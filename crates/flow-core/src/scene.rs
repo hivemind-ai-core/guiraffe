@@ -16,30 +16,34 @@ struct Branch {
 #[derive(Clone, Debug, Default)]
 pub struct SpatialIndex {
     root: Option<Arc<Branch>>,
-    locations: im::OrdMap<u64, Vec<bool>>,
+    locations: im::OrdMap<u64, u64>,
+    max_depth: u32,
 }
 impl SpatialIndex {
     pub fn new(entries: impl IntoIterator<Item = (u64, Rect)>) -> Self {
         let mut entries: Vec<_> = entries.into_iter().filter(|(_, r)| r.valid()).collect();
         let mut index = Self::default();
+        let mut locations = BTreeMap::new();
         if !entries.is_empty() {
-            index.root = Some(Self::build(
-                &mut entries,
-                &mut Vec::new(),
-                &mut index.locations,
-            ));
+            index.root = Some(Self::build(&mut entries, 1, &mut locations));
         }
+        index.max_depth = locations
+            .values()
+            .map(|p| 63 - p.leading_zeros())
+            .max()
+            .unwrap_or(0);
+        index.locations = locations.into_iter().collect();
         index
     }
     fn build(
         entries: &mut [(u64, Rect)],
-        path: &mut Vec<bool>,
-        locations: &mut im::OrdMap<u64, Vec<bool>>,
+        path: u64,
+        locations: &mut BTreeMap<u64, u64>,
     ) -> Arc<Branch> {
         let bounds = entries.iter().map(|(_, r)| *r).reduce(Rect::union);
         if entries.len() <= 8 {
             for (id, _) in entries.iter() {
-                locations.insert(*id, path.clone());
+                locations.insert(*id, path);
             }
             return Arc::new(Branch {
                 bounds,
@@ -54,12 +58,8 @@ impl SpatialIndex {
             coord(a.1).total_cmp(&coord(b.1)).then(a.0.cmp(&b.0))
         });
         let (left, right) = entries.split_at_mut(mid);
-        path.push(false);
-        let left = Self::build(left, path, locations);
-        path.pop();
-        path.push(true);
-        let right = Self::build(right, path, locations);
-        path.pop();
+        let left = Self::build(left, path << 1, locations);
+        let right = Self::build(right, (path << 1) | 1, locations);
         Arc::new(Branch {
             bounds,
             entries: Vec::new(),
@@ -72,27 +72,51 @@ impl SpatialIndex {
     /// Insert, remove or refit entries by copying only affected branches.
     pub fn update(&mut self, changes: &BTreeMap<u64, Option<Rect>>) {
         for (id, rect) in changes {
-            if let Some(path) = self.locations.get(id).cloned() {
+            if let Some(path) = self.locations.get(id).copied() {
                 if let Some(root) = &mut self.root {
-                    Self::refit(root, &path, *id, *rect);
+                    Self::refit(root, path, 63 - path.leading_zeros(), *id, *rect);
                 }
                 if rect.is_none() {
                     self.locations.remove(id);
                 }
             } else if let Some(rect) = rect.filter(|r| r.valid()) {
+                // Bound insertion chains before the packed path can overflow.
+                if self.max_depth >= 48 {
+                    let mut entries = BTreeMap::new();
+                    if let Some(root) = &self.root {
+                        Self::collect(root, &mut entries);
+                    }
+                    entries.insert(*id, rect);
+                    *self = Self::new(entries);
+                    continue;
+                }
                 if let Some(root) = &mut self.root {
-                    Self::insert(root, (*id, rect), &mut Vec::new(), &mut self.locations);
+                    Self::insert(
+                        root,
+                        (*id, rect),
+                        1,
+                        &mut self.locations,
+                        &mut self.max_depth,
+                    );
                 } else {
                     *self = Self::new([(*id, rect)]);
                 }
             }
         }
     }
+    fn collect(branch: &Branch, entries: &mut BTreeMap<u64, Rect>) {
+        entries.extend(branch.entries.iter().copied());
+        if let Some((left, right)) = &branch.children {
+            Self::collect(left, entries);
+            Self::collect(right, entries);
+        }
+    }
     fn insert(
         root: &mut Arc<Branch>,
         entry: (u64, Rect),
-        path: &mut Vec<bool>,
-        locations: &mut im::OrdMap<u64, Vec<bool>>,
+        path: u64,
+        locations: &mut im::OrdMap<u64, u64>,
+        max_depth: &mut u32,
     ) {
         let branch = Arc::make_mut(root);
         if let Some((left, right)) = &mut branch.children {
@@ -104,9 +128,13 @@ impl SpatialIndex {
                 })
             };
             let to_right = cost(right) < cost(left);
-            path.push(to_right);
-            Self::insert(if to_right { right } else { left }, entry, path, locations);
-            path.pop();
+            Self::insert(
+                if to_right { right } else { left },
+                entry,
+                (path << 1) | u64::from(to_right),
+                locations,
+                max_depth,
+            );
             branch.bounds = match (left.bounds, right.bounds) {
                 (Some(a), Some(b)) => Some(a.union(b)),
                 (a, b) => a.or(b),
@@ -114,18 +142,30 @@ impl SpatialIndex {
         } else {
             branch.entries.push(entry);
             if branch.entries.len() > 8 {
-                *root = Self::build(&mut branch.entries, path, locations);
+                let mut split_locations = BTreeMap::new();
+                *root = Self::build(&mut branch.entries, path, &mut split_locations);
+                for (id, path) in split_locations {
+                    *max_depth = (*max_depth).max(63 - path.leading_zeros());
+                    locations.insert(id, path);
+                }
             } else {
-                locations.insert(entry.0, path.clone());
+                *max_depth = (*max_depth).max(63 - path.leading_zeros());
+                locations.insert(entry.0, path);
                 branch.bounds = branch.entries.iter().map(|(_, r)| *r).reduce(Rect::union);
             }
         }
     }
-    fn refit(root: &mut Arc<Branch>, path: &[bool], id: u64, rect: Option<Rect>) {
+    fn refit(root: &mut Arc<Branch>, path: u64, depth: u32, id: u64, rect: Option<Rect>) {
         let branch = Arc::make_mut(root);
         if let Some((l, r)) = &mut branch.children {
-            if let Some((right, rest)) = path.split_first() {
-                Self::refit(if *right { r } else { l }, rest, id, rect);
+            if depth > 0 {
+                Self::refit(
+                    if path & (1 << (depth - 1)) != 0 { r } else { l },
+                    path,
+                    depth - 1,
+                    id,
+                    rect,
+                );
             }
             branch.bounds = match (l.bounds, r.bounds) {
                 (Some(a), Some(b)) => Some(a.union(b)),
@@ -184,8 +224,25 @@ impl EdgePath {
         source_override: Option<Point>,
         target_override: Option<Point>,
     ) -> Result<Self, FlowError> {
-        let (source, sh) = graph.handle(&edge.source)?;
-        let (target, th) = graph.handle(&edge.target)?;
+        let source = graph
+            .nodes
+            .get(&edge.source.node)
+            .ok_or(FlowError::MissingNode(edge.source.node))?;
+        let target = graph
+            .nodes
+            .get(&edge.target.node)
+            .ok_or(FlowError::MissingNode(edge.target.node))?;
+        Self::from_nodes(edge, source, target, source_override, target_override)
+    }
+    fn from_nodes(
+        edge: &Edge,
+        source: &crate::Node,
+        target: &crate::Node,
+        source_override: Option<Point>,
+        target_override: Option<Point>,
+    ) -> Result<Self, FlowError> {
+        let sh = Graph::node_handle(source, &edge.source)?;
+        let th = Graph::node_handle(target, &edge.target)?;
         let from = sh.position(Rect {
             origin: source_override.unwrap_or(source.pos),
             size: source.size,
@@ -328,10 +385,24 @@ pub struct Scene {
 impl Scene {
     pub fn new(graph: Graph) -> Result<Self, FlowError> {
         graph.validate()?;
+        let node_refs: BTreeMap<_, _> = graph.nodes.iter().map(|(id, node)| (*id, node)).collect();
         let paths: im::OrdMap<EdgeId, Arc<EdgePath>> = graph
             .edges
             .values()
-            .map(|e| EdgePath::new(&graph, e, None, None).map(|p| (e.id, Arc::new(p))))
+            .map(|e| {
+                EdgePath::from_nodes(
+                    e,
+                    node_refs
+                        .get(&e.source.node)
+                        .ok_or(FlowError::MissingNode(e.source.node))?,
+                    node_refs
+                        .get(&e.target.node)
+                        .ok_or(FlowError::MissingNode(e.target.node))?,
+                    None,
+                    None,
+                )
+                .map(|p| (e.id, Arc::new(p)))
+            })
             .collect::<Result<_, _>>()?;
         let nodes = SpatialIndex::new(graph.nodes.values().map(|n| (n.id, n.rect())));
         let edges = SpatialIndex::new(paths.iter().map(|(id, path)| (*id, path.bounds)));
@@ -417,6 +488,9 @@ impl Scene {
         next.revision = self.revision.wrapping_add(1);
         let node_changes: BTreeMap<_, _> = changed_nodes
             .iter()
+            .filter(|id| {
+                self.graph.nodes.get(id).map(|n| n.rect()) != graph.nodes.get(id).map(|n| n.rect())
+            })
             .map(|id| (*id, graph.nodes.get(id).map(|n| n.rect())))
             .collect();
         next.nodes.update(&node_changes);
@@ -426,7 +500,12 @@ impl Scene {
         }
         let mut edges = changed_edges.clone();
         for id in changed_nodes {
-            edges.extend(self.incident_edges(*id));
+            let old = self.graph.nodes.get(id);
+            let new = graph.nodes.get(id);
+            if old.map(|n| (n.pos, n.size, &n.handles)) != new.map(|n| (n.pos, n.size, &n.handles))
+            {
+                edges.extend(self.incident_edges(*id));
+            }
             if graph.nodes.contains_key(id) {
                 next.revisions.insert(*id, next.revision);
             } else {
@@ -466,6 +545,11 @@ impl Scene {
             next.depths = Self::depths(&graph);
         }
         for id in changed_nodes {
+            if self.graph.nodes.get(id).and_then(|n| n.parent)
+                == graph.nodes.get(id).and_then(|n| n.parent)
+            {
+                continue;
+            }
             if let Some(parent) = self.graph.nodes.get(id).and_then(|n| n.parent)
                 && let Some(ids) = next.children.get_mut(&parent)
             {

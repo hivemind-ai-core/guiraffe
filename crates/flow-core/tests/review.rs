@@ -183,3 +183,21 @@ fn review_11_spatial_insert_remove_refit_preserves_old_snapshot() {
     index.query(Rect::new(-100., 30., 20., 50.), &mut ids);
     assert_eq!(ids, (30..80).collect::<Vec<_>>());
 }
+
+#[test]
+fn review_11_large_insert_batch_rebalances_and_remains_queryable() {
+    let mut index = SpatialIndex::default();
+    let changes = (0..1500)
+        .map(|id| (id, Some(Rect::new(id as f32 * 30., 0., 20., 20.))))
+        .collect();
+    index.update(&changes);
+    let mut ids = Vec::new();
+    for i in 0..50 {
+        let area = Rect::new(i as f32 * 800., 0., 800., 20.);
+        index.query(area, &mut ids);
+        let expected = (0..1500)
+            .filter(|id| Rect::new(*id as f32 * 30., 0., 20., 20.).intersects(area))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, expected);
+    }
+}

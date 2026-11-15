@@ -230,15 +230,22 @@ impl Graph {
             .nodes
             .get(&endpoint.node)
             .ok_or(FlowError::MissingNode(endpoint.node))?;
-        let handle = node
-            .handles
-            .iter()
-            .find(|h| h.id == endpoint.handle)
-            .ok_or_else(|| FlowError::MissingHandle(endpoint.clone()))?;
+        let handle = Self::node_handle(node, endpoint)?;
         Ok((node, handle))
     }
+    pub(crate) fn node_handle<'a>(
+        node: &'a Node,
+        endpoint: &Endpoint,
+    ) -> Result<&'a Handle, FlowError> {
+        node.handles
+            .iter()
+            .find(|h| h.id == endpoint.handle)
+            .ok_or_else(|| FlowError::MissingHandle(endpoint.clone()))
+    }
     pub fn validate(&self) -> Result<(), FlowError> {
-        for (id, node) in &self.nodes {
+        // Bulk validation uses a transient read index, avoiding repeated persistent-tree walks.
+        let nodes: BTreeMap<_, _> = self.nodes.iter().map(|(id, node)| (*id, node)).collect();
+        for (id, node) in &nodes {
             if *id != node.id {
                 return Err(FlowError::DuplicateId);
             }
@@ -267,8 +274,7 @@ impl Graph {
                 if !visiting.insert(current) {
                     return Err(FlowError::ParentCycle);
                 }
-                next = self
-                    .nodes
+                next = nodes
                     .get(&current)
                     .ok_or(FlowError::MissingNode(current))?
                     .parent;
@@ -282,7 +288,17 @@ impl Graph {
             if *id != edge.id {
                 return Err(FlowError::DuplicateId);
             }
-            self.validate_endpoints(&edge.source, &edge.target)?;
+            for (endpoint, kind) in [
+                (&edge.source, HandleKind::Source),
+                (&edge.target, HandleKind::Target),
+            ] {
+                let node = nodes
+                    .get(&endpoint.node)
+                    .ok_or(FlowError::MissingNode(endpoint.node))?;
+                if Self::node_handle(node, endpoint)?.kind != kind {
+                    return Err(FlowError::WrongHandleDirection);
+                }
+            }
         }
         Ok(())
     }
