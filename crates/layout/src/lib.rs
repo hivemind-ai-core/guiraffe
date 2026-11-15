@@ -20,11 +20,19 @@
 //! width of its own container can say so with [`ContainerWidth`].
 
 mod align;
+mod flex;
+mod group;
+mod macros;
 mod responsive;
+mod stack;
+mod style;
 mod tokens;
 mod width;
 
 pub use align::{Align, Justify};
+pub use flex::{Flex, FlexDirection};
+pub use group::Group;
 pub use responsive::{Breakpoint, Responsive};
+pub use stack::Stack;
 pub use tokens::Size;
 pub use width::ContainerWidth;
