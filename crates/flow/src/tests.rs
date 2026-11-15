@@ -393,7 +393,7 @@ fn review_12_retained_node_and_edge_buffer_survive_camera_frame(cx: &mut TestApp
 }
 #[gpui_kit::test]
 fn review_16_control_wheel_clamps_extreme_deltas(cx: &mut TestAppContext) {
-    use gpui_kit::{InputEvent, Modifiers, ScrollWheelEvent};
+    use gpui_kit::{InputEvent, Modifiers, ScrollEvent};
     let (w, v) = open(cx);
     for (delta, expected) in [
         (100000., Viewport::MAX_ZOOM),
@@ -401,7 +401,7 @@ fn review_16_control_wheel_clamps_extreme_deltas(cx: &mut TestAppContext) {
     ] {
         w.update(cx, |_, w, cx| {
             w.dispatch_event(
-                ScrollWheelEvent {
+                ScrollEvent {
                     position: point(px(300.), px(300.)),
                     delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
                     modifiers: Modifiers {
@@ -417,4 +417,113 @@ fn review_16_control_wheel_clamps_extreme_deltas(cx: &mut TestAppContext) {
         .expect("wheel");
         assert_eq!(v.read_with(cx, |v, _| v.viewport().zoom), expected);
     }
+}
+
+#[gpui_kit::test]
+fn review_12_unrelated_node_edit_does_not_render_retained_node(cx: &mut TestAppContext) {
+    struct Renderer(Rc<Cell<usize>>);
+    impl NodeRenderer for Renderer {
+        fn render(&self, node: &Node, _: f32, _: &mut Window, _: &mut App) -> AnyElement {
+            if node.id == 1 {
+                self.0.set(self.0.get() + 1);
+            }
+            div().child("counted").into_any_element()
+        }
+    }
+    let count = Rc::new(Cell::new(0));
+    let observed = count.clone();
+    let (w, v) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| {
+                Flow::new(fixture(), cx)
+                    .expect("flow")
+                    .node_renderer(Renderer(observed))
+            })
+        })
+        .expect("window")
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        w.render_frame(cx);
+    })
+    .expect("initial frames");
+    let before = count.get();
+    assert!(before > 0);
+    v.update(cx, |v, cx| {
+        v.edit(
+            |g| {
+                g.nodes.get_mut(&2).expect("node").data = "changed target".into();
+                Ok(())
+            },
+            cx,
+        )
+        .expect("edit");
+    });
+    // render_frame deliberately refreshes every view; draw tests normal dirty-view caching.
+    w.update(cx, |_, w, cx| w.draw(cx).clear(cx))
+        .expect("frame");
+    assert_eq!(count.get(), before);
+}
+
+#[gpui_kit::test]
+fn review_16_real_self_loop_with_allow_self(cx: &mut TestAppContext) {
+    let (w, v) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| {
+                Flow::new(fixture(), cx).expect("flow").connection_policy(
+                    crate::core::ConnectionPolicy {
+                        allow_self: true,
+                        ..Default::default()
+                    },
+                )
+            })
+        })
+        .expect("window")
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        w.render_frame(cx);
+        w.drag(point(px(240.), px(156.)), point(px(80.), px(156.)), cx);
+    })
+    .expect("self connect");
+    assert_eq!(v.read_with(cx, |v, _| v.graph().edges.len()), 1);
+    assert_eq!(
+        v.read_with(cx, |v, _| {
+            let e = v.graph().edges.values().next().expect("edge");
+            (e.source.node, e.target.node)
+        }),
+        (1, 1)
+    );
+}
+#[gpui_kit::test]
+fn review_2_real_parent_drag_moves_child_once(cx: &mut TestAppContext) {
+    let (w, v) = open(cx);
+    v.update(cx, |v, cx| {
+        v.edit(
+            |g| {
+                let parent = g.nodes.get_mut(&2).expect("parent");
+                parent.pos = WorldPoint::new(60., 100.);
+                parent.size = WorldPoint::new(400., 300.);
+                g.nodes.get_mut(&1).expect("child").parent = Some(2);
+                Ok(())
+            },
+            cx,
+        )
+        .expect("parent");
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        w.drag(point(px(400.), px(300.)), point(px(440.), px(320.)), cx);
+    })
+    .expect("drag");
+    assert_eq!(
+        v.read_with(cx, |v, _| v.graph().nodes[&1].pos),
+        WorldPoint::new(120., 140.)
+    );
+    assert_eq!(
+        v.read_with(cx, |v, _| v.graph().nodes[&2].pos),
+        WorldPoint::new(100., 120.)
+    );
 }

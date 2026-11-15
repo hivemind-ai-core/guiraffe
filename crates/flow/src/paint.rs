@@ -563,4 +563,51 @@ mod tests {
         );
         assert_eq!(frame.edges.as_ptr(), storage);
     }
+    #[gpui_kit::test]
+    fn review_13_selection_does_not_rebuild_minimap(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::{AppContext, WindowOptions, test::TestWindowExt};
+        let graph =
+            Graph::from_parts([Node::new(1, "", WorldPoint::new(100., 100.))], []).expect("graph");
+        let (w, v) = cx.update(|cx| {
+            guiraffe_core::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| crate::Flow::new(graph, cx).expect("flow"))
+            })
+            .expect("window")
+        });
+        w.update(cx, |_, w, cx| {
+            w.render_frame(cx);
+            w.render_frame(cx);
+        })
+        .expect("frames");
+        let before = v.read_with(cx, |v, _| {
+            v.meshes
+                .borrow()
+                .minimap
+                .as_ref()
+                .expect("minimap")
+                .normal
+                .vertices
+                .as_ptr()
+        });
+        v.update(cx, |v, cx| {
+            v.interaction
+                .editor
+                .select(&std::collections::BTreeSet::from([1]), false);
+            cx.notify();
+        });
+        w.update(cx, |_, w, cx| w.render_frame(cx))
+            .expect("selection frame");
+        let after = v.read_with(cx, |v, _| {
+            v.meshes
+                .borrow()
+                .minimap
+                .as_ref()
+                .expect("minimap")
+                .normal
+                .vertices
+                .as_ptr()
+        });
+        assert_eq!(before, after);
+    }
 }

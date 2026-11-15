@@ -111,6 +111,19 @@ impl Flow {
         self.renderer = Rc::new(renderer);
         self
     }
+    /// Configure structural connection rules, including self-loops and parallel edges.
+    pub fn connection_policy(mut self, policy: core::ConnectionPolicy) -> Self {
+        self.interaction.editor.policy = policy;
+        self
+    }
+    /// Live node selection, independent of document serialization and undo/redo.
+    pub fn selected_nodes(&self) -> &std::collections::BTreeSet<core::NodeId> {
+        self.interaction.editor.selected_nodes()
+    }
+    /// Live edge selection, independent of document serialization and undo/redo.
+    pub fn selected_edges(&self) -> &std::collections::BTreeSet<core::EdgeId> {
+        self.interaction.editor.selected_edges()
+    }
     pub fn connection_validator(mut self, validator: impl ConnectionValidator + 'static) -> Self {
         self.validator = Some(Rc::new(validator));
         self
@@ -137,8 +150,13 @@ impl Flow {
         viewport: Viewport,
         cx: &mut Context<Self>,
     ) -> Result<(), FlowError> {
+        let before = self.viewport();
+        let had_gesture = self.interaction.gesture.is_some();
         self.interaction.set_viewport(viewport)?;
         let viewport = self.viewport();
+        if before == viewport && !had_gesture {
+            return Ok(());
+        }
         cx.emit(FlowEvent::ViewportChanged(viewport));
         cx.notify();
         Ok(())
@@ -467,7 +485,7 @@ impl Render for Flow {
                     this.finish(result, cx);
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 let delta = event.delta.pixel_delta(px(20.));
                 if event.modifiers.control || event.modifiers.platform {
                     this.zoom(

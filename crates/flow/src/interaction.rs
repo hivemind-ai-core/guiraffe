@@ -38,7 +38,7 @@ impl Gesture {
             }
             let root_origin = *origins.get(&root)?;
             let target = grid.map_or(root_origin + *delta, |g| (root_origin + *delta).snap(g));
-            Some(origin + target - root_origin)
+            Some(origin + (target - root_origin))
         } else {
             None
         }
