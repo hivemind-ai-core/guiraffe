@@ -74,6 +74,7 @@ struct MinimapMeshes {
     scene: Arc<Scene>,
     size: WorldPoint,
     normal: Path<Pixels>,
+    selection: Option<(Arc<BTreeSet<u64>>, Path<Pixels>)>,
 }
 fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
     let mut builder = PathBuilder::stroke(px(1.5));
@@ -130,8 +131,8 @@ pub(crate) struct Frame {
     grid: Option<f32>,
     surfaces: Surfaces,
     accent: Rgb,
-    selected: BTreeSet<u64>,
-    selected_edges: BTreeSet<u64>,
+    selected: Arc<BTreeSet<u64>>,
+    selected_edges: Arc<BTreeSet<u64>>,
 }
 impl Frame {
     pub fn new(
@@ -151,8 +152,8 @@ impl Frame {
             grid: i.grid,
             surfaces: theme.surfaces(),
             accent: theme.primary_color(),
-            selected: i.editor.selected_nodes().clone(),
-            selected_edges: i.editor.selected_edges().clone(),
+            selected: i.editor.selected_nodes_shared(),
+            selected_edges: i.editor.selected_edges_shared(),
         }
     }
     fn preview(&self, id: u64) -> Option<WorldPoint> {
@@ -383,9 +384,10 @@ impl Frame {
                 scene: self.scene.clone(),
                 size,
                 normal,
+                selection: None,
             });
         }
-        if let Some(meshes) = &cache.minimap {
+        if let Some(meshes) = &mut cache.minimap {
             paint_mesh(
                 &meshes.normal,
                 Viewport::default(),
@@ -393,31 +395,33 @@ impl Frame {
                 window,
                 self.surfaces.dimmed,
             );
-        }
-        // Selection is a small overlay; changing it never rebuilds the scene minimap.
-        let mut selected = Path::new(pixel(map.origin));
-        for id in &self.selected {
-            if let Some(n) = self.scene.graph().nodes.get(id) {
-                rectangle(
-                    &mut selected,
-                    Rect {
-                        origin: camera.screen(n.pos),
-                        size: WorldPoint::new(
-                            (n.size.x * camera.zoom).max(1.),
-                            (n.size.y * camera.zoom).max(1.),
-                        ),
-                    },
-                );
+            if meshes
+                .selection
+                .as_ref()
+                .is_none_or(|(selected, _)| !Arc::ptr_eq(selected, &self.selected))
+            {
+                let mut path = Path::new(pixel(map.origin));
+                for id in self.selected.iter() {
+                    if let Some(n) = self.scene.graph().nodes.get(id) {
+                        rectangle(
+                            &mut path,
+                            Rect {
+                                origin: camera.screen(n.pos),
+                                size: WorldPoint::new(
+                                    (n.size.x * camera.zoom).max(1.),
+                                    (n.size.y * camera.zoom).max(1.),
+                                ),
+                            },
+                        );
+                    }
+                }
+                meshes.selection = Some((self.selected.clone(), path));
             }
-        }
-        if !selected.vertices.is_empty() {
-            paint_mesh(
-                &selected,
-                Viewport::default(),
-                b.origin,
-                window,
-                self.accent,
-            );
+            if let Some((_, path)) = &meshes.selection
+                && !path.vertices.is_empty()
+            {
+                paint_mesh(path, Viewport::default(), b.origin, window, self.accent);
+            }
         }
         let visible = self.viewport.visible(size);
         let screen = Rect {
@@ -609,5 +613,71 @@ mod tests {
                 .as_ptr()
         });
         assert_eq!(before, after);
+        let overlay_before = v.read_with(cx, |v, _| {
+            v.meshes
+                .borrow()
+                .minimap
+                .as_ref()
+                .expect("minimap")
+                .selection
+                .as_ref()
+                .expect("selection")
+                .1
+                .vertices
+                .as_ptr()
+        });
+        v.update(cx, |v, cx| {
+            v.set_viewport(
+                Viewport {
+                    pan: WorldPoint::new(20., 10.),
+                    zoom: 1.,
+                },
+                cx,
+            )
+            .expect("camera");
+        });
+        w.update(cx, |_, w, cx| w.render_frame(cx))
+            .expect("camera frame");
+        let overlay_after = v.read_with(cx, |v, _| {
+            v.meshes
+                .borrow()
+                .minimap
+                .as_ref()
+                .expect("minimap")
+                .selection
+                .as_ref()
+                .expect("selection")
+                .1
+                .vertices
+                .as_ptr()
+        });
+        assert_eq!(overlay_before, overlay_after);
+    }
+    #[test]
+    fn review_12_view_frames_share_selection_storage() {
+        let mut i = Interaction::new(
+            Graph::from_parts([Node::new(1, "", WorldPoint::default())], []).expect("graph"),
+        )
+        .expect("interaction");
+        i.editor.select(&BTreeSet::from([1]), false);
+        let mut visible = Visible::default();
+        let a = Frame::new(
+            &i,
+            &mut visible,
+            Background::None,
+            false,
+            &GuiraffeTheme::default(),
+        );
+        let b = Frame::new(
+            &i,
+            &mut visible,
+            Background::None,
+            false,
+            &GuiraffeTheme::default(),
+        );
+        assert_eq!(
+            a.selected.iter().next().map(|id| id as *const u64),
+            b.selected.iter().next().map(|id| id as *const u64)
+        );
     }
 }

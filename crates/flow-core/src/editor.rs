@@ -11,8 +11,8 @@ pub struct Editor {
     undo: VecDeque<Graph>,
     redo: Vec<Graph>,
     limit: usize,
-    selected: BTreeSet<NodeId>,
-    selected_edges: BTreeSet<EdgeId>,
+    selected: Arc<BTreeSet<NodeId>>,
+    selected_edges: Arc<BTreeSet<EdgeId>>,
     pub policy: ConnectionPolicy,
 }
 fn changed_keys<V: Clone + PartialEq>(
@@ -48,8 +48,8 @@ impl Editor {
             undo: VecDeque::new(),
             redo: Vec::new(),
             limit: 100,
-            selected,
-            selected_edges: BTreeSet::new(),
+            selected: Arc::new(selected),
+            selected_edges: Arc::new(BTreeSet::new()),
             policy: ConnectionPolicy::default(),
         })
     }
@@ -67,6 +67,13 @@ impl Editor {
     }
     pub fn selected_edges(&self) -> &BTreeSet<EdgeId> {
         &self.selected_edges
+    }
+    /// Immutable view snapshot; pointer identity changes only with selection content.
+    pub fn selected_nodes_shared(&self) -> Arc<BTreeSet<NodeId>> {
+        self.selected.clone()
+    }
+    pub fn selected_edges_shared(&self) -> Arc<BTreeSet<EdgeId>> {
+        self.selected_edges.clone()
     }
     pub fn is_selected(&self, id: NodeId) -> bool {
         self.selected.contains(&id)
@@ -125,9 +132,16 @@ impl Editor {
     }
     fn prune_selection(&mut self) {
         let graph = self.scene.graph();
-        self.selected.retain(|id| graph.nodes.contains_key(id));
-        self.selected_edges
-            .retain(|id| graph.edges.contains_key(id));
+        if self.selected.iter().any(|id| !graph.nodes.contains_key(id)) {
+            Arc::make_mut(&mut self.selected).retain(|id| graph.nodes.contains_key(id));
+        }
+        if self
+            .selected_edges
+            .iter()
+            .any(|id| !graph.edges.contains_key(id))
+        {
+            Arc::make_mut(&mut self.selected_edges).retain(|id| graph.edges.contains_key(id));
+        }
     }
     /// Rejected edits leave document, caches, selection and history intact.
     pub fn edit(
@@ -213,29 +227,45 @@ impl Editor {
         self.connect(edge, validator)
     }
     pub fn select(&mut self, ids: &BTreeSet<NodeId>, additive: bool) {
-        if !additive {
-            self.selected.clear();
-            self.selected_edges.clear();
-        }
-        self.selected.extend(
+        let mut next = if additive {
+            self.selected.as_ref().clone()
+        } else {
+            BTreeSet::new()
+        };
+        next.extend(
             ids.iter()
                 .filter(|id| self.graph().nodes.contains_key(id))
-                .copied()
-                .collect::<Vec<_>>(),
+                .copied(),
         );
+        if *self.selected != next {
+            self.selected = Arc::new(next);
+        }
+        if !additive && !self.selected_edges.is_empty() {
+            self.selected_edges = Arc::new(BTreeSet::new());
+        }
     }
     pub fn toggle(&mut self, id: NodeId) {
-        if self.graph().nodes.contains_key(&id) && !self.selected.remove(&id) {
-            self.selected.insert(id);
+        if self.graph().nodes.contains_key(&id) {
+            let selection = Arc::make_mut(&mut self.selected);
+            if !selection.remove(&id) {
+                selection.insert(id);
+            }
         }
     }
     pub fn select_edge(&mut self, id: EdgeId, additive: bool) {
-        if !additive {
-            self.selected.clear();
-            self.selected_edges.clear();
+        let mut next = if additive {
+            self.selected_edges.as_ref().clone()
+        } else {
+            BTreeSet::new()
+        };
+        if self.graph().edges.contains_key(&id) && !next.remove(&id) {
+            next.insert(id);
         }
-        if self.graph().edges.contains_key(&id) && !self.selected_edges.remove(&id) {
-            self.selected_edges.insert(id);
+        if *self.selected_edges != next {
+            self.selected_edges = Arc::new(next);
+        }
+        if !additive && !self.selected.is_empty() {
+            self.selected = Arc::new(BTreeSet::new());
         }
     }
     pub fn select_box(&mut self, area: Rect, additive: bool) {
@@ -332,7 +362,7 @@ impl Editor {
         if self.selected.is_empty() && self.selected_edges.is_empty() {
             return Ok(false);
         }
-        let mut remove = self.selected.clone();
+        let mut remove = self.selected.as_ref().clone();
         let mut stack: Vec<_> = remove.iter().copied().collect();
         while let Some(id) = stack.pop() {
             for child in self.scene.children(id) {
@@ -342,7 +372,7 @@ impl Editor {
             }
         }
         let mut graph = self.graph().clone();
-        let mut edges = self.selected_edges.clone();
+        let mut edges = self.selected_edges.as_ref().clone();
         for id in remove {
             edges.extend(self.scene.incident_edges(id));
             graph.nodes.remove(&id);
