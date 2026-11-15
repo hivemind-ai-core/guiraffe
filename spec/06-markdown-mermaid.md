@@ -1,0 +1,3 @@
+# guiraffe-markdown / guiraffe-mermaid
+Markdown: CommonMark + GFM (tables, task lists, strikethrough, footnotes, autolinks), syntax highlighting for code, selectable text, copy code, link handler callback, image loading, heading anchors + TOC extraction, incremental re-parse for streaming (agent chat), virtualization for big docs, theming from core. Feature `mermaid` renders ```mermaid fences via guiraffe-mermaid.
+Mermaid: standalone viewer element; parse+layout off the main thread, cache by source hash, pan/zoom/fit, theme-aware colors, error display, panic isolation. Port from ../gui/workbench/crates/mer (mermaid-rs-renderer).

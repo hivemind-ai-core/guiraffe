@@ -1,0 +1,23 @@
+[package]
+name = "guiraffe-gallery"
+description = "Storybook / gallery app showcasing every guiraffe widget."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-layout.workspace = true
+guiraffe-components.workspace = true
+guiraffe-overlays.workspace = true
+guiraffe-windows.workspace = true
+guiraffe-markdown = { workspace = true, features = ["mermaid"] }
+guiraffe-mermaid.workspace = true
+guiraffe-flow.workspace = true
+
+[dev-dependencies]
+

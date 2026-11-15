@@ -1,0 +1,16 @@
+[package]
+name = "guiraffe-windows"
+description = "Rock-solid multi-window management: registry, lifecycle, cross-window messaging, persistence."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }

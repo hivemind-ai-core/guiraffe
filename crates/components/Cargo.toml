@@ -1,0 +1,17 @@
+[package]
+name = "guiraffe-components"
+description = "Mantine-inspired components not provided by GPUI Controls."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-layout.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }

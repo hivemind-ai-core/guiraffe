@@ -1,0 +1,16 @@
+[package]
+name = "guiraffe-layout"
+description = "Layout primitives: Stack, Group, Flex, Grid, SimpleGrid, Container, Center, AspectRatio, AppShell, Splitter."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }

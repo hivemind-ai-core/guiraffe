@@ -1,0 +1,15 @@
+[package]
+name = "guiraffe-flow-core"
+description = "GPUI-free graph model for guiraffe-flow: nodes, edges, viewport, hit-testing, spatial index, history."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+

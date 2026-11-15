@@ -1,1 +1,3 @@
-A Rust GUI framework based on GPUI Kit and GPUI Controls, inspired heavily by Mantine
+# GUIraffe 🦒
+
+Rich, beautiful and FAST desktop UI for Rust, built on GPUI Kit + GPUI Controls (gpui-component), heavily inspired by Mantine.

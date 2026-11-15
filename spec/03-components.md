@@ -1,0 +1,4 @@
+# guiraffe-components (gaps vs Controls; check Controls first, wrap if it exists)
+Inputs: SegmentedControl, Chip/ChipGroup, PinInput, NumberInput w/ steppers, TagsInput, MultiSelect pills, Autocomplete, FileInput/Dropzone, ColorInput+swatches, Rating(if missing), RangeSlider, JsonInput, PasswordInput strength meter.
+Display: Card (sections), Paper, ThemeIcon, Indicator, RingProgress, SemiCircleProgress, Timeline, Stepper polish, Spoiler, Highlight, Mark, Blockquote, Code/CodeBlock (copy), Image w/ fallback, BackgroundImage, Table helpers, Title/Text typography scale, Anchor, NavLink, Pill, Loader variants (oval, bars, dots), Burger, CloseButton, ActionIcon, CopyButton, UnstyledButton.
+Agent chat (inspired by mocket): message list (virtualized, streaming markdown), tool-call cards (collapsible), composer with attachments/mentions/slash-commands, thinking blocks.

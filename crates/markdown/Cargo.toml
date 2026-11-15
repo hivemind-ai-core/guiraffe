@@ -1,0 +1,21 @@
+[package]
+name = "guiraffe-markdown"
+description = "Fast Markdown viewer control with optional Mermaid support."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-mermaid = { workspace = true, optional = true }
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+default = []
+mermaid = ["dep:guiraffe-mermaid"]

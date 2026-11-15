@@ -1,0 +1,16 @@
+[package]
+name = "guiraffe-overlays"
+description = "Overlay stack: modals manager, drawers, popovers, context menus, toasts, spotlight, desktop notifications."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
