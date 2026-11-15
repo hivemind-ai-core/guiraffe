@@ -10,11 +10,15 @@ use crate::tokens::Size;
 /// The width bands the responsive props switch at.
 ///
 /// The bands are the ones the core size scale names, so a breakpoint and a
-/// size token agree on where the edges are.
+/// size token agree on where the edges are. Below the smallest band there is
+/// the [`Base`](Breakpoint::Base) band: every width starts there, and a value
+/// set for `Base` holds until the next band takes over.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Breakpoint {
-    /// 576px and up.
+    /// Below 576 pixels.
     #[default]
+    Base,
+    /// 576px and up.
     Xs,
     /// 768px and up.
     Sm,
@@ -28,7 +32,8 @@ pub enum Breakpoint {
 
 impl Breakpoint {
     /// Every breakpoint, narrowest first.
-    pub const ALL: [Breakpoint; 5] = [
+    pub const ALL: [Breakpoint; 6] = [
+        Breakpoint::Base,
         Breakpoint::Xs,
         Breakpoint::Sm,
         Breakpoint::Md,
@@ -39,6 +44,7 @@ impl Breakpoint {
     /// The narrowest width that belongs to this breakpoint.
     pub fn min_width(self) -> f32 {
         match self {
+            Breakpoint::Base => 0.,
             Breakpoint::Xs => Size::Xs.breakpoint(),
             Breakpoint::Sm => Size::Sm.breakpoint(),
             Breakpoint::Md => Size::Md.breakpoint(),
@@ -49,7 +55,7 @@ impl Breakpoint {
 
     /// The breakpoint a width falls into: the widest band the width reaches.
     pub fn from_width(width: f32) -> Breakpoint {
-        let mut resolved = Breakpoint::Xs;
+        let mut resolved = Breakpoint::Base;
         for breakpoint in Breakpoint::ALL {
             if width >= breakpoint.min_width() {
                 resolved = breakpoint;
@@ -61,11 +67,12 @@ impl Breakpoint {
     /// This breakpoint's position on the scale, narrowest first.
     pub fn index(self) -> usize {
         match self {
-            Breakpoint::Xs => 0,
-            Breakpoint::Sm => 1,
-            Breakpoint::Md => 2,
-            Breakpoint::Lg => 3,
-            Breakpoint::Xl => 4,
+            Breakpoint::Base => 0,
+            Breakpoint::Xs => 1,
+            Breakpoint::Sm => 2,
+            Breakpoint::Md => 3,
+            Breakpoint::Lg => 4,
+            Breakpoint::Xl => 5,
         }
     }
 
@@ -88,6 +95,9 @@ impl Breakpoint {
 /// `Value` is one value everywhere. `Map` carries a base value plus the
 /// breakpoints that override it; a width resolves to the override of the
 /// widest band at or below it, and to the base value when no band matches.
+///
+/// The base value belongs to the [`Base`](Breakpoint::Base) band: it holds
+/// from zero pixels up to the next override.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Responsive<T> {
     /// One value for every width.
@@ -182,9 +192,32 @@ mod tests {
     use crate::tokens::Size;
 
     #[test]
+    fn a_width_below_the_smallest_band_is_in_the_base_band() {
+        assert_eq!(Breakpoint::from_width(0.), Breakpoint::Base);
+        assert_eq!(Breakpoint::from_width(575.), Breakpoint::Base);
+        assert_eq!(Breakpoint::from_width(575.9), Breakpoint::Base);
+    }
+
+    #[test]
+    fn an_xs_override_only_starts_at_the_xs_band() {
+        let value = Responsive::base(12u16).at(Breakpoint::Xs, 6);
+        assert_eq!(value.resolve(0.), 12, "the base band keeps the base value");
+        assert_eq!(value.resolve(575.), 12, "the base band reaches up to 575");
+        assert_eq!(value.resolve(576.), 6, "the xs band takes over at 576");
+    }
+
+    #[test]
+    fn the_base_band_can_be_set_on_its_own() {
+        let value = Responsive::base(12u16)
+            .at(Breakpoint::Base, 3)
+            .at(Breakpoint::Sm, 9);
+        assert_eq!(value.resolve(0.), 3);
+        assert_eq!(value.resolve(575.), 3);
+        assert_eq!(value.resolve(768.), 9);
+    }
+
+    #[test]
     fn widths_map_to_the_widest_band_they_reach() {
-        assert_eq!(Breakpoint::from_width(0.), Breakpoint::Xs);
-        assert_eq!(Breakpoint::from_width(575.), Breakpoint::Xs);
         assert_eq!(Breakpoint::from_width(576.), Breakpoint::Xs);
         assert_eq!(Breakpoint::from_width(767.), Breakpoint::Xs);
         assert_eq!(Breakpoint::from_width(768.), Breakpoint::Sm);
@@ -211,13 +244,14 @@ mod tests {
 
     #[test]
     fn the_bands_are_the_ones_the_core_scale_names() {
-        for (breakpoint, size) in Breakpoint::ALL.into_iter().zip(Size::ALL) {
+        for (breakpoint, size) in Breakpoint::ALL[1..].iter().zip(Size::ALL) {
             assert_eq!(breakpoint.min_width(), size.breakpoint());
         }
     }
 
     #[test]
     fn breakpoints_are_ordered_and_indexed() {
+        assert!(Breakpoint::Base < Breakpoint::Xs);
         assert!(Breakpoint::Xs < Breakpoint::Sm);
         assert!(Breakpoint::Sm < Breakpoint::Md);
         assert!(Breakpoint::Md < Breakpoint::Lg);
