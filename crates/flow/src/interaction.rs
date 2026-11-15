@@ -21,9 +21,32 @@ pub enum Gesture {
         at: Point,
     },
 }
+impl Gesture {
+    pub(crate) fn preview(&self, id: NodeId, graph: &Graph, grid: Option<f32>) -> Option<Point> {
+        if let Self::Move { origins, delta, .. } = self {
+            let origin = *origins.get(&id)?;
+            if *delta == Point::default() {
+                return Some(origin);
+            }
+            let mut root = id;
+            let mut parent = graph.nodes.get(&id)?.parent;
+            while let Some(id) = parent {
+                if origins.contains_key(&id) {
+                    root = id;
+                }
+                parent = graph.nodes.get(&id)?.parent;
+            }
+            let root_origin = *origins.get(&root)?;
+            let target = grid.map_or(root_origin + *delta, |g| (root_origin + *delta).snap(g));
+            Some(origin + target - root_origin)
+        } else {
+            None
+        }
+    }
+}
 pub struct Interaction {
     pub editor: Editor,
-    pub viewport: Viewport,
+    viewport: Viewport,
     pub gesture: Option<Gesture>,
     pub grid: Option<f32>,
     scratch: Vec<NodeId>,
@@ -41,15 +64,41 @@ impl Interaction {
     pub fn cancel(&mut self) {
         self.gesture = None;
     }
-    pub fn preview(&self, id: NodeId) -> Option<Point> {
-        if let Some(Gesture::Move { origins, delta, .. }) = &self.gesture {
-            origins.get(&id).map(|p| {
-                self.grid
-                    .map_or(*p + *delta, |grid| (*p + *delta).snap(grid))
-            })
-        } else {
-            None
+    pub fn viewport(&self) -> Viewport {
+        self.viewport
+    }
+    pub fn set_viewport(&mut self, mut viewport: Viewport) -> Result<(), FlowError> {
+        if !viewport.pan.finite() || !viewport.zoom.is_finite() || viewport.zoom <= 0. {
+            return Err(FlowError::InvalidGeometry);
         }
+        viewport.zoom = viewport.zoom.clamp(Viewport::MIN_ZOOM, Viewport::MAX_ZOOM);
+        self.cancel();
+        self.viewport = viewport;
+        Ok(())
+    }
+    pub fn pan_to(&mut self, pan: Point) {
+        if pan.finite() {
+            self.viewport.pan = pan;
+        }
+    }
+    pub fn zoom_at(&mut self, at: Point, factor: f32) {
+        self.cancel();
+        self.viewport.zoom_at(at, factor);
+    }
+    pub fn fit(&mut self, size: Point) {
+        self.cancel();
+        if let Some(bounds) = self.editor.scene().bounds() {
+            self.viewport.fit(bounds, size, 40.);
+        }
+    }
+    pub fn delete_selected(&mut self) -> Result<bool, FlowError> {
+        self.cancel();
+        self.editor.delete_selected()
+    }
+    pub fn preview(&self, id: NodeId) -> Option<Point> {
+        self.gesture
+            .as_ref()
+            .and_then(|g| g.preview(id, self.editor.graph(), self.grid))
     }
     pub fn handle_at(&mut self, at: Point, kind: HandleKind) -> Option<Endpoint> {
         let radius = 9. / self.viewport.zoom;
@@ -61,6 +110,7 @@ impl Interaction {
             .expand(radius),
             &mut self.scratch,
         );
+        self.scratch.sort_by_key(|id| self.editor.z_key(*id));
         for id in self.scratch.iter().rev() {
             let node = &self.editor.graph().nodes[id];
             let rect = Rect {
@@ -84,26 +134,41 @@ impl Interaction {
             self.gesture = Some(Gesture::Connect { source, at: world });
             return;
         }
-        let hit = self.editor.scene().hit_node(world, &mut self.scratch);
+        let hit = self.editor.hit_node(world, &mut self.scratch);
         if let Some(id) = hit {
             if additive {
                 self.editor.toggle(id);
-            } else if !self.editor.graph().nodes[&id].selected {
+            } else if !self.editor.is_selected(id) {
                 self.editor.select(&BTreeSet::from([id]), false);
             }
+            let positions = self
+                .editor
+                .selected_nodes()
+                .iter()
+                .filter_map(|id| {
+                    self.editor
+                        .graph()
+                        .nodes
+                        .get(id)
+                        .filter(|n| n.draggable)
+                        .map(|n| (*id, n.pos))
+                })
+                .collect();
             let origins = self
                 .editor
-                .graph()
-                .nodes
-                .values()
-                .filter(|n| n.selected && n.draggable)
-                .map(|n| (n.id, n.pos))
-                .collect();
+                .move_positions(&positions, None)
+                .unwrap_or_default();
             self.gesture = Some(Gesture::Move {
                 start: screen,
                 origins,
                 delta: Point::default(),
             });
+        } else if let Some(id) =
+            self.editor
+                .scene()
+                .hit_edge(world, 6. / self.viewport.zoom, &mut self.scratch)
+        {
+            self.editor.select_edge(id, additive);
         } else if boxing {
             self.gesture = Some(Gesture::Box {
                 start: world,
@@ -120,9 +185,17 @@ impl Interaction {
         }
     }
     pub fn motion(&mut self, screen: Point) {
+        if !screen.finite() {
+            return;
+        }
         let world = self.viewport.world(screen);
         match &mut self.gesture {
-            Some(Gesture::Pan { start, origin }) => self.viewport.pan = *origin + screen - *start,
+            Some(Gesture::Pan { start, origin }) => {
+                let pan = *origin + screen - *start;
+                if pan.finite() {
+                    self.viewport.pan = pan;
+                }
+            }
             Some(Gesture::Move { start, delta, .. }) => {
                 if screen.distance(*start) >= 3. {
                     *delta = (screen - *start) * (1. / self.viewport.zoom);
@@ -231,16 +304,18 @@ mod tests {
         i.press(Point::new(-20., -20.), true, true);
         i.motion(Point::new(600., 100.));
         i.release(None).expect("box");
-        assert!(i.editor.graph().nodes.values().all(|n| n.selected));
+        assert!(i.editor.selected_nodes().len() == 2);
         i.press(Point::new(30., 30.), true, false);
         i.release(None).expect("toggle");
-        assert!(!i.editor.graph().nodes[&1].selected);
-        assert!(i.editor.graph().nodes[&2].selected);
+        assert!(!i.editor.is_selected(1));
+        assert!(i.editor.is_selected(2));
     }
     #[test]
     fn review_5_off_grid_preview_matches_commit_and_click() {
         let mut i = interaction();
-        i.editor.move_nodes(&BTreeMap::from([(1, Point::new(13., 17.))]), None).expect("origin");
+        i.editor
+            .move_nodes(&BTreeMap::from([(1, Point::new(13., 17.))]), None)
+            .expect("origin");
         i.press(Point::new(40., 40.), false, false);
         assert_eq!(i.preview(1), Some(Point::new(13., 17.)));
         i.motion(Point::new(87., 73.));
@@ -251,35 +326,45 @@ mod tests {
     #[test]
     fn review_2_parent_preview_moves_descendants() {
         let mut i = interaction();
-        i.editor.edit(|g| { g.nodes.get_mut(&2).expect("child").parent = Some(1); Ok(()) }).expect("parent");
-        i.press(Point::new(30.,30.), false, false);
-        i.motion(Point::new(70.,50.));
-        assert_eq!(i.preview(2), Some(Point::new(440.,20.)));
+        i.editor
+            .edit(|g| {
+                g.nodes.get_mut(&2).expect("child").parent = Some(1);
+                Ok(())
+            })
+            .expect("parent");
+        i.press(Point::new(30., 30.), false, false);
+        i.motion(Point::new(70., 50.));
+        assert_eq!(i.preview(2), Some(Point::new(440., 20.)));
     }
     #[test]
     fn review_8_edge_click_selects_and_deletes() {
         let mut i = interaction();
-        i.editor.connect(Edge::new(1,1,2), None).expect("edge");
+        i.editor.connect(Edge::new(1, 1, 2), None).expect("edge");
         let at = i.editor.scene().paths()[&1].points[16];
-        i.press(at,false,false);
+        i.press(at, false, false);
         assert!(i.editor.delete_selected().expect("delete edge"));
         assert!(i.editor.graph().edges.is_empty());
-        assert_eq!(i.editor.graph().nodes.len(),2);
+        assert_eq!(i.editor.graph().nodes.len(), 2);
     }
     #[test]
     fn review_7_invalid_camera_cannot_be_installed() {
         let mut i = interaction();
-        i.viewport.zoom = 0.;
-        assert!(i.viewport.valid());
+        let old = i.viewport();
+        for zoom in [0., f32::NAN, -1., f32::INFINITY] {
+            assert!(i.set_viewport(Viewport { zoom, ..old }).is_err());
+            assert_eq!(i.viewport(), old);
+        }
+        i.set_viewport(Viewport { zoom: 100., ..old })
+            .expect("clamp");
+        assert_eq!(i.viewport().zoom, Viewport::MAX_ZOOM);
     }
     #[test]
     fn review_16_allow_self_connects_via_handles() {
         let mut i = interaction();
         i.editor.policy.allow_self = true;
-        i.press(Point::new(160.,36.),false,false);
-        i.motion(Point::new(0.,36.));
+        i.press(Point::new(160., 36.), false, false);
+        i.motion(Point::new(0., 36.));
         assert!(i.release(None).expect("self connect"));
-        assert_eq!(i.editor.graph().edges[&1].target.node,1);
+        assert_eq!(i.editor.graph().edges[&1].target.node, 1);
     }
-
 }
