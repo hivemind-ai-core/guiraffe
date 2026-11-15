@@ -222,6 +222,7 @@ pub struct Scene {
     nodes: SpatialIndex,
     edges: SpatialIndex,
     pub bounds: Option<Rect>,
+    incident: BTreeMap<NodeId, Vec<EdgeId>>,
 }
 impl Scene {
     pub fn new(graph: Graph) -> Result<Self, FlowError> {
@@ -234,13 +235,24 @@ impl Scene {
         let nodes = SpatialIndex::new(graph.nodes.values().map(|n| (n.id, n.rect())));
         let edges = SpatialIndex::new(paths.iter().map(|(id, path)| (*id, path.bounds)));
         let bounds = graph.bounds();
+        let mut incident: BTreeMap<NodeId, Vec<EdgeId>> = BTreeMap::new();
+        for edge in graph.edges.values() {
+            incident.entry(edge.source.node).or_default().push(edge.id);
+            if edge.source.node != edge.target.node {
+                incident.entry(edge.target.node).or_default().push(edge.id);
+            }
+        }
         Ok(Self {
             graph,
             paths,
             nodes,
             edges,
             bounds,
+            incident,
         })
+    }
+    pub fn incident_edges(&self, id: NodeId) -> &[EdgeId] {
+        self.incident.get(&id).map_or(&[], Vec::as_slice)
     }
     pub fn graph(&self) -> &Graph {
         &self.graph
