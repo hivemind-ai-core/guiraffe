@@ -1,6 +1,12 @@
 # GUIraffe 🦒 — Design
 
 > Make rich, fluid, beautiful desktop apps in Rust a breeze — and keep them fast.
+>
+> **North star:** building a GUIraffe app should feel as convenient and flexible as building a
+> React app. Someone choosing between Electron + React and GUIraffe should find GUIraffe the better
+> choice: the same productivity (components, state, routing, forms, data fetching, hot reload,
+> devtools, design-tool import), with native speed, a fraction of the memory, and one language.
+> The parity checklist (§13) tracks this.
 
 This is the master design. Per-crate details live in `spec/NN-*.md`; sequencing, owners and
 status live in `plans/ROADMAP.md` and `TODO.md`; review findings in `reviews/`.
@@ -65,6 +71,24 @@ Rules:
   (placement, positioning, fuzzy match, easing) have **no GPUI dependency** so they test headless and fast.
 - Every widget crate is usable alone; `guiraffe` (umbrella crate, later) re-exports with features.
 - One `init(cx)` per crate, idempotent; `guiraffe::init` calls them all.
+
+## 2a. App framework layer (React-ecosystem parity)
+
+Widgets aren't enough. React apps are productive because of the layer around them
+(TanStack Router, Zustand/Redux, TanStack Query, Mantine Form, XState). GUIraffe ships
+equivalents designed for GPUI's entity model. See `spec/12-app-framework.md`.
+
+| React world | GUIraffe crate | Idea |
+|---|---|---|
+| Zustand / Redux / Jotai | `guiraffe-state` | `Store<T>` entities with **selectors** (`store.select(cx, \|s\| &s.user.name)`) that re-render a view only when the selected slice changes; actions, derived values, middleware (undo/redo, persist, devtools log/time-travel) |
+| TanStack Router | `guiraffe-router` | **typed routes** (`#[derive(Route)] enum`), nested layouts with outlets, typed search params (serde), guards and loaders, **per-window history**, deep links, "open route in new window" through `guiraffe-windows`, animated route transitions |
+| TanStack Query | `guiraffe-query` | async resources with keys, caching, stale-while-revalidate, retries, cancellation, invalidation, optimistic updates, on GPUI executors |
+| Mantine Form / react-hook-form | `guiraffe-form` | typed form state, field registration on inputs, sync/async validation, dirty/touched tracking, submit lifecycle |
+| XState | `guiraffe-machine` | small typed **statecharts** for complex interaction modes (editor tools, drag/connect/select modes, wizards), with guards, nested and parallel states, a devtools visualizer, and exhaustively testable transitions |
+| command palette / shortcuts | `guiraffe-commands` | one registry of commands (title, keybinding, `when` context, enabled state) feeding menus, toolbar, Spotlight and keymap editing |
+
+All of them follow the conventions (§2b), are test-first, and are pure where possible (machines, router
+matching, query cache policy, and validation are GPUI-free).
 
 ## 2b. One API across crates
 
@@ -243,11 +267,61 @@ and the conformance tests.
 - **Agent support**: `AGENTS.md` conventions, IR JSON Schema and the e2e probe make GUIraffe apps
   scriptable by coding agents (generate UI as data, verify through the probe and snapshots).
 
-## 12. Open decisions (defaults chosen; shout to change)
+## 12. Benchmarks and baselines
+
+Performance is measured, never assumed. Every optimisation is proven against a recorded baseline.
+See `spec/13-benchmarks.md`.
+
+- **Suites.**
+  - Pure micro-benchmarks (criterion).
+  - **Instruction-count benchmarks** (iai-callgrind). These are deterministic, so they're CI gates even on noisy or shared machines.
+  - GPUI headless frame benchmarks (layout/prepaint/paint per frame).
+  - **Render-count metrics**: re-renders per interaction, deterministic, asserted in tests.
+  - Real-renderer scenario benchmarks through the e2e probe (frame-time histograms while panning, scrolling, streaming).
+  - Startup time, memory (peak RSS, allocation counts via dhat), and binary size.
+- **Baselines.**
+  - `guiraffe bench baseline` records JSON per machine profile in `bench/baselines/`, including commit, toolchain and CPU info.
+  - `guiraffe bench compare` runs A/B *interleaved* (old vs new, alternating, pinned CPUs).
+  - It reports medians, spread and bootstrap confidence intervals, and flags regressions beyond thresholds (instructions > 2 %, wall-clock > 10 %).
+- **Cadence.**
+  - Every PR: instruction counts and render counts (gating).
+  - Nightly on a quiet runner: wall-clock and real-renderer suites, plus a trend report (HTML).
+  - Every release: full suite, and baselines re-recorded.
+- **Rules.**
+  - Any PR that claims a speed-up attaches before/after from `bench compare`.
+  - Every hot path (flow, markdown, lists, tables, layout, motion) has a benchmark before it is optimised.
+  - The budgets in §6 are encoded as benchmark assertions.
+- **Electron comparison.** The same reference app built in GUIraffe and in React/Electron (startup, memory, frame times, input latency), published with each release as proof of the north star.
+
+## 12b. Quality toolbox
+
+Beyond the test pyramid (§8):
+- Property tests (proptest).
+- **Fuzzing** (cargo-fuzz) for the markdown, mermaid, IR and layout-file parsers.
+- **Mutation testing** (cargo-mutants) to find tests that don't actually assert anything.
+- Miri on pure crates.
+- Coverage (cargo-llvm-cov) with per-crate floors.
+- cargo-deny and cargo-audit.
+- cargo-semver-checks.
+- Doc tests.
+- Clippy pedantic on public API.
+- Scheduled janitor and refactor passes, with independent review of every merge.
+- A **flake detector**: the e2e and visual suites are re-run N times nightly.
+
+## 13. React/Electron parity checklist
+
+Components ✔ (wave 2) · layout ✔ · theming ✔ · state store · router · forms · async data ·
+statecharts · hot reload (data-driven UI) · devtools (inspector, state/time-travel, render
+highlighting like React DevTools "highlight updates") · storybook (gallery) · design import
+(Mocket) · testing library (`guiraffe-test` ≈ Testing Library + Playwright) · app templates
+(`guiraffe new`) · packaging (`guiraffe bundle`: AppImage/deb/dmg/msi, auto-update hook) ·
+docs/cookbook.
+
+## 14. Open decisions (defaults chosen; shout to change)
 
 | Question | Default |
 |---|---|
 | IR authoring syntax | JSON + schema first; terse KDL syntax optional later |
 | Snapshot rendering on Linux | Xvfb/weston-headless + lavapipe (pending spike) |
-| gpui-kit version | upgrade to `0.8.x` right after wave 1 merges (one foreman PR), so CI can run on both upstream GPUI and **gpui-fast** (gpui-kit `gpui-fast` feature) |
+| gpui-kit version | **=0.9.1** (latest; upgraded). CI runs on upstream GPUI and on **gpui-fast** (gpui-kit `gpui-fast` feature) |
 | Umbrella crate name | `guiraffe` with feature flags per sub-crate |
