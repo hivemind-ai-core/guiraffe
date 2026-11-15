@@ -339,6 +339,31 @@ fn a_container_is_centered_and_never_wider_than_its_size(cx: &mut TestAppContext
     assert_eq!(content.left(), px(240.), "the container sits in the middle");
 }
 
+struct NarrowContainerHarness;
+
+impl Render for NarrowContainerHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(400.)).h(px(120.)).child(
+            Container::new()
+                .size(Size::Sm)
+                .child(div().h(px(10.)).debug_selector(|| "content".into())),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_container_fits_the_space_it_is_given(cx: &mut TestAppContext) {
+    let cx = harness!(cx, NarrowContainerHarness);
+
+    let content = cx.debug_bounds("content").expect("the content");
+    assert_eq!(
+        content.size.width,
+        px(400.),
+        "the container does not reach past a narrow parent"
+    );
+    assert_eq!(content.left(), px(0.));
+}
+
 struct CenterHarness;
 
 impl Render for CenterHarness {

@@ -97,10 +97,10 @@ impl gpui_kit::Styled for Container {
 
 impl RenderOnce for Container {
     fn render(self, _: &mut Window, _: &mut App) -> impl gpui_kit::IntoElement {
-        let mut element = div().mx_auto();
+        let mut element = div().mx_auto().w_full();
         element = match self.size.filter(|_| !self.fluid) {
-            Some(size) => element.w(px(size.container_width())),
-            None => element.w_full(),
+            Some(size) => element.max_w(px(size.container_width())),
+            None => element,
         };
         if self.padding > 0. {
             element = element.p(px(self.padding));
