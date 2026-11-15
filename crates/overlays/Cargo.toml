@@ -13,4 +13,12 @@ gpui-kit.workspace = true
 guiraffe-core.workspace = true
 
 [dev-dependencies]
+guiraffe-windows.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+default = []
+desktop = ["dep:notify-rust"]
+
+[target.'cfg(not(any(target_os = "ios", target_os = "android", target_family = "wasm")))'.dependencies]
+notify-rust = { version = "4.18", optional = true }
