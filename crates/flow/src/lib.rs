@@ -80,6 +80,7 @@ pub struct Flow {
     focus: FocusHandle,
     bounds: Rc<Cell<Bounds<Pixels>>>,
     visible: Visible,
+    visible_counts: (usize, usize),
     meshes: Rc<RefCell<paint::MeshCache>>,
     last_error: Option<FlowError>,
     nodes: BTreeMap<core::NodeId, Entity<node::NodeCard>>,
@@ -95,6 +96,7 @@ impl Flow {
             focus: cx.focus_handle(),
             bounds: Rc::new(Cell::new(Bounds::default())),
             visible: Visible::default(),
+            visible_counts: (0, 0),
             meshes: Rc::new(RefCell::new(paint::MeshCache::default())),
             last_error: None,
             nodes: BTreeMap::new(),
@@ -122,10 +124,10 @@ impl Flow {
     }
     /// Node and edge counts admitted by the last viewport query, including drag previews.
     pub fn visible_counts(&self) -> (usize, usize) {
-        (self.visible.nodes.len(), self.visible.edges.len())
+        self.visible_counts
     }
     pub fn viewport(&self) -> Viewport {
-        self.interaction.viewport
+        self.interaction.viewport()
     }
     pub fn last_error(&self) -> Option<&FlowError> {
         self.last_error.as_ref()
@@ -135,11 +137,8 @@ impl Flow {
         viewport: Viewport,
         cx: &mut Context<Self>,
     ) -> Result<(), FlowError> {
-        if !viewport.valid() {
-            return Err(FlowError::InvalidGeometry);
-        }
-        self.interaction.cancel();
-        self.interaction.viewport = viewport;
+        self.interaction.set_viewport(viewport)?;
+        let viewport = self.viewport();
         cx.emit(FlowEvent::ViewportChanged(viewport));
         cx.notify();
         Ok(())
@@ -166,9 +165,7 @@ impl Flow {
     }
     pub fn fit(&mut self, cx: &mut Context<Self>) {
         self.interaction.cancel();
-        if let Some(bounds) = self.interaction.editor.scene().bounds() {
-            self.interaction.viewport.fit(bounds, self.size(), 40.);
-        }
+        self.interaction.fit(self.size());
         cx.emit(FlowEvent::ViewportChanged(self.viewport()));
         cx.notify();
     }
@@ -182,7 +179,9 @@ impl Flow {
     }
     fn changed(&mut self, changed: bool, cx: &mut Context<Self>) {
         if changed {
-            self.meshes.borrow_mut().clear();
+            self.meshes
+                .borrow_mut()
+                .sync(self.interaction.editor.scene());
             cx.emit(FlowEvent::Changed);
         }
         cx.notify();
@@ -202,7 +201,7 @@ impl Flow {
     }
     fn zoom(&mut self, at: WorldPoint, factor: f32, cx: &mut Context<Self>) {
         self.interaction.cancel();
-        self.interaction.viewport.zoom_at(at, factor);
+        self.interaction.zoom_at(at, factor);
         cx.emit(FlowEvent::ViewportChanged(self.viewport()));
         cx.notify();
     }
@@ -231,7 +230,7 @@ impl Flow {
             }
             "delete" | "backspace" => {
                 self.interaction.cancel();
-                let result = self.interaction.editor.delete_selected();
+                let result = self.interaction.delete_selected();
                 self.finish(result, cx);
             }
             "+" | "=" => self.zoom(self.size() * 0.5, 1.2, cx),
@@ -245,7 +244,7 @@ impl Flow {
                     "up" => WorldPoint::new(0., 40.),
                     _ => WorldPoint::new(0., -40.),
                 };
-                self.interaction.viewport.pan = self.viewport().pan + delta;
+                self.interaction.pan_to(self.viewport().pan + delta);
                 cx.emit(FlowEvent::ViewportChanged(self.viewport()));
                 cx.notify();
             }
@@ -271,6 +270,9 @@ impl Render for Flow {
         } else {
             self.size()
         };
+        if self.visible.edges.is_empty() {
+            self.visible.edges = std::mem::take(&mut self.meshes.borrow_mut().edge_buffer);
+        }
         self.interaction.editor.scene().visible(
             viewport.visible(size).expand(12. / viewport.zoom),
             &mut self.visible,
@@ -287,26 +289,47 @@ impl Render for Flow {
             self.visible.edges.sort_unstable();
             self.visible.edges.dedup();
         }
-        let mut nodes = Vec::with_capacity(self.visible.nodes.len());
+        self.visible
+            .nodes
+            .retain(|id| self.interaction.editor.graph().nodes.contains_key(id));
+        self.visible_counts = (self.visible.nodes.len(), self.visible.edges.len());
         self.nodes
             .retain(|id, _| self.visible.nodes.binary_search(id).is_ok());
+        self.visible
+            .nodes
+            .sort_by_key(|id| self.interaction.editor.z_key(*id));
+        let mut nodes = Vec::with_capacity(self.visible.nodes.len());
         for id in &self.visible.nodes {
-            let node = &self.interaction.editor.graph().nodes[id];
+            let Some(node) = self.interaction.editor.graph().nodes.get(id) else {
+                continue;
+            };
+            let revision = self.interaction.editor.scene().node_revision(*id);
+            let selected = self.interaction.editor.is_selected(*id);
             let position = viewport.screen(self.interaction.preview(*id).unwrap_or(node.pos));
             let card = self.nodes.entry(*id).or_insert_with(|| {
                 cx.new(|_| node::NodeCard {
-                    node: node.clone(),
+                    node: {
+                        let mut n = node.clone();
+                        n.selected = selected;
+                        n
+                    },
+                    revision,
                     zoom: viewport.zoom,
                     theme: theme.clone(),
                     renderer: self.renderer.clone(),
                 })
             });
-            if card.read(cx).node != *node
+            if card.read(cx).revision != revision
+                || card.read(cx).node.selected != selected
                 || card.read(cx).zoom != viewport.zoom
                 || card.read(cx).theme != theme
             {
                 card.update(cx, |card, cx| {
-                    card.node = node.clone();
+                    if card.revision != revision {
+                        card.node = node.clone();
+                        card.revision = revision;
+                    }
+                    card.node.selected = selected;
                     card.zoom = viewport.zoom;
                     card.theme = theme.clone();
                     cx.notify();
@@ -367,7 +390,7 @@ impl Render for Flow {
         let meshes = self.meshes.clone();
         let frame = paint::Frame::new(
             &self.interaction,
-            &self.visible,
+            &mut self.visible,
             self.options.background,
             self.options.minimap,
             &theme,
@@ -408,8 +431,8 @@ impl Render for Flow {
                         this.interaction.cancel();
                         if let Some(bounds) = this.interaction.editor.scene().bounds() {
                             let world = paint::minimap_world(p, this.size(), bounds);
-                            this.interaction.viewport.pan =
-                                this.size() * 0.5 - world * this.viewport().zoom;
+                            this.interaction
+                                .pan_to(this.size() * 0.5 - world * this.viewport().zoom);
                             cx.emit(FlowEvent::ViewportChanged(this.viewport()));
                         }
                     } else {
@@ -449,13 +472,14 @@ impl Render for Flow {
                 if event.modifiers.control || event.modifiers.platform {
                     this.zoom(
                         this.local(event.position),
-                        (delta.y.as_f32() * 0.008).exp(),
+                        (delta.y.as_f32() * 0.008).clamp(-80., 80.).exp(),
                         cx,
                     );
                 } else {
                     this.interaction.cancel();
-                    this.interaction.viewport.pan =
-                        this.viewport().pan + WorldPoint::new(delta.x.as_f32(), delta.y.as_f32());
+                    this.interaction.pan_to(
+                        this.viewport().pan + WorldPoint::new(delta.x.as_f32(), delta.y.as_f32()),
+                    );
                     cx.emit(FlowEvent::ViewportChanged(this.viewport()));
                     cx.notify();
                 }
@@ -468,18 +492,29 @@ impl Render for Flow {
             root = root.child(self.controls(cx));
         }
         if self.options.toolbar
-            && let Some(node) = self.graph().nodes.values().find(|n| n.selected)
+            && let Some(node) = self
+                .interaction
+                .editor
+                .selected_nodes()
+                .iter()
+                .next()
+                .and_then(|id| self.graph().nodes.get(id))
         {
             let p = viewport.screen(self.interaction.preview(node.id).unwrap_or(node.pos));
             root = root.child(
-                div().absolute().left(px(p.x)).top(px(p.y - 34.)).child(
-                    gpui_kit::component::button::Button::new("flow-delete")
-                        .label("Delete selected")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let result = this.interaction.editor.delete_selected();
-                            this.finish(result, cx);
-                        })),
-                ),
+                div()
+                    .absolute()
+                    .left(px(p.x))
+                    .top(px(p.y - 34.))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        gpui_kit::component::button::Button::new("flow-delete")
+                            .label("Delete selected")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let result = this.interaction.delete_selected();
+                                this.finish(result, cx);
+                            })),
+                    ),
             );
         }
         if let Some(error) = &self.last_error {

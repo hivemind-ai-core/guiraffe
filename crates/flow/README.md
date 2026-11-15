@@ -17,7 +17,7 @@ See `examples/editor.rs` for a complete runnable application:
 
 The canvas mounts only visible nodes and edge labels. Node entities persist while visible; GPUI paint reuse applies only when absolute
 bounds, text style and state match (a pan still changes their bounds). World-space routes and
-bounded tessellated meshes are cached separately from viewport translation.
+scene-scoped tessellated meshes are cached separately from viewport translation.
 Dragged nodes and incident edges stay mounted during previews; only release
 creates a document history entry. `NodeRenderer` receives the node and zoom;
 custom content should scale its internal typography and spacing to match the
@@ -28,7 +28,7 @@ Pointer gestures:
 - Drag empty background to pan; wheel pans; Control/platform + wheel and pinch
   zoom about the pointer.
 - Click a node to select; Shift/Control/platform + click toggles selection.
-  Drag a selected node to move all selected draggable nodes.
+  Drag a selected node to move selected draggable roots and their descendants.
 - Shift + drag on empty canvas adds the touched nodes to the selection.
 - Drag a source handle onto a target handle to connect. Structural and optional
   host semantic validators run before the edge is accepted.
@@ -36,7 +36,8 @@ Pointer gestures:
   redo; the selected node toolbar deletes the selection.
 
 Keyboard (with the canvas focused): arrows pan, `+`/`-` zoom at center, `f` fits,
-Escape cancels a preview, Delete/Backspace deletes selected nodes and descendants,
+Click an edge to select it (modifier-click toggles additive selection).
+Escape cancels a preview, Delete/Backspace deletes selected edges, nodes and descendants,
 Control/platform + A selects all, Z undoes, Shift+Z/Y redoes.
 
 Use `Flow::edit` for document changes so history and caches remain coherent.
@@ -68,3 +69,8 @@ Every visible node gets full content; fitting a graph so all 5,000 nodes are
 visible needs separate performance evaluation. Parent ownership has no implicit
 group frames or relative child transforms, parallel edges share their paths,
 and keyboard focus does not yet navigate individual handles/edge labels.
+
+`Interaction::viewport()` is read-only; use `set_viewport` to reject invalid cameras
+and clamp finite positive zooms. Selection stays outside document/history and does
+not invalidate minimap geometry. Parent and child coordinates are absolute world
+coordinates; parent moves translate descendants and preserve their offsets.

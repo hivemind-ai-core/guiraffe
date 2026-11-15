@@ -6,14 +6,14 @@ use guiraffe_flow_core::{
     EdgeId, EdgePath, Marker, Point as WorldPoint, Rect, Scene, Viewport, Visible,
 };
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 
 #[derive(Default)]
 pub(crate) struct MeshCache {
-    entries: BTreeMap<EdgeId, Path<Pixels>>,
-    order: VecDeque<EdgeId>,
+    entries: BTreeMap<EdgeId, (Arc<EdgePath>, Path<Pixels>)>,
+    pub edge_buffer: Vec<EdgeId>,
     vertices: usize,
     pub misses: usize,
     pub timings: (u128, u128, u128),
@@ -21,32 +21,38 @@ pub(crate) struct MeshCache {
     grid: Option<GridMesh>,
 }
 impl MeshCache {
+    #[cfg(test)]
     pub fn clear(&mut self) {
         self.entries.clear();
-        self.order.clear();
+
         self.vertices = 0;
         self.minimap = None;
     }
-    fn get(&mut self, id: EdgeId, route: &EdgePath) -> Option<&Path<Pixels>> {
-        if !self.entries.contains_key(&id) {
+    pub fn sync(&mut self, scene: &Scene) {
+        self.entries.retain(|id, (route, _)| {
+            scene
+                .paths()
+                .get(id)
+                .is_some_and(|next| Arc::ptr_eq(route, next))
+        });
+        self.vertices = self.entries.values().map(|(_, p)| p.vertices.len()).sum();
+    }
+    // Scene-scoped: every graph edge can stay resident, with no FIFO working-set cliff.
+    fn get(&mut self, id: EdgeId, route: &Arc<EdgePath>) -> Option<&Path<Pixels>> {
+        if self
+            .entries
+            .get(&id)
+            .is_none_or(|(old, _)| !Arc::ptr_eq(old, route))
+        {
             let path = mesh(route)?;
-            if path.vertices.len() > 500_000 {
-                return None;
-            }
-            while self.entries.len() >= 2048 || self.vertices + path.vertices.len() > 500_000 {
-                let Some(old) = self.order.pop_front() else {
-                    break;
-                };
-                if let Some(path) = self.entries.remove(&old) {
-                    self.vertices -= path.vertices.len();
-                }
+            if let Some((_, old)) = self.entries.remove(&id) {
+                self.vertices -= old.vertices.len();
             }
             self.vertices += path.vertices.len();
             self.misses += 1;
-            self.order.push_back(id);
-            self.entries.insert(id, path);
+            self.entries.insert(id, (route.clone(), path));
         }
-        self.entries.get(&id)
+        self.entries.get(&id).map(|(_, p)| p)
     }
 }
 struct GridMesh {
@@ -68,7 +74,6 @@ struct MinimapMeshes {
     scene: Arc<Scene>,
     size: WorldPoint,
     normal: Path<Pixels>,
-    selected: Path<Pixels>,
 }
 fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
     let mut builder = PathBuilder::stroke(px(1.5));
@@ -125,37 +130,37 @@ pub(crate) struct Frame {
     grid: Option<f32>,
     surfaces: Surfaces,
     accent: Rgb,
+    selected: BTreeSet<u64>,
+    selected_edges: BTreeSet<u64>,
 }
 impl Frame {
     pub fn new(
         i: &Interaction,
-        visible: &Visible,
+        visible: &mut Visible,
         background: Background,
         minimap: bool,
         theme: &GuiraffeTheme,
     ) -> Self {
         Self {
             scene: i.editor.scene_shared(),
-            viewport: i.viewport,
-            edges: visible.edges.clone(),
+            viewport: i.viewport(),
+            edges: std::mem::take(&mut visible.edges),
             background,
             minimap,
             gesture: i.gesture.clone(),
             grid: i.grid,
             surfaces: theme.surfaces(),
             accent: theme.primary_color(),
+            selected: i.editor.selected_nodes().clone(),
+            selected_edges: i.editor.selected_edges().clone(),
         }
     }
     fn preview(&self, id: u64) -> Option<WorldPoint> {
-        if let Some(Gesture::Move { origins, delta, .. }) = &self.gesture {
-            origins
-                .get(&id)
-                .map(|p| self.grid.map_or(*p + *delta, |g| (*p + *delta).snap(g)))
-        } else {
-            None
-        }
+        self.gesture
+            .as_ref()
+            .and_then(|g| g.preview(id, self.scene.graph(), self.grid))
     }
-    pub fn paint(&self, bounds: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
+    pub fn paint(mut self, bounds: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
         cache.misses = 0;
         let started = std::time::Instant::now();
         self.grid(bounds, cache, window);
@@ -163,32 +168,27 @@ impl Frame {
         let edge_started = std::time::Instant::now();
         let graph = self.scene.graph();
         for id in &self.edges {
-            let edge = &graph.edges[id];
+            let Some(edge) = graph.edges.get(id) else {
+                continue;
+            };
+            let color = if self.selected_edges.contains(id) {
+                self.accent
+            } else {
+                self.surfaces.dimmed
+            };
             let from = self.preview(edge.source.node);
             let to = self.preview(edge.target.node);
             if from.is_some() || to.is_some() {
                 if let Ok(route) = EdgePath::new(graph, edge, from, to) {
                     if let Some(path) = mesh(&route) {
-                        paint_mesh(
-                            &path,
-                            self.viewport,
-                            bounds.origin,
-                            window,
-                            self.surfaces.dimmed,
-                        );
+                        paint_mesh(&path, self.viewport, bounds.origin, window, color);
                     }
                     self.markers(&route, edge.marker_start, edge.marker_end, bounds, window);
                 }
             } else {
                 let route = &self.scene.paths()[id];
                 if let Some(path) = cache.get(*id, route) {
-                    paint_mesh(
-                        path,
-                        self.viewport,
-                        bounds.origin,
-                        window,
-                        self.surfaces.dimmed,
-                    );
+                    paint_mesh(path, self.viewport, bounds.origin, window, color);
                 }
                 self.markers(route, edge.marker_start, edge.marker_end, bounds, window);
                 if edge.animated {
@@ -235,6 +235,7 @@ impl Frame {
             self.minimap(bounds, cache, window);
         }
         cache.timings = (grid_us, edge_us, minimap_started.elapsed().as_micros());
+        cache.edge_buffer = std::mem::take(&mut self.edges);
     }
     fn grid(&self, b: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
         if self.background == Background::None {
@@ -363,7 +364,7 @@ impl Frame {
             .is_none_or(|m| !Arc::ptr_eq(&m.scene, &self.scene) || m.size != size)
         {
             let mut normal = Path::new(pixel(map.origin));
-            let mut selected = Path::new(pixel(map.origin));
+
             for node in self.scene.graph().nodes.values() {
                 let p = camera.screen(node.pos);
                 let s = node.size * camera.zoom;
@@ -373,11 +374,7 @@ impl Frame {
                 let b = pixel(WorldPoint::new(right, p.y));
                 let c = pixel(WorldPoint::new(right, bottom));
                 let d = pixel(WorldPoint::new(p.x, bottom));
-                let path = if node.selected {
-                    &mut selected
-                } else {
-                    &mut normal
-                };
+                let path = &mut normal;
                 let uv = (point(0., 1.), point(0., 1.), point(0., 1.));
                 path.push_triangle((a, b, c), uv);
                 path.push_triangle((a, c, d), uv);
@@ -386,7 +383,6 @@ impl Frame {
                 scene: self.scene.clone(),
                 size,
                 normal,
-                selected,
             });
         }
         if let Some(meshes) = &cache.minimap {
@@ -397,8 +393,26 @@ impl Frame {
                 window,
                 self.surfaces.dimmed,
             );
+        }
+        // Selection is a small overlay; changing it never rebuilds the scene minimap.
+        let mut selected = Path::new(pixel(map.origin));
+        for id in &self.selected {
+            if let Some(n) = self.scene.graph().nodes.get(id) {
+                rectangle(
+                    &mut selected,
+                    Rect {
+                        origin: camera.screen(n.pos),
+                        size: WorldPoint::new(
+                            (n.size.x * camera.zoom).max(1.),
+                            (n.size.y * camera.zoom).max(1.),
+                        ),
+                    },
+                );
+            }
+        }
+        if !selected.vertices.is_empty() {
             paint_mesh(
-                &meshes.selected,
+                &selected,
                 Viewport::default(),
                 b.origin,
                 window,
@@ -458,7 +472,7 @@ mod tests {
             [Edge::new(1, 1, 2)],
         )
         .expect("graph");
-        let route = EdgePath::new(&graph, &graph.edges[&1], None, None).expect("route");
+        let route = Arc::new(EdgePath::new(&graph, &graph.edges[&1], None, None).expect("route"));
         let mut cache = MeshCache::default();
         let vertices = cache.get(1, &route).expect("mesh").vertices.len();
         assert!(vertices > 0);
@@ -467,8 +481,7 @@ mod tests {
         assert_eq!(cache.misses, 1);
         for id in 2..2200 {
             cache.get(id, &route).expect("mesh");
-            assert!(cache.entries.len() <= 2048);
-            assert!(cache.vertices <= 500_000);
+            assert_eq!(cache.entries.len(), id as usize);
         }
         cache.clear();
         assert_eq!(cache.vertices, 0);
@@ -484,7 +497,7 @@ mod tests {
             [Edge::new(1, 1, 2)],
         )
         .expect("graph");
-        let route = EdgePath::new(&graph, &graph.edges[&1], None, None).expect("route");
+        let route = Arc::new(EdgePath::new(&graph, &graph.edges[&1], None, None).expect("route"));
         let cached = mesh(&route).expect("mesh");
         let viewport = Viewport {
             pan: WorldPoint::new(-150., 200.),
@@ -513,13 +526,41 @@ mod tests {
     }
     #[test]
     fn review_10_second_frame_over_2048_edges_has_no_misses() {
-        let graph = Graph::from_parts([Node::new(1,"",WorldPoint::default()),Node::new(2,"",WorldPoint::new(400.,100.))],[]).expect("graph");
-        let route = EdgePath::new(&graph,&Edge::new(1,1,2),None,None).expect("route");
+        let graph = Graph::from_parts(
+            [
+                Node::new(1, "", WorldPoint::default()),
+                Node::new(2, "", WorldPoint::new(400., 100.)),
+            ],
+            [],
+        )
+        .expect("graph");
+        let route =
+            Arc::new(EdgePath::new(&graph, &Edge::new(1, 1, 2), None, None).expect("route"));
         let mut cache = MeshCache::default();
-        for id in 0..3000 { cache.get(id,&route).expect("mesh"); }
+        for id in 0..3000 {
+            cache.get(id, &route).expect("mesh");
+        }
         cache.misses = 0;
-        for id in 0..3000 { cache.get(id,&route).expect("mesh"); }
-        assert_eq!(cache.misses,0);
+        for id in 0..3000 {
+            cache.get(id, &route).expect("mesh");
+        }
+        assert_eq!(cache.misses, 0);
     }
-
+    #[test]
+    fn review_12_frame_transfers_visible_edge_buffer() {
+        let i = Interaction::new(Graph::default()).expect("interaction");
+        let mut visible = Visible {
+            edges: vec![1, 2, 3],
+            ..Default::default()
+        };
+        let storage = visible.edges.as_ptr();
+        let frame = Frame::new(
+            &i,
+            &mut visible,
+            Background::None,
+            false,
+            &GuiraffeTheme::default(),
+        );
+        assert_eq!(frame.edges.as_ptr(), storage);
+    }
 }

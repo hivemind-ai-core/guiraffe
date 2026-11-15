@@ -248,27 +248,173 @@ fn pan_updates_observed_node_bounds(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn review_1_render_tolerates_deleted_drag_nodes(cx: &mut TestAppContext) {
-    let (w,v) = open(cx);
-    v.update(cx, |v,cx| {
-        v.interaction.press(WorldPoint::new(110.,150.),false,false);
-        v.interaction.motion(WorldPoint::new(150.,170.));
+    let (w, v) = open(cx);
+    v.update(cx, |v, cx| {
+        v.interaction
+            .press(WorldPoint::new(110., 150.), false, false);
+        v.interaction.motion(WorldPoint::new(150., 170.));
         v.interaction.editor.delete_selected().expect("delete");
         cx.notify();
     });
-    w.update(cx, |_,w,cx| w.render_frame(cx)).expect("render");
+    w.update(cx, |_, w, cx| w.render_frame(cx)).expect("render");
 }
 #[gpui_kit::test]
 fn review_16_empty_minimap_and_extreme_pinch_remain_valid(cx: &mut TestAppContext) {
-    use gpui_kit::{InputEvent,PinchEvent};
-    let (w,v) = open(cx);
-    v.update(cx, |v,cx| { v.edit(|g| {g.nodes.clear();g.edges.clear();Ok(())},cx).expect("empty"); });
-    w.update(cx, |_,w,cx| {
+    use gpui_kit::{InputEvent, PinchEvent};
+    let (w, v) = open(cx);
+    v.update(cx, |v, cx| {
+        v.edit(
+            |g| {
+                g.nodes.clear();
+                g.edges.clear();
+                Ok(())
+            },
+            cx,
+        )
+        .expect("empty");
+    });
+    w.update(cx, |_, w, cx| {
         w.render_frame(cx);
-        let p = w.find("flow").bounds().bottom_right() - point(px(100.),px(80.));
-        w.click_at("flow",p,cx);
-        for delta in [-1.,-2.,f32::NAN,10000.] {
-            w.dispatch_event(PinchEvent {position:point(px(200.),px(200.)),delta,..Default::default()}.to_platform_input(),cx);
+        let p = w.find("flow").bounds().bottom_right() - point(px(100.), px(80.));
+        w.click_at("flow", p, cx);
+        for delta in [-1., -2., f32::NAN, 10000.] {
+            w.dispatch_event(
+                PinchEvent {
+                    position: point(px(200.), px(200.)),
+                    delta,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
         }
-    }).expect("events");
-    assert!(v.read_with(cx, |v,_| v.viewport().valid()));
+    })
+    .expect("events");
+    assert!(v.read_with(cx, |v, _| v.viewport().valid()));
+}
+
+#[gpui_kit::test]
+fn review_1_toolbar_delete_cancels_drag(cx: &mut TestAppContext) {
+    let (w, v) = open(cx);
+    v.update(cx, |v, cx| {
+        v.interaction
+            .press(WorldPoint::new(110., 150.), false, false);
+        cx.notify();
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        let center = w.find("flow-delete").bounds().center();
+        v.update(cx, |v, _| {
+            if let Some(crate::Gesture::Move { start, .. }) = &mut v.interaction.gesture {
+                *start = WorldPoint::new(center.x.as_f32(), center.y.as_f32());
+            }
+        });
+        w.click("flow-delete", cx);
+        w.render_frame(cx);
+    })
+    .expect("toolbar delete");
+    assert!(v.read_with(cx, |v, _| v.interaction.gesture.is_none()));
+    assert!(!v.read_with(cx, |v, _| v.graph().nodes.contains_key(&1)));
+}
+#[gpui_kit::test]
+fn review_8_real_edge_click_and_keyboard_delete(cx: &mut TestAppContext) {
+    let (w, v) = open(cx);
+    v.update(cx, |v, cx| {
+        v.edit(
+            |g| {
+                g.edges.insert(1, crate::core::Edge::new(1, 1, 2));
+                Ok(())
+            },
+            cx,
+        )
+        .expect("edge");
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        w.click_at("flow", point(px(360.), px(156.)), cx);
+        w.press("delete", cx);
+    })
+    .expect("delete");
+    assert!(v.read_with(cx, |v, _| v.graph().edges.is_empty()));
+    assert_eq!(v.read_with(cx, |v, _| v.graph().nodes.len()), 2);
+}
+#[gpui_kit::test]
+fn review_3_child_paints_and_picks_above_higher_id_parent(cx: &mut TestAppContext) {
+    let (w, v) = open(cx);
+    v.update(cx, |v, cx| {
+        v.edit(
+            |g| {
+                let parent = g.nodes.get_mut(&2).expect("parent");
+                parent.pos = WorldPoint::new(60., 100.);
+                parent.size = WorldPoint::new(400., 300.);
+                g.nodes.get_mut(&1).expect("child").parent = Some(2);
+                Ok(())
+            },
+            cx,
+        )
+        .expect("parent");
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        w.click_at("flow", point(px(120.), px(150.)), cx);
+    })
+    .expect("pick");
+    assert!(v.read_with(cx, |v, _| v.interaction.editor.is_selected(1)));
+    assert!(!v.read_with(cx, |v, _| v.interaction.editor.is_selected(2)));
+    assert_eq!(v.read_with(cx, |v, _| v.visible.nodes.clone()), vec![2, 1]);
+}
+#[gpui_kit::test]
+fn review_12_retained_node_and_edge_buffer_survive_camera_frame(cx: &mut TestAppContext) {
+    let (w, v) = open(cx);
+    let before = v.read_with(cx, |v, cx| {
+        (
+            v.nodes[&1].read(cx).revision,
+            v.meshes.borrow().edge_buffer.as_ptr(),
+        )
+    });
+    v.update(cx, |v, cx| {
+        v.set_viewport(
+            Viewport {
+                pan: WorldPoint::new(10., 10.),
+                zoom: 1.,
+            },
+            cx,
+        )
+        .expect("pan");
+    });
+    w.update(cx, |_, w, cx| w.render_frame(cx)).expect("frame");
+    let after = v.read_with(cx, |v, cx| {
+        (
+            v.nodes[&1].read(cx).revision,
+            v.meshes.borrow().edge_buffer.as_ptr(),
+        )
+    });
+    assert_eq!(before, after);
+}
+#[gpui_kit::test]
+fn review_16_control_wheel_clamps_extreme_deltas(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent, Modifiers, ScrollWheelEvent};
+    let (w, v) = open(cx);
+    for (delta, expected) in [
+        (100000., Viewport::MAX_ZOOM),
+        (-100000., Viewport::MIN_ZOOM),
+    ] {
+        w.update(cx, |_, w, cx| {
+            w.dispatch_event(
+                ScrollWheelEvent {
+                    position: point(px(300.), px(300.)),
+                    delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
+                    modifiers: Modifiers {
+                        control: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .expect("wheel");
+        assert_eq!(v.read_with(cx, |v, _| v.viewport().zoom), expected);
+    }
 }

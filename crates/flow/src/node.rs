@@ -6,6 +6,7 @@ use guiraffe_flow_core::{Node, Point as WorldPoint, Rect};
 use std::rc::Rc;
 pub(crate) struct NodeCard {
     pub node: Node,
+    pub revision: u64,
     pub zoom: f32,
     pub theme: GuiraffeTheme,
     pub renderer: Rc<dyn NodeRenderer>,
