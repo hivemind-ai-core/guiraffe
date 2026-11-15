@@ -43,11 +43,18 @@ pub(crate) fn font_size_px(cx: &App, size: Size) -> gpui_kit::Pixels {
     px(font_size(cx, size))
 }
 
+/// The narrowest a pane of a splitter may become, in pixels.
+///
+/// The core theme does not name a panel width yet, so the width comes from
+/// the scale: two controls side by side.
+pub(crate) fn panel_min_size() -> f32 {
+    Size::Sm.control_height() * 2.
+}
+
 #[cfg(test)]
 mod tests {
     use super::{font_size, hairline_width};
     use guiraffe_core::Size;
-    use gpui_kit::AppContext as _;
 
     #[test]
     fn a_hairline_is_one_pixel_wide() {

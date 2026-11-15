@@ -327,9 +327,7 @@ impl Render for GrowingGridHarness {
                 .gutter_px(0.)
                 .grow(true)
                 .child(Col::span(12).child(div().h(px(20.)).debug_selector(|| "first".into())))
-                .child(
-                    Col::span(12).child(div().h_full().debug_selector(|| "second".into())),
-                ),
+                .child(Col::span(12).child(div().h_full().debug_selector(|| "second".into()))),
         )
     }
 }

@@ -90,7 +90,10 @@ pub use responsive::{Breakpoint, Responsive};
 pub use scroll_area::ScrollArea;
 pub use simple_grid::{SimpleGrid, columns_for_min_width};
 pub use space::Space;
-pub use splitter::{Splitter, SplitterAxis, SplitterEvent, SplitterSizes, SplitterState};
+pub use splitter::{
+    Splitter, SplitterAxis, SplitterEvent, SplitterSizes, SplitterState, SplitterStore,
+    splitter_store,
+};
 pub use stack::Stack;
 pub use tokens::Size;
 pub use width::ContainerWidth;
