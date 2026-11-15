@@ -19,4 +19,3 @@ pub(crate) fn muted_foreground(cx: &App) -> Hsla {
         .map(|theme| theme.muted_foreground)
         .unwrap_or_else(|| gpui_kit::hsla(0., 0., 0.45, 0.9))
 }
-
