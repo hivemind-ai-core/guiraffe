@@ -1,0 +1,126 @@
+//! A scrollable region.
+
+use gpui_kit::{
+    AnyElement, App, ElementId, InteractiveElement as _, ParentElement as _, RenderOnce,
+    StatefulInteractiveElement as _, StyleRefinement, Window, div,
+};
+
+use crate::macros::impl_into_element;
+
+/// A region whose content scrolls when it does not fit.
+///
+/// A scroll area scrolls down by default; [`ScrollArea::both`] scrolls in both
+/// directions.
+///
+/// The id has to stay the same across renders and has to be unique among the
+/// element's siblings: it is what the scroll position is remembered by.
+///
+/// ```
+/// use guiraffe_layout::ScrollArea;
+///
+/// let area = ScrollArea::new("list").child("a long list");
+/// ```
+pub struct ScrollArea {
+    id: ElementId,
+    scroll_x: bool,
+    scroll_y: bool,
+    children: Vec<AnyElement>,
+    style: StyleRefinement,
+}
+
+impl ScrollArea {
+    /// A scroll area that scrolls down.
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            scroll_x: false,
+            scroll_y: true,
+            children: Vec::new(),
+            style: StyleRefinement::default(),
+        }
+    }
+
+    /// A scroll area that scrolls in both directions.
+    pub fn both(id: impl Into<ElementId>) -> Self {
+        Self::new(id).scroll_x(true).scroll_y(true)
+    }
+
+    /// Whether the area scrolls sideways.
+    pub fn scroll_x(mut self, scroll_x: bool) -> Self {
+        self.scroll_x = scroll_x;
+        self
+    }
+
+    /// Whether the area scrolls down.
+    pub fn scroll_y(mut self, scroll_y: bool) -> Self {
+        self.scroll_y = scroll_y;
+        self
+    }
+
+    /// Adds a child.
+    pub fn child(mut self, child: impl gpui_kit::IntoElement) -> Self {
+        self.children.push(child.into_any_element());
+        self
+    }
+
+    /// Adds several children.
+    pub fn children(
+        mut self,
+        children: impl IntoIterator<Item = impl gpui_kit::IntoElement>,
+    ) -> Self {
+        self.children
+            .extend(children.into_iter().map(|child| child.into_any_element()));
+        self
+    }
+}
+
+impl gpui_kit::Styled for ScrollArea {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl RenderOnce for ScrollArea {
+    fn render(self, _: &mut Window, _: &mut App) -> impl gpui_kit::IntoElement {
+        let mut element = div().id(self.id);
+        if self.scroll_x {
+            element = element.overflow_x_scroll();
+        }
+        if self.scroll_y {
+            element = element.overflow_y_scroll();
+        }
+        element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
+        for child in self.children {
+            element = element.child(child);
+        }
+        element
+    }
+}
+
+impl_into_element!(ScrollArea);
+
+#[cfg(test)]
+mod tests {
+    use super::ScrollArea;
+
+    #[test]
+    fn a_new_scroll_area_scrolls_down_only() {
+        let area = ScrollArea::new("list");
+        assert!(area.scroll_y);
+        assert!(!area.scroll_x);
+    }
+
+    #[test]
+    fn both_directions_can_be_asked_for() {
+        let area = ScrollArea::both("list");
+        assert!(area.scroll_y);
+        assert!(area.scroll_x);
+    }
+
+    #[test]
+    fn each_direction_can_be_turned_off() {
+        let area = ScrollArea::new("list").scroll_y(false);
+        assert!(!area.scroll_y);
+        assert!(!area.scroll_x);
+    }
+}

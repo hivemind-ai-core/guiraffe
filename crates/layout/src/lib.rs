@@ -20,23 +20,36 @@
 //! width of its own container can say so with [`ContainerWidth`].
 
 mod align;
+mod aspect_ratio;
+mod center;
+mod container;
+mod divider;
 mod flex;
 mod grid;
 mod group;
 mod macros;
 mod responsive;
+mod scroll_area;
 mod simple_grid;
+mod space;
 mod stack;
 mod style;
+mod theme;
 mod tokens;
 mod width;
 
 pub use align::{Align, Justify};
+pub use aspect_ratio::AspectRatio;
+pub use center::Center;
+pub use container::{Container, ContainerSize};
+pub use divider::{Divider, DividerOrientation, LabelPosition};
 pub use flex::{Flex, FlexDirection};
 pub use grid::{Col, Grid, DEFAULT_COLUMNS};
 pub use group::Group;
 pub use responsive::{Breakpoint, Responsive};
+pub use scroll_area::ScrollArea;
 pub use simple_grid::{SimpleGrid, columns_for_min_width};
+pub use space::Space;
 pub use stack::Stack;
 pub use tokens::Size;
 pub use width::ContainerWidth;
