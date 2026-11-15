@@ -30,38 +30,44 @@ impl Render for Plain {
             .test_support()
             .size_full()
             .track_focus(&self.focus)
-            .on_scroll_wheel(move |_, _, _| scrolls.set(scrolls.get() + 1))
+            .on_scroll(move |_, _, _| scrolls.set(scrolls.get() + 1))
             .child("Background")
             .child(
                 div()
                     .id("background-corner")
                     .test_support()
                     .absolute()
-                    .top_0()
+                    .top(px(40.))
                     .left_0()
                     .size(px(8.)),
             )
     }
 }
-fn open(cx: &mut TestAppContext) -> WindowHandle<Root> {
+fn open_with_content(cx: &mut TestAppContext) -> (WindowHandle<Root>, gpui_kit::Entity<Plain>) {
     cx.update(|cx| {
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| {
-                let focus = cx.focus_handle();
-                focus.focus(window, cx);
-                Plain {
-                    focus,
-                    scrolls: Rc::default(),
-                    renders: Rc::default(),
-                }
+        let mut content = None;
+        let handle = cx
+            .open_window(WindowOptions::default(), |window, cx| {
+                let view = cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    focus.focus(window, cx);
+                    Plain {
+                        focus,
+                        scrolls: Rc::default(),
+                        renders: Rc::default(),
+                    }
+                });
+                content = Some(view.clone());
+                root(view, window, cx)
             })
-        })
-        .expect("window")
-        .0
-        .downcast::<Root>()
-        .expect("root")
+            .expect("window");
+        (handle, content.expect("content"))
     })
 }
+fn open(cx: &mut TestAppContext) -> WindowHandle<Root> {
+    open_with_content(cx).0
+}
+
 fn poll(result: &mut ConfirmResult) -> Poll<bool> {
     Pin::new(result).poll(&mut TaskContext::from_waker(Waker::noop()))
 }
@@ -118,7 +124,6 @@ fn stacked_modal_escape_policy_and_focus_restore(cx: &mut TestAppContext) {
                 Policy {
                     escape: false,
                     outside: false,
-                    ..Default::default()
                 },
                 |d, _, _| d.title("Second"),
             )
@@ -240,6 +245,14 @@ fn toast_hover_and_update_by_id(cx: &mut TestAppContext) {
         OverlayHost::notify(window, cx, Toast::new(ToastId(1), "Saved")).expect("toast");
         OverlayHost::notify(window, cx, Toast::new(ToastId(2), "Queued")).expect("toast");
         window.render_frame(cx);
+    })
+    .expect("show");
+    cx.run_until_parked();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
         window.hover(("guiraffe-toast", 1_u64), cx);
         let host = OverlayHost::entity(window, cx).expect("host");
         assert!(host.read(cx).toasts().visible()[0].paused);
@@ -282,16 +295,8 @@ fn spotlight_typing_keyboard_and_click(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn modal_blocks_background_wheel(cx: &mut TestAppContext) {
     cx.update(init);
-    let handle = open(cx);
-    cx.update_window(handle.into(), |root, window, cx| {
-        let content = root
-            .downcast::<Root>()
-            .expect("root")
-            .read(cx)
-            .view()
-            .clone()
-            .downcast::<Plain>()
-            .expect("plain");
+    let (handle, content) = open_with_content(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
         let scrolls = content.read(cx).scrolls.clone();
         OverlayHost::open(window, cx, Policy::default(), |d, _, _| d.title("Modal")).expect("open");
         window.render_frame(cx);
@@ -370,7 +375,7 @@ impl Render for Loading {
                         clicks.set(clicks.get() + 1)
                     }),
             )
-            .child(LoadingOverlay::new(self.loading))
+            .child(LoadingOverlay::new().visible(self.loading))
     }
 }
 #[gpui_kit::test]
@@ -462,4 +467,247 @@ fn window_destruction_cancels_pending_confirm(cx: &mut TestAppContext) {
         .expect("close");
     cx.run_until_parked();
     assert_eq!(poll(&mut result), Poll::Ready(false));
+}
+#[gpui_kit::test]
+fn repeated_init_preserves_theme_and_window_state(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guiraffe_core::init(cx);
+        guiraffe_core::apply(
+            guiraffe_core::GuiraffeTheme {
+                primary: guiraffe_core::ColorName::Violet,
+                ..Default::default()
+            },
+            cx,
+        );
+        init(cx);
+        assert_eq!(
+            guiraffe_core::GuiraffeTheme::global(cx).primary,
+            guiraffe_core::ColorName::Violet
+        );
+    });
+    let handle = open(cx);
+    cx.update(|cx| {
+        guiraffe_core::apply(
+            guiraffe_core::GuiraffeTheme {
+                primary: guiraffe_core::ColorName::Violet,
+                ..Default::default()
+            },
+            cx,
+        );
+        init(cx);
+        assert_eq!(
+            guiraffe_core::GuiraffeTheme::global(cx).primary,
+            guiraffe_core::ColorName::Violet
+        );
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(OverlayHost::entity(window, cx).is_ok())
+    })
+    .expect("window");
+}
+#[gpui_kit::test]
+fn toast_progress_does_not_notify_application_content(cx: &mut TestAppContext) {
+    use std::time::Duration;
+    cx.update(init);
+    let (handle, content) = open_with_content(cx);
+    let renders = cx
+        .update_window(handle.into(), |_, window, cx| {
+            OverlayHost::notify(window, cx, Toast::new(ToastId(1), "Progress")).expect("toast");
+            window.render_frame(cx);
+            content.read(cx).renders.clone()
+        })
+        .expect("window");
+    cx.run_until_parked();
+    cx.background_executor.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .expect("draw");
+    let before = renders.get();
+    cx.background_executor
+        .advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .expect("draw");
+    assert_eq!(renders.get(), before, "progress is a leaf update");
+}
+#[gpui_kit::test]
+fn native_toast_close_promotes_queue_and_timer_expires(cx: &mut TestAppContext) {
+    use std::time::Duration;
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        OverlayHost::toast_limit(window, cx, 1).expect("limit");
+        for id in [1, 2] {
+            OverlayHost::notify(window, cx, Toast::new(ToastId(id), "Toast")).expect("toast");
+        }
+        window.render_frame(cx);
+    })
+    .expect("show");
+    cx.run_until_parked();
+    cx.background_executor
+        .advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.hover(("guiraffe-toast", 1_u64), cx);
+        window.click("close", cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+    cx.background_executor
+        .advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        let host = OverlayHost::entity(window, cx).expect("host");
+        assert_eq!(host.read(cx).toasts().visible()[0].id, ToastId(2));
+    })
+    .expect("promoted");
+    cx.background_executor.advance_clock(Duration::from_secs(6));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .read(cx)
+                .toasts()
+                .visible()
+                .is_empty()
+        )
+    })
+    .expect("expired");
+}
+#[gpui_kit::test]
+fn disabling_escape_keeps_pointer_close_available(cx: &mut TestAppContext) {
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        Drawer::new()
+            .close_on_escape(false)
+            .open(window, cx, |sheet, _, _| sheet.title("Drawer"))
+            .expect("drawer");
+        window.render_frame(cx);
+        window.press("escape", cx);
+        assert_eq!(
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .read(cx)
+                .stack()
+                .entries()
+                .len(),
+            1
+        );
+    })
+    .expect("open");
+    cx.run_until_parked();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("close", cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .read(cx)
+                .stack()
+                .entries()
+                .is_empty()
+        )
+    })
+    .expect("closed");
+}
+#[gpui_kit::test]
+fn spotlight_arrows_and_pointer_select_commands(cx: &mut TestAppContext) {
+    cx.update(init);
+    let handle = open(cx);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    for keyboard in [true, false] {
+        let output = output.clone();
+        cx.update_window(handle.into(), |_, window, cx| {
+            let palette = cx.new(|cx| {
+                Spotlight::new(
+                    vec![
+                        search::Command::new("one", "One"),
+                        search::Command::new("two", "Two"),
+                    ],
+                    window,
+                    cx,
+                    move |id, _, _| output.borrow_mut().push(id.to_owned()),
+                )
+            });
+            let id = Spotlight::open(&palette, window, cx).expect("open");
+            assert_eq!(Spotlight::open(&palette, window, cx), Ok(id));
+            window.render_frame(cx);
+            if keyboard {
+                window.press("down", cx);
+                window.press("enter", cx);
+            } else {
+                window.click(("command", 1_usize), cx);
+            }
+        })
+        .expect("window");
+        cx.run_until_parked();
+    }
+    assert_eq!(*output.borrow(), ["two", "two"]);
+}
+
+struct AffixDemo {
+    position: toast::ToastPosition,
+}
+impl Render for AffixDemo {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("affix-parent")
+            .test_support()
+            .relative()
+            .size_full()
+            .child(
+                Affix::new()
+                    .position(self.position)
+                    .child(div().id("affixed").test_support().size(px(32.))),
+            )
+    }
+}
+#[gpui_kit::test]
+fn affix_anchors_all_six_positions(cx: &mut TestAppContext) {
+    cx.update(init);
+    let (handle, view) = cx
+        .update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|_| AffixDemo {
+                    position: toast::ToastPosition::TopLeft,
+                })
+            })
+        })
+        .expect("window");
+    for position in toast::ToastPosition::ALL {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.position = position;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            let parent = window.find("affix-parent").bounds();
+            let marker = window.find("affixed").bounds();
+            let offset = px(guiraffe_core::Size::Md.spacing());
+            use toast::ToastPosition::*;
+            let expected_x = match position {
+                TopLeft | BottomLeft => parent.origin.x + offset,
+                TopRight | BottomRight => {
+                    parent.origin.x + parent.size.width - offset - marker.size.width
+                }
+                _ => parent.origin.x + (parent.size.width - marker.size.width) / 2.,
+            };
+            let expected_y = match position {
+                TopLeft | TopCenter | TopRight => parent.origin.y + offset,
+                _ => parent.origin.y + parent.size.height - offset - marker.size.height,
+            };
+            assert_eq!(marker.origin, point(expected_x, expected_y));
+        })
+        .expect("position");
+    }
 }

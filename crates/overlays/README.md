@@ -1,6 +1,6 @@
 # guiraffe-overlays
 
-Overlays built on `gpui-kit =0.7.0`, with pure logic in `position`, `search`,
+Overlays built on `gpui-kit =0.9.1`, with pure logic in `position`, `search`,
 `stack`, and `toast`. See [INVENTORY.md](INVENTORY.md) for the upstream audit.
 
 Call `guiraffe_overlays::init(cx)` before creating windows. Kit's `open_window`
@@ -15,7 +15,8 @@ WindowManager::open(key, OpenMode::Reuse, options, |window, cx| {
 
 `root` returns an existing Root unchanged, so wrapping is idempotent. State and
 pending confirmation futures belong to each window and are released with it.
-Toast ticks invalidate the toast layer and card entities, not application content.
+Toast progress ticks notify individual native card entities, without notifying the
+overlay Root plugin. Native Controls owns toast insertion/removal and transitions.
 
 - `OverlayHost::open`: stacked dialogs with managed IDs and policy.
 - `OverlayHost::confirm`: returns `(id, result)`; await `result` for a boolean.
@@ -36,8 +37,8 @@ Managed layers must be opened and closed through this crate. Native Controls
 window methods remain available for independent usage but bypass managed IDs.
 Only the top managed overlay can close: this preserves Controls' focus chain.
 Controls owns focus trapping/restoration, scroll/pointer occlusion, and transitions.
-The `scroll_lock` policy tracks the stack's modal-lock requirement; turning it off
-does not remove Controls' intrinsic modal pointer occlusion. A Drawer opens only
+All managed layers are modal and retain Controls' intrinsic scroll/pointer
+occlusion. A Drawer opens only
 when the managed stack is empty (Controls supports one sheet); dialogs may then
 stack above it. Builder close callbacks are reserved for manager bookkeeping.
 
@@ -50,3 +51,16 @@ Run the managed-window example:
 ```sh
 cargo run -p guiraffe-overlays --example overlays
 ```
+
+`modals::{open, confirm, close, close_all, register_context, open_context}` and
+`notifications::{show, update, hide, clean, set_limit}` provide the free-function
+service API; associated `OverlayHost` functions remain available.
+
+The managed visible-toast limit is clamped to Controls' theme `notification.max_items`;
+queued lifetimes start only when promoted. The root helper caches application
+content so progress redraws do not rerender the page. Use it for both ordinary
+and `WindowManager` windows when that isolation is required.
+
+Key contexts: `GrModalEscapeDisabled > Sheet` suppresses only the Escape key,
+preserving pointer close; `GrSpotlight` and `GrSpotlight > Input` bind Up/Down/Enter.
+Applications can override these bindings through GPUI's keymap.

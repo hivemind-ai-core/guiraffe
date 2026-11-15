@@ -1,6 +1,6 @@
 //! Small token-styled overlay elements.
 use gpui_kit::base::TestSupportExt;
-use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::{StyledExt, spinner::Spinner};
 use gpui_kit::{
     AnyElement, App, InteractiveElement, IntoElement, ParentElement, RenderOnce, Styled, Window,
     div, px,
@@ -13,6 +13,7 @@ pub struct LoadingOverlay {
     size: Size,
     color: Option<ColorName>,
     variant: Variant,
+    style: gpui_kit::StyleRefinement,
 }
 impl Default for LoadingOverlay {
     fn default() -> Self {
@@ -21,15 +22,17 @@ impl Default for LoadingOverlay {
             size: Size::Md,
             color: None,
             variant: Variant::Light,
+            style: Default::default(),
         }
     }
 }
 impl LoadingOverlay {
-    pub fn new(visible: bool) -> Self {
-        Self {
-            visible,
-            ..Self::default()
-        }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
     }
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
@@ -63,13 +66,14 @@ impl RenderOnce for LoadingOverlay {
             .bg(colors.background.to_hsla())
             .rounded(px(theme.default_radius.radius()))
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(
                 div()
                     .w(px(self.size.control_height()))
                     .h(px(self.size.control_height()))
                     .child(Spinner::new()),
             )
+            .refine_style(&self.style)
             .into_any_element()
     }
 }
@@ -78,15 +82,12 @@ impl RenderOnce for LoadingOverlay {
 pub struct Affix {
     side: crate::toast::ToastPosition,
     offset: Size,
-    child: AnyElement,
+    children: Vec<AnyElement>,
+    style: gpui_kit::StyleRefinement,
 }
 impl Affix {
-    pub fn new(child: impl IntoElement) -> Self {
-        Self {
-            side: crate::toast::ToastPosition::BottomRight,
-            offset: Size::Md,
-            child: child.into_any_element(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
     pub fn position(mut self, position: crate::toast::ToastPosition) -> Self {
         self.side = position;
@@ -111,6 +112,33 @@ impl RenderOnce for Affix {
             TopRight | BottomRight => element.right(offset),
             _ => element.left_0().w_full().flex().justify_center(),
         };
-        element.child(self.child)
+        element.children(self.children).refine_style(&self.style)
+    }
+}
+
+impl Styled for LoadingOverlay {
+    fn style(&mut self) -> &mut gpui_kit::StyleRefinement {
+        &mut self.style
+    }
+}
+impl Styled for Affix {
+    fn style(&mut self) -> &mut gpui_kit::StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl Default for Affix {
+    fn default() -> Self {
+        Self {
+            side: crate::toast::ToastPosition::BottomRight,
+            offset: Size::Md,
+            children: Vec::new(),
+            style: Default::default(),
+        }
+    }
+}
+impl ParentElement for Affix {
+    fn extend(&mut self, children: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(children);
     }
 }

@@ -273,3 +273,86 @@ mod tests {
         assert!(p.x >= 108.);
     }
 }
+
+#[cfg(test)]
+mod directional_tests {
+    use super::*;
+    #[test]
+    fn exact_coordinates_and_arrows_for_every_side_and_alignment() {
+        let anchor = Rect {
+            x: 100.,
+            y: 100.,
+            width: 20.,
+            height: 40.,
+        };
+        let viewport = Rect {
+            x: 0.,
+            y: 0.,
+            width: 400.,
+            height: 400.,
+        };
+        for (align, v, h, vertical_arrow, horizontal_arrow) in [
+            (Align::Start, 100., 100., 10., 20.),
+            (Align::Center, 80., 105., 30., 15.),
+            (Align::End, 60., 110., 50., 10.),
+        ] {
+            for (side, x, y, arrow) in [
+                (Side::Top, v, 66., vertical_arrow),
+                (Side::Bottom, v, 144., vertical_arrow),
+                (Side::Left, 36., h, horizontal_arrow),
+                (Side::Right, 124., h, horizontal_arrow),
+            ] {
+                let actual = position(
+                    anchor,
+                    (60., 30.),
+                    viewport,
+                    FloatingOptions {
+                        side,
+                        align,
+                        flip: false,
+                        shift: false,
+                        ..Default::default()
+                    },
+                )
+                .expect("valid position");
+                assert_eq!(actual, FloatingPosition { x, y, side, arrow });
+            }
+        }
+    }
+    #[test]
+    fn all_four_flip_directions_and_explicit_disable() {
+        let viewport = Rect {
+            x: 0.,
+            y: 0.,
+            width: 400.,
+            height: 400.,
+        };
+        for (side, x, y) in [
+            (Side::Top, 100., 0.),
+            (Side::Bottom, 100., 380.),
+            (Side::Left, 0., 100.),
+            (Side::Right, 380., 100.),
+        ] {
+            let anchor = Rect {
+                x,
+                y,
+                width: 20.,
+                height: 20.,
+            };
+            for flip in [true, false] {
+                let actual = position(
+                    anchor,
+                    (60., 30.),
+                    viewport,
+                    FloatingOptions {
+                        side,
+                        flip,
+                        ..Default::default()
+                    },
+                )
+                .expect("valid position");
+                assert_eq!(actual.side, if flip { side.opposite() } else { side });
+            }
+        }
+    }
+}

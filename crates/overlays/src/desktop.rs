@@ -30,11 +30,15 @@ impl DesktopNotification {
     /// Blocking platform delivery; callers should run it on their background executor.
     #[cfg(not(any(target_os = "ios", target_os = "android", target_family = "wasm")))]
     pub fn show(&self) -> Result<(), String> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let body = escape_markup(&self.body);
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let body = self.body.clone();
         let mut notification = notify_rust::Notification::new();
         notification
             .appname(&self.app_name)
             .summary(&self.title)
-            .body(&escape_markup(&self.body))
+            .body(&body)
             .icon(&self.icon)
             .timeout(self.timeout_ms);
         #[cfg(target_os = "linux")]

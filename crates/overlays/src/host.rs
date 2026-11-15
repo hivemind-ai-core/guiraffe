@@ -12,27 +12,26 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     Anchor, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Subscription, Task, Window, div, px,
+    Render, Styled, Task, Window, div, px,
 };
 use guiraffe_core::{GuiraffeTheme, Size};
-use std::{
-    collections::HashMap,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, rc::Rc, time::Duration};
 
 struct ToastCard {
     entity: Entity<Notification>,
-    _subscription: Subscription,
     message: String,
     position: ToastPosition,
+    elapsed: Duration,
+    auto_close: Option<Duration>,
+    generation: u64,
 }
+gpui_kit::actions!(guiraffe_overlays, [IgnoreEscape]);
 pub type ContextBuilder = Rc<dyn Fn(Dialog, &mut Window, &mut App) -> Dialog>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayError {
     MissingRoot,
     NotTopmost,
-    DrawerAlreadyOpen,
+    DrawerRequiresEmptyStack,
     UnknownContext,
 }
 impl std::fmt::Display for OverlayError {
@@ -50,7 +49,7 @@ pub struct OverlayHost {
     toasts: ToastQueue,
     cards: HashMap<ToastId, ToastCard>,
     timer: Option<Task<()>>,
-    layer: Option<Entity<ToastLayer>>,
+    next_generation: u64,
 }
 impl RootPlugin for OverlayHost {
     fn decorate(
@@ -58,35 +57,23 @@ impl RootPlugin for OverlayHost {
         surface: gpui_kit::AnyElement,
         _: &Root,
         _: &mut Window,
-        cx: &mut App,
+        _: &mut App,
     ) -> impl IntoElement {
         let escape = self.stack.top().is_none_or(|e| e.policy.escape);
-        let _ = cx;
         div()
             .size_full()
-            .capture_action(move |_: &gpui_kit::base::actions::Cancel, _, cx| {
-                if escape {
-                    cx.propagate();
-                } else {
-                    cx.stop_propagation();
-                }
+            .key_context(if escape {
+                "GrModal"
+            } else {
+                "GrModalEscapeDisabled"
             })
+            .on_action(|_: &IgnoreEscape, _, cx| cx.stop_propagation())
             .child(surface)
     }
 }
 impl OverlayHost {
-    fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        let host = cx.weak_entity();
-        let layer = cx.new(|_| ToastLayer { host });
-        Self {
-            layer: Some(layer),
-            ..Self::default()
-        }
-    }
-    fn notify_layer(&self, cx: &mut App) {
-        if let Some(layer) = &self.layer {
-            layer.update(cx, |_, cx| cx.notify());
-        }
+    fn new(_: &mut Window, _: &mut Context<Self>) -> Self {
+        Self::default()
     }
     pub fn entity(window: &Window, cx: &App) -> Result<Entity<Self>, OverlayError> {
         window
@@ -187,36 +174,47 @@ impl OverlayHost {
         let (sender, result) = confirm::channel();
         let title = title.into();
         let message = message.into();
-        let id = Self::open_inner(
-            window,
-            cx,
-            Policy {
-                outside: false,
-                ..Default::default()
-            },
-            OverlayKind::Modal,
-            Some(sender),
-            move |dialog, _, _| {
-                dialog
-                    .title(title.clone())
-                    .child(message.clone())
-                    .button_props(
-                        gpui_kit::component::dialog::DialogButtonProps::default().show_cancel(true),
-                    )
-                    .on_ok(|_, window, cx| {
-                        if let Ok(host) = Self::entity(window, cx) {
-                            host.update(cx, |host, _| {
-                                if let Some(entry) = host.stack.top() {
-                                    if let Some(sender) = host.confirms.get(&entry.id) {
+        let id =
+            Self::open_inner(
+                window,
+                cx,
+                Policy {
+                    outside: false,
+                    ..Default::default()
+                },
+                OverlayKind::Modal,
+                Some(sender),
+                move |dialog, _, _| {
+                    dialog
+                        .title(title.clone())
+                        .content({
+                            let message = message.clone();
+                            move |content, _, _| content.child(message.clone())
+                        })
+                        .footer(
+                            gpui_kit::component::dialog::DialogFooter::new()
+                                .child(
+                                    gpui_kit::component::dialog::DialogClose::new()
+                                        .trigger(|button| button.label("Cancel")),
+                                )
+                                .child(gpui_kit::component::dialog::DialogAction::new().child(
+                                    gpui_kit::component::button::Button::new("ok").label("OK"),
+                                )),
+                        )
+                        .on_ok(|_, window, cx| {
+                            if let Ok(host) = Self::entity(window, cx) {
+                                host.update(cx, |host, _| {
+                                    if let Some(entry) = host.stack.top()
+                                        && let Some(sender) = host.confirms.get(&entry.id)
+                                    {
                                         sender.resolve(true);
                                     }
-                                }
-                            });
-                        }
-                        true
-                    })
-            },
-        )?;
+                                });
+                            }
+                            true
+                        })
+                },
+            )?;
         Ok((id, result))
     }
     pub fn register_context(
@@ -251,9 +249,12 @@ impl OverlayHost {
     pub fn notify(window: &mut Window, cx: &mut App, toast: Toast) -> Result<(), OverlayError> {
         let host = Self::entity(window, cx)?;
         host.update(cx, |host, cx| {
+            let cap = gpui_kit::component::theme::Theme::global(cx)
+                .notification
+                .max_items;
+            host.toasts.set_limit(host.toasts.limit().min(cap));
             host.toasts.push(toast);
-            host.sync_cards(cx);
-            host.notify_layer(cx);
+            host.sync_cards(window, cx);
         });
         Ok(())
     }
@@ -264,8 +265,7 @@ impl OverlayHost {
     ) -> Result<(), OverlayError> {
         Self::entity(window, cx)?.update(cx, |host, cx| {
             host.toasts.remove(id);
-            host.sync_cards(cx);
-            host.notify_layer(cx);
+            host.sync_cards(window, cx);
         });
         Ok(())
     }
@@ -275,91 +275,128 @@ impl OverlayHost {
         limit: usize,
     ) -> Result<(), OverlayError> {
         Self::entity(window, cx)?.update(cx, |host, cx| {
-            host.toasts.set_limit(limit);
-            host.sync_cards(cx);
-            host.notify_layer(cx);
+            let cap = gpui_kit::component::theme::Theme::global(cx)
+                .notification
+                .max_items;
+            host.toasts.set_limit(limit.min(cap));
+            host.sync_cards(window, cx);
         });
         Ok(())
     }
     pub fn clear_toasts(window: &mut Window, cx: &mut App) -> Result<(), OverlayError> {
         Self::entity(window, cx)?.update(cx, |host, cx| {
+            for id in host.cards.keys() {
+                window.remove_notification1::<ManagedToast>(id.0, cx);
+            }
             host.toasts.clear();
             host.cards.clear();
             host.timer = None;
-            host.notify_layer(cx);
         });
         Ok(())
     }
-    fn ensure_timer(&mut self, cx: &mut Context<Self>) {
-        if self.timer.is_none() && self.toasts.visible().iter().any(|t| t.auto_close.is_some()) {
-            self.timer = Some(cx.spawn(async move |weak, cx| {
-                let mut last = Instant::now();
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(33))
-                        .await;
-                    let now = Instant::now();
-                    let delta = now.saturating_duration_since(last);
-                    last = now;
-                    let Ok(active) = weak.update(cx, |host, cx| {
-                        host.toasts.advance(delta);
-                        host.sync_cards(cx);
-                        host.notify_layer(cx);
-                        host.toasts.visible().iter().any(|t| t.auto_close.is_some())
-                    }) else {
-                        break;
-                    };
-                    if !active {
-                        let _ = weak.update(cx, |host, _| host.timer = None);
-                        break;
-                    }
-                }
-            }));
+    fn ensure_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.timer.is_some() || !self.toasts.visible().iter().any(|t| t.auto_close.is_some()) {
+            return;
         }
+        self.timer = Some(cx.spawn_in(window, async move |weak, cx| {
+            let mut last = cx.background_executor().now();
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(33))
+                    .await;
+                let now = cx.background_executor().now();
+                let delta = now.saturating_duration_since(last);
+                last = now;
+                let Ok(active) = weak.update_in(cx, |host, window, cx| {
+                    host.toasts.advance(delta);
+                    host.sync_cards(window, cx);
+                    host.toasts.visible().iter().any(|t| t.auto_close.is_some())
+                }) else {
+                    break;
+                };
+                if !active {
+                    let _ = weak.update(cx, |host, _| host.timer = None);
+                    break;
+                }
+            }
+        }));
     }
-    fn sync_cards(&mut self, cx: &mut Context<Self>) {
-        self.cards
-            .retain(|id, _| self.toasts.visible().iter().any(|t| t.id == *id));
-        for toast in self.toasts.visible() {
-            let id = toast.id;
-            let host = cx.weak_entity();
-            if let Some(card) = self.cards.get_mut(&id) {
-                card.entity.update(cx, |notification_view, cx| {
-                    if card.message != toast.message || card.position != toast.position {
-                        *notification_view = notification(toast, host);
-                        card.message = toast.message.clone();
-                        card.position = toast.position;
-                    }
-                    cx.notify();
-                });
+    fn sync_cards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cards.retain(|id, _| {
+            if self.toasts.visible().iter().any(|t| t.id == *id) {
+                true
             } else {
-                let entity = cx.new(|_| notification(toast, host));
-                let subscription =
-                    cx.subscribe(&entity, move |host, _, _: &gpui_kit::DismissEvent, cx| {
-                        host.toasts.remove(id);
-                        host.sync_cards(cx);
-                        host.notify_layer(cx);
-                    });
+                window.remove_notification1::<ManagedToast>(id.0, cx);
+                false
+            }
+        });
+        for toast in self.toasts.visible() {
+            if let Some(card) = self.cards.get_mut(&toast.id)
+                && card.message == toast.message
+                && card.position == toast.position
+            {
+                if card.elapsed != toast.elapsed || card.auto_close != toast.auto_close {
+                    card.elapsed = toast.elapsed;
+                    card.auto_close = toast.auto_close;
+                    card.entity.update(cx, |_, cx| cx.notify());
+                }
+                continue;
+            }
+            self.next_generation += 1;
+            let generation = self.next_generation;
+            let before = window.notifications(cx);
+            let host = cx.weak_entity();
+            window.push_notification(notification(toast, host, generation), cx);
+            let after = window.notifications(cx);
+            if let Some(entity) = after.iter().find(|entity| {
+                !before
+                    .iter()
+                    .any(|old| old.entity_id() == entity.entity_id())
+            }) {
                 self.cards.insert(
-                    id,
+                    toast.id,
                     ToastCard {
-                        entity,
-                        _subscription: subscription,
+                        entity: entity.clone(),
                         message: toast.message.clone(),
                         position: toast.position,
+                        elapsed: toast.elapsed,
+                        auto_close: toast.auto_close,
+                        generation,
                     },
                 );
             }
         }
-        self.ensure_timer(cx);
+        self.ensure_timer(window, cx);
     }
 }
-fn notification(toast: &Toast, host: gpui_kit::WeakEntity<OverlayHost>) -> Notification {
+struct ManagedToast;
+fn notification(
+    toast: &Toast,
+    host: gpui_kit::WeakEntity<OverlayHost>,
+    generation: u64,
+) -> Notification {
     let id = toast.id;
+    let message: gpui_kit::SharedString = toast.message.clone().into();
+    let closed = host.clone();
     Notification::new()
-        .message(toast.message.clone())
+        .id1::<ManagedToast>(id.0)
         .autohide(false)
         .placement(anchor(toast.position))
+        .on_close(move |window, cx| {
+            let closed = closed.clone();
+            window.defer(cx, move |window, cx| {
+                let _ = closed.update(cx, |host, cx| {
+                    if host
+                        .cards
+                        .get(&id)
+                        .is_some_and(|card| card.generation == generation)
+                    {
+                        host.toasts.remove(id);
+                        host.sync_cards(window, cx);
+                    }
+                });
+            });
+        })
         .content(move |_, _, cx| {
             let progress = host.upgrade().and_then(|host| {
                 host.read(cx)
@@ -370,7 +407,15 @@ fn notification(toast: &Toast, host: gpui_kit::WeakEntity<OverlayHost>) -> Notif
                     .and_then(Toast::progress)
             });
             let color = GuiraffeTheme::global(cx).primary_color().to_hsla();
+            let hover = host.clone();
             div()
+                .id(("guiraffe-toast", id.0))
+                .test_support()
+                .w_full()
+                .on_hover(move |paused, _, cx| {
+                    let _ = hover.update(cx, |host, _| host.toasts.pause(id, *paused));
+                })
+                .child(message.clone())
                 .children(progress.map(|value| {
                     Progress::new("toast-progress")
                         .value(value * 100.)
@@ -379,7 +424,6 @@ fn notification(toast: &Toast, host: gpui_kit::WeakEntity<OverlayHost>) -> Notif
                 .into_any_element()
         })
 }
-
 fn anchor(position: ToastPosition) -> Anchor {
     match position {
         ToastPosition::TopLeft => Anchor::TopLeft,
@@ -390,80 +434,55 @@ fn anchor(position: ToastPosition) -> Anchor {
         ToastPosition::BottomRight => Anchor::BottomRight,
     }
 }
-struct ToastLayer {
-    host: gpui_kit::WeakEntity<OverlayHost>,
-}
 impl Render for OverlayHost {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().absolute().inset_0().children(self.layer.clone())
-    }
-}
-impl Render for ToastLayer {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(host) = self.host.upgrade() else {
-            return div().into_any_element();
-        };
-        let host = host.read(cx);
-        let gap = Size::Sm.spacing();
-        let width = px(Size::Xs.container_width() / 1.5);
-        let viewport = window.viewport_size();
         div()
-            .absolute()
-            .inset_0()
-            .children(ToastPosition::ALL.into_iter().map(|position| {
-                let mut column = div().absolute().flex().flex_col().gap(px(gap)).w(width);
-                column = match position {
-                    ToastPosition::TopLeft | ToastPosition::TopCenter | ToastPosition::TopRight => {
-                        column.top(px(gap))
-                    }
-                    _ => column.bottom(px(gap)),
-                };
-                column = match position {
-                    ToastPosition::TopLeft | ToastPosition::BottomLeft => column.left(px(gap)),
-                    ToastPosition::TopRight | ToastPosition::BottomRight => column.right(px(gap)),
-                    _ => column.left((viewport.width - width) / 2.),
-                };
-                column.children(
-                    host.toasts
-                        .visible()
-                        .iter()
-                        .filter(|t| t.position == position)
-                        .filter_map(|toast| {
-                            let id = toast.id;
-                            host.cards.get(&id).map(|card| {
-                                div()
-                                    .id(("guiraffe-toast", id.0))
-                                    .test_support()
-                                    .on_hover({
-                                        let host = self.host.clone();
-                                        move |hovered, _, cx| {
-                                            let _ = host.update(cx, |host, _| {
-                                                host.toasts.pause(id, *hovered)
-                                            });
-                                        }
-                                    })
-                                    .child(card.entity.clone())
-                            })
-                        }),
-                )
-            }))
-            .into_any_element()
     }
 }
 /// Initialize Kit, theme and the window-local overlay plugin before opening windows.
+struct Initialized;
+impl gpui_kit::Global for Initialized {}
 pub fn init(cx: &mut App) {
+    if cx.has_global::<Initialized>() {
+        return;
+    }
+    let theme = cx.try_global::<GuiraffeTheme>().cloned();
     gpui_kit::init(cx);
-    guiraffe_core::init(cx);
+    if let Some(theme) = theme {
+        guiraffe_core::apply(theme, cx);
+    } else {
+        guiraffe_core::init(cx);
+    }
     Root::register_plugin::<OverlayHost>(cx, OverlayHost::new);
+    cx.bind_keys([gpui_kit::KeyBinding::new(
+        "escape",
+        IgnoreEscape,
+        Some("GrModalEscapeDisabled > Sheet"),
+    )]);
+    crate::spotlight::init(cx);
+    cx.set_global(Initialized);
 }
 /// Build this Root inside `WindowManager::open` to keep its typed window handle.
 pub fn root(view: impl Into<gpui_kit::AnyView>, window: &mut Window, cx: &mut App) -> Entity<Root> {
     match view.into().downcast::<Root>() {
         Ok(root) => root,
-        Err(view) => cx.new(|cx| Root::new(view, window, cx)),
+        Err(view) => {
+            let cached = cx.new(|_| CachedContent { view });
+            cx.new(|cx| Root::new(cached, window, cx))
+        }
     }
 }
 
+struct CachedContent {
+    view: gpui_kit::AnyView,
+}
+impl Render for CachedContent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.view
+            .clone()
+            .cached(gpui_kit::StyleRefinement::default().size_full())
+    }
+}
 /// Four-sided Controls sheet with GUIraffe sizing. Controls permits one sheet per window.
 pub struct Drawer {
     pub side: crate::position::Side,
@@ -480,6 +499,26 @@ impl Default for Drawer {
     }
 }
 impl Drawer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn position(mut self, side: crate::position::Side) -> Self {
+        self.side = side;
+        self
+    }
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+    pub fn close_on_escape(mut self, enabled: bool) -> Self {
+        self.policy.escape = enabled;
+        self
+    }
+    pub fn close_on_click_outside(mut self, enabled: bool) -> Self {
+        self.policy.outside = enabled;
+        self
+    }
+
     pub fn open(
         self,
         window: &mut Window,
@@ -493,7 +532,7 @@ impl Drawer {
     ) -> Result<OverlayId, OverlayError> {
         let host = OverlayHost::entity(window, cx)?;
         if !host.read(cx).stack.entries().is_empty() {
-            return Err(OverlayError::DrawerAlreadyOpen);
+            return Err(OverlayError::DrawerRequiresEmptyStack);
         }
         let id = host.update(cx, |host, cx| {
             let id = host.stack.push(OverlayKind::Drawer, self.policy);

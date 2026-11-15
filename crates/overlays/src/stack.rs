@@ -17,14 +17,12 @@ pub enum Dismiss {
 pub struct Policy {
     pub escape: bool,
     pub outside: bool,
-    pub scroll_lock: bool,
 }
 impl Default for Policy {
     fn default() -> Self {
         Self {
             escape: true,
             outside: true,
-            scroll_lock: true,
         }
     }
 }
@@ -53,7 +51,7 @@ impl OverlayStack {
         self.entries.last()
     }
     pub fn scroll_locked(&self) -> bool {
-        self.entries.iter().any(|e| e.policy.scroll_lock)
+        !self.entries.is_empty()
     }
     /// Only the top overlay can consume dismissal. A rejecting top never dismisses the layer below.
     pub fn dismiss(&mut self, id: OverlayId, reason: Dismiss) -> bool {
@@ -86,7 +84,6 @@ mod tests {
             Policy {
                 escape: false,
                 outside: false,
-                ..Default::default()
             },
         );
         assert_eq!(s.z_index(b), Some(1));

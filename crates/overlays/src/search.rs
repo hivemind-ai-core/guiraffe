@@ -41,7 +41,7 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i64> {
     }
     Some(score - text.len() as i64 / 4)
 }
-pub fn search<'a>(query: &str, commands: &'a [Command], limit: usize) -> Vec<&'a Command> {
+pub fn search_indices(query: &str, commands: &[Command], limit: usize) -> Vec<usize> {
     let mut matches: Vec<_> = commands
         .iter()
         .enumerate()
@@ -55,7 +55,13 @@ pub fn search<'a>(query: &str, commands: &'a [Command], limit: usize) -> Vec<&'a
         })
         .collect();
     matches.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    matches.into_iter().take(limit).map(|(_, _, c)| c).collect()
+    matches.into_iter().take(limit).map(|(_, i, _)| i).collect()
+}
+pub fn search<'a>(query: &str, commands: &'a [Command], limit: usize) -> Vec<&'a Command> {
+    search_indices(query, commands, limit)
+        .into_iter()
+        .filter_map(|i| commands.get(i))
+        .collect()
 }
 #[cfg(test)]
 mod tests {

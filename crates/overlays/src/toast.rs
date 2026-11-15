@@ -72,6 +72,9 @@ impl ToastQueue {
             queued: VecDeque::new(),
         }
     }
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
     pub fn visible(&self) -> &[Toast] {
         &self.visible
     }

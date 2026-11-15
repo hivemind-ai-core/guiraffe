@@ -1,4 +1,4 @@
-//! Window-local overlays built on GPUI Controls 0.7.0.
+//! Window-local overlays built on GPUI Controls 0.9.1.
 //!
 //! Call [`init`] before opening windows. Kit `open_window` mounts a Root automatically;
 //! with guiraffe-windows, return [`root`] from the window builder. Use [`OverlayHost`]
@@ -24,3 +24,6 @@ mod gpui_tests;
 
 /// Mantine-style name for the window-local modal manager.
 pub type Modals = OverlayHost;
+pub mod modals;
+pub mod notifications;
+pub use host::OverlayError as Error;
