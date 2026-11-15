@@ -1,9 +1,9 @@
 # Flow review #1 validation and alternating benchmarks
 
-Validated source: `6860754de5b06b4c72d4255f4dc972bc3f7fa541`, rebased onto
+Validated source: `77530eabec54379ef1cbc34a50716cd59803245e`, rebased onto
 release `8d0f992f37a22d271ae7d49f505ee3e3beefe681`, **gpui-kit =0.9.1**.
 The foreman requested this upgrade after the original 0.7.0 task dispatch.
-All 69 tests, package Clippy with `-D warnings`, formatting and diff checks pass.
+All 70 tests, package Clippy with `-D warnings`, formatting and diff checks pass.
 See [REVIEW-1.md](REVIEW-1.md) for the per-item resolution and exact test limits.
 No branch was merged or pushed.
 
@@ -14,14 +14,15 @@ based on release `f96e93a`; its core/theme and root manifest match `8d0f992`.
 Only the deprecated scroll names were ported to 0.9.1 for the baseline UI, and the
 same `edit_stress` example was added to both. Both variants therefore use the
 same GPUI version, host, toolchain and benchmark source. The new variant is
-`6860754` with the review fixes. The baseline worktree was removed after measurement.
+`77530ea` with the review fixes. The baseline worktree was removed after measurement.
 
 Binaries were built once, copied to distinct paths to avoid Cargo's two `stress`
 example filename collision, then run **ten times per variant per benchmark** on
 CPU 15 with `taskset`. Each run alternated AB/BA order; no new build was started
 by this worker during the measurement. Other workloads continued on the shared
-16-CPU host (observed load approximately 35–68 during this work). This reduces
-order bias but does not make the host quiet or establish formal performance acceptance.
+16-CPU host. Load fell from roughly 35–68 earlier in development to checkpoints
+of 3.8 and 3.5 during the final run. Alternation reduces order bias; it does not
+establish formal performance acceptance or exclude scheduler interference.
 
 Entries below are **medians across runs**, with the **minimum–maximum across
 runs** in parentheses. For distribution rows these are medians/ranges of the
@@ -29,25 +30,26 @@ individual runs' reported percentiles, not pooled percentiles.
 
 | Measurement | Before | After |
 |---|---:|---:|
-| Scene build | 22.03 ms (14.89–49.41) | 29.28 ms (23.48–80.41) |
-| Spatial query + cached routes p50 | 16 us (13–17) | 19.5 us (12–20) |
-| Spatial query + cached routes p95 | 22 us (19–23) | 29.5 us (22–33) |
-| Spatial query + cached routes p99 | 33 us (27–110) | 49 us (37–1077) |
-| One-node edit p50 | 23.542 ms (18.735–55.075) | 0.157 ms (0.134–0.187) |
-| One-node edit p95 | 29.481 ms (22.400–93.086) | 0.240 ms (0.184–3.035) |
-| One-node edit p99 | 41.365 ms (24.243–234.965) | 0.617 ms (0.233–4.860) |
-| Headless frame p50 | 14.406 ms (7.754–35.495) | 11.933 ms (8.026–26.612) |
-| Headless frame p95 | 24.355 ms (11.643–51.658) | 26.418 ms (10.227–56.361) |
-| Headless frame p99 | 30.842 ms (12.643–60.200) | 29.563 ms (11.910–67.668) |
+| Scene build | 9.924 ms (9.078–11.370) | 14.254 ms (14.010–16.856) |
+| Spatial query + cached routes p50 | 9 us (8–9) | 8 us (8–8) |
+| Spatial query + cached routes p95 | 10 us (10–13) | 10 us (10–13) |
+| Spatial query + cached routes p99 | 13 us (13–16) | 14 us (13–18) |
+| One-node edit p50 | 13.920 ms (13.612–14.109) | 0.085 ms (0.082–0.092) |
+| One-node edit p95 | 16.169 ms (15.518–16.779) | 0.135 ms (0.126–0.141) |
+| One-node edit p99 | 17.843 ms (16.385–19.998) | 0.192 ms (0.139–0.472) |
+| Headless frame p50 | 6.383 ms (5.789–6.637) | 5.671 ms (4.948–6.447) |
+| Headless frame p95 | 8.270 ms (7.720–9.026) | 7.673 ms (6.894–8.518) |
+| Headless frame p99 | 9.248 ms (8.663–9.887) | 8.681 ms (7.868–9.402) |
 
-The median edit result improved by about 150x. Persistent maps and path-copyable
-indexes retain a **33% median scene-build cost and 22% median query cost** in this
-comparison; these are explicit tradeoffs, not improvements. Transient std indexes
-for bulk handle lookup/validation, bulk location collection and packed BVH paths
-removed avoidable overhead. The initial isolated 12→62 ms build observations were
-not sustained by the interleaved comparison. Frame medians overlap broadly and
-p95 worsened in this sample; no stable frame speedup or GPU refresh rate is claimed.
-The 8 ms p99 design budget remains unproven.
+The median edit result improved by about 164x. Persistent maps and path-copyable
+indexes retain a **44% median scene-build cost** in this comparison, an explicit
+tradeoff. Median query time was 8 us versus 9 us, with overlapping run ranges.
+Transient std indexes for bulk handle lookup/validation, bulk location collection
+and packed BVH paths removed avoidable overhead. The initial isolated 12→62 ms
+build observations were not sustained by the interleaved comparison. Headless
+frame distributions were modestly lower; their ranges overlap, and no GPU refresh
+rate or formal frame acceptance is claimed. The new median run p99 is 8.682 ms,
+so the 8 ms p99 design budget remains unproven.
 
 Geometry and UI graph/view parameters are the same as the historical protocol
 below. The new edit example uses that 5k/10k graph, 20 warmups and 100 measured

@@ -1,6 +1,6 @@
 # Flow review #1 hand-in
 
-Implementation and validation revision: `6860754de5b06b4c72d4255f4dc972bc3f7fa541`.
+Implementation and validation revision: `77530eabec54379ef1cbc34a50716cd59803245e`.
 This branch was rebased onto `release/0.1` at `8d0f992f37a22d271ae7d49f505ee3e3beefe681`
 per the foreman's follow-up. The workspace now pins **gpui-kit =0.9.1**.
 No merge or push was performed.
@@ -20,8 +20,8 @@ No merge or push was performed.
 | 9 | Fixed | Selection never mutates or clones Scene; empty selection/deletion is cheap and creates no history. Shared Scene pointer regression includes empty and nonempty selection. |
 | 10 | Fixed | Mesh cache is scoped to the document's edges rather than a FIFO/vertex working-set cap; unchanged route Arcs retain their meshes across edits. Two passes over 3,000 meshes produce zero misses on the second pass. |
 | 11 | Fixed | Persistent graph maps share unchanged pages with bounded history; persistent BVHs copy/refit affected branches, and only changed/incident routes are regenerated. Bulk construction uses transient std indexes and packed BVH paths. Mixed move/delete/undo/redo tests compare fresh routes and indexes; independent snapshot and 1,500-entry insertion tests cover index mutations/rebalancing. |
-| 12 | Fixed | Toolbar reads the selection set, node cards compare revision/selection counters instead of full Node data, and the visible-edge allocation transfers to paint and back through a reused buffer. Storage-pointer and unrelated-node render-count tests. |
-| 13 | Fixed | Stable Scene identity preserves base minimap triangles; selection is a small overlay. GPUI test proves the minimap's geometry storage survives selection changes. |
+| 12 | Fixed | Toolbar reads the selection set, node cards compare revision/selection counters instead of full Node data, and the visible-edge allocation transfers to paint and back through a reused buffer. Selection snapshots use shared immutable sets. Storage-pointer and unrelated-node render-count tests. |
+| 13 | Fixed | Stable Scene identity preserves base minimap triangles; selection is an independently cached overlay. GPUI tests prove base geometry survives selection changes and selected geometry survives camera changes. |
 | 14 | Documented option | Child positions remain **absolute world coordinates**, explicitly documented in both READMEs and `Node::rect`; moving a parent translates the whole subtree. This is the review's permitted documented alternative to parent-relative positions. |
 | 15 | Fixed | Serialized edge high-water mark advances on successful connections, survives deletion/undo, and initializes from imported IDs. Undo + serde + reconnect regression proves automatic IDs are not reused. |
 | 16 | Complete | All requested cases are present: deleted drag, parent drag, lower-ID child hit, selection-independent undo, off-grid drag, pinned/parent layout, >2048 meshes, real self-loop with allow_self, delete/undo fresh-scene equality, empty delete, extreme pinch and wheel clamp, empty minimap. |
@@ -39,6 +39,9 @@ The regression commit `af344c3` precedes the fixes. Against the original impleme
 - The edge-buffer transfer test was also executed against restored original sources
   (`4c9969c`) and failed because Frame cloned the edge allocation. Sources were restored
   immediately afterward. It passes with the implementation.
+- A final snapshot-sharing regression failed against `6860754` before the selection-cache
+  follow-up; immutable selection snapshots and cached selected minimap triangles now avoid
+  copying large selections on camera frames.
 - Follow-up event tests exposed wheel exponent overflow and toolbar event handling;
   those tests passed after their corrections. Existing passing edge cases were retained.
 
@@ -51,7 +54,7 @@ cargo fmt -p guiraffe-flow-core -p guiraffe-flow -- --check
 git diff --check
 ```
 
-**69 tests:** 35 flow-core integration tests and 34 flow tests, including 19 GPUI
+**70 tests:** 35 flow-core integration tests and 35 flow tests, including 19 GPUI
 TestAppContext tests. No ignored tests. Production source has no unwrap/expect;
 workspace lints deny unsafe code. The render-count test uses normal `Window::draw`,
 because gpui-kit's `render_frame` intentionally forces a refresh of every view.
