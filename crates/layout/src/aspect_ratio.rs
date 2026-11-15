@@ -1,10 +1,10 @@
 //! A box that keeps a fixed shape.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div,
 };
-
-use crate::macros::impl_into_element;
 
 /// Content in a box whose height follows from its width.
 ///
@@ -15,6 +15,7 @@ use crate::macros::impl_into_element;
 ///
 /// let ratio = AspectRatio::new(16.0 / 9.0).child("video");
 /// ```
+#[derive(IntoElement)]
 pub struct AspectRatio {
     ratio: f32,
     children: Vec<AnyElement>,
@@ -78,8 +79,6 @@ impl RenderOnce for AspectRatio {
         element
     }
 }
-
-impl_into_element!(AspectRatio);
 
 #[cfg(test)]
 mod tests {

@@ -1,11 +1,12 @@
 //! A rule between two blocks, optionally with a label in it.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     App, Hsla, ParentElement as _, RenderOnce, SharedString, StyleRefinement, Styled as _, Window,
     div, px,
 };
 
-use crate::macros::impl_into_element;
 use crate::tokens::Size;
 
 /// Which way a [`Divider`] runs.
@@ -39,6 +40,7 @@ pub enum LabelPosition {
 ///
 /// let divider = Divider::new().label("Section");
 /// ```
+#[derive(IntoElement)]
 pub struct Divider {
     orientation: DividerOrientation,
     label: Option<SharedString>,
@@ -151,8 +153,6 @@ impl RenderOnce for Divider {
         gpui_kit::base::StyledExt::refine_style(element, &self.style)
     }
 }
-
-impl_into_element!(Divider);
 
 #[cfg(test)]
 mod tests {

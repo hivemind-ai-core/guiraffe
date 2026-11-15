@@ -1,10 +1,11 @@
 //! A centered, width-limited container.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
 };
 
-use crate::macros::impl_into_element;
 use crate::tokens::Size;
 
 /// Content in a column that is centered and never wider than its size says.
@@ -20,6 +21,7 @@ use crate::tokens::Size;
 ///     .padding(Size::Md)
 ///     .child("content");
 /// ```
+#[derive(IntoElement)]
 pub struct Container {
     size: Option<Size>,
     fluid: bool,
@@ -110,8 +112,6 @@ impl RenderOnce for Container {
         element
     }
 }
-
-impl_into_element!(Container);
 
 #[cfg(test)]
 mod tests {

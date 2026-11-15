@@ -1,8 +1,9 @@
 //! Empty space that pushes its neighbours apart.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{App, RenderOnce, StyleRefinement, Styled as _, Window, div, px};
 
-use crate::macros::impl_into_element;
 use crate::tokens::Size;
 
 /// A gap with nothing in it.
@@ -12,6 +13,7 @@ use crate::tokens::Size;
 ///
 /// let space = Space::h(Size::Md);
 /// ```
+#[derive(IntoElement)]
 pub struct Space {
     width: Option<f32>,
     height: Option<f32>,
@@ -87,8 +89,6 @@ impl RenderOnce for Space {
         gpui_kit::base::StyledExt::refine_style(element, &self.style)
     }
 }
-
-impl_into_element!(Space);
 
 #[cfg(test)]
 mod tests {

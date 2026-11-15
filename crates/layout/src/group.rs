@@ -1,11 +1,12 @@
 //! A horizontal run of children.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
 };
 
 use crate::align::{Align, Justify};
-use crate::macros::impl_into_element;
 use crate::style::{align_items, justify_content};
 use crate::tokens::Size;
 
@@ -19,6 +20,7 @@ use crate::tokens::Size;
 ///
 /// let group = Group::new().gap(Size::Sm).child("first").child("second");
 /// ```
+#[derive(IntoElement)]
 pub struct Group {
     gap: f32,
     align: Align,
@@ -128,8 +130,6 @@ impl RenderOnce for Group {
         element
     }
 }
-
-impl_into_element!(Group);
 
 #[cfg(test)]
 mod tests {

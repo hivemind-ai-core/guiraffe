@@ -1,11 +1,12 @@
 //! A flex row or column.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
 };
 
 use crate::align::{Align, Justify};
-use crate::macros::impl_into_element;
 use crate::style::{align_items, justify_content};
 use crate::tokens::Size;
 
@@ -37,6 +38,7 @@ pub enum FlexDirection {
 ///     .child("first")
 ///     .child("second");
 /// ```
+#[derive(IntoElement)]
 pub struct Flex {
     direction: FlexDirection,
     gap: f32,
@@ -160,8 +162,6 @@ impl RenderOnce for Flex {
         element
     }
 }
-
-impl_into_element!(Flex);
 
 #[cfg(test)]
 mod tests {

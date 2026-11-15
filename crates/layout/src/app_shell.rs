@@ -1,12 +1,12 @@
 //! The frame an application is built in.
 
+use crate::gpui::IntoElement;
+use crate::tokens::Size;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _, Window,
     div, px,
 };
-
-use crate::macros::impl_into_element;
-use crate::tokens::Size;
 
 /// The parts an application shell is made of.
 ///
@@ -24,6 +24,7 @@ use crate::tokens::Size;
 ///     .main("content")
 ///     .padding(Size::Md);
 /// ```
+#[derive(IntoElement)]
 pub struct AppShell {
     header: Option<AnyElement>,
     navbar: Option<AnyElement>,
@@ -46,6 +47,12 @@ impl Default for AppShell {
     }
 }
 
+/// The width the side bars take until the application says otherwise: a
+/// quarter of the medium container.
+fn default_bar_width() -> Pixels {
+    px(Size::Md.container_width() / 4.)
+}
+
 impl AppShell {
     /// A shell with no parts in it.
     pub fn new() -> Self {
@@ -55,10 +62,10 @@ impl AppShell {
             aside: None,
             footer: None,
             main: None,
-            navbar_width: px(240.),
-            aside_width: px(240.),
-            header_height: px(60.),
-            footer_height: px(40.),
+            navbar_width: default_bar_width(),
+            aside_width: default_bar_width(),
+            header_height: px(Size::Lg.control_height()),
+            footer_height: px(Size::Sm.control_height()),
             padding: 0.,
             navbar_collapsed: false,
             with_border: false,
@@ -216,11 +223,10 @@ impl RenderOnce for AppShell {
     }
 }
 
-impl_into_element!(AppShell);
-
 #[cfg(test)]
 mod tests {
     use super::AppShell;
+    use crate::tokens::Size;
     use gpui_kit::px;
 
     #[test]
@@ -241,8 +247,8 @@ mod tests {
         let shell = AppShell::new();
         assert_eq!(shell.navbar_width, px(240.));
         assert_eq!(shell.aside_width, px(240.));
-        assert_eq!(shell.header_height, px(60.));
-        assert_eq!(shell.footer_height, px(40.));
+        assert_eq!(shell.header_height, px(Size::Lg.control_height()));
+        assert_eq!(shell.footer_height, px(Size::Sm.control_height()));
     }
 
     #[test]

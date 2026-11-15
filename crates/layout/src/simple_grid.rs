@@ -1,11 +1,12 @@
 //! A grid of equally sized cells.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _, Window,
     div, px,
 };
 
-use crate::macros::impl_into_element;
 use crate::tokens::Size;
 use crate::width::ContainerWidth;
 
@@ -39,6 +40,7 @@ pub fn columns_for_min_width(width: f32, min_child_width: f32, spacing: f32) -> 
 ///     .child("two")
 ///     .child("three");
 /// ```
+#[derive(IntoElement)]
 pub struct SimpleGrid {
     cols: u16,
     spacing: f32,
@@ -137,8 +139,6 @@ impl RenderOnce for SimpleGrid {
         element
     }
 }
-
-impl_into_element!(SimpleGrid);
 
 #[cfg(test)]
 mod tests {

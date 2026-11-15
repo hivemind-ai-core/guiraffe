@@ -3,11 +3,11 @@
 //! Run it with `cargo run -p guiraffe-layout --example layout_gallery`.
 
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Div, Render, Window, WindowOptions, div, px, rgb};
+use gpui_kit::{Context, Div, Entity, Render, Window, WindowOptions, div, px, rgb};
 use guiraffe_layout::{
     AppShell, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth, Divider, Flex,
     FlexDirection, Grid, Group, Justify, LabelPosition, Responsive, ScrollArea, SimpleGrid, Size,
-    Space, Splitter, Stack,
+    Space, Splitter, SplitterState, Stack,
 };
 
 const INK: u32 = 0x263b38;
@@ -51,7 +51,9 @@ fn pill(text: impl Into<gpui_kit::SharedString>) -> Div {
         .child(text.into())
 }
 
-struct Gallery;
+struct Gallery {
+    splitter: Entity<SplitterState>,
+}
 
 impl Render for Gallery {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -89,7 +91,7 @@ impl Render for Gallery {
                         .child(stacks())
                         .child(grids())
                         .child(shapes())
-                        .child(shell()),
+                        .child(shell(&self.splitter)),
                 ),
             )
             .footer(
@@ -203,9 +205,9 @@ fn shapes() -> Div {
         )
 }
 
-fn shell() -> Div {
+fn shell(splitter: &Entity<SplitterState>) -> Div {
     card().child(heading("AppShell and Splitter")).child(
-        Splitter::new("gallery-splitter")
+        Splitter::new(splitter)
             .first_size(px(160.))
             .first(
                 div()
@@ -230,8 +232,11 @@ fn shell() -> Div {
 
 fn main() {
     gpui_kit::application().run(|cx| {
-        guiraffe_core::init(cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Gallery))
-            .expect("the gallery window opens");
+        guiraffe_layout::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            let splitter = cx.new(|_| SplitterState::default());
+            cx.new(|_| Gallery { splitter })
+        })
+        .expect("the gallery window opens");
     });
 }

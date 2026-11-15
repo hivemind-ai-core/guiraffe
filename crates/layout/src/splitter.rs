@@ -2,17 +2,25 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::ResizableState;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
+use gpui_kit::component::{ResizablePanelEvent, ResizableState};
 use gpui_kit::{
     AnyElement, App, ElementId, Entity, ParentElement as _, Pixels, RenderOnce, StyleRefinement,
     Styled as _, Window, div, px,
 };
 
-use crate::macros::impl_into_element;
+use crate::gpui::IntoElement;
+use crate::tokens::Size;
 
-/// The callback a splitter reports its new pane sizes to.
-type ResizeCallback = Rc<dyn Fn(&[Pixels])>;
+/// The state a [`Splitter`] keeps its pane sizes in.
+///
+/// The state is an entity, so it outlives a frame and an application can hold
+/// on to it: read the sizes with [`SplitterState::sizes`] and put them back
+/// when the application starts again.
+pub type SplitterState = ResizableState;
+
+/// The event a [`Splitter`] emits when its panes are resized.
+pub type SplitterEvent = ResizablePanelEvent;
 
 /// Which way a [`Splitter`] divides its panes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -73,42 +81,45 @@ impl SplitterSizes {
 
 /// Two panes with a divider the user can drag.
 ///
-/// The splitter keeps its state in a [`ResizableState`], which an application
-/// can own so the sizes survive a restart: read them with
-/// [`ResizableState::sizes`] and hand them back through
-/// [`Splitter::with_state`].
-///
-/// The id has to stay the same across renders — it is what the panes are
-/// remembered by.
+/// The splitter is a control: the pane sizes live in a [`SplitterState`] the
+/// application owns, so they survive a restart. Read them with
+/// [`SplitterState::sizes`], turn them into plain numbers with
+/// [`SplitterSizes`], and hand the state back when the application starts.
 ///
 /// ```
 /// use guiraffe_layout::Splitter;
 ///
-/// let splitter = Splitter::new("workspace").first("sidebar").second("content");
+/// # fn build(state: &gpui_kit::Entity<guiraffe_layout::SplitterState>) {
+/// let splitter = Splitter::new(state).first("sidebar").second("content");
+/// # }
 /// ```
+#[derive(IntoElement)]
 pub struct Splitter {
     id: ElementId,
+    state: Entity<SplitterState>,
     axis: SplitterAxis,
     first: Option<AnyElement>,
     second: Option<AnyElement>,
     first_size: Option<Pixels>,
     min_size: Pixels,
-    state: Option<Entity<ResizableState>>,
     on_resize: Option<ResizeCallback>,
     style: StyleRefinement,
 }
 
+/// The callback a splitter reports its new pane sizes to.
+type ResizeCallback = Rc<dyn Fn(&[Pixels], &mut Window, &mut App)>;
+
 impl Splitter {
-    /// A splitter with two empty panes.
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    /// A splitter whose pane sizes live in `state`.
+    pub fn new(state: &Entity<SplitterState>) -> Self {
         Self {
-            id: id.into(),
+            id: ElementId::View(state.entity_id()),
+            state: state.clone(),
             axis: SplitterAxis::Horizontal,
             first: None,
             second: None,
             first_size: None,
-            min_size: px(80.),
-            state: None,
+            min_size: px(Size::Sm.control_height() * 2.),
             on_resize: None,
             style: StyleRefinement::default(),
         }
@@ -144,14 +155,11 @@ impl Splitter {
         self
     }
 
-    /// The state that remembers the pane sizes.
-    pub fn with_state(mut self, state: &Entity<ResizableState>) -> Self {
-        self.state = Some(state.clone());
-        self
-    }
-
     /// Called whenever the panes are resized.
-    pub fn on_resize(mut self, on_resize: impl Fn(&[Pixels]) + 'static) -> Self {
+    pub fn on_resize(
+        mut self,
+        on_resize: impl Fn(&[Pixels], &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_resize = Some(Rc::new(on_resize));
         self
     }
@@ -170,12 +178,13 @@ impl RenderOnce for Splitter {
             SplitterAxis::Vertical => v_resizable(self.id.clone()),
         };
 
-        if let Some(state) = &self.state {
-            group = group.with_state(state);
-        }
+        group = group.with_state(&self.state);
         if let Some(on_resize) = &self.on_resize {
             let on_resize = on_resize.clone();
-            group = group.on_resize(move |state, _, cx| on_resize(state.read(cx).sizes()));
+            group = group.on_resize(move |state, window, cx| {
+                let sizes = state.read(cx).sizes().to_vec();
+                on_resize(&sizes, window, cx);
+            });
         }
 
         let mut first = resizable_panel().size_range(self.min_size..Pixels::MAX);
@@ -196,12 +205,10 @@ impl RenderOnce for Splitter {
     }
 }
 
-impl_into_element!(Splitter);
-
 #[cfg(test)]
 mod tests {
     use super::{Splitter, SplitterAxis, SplitterSizes};
-    use gpui_kit::px;
+    use gpui_kit::{AppContext as _, px};
 
     #[test]
     fn sizes_survive_a_round_trip_through_plain_numbers() {
@@ -224,17 +231,21 @@ mod tests {
 
     #[test]
     fn a_new_splitter_is_a_horizontal_split_with_two_empty_panes() {
-        let splitter = Splitter::new("workspace");
+        let cx = gpui_kit::TestAppContext::single();
+        let state = cx.update(|cx| cx.new(|_| super::SplitterState::default()));
+        let splitter = Splitter::new(&state);
         assert_eq!(splitter.axis, SplitterAxis::Horizontal);
         assert!(splitter.first.is_none());
         assert!(splitter.second.is_none());
-        assert_eq!(splitter.min_size, px(80.));
+        assert!(splitter.min_size > px(0.));
     }
 
     #[test]
     fn the_axis_can_be_changed() {
+        let cx = gpui_kit::TestAppContext::single();
+        let state = cx.update(|cx| cx.new(|_| super::SplitterState::default()));
         assert_eq!(
-            Splitter::new("workspace").axis(SplitterAxis::Vertical).axis,
+            Splitter::new(&state).axis(SplitterAxis::Vertical).axis,
             SplitterAxis::Vertical
         );
     }

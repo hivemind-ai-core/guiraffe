@@ -1,12 +1,13 @@
 //! A twelve-column grid and the columns that fill it.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _, Window,
     div, px,
 };
 
 use crate::align::Justify;
-use crate::macros::impl_into_element;
 use crate::responsive::Responsive;
 use crate::style::justify_content;
 use crate::tokens::Size;
@@ -29,6 +30,7 @@ pub const DEFAULT_COLUMNS: u16 = 12;
 ///     .child(Col::span(6).child("left"))
 ///     .child(Col::span(6).child("right"));
 /// ```
+#[derive(IntoElement)]
 pub struct Grid {
     columns: u16,
     gutter: f32,
@@ -129,8 +131,6 @@ impl RenderOnce for Grid {
         element
     }
 }
-
-impl_into_element!(Grid);
 
 /// One column of a [`Grid`].
 ///
@@ -253,8 +253,6 @@ impl RenderOnce for Col {
         self.render_at(width, window, cx)
     }
 }
-
-impl_into_element!(Col);
 
 #[cfg(test)]
 mod tests {

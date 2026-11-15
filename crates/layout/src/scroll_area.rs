@@ -1,11 +1,11 @@
 //! A scrollable region.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ElementId, InteractiveElement as _, ParentElement as _, RenderOnce,
     StatefulInteractiveElement as _, StyleRefinement, Window, div,
 };
-
-use crate::macros::impl_into_element;
 
 /// A region whose content scrolls when it does not fit.
 ///
@@ -20,6 +20,7 @@ use crate::macros::impl_into_element;
 ///
 /// let area = ScrollArea::new("list").child("a long list");
 /// ```
+#[derive(IntoElement)]
 pub struct ScrollArea {
     id: ElementId,
     scroll_x: bool,
@@ -96,8 +97,6 @@ impl RenderOnce for ScrollArea {
         element
     }
 }
-
-impl_into_element!(ScrollArea);
 
 #[cfg(test)]
 mod tests {

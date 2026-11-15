@@ -1,11 +1,11 @@
 //! Content centered in both directions.
 
+use crate::gpui::IntoElement;
+
 use gpui_kit::{
     AnyElement, App, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _, Window,
     div,
 };
-
-use crate::macros::impl_into_element;
 
 /// Content centered on both axes.
 ///
@@ -14,6 +14,7 @@ use crate::macros::impl_into_element;
 ///
 /// let center = Center::new().child("middle");
 /// ```
+#[derive(IntoElement)]
 pub struct Center {
     min_height: Option<Pixels>,
     children: Vec<AnyElement>,
@@ -78,8 +79,6 @@ impl RenderOnce for Center {
         element
     }
 }
-
-impl_into_element!(Center);
 
 #[cfg(test)]
 mod tests {

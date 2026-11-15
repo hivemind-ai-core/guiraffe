@@ -56,10 +56,9 @@ impl Render for SplitterHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let resizes = self.resizes.clone();
         div().w(px(400.)).h(px(200.)).child(
-            Splitter::new("workspace")
-                .with_state(&self.state)
+            Splitter::new(&self.state)
                 .first_size(px(200.))
-                .on_resize(move |_| resizes.set(resizes.get() + 1))
+                .on_resize(move |_, _, _| resizes.set(resizes.get() + 1))
                 .first(div().size_full().debug_selector(|| "first".into()))
                 .second(div().size_full().debug_selector(|| "second".into())),
         )
