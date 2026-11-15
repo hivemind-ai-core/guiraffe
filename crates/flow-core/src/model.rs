@@ -148,8 +148,11 @@ impl Edge {
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Graph {
-    pub nodes: BTreeMap<NodeId, Node>,
-    pub edges: BTreeMap<EdgeId, Edge>,
+    pub nodes: im::OrdMap<NodeId, Node>,
+    pub edges: im::OrdMap<EdgeId, Edge>,
+    /// High-water mark; never rewound by undo, serialized even after edge deletion.
+    #[serde(default)]
+    pub edge_id_high_water: EdgeId,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlowError {
@@ -218,6 +221,7 @@ impl Graph {
                 return Err(FlowError::DuplicateId);
             }
         }
+        graph.edge_id_high_water = graph.edges.keys().next_back().copied().unwrap_or(0);
         graph.validate()?;
         Ok(graph)
     }
