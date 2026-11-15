@@ -84,7 +84,7 @@ pub use center::Center;
 pub use container::Container;
 pub use divider::{Divider, DividerOrientation, LabelPosition};
 pub use flex::{Flex, FlexDirection};
-pub use grid::{Col, DEFAULT_COLUMNS, Grid};
+pub use grid::{Col, DEFAULT_COLUMNS, Grid, GridPlacement, Span};
 pub use group::Group;
 pub use responsive::{Breakpoint, Responsive};
 pub use scroll_area::ScrollArea;

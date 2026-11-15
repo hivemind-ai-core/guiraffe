@@ -178,6 +178,20 @@ impl<T> Responsive<T> {
             Responsive::Map { base, .. } => base,
         }
     }
+
+    /// Maps every value of this responsive value.
+    pub fn map<U>(self, map: impl Fn(T) -> U) -> Responsive<U> {
+        match self {
+            Responsive::Value(value) => Responsive::Value(map(value)),
+            Responsive::Map { base, overrides } => Responsive::Map {
+                base: map(base),
+                overrides: overrides
+                    .into_iter()
+                    .map(|(band, value)| (band, map(value)))
+                    .collect(),
+            },
+        }
+    }
 }
 
 impl<T> From<T> for Responsive<T> {

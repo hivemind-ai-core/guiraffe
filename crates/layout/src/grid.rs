@@ -3,8 +3,7 @@
 use crate::gpui::IntoElement;
 
 use gpui_kit::{
-    AnyElement, App, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _, Window,
-    div, px,
+    AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
 };
 
 use crate::align::Justify;
@@ -16,11 +15,52 @@ use crate::width::ContainerWidth;
 /// The number of columns a grid has unless it is told otherwise.
 pub const DEFAULT_COLUMNS: u16 = 12;
 
+/// How many of the grid's columns a [`Col`] takes.
+///
+/// A column that takes the whole grid is the default: it fills the row it is
+/// in, whatever the grid's column count is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Span {
+    /// The whole width of the grid.
+    Full,
+    /// A number of the grid's columns.
+    Columns(u16),
+}
+
+impl From<u16> for Span {
+    fn from(columns: u16) -> Self {
+        Span::Columns(columns)
+    }
+}
+
+/// Where a column sits in the grid.
+///
+/// Lines are counted from one, the way CSS counts them: a column that spans
+/// six of twelve columns and starts after two empty ones runs from line three
+/// to line nine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridPlacement {
+    /// The row the column is in, counted from one.
+    pub row: u16,
+    /// The first grid line the column covers.
+    pub start: u16,
+    /// The line after the last one the column covers.
+    pub end: u16,
+}
+
+/// Keeps a line number inside the range GPUI can be given.
+fn to_i16(line: u16) -> i16 {
+    i16::try_from(line).unwrap_or(i16::MAX)
+}
+
 /// A grid of columns.
 ///
 /// A grid has twelve columns by default. Each [`Col`] takes a span of those
 /// columns and may leave an offset before it. Both can change with the width
 /// the grid is laid out in.
+///
+/// A column that does not fit in the row it is placed in moves down to the
+/// next one, the way a grid of columns wraps.
 ///
 /// ```
 /// use guiraffe_layout::{Col, Grid, Size};
@@ -86,6 +126,8 @@ impl Grid {
     }
 
     /// Whether the grid grows to fill the space its parent offers.
+    ///
+    /// The last row takes the room that is left over.
     pub fn grow(mut self, grow: bool) -> Self {
         self.grow = grow;
         self
@@ -108,6 +150,53 @@ impl Grid {
         self.children.extend(children.into_iter().map(Into::into));
         self
     }
+
+    /// Where the grid's columns sit at a width.
+    ///
+    /// The columns fill the grid one after another. A column that does not
+    /// fit in the row it would land in moves down to the next row, and the
+    /// grid never grows past the columns it has.
+    pub fn layout(&self, width: f32) -> Vec<GridPlacement> {
+        let columns = u32::from(self.columns.max(1));
+        let mut placements = Vec::with_capacity(self.children.len());
+        let mut row = 1u32;
+        let mut cursor = 0u32;
+
+        for column in &self.children {
+            let span = u32::from(column.span_at(self.columns, width));
+            let offset = u32::from(column.offset_at(self.columns, width));
+
+            let (start, end) = if offset > 0 {
+                if offset + span > columns {
+                    // The offset pushes the column past the last column of the
+                    // grid: it moves down and takes the offset it can afford.
+                    row += 1;
+                    cursor = 0;
+                    let offset = columns.saturating_sub(span);
+                    (offset + 1, offset + 1 + span)
+                } else {
+                    (offset + 1, offset + 1 + span)
+                }
+            } else if cursor + span > columns {
+                // The column does not fit in what is left of the row.
+                row += 1;
+                cursor = 0;
+                (1, 1 + span)
+            } else {
+                let start = cursor + 1;
+                (start, start + span)
+            };
+
+            cursor = cursor.max(end - 1);
+            placements.push(GridPlacement {
+                row: u16::try_from(row).unwrap_or(u16::MAX),
+                start: u16::try_from(start).unwrap_or(u16::MAX),
+                end: u16::try_from(end).unwrap_or(u16::MAX),
+            });
+        }
+
+        placements
+    }
 }
 
 impl gpui_kit::Styled for Grid {
@@ -119,31 +208,58 @@ impl gpui_kit::Styled for Grid {
 impl RenderOnce for Grid {
     fn render(self, window: &mut Window, cx: &mut App) -> impl gpui_kit::IntoElement {
         let width = self.container_width.resolve(window);
-        let mut element = div().grid().grid_cols(self.columns).gap(px(self.gutter));
-        element = justify_content(element, self.justify);
+        let placements = self.layout(width.as_f32());
+
+        let mut rows: Vec<Vec<(GridPlacement, Col)>> = Vec::new();
+        for (column, placement) in self.children.into_iter().zip(placements) {
+            match rows.last_mut() {
+                Some(row)
+                    if row
+                        .first()
+                        .is_some_and(|(first, _)| first.row == placement.row) =>
+                {
+                    row.push((placement, column));
+                }
+                _ => rows.push(vec![(placement, column)]),
+            }
+        }
+
+        let last_row = rows.len().saturating_sub(1);
+        let mut grid = div().flex().flex_col().gap(px(self.gutter));
         if self.grow {
-            element = element.flex_grow_1();
+            grid = grid.flex_grow_1();
         }
-        element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
-        for column in self.children {
-            element = element.child(column.render_at(width, window, cx));
+
+        for (index, row) in rows.into_iter().enumerate() {
+            let mut line = div().grid().grid_cols(self.columns).gap(px(self.gutter));
+            line = justify_content(line, self.justify);
+            if self.grow && index == last_row {
+                line = line.flex_grow_1();
+            }
+            for (placement, column) in row {
+                line = line.child(column.render_at(placement, window, cx));
+            }
+            grid = grid.child(line);
         }
-        element
+
+        gpui_kit::base::StyledExt::refine_style(grid, &self.style)
     }
 }
 
 /// One column of a [`Grid`].
 ///
 /// A column spans a number of the grid's columns and may start after an
-/// offset. Both numbers can be different per breakpoint.
+/// offset. Both numbers can be different per breakpoint. A column without a
+/// span fills the grid.
 ///
 /// ```
-/// use guiraffe_layout::{Breakpoint, Col, Responsive};
+/// use guiraffe_layout::{Breakpoint, Col, Responsive, Span};
 ///
 /// let column = Col::span(Responsive::base(12).at(Breakpoint::Md, 6));
+/// let full = Col::span(Span::Full);
 /// ```
 pub struct Col {
-    span: Responsive<u16>,
+    span: Responsive<Span>,
     offset: Responsive<u16>,
     children: Vec<AnyElement>,
     style: StyleRefinement,
@@ -156,10 +272,10 @@ impl Default for Col {
 }
 
 impl Col {
-    /// A column that spans the whole grid.
+    /// A column that fills the grid.
     pub fn new() -> Self {
         Self {
-            span: Responsive::value(DEFAULT_COLUMNS),
+            span: Responsive::value(Span::Full),
             offset: Responsive::value(0),
             children: Vec::new(),
             style: StyleRefinement::default(),
@@ -173,11 +289,11 @@ impl Col {
     ///
     /// let column = Col::span(6);
     /// ```
-    pub fn span(span: impl Into<Responsive<u16>>) -> Self {
+    pub fn span(span: impl Into<Responsive<Span>>) -> Self {
         Self::new().with_span(span)
     }
 
-    fn with_span(mut self, span: impl Into<Responsive<u16>>) -> Self {
+    fn with_span(mut self, span: impl Into<Responsive<Span>>) -> Self {
         self.span = span.into();
         self
     }
@@ -213,6 +329,18 @@ impl From<AnyElement> for Col {
     }
 }
 
+impl From<u16> for Responsive<Span> {
+    fn from(columns: u16) -> Self {
+        Responsive::value(Span::Columns(columns))
+    }
+}
+
+impl From<Responsive<u16>> for Responsive<Span> {
+    fn from(span: Responsive<u16>) -> Self {
+        span.map(Span::Columns)
+    }
+}
+
 impl gpui_kit::Styled for Col {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
@@ -220,25 +348,35 @@ impl gpui_kit::Styled for Col {
 }
 
 impl Col {
-    /// The grid lines this column occupies at a given width.
+    /// How many of the grid's columns this column takes at a width.
     ///
-    /// Lines are counted from one, the way CSS counts them: a column that
-    /// spans six of twelve columns and starts after two empty ones runs from
-    /// line three to line nine.
-    pub fn placement(&self, width: f32) -> (u16, u16) {
-        let span = self.span.resolve(width).max(1);
-        let offset = self.offset.resolve(width);
-        (offset + 1, offset + 1 + span)
+    /// A column that fills the grid takes all of them; a column that names a
+    /// number takes that many, never more than the grid has.
+    pub fn span_at(&self, columns: u16, width: f32) -> u16 {
+        let columns = columns.max(1);
+        match self.span.resolve(width) {
+            Span::Full => columns,
+            Span::Columns(span) => span.clamp(1, columns),
+        }
     }
 
-    fn render_at(self, width: Pixels, _: &mut Window, _: &mut App) -> impl gpui_kit::IntoElement {
-        let (start, end) = self.placement(width.as_f32());
-        let mut element = div();
-        if start > 1 {
-            element = element.col_start(start as i16).col_end(end as i16);
-        } else {
-            element = element.col_span(end - 1);
-        }
+    /// How many columns are left empty before this one at a width.
+    pub fn offset_at(&self, columns: u16, width: f32) -> u16 {
+        let columns = columns.max(1);
+        self.offset.resolve(width).min(columns.saturating_sub(1))
+    }
+
+    fn render_at(
+        self,
+        placement: GridPlacement,
+        _: &mut Window,
+        _: &mut App,
+    ) -> impl gpui_kit::IntoElement {
+        let mut element = div()
+            .col_start(to_i16(placement.start))
+            .col_end(to_i16(placement.end))
+            .row_start(to_i16(placement.row))
+            .row_end(to_i16(placement.row.saturating_add(1)));
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
         for child in self.children {
             element = element.child(child);
@@ -250,17 +388,26 @@ impl Col {
 impl RenderOnce for Col {
     fn render(self, window: &mut Window, cx: &mut App) -> impl gpui_kit::IntoElement {
         let width = ContainerWidth::Viewport.resolve(window);
-        self.render_at(width, window, cx)
+        let placement = GridPlacement {
+            row: 1,
+            start: 1,
+            end: self.span_at(DEFAULT_COLUMNS, width.as_f32()) + 1,
+        };
+        self.render_at(placement, window, cx)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Col, DEFAULT_COLUMNS, Grid};
+    use super::{Col, DEFAULT_COLUMNS, Grid, GridPlacement, Span};
     use crate::align::Justify;
     use crate::responsive::{Breakpoint, Responsive};
     use crate::tokens::Size;
     use crate::width::ContainerWidth;
+
+    fn placement(row: u16, start: u16, end: u16) -> GridPlacement {
+        GridPlacement { row, start, end }
+    }
 
     #[test]
     fn a_new_grid_has_twelve_columns_and_the_default_gutter() {
@@ -280,39 +427,100 @@ mod tests {
 
     #[test]
     fn a_column_without_a_span_fills_the_grid() {
-        let column = Col::new();
-        assert_eq!(column.placement(1200.), (1, DEFAULT_COLUMNS + 1));
+        let grid = Grid::new().columns(6).child(Col::new());
+        assert_eq!(grid.layout(1200.), vec![placement(1, 1, 7)]);
+    }
+
+    #[test]
+    fn a_column_without_a_span_fills_a_wider_grid_too() {
+        let grid = Grid::new().columns(24).child(Col::new());
+        assert_eq!(grid.layout(1200.), vec![placement(1, 1, 25)]);
     }
 
     #[test]
     fn an_offset_pushes_the_column_to_the_right() {
-        let column = Col::span(6).offset(2);
-        assert_eq!(column.placement(1200.), (3, 9));
+        let grid = Grid::new().child(Col::span(6).offset(2));
+        assert_eq!(grid.layout(1200.), vec![placement(1, 3, 9)]);
     }
 
     #[test]
     fn a_column_can_be_built_from_a_plain_span() {
-        let column = Col::span(4);
-        assert_eq!(column.placement(1200.), (1, 5));
+        let grid = Grid::new().child(Col::span(4));
+        assert_eq!(grid.layout(1200.), vec![placement(1, 1, 5)]);
     }
 
     #[test]
     fn a_span_never_collapses_to_nothing() {
-        let column = Col::span(0);
-        assert_eq!(column.placement(1200.), (1, 2));
+        let grid = Grid::new().child(Col::span(0));
+        assert_eq!(grid.layout(1200.), vec![placement(1, 1, 2)]);
+    }
+
+    #[test]
+    fn the_columns_fill_the_grid_one_after_the_other() {
+        let grid = Grid::new().child(Col::span(6)).child(Col::span(6));
+        assert_eq!(
+            grid.layout(1200.),
+            vec![placement(1, 1, 7), placement(1, 7, 13)]
+        );
+    }
+
+    #[test]
+    fn a_column_that_does_not_fit_moves_to_the_next_row() {
+        let grid = Grid::new().child(Col::span(8)).child(Col::span(8));
+        assert_eq!(
+            grid.layout(1200.),
+            vec![placement(1, 1, 9), placement(2, 1, 9)]
+        );
+    }
+
+    #[test]
+    fn a_column_never_reaches_past_the_last_column_of_the_grid() {
+        let grid = Grid::new().columns(4).child(Col::span(12));
+        assert_eq!(grid.layout(1200.), vec![placement(1, 1, 5)]);
+    }
+
+    #[test]
+    fn an_offset_that_does_not_fit_moves_the_column_to_the_next_row() {
+        let grid = Grid::new()
+            .child(Col::span(4))
+            .child(Col::span(4).offset(10));
+        assert_eq!(
+            grid.layout(1200.),
+            vec![placement(1, 1, 5), placement(2, 9, 13)],
+            "the offset is trimmed so the column still fits"
+        );
     }
 
     #[test]
     fn a_column_can_change_span_per_breakpoint() {
-        let column = Col::span(Responsive::base(12).at(Breakpoint::Md, 6));
-        assert_eq!(column.placement(500.), (1, 13));
-        assert_eq!(column.placement(1000.), (1, 7));
+        let grid = Grid::new().child(Col::span(Responsive::base(12).at(Breakpoint::Md, 6)));
+        assert_eq!(grid.layout(500.), vec![placement(1, 1, 13)]);
+        assert_eq!(grid.layout(1000.), vec![placement(1, 1, 7)]);
     }
 
     #[test]
     fn a_column_can_change_offset_per_breakpoint() {
-        let column = Col::new().offset(Responsive::base(0).at(Breakpoint::Lg, 3));
-        assert_eq!(column.placement(500.), (1, 13));
-        assert_eq!(column.placement(1300.), (4, 16));
+        let grid = Grid::new().child(Col::new().offset(Responsive::base(0).at(Breakpoint::Lg, 3)));
+        assert_eq!(grid.layout(500.), vec![placement(1, 1, 13)]);
+        assert_eq!(
+            grid.layout(1300.),
+            vec![placement(2, 1, 13)],
+            "the offset no longer fits, so the column moves down"
+        );
+    }
+
+    #[test]
+    fn huge_numbers_do_not_overflow() {
+        let grid = Grid::new().child(Col::span(u16::MAX).offset(u16::MAX));
+        let layout = grid.layout(1200.);
+        assert_eq!(layout.len(), 1);
+        assert!(layout[0].start <= grid.columns);
+        assert!(layout[0].end <= grid.columns + 1);
+    }
+
+    #[test]
+    fn a_full_span_can_be_set_explicitly() {
+        let grid = Grid::new().columns(6).child(Col::span(Span::Full));
+        assert_eq!(grid.layout(1200.), vec![placement(1, 1, 7)]);
     }
 }

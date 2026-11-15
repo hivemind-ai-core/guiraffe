@@ -232,6 +232,64 @@ fn a_wide_container_halves_the_span(cx: &mut TestAppContext) {
     assert_eq!(column.size.width, px(120.), "six of twelve columns");
 }
 
+struct WrappingGridHarness;
+
+impl Render for WrappingGridHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(240.)).h(px(120.)).child(
+            Grid::new()
+                .gutter_px(0.)
+                .child(Col::span(8).child(div().h(px(10.)).debug_selector(|| "a".into())))
+                .child(Col::span(8).child(div().h(px(10.)).debug_selector(|| "b".into()))),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_column_that_does_not_fit_moves_to_the_next_row(cx: &mut TestAppContext) {
+    let cx = harness!(cx, WrappingGridHarness);
+
+    let first = cx.debug_bounds("a").expect("the first column");
+    let second = cx.debug_bounds("b").expect("the second column");
+
+    assert_eq!(first.size.width, px(160.), "eight of twelve columns");
+    assert_eq!(
+        second.size.width,
+        px(160.),
+        "the column keeps its span on the next row"
+    );
+    assert_eq!(
+        second.top(),
+        px(10.),
+        "the column that does not fit moves down a row"
+    );
+}
+
+struct DefaultSpanGridHarness;
+
+impl Render for DefaultSpanGridHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(240.)).h(px(120.)).child(
+            Grid::new()
+                .columns(6)
+                .gutter_px(0.)
+                .child(Col::new().child(div().h(px(10.)).debug_selector(|| "a".into()))),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_column_without_a_span_fills_the_grid(cx: &mut TestAppContext) {
+    let cx = harness!(cx, DefaultSpanGridHarness);
+
+    let column = cx.debug_bounds("a").expect("the column");
+    assert_eq!(
+        column.size.width,
+        px(240.),
+        "the column takes every column of the grid"
+    );
+}
+
 struct SimpleGridHarness;
 
 impl Render for SimpleGridHarness {
