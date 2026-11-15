@@ -21,9 +21,11 @@
 
 mod align;
 mod flex;
+mod grid;
 mod group;
 mod macros;
 mod responsive;
+mod simple_grid;
 mod stack;
 mod style;
 mod tokens;
@@ -31,8 +33,10 @@ mod width;
 
 pub use align::{Align, Justify};
 pub use flex::{Flex, FlexDirection};
+pub use grid::{Col, Grid, DEFAULT_COLUMNS};
 pub use group::Group;
 pub use responsive::{Breakpoint, Responsive};
+pub use simple_grid::{SimpleGrid, columns_for_min_width};
 pub use stack::Stack;
 pub use tokens::Size;
 pub use width::ContainerWidth;
