@@ -54,7 +54,7 @@ impl Stack {
 
     /// The space between children, in pixels.
     pub fn gap_px(mut self, gap: f32) -> Self {
-        self.gap = gap;
+        self.gap = crate::style::gap_value(gap);
         self
     }
 

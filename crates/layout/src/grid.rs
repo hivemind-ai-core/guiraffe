@@ -115,7 +115,7 @@ impl Grid {
 
     /// The space between columns and rows, in pixels.
     pub fn gutter_px(mut self, gutter: f32) -> Self {
-        self.gutter = gutter;
+        self.gutter = crate::style::gap_value(gutter);
         self
     }
 

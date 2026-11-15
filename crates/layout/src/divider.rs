@@ -64,7 +64,7 @@ impl Divider {
             label: None,
             label_position: LabelPosition::Center,
             color: None,
-            thickness: 1.,
+            thickness: crate::theme::hairline_width(),
             style: StyleRefinement::default(),
         }
     }
@@ -130,7 +130,7 @@ impl RenderOnce for Divider {
         let label_element = label.map(|label| {
             div()
                 .px(px(Size::Xs.spacing()))
-                .text_xs()
+                .text_size(crate::theme::font_size_px(cx, Size::Xs))
                 .text_color(crate::theme::muted_foreground(cx))
                 .child(label)
         });
@@ -164,7 +164,11 @@ mod tests {
         assert_eq!(divider.orientation, DividerOrientation::Horizontal);
         assert_eq!(divider.label_position, LabelPosition::Center);
         assert_eq!(divider.label, None);
-        assert_eq!(divider.thickness, 1.);
+        assert_eq!(
+            divider.thickness,
+            crate::theme::hairline_width(),
+            "the rule takes the width of a hairline from the theme"
+        );
     }
 
     #[test]

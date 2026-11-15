@@ -87,13 +87,13 @@ impl SimpleGrid {
 
     /// The space between the cells.
     pub fn spacing(mut self, spacing: impl Into<Responsive<f32>>) -> Self {
-        self.spacing = spacing.into();
+        self.spacing = spacing.into().map(crate::style::gap_value);
         self
     }
 
     /// The space between the rows of cells.
     pub fn vertical_spacing(mut self, spacing: impl Into<Responsive<f32>>) -> Self {
-        self.vertical_spacing = Some(spacing.into());
+        self.vertical_spacing = Some(spacing.into().map(crate::style::gap_value));
         self
     }
 
