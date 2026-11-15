@@ -3003,8 +3003,12 @@ dependencies = [
 name = "guiraffe-windows"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui-kit",
  "guiraffe-core",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
