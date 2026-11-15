@@ -290,6 +290,65 @@ fn a_column_without_a_span_fills_the_grid(cx: &mut TestAppContext) {
     );
 }
 
+struct GrowingGroupHarness;
+
+impl Render for GrowingGroupHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(200.)).h(px(200.)).child(
+            Group::new()
+                .grow(true)
+                .gap(Size::Xs)
+                .child(div().h(px(20.)).debug_selector(|| "first".into()))
+                .child(div().h(px(20.)).debug_selector(|| "second".into())),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_growing_group_spreads_its_children_over_the_width(cx: &mut TestAppContext) {
+    let cx = harness!(cx, GrowingGroupHarness);
+
+    let first = cx.debug_bounds("first").expect("the first child");
+    let second = cx.debug_bounds("second").expect("the second child");
+
+    let gap = Size::Xs.spacing();
+    let share = px((200. - gap) / 2.);
+    assert_eq!(first.size.width, share, "the children share the width");
+    assert_eq!(second.size.width, share);
+    assert_eq!(second.left(), px(200.) - share);
+}
+
+struct GrowingGridHarness;
+
+impl Render for GrowingGridHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(200.)).h(px(200.)).child(
+            Grid::new()
+                .gutter_px(0.)
+                .grow(true)
+                .child(Col::span(12).child(div().h(px(20.)).debug_selector(|| "first".into())))
+                .child(
+                    Col::span(12).child(div().h_full().debug_selector(|| "second".into())),
+                ),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_growing_grid_fills_the_room_with_its_last_row(cx: &mut TestAppContext) {
+    let cx = harness!(cx, GrowingGridHarness);
+
+    let first = cx.debug_bounds("first").expect("the first row");
+    let second = cx.debug_bounds("second").expect("the last row");
+
+    assert_eq!(first.size.height, px(20.), "the first row keeps its height");
+    assert_eq!(
+        second.size.height,
+        px(180.),
+        "the last row takes what is left"
+    );
+}
+
 struct SimpleGridHarness;
 
 impl Render for SimpleGridHarness {

@@ -227,7 +227,9 @@ impl RenderOnce for Grid {
         let last_row = rows.len().saturating_sub(1);
         let mut grid = div().flex().flex_col().gap(px(self.gutter));
         if self.grow {
-            grid = grid.flex_grow_1();
+            // A growing grid fills the room it is given, and the last row
+            // takes what is left of it.
+            grid = grid.h_full().flex_grow_1();
         }
 
         for (index, row) in rows.into_iter().enumerate() {
@@ -372,11 +374,13 @@ impl Col {
         _: &mut Window,
         _: &mut App,
     ) -> impl gpui_kit::IntoElement {
+        // Every row of the grid is a grid of its own, so a column always
+        // sits in the first row of the one it belongs to.
         let mut element = div()
             .col_start(to_i16(placement.start))
             .col_end(to_i16(placement.end))
-            .row_start(to_i16(placement.row))
-            .row_end(to_i16(placement.row.saturating_add(1)));
+            .row_start(1)
+            .row_end(2);
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
         for child in self.children {
             element = element.child(child);

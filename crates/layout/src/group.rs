@@ -125,7 +125,12 @@ impl RenderOnce for Group {
         }
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
         for child in self.children {
-            element = element.child(child);
+            if self.grow {
+                // A growing group shares the width out between its children.
+                element = element.child(div().flex_1().min_w_0().child(child));
+            } else {
+                element = element.child(child);
+            }
         }
         element
     }
