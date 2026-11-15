@@ -1,6 +1,7 @@
 //! A twelve-column grid and the columns that fill it.
 
 use crate::gpui::IntoElement;
+use gpui_kit::base::ElementExt as _;
 
 use gpui_kit::{
     AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
@@ -10,7 +11,7 @@ use crate::align::Justify;
 use crate::responsive::Responsive;
 use crate::style::justify_content;
 use crate::tokens::Size;
-use crate::width::ContainerWidth;
+use crate::width::{ContainerWidth, measure};
 
 /// The number of columns a grid has unless it is told otherwise.
 pub const DEFAULT_COLUMNS: u16 = 12;
@@ -207,8 +208,8 @@ impl gpui_kit::Styled for Grid {
 
 impl RenderOnce for Grid {
     fn render(self, window: &mut Window, cx: &mut App) -> impl gpui_kit::IntoElement {
-        let width = self.container_width.resolve(window);
-        let placements = self.layout(width.as_f32());
+        let width = self.container_width.resolve(window, cx).as_f32();
+        let placements = self.layout(width);
 
         let mut rows: Vec<Vec<(GridPlacement, Col)>> = Vec::new();
         for (column, placement) in self.children.into_iter().zip(placements) {
@@ -231,6 +232,11 @@ impl RenderOnce for Grid {
             // takes what is left of it.
             grid = grid.h_full().flex_grow_1();
         }
+        if self.container_width.measurement().is_some() {
+            // A grid that measures its container fills it, so the measurement
+            // is the width of the container and not the width of the columns.
+            grid = grid.relative().w_full();
+        }
 
         for (index, row) in rows.into_iter().enumerate() {
             let mut line = div().grid().grid_cols(self.columns).gap(px(self.gutter));
@@ -242,6 +248,12 @@ impl RenderOnce for Grid {
                 line = line.child(column.render_at(placement, window, cx));
             }
             grid = grid.child(line);
+        }
+        if let Some(state) = self.container_width.measurement() {
+            let state = state.clone();
+            grid = grid.on_prepaint(move |bounds, _, cx| {
+                measure(&state, bounds, cx);
+            });
         }
 
         gpui_kit::base::StyledExt::refine_style(grid, &self.style)
@@ -391,11 +403,11 @@ impl Col {
 
 impl RenderOnce for Col {
     fn render(self, window: &mut Window, cx: &mut App) -> impl gpui_kit::IntoElement {
-        let width = ContainerWidth::Viewport.resolve(window);
+        let width = ContainerWidth::Viewport.resolve(window, cx).as_f32();
         let placement = GridPlacement {
             row: 1,
             start: 1,
-            end: self.span_at(DEFAULT_COLUMNS, width.as_f32()) + 1,
+            end: self.span_at(DEFAULT_COLUMNS, width) + 1,
         };
         self.render_at(placement, window, cx)
     }

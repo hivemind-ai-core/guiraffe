@@ -1,6 +1,7 @@
 //! A grid of equally sized cells.
 
 use crate::gpui::IntoElement;
+use gpui_kit::base::ElementExt as _;
 
 use gpui_kit::{
     AnyElement, App, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _, Window,
@@ -9,7 +10,7 @@ use gpui_kit::{
 
 use crate::responsive::Responsive;
 use crate::tokens::Size;
-use crate::width::ContainerWidth;
+use crate::width::{ContainerWidth, measure};
 
 impl From<Size> for Responsive<f32> {
     fn from(size: Size) -> Self {
@@ -150,8 +151,8 @@ impl gpui_kit::Styled for SimpleGrid {
 }
 
 impl RenderOnce for SimpleGrid {
-    fn render(self, window: &mut Window, _cx: &mut App) -> impl gpui_kit::IntoElement {
-        let width = self.container_width.resolve(window).as_f32();
+    fn render(self, window: &mut Window, cx: &mut App) -> impl gpui_kit::IntoElement {
+        let width = self.container_width.resolve(window, cx).as_f32();
         let spacing = self.spacing_at(width);
         let cols = match self.min_child_width {
             Some(min_child_width) => {
@@ -162,6 +163,12 @@ impl RenderOnce for SimpleGrid {
         let mut element = div().grid().grid_cols(cols).gap(px(spacing));
         if let Some(vertical_spacing) = self.vertical_spacing_at(width) {
             element = element.gap_y(px(vertical_spacing));
+        }
+        if let Some(state) = self.container_width.measurement() {
+            let state = state.clone();
+            element = element.w_full().on_prepaint(move |bounds, _, cx| {
+                measure(&state, bounds, cx);
+            });
         }
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
         for child in self.children {

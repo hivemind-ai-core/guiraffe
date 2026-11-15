@@ -10,7 +10,7 @@ use gpui_kit::{
     Context, Entity, InputEvent as _, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels,
     Point, Render, TestAppContext, Window, div, point, px,
 };
-use guiraffe_layout::{AppShell, Size, Splitter};
+use guiraffe_layout::{AppShell, AppShellState, Size, Splitter};
 
 macro_rules! harness {
     ($cx:expr, $view:expr) => {{
@@ -329,19 +329,17 @@ fn a_drag_that_changes_nothing_reports_no_resize_and_leaves_the_siblings_alone(
 }
 
 struct ShellHarness {
-    collapsed: bool,
+    state: Entity<AppShellState>,
 }
 
 impl Render for ShellHarness {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let collapsed = self.collapsed;
-        let toggle = cx.listener(|this: &mut Self, _, _, _| {
-            this.collapsed = !this.collapsed;
+        let state = self.state.clone();
+        let toggle = cx.listener(move |_: &mut Self, _, _, cx| {
+            state.update(cx, |state, cx| state.toggle_navbar(cx));
         });
         div().w(px(400.)).h(px(300.)).child(
-            AppShell::new()
-                .navbar_width(px(100.))
-                .navbar_collapsed(collapsed)
+            AppShell::new(&self.state)
                 .navbar(
                     div().h_full().child(
                         div()
@@ -358,7 +356,13 @@ impl Render for ShellHarness {
 
 #[gpui_kit::test]
 fn a_button_in_the_navbar_can_collapse_it(cx: &mut TestAppContext) {
-    let cx = harness!(cx, ShellHarness { collapsed: false });
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(|cx| {
+        let state = AppShellState::new(cx);
+        state.update(cx, |state, cx| state.set_navbar_width(px(100.), cx));
+        state
+    });
+    let cx = harness!(cx, ShellHarness { state });
 
     let navbar = cx.debug_bounds("main").expect("the main content");
     assert_eq!(navbar.left(), px(100.), "the navbar takes its room");
@@ -368,7 +372,47 @@ fn a_button_in_the_navbar_can_collapse_it(cx: &mut TestAppContext) {
 
     let main = cx.debug_bounds("main").expect("the main content");
     assert_eq!(main.left(), px(0.), "the navbar gave its room back");
-    assert!(cx.debug_bounds("toggle").is_none(), "the navbar is gone");
+    assert!(
+        cx.debug_bounds("toggle").is_some(),
+        "the navbar keeps its place, so what is inside it keeps its state"
+    );
+}
+
+struct NarrowShellHarness {
+    state: Entity<AppShellState>,
+}
+
+impl Render for NarrowShellHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(300.)).h(px(200.)).child(
+            AppShell::new(&self.state)
+                .navbar(div().h_full().debug_selector(|| "navbar".into()))
+                .main(div().h_full().debug_selector(|| "main".into())),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_narrow_window_collapses_the_navbar(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(|cx| {
+        let state = AppShellState::new(cx);
+        state.update(cx, |state, cx| {
+            state.set_navbar_width(px(100.), cx);
+            state.collapse_below_width(400., cx);
+        });
+        state
+    });
+    let cx = harness!(cx, NarrowShellHarness { state });
+
+    let navbar = cx.debug_bounds("navbar").expect("the navbar");
+    assert_eq!(
+        navbar.size.width,
+        px(0.),
+        "the navbar collapsed, because the window is too narrow for it"
+    );
+    let main = cx.debug_bounds("main").expect("the main content");
+    assert_eq!(main.left(), px(0.));
 }
 
 struct SizedHarness;

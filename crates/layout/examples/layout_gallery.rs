@@ -5,9 +5,9 @@
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Div, Entity, Render, Window, WindowOptions, div, px, rgb};
 use guiraffe_layout::{
-    AppShell, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth, Divider, Flex,
-    FlexDirection, Grid, Group, Justify, LabelPosition, Responsive, ScrollArea, SimpleGrid, Size,
-    Space, Splitter, SplitterState, Stack,
+    AppShell, AppShellState, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth,
+    Divider, Flex, FlexDirection, Grid, Group, Justify, LabelPosition, Responsive, ScrollArea,
+    SimpleGrid, Size, Space, Splitter, SplitterState, Stack,
 };
 
 const INK: u32 = 0x263b38;
@@ -52,12 +52,13 @@ fn pill(text: impl Into<gpui_kit::SharedString>) -> Div {
 }
 
 struct Gallery {
+    shell: Entity<AppShellState>,
     splitter: Entity<SplitterState>,
 }
 
 impl Render for Gallery {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        AppShell::new()
+        AppShell::new(&self.shell)
             .header(
                 Group::new()
                     .justify(Justify::Between)
@@ -235,7 +236,8 @@ fn main() {
         guiraffe_layout::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             let splitter = cx.new(|_| SplitterState::default());
-            cx.new(|_| Gallery { splitter })
+            let shell = AppShellState::new(cx);
+            cx.new(|_| Gallery { shell, splitter })
         })
         .expect("the gallery window opens");
     });

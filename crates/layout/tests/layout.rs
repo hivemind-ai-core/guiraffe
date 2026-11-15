@@ -1,11 +1,12 @@
 //! Layout assertions for the widgets in this crate.
 
+use gpui_kit::Entity;
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Render, TestAppContext, Window, div, px};
 use guiraffe_layout::{
-    AppShell, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth, Divider, Flex,
-    FlexDirection, Grid, Group, LabelPosition, Responsive, ScrollArea, SimpleGrid, Size, Space,
-    Stack,
+    AppShell, AppShellState, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth,
+    ContainerWidthState, Divider, Flex, FlexDirection, Grid, Group, LabelPosition, Responsive,
+    ScrollArea, SimpleGrid, Size, Space, Stack,
 };
 
 macro_rules! harness {
@@ -347,6 +348,50 @@ fn a_growing_grid_fills_the_room_with_its_last_row(cx: &mut TestAppContext) {
     );
 }
 
+struct MeasuredGridHarness {
+    width: Entity<ContainerWidthState>,
+}
+
+impl Render for MeasuredGridHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(600.)).h(px(120.)).child(
+            Grid::new()
+                .gutter_px(0.)
+                .container_width(ContainerWidth::Measured(self.width.clone()))
+                .child(
+                    Col::span(Responsive::base(12).at(Breakpoint::Xs, 6))
+                        .child(div().h(px(10.)).debug_selector(|| "a".into())),
+                )
+                .child(
+                    Col::span(Responsive::base(12).at(Breakpoint::Xs, 6))
+                        .child(div().h(px(10.)).debug_selector(|| "b".into())),
+                ),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_grid_follows_the_container_it_is_in_and_not_the_window(cx: &mut TestAppContext) {
+    let width = cx.update(ContainerWidthState::new);
+    let (_, cx): (Entity<MeasuredGridHarness>, _) =
+        cx.add_window_view(|_, _| MeasuredGridHarness { width });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    // The measurement happens while the grid is painted, so the grid answers
+    // to the width of its container on the frame after that.
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    let first = cx.debug_bounds("a").expect("the first column");
+    let second = cx.debug_bounds("b").expect("the second column");
+
+    assert_eq!(
+        first.size.width,
+        px(300.),
+        "the column is half of the container, not of the window"
+    );
+    assert_eq!(second.size.width, px(300.));
+    assert_eq!(second.left(), px(300.));
+}
+
 struct SimpleGridHarness;
 
 impl Render for SimpleGridHarness {
@@ -491,14 +536,14 @@ fn a_space_pushes_what_follows_it_along(cx: &mut TestAppContext) {
     assert_eq!(content.left(), px(16.), "the medium gap");
 }
 
-struct AppShellHarness;
+struct AppShellHarness {
+    state: Entity<AppShellState>,
+}
 
 impl Render for AppShellHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().w(px(400.)).h(px(300.)).child(
-            AppShell::new()
-                .navbar_width(px(100.))
-                .aside_width(px(80.))
+            AppShell::new(&self.state)
                 .navbar(div().h_full().debug_selector(|| "navbar".into()))
                 .main(div().h_full().debug_selector(|| "main".into()))
                 .aside(div().h_full().debug_selector(|| "aside".into())),
@@ -506,9 +551,22 @@ impl Render for AppShellHarness {
     }
 }
 
+/// A shell whose bars have the widths the application asked for.
+fn shell_state(cx: &mut TestAppContext) -> Entity<AppShellState> {
+    cx.update(|cx| {
+        let state = AppShellState::new(cx);
+        state.update(cx, |state, cx| {
+            state.set_navbar_width(px(100.), cx);
+            state.set_aside_width(px(80.), cx);
+        });
+        state
+    })
+}
+
 #[gpui_kit::test]
 fn an_app_shell_keeps_its_parts_where_they_belong(cx: &mut TestAppContext) {
-    let cx = harness!(cx, AppShellHarness);
+    let state = shell_state(cx);
+    let cx = harness!(cx, AppShellHarness { state });
 
     let navbar = cx.debug_bounds("navbar").expect("the navbar");
     let main = cx.debug_bounds("main").expect("the main content");
@@ -526,14 +584,14 @@ fn an_app_shell_keeps_its_parts_where_they_belong(cx: &mut TestAppContext) {
     assert_eq!(aside.size.width, px(80.));
 }
 
-struct CollapsedShellHarness;
+struct CollapsedShellHarness {
+    state: Entity<AppShellState>,
+}
 
 impl Render for CollapsedShellHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().w(px(400.)).h(px(300.)).child(
-            AppShell::new()
-                .navbar_width(px(100.))
-                .navbar_collapsed(true)
+            AppShell::new(&self.state)
                 .navbar(div().h_full().debug_selector(|| "navbar".into()))
                 .main(div().h_full().debug_selector(|| "main".into())),
         )
@@ -541,10 +599,25 @@ impl Render for CollapsedShellHarness {
 }
 
 #[gpui_kit::test]
-fn a_collapsed_navbar_takes_no_room(cx: &mut TestAppContext) {
-    let cx = harness!(cx, CollapsedShellHarness);
+fn a_collapsed_navbar_takes_no_room_but_stays_where_it_is(cx: &mut TestAppContext) {
+    let state = cx.update(|cx| {
+        let state = AppShellState::new(cx);
+        state.update(cx, |state, cx| {
+            state.set_navbar_width(px(100.), cx);
+            state.collapse_navbar(cx);
+        });
+        state
+    });
+    let cx = harness!(cx, CollapsedShellHarness { state });
 
-    assert!(cx.debug_bounds("navbar").is_none(), "the navbar is gone");
+    let navbar = cx
+        .debug_bounds("navbar")
+        .expect("the navbar is still there");
+    assert_eq!(
+        navbar.size.width,
+        px(0.),
+        "the collapsed navbar takes no room"
+    );
     let main = cx.debug_bounds("main").expect("the main content");
     assert_eq!(main.left(), px(0.));
     assert_eq!(main.size.width, px(400.));
