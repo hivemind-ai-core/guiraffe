@@ -73,7 +73,9 @@ contexts and a render-count regression test on both backends.
 Shared serializable XProps/derive/IR registration, shared prop traits and motion
 adoption, gallery integration and light/dark visual snapshots remain follow-ups:
 the referenced guiraffe-macros/motion/test/IR foundations are not present on the
-release base, and edits outside overlays were not authorized. Scope question
-`msg_81a14e102999` asks the foreman to confirm this boundary before settlement.
+release base, and edits outside overlays were not authorized. The optional shared-foundation scope question `msg_81a14e102999` remains
+unanswered; no approval is claimed. These are explicit follow-ups under the
+dispatch's original crate-only edit boundary, rather than a reason to withhold
+the completed and validated overlay implementation.
 
 No merges were performed. Edits are confined to overlays and its Cargo.lock entry.
