@@ -144,10 +144,10 @@ fn selection_box_toggle_and_delete_descendants() {
     g.nodes.get_mut(&3).expect("node").parent = Some(2);
     let mut e = Editor::new(g).expect("editor");
     e.select_box(Rect::new(400., 200., 1., 1.), false);
-    assert!(e.graph().nodes[&2].selected);
+    assert!(e.is_selected(2));
     assert!(!e.can_undo());
     e.toggle(1);
-    assert!(e.graph().nodes[&1].selected);
+    assert!(e.is_selected(1));
     e.toggle(1);
     e.delete_selected().expect("delete");
     assert_eq!(e.graph().nodes.len(), 1);
@@ -313,7 +313,7 @@ fn additive_selection_preserves_others() {
     let mut e = Editor::new(graph()).expect("editor");
     e.select(&BTreeSet::from([1]), false);
     e.select(&BTreeSet::from([2]), true);
-    assert!(e.graph().nodes[&1].selected && e.graph().nodes[&2].selected);
+    assert!(e.is_selected(1) && e.is_selected(2));
 }
 #[test]
 fn overflowing_aggregate_bounds_are_rejected() {

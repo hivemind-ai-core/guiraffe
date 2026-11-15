@@ -17,6 +17,44 @@ impl Default for LayeredLayout {
 }
 impl Layout for LayeredLayout {
     fn positions(&self, graph: &Graph) -> BTreeMap<NodeId, Point> {
+        if graph.nodes.values().any(|n| n.parent.is_some()) {
+            let root = |mut id: NodeId| {
+                while let Some(parent) = graph.nodes[&id].parent {
+                    id = parent;
+                }
+                id
+            };
+            let mut groups = BTreeMap::new();
+            for n in graph.nodes.values() {
+                groups
+                    .entry(root(n.id))
+                    .and_modify(|r: &mut crate::Rect| *r = r.union(n.rect()))
+                    .or_insert(n.rect());
+            }
+            let mut flat = Graph::default();
+            for (id, bounds) in &groups {
+                let mut n = graph.nodes[id].clone();
+                n.pos = bounds.origin;
+                n.size = bounds.size;
+                flat.nodes.insert(*id, n);
+            }
+            for e in graph.edges.values() {
+                let (source, target) = (root(e.source.node), root(e.target.node));
+                if source != target {
+                    flat.edges
+                        .insert(e.id, crate::Edge::new(e.id, source, target));
+                }
+            }
+            let positions = self.positions(&flat);
+            return graph
+                .nodes
+                .values()
+                .map(|n| {
+                    let r = root(n.id);
+                    (n.id, n.pos + positions[&r] - groups[&r].origin)
+                })
+                .collect();
+        }
         let mut degree: BTreeMap<_, usize> = graph.nodes.keys().map(|id| (*id, 0)).collect();
         let mut next: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
         for edge in graph.edges.values() {
@@ -86,6 +124,6 @@ impl Layout for LayeredLayout {
 impl Editor {
     pub fn arrange(&mut self, layout: &dyn Layout) -> Result<bool, FlowError> {
         let positions = layout.positions(self.graph());
-        self.move_nodes(&positions, None)
+        self.set_positions(&positions)
     }
 }

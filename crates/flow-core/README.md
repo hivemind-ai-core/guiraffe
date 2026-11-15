@@ -1,7 +1,7 @@
 # guiraffe-flow-core
 
 GPUI-free graph documents, atomic editing, bounded undo/redo, spatial queries and
-cached edge geometry. Depends only on serde and serde_json.
+cached edge geometry. Uses serde/serde_json and structurally shared `im` maps.
 
 `Graph::from_parts` validates IDs, finite positive node rectangles, named handles,
 handle directions and acyclic parent chains. Deserialization is deliberately
@@ -13,12 +13,16 @@ before using it. Nodes carry arbitrary JSON data and an application-defined
 An error changes neither document nor history; no-op edits preserve redo.
 Selection does not enter history. A drag should preview positions and call
 `move_nodes` once at release. Deleting a selected parent deletes descendants and
-incident edges. History defaults to 100 document snapshots and can be disabled.
-Nodes marked `draggable = false` retain their positions during moves and layout.
+incident edges. History defaults to 100 structurally shared document snapshots and can be disabled.
+Nodes marked `draggable = false` stay put during direct dragging. Moving an ancestor
+translates its entire subtree, including pinned descendants; layout places every node.
 
 Parents express structural ownership. All positions are **absolute world
-coordinates**; moving a parent does not implicitly move children. Hosts can move
-a complete subtree in a single transaction. There are no implicit group frames.
+coordinates**, including child positions (unlike React Flow parent-relative positions).
+Moving a parent translates all descendants by the same delta in preview and commit.
+Only the moved root snaps; descendant offsets remain exact. Selecting both a parent
+and child does not apply the movement twice. There are no implicit group frames.
+Layered layout treats each root subtree as one bounding box and preserves offsets.
 
 Connection validation checks source/target handle kinds, optional self/parallel
 and cycle policies, then the application's `ConnectionValidator` hook.
@@ -31,7 +35,19 @@ arc-length midpoint labels, incident edge lists and independent node/edge BVHs.
 Edge indexing includes the complete cached stroke, so a crossing edge remains
 visible when both endpoints are outside the viewport. `SpatialIndex::query` and
 `Scene::visible` reuse caller-owned vectors and return deterministic ID order.
-Use `Scene::hit_node` and `hit_edge` for topmost picking.
+`Scene::hit_node` orders parents before descendants, then by ID. Use
+`Editor::hit_node` and `Editor::z_key` for selection-aware picking and paint order.
+Selection is owned by `Editor::selected_nodes/selected_edges`, outside the document
+and its history. `Node::selected` is an import hint consumed by `Editor::new`; node
+renderers receive the live flag in their view copy. Undo does not resurrect deleted
+selection. New connections use the serialized `Graph::edge_id_high_water`, which
+is never rewound by undo or deletion.
+
+Graph maps are persistent ordered maps with the same JSON map representation.
+History snapshots share unchanged pages. Moves/deletions update affected routes
+and refit BVH branches; arbitrary `edit` closures still run structural validation.
+New index entries split only their destination leaf; large movements can degrade
+spatial grouping over time, so a host may rebuild a scene for rebalancing.
 
 Run `cargo run --release -p guiraffe-flow-core --example stress` for the
 criterion-free 5,000-node/10,000-edge geometry benchmark. The companion UI crate
