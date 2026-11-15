@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
     gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
+        guiraffe_core::init(cx);
         let result = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| match Flow::new(graph, cx) {
                 Ok(flow) => flow,

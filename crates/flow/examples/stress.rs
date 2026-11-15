@@ -2,7 +2,7 @@
 //! This does not measure GPU presentation or establish desktop refresh rate.
 use gpui_kit::{AppContext, TestAppContext, TestDispatcher, WindowOptions, test::TestWindowExt};
 use guiraffe_flow::{
-    Flow,
+    Flow, FlowOptions,
     core::{Edge, Graph, Node, Point, Viewport},
 };
 use std::time::Instant;
@@ -23,11 +23,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         }),
     )?;
+    let no_minimap = std::env::args().any(|arg| arg == "--no-minimap");
     let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_stress"));
     let (window, view) = cx.update(|cx| {
-        gpui_kit::init(cx);
+        guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(|cx| Flow::new(graph, cx).expect("validated stress graph"))
+            cx.new(|cx| {
+                Flow::new(graph, cx)
+                    .expect("validated stress graph")
+                    .options(FlowOptions {
+                        minimap: !no_minimap,
+                        ..Default::default()
+                    })
+            })
         })
         .expect("window")
     });
@@ -53,8 +61,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     times.sort_unstable();
     println!(
-        "5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50={}us p95={}us p99={}us (no GPU/presentation)",
-        times[100], times[190], times[198]
+        "last paint grid/edges/minimap (us): {:?}",
+        view.read_with(&cx, |v, _| v.paint_timings())
+    );
+    println!(
+        "visible nodes/edges: {:?}",
+        view.read_with(&cx, |v, _| v.visible_counts())
+    );
+    println!(
+        "5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50={}us p95={}us p99={}us (no GPU/presentation; minimap={})",
+        times[100], times[190], times[198], !no_minimap
     );
     Ok(())
 }

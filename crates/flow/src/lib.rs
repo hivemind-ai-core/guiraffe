@@ -1,14 +1,15 @@
 //! Retained GPUI flow canvas. Model and geometry live in `guiraffe-flow-core`.
 mod interaction;
+mod node;
 mod paint;
 #[cfg(test)]
 mod tests;
-use core::{
-    ConnectionValidator, FlowError, Graph, Node, Point as WorldPoint, Rect, Viewport, Visible,
-};
+use core::{ConnectionValidator, FlowError, Graph, Node, Point as WorldPoint, Viewport, Visible};
 use gpui_kit::{prelude::*, *};
+use guiraffe_core::{ColorName, GuiraffeTheme, Size};
 pub use guiraffe_flow_core as core;
 pub use interaction::{Gesture, Interaction};
+use std::collections::BTreeMap;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -21,15 +22,17 @@ pub trait NodeRenderer: 'static {
 }
 pub struct DefaultNodeRenderer;
 impl NodeRenderer for DefaultNodeRenderer {
-    fn render(&self, node: &Node, zoom: f32, _: &mut Window, _: &mut App) -> AnyElement {
+    fn render(&self, node: &Node, zoom: f32, _: &mut Window, cx: &mut App) -> AnyElement {
         div()
             .size_full()
             .flex()
             .items_center()
             .justify_center()
             .overflow_hidden()
-            .text_size(px(14. * zoom))
-            .text_color(rgb(0xe2e8f0))
+            .text_size(px(Size::Sm.font_size()
+                * GuiraffeTheme::global(cx).scale
+                * zoom))
+            .text_color(GuiraffeTheme::global(cx).surfaces().text.to_hsla())
             .child(node.label().to_owned())
             .into_any_element()
     }
@@ -79,6 +82,7 @@ pub struct Flow {
     visible: Visible,
     meshes: Rc<RefCell<paint::MeshCache>>,
     last_error: Option<FlowError>,
+    nodes: BTreeMap<core::NodeId, Entity<node::NodeCard>>,
 }
 impl EventEmitter<FlowEvent> for Flow {}
 impl Flow {
@@ -93,6 +97,7 @@ impl Flow {
             visible: Visible::default(),
             meshes: Rc::new(RefCell::new(paint::MeshCache::default())),
             last_error: None,
+            nodes: BTreeMap::new(),
         })
     }
     pub fn options(mut self, options: FlowOptions) -> Self {
@@ -110,6 +115,14 @@ impl Flow {
     }
     pub fn graph(&self) -> &Graph {
         self.interaction.editor.graph()
+    }
+    /// Last paint stage wall times in microseconds: grid, edges, minimap.
+    pub fn paint_timings(&self) -> (u128, u128, u128) {
+        self.meshes.borrow().timings
+    }
+    /// Node and edge counts admitted by the last viewport query, including drag previews.
+    pub fn visible_counts(&self) -> (usize, usize) {
+        (self.visible.nodes.len(), self.visible.edges.len())
     }
     pub fn viewport(&self) -> Viewport {
         self.interaction.viewport
@@ -153,7 +166,7 @@ impl Flow {
     }
     pub fn fit(&mut self, cx: &mut Context<Self>) {
         self.interaction.cancel();
-        if let Some(bounds) = self.interaction.editor.scene().bounds {
+        if let Some(bounds) = self.interaction.editor.scene().bounds() {
             self.interaction.viewport.fit(bounds, self.size(), 40.);
         }
         cx.emit(FlowEvent::ViewportChanged(self.viewport()));
@@ -247,6 +260,8 @@ impl Focusable for Flow {
 }
 impl Render for Flow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = GuiraffeTheme::global(cx).clone();
+        let surfaces = theme.surfaces();
         let viewport = self.viewport();
         let size = if self.size() == WorldPoint::default() {
             WorldPoint::new(
@@ -273,39 +288,44 @@ impl Render for Flow {
             self.visible.edges.dedup();
         }
         let mut nodes = Vec::with_capacity(self.visible.nodes.len());
+        self.nodes
+            .retain(|id, _| self.visible.nodes.binary_search(id).is_ok());
         for id in &self.visible.nodes {
-            let node = &self.graph().nodes[id];
+            let node = &self.interaction.editor.graph().nodes[id];
             let position = viewport.screen(self.interaction.preview(*id).unwrap_or(node.pos));
-            let content = self.renderer.render(node, viewport.zoom, window, cx);
-            let mut frame = div()
-                .id(("flow-node", *id))
-                .test_support()
+            let card = self.nodes.entry(*id).or_insert_with(|| {
+                cx.new(|_| node::NodeCard {
+                    node: node.clone(),
+                    zoom: viewport.zoom,
+                    theme: theme.clone(),
+                    renderer: self.renderer.clone(),
+                })
+            });
+            if card.read(cx).node != *node
+                || card.read(cx).zoom != viewport.zoom
+                || card.read(cx).theme != theme
+            {
+                card.update(cx, |card, cx| {
+                    card.node = node.clone();
+                    card.zoom = viewport.zoom;
+                    card.theme = theme.clone();
+                    cx.notify();
+                });
+            }
+            let style = StyleRefinement::default()
                 .absolute()
                 .left(px(position.x))
                 .top(px(position.y))
                 .w(px(node.size.x * viewport.zoom))
-                .h(px(node.size.y * viewport.zoom))
-                .rounded(px(10. * viewport.zoom))
-                .bg(rgb(0x202a3b))
-                .border_1()
-                .border_color(rgb(if node.selected { 0x8b9cff } else { 0x465169 }))
-                .child(content);
-            for handle in &node.handles {
-                let p = viewport.screen(handle.position(Rect {
-                    origin: self.interaction.preview(*id).unwrap_or(node.pos),
-                    size: node.size,
-                })) - position;
-                frame = frame.child(
-                    div()
-                        .absolute()
-                        .left(px(p.x - 5.))
-                        .top(px(p.y - 5.))
-                        .size(px(10.))
-                        .rounded_full()
-                        .bg(rgb(0x9eafff)),
-                );
+                .h(px(node.size.y * viewport.zoom));
+            // GPUI 0.3.7 does not replay accessibility nodes from its paint cache.
+            if window.is_a11y_active() {
+                let mut frame = div().child(card.clone());
+                *frame.style() = style;
+                nodes.push(frame.into_any_element());
+            } else {
+                nodes.push(card.clone().cached(style).into_any_element());
             }
-            nodes.push(frame);
         }
         let labels: Vec<_> = self
             .visible
@@ -316,7 +336,7 @@ impl Render for Flow {
                 if edge.label.is_empty() || viewport.zoom < 0.4 {
                     return None;
                 }
-                let path = &self.interaction.editor.scene().paths[id];
+                let path = &self.interaction.editor.scene().paths()[id];
                 let source = self.interaction.preview(edge.source.node);
                 let target = self.interaction.preview(edge.target.node);
                 let label = if source.is_some() || target.is_some() {
@@ -334,9 +354,9 @@ impl Render for Flow {
                         .max_w(px(180.))
                         .overflow_hidden()
                         .rounded_md()
-                        .bg(rgb(0x162033))
-                        .text_color(rgb(0xb8c6e3))
-                        .text_size(px(11.))
+                        .bg(surfaces.surface.to_hsla())
+                        .text_color(surfaces.dimmed.to_hsla())
+                        .text_size(px(Size::Xs.font_size() * theme.scale))
                         .px_1()
                         .child(edge.label.clone()),
                 )
@@ -350,6 +370,7 @@ impl Render for Flow {
             &self.visible,
             self.options.background,
             self.options.minimap,
+            &theme,
         );
         let mut root = div()
             .id("flow")
@@ -358,7 +379,7 @@ impl Render for Flow {
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(rgb(0x111827))
+            .bg(surfaces.body.to_hsla())
             .child(
                 canvas(
                     move |b, _, cx| {
@@ -385,7 +406,7 @@ impl Render for Flow {
                     // Minimap is painted in the lower right; clicks recenter the camera.
                     if this.options.minimap && paint::minimap_rect(this.size()).contains(p) {
                         this.interaction.cancel();
-                        if let Some(bounds) = this.interaction.editor.scene().bounds {
+                        if let Some(bounds) = this.interaction.editor.scene().bounds() {
                             let world = paint::minimap_world(p, this.size(), bounds);
                             this.interaction.viewport.pan =
                                 this.size() * 0.5 - world * this.viewport().zoom;
@@ -467,7 +488,7 @@ impl Render for Flow {
                     .absolute()
                     .left_2()
                     .bottom_2()
-                    .text_color(rgb(0xffb4b4))
+                    .text_color(ColorName::Red.shade(6).to_hsla())
                     .child(error.to_string()),
             );
         }

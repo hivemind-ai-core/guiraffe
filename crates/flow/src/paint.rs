@@ -1,6 +1,7 @@
 //! Cached world-space tessellation with bounded storage and indexed culling.
 use crate::{Background, Gesture, Interaction};
-use gpui_kit::{Bounds, Path, PathBuilder, Pixels, Window, fill, point, px, rgb};
+use gpui_kit::{Bounds, Path, PathBuilder, Pixels, Window, fill, point, px};
+use guiraffe_core::{GuiraffeTheme, Rgb, Surfaces};
 use guiraffe_flow_core::{
     EdgeId, EdgePath, Marker, Point as WorldPoint, Rect, Scene, Viewport, Visible,
 };
@@ -15,12 +16,16 @@ pub(crate) struct MeshCache {
     order: VecDeque<EdgeId>,
     vertices: usize,
     pub misses: usize,
+    pub timings: (u128, u128, u128),
+    minimap: Option<MinimapMeshes>,
+    grid: Option<GridMesh>,
 }
 impl MeshCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.order.clear();
         self.vertices = 0;
+        self.minimap = None;
     }
     fn get(&mut self, id: EdgeId, route: &EdgePath) -> Option<&Path<Pixels>> {
         if !self.entries.contains_key(&id) {
@@ -44,6 +49,27 @@ impl MeshCache {
         self.entries.get(&id)
     }
 }
+struct GridMesh {
+    size: WorldPoint,
+    step: f32,
+    background: Background,
+    path: Path<Pixels>,
+}
+fn rectangle(path: &mut Path<Pixels>, rect: Rect) {
+    let a = pixel(rect.origin);
+    let b = pixel(WorldPoint::new(rect.max().x, rect.origin.y));
+    let c = pixel(rect.max());
+    let d = pixel(WorldPoint::new(rect.origin.x, rect.max().y));
+    let uv = (point(0., 1.), point(0., 1.), point(0., 1.));
+    path.push_triangle((a, b, c), uv);
+    path.push_triangle((a, c, d), uv);
+}
+struct MinimapMeshes {
+    scene: Arc<Scene>,
+    size: WorldPoint,
+    normal: Path<Pixels>,
+    selected: Path<Pixels>,
+}
 fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
     let mut builder = PathBuilder::stroke(px(1.5));
     for (i, p) in route.points.iter().enumerate() {
@@ -58,21 +84,36 @@ fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
 fn pixel(p: WorldPoint) -> gpui_kit::Point<Pixels> {
     point(px(p.x), px(p.y))
 }
-fn paint_mesh(
+fn transformed_mesh(
     path: &Path<Pixels>,
     viewport: Viewport,
     origin: gpui_kit::Point<Pixels>,
-    window: &mut Window,
-) {
+) -> Path<Pixels> {
     // GPUI owns the submitted triangles. Transform copies, preserving cached world vertices.
     let mut screen = Path::new(origin + pixel(viewport.pan));
+    screen.bounds = Bounds::new(
+        path.bounds.origin * viewport.zoom + origin + pixel(viewport.pan) - point(px(1.), px(1.)),
+        gpui_kit::size(
+            path.bounds.size.width * viewport.zoom + px(2.),
+            path.bounds.size.height * viewport.zoom + px(2.),
+        ),
+    );
     screen
         .vertices
         .extend(path.vertices.iter().cloned().map(|mut vertex| {
             vertex.xy_position = vertex.xy_position * viewport.zoom + origin + pixel(viewport.pan);
             vertex
         }));
-    window.paint_path(screen, rgb(0x7186b3));
+    screen
+}
+fn paint_mesh(
+    path: &Path<Pixels>,
+    viewport: Viewport,
+    origin: gpui_kit::Point<Pixels>,
+    window: &mut Window,
+    color: Rgb,
+) {
+    window.paint_path(transformed_mesh(path, viewport, origin), color.to_hsla());
 }
 pub(crate) struct Frame {
     scene: Arc<Scene>,
@@ -82,9 +123,17 @@ pub(crate) struct Frame {
     minimap: bool,
     gesture: Option<Gesture>,
     grid: Option<f32>,
+    surfaces: Surfaces,
+    accent: Rgb,
 }
 impl Frame {
-    pub fn new(i: &Interaction, visible: &Visible, background: Background, minimap: bool) -> Self {
+    pub fn new(
+        i: &Interaction,
+        visible: &Visible,
+        background: Background,
+        minimap: bool,
+        theme: &GuiraffeTheme,
+    ) -> Self {
         Self {
             scene: i.editor.scene_shared(),
             viewport: i.viewport,
@@ -93,6 +142,8 @@ impl Frame {
             minimap,
             gesture: i.gesture.clone(),
             grid: i.grid,
+            surfaces: theme.surfaces(),
+            accent: theme.primary_color(),
         }
     }
     fn preview(&self, id: u64) -> Option<WorldPoint> {
@@ -106,7 +157,10 @@ impl Frame {
     }
     pub fn paint(&self, bounds: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
         cache.misses = 0;
-        self.grid(bounds, window);
+        let started = std::time::Instant::now();
+        self.grid(bounds, cache, window);
+        let grid_us = started.elapsed().as_micros();
+        let edge_started = std::time::Instant::now();
         let graph = self.scene.graph();
         for id in &self.edges {
             let edge = &graph.edges[id];
@@ -115,14 +169,26 @@ impl Frame {
             if from.is_some() || to.is_some() {
                 if let Ok(route) = EdgePath::new(graph, edge, from, to) {
                     if let Some(path) = mesh(&route) {
-                        paint_mesh(&path, self.viewport, bounds.origin, window);
+                        paint_mesh(
+                            &path,
+                            self.viewport,
+                            bounds.origin,
+                            window,
+                            self.surfaces.dimmed,
+                        );
                     }
                     self.markers(&route, edge.marker_start, edge.marker_end, bounds, window);
                 }
             } else {
-                let route = &self.scene.paths[id];
+                let route = &self.scene.paths()[id];
                 if let Some(path) = cache.get(*id, route) {
-                    paint_mesh(path, self.viewport, bounds.origin, window);
+                    paint_mesh(
+                        path,
+                        self.viewport,
+                        bounds.origin,
+                        window,
+                        self.surfaces.dimmed,
+                    );
                 }
                 self.markers(route, edge.marker_start, edge.marker_end, bounds, window);
                 if edge.animated {
@@ -135,7 +201,7 @@ impl Frame {
                         let p = pixel(self.viewport.screen(*p)) + bounds.origin;
                         window.paint_quad(fill(
                             Bounds::new(p - point(px(2.), px(2.)), gpui_kit::size(px(4.), px(4.))),
-                            rgb(0xb6c6ff),
+                            self.accent.to_hsla(),
                         ));
                     }
                     window.request_animation_frame();
@@ -150,7 +216,7 @@ impl Frame {
             builder.move_to(bounds.origin + pixel(self.viewport.screen(from)));
             builder.line_to(bounds.origin + pixel(self.viewport.screen(*at)));
             if let Ok(path) = builder.build() {
-                window.paint_path(path, rgb(0xa5b4fc));
+                window.paint_path(path, self.accent.to_hsla());
             }
         }
         if let Some(Gesture::Box { start, end }) = &self.gesture {
@@ -160,56 +226,73 @@ impl Frame {
                     bounds.origin + pixel(r.origin),
                     gpui_kit::size(px(r.size.x), px(r.size.y)),
                 ),
-                gpui_kit::rgba(0x8b9cff33),
+                self.accent.alpha(0.2).to_hsla(),
             ));
         }
+        let edge_us = edge_started.elapsed().as_micros();
+        let minimap_started = std::time::Instant::now();
         if self.minimap {
-            self.minimap(bounds, window);
+            self.minimap(bounds, cache, window);
         }
+        cache.timings = (grid_us, edge_us, minimap_started.elapsed().as_micros());
     }
-    fn grid(&self, b: Bounds<Pixels>, window: &mut Window) {
+    fn grid(&self, b: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
         if self.background == Background::None {
             return;
         }
-        let step = (self.grid.unwrap_or(20.).max(8.) * self.viewport.zoom).max(16.);
-        let width = b.size.width.as_f32();
-        let height = b.size.height.as_f32();
-        let mut path = PathBuilder::stroke(px(0.6));
-        let mut x = self.viewport.pan.x.rem_euclid(step);
-        while x < width {
-            let mut y = self.viewport.pan.y.rem_euclid(step);
-            if self.background == Background::Lines {
-                path.move_to(b.origin + pixel(WorldPoint::new(x, 0.)));
-                path.line_to(b.origin + pixel(WorldPoint::new(x, height)));
-            } else {
-                while y < height {
-                    let p = b.origin + pixel(WorldPoint::new(x, y));
-                    let r = if self.background == Background::Cross {
-                        3.
-                    } else {
-                        0.7
-                    };
-                    path.move_to(p - point(px(r), px(0.)));
-                    path.line_to(p + point(px(r), px(0.)));
-                    if self.background == Background::Cross {
-                        path.move_to(p - point(px(0.), px(r)));
-                        path.line_to(p + point(px(0.), px(r)));
+        let raw = self.grid.filter(|g| g.is_finite()).unwrap_or(20.);
+        let step = (raw.max(8.) * self.viewport.zoom).max(16.);
+        let size = WorldPoint::new(b.size.width.as_f32(), b.size.height.as_f32());
+        if cache
+            .grid
+            .as_ref()
+            .is_none_or(|g| g.size != size || g.step != step || g.background != self.background)
+        {
+            let mut path = Path::new(pixel(WorldPoint::new(-step, -step)));
+            let mut x = -step;
+            while x < size.x + step {
+                if self.background == Background::Lines {
+                    rectangle(&mut path, Rect::new(x, -step, 0.6, size.y + 2. * step));
+                } else {
+                    let mut y = -step;
+                    while y < size.y + step {
+                        if self.background == Background::Cross {
+                            rectangle(&mut path, Rect::new(x - 3., y - 0.3, 6., 0.6));
+                            rectangle(&mut path, Rect::new(x - 0.3, y - 3., 0.6, 6.));
+                        } else {
+                            rectangle(&mut path, Rect::new(x - 0.6, y - 0.6, 1.2, 1.2));
+                        }
+                        y += step;
                     }
+                }
+                x += step;
+            }
+            if self.background == Background::Lines {
+                let mut y = -step;
+                while y < size.y + step {
+                    rectangle(&mut path, Rect::new(-step, y, size.x + 2. * step, 0.6));
                     y += step;
                 }
             }
-            x += step;
+            cache.grid = Some(GridMesh {
+                size,
+                step,
+                background: self.background,
+                path,
+            });
         }
-        if self.background == Background::Lines {
-            let mut y = self.viewport.pan.y.rem_euclid(step);
-            while y < height {
-                path.move_to(b.origin + pixel(WorldPoint::new(0., y)));
-                path.line_to(b.origin + pixel(WorldPoint::new(width, y)));
-                y += step;
-            }
-        }
-        if let Ok(path) = path.build() {
-            window.paint_path(path, rgb(0x334155));
+        if let Some(grid) = &cache.grid {
+            let pan = WorldPoint::new(
+                self.viewport.pan.x.rem_euclid(step),
+                self.viewport.pan.y.rem_euclid(step),
+            );
+            paint_mesh(
+                &grid.path,
+                Viewport { pan, zoom: 1. },
+                b.origin,
+                window,
+                self.surfaces.border,
+            );
         }
     }
     fn markers(
@@ -256,11 +339,11 @@ impl Frame {
                 builder.close();
             }
             if let Ok(path) = builder.build() {
-                window.paint_path(path, rgb(0x9caee0));
+                window.paint_path(path, self.accent.to_hsla());
             }
         }
     }
-    fn minimap(&self, b: Bounds<Pixels>, window: &mut Window) {
+    fn minimap(&self, b: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
         let size = WorldPoint::new(b.size.width.as_f32(), b.size.height.as_f32());
         let map = minimap_rect(size);
         window.paint_quad(fill(
@@ -268,22 +351,59 @@ impl Frame {
                 b.origin + pixel(map.origin),
                 gpui_kit::size(px(map.size.x), px(map.size.y)),
             ),
-            rgb(0x263249),
+            self.surfaces.surface.to_hsla(),
         ));
-        let Some(bounds) = self.scene.bounds else {
+        let Some(bounds) = self.scene.bounds() else {
             return;
         };
         let camera = map_camera(size, bounds);
-        for node in self.scene.graph().nodes.values() {
-            let p = camera.screen(node.pos);
-            let s = node.size * camera.zoom;
-            window.paint_quad(fill(
-                Bounds::new(
-                    b.origin + pixel(p),
-                    gpui_kit::size(px(s.x.max(1.)), px(s.y.max(1.))),
-                ),
-                rgb(if node.selected { 0xa5b4fc } else { 0x7588af }),
-            ));
+        if cache
+            .minimap
+            .as_ref()
+            .is_none_or(|m| !Arc::ptr_eq(&m.scene, &self.scene) || m.size != size)
+        {
+            let mut normal = Path::new(pixel(map.origin));
+            let mut selected = Path::new(pixel(map.origin));
+            for node in self.scene.graph().nodes.values() {
+                let p = camera.screen(node.pos);
+                let s = node.size * camera.zoom;
+                let right = p.x + s.x.max(1.);
+                let bottom = p.y + s.y.max(1.);
+                let a = pixel(p);
+                let b = pixel(WorldPoint::new(right, p.y));
+                let c = pixel(WorldPoint::new(right, bottom));
+                let d = pixel(WorldPoint::new(p.x, bottom));
+                let path = if node.selected {
+                    &mut selected
+                } else {
+                    &mut normal
+                };
+                let uv = (point(0., 1.), point(0., 1.), point(0., 1.));
+                path.push_triangle((a, b, c), uv);
+                path.push_triangle((a, c, d), uv);
+            }
+            cache.minimap = Some(MinimapMeshes {
+                scene: self.scene.clone(),
+                size,
+                normal,
+                selected,
+            });
+        }
+        if let Some(meshes) = &cache.minimap {
+            paint_mesh(
+                &meshes.normal,
+                Viewport::default(),
+                b.origin,
+                window,
+                self.surfaces.dimmed,
+            );
+            paint_mesh(
+                &meshes.selected,
+                Viewport::default(),
+                b.origin,
+                window,
+                self.accent,
+            );
         }
         let visible = self.viewport.visible(size);
         let screen = Rect {
@@ -304,7 +424,7 @@ impl Frame {
                     b.origin + pixel(min),
                     gpui_kit::size(px(max.x - min.x), px(max.y - min.y)),
                 ),
-                gpui_kit::rgba(0xa5b4fc44),
+                self.accent.alpha(0.27).to_hsla(),
             ));
         }
     }
@@ -353,6 +473,35 @@ mod tests {
         cache.clear();
         assert_eq!(cache.vertices, 0);
         assert!(cache.entries.is_empty());
+    }
+    #[test]
+    fn transformed_mesh_metadata_contains_all_transformed_vertices() {
+        let graph = Graph::from_parts(
+            [
+                Node::new(1, "", WorldPoint::default()),
+                Node::new(2, "", WorldPoint::new(400., 100.)),
+            ],
+            [Edge::new(1, 1, 2)],
+        )
+        .expect("graph");
+        let route = EdgePath::new(&graph, &graph.edges[&1], None, None).expect("route");
+        let cached = mesh(&route).expect("mesh");
+        let viewport = Viewport {
+            pan: WorldPoint::new(-150., 200.),
+            zoom: 2.,
+        };
+        let translated = transformed_mesh(&cached, viewport, point(px(40.), px(70.)));
+        assert_eq!(translated.vertices.len(), cached.vertices.len());
+        for vertex in &translated.vertices {
+            assert!(
+                translated.bounds.contains(&vertex.xy_position),
+                "bounds={:?}, vertex={:?}, source={:?}",
+                translated.bounds,
+                vertex.xy_position,
+                cached.bounds
+            );
+        }
+        assert_ne!(translated.bounds, cached.bounds);
     }
     #[test]
     fn minimap_mapping_centers_on_graph_and_roundtrips() {

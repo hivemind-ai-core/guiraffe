@@ -1,5 +1,10 @@
-use super::*;
+use crate::{Flow, FlowError, Graph, Node, NodeRenderer, Viewport, WorldPoint};
+use gpui_kit::{
+    AnyElement, AnyWindowHandle, App, AppContext, Entity, IntoElement, ParentElement, ScrollDelta,
+    Window, WindowOptions, div, point, px,
+};
 use gpui_kit::{TestAppContext, test::TestWindowExt};
+use std::{cell::Cell, rc::Rc};
 fn fixture() -> Graph {
     Graph::from_parts(
         [
@@ -13,7 +18,7 @@ fn fixture() -> Graph {
 #[gpui_kit::test]
 fn canvas_mounts_and_controls_change_viewport(cx: &mut TestAppContext) {
     let (window, view) = cx.update(|cx| {
-        gpui_kit::init(cx);
+        guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| Flow::new(fixture(), cx).expect("flow"))
         })
@@ -34,7 +39,7 @@ fn canvas_mounts_and_controls_change_viewport(cx: &mut TestAppContext) {
 }
 fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Flow>) {
     let result = cx.update(|cx| {
-        gpui_kit::init(cx);
+        guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| Flow::new(fixture(), cx).expect("flow"))
         })
@@ -133,7 +138,7 @@ fn culling_unmounts_distant_nodes_and_custom_renderer_is_called(cx: &mut TestApp
     let count = Rc::new(Cell::new(0));
     let observed = count.clone();
     let (w, v) = cx.update(|cx| {
-        gpui_kit::init(cx);
+        guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| {
                 Flow::new(fixture(), cx)
@@ -165,4 +170,78 @@ fn culling_unmounts_distant_nodes_and_custom_renderer_is_called(cx: &mut TestApp
         assert!(w.try_find(("flow-node", 1u64)).is_none());
     })
     .expect("cull");
+}
+#[gpui_kit::test]
+fn native_pinch_preserves_world_point_under_pointer(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent, PinchEvent};
+    let (w, v) = open(cx);
+    let at = WorldPoint::new(330., 270.);
+    let before = v.read_with(cx, |v, _| v.viewport().world(at));
+    w.update(cx, |_, w, cx| {
+        w.dispatch_event(
+            PinchEvent {
+                position: point(px(at.x), px(at.y)),
+                delta: 0.3,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        w.render_frame(cx);
+    })
+    .expect("pinch");
+    assert!(
+        v.read_with(cx, |v, _| v.viewport().world(at))
+            .distance(before)
+            < 0.001
+    );
+    assert!(v.read_with(cx, |v, _| v.viewport().zoom) > 1.);
+}
+#[gpui_kit::test]
+fn pan_updates_observed_node_bounds(cx: &mut TestAppContext) {
+    struct Renderer(Rc<Cell<usize>>);
+    impl NodeRenderer for Renderer {
+        fn render(&self, _: &Node, _: f32, _: &mut Window, _: &mut App) -> AnyElement {
+            self.0.set(self.0.get() + 1);
+            div().child("retained").into_any_element()
+        }
+    }
+    let count = Rc::new(Cell::new(0));
+    let observed = count.clone();
+    let (w, v) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| {
+                Flow::new(fixture(), cx)
+                    .expect("flow")
+                    .node_renderer(Renderer(observed))
+            })
+        })
+        .expect("window")
+    });
+    let before = w
+        .update(cx, |_, w, cx| {
+            w.render_frame(cx);
+            w.render_frame(cx);
+            w.find(("flow-node", 1u64)).bounds().origin
+        })
+        .expect("frame");
+    v.update(cx, |v, cx| {
+        v.set_viewport(
+            Viewport {
+                pan: WorldPoint::new(10., 20.),
+                zoom: 1.,
+            },
+            cx,
+        )
+        .expect("camera")
+    });
+    let after = w
+        .update(cx, |_, w, cx| {
+            w.render_frame(cx);
+            w.find(("flow-node", 1u64)).bounds().origin
+        })
+        .expect("pan");
+    assert!(count.get() > 0);
+    assert_eq!(after, before + point(px(10.), px(20.)));
 }
