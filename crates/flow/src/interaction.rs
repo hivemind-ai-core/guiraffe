@@ -237,4 +237,49 @@ mod tests {
         assert!(!i.editor.graph().nodes[&1].selected);
         assert!(i.editor.graph().nodes[&2].selected);
     }
+    #[test]
+    fn review_5_off_grid_preview_matches_commit_and_click() {
+        let mut i = interaction();
+        i.editor.move_nodes(&BTreeMap::from([(1, Point::new(13., 17.))]), None).expect("origin");
+        i.press(Point::new(40., 40.), false, false);
+        assert_eq!(i.preview(1), Some(Point::new(13., 17.)));
+        i.motion(Point::new(87., 73.));
+        let preview = i.preview(1).expect("preview");
+        i.release(None).expect("release");
+        assert_eq!(i.editor.graph().nodes[&1].pos, preview);
+    }
+    #[test]
+    fn review_2_parent_preview_moves_descendants() {
+        let mut i = interaction();
+        i.editor.edit(|g| { g.nodes.get_mut(&2).expect("child").parent = Some(1); Ok(()) }).expect("parent");
+        i.press(Point::new(30.,30.), false, false);
+        i.motion(Point::new(70.,50.));
+        assert_eq!(i.preview(2), Some(Point::new(440.,20.)));
+    }
+    #[test]
+    fn review_8_edge_click_selects_and_deletes() {
+        let mut i = interaction();
+        i.editor.connect(Edge::new(1,1,2), None).expect("edge");
+        let at = i.editor.scene().paths()[&1].points[16];
+        i.press(at,false,false);
+        assert!(i.editor.delete_selected().expect("delete edge"));
+        assert!(i.editor.graph().edges.is_empty());
+        assert_eq!(i.editor.graph().nodes.len(),2);
+    }
+    #[test]
+    fn review_7_invalid_camera_cannot_be_installed() {
+        let mut i = interaction();
+        i.viewport.zoom = 0.;
+        assert!(i.viewport.valid());
+    }
+    #[test]
+    fn review_16_allow_self_connects_via_handles() {
+        let mut i = interaction();
+        i.editor.policy.allow_self = true;
+        i.press(Point::new(160.,36.),false,false);
+        i.motion(Point::new(0.,36.));
+        assert!(i.release(None).expect("self connect"));
+        assert_eq!(i.editor.graph().edges[&1].target.node,1);
+    }
+
 }

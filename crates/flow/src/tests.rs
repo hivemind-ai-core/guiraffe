@@ -245,3 +245,30 @@ fn pan_updates_observed_node_bounds(cx: &mut TestAppContext) {
     assert!(count.get() > 0);
     assert_eq!(after, before + point(px(10.), px(20.)));
 }
+
+#[gpui_kit::test]
+fn review_1_render_tolerates_deleted_drag_nodes(cx: &mut TestAppContext) {
+    let (w,v) = open(cx);
+    v.update(cx, |v,cx| {
+        v.interaction.press(WorldPoint::new(110.,150.),false,false);
+        v.interaction.motion(WorldPoint::new(150.,170.));
+        v.interaction.editor.delete_selected().expect("delete");
+        cx.notify();
+    });
+    w.update(cx, |_,w,cx| w.render_frame(cx)).expect("render");
+}
+#[gpui_kit::test]
+fn review_16_empty_minimap_and_extreme_pinch_remain_valid(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent,PinchEvent};
+    let (w,v) = open(cx);
+    v.update(cx, |v,cx| { v.edit(|g| {g.nodes.clear();g.edges.clear();Ok(())},cx).expect("empty"); });
+    w.update(cx, |_,w,cx| {
+        w.render_frame(cx);
+        let p = w.find("flow").bounds().bottom_right() - point(px(100.),px(80.));
+        w.click_at("flow",p,cx);
+        for delta in [-1.,-2.,f32::NAN,10000.] {
+            w.dispatch_event(PinchEvent {position:point(px(200.),px(200.)),delta,..Default::default()}.to_platform_input(),cx);
+        }
+    }).expect("events");
+    assert!(v.read_with(cx, |v,_| v.viewport().valid()));
+}

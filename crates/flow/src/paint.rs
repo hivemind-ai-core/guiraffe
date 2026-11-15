@@ -511,4 +511,15 @@ mod tests {
         let world = minimap_world(map.center(), size, bounds);
         assert!(world.distance(bounds.center()) < 0.001);
     }
+    #[test]
+    fn review_10_second_frame_over_2048_edges_has_no_misses() {
+        let graph = Graph::from_parts([Node::new(1,"",WorldPoint::default()),Node::new(2,"",WorldPoint::new(400.,100.))],[]).expect("graph");
+        let route = EdgePath::new(&graph,&Edge::new(1,1,2),None,None).expect("route");
+        let mut cache = MeshCache::default();
+        for id in 0..3000 { cache.get(id,&route).expect("mesh"); }
+        cache.misses = 0;
+        for id in 0..3000 { cache.get(id,&route).expect("mesh"); }
+        assert_eq!(cache.misses,0);
+    }
+
 }
