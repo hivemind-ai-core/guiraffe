@@ -297,7 +297,7 @@ impl Render for SimpleGridHarness {
         div().w(px(300.)).h(px(120.)).child(
             SimpleGrid::new()
                 .cols(3)
-                .spacing_px(0.)
+                .spacing(0.)
                 .child(div().h(px(10.)).debug_selector(|| "a".into()))
                 .child(div().h(px(10.)).debug_selector(|| "b".into()))
                 .child(div().h(px(10.)).debug_selector(|| "c".into())),
