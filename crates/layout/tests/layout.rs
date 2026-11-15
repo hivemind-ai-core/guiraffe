@@ -3,9 +3,9 @@
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Render, TestAppContext, Window, div, px};
 use guiraffe_layout::{
-    AppShell, AspectRatio, Breakpoint, Center, Col, Container, ContainerSize, ContainerWidth,
-    Divider, Flex, FlexDirection, Grid, Group, LabelPosition, Responsive, ScrollArea, SimpleGrid,
-    Size, Space, Stack,
+    AppShell, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth, Divider, Flex,
+    FlexDirection, Grid, Group, LabelPosition, Responsive, ScrollArea, SimpleGrid, Size, Space,
+    Stack,
 };
 
 macro_rules! harness {
@@ -264,9 +264,9 @@ struct ContainerHarness;
 
 impl Render for ContainerHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(600.)).h(px(120.)).child(
+        div().w(px(1200.)).h(px(120.)).child(
             Container::new()
-                .size(ContainerSize::Sm)
+                .size(Size::Sm)
                 .child(div().h(px(10.)).debug_selector(|| "content".into())),
         )
     }
@@ -277,8 +277,8 @@ fn a_container_is_centered_and_never_wider_than_its_size(cx: &mut TestAppContext
     let cx = harness!(cx, ContainerHarness);
 
     let content = cx.debug_bounds("content").expect("the content");
-    assert_eq!(content.size.width, px(480.), "the small container");
-    assert_eq!(content.left(), px(60.), "the container sits in the middle");
+    assert_eq!(content.size.width, px(720.), "the small container");
+    assert_eq!(content.left(), px(240.), "the container sits in the middle");
 }
 
 struct CenterHarness;

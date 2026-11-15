@@ -308,13 +308,13 @@ mod tests {
     fn a_column_can_change_span_per_breakpoint() {
         let column = Col::span(Responsive::base(12).at(Breakpoint::Md, 6));
         assert_eq!(column.placement(500.), (1, 13));
-        assert_eq!(column.placement(900.), (1, 7));
+        assert_eq!(column.placement(1000.), (1, 7));
     }
 
     #[test]
     fn a_column_can_change_offset_per_breakpoint() {
         let column = Col::new().offset(Responsive::base(0).at(Breakpoint::Lg, 3));
         assert_eq!(column.placement(500.), (1, 13));
-        assert_eq!(column.placement(1200.), (4, 16));
+        assert_eq!(column.placement(1300.), (4, 16));
     }
 }

@@ -5,9 +5,9 @@
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Div, Render, Window, WindowOptions, div, px, rgb};
 use guiraffe_layout::{
-    AppShell, AspectRatio, Breakpoint, Center, Col, Container, ContainerSize, ContainerWidth,
-    Divider, Flex, FlexDirection, Grid, Group, Justify, LabelPosition, Responsive, ScrollArea,
-    SimpleGrid, Size, Space, Splitter, Stack,
+    AppShell, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth, Divider, Flex,
+    FlexDirection, Grid, Group, Justify, LabelPosition, Responsive, ScrollArea, SimpleGrid, Size,
+    Space, Splitter, Stack,
 };
 
 const INK: u32 = 0x263b38;
@@ -162,7 +162,7 @@ fn shapes() -> Div {
         .child(heading("Container, Center, AspectRatio and Space"))
         .child(
             Container::new()
-                .size(ContainerSize::Sm)
+                .size(Size::Sm)
                 .padding(Size::Sm)
                 .child(muted(
                     "A container is centered and never wider than its size says.",
@@ -230,7 +230,7 @@ fn shell() -> Div {
 
 fn main() {
     gpui_kit::application().run(|cx| {
-        gpui_kit::init(cx);
+        guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Gallery))
             .expect("the gallery window opens");
     });

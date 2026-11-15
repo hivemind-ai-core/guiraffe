@@ -1,21 +1,17 @@
 //! Theme lookups.
 
 use gpui_kit::{App, Hsla};
+use guiraffe_core::GuiraffeTheme;
 
 /// The hairline color of the active theme.
 ///
-/// A neutral gray stands in when no theme has been installed, so a widget that
-/// draws a rule never asks an application to have a theme before it can be
-/// shown.
+/// The core theme answers even when an application has not installed one, so
+/// a widget that draws a rule can be shown before a theme exists.
 pub(crate) fn hairline(cx: &App) -> Hsla {
-    cx.try_global::<gpui_kit::component::Theme>()
-        .map(|theme| theme.border)
-        .unwrap_or_else(|| gpui_kit::hsla(0., 0., 0.5, 0.25))
+    GuiraffeTheme::global(cx).surfaces().border.to_hsla()
 }
 
 /// The muted text color of the active theme.
 pub(crate) fn muted_foreground(cx: &App) -> Hsla {
-    cx.try_global::<gpui_kit::component::Theme>()
-        .map(|theme| theme.muted_foreground)
-        .unwrap_or_else(|| gpui_kit::hsla(0., 0., 0.45, 0.9))
+    GuiraffeTheme::global(cx).surfaces().dimmed.to_hsla()
 }

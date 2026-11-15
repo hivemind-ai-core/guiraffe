@@ -7,50 +7,21 @@ use gpui_kit::{
 use crate::macros::impl_into_element;
 use crate::tokens::Size;
 
-/// How wide a container may get.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum ContainerSize {
-    /// 320px.
-    Xs,
-    /// 480px.
-    Sm,
-    /// 720px.
-    #[default]
-    Md,
-    /// 960px.
-    Lg,
-    /// 1200px.
-    Xl,
-    /// As wide as the parent allows.
-    Full,
-}
-
-impl ContainerSize {
-    /// The width this size stands for, in pixels.
-    pub fn max_width(self) -> Option<f32> {
-        match self {
-            ContainerSize::Xs => Some(320.),
-            ContainerSize::Sm => Some(480.),
-            ContainerSize::Md => Some(720.),
-            ContainerSize::Lg => Some(960.),
-            ContainerSize::Xl => Some(1200.),
-            ContainerSize::Full => None,
-        }
-    }
-}
-
 /// Content in a column that is centered and never wider than its size says.
 ///
+/// The width comes from the core size scale: a small container is 720 pixels
+/// wide, a medium one 960.
+///
 /// ```
-/// use guiraffe_layout::{Container, ContainerSize, Size};
+/// use guiraffe_layout::{Container, Size};
 ///
 /// let container = Container::new()
-///     .size(ContainerSize::Md)
+///     .size(Size::Md)
 ///     .padding(Size::Md)
 ///     .child("content");
 /// ```
 pub struct Container {
-    size: ContainerSize,
+    size: Option<Size>,
     fluid: bool,
     padding: f32,
     children: Vec<AnyElement>,
@@ -67,7 +38,7 @@ impl Container {
     /// A container with the default size and no padding.
     pub fn new() -> Self {
         Self {
-            size: ContainerSize::Md,
+            size: Some(Size::Md),
             fluid: false,
             padding: 0.,
             children: Vec::new(),
@@ -76,8 +47,8 @@ impl Container {
     }
 
     /// How wide the container may get.
-    pub fn size(mut self, size: ContainerSize) -> Self {
-        self.size = size;
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = Some(size);
         self
     }
 
@@ -125,13 +96,9 @@ impl gpui_kit::Styled for Container {
 impl RenderOnce for Container {
     fn render(self, _: &mut Window, _: &mut App) -> impl gpui_kit::IntoElement {
         let mut element = div().mx_auto();
-        element = if self.fluid {
-            element.w_full()
-        } else {
-            match self.size.max_width() {
-                Some(width) => element.w(px(width)),
-                None => element.w_full(),
-            }
+        element = match self.size.filter(|_| !self.fluid) {
+            Some(size) => element.w(px(size.container_width())),
+            None => element.w_full(),
         };
         if self.padding > 0. {
             element = element.p(px(self.padding));
@@ -148,36 +115,29 @@ impl_into_element!(Container);
 
 #[cfg(test)]
 mod tests {
-    use super::{Container, ContainerSize};
+    use super::Container;
     use crate::tokens::Size;
-
-    #[test]
-    fn the_container_sizes_grow() {
-        let widths: Vec<f32> = [
-            ContainerSize::Xs,
-            ContainerSize::Sm,
-            ContainerSize::Md,
-            ContainerSize::Lg,
-            ContainerSize::Xl,
-        ]
-        .iter()
-        .map(|size| size.max_width().unwrap_or_default())
-        .collect();
-        assert_eq!(widths, vec![320., 480., 720., 960., 1200.]);
-        assert!(widths.windows(2).all(|pair| pair[0] < pair[1]));
-    }
-
-    #[test]
-    fn the_full_size_has_no_width_of_its_own() {
-        assert_eq!(ContainerSize::Full.max_width(), None);
-    }
 
     #[test]
     fn a_new_container_is_centered_without_padding() {
         let container = Container::new();
-        assert_eq!(container.size, ContainerSize::Md);
+        assert_eq!(container.size, Some(Size::Md));
         assert!(!container.fluid);
         assert_eq!(container.padding, 0.);
+    }
+
+    #[test]
+    fn the_container_widths_grow_with_the_scale() {
+        let widths: Vec<f32> = Size::ALL
+            .iter()
+            .map(|size| size.container_width())
+            .collect();
+        assert!(widths.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn the_size_can_be_changed() {
+        assert_eq!(Container::new().size(Size::Lg).size, Some(Size::Lg));
     }
 
     #[test]

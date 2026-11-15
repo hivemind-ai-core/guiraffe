@@ -21,10 +21,9 @@
 //!
 //! # Tokens
 //!
-//! Sizes come from [`Size`]. `guiraffe-core` owns the canonical token tables;
-//! until it lands, this crate carries its own copy in `tokens`, so the widgets
-//! have a scale of their own. Swapping to `guiraffe_core::Size` later touches
-//! that module and the re-export below.
+//! Sizes come from [`Size`], the scale `guiraffe-core` owns: the same tokens
+//! the theme and the palette use, so a gap here means what a gap means
+//! everywhere else in GUIraffe.
 //!
 //! # Responsiveness
 //!
@@ -58,7 +57,7 @@ pub use align::{Align, Justify};
 pub use app_shell::AppShell;
 pub use aspect_ratio::AspectRatio;
 pub use center::Center;
-pub use container::{Container, ContainerSize};
+pub use container::Container;
 pub use divider::{Divider, DividerOrientation, LabelPosition};
 pub use flex::{Flex, FlexDirection};
 pub use grid::{Col, DEFAULT_COLUMNS, Grid};

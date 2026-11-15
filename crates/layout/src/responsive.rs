@@ -5,19 +5,24 @@
 
 use std::collections::BTreeMap;
 
+use crate::tokens::Size;
+
 /// The width bands the responsive props switch at.
+///
+/// The bands are the ones the core size scale names, so a breakpoint and a
+/// size token agree on where the edges are.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Breakpoint {
-    /// Below every named band.
+    /// 576px and up.
     #[default]
     Xs,
-    /// 576px and up.
-    Sm,
     /// 768px and up.
-    Md,
+    Sm,
     /// 992px and up.
-    Lg,
+    Md,
     /// 1200px and up.
+    Lg,
+    /// 1408px and up.
     Xl,
 }
 
@@ -34,11 +39,11 @@ impl Breakpoint {
     /// The narrowest width that belongs to this breakpoint.
     pub fn min_width(self) -> f32 {
         match self {
-            Breakpoint::Xs => 0.,
-            Breakpoint::Sm => 576.,
-            Breakpoint::Md => 768.,
-            Breakpoint::Lg => 992.,
-            Breakpoint::Xl => 1200.,
+            Breakpoint::Xs => Size::Xs.breakpoint(),
+            Breakpoint::Sm => Size::Sm.breakpoint(),
+            Breakpoint::Md => Size::Md.breakpoint(),
+            Breakpoint::Lg => Size::Lg.breakpoint(),
+            Breakpoint::Xl => Size::Xl.breakpoint(),
         }
     }
 
@@ -174,30 +179,40 @@ impl<T> From<T> for Responsive<T> {
 #[cfg(test)]
 mod tests {
     use super::{Breakpoint, Responsive};
+    use crate::tokens::Size;
 
     #[test]
     fn widths_map_to_the_widest_band_they_reach() {
         assert_eq!(Breakpoint::from_width(0.), Breakpoint::Xs);
         assert_eq!(Breakpoint::from_width(575.), Breakpoint::Xs);
-        assert_eq!(Breakpoint::from_width(576.), Breakpoint::Sm);
-        assert_eq!(Breakpoint::from_width(767.), Breakpoint::Sm);
-        assert_eq!(Breakpoint::from_width(768.), Breakpoint::Md);
-        assert_eq!(Breakpoint::from_width(991.), Breakpoint::Md);
-        assert_eq!(Breakpoint::from_width(992.), Breakpoint::Lg);
-        assert_eq!(Breakpoint::from_width(1199.), Breakpoint::Lg);
-        assert_eq!(Breakpoint::from_width(1200.), Breakpoint::Xl);
+        assert_eq!(Breakpoint::from_width(576.), Breakpoint::Xs);
+        assert_eq!(Breakpoint::from_width(767.), Breakpoint::Xs);
+        assert_eq!(Breakpoint::from_width(768.), Breakpoint::Sm);
+        assert_eq!(Breakpoint::from_width(991.), Breakpoint::Sm);
+        assert_eq!(Breakpoint::from_width(992.), Breakpoint::Md);
+        assert_eq!(Breakpoint::from_width(1199.), Breakpoint::Md);
+        assert_eq!(Breakpoint::from_width(1200.), Breakpoint::Lg);
+        assert_eq!(Breakpoint::from_width(1407.), Breakpoint::Lg);
+        assert_eq!(Breakpoint::from_width(1408.), Breakpoint::Xl);
         assert_eq!(Breakpoint::from_width(4000.), Breakpoint::Xl);
     }
 
     #[test]
     fn every_breakpoint_reports_its_own_floor() {
-        assert_eq!(Breakpoint::Xs.min_width(), 0.);
-        assert_eq!(Breakpoint::Sm.min_width(), 576.);
-        assert_eq!(Breakpoint::Md.min_width(), 768.);
-        assert_eq!(Breakpoint::Lg.min_width(), 992.);
-        assert_eq!(Breakpoint::Xl.min_width(), 1200.);
+        assert_eq!(Breakpoint::Xs.min_width(), 576.);
+        assert_eq!(Breakpoint::Sm.min_width(), 768.);
+        assert_eq!(Breakpoint::Md.min_width(), 992.);
+        assert_eq!(Breakpoint::Lg.min_width(), 1200.);
+        assert_eq!(Breakpoint::Xl.min_width(), 1408.);
         for breakpoint in Breakpoint::ALL {
             assert_eq!(Breakpoint::from_width(breakpoint.min_width()), breakpoint);
+        }
+    }
+
+    #[test]
+    fn the_bands_are_the_ones_the_core_scale_names() {
+        for (breakpoint, size) in Breakpoint::ALL.into_iter().zip(Size::ALL) {
+            assert_eq!(breakpoint.min_width(), size.breakpoint());
         }
     }
 
@@ -228,8 +243,8 @@ mod tests {
         let value = Responsive::base(12u16).at(Breakpoint::Md, 6);
         assert!(!value.is_constant());
         assert_eq!(value.resolve(0.), 12);
-        assert_eq!(value.resolve(767.), 12);
-        assert_eq!(value.resolve(768.), 6);
+        assert_eq!(value.resolve(991.), 12);
+        assert_eq!(value.resolve(992.), 6);
         assert_eq!(value.resolve(2000.), 6);
     }
 
@@ -240,9 +255,10 @@ mod tests {
             .at(Breakpoint::Lg, 4)
             .at(Breakpoint::Md, 3);
         assert_eq!(value.resolve(0.), 1);
-        assert_eq!(value.resolve(600.), 2);
-        assert_eq!(value.resolve(800.), 3);
-        assert_eq!(value.resolve(1000.), 4);
+        assert_eq!(value.resolve(767.), 1);
+        assert_eq!(value.resolve(800.), 2);
+        assert_eq!(value.resolve(1000.), 3);
+        assert_eq!(value.resolve(1300.), 4);
     }
 
     #[test]
@@ -251,7 +267,7 @@ mod tests {
             .at(Breakpoint::Sm, 2)
             .at(Breakpoint::Xl, 5);
         assert_eq!(value.resolve(1000.), 2);
-        assert_eq!(value.resolve(1300.), 5);
+        assert_eq!(value.resolve(1500.), 5);
     }
 
     #[test]
