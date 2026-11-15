@@ -271,6 +271,9 @@ impl Graph {
             }
             complete.extend(visiting);
         }
+        if self.bounds().is_some_and(|bounds| !bounds.valid()) {
+            return Err(FlowError::InvalidGeometry);
+        }
         for (id, edge) in &self.edges {
             if *id != edge.id {
                 return Err(FlowError::DuplicateId);

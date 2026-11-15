@@ -138,6 +138,9 @@ impl EdgePath {
                 }
             }
         };
+        if !points.iter().all(|point| point.finite()) {
+            return Err(FlowError::InvalidGeometry);
+        }
         let bounds = points
             .iter()
             .map(|p| Rect {
@@ -147,7 +150,13 @@ impl EdgePath {
             .reduce(Rect::union)
             .unwrap_or_default()
             .expand(2.);
+        if !bounds.valid() {
+            return Err(FlowError::InvalidGeometry);
+        }
         let label = midpoint(&points);
+        if !label.finite() {
+            return Err(FlowError::InvalidGeometry);
+        }
         Ok(Self {
             points,
             bounds,
@@ -218,10 +227,10 @@ pub struct Visible {
 #[derive(Clone, Debug)]
 pub struct Scene {
     graph: Graph,
-    pub paths: BTreeMap<EdgeId, EdgePath>,
+    paths: BTreeMap<EdgeId, EdgePath>,
     nodes: SpatialIndex,
     edges: SpatialIndex,
-    pub bounds: Option<Rect>,
+    bounds: Option<Rect>,
     incident: BTreeMap<NodeId, Vec<EdgeId>>,
 }
 impl Scene {
@@ -250,6 +259,12 @@ impl Scene {
             bounds,
             incident,
         })
+    }
+    pub fn paths(&self) -> &BTreeMap<EdgeId, EdgePath> {
+        &self.paths
+    }
+    pub fn bounds(&self) -> Option<Rect> {
+        self.bounds
     }
     pub fn incident_edges(&self, id: NodeId) -> &[EdgeId] {
         self.incident.get(&id).map_or(&[], Vec::as_slice)

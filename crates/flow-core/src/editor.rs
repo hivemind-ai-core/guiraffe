@@ -37,8 +37,8 @@ impl Editor {
         while self.undo.len() > limit {
             self.undo.pop_front();
         }
-        if limit == 0 {
-            self.redo.clear();
+        if self.redo.len() > limit {
+            self.redo.drain(..self.redo.len() - limit);
         }
     }
     pub fn can_undo(&self) -> bool {

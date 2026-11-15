@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
         scene.visible(black_box(area), &mut visible);
         for id in &visible.edges {
-            checksum += black_box(scene.paths[id].points.len());
+            checksum += black_box(scene.paths()[id].points.len());
         }
         if i >= 100 {
             timings.push(start.elapsed().as_nanos());

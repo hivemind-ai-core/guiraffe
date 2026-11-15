@@ -263,7 +263,7 @@ fn every_path_bounds_contains_every_sample_and_label() {
     ] {
         g.edges.get_mut(&1).expect("edge").edge_type = kind;
         let scene = Scene::new(g.clone()).expect("scene");
-        let path = &scene.paths[&1];
+        let path = &scene.paths()[&1];
         assert!(path.points.iter().all(|p| path.bounds.contains(*p)));
         assert!(path.bounds.contains(path.label));
         assert!(path.distance(path.points[0]) < 0.001);
@@ -288,7 +288,7 @@ fn hit_testing_uses_topmost_id_and_actual_stroke() {
     let mut scratch = Vec::new();
     assert_eq!(scene.hit_node(Point::new(10., 10.), &mut scratch), Some(2));
     assert_eq!(scene.hit_node(Point::new(-100., -100.), &mut scratch), None);
-    let p = scene.paths[&1].points[10];
+    let p = scene.paths()[&1].points[10];
     assert_eq!(scene.hit_edge(p, 2., &mut scratch), Some(1));
     assert_eq!(scene.hit_edge(p, -1., &mut scratch), None);
 }
@@ -314,4 +314,30 @@ fn additive_selection_preserves_others() {
     e.select(&BTreeSet::from([1]), false);
     e.select(&BTreeSet::from([2]), true);
     assert!(e.graph().nodes[&1].selected && e.graph().nodes[&2].selected);
+}
+#[test]
+fn overflowing_aggregate_bounds_are_rejected() {
+    let nodes = [
+        Node::new(1, "", Point::new(-3e38, 0.)),
+        Node::new(2, "", Point::new(3e38, 0.)),
+    ];
+    assert_eq!(
+        Graph::from_parts(nodes, []),
+        Err(FlowError::InvalidGeometry)
+    );
+}
+#[test]
+fn shrinking_history_limit_bounds_redo_as_well_as_undo() {
+    let mut e = Editor::new(graph()).expect("editor");
+    for id in 4..7 {
+        e.add_node(Node::new(id, "", Point::default()))
+            .expect("add");
+    }
+    for _ in 0..3 {
+        e.undo().expect("undo");
+    }
+    e.history_limit(1);
+    assert!(e.redo().expect("redo"));
+    assert!(!e.can_redo());
+    assert_eq!(e.graph().nodes.len(), 4);
 }
