@@ -1,7 +1,7 @@
 # GUIraffe 🦒 — Specification
 
 Goal: a framework + addon widget crates for rich, beautiful, FAST GPUI interfaces.
-Base: `gpui-kit =0.7.0` (GPUI + GPUI Controls = `gpui_kit::component`, i.e. gpui-component).
+Base: `gpui-kit =0.9.1` (GPUI + GPUI Controls = `gpui_kit::component`, i.e. gpui-component).
 Never re-implement something Controls already ships well (Button, Input, Select, Dialog,
 Tabs, Table, Tree, Tooltip, Popover, Accordion, Slider, Switch, Checkbox, Radio, Badge,
 Avatar, Kbd, Progress, Skeleton, Spinner, Sidebar, Dock, Resizable, Notification, ...).
