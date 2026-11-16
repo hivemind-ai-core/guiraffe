@@ -1,0 +1,37 @@
+    Blocking waiting for file lock on build directory
+   Compiling guiraffe-test v0.1.0 (/home/dan/orca/workspaces/anteater/spike-visual/crates/test)
+    Finished `test` profile [unoptimized] target(s) in 48.02s
+     Running tests/e2e.rs (target/debug/deps/e2e-df0c7f0d93bec28a)
+
+running 1 test
+test real_app_input_and_five_fresh_captures ... artifacts: /tmp/guiraffe-visual-1617177
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+GPUI GPU: Some(GpuSpecs { is_software_emulated: true, device_name: "llvmpipe (LLVM 22.1.8, 256 bits)", driver_name: "", driver_info: "4.6 (Core Profile) Mesa 26.2.1-arch1.1" }); scale: 1
+native render_to_image: Err(render_to_image not implemented for this platform)
+launch 0: identical baseline, input verified, capture /tmp/guiraffe-visual-1617177/run-0/frame-13.png
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+GPUI GPU: Some(GpuSpecs { is_software_emulated: true, device_name: "llvmpipe (LLVM 22.1.8, 256 bits)", driver_name: "", driver_info: "4.6 (Core Profile) Mesa 26.2.1-arch1.1" }); scale: 1
+native render_to_image: Err(render_to_image not implemented for this platform)
+launch 1: identical baseline, input verified, capture /tmp/guiraffe-visual-1617177/run-1/frame-12.png
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+GPUI GPU: Some(GpuSpecs { is_software_emulated: true, device_name: "llvmpipe (LLVM 22.1.8, 256 bits)", driver_name: "", driver_info: "4.6 (Core Profile) Mesa 26.2.1-arch1.1" }); scale: 1
+native render_to_image: Err(render_to_image not implemented for this platform)
+launch 2: identical baseline, input verified, capture /tmp/guiraffe-visual-1617177/run-2/frame-12.png
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+GPUI GPU: Some(GpuSpecs { is_software_emulated: true, device_name: "llvmpipe (LLVM 22.1.8, 256 bits)", driver_name: "", driver_info: "4.6 (Core Profile) Mesa 26.2.1-arch1.1" }); scale: 1
+native render_to_image: Err(render_to_image not implemented for this platform)
+launch 3: identical baseline, input verified, capture /tmp/guiraffe-visual-1617177/run-3/frame-12.png
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+GPUI GPU: Some(GpuSpecs { is_software_emulated: true, device_name: "llvmpipe (LLVM 22.1.8, 256 bits)", driver_name: "", driver_info: "4.6 (Core Profile) Mesa 26.2.1-arch1.1" }); scale: 1
+native render_to_image: Err(render_to_image not implemented for this platform)
+launch 4: identical baseline, input verified, capture /tmp/guiraffe-visual-1617177/run-4/frame-12.png
+artifacts retained at /tmp/guiraffe-visual-1617177
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.84s
+
