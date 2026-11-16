@@ -5,6 +5,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use gpui_kit::SharedString;
+use guiraffe_core::{ColorName, Size};
 
 use crate::{
     ir::{Document, FORMAT_VERSION, Node},
@@ -21,6 +22,9 @@ pub enum Prop {
     Unset,
     Lit(Value),
     Slot(SlotId),
+    Item(Box<[SharedString]>),
+    Size(Size),
+    Color(ColorName),
 }
 
 pub struct NodeSpec {
@@ -33,6 +37,10 @@ pub struct NodeSpec {
     pub events: Box<[Option<EventId>]>,
     /// Slots this node's own props read (non-empty ⇒ rendered as its own entity).
     pub deps: Box<[SlotId]>,
+    pub each: Option<SlotId>,
+    pub when: Option<SlotId>,
+    pub key: Box<[SharedString]>,
+    pub change: Option<(SlotId, EventId)>,
     children: (u32, u32),
 }
 
@@ -261,6 +269,15 @@ impl Compiler<'_> {
                 }
                 continue;
             };
+            if let Some(path) = slot.strip_prefix("@item.") {
+                props[i] = Prop::Item(path.split('.').map(|s| s.to_owned().into()).collect());
+                continue;
+            }
+            if slot == "@item" {
+                props[i] = Prop::Item(Box::new([]));
+                continue;
+            }
+            let slot = slot.strip_prefix('@').unwrap_or(slot);
             let id = self.slot(slot);
             if let Prop::Lit(lit) = &props[i]
                 && self.t.slot_defaults[id.0 as usize] == Value::Null
@@ -268,6 +285,58 @@ impl Compiler<'_> {
                 self.t.slot_defaults[id.0 as usize] = lit.clone();
             }
             props[i] = Prop::Slot(id);
+            if !deps.contains(&id) {
+                deps.push(id);
+                self.t.slot_nodes[id.0 as usize].push(index);
+            }
+        }
+        // Item references and style tokens become positional recipes at compilation.
+        for (i, prop) in props.iter_mut().enumerate() {
+            if let Prop::Lit(Value::Str(text)) = prop {
+                if let Some(item) = text.strip_prefix("@item.") {
+                    *prop = Prop::Item(item.split('.').map(|s| s.to_owned().into()).collect());
+                } else if text.as_ref() == "@item" {
+                    *prop = Prop::Item(Box::new([]));
+                } else if let Some(name) = text.strip_prefix('@') {
+                    let id = self.slot(name);
+                    *prop = Prop::Slot(id);
+                    if !deps.contains(&id) {
+                        deps.push(id);
+                        self.t.slot_nodes[id.0 as usize].push(index);
+                    }
+                } else if schema
+                    .props
+                    .get(i)
+                    .is_some_and(|name| matches!(*name, "size" | "gap" | "color"))
+                {
+                    let name = schema.props.get(i).copied().unwrap_or_default();
+                    let parsed = if name == "color" {
+                        ColorName::from_name(text).map(Prop::Color)
+                    } else {
+                        parse_size(text).map(Prop::Size)
+                    };
+                    if let Some(parsed) = parsed {
+                        *prop = parsed;
+                    } else {
+                        self.diag(
+                            Severity::Warning,
+                            &path,
+                            format!("invalid {name} token `{text}`"),
+                        );
+                        *prop = Prop::Unset;
+                    }
+                }
+            }
+        }
+        let each = n
+            .each
+            .as_ref()
+            .map(|name| self.slot(name.trim_start_matches('@')));
+        let when = n
+            .when
+            .as_ref()
+            .map(|name| self.slot(name.trim_start_matches('@')));
+        for id in each.into_iter().chain(when) {
             if !deps.contains(&id) {
                 deps.push(id);
                 self.t.slot_nodes[id.0 as usize].push(index);
@@ -285,6 +354,27 @@ impl Compiler<'_> {
                 None => {}
             }
         }
+        let mut change = None;
+        if let (Some(i), Some(ev)) = (
+            schema.props.iter().position(|p| *p == "value"),
+            schema.events.iter().position(|e| *e == "change"),
+        ) && let Some(Prop::Slot(slot)) = props.get(i)
+        {
+            let event = events.get(ev).copied().flatten().unwrap_or_else(|| {
+                let name = format!(
+                    "{}.change",
+                    self.t
+                        .names
+                        .slots
+                        .get(slot.0 as usize)
+                        .map(String::as_str)
+                        .unwrap_or_default()
+                );
+                self.event(&name)
+            });
+            events[ev] = Some(event);
+            change = Some((*slot, event));
+        }
         if let Some(id) = &n.id {
             if self.t.ids.contains_key(id.as_str()) {
                 self.diag(Severity::Error, &path, format!("duplicate id `{id}` (ids must be unique; they key interaction state and selectors)"));
@@ -299,6 +389,17 @@ impl Compiler<'_> {
             props: props.into(),
             events: events.into(),
             deps: deps.into(),
+            each,
+            when,
+            key: n
+                .key
+                .as_deref()
+                .unwrap_or("id")
+                .trim_start_matches("@item.")
+                .split('.')
+                .map(|s| s.to_owned().into())
+                .collect(),
+            change,
             children: (0, 0),
         });
         let mut kids = Vec::with_capacity(n.children.len());
@@ -312,5 +413,16 @@ impl Compiler<'_> {
             node.children = (start, end);
         }
         Ok(index)
+    }
+}
+
+pub(crate) fn parse_size(value: &str) -> Option<Size> {
+    match value {
+        "xs" => Some(Size::Xs),
+        "sm" => Some(Size::Sm),
+        "md" => Some(Size::Md),
+        "lg" => Some(Size::Lg),
+        "xl" => Some(Size::Xl),
+        _ => None,
     }
 }

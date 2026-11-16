@@ -18,6 +18,9 @@ use crate::{
 };
 
 /// Delivers an event to the host, stamped with the template generation it was wired for.
+pub(crate) type InputEmit =
+    Rc<dyn Fn(Option<EventId>, Option<crate::SlotId>, crate::Payload, u32, &mut Window, &mut App)>;
+
 pub type Emit = Rc<dyn Fn(EventId, Value, u32, &mut Window, &mut App)>;
 
 /// The props and events a widget kind understands, in positional order.
@@ -41,6 +44,11 @@ pub struct NodeView<'a> {
     pub emit: &'a Emit,
     pub generation: u32,
     pub index: u32,
+    pub item: Option<&'a Value>,
+    pub(crate) input_emit: &'a InputEmit,
+    pub(crate) controls: &'a crate::controls::ControlCache,
+    pub(crate) scope: u64,
+    pub(crate) active: Option<Rc<std::cell::Cell<bool>>>,
 }
 
 static NULL: Value = Value::Null;
@@ -51,7 +59,8 @@ impl NodeView<'_> {
         match self.spec.props.get(i) {
             Some(Prop::Lit(v)) => v,
             Some(Prop::Slot(id)) => self.slots.get(*id),
-            Some(Prop::Unset) | None => &NULL,
+            Some(Prop::Item(path)) => self.item.map(|v| v.field(path)).unwrap_or(&NULL),
+            Some(Prop::Size(_) | Prop::Color(_) | Prop::Unset) | None => &NULL,
         }
     }
     pub fn text(&self, i: usize) -> SharedString {
@@ -64,24 +73,43 @@ impl NodeView<'_> {
         self.prop(i).as_f64()
     }
     pub fn size(&self, i: usize) -> Option<Size> {
-        match self.prop(i).as_str()? {
-            "xs" => Some(Size::Xs),
-            "sm" => Some(Size::Sm),
-            "md" => Some(Size::Md),
-            "lg" => Some(Size::Lg),
-            "xl" => Some(Size::Xl),
+        match self.spec.props.get(i) {
+            Some(Prop::Size(value)) => Some(*value),
+            Some(Prop::Slot(id)) => self.slots.size(*id),
             _ => None,
         }
     }
     pub fn color(&self, i: usize) -> Option<ColorName> {
-        ColorName::from_name(self.prop(i).as_str()?)
+        match self.spec.props.get(i) {
+            Some(Prop::Color(value)) => Some(*value),
+            Some(Prop::Slot(id)) => self.slots.color(*id),
+            _ => None,
+        }
     }
     /// Handler for the widget's event at schema position `i`, if the document wires it.
     pub fn handler(&self, i: usize) -> Option<impl Fn(Value, &mut Window, &mut App) + 'static> {
         let id = (*self.spec.events.get(i)?)?;
+        let active = self.active.clone();
         let (emit, generation) = (self.emit.clone(), self.generation);
         Some(move |payload: Value, w: &mut Window, cx: &mut App| {
-            emit(id, payload, generation, w, cx)
+            if active.as_ref().is_none_or(|alive| alive.get()) {
+                emit(id, payload, generation, w, cx)
+            }
+        })
+    }
+    pub(crate) fn change_handler(&self) -> crate::controls::Change {
+        let emit = self.input_emit.clone();
+        let generation = self.generation;
+        let (slot, event) = self
+            .spec
+            .change
+            .map(|(slot, event)| (Some(slot), Some(event)))
+            .unwrap_or((None, self.spec.events.first().copied().flatten()));
+        let active = self.active.clone();
+        Rc::new(move |payload, w, cx| {
+            if active.as_ref().is_none_or(|alive| alive.get()) {
+                emit(event, slot, payload, generation, w, cx)
+            }
         })
     }
     pub fn element_id(&self) -> gpui_kit::ElementId {
@@ -161,7 +189,7 @@ impl Widget for Placeholder {
             .border_1()
             .border_dashed()
             .border_color(ColorName::Red.shade(5).to_hsla())
-            .p(px(4.))
+            .p(px(Size::Xs.spacing()))
             .text_color(s.dimmed.to_hsla())
             .child(format!("unknown widget `{}`", node.spec.kind))
             .children(children)

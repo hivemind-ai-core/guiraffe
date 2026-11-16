@@ -65,6 +65,7 @@ static BUTTON: Schema = Schema {
 };
 
 pub fn register(r: &mut Registry) {
+    crate::controls::register(r);
     r.register(
         "stack",
         widget(&GAP, |n, kids, _, _| {
@@ -215,4 +216,8 @@ pub const KINDS: &[&str] = &[
     "button",
     "hug",
     "spacer",
+    "text-input",
+    "checkbox",
+    "switch",
+    "select",
 ];

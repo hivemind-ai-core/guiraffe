@@ -12,6 +12,10 @@ pub enum Value {
     Num(f64),
     Str(SharedString),
     List(Arc<[Value]>),
+    /// Persistent list storage used after a splice (shares unaffected tree nodes).
+    Sequence(im::Vector<Value>),
+    /// Record fields for item-relative bindings.
+    Record(Arc<std::collections::BTreeMap<SharedString, Value>>),
 }
 
 /// Equality tuned for change detection: numbers compare by bit pattern (so NaN == NaN and a
@@ -24,12 +28,46 @@ impl PartialEq for Value {
             (Value::Num(a), Value::Num(b)) => a.to_bits() == b.to_bits() || (a == b),
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b) || a[..] == b[..],
+            (Value::Sequence(a), Value::Sequence(b)) => a.ptr_eq(b) || a == b,
+            (Value::Record(a), Value::Record(b)) => Arc::ptr_eq(a, b) || a == b,
+            (a, b) if a.list_len().is_some() && a.list_len() == b.list_len() => {
+                (0..a.list_len().unwrap_or(0)).all(|i| a.list_get(i) == b.list_get(i))
+            }
             _ => false,
         }
     }
 }
 
 impl Value {
+    pub fn list_len(&self) -> Option<usize> {
+        match self {
+            Self::List(v) => Some(v.len()),
+            Self::Sequence(v) => Some(v.len()),
+            _ => None,
+        }
+    }
+    pub fn list_get(&self, index: usize) -> Option<&Value> {
+        match self {
+            Self::List(v) => v.get(index),
+            Self::Sequence(v) => v.get(index),
+            _ => None,
+        }
+    }
+    pub fn field(&self, path: &[SharedString]) -> &Value {
+        static NULL: Value = Value::Null;
+        path.iter()
+            .try_fold(self, |value, key| match value {
+                Self::Record(fields) => fields.get(key),
+                _ => None,
+            })
+            .unwrap_or(&NULL)
+    }
+    pub(crate) fn persistent(self) -> Self {
+        match self {
+            Self::List(values) => Self::Sequence(values.iter().cloned().collect()),
+            value => value,
+        }
+    }
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::Str(s) => Some(s.as_ref()),
@@ -63,6 +101,21 @@ impl Value {
             Value::Num(n) => n.to_string().into(),
             Value::Str(s) => s.clone(),
             Value::List(l) => format!("[{} items]", l.len()).into(),
+            Value::Sequence(l) => format!("[{} items]", l.len()).into(),
+            Value::Record(_) => "[record]".into(),
+        }
+    }
+    /// Records are accepted inside list items, while direct object-valued props remain errors.
+    pub fn item_from_json(v: &serde_json::Value) -> Result<Self, &'static str> {
+        if let serde_json::Value::Object(fields) = v {
+            Ok(Self::Record(Arc::new(
+                fields
+                    .iter()
+                    .map(|(key, value)| Ok((key.clone().into(), Self::item_from_json(value)?)))
+                    .collect::<Result<_, &'static str>>()?,
+            )))
+        } else {
+            Self::try_from_json(v)
         }
     }
     /// Convert JSON; objects are not values (`Err` lets the compiler report them).
@@ -74,7 +127,7 @@ impl Value {
             serde_json::Value::String(s) => Value::Str(s.clone().into()),
             serde_json::Value::Array(a) => Value::List(
                 a.iter()
-                    .map(Value::try_from_json)
+                    .map(Value::item_from_json)
                     .collect::<Result<Vec<_>, _>>()?
                     .into(),
             ),
@@ -138,7 +191,7 @@ mod tests {
     #[test]
     fn json_objects_are_rejected_and_big_numbers_display_safely() {
         assert!(Value::try_from_json(&serde_json::json!({"a": 1})).is_err());
-        assert!(Value::try_from_json(&serde_json::json!([1, {"a": 1}])).is_err());
+        assert!(Value::try_from_json(&serde_json::json!([1, {"a": 1}])).is_ok());
         assert_eq!(Value::Num(1e300).display().as_ref(), "1e300");
         assert_eq!(Value::Num(42.0).display().as_ref(), "42");
         assert_eq!(Value::Num(f64::NAN).display().as_ref(), "NaN");

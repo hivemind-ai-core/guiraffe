@@ -6,18 +6,21 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     rc::Rc,
     sync::Arc,
 };
 
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, IntoElement, Render, WeakEntity, Window, div,
+    AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled,
+    Window, div, px, uniform_list,
 };
 
 use crate::{
+    Payload,
     ir::Document,
-    slots::{PatchBuf, SlotId, SlotTable},
+    repeat::KeyedList,
+    slots::{Patch, PatchBuf, SlotId, SlotTable},
     template::{CompileError, EventId, Names, Template},
     value::Value,
     widget::{Emit, NodeView, Registry},
@@ -31,7 +34,13 @@ pub trait Logic: 'static {
     fn bind(&mut self, names: &Names, out: &mut PatchBuf);
     /// Called once, after the first bind, to populate initial view data.
     fn init(&mut self, _out: &mut PatchBuf) {}
-    fn on_event(&mut self, event: EventId, payload: &Value, out: &mut PatchBuf);
+    fn on_event(&mut self, _event: EventId, _payload: &Value, _out: &mut PatchBuf) {}
+    /// Compact input hook. The default preserves existing Value-based logic.
+    /// The optimistic value is already in the slot table. Use out.veto() or emit
+    /// a replacement patch to reject or normalize a change.
+    fn on_payload(&mut self, event: EventId, payload: &Payload, out: &mut PatchBuf) {
+        self.on_event(event, &payload.value(), out);
+    }
 }
 
 /// A no-op logic (static documents).
@@ -43,12 +52,18 @@ impl Logic for NoLogic {
 }
 
 /// State shared by the host and its bound-node entities (UI thread only).
+type RepeatState = Rc<RefCell<KeyedList<Rc<ItemScope>>>>;
 struct Shared {
     template: RefCell<Arc<Template>>,
     slots: RefCell<SlotTable>,
     generation: Cell<u32>,
     emit: Emit,
-    bound: RefCell<HashMap<u32, Entity<BoundNode>>>,
+    bound: RefCell<BTreeMap<(u32, u64), Entity<BoundNode>>>,
+    repeats: RefCell<HashMap<(u32, u64), RepeatState>>,
+    next_item: Cell<u64>,
+    input_emit: crate::widget::InputEmit,
+    controls: crate::controls::ControlCache,
+
     renders: RefCell<Vec<u64>>,
     logic: RefCell<Box<dyn Logic>>,
     buf: RefCell<PatchBuf>,
@@ -56,7 +71,7 @@ struct Shared {
     events_handled: Cell<u64>,
     stale_events: Cell<u64>,
     host_refreshes: Cell<u64>,
-    host: WeakEntity<DataUi>,
+    owner: std::rc::Weak<Shared>,
 }
 
 impl Shared {
@@ -66,6 +81,9 @@ impl Shared {
         if generation != self.generation.get() {
             // Wired for an older document: its EventId may mean something else now.
             self.stale_events.set(self.stale_events.get() + 1);
+            return;
+        }
+        if self.template.borrow().names().event_name(event).is_none() {
             return;
         }
         self.events_handled.set(self.events_handled.get() + 1);
@@ -81,46 +99,159 @@ impl Shared {
         self.flush(cx);
     }
 
-    /// Apply buffered patches and notify only the entities bound to changed slots.
+    fn dispatch_input(
+        &self,
+        event: Option<EventId>,
+        slot: Option<SlotId>,
+        payload: Payload,
+        generation: u32,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let _ = window;
+        if generation != self.generation.get() {
+            self.stale_events.set(self.stale_events.get() + 1);
+            return;
+        }
+        self.buf.borrow_mut().take_veto();
+        let previous = slot.map(|id| self.slots.borrow().get(id).clone());
+        if let Some(id) = slot {
+            self.buf.borrow_mut().set(id, payload.value());
+            self.flush(cx);
+        }
+        if let Some(event) = event {
+            self.events_handled.set(self.events_handled.get() + 1);
+            self.logic
+                .borrow_mut()
+                .on_payload(event, &payload, &mut self.buf.borrow_mut());
+        }
+        if self.buf.borrow_mut().take_veto()
+            && let (Some(id), Some(previous)) = (slot, previous)
+        {
+            self.buf.borrow_mut().set(id, previous);
+        }
+        self.flush(cx);
+    }
+
+    /// Apply patches, incrementally reconcile repeat ranges, then notify leaves purely.
     fn flush(&self, cx: &mut App) {
         let mut changed = self.changed.borrow_mut();
         changed.clear();
-        if self
-            .slots
-            .borrow_mut()
-            .apply_tracked(&mut self.buf.borrow_mut(), &mut changed)
-            == 0
+        let mut edits = Vec::new();
+        if self.slots.borrow_mut().apply_detailed(
+            &mut self.buf.borrow_mut(),
+            &mut changed,
+            &mut edits,
+        ) == 0
         {
             return;
         }
         let template = self.template.borrow().clone();
-        let mut root_dirty = false;
-        let mut targets = Vec::new();
+        for edit in edits {
+            let slot = match &edit {
+                Patch::Set(id, _) | Patch::Splice(id, _, _) => *id,
+            };
+            let targets: Vec<_> = self
+                .repeats
+                .borrow()
+                .iter()
+                .filter_map(|((index, _), state)| {
+                    template
+                        .node(*index)
+                        .filter(|spec| spec.each == Some(slot))
+                        .map(|_| state.clone())
+                })
+                .collect();
+            for state in targets {
+                match &edit {
+                    Patch::Set(_, value) => {
+                        let values: Arc<[Value]> = (0..value.list_len().unwrap_or(0))
+                            .filter_map(|i| value.list_get(i).cloned())
+                            .collect();
+                        let len = state.borrow().rows.len();
+                        self.splice_rows(&state, 0..len, &values, cx);
+                    }
+                    Patch::Splice(_, range, values) => {
+                        self.splice_rows(&state, range.clone(), values, cx)
+                    }
+                }
+            }
+        }
+        let mut targets = std::collections::HashSet::new();
         for slot in changed.iter() {
-            for node in template.slot_nodes(*slot) {
-                match self.bound.borrow().get(node) {
-                    Some(e) => targets.push(e.clone()),
-                    // Not rendered as an entity yet (or the root itself): re-render the host.
-                    None => root_dirty = true,
+            for index in template.slot_nodes(*slot) {
+                for (_, entity) in self.bound.borrow().range((*index, 0)..=(*index, u64::MAX)) {
+                    targets.insert(entity.entity_id());
                 }
             }
         }
         drop(changed);
-        for e in targets {
-            // A pure notification. `entity.update(..)` would count as a *write* on gpui-fast and
-            // invalidate every view that rendered the entity (i.e. its ancestors).
-            cx.notify(e.entity_id());
-        }
-        if root_dirty {
-            self.host_refreshes.set(self.host_refreshes.get() + 1);
-            let _ = self.host.update(cx, |_, cx| cx.notify());
+        for target in targets {
+            cx.notify(target);
         }
     }
 
+    fn splice_rows(
+        &self,
+        state: &RepeatState,
+        range: std::ops::Range<usize>,
+        values: &Arc<[Value]>,
+        cx: &mut App,
+    ) {
+        // Stored rows carry weak host pointers; creating or dropping a row never writes DataUi.
+        let owner = self.owner.clone();
+        let app = RefCell::new(cx);
+        state.borrow_mut().splice(
+            range,
+            values,
+            |value| {
+                let id = self.next_item.get();
+                self.next_item.set(id + 1);
+                Rc::new_cyclic(|weak| ItemScope {
+                    id,
+                    value: RefCell::new(value.clone()),
+                    active: Rc::new(Cell::new(true)),
+                    renders: Cell::new(0),
+                    template_node: Cell::new(0),
+                    owner: owner.clone(),
+                    bound: RefCell::new(Vec::new()),
+                    repeats: RefCell::new(Vec::new()),
+                    row: app.borrow_mut().new(|_| ItemView { item: weak.clone() }),
+                })
+            },
+            |item, value| {
+                *item.value.borrow_mut() = value.clone();
+                app.borrow_mut().notify(item.row.entity_id());
+                for key in item.bound.borrow().iter() {
+                    if let Some(bound) = self.bound.borrow().get(key) {
+                        app.borrow_mut().notify(bound.entity_id());
+                    }
+                }
+            },
+            |item| self.dispose_item(&item),
+        );
+    }
+
+    fn dispose_item(&self, item: &ItemScope) {
+        item.active.set(false);
+        for key in item.bound.borrow().iter() {
+            self.bound.borrow_mut().remove(key);
+        }
+        self.controls.remove_scope(item.id);
+        for key in item.repeats.borrow().iter() {
+            let nested = self.repeats.borrow_mut().remove(key);
+            if let Some(nested) = nested {
+                for entry in nested.borrow().rows.iter() {
+                    self.dispose_item(&entry.state);
+                }
+            }
+        }
+    }
     fn render_node(
         self: &Rc<Self>,
         index: u32,
         as_entity_root: bool,
+        item: Option<Rc<ItemScope>>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -128,31 +259,97 @@ impl Shared {
         let Some(spec) = template.node(index) else {
             return div().into_any_element();
         };
+        let scope = item.as_ref().map(|item| item.id).unwrap_or(0);
         if !spec.deps.is_empty() && !as_entity_root {
-            let existing = self.bound.borrow().get(&index).cloned();
+            let key = (index, scope);
+            let existing = self.bound.borrow().get(&key).cloned();
             let entity = existing.unwrap_or_else(|| {
-                let shared = self.clone();
-                let e = cx.new(|_| BoundNode { shared, index });
-                self.bound.borrow_mut().insert(index, e.clone());
-                e
+                let shared = Rc::downgrade(self);
+                let entity = cx.new(|_| BoundNode {
+                    shared,
+                    index,
+                    item: item.as_ref().map(Rc::downgrade),
+                });
+                self.bound.borrow_mut().insert(key, entity.clone());
+                if let Some(item) = &item {
+                    item.bound.borrow_mut().push(key);
+                }
+                entity
             });
             return entity.into_any_element();
         }
         if let Some(r) = self.renders.borrow_mut().get_mut(index as usize) {
             *r += 1;
         }
-        let children: Vec<AnyElement> = template
-            .children(spec)
-            .iter()
-            .map(|c| self.render_node(*c, false, window, cx))
-            .collect();
+        if spec
+            .when
+            .is_some_and(|id| self.slots.borrow().get(id).as_bool() != Some(true))
+        {
+            return div().into_any_element();
+        }
+        let children = if let Some(slot) = spec.each {
+            let key = (index, scope);
+            let existing = self.repeats.borrow().get(&key).cloned();
+            let state = existing.unwrap_or_else(|| {
+                let state = Rc::new(RefCell::new(KeyedList::new(spec.key.clone())));
+                let values = self.slots.borrow().get(slot).clone();
+                let values = (0..values.list_len().unwrap_or(0))
+                    .filter_map(|i| values.list_get(i).cloned())
+                    .collect::<Arc<[Value]>>();
+                self.splice_rows(&state, 0..0, &values, cx);
+                self.repeats.borrow_mut().insert(key, state.clone());
+                if let Some(item) = &item {
+                    item.repeats.borrow_mut().push(key);
+                }
+                state
+            });
+            let rows = state.borrow().rows.clone();
+            let count = rows.len();
+            // Equal-height templates are virtualized; each item remains its own view.
+            vec![
+                uniform_list(
+                    ("data-ui-repeat", index as usize),
+                    count,
+                    move |range, _, _| {
+                        range
+                            .filter_map(|position| rows.get(position))
+                            .map(|entry| {
+                                let row = entry.state.row.clone();
+                                entry.state.template_node.set(index);
+                                row.cached(
+                                    gpui_kit::StyleRefinement::default()
+                                        .w_full()
+                                        .h(px(guiraffe_core::Size::Md.control_height())),
+                                )
+                                .into_any_element()
+                            })
+                            .collect()
+                    },
+                )
+                .h(px(guiraffe_core::Size::Md.control_height() * 8.))
+                .w_full()
+                .into_any_element(),
+            ]
+        } else {
+            template
+                .children(spec)
+                .iter()
+                .map(|child| self.render_node(*child, false, item.clone(), window, cx))
+                .collect()
+        };
         let slots = self.slots.borrow();
+        let item_value = item.as_ref().map(|item| item.value.borrow());
         let view = NodeView {
             spec,
             slots: &slots,
             emit: &self.emit,
             generation: self.generation.get(),
             index,
+            item: item_value.as_deref(),
+            input_emit: &self.input_emit,
+            controls: &self.controls,
+            scope,
+            active: item.as_ref().map(|item| item.active.clone()),
         };
         spec.widget.render(&view, children, window, cx)
     }
@@ -160,13 +357,64 @@ impl Shared {
 
 /// A node with slot-bound props, rendered as its own entity for targeted invalidation.
 pub struct BoundNode {
-    shared: Rc<Shared>,
+    shared: std::rc::Weak<Shared>,
     index: u32,
+    item: Option<std::rc::Weak<ItemScope>>,
 }
 
 impl Render for BoundNode {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.shared.render_node(self.index, true, window, cx)
+        self.shared
+            .upgrade()
+            .map(|shared| {
+                shared.render_node(
+                    self.index,
+                    true,
+                    self.item.as_ref().and_then(std::rc::Weak::upgrade),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap_or_else(|| div().into_any_element())
+    }
+}
+
+struct ItemScope {
+    id: u64,
+    value: RefCell<Value>,
+    active: Rc<Cell<bool>>,
+    renders: Cell<u64>,
+    template_node: Cell<u32>,
+    owner: std::rc::Weak<Shared>,
+    bound: RefCell<Vec<(u32, u64)>>,
+    repeats: RefCell<Vec<(u32, u64)>>,
+    row: Entity<ItemView>,
+}
+struct ItemView {
+    item: std::rc::Weak<ItemScope>,
+}
+impl Render for ItemView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(item) = self.item.upgrade().filter(|item| item.active.get()) else {
+            return div().into_any_element();
+        };
+        let Some(shared) = item.owner.upgrade() else {
+            return div().into_any_element();
+        };
+        item.renders.set(item.renders.get() + 1);
+        let template = shared.template.borrow().clone();
+        let index = Some(item.template_node.get());
+        let kids = index
+            .and_then(|index| template.node(index))
+            .map(|spec| {
+                template
+                    .children(spec)
+                    .iter()
+                    .map(|index| shared.render_node(*index, false, Some(item.clone()), window, cx))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        div().flex().flex_col().children(kids).into_any_element()
     }
 }
 
@@ -186,15 +434,30 @@ impl DataUiHandle {
     pub fn patch(&self, f: impl FnOnce(&Names, &mut PatchBuf), cx: &mut App) {
         self.shared.patch(f, cx);
     }
-    pub fn dispatch(&self, event: EventId, payload: Value, cx: &mut App) {
+    pub fn dispatch(&self, event: impl Into<EventId>, payload: Value, cx: &mut App) {
         self.shared
-            .dispatch(event, payload, self.shared.generation.get(), cx);
+            .dispatch(event.into(), payload, self.shared.generation.get(), cx);
     }
     pub fn slot_value(&self, name: &str) -> Option<Value> {
         let id = self.shared.template.borrow().names().slot(name)?;
         Some(self.shared.slots.borrow().get(id).clone())
     }
 
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn native_input_value(&self, node: u32, cx: &App) -> Option<Value> {
+        self.shared.controls.native_value(node, cx)
+    }
+    /// Render counts and entity identities for keyed-repeat isolation tests/devtools.
+    pub fn item_metrics(&self, node: u32, key: &str) -> Option<(u64, u64)> {
+        let states = self.shared.repeats.borrow();
+        let state = states.get(&(node, 0))?.borrow();
+        let entry = state
+            .rows
+            .iter()
+            .find(|entry| entry.value.field(&["id".into()]).as_str() == Some(key))?;
+        Some((entry.state.id, entry.state.renders.get()))
+    }
     /// Test seam: deliver an event stamped with the *previous* document generation, as a
     /// handler captured before a hot reload would.
     #[doc(hidden)]
@@ -222,8 +485,7 @@ impl DataUi {
         mut logic: impl Logic,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|cx| {
-            let host: WeakEntity<Self> = cx.entity().downgrade();
+        cx.new(|_cx| {
             // Built once, shared by every handler; dispatches through the shared state (never
             // by writing the host entity). The cell breaks the Rc cycle Shared ↔ emit.
             let shared_slot: Rc<RefCell<std::rc::Weak<Shared>>> = Rc::default();
@@ -233,17 +495,28 @@ impl DataUi {
                     shared.dispatch(id, payload, generation, cx);
                 }
             });
+            let input_target = shared_slot.clone();
+            let input_emit: crate::widget::InputEmit =
+                Rc::new(move |event, slot, payload, generation, window, cx| {
+                    if let Some(shared) = input_target.borrow().upgrade() {
+                        shared.dispatch_input(event, slot, payload, generation, window, cx);
+                    }
+                });
             let mut slots = SlotTable::with_defaults(template.slot_defaults());
             let mut buf = PatchBuf::default();
             logic.bind(template.names(), &mut buf);
             logic.init(&mut buf);
             slots.apply(&mut buf);
             let renders = vec![0; template.len()];
-            let shared = Rc::new(Shared {
+            let shared = Rc::new_cyclic(|owner| Shared {
                 template: RefCell::new(template),
                 slots: RefCell::new(slots),
                 generation: Cell::new(0),
                 emit,
+                input_emit,
+                controls: Default::default(),
+                repeats: RefCell::default(),
+                next_item: Cell::new(1),
                 bound: RefCell::default(),
                 renders: RefCell::new(renders),
                 logic: RefCell::new(Box::new(logic)),
@@ -252,7 +525,7 @@ impl DataUi {
                 events_handled: Cell::new(0),
                 stale_events: Cell::new(0),
                 host_refreshes: Cell::new(0),
-                host,
+                owner: owner.clone(),
             });
             *shared_slot.borrow_mut() = Rc::downgrade(&shared);
             Self { registry, shared }
@@ -317,6 +590,13 @@ impl DataUi {
         *self.shared.slots.borrow_mut() = migrated;
         *self.shared.renders.borrow_mut() = vec![0; template.len()];
         self.shared.bound.borrow_mut().clear();
+        for state in self.shared.repeats.borrow().values() {
+            for row in state.borrow().rows.iter() {
+                row.state.active.set(false);
+            }
+        }
+        self.shared.repeats.borrow_mut().clear();
+        self.shared.controls.clear();
         self.shared
             .generation
             .set(self.shared.generation.get().wrapping_add(1));
@@ -337,6 +617,6 @@ impl DataUi {
 impl Render for DataUi {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let root = self.shared.template.borrow().root();
-        self.shared.render_node(root, false, window, cx)
+        self.shared.render_node(root, false, None, window, cx)
     }
 }

@@ -3444,6 +3444,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-ui",
+ "im",
  "serde",
  "serde_json",
 ]

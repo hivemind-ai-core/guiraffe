@@ -22,3 +22,12 @@ pub use slots::{Patch, PatchBuf, SlotId, SlotTable};
 pub use template::{CompileError, Diagnostic, EventId, MAX_DEPTH, Names, Prop, Severity, Template};
 pub use value::Value;
 pub use widget::{FnWidget, NodeView, Registry, Schema, Widget, widget};
+
+pub mod bindings;
+pub mod payload;
+pub use bindings::{Bindings, Event, Slot, SlotValue};
+pub use payload::Payload;
+
+mod repeat;
+
+mod controls;
