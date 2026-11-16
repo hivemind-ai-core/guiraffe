@@ -84,6 +84,8 @@ pub struct Flow {
     meshes: Rc<RefCell<paint::MeshCache>>,
     last_error: Option<FlowError>,
     nodes: BTreeMap<core::NodeId, Entity<node::NodeCard>>,
+    /// Start of the animated-edge clock (app/executor time, so tests are deterministic).
+    anim_epoch: Option<std::time::Instant>,
 }
 impl EventEmitter<FlowEvent> for Flow {}
 impl Flow {
@@ -100,6 +102,7 @@ impl Flow {
             meshes: Rc::new(RefCell::new(paint::MeshCache::default())),
             last_error: None,
             nodes: BTreeMap::new(),
+            anim_epoch: None,
         })
     }
     pub fn options(mut self, options: FlowOptions) -> Self {
@@ -406,12 +409,18 @@ impl Render for Flow {
         let bounds = self.bounds.clone();
         let weak = cx.entity().downgrade();
         let meshes = self.meshes.clone();
+        // Animated edges: phase from the app clock; none at all under reduced motion.
+        let now = cx.background_executor().now();
+        let epoch = *self.anim_epoch.get_or_insert(now);
+        let phase = (!cx.reduce_motion())
+            .then(|| (now.saturating_duration_since(epoch).as_millis() % 1000) as f32 / 1000.);
         let frame = paint::Frame::new(
             &self.interaction,
             &mut self.visible,
             self.options.background,
             self.options.minimap,
             &theme,
+            phase,
         );
         let mut root = div()
             .id("flow")
