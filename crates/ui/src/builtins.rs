@@ -181,6 +181,18 @@ pub fn register(r: &mut Registry) {
             b
         }),
     );
+    // Content-sized child (Mocket `width: "hug"`): opts out of the parent's cross-axis stretch.
+    r.register(
+        "hug",
+        widget(&Schema::EMPTY, |_, kids, _, _| {
+            div()
+                .flex()
+                .flex_col()
+                .self_start()
+                .children(kids)
+                .into_any_element()
+        }),
+    );
     r.register(
         "spacer",
         widget(&Schema::EMPTY, |_, _, _, _| {
@@ -201,5 +213,6 @@ pub const KINDS: &[&str] = &[
     "card",
     "ring",
     "button",
+    "hug",
     "spacer",
 ];

@@ -1,0 +1,1486 @@
+{
+  "annotations": [
+    {
+      "category": "behaviour",
+      "criteria": [
+        "No horizontal scroll at 900px and 768px",
+        "The search field stays first",
+        "All filters remain reachable by keyboard"
+      ],
+      "kind": "note",
+      "labelPos": {
+        "x": 420,
+        "y": 210
+      },
+      "number": 1,
+      "points": [
+        {
+          "x": 320,
+          "y": 240
+        }
+      ],
+      "priority": "must",
+      "screen": "u-screen-screen-1",
+      "target": "u-node-analytics-filters",
+      "text": "Make this toolbar wrap to a second row below 900px instead of scrolling horizontally.",
+      "uid": "u-note-1"
+    },
+    {
+      "category": "data",
+      "kind": "note",
+      "labelPos": {
+        "x": 760,
+        "y": 380
+      },
+      "number": 2,
+      "points": [
+        {
+          "x": 320,
+          "y": 400
+        }
+      ],
+      "priority": "should",
+      "screen": "u-screen-screen-1",
+      "target": "u-node-analytics-revenue-chart",
+      "text": "Show a dotted target line at the revenue plan, labelled \"Plan\".",
+      "uid": "u-note-2"
+    },
+    {
+      "category": "question",
+      "kind": "note",
+      "labelPos": {
+        "x": 760,
+        "y": 540
+      },
+      "number": 3,
+      "points": [
+        {
+          "x": 320,
+          "y": 560
+        }
+      ],
+      "screen": "u-screen-screen-1",
+      "target": "u-node-analytics-conversions-table",
+      "text": "Should the table default to 25 rows or the full month?",
+      "uid": "u-note-3"
+    },
+    {
+      "category": "behaviour",
+      "criteria": [
+        "A reason is required",
+        "The amount is shown before confirming"
+      ],
+      "kind": "note",
+      "labelPos": {
+        "x": 640,
+        "y": 470
+      },
+      "number": 4,
+      "points": [
+        {
+          "x": 400,
+          "y": 520
+        }
+      ],
+      "priority": "must",
+      "screen": "u-screen-order-detail",
+      "target": "u-node-detail-refund",
+      "text": "Refund asks for a reason first, then confirms with the amount. It must never be a single click.",
+      "uid": "u-note-4"
+    }
+  ],
+  "chartLibrary": {
+    "items": [
+      {
+        "id": "orders-by-region",
+        "name": "Orders by region",
+        "purpose": "Show how order volume is distributed across regions.",
+        "spec": {
+          "mode": "custom",
+          "panels": [
+            {
+              "axes": [
+                {
+                  "direction": "x",
+                  "id": "x",
+                  "position": "bottom",
+                  "type": "band"
+                },
+                {
+                  "direction": "y",
+                  "id": "y",
+                  "position": "left",
+                  "title": "Orders",
+                  "type": "linear"
+                }
+              ],
+              "id": "main",
+              "placement": "main",
+              "series": [
+                {
+                  "encoders": {
+                    "x": {
+                      "field": "region"
+                    },
+                    "y": {
+                      "field": "orders"
+                    }
+                  },
+                  "id": "orders",
+                  "mark": "bar",
+                  "view": "view-orders",
+                  "xAxis": "x",
+                  "yAxis": "y"
+                }
+              ]
+            }
+          ],
+          "version": 2
+        },
+        "uid": "chart-orders-by-region"
+      }
+    ],
+    "version": 1
+  },
+  "dataLayer": {
+    "version": 1,
+    "views": [
+      {
+        "id": "orders-by-region",
+        "name": "Orders by region",
+        "output": [
+          {
+            "name": "region",
+            "nullable": false,
+            "type": "string"
+          },
+          {
+            "name": "orders",
+            "nullable": false,
+            "type": "number"
+          }
+        ],
+        "source": {
+          "columns": [
+            {
+              "name": "region",
+              "nullable": false,
+              "type": "string"
+            },
+            {
+              "name": "orders",
+              "nullable": false,
+              "type": "number"
+            }
+          ],
+          "kind": "inline",
+          "rows": [
+            {
+              "orders": 128,
+              "region": "North"
+            },
+            {
+              "orders": 96,
+              "region": "South"
+            },
+            {
+              "orders": 143,
+              "region": "East"
+            },
+            {
+              "orders": 117,
+              "region": "West"
+            }
+          ]
+        },
+        "transforms": [],
+        "uid": "view-orders"
+      }
+    ]
+  },
+  "nodes": {
+    "u-node-analytics-body": {
+      "children": [
+        "u-node-analytics-sidebar",
+        "u-node-analytics-main"
+      ],
+      "id": "analytics-body",
+      "layout": {
+        "align": "stretch",
+        "display": "row",
+        "gap": 0,
+        "minHeight": 768,
+        "padding": 0,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-page",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "row",
+      "uid": "u-node-analytics-body"
+    },
+    "u-node-analytics-content": {
+      "children": [
+        "u-node-analytics-page-heading",
+        "u-node-analytics-filters",
+        "u-node-analytics-meta",
+        "u-node-analytics-kpis",
+        "u-node-analytics-main-grid",
+        "u-node-analytics-detail-grid"
+      ],
+      "id": "analytics-content",
+      "layout": {
+        "display": "stack",
+        "gap": 24,
+        "minHeight": 48,
+        "padding": 32,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-main",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "stack",
+      "uid": "u-node-analytics-content"
+    },
+    "u-node-analytics-conversions-card": {
+      "children": [
+        "u-node-analytics-conversions-table"
+      ],
+      "id": "analytics-conversions-card",
+      "layout": {
+        "display": "stack",
+        "gap": 16,
+        "minHeight": 320,
+        "padding": 24,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-detail-grid",
+      "props": {
+        "accent": "neutral",
+        "accentSide": "none",
+        "footer": "",
+        "overline": "",
+        "state": "default",
+        "subtitle": "New paying accounts",
+        "surface": "outlined",
+        "title": "Recent conversions",
+        "variant": "outlined"
+      },
+      "type": "card",
+      "uid": "u-node-analytics-conversions-card"
+    },
+    "u-node-analytics-conversions-table": {
+      "children": [],
+      "id": "analytics-conversions-table",
+      "layout": {
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-conversions-card",
+      "props": {
+        "columnTypes": "avatar\nstatus\nnumber\ntrend",
+        "columns": "Customer\nStatus\nMRR\nTrend",
+        "emptyMessage": "No rows yet",
+        "errorMessage": "Couldn’t load these rows",
+        "pageSize": 6,
+        "pagination": false,
+        "rows": "Northwind~northwind.com | Paid | $1,240 | +12.4%\nInitech~initech.io | Trial | $480 | +4.1%\nGlobex~globex.com | Paid | $1,240 | +8.7%\nUmbrella~umbrella.co | Overdue | $96 | -2.3%\nSoylent~soylent.dev | Paid | $480 | +6.0%\nHooli~hooli.xyz | Paid | $1,240 | +11.2%\nPied Piper~piedpiper.com | Trial | $96 | +1.8%",
+        "selected": "",
+        "selection": false,
+        "sortColumn": 3,
+        "sortDir": "desc",
+        "state": "default",
+        "stickyHeader": false,
+        "variant": "plain"
+      },
+      "type": "table",
+      "uid": "u-node-analytics-conversions-table"
+    },
+    "u-node-analytics-detail-grid": {
+      "children": [
+        "u-node-analytics-pages-card",
+        "u-node-analytics-conversions-card"
+      ],
+      "id": "analytics-detail-grid",
+      "layout": {
+        "columns": "1fr 1fr",
+        "display": "grid",
+        "gap": 24,
+        "minHeight": 48,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-content",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "grid",
+      "uid": "u-node-analytics-detail-grid"
+    },
+    "u-node-analytics-filters": {
+      "children": [],
+      "id": "analytics-filters",
+      "layout": {
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-content",
+      "props": {
+        "chips": "Channel: All\nSegment: Pro",
+        "date": "Oct 1 – Oct 31, 2026",
+        "exportLabel": "Export",
+        "search": "Search this view…",
+        "view": "table"
+      },
+      "type": "filter-toolbar",
+      "uid": "u-node-analytics-filters"
+    },
+    "u-node-analytics-header": {
+      "children": [],
+      "id": "analytics-header",
+      "layout": {
+        "display": "row",
+        "gap": 12,
+        "padding": [
+          12,
+          24
+        ],
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-main",
+      "props": {
+        "actionLabel": "",
+        "active": 0,
+        "avatar": true,
+        "brand": "Acme",
+        "layout": "spread",
+        "links": "",
+        "search": true,
+        "variant": "bordered"
+      },
+      "type": "header-nav",
+      "uid": "u-node-analytics-header"
+    },
+    "u-node-analytics-kpi-churn": {
+      "children": [],
+      "id": "analytics-kpi-churn",
+      "layout": {
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-kpis",
+      "props": {
+        "comparison": "vs. last month",
+        "count": 20,
+        "data": "",
+        "delta": "-0.3%",
+        "deltaTone": "positive",
+        "label": "Churn",
+        "seed": 16,
+        "sparkVariant": "area",
+        "sparkline": true,
+        "state": "default",
+        "trend": "down",
+        "value": "1.2%"
+      },
+      "type": "kpi",
+      "uid": "u-node-analytics-kpi-churn"
+    },
+    "u-node-analytics-kpi-revenue": {
+      "children": [],
+      "id": "analytics-kpi-revenue",
+      "layout": {
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-kpis",
+      "props": {
+        "comparison": "vs. last month",
+        "count": 20,
+        "data": "",
+        "delta": "+12.4%",
+        "deltaTone": "auto",
+        "label": "Revenue",
+        "seed": 4,
+        "sparkVariant": "area",
+        "sparkline": true,
+        "state": "default",
+        "trend": "up",
+        "value": "$48,120"
+      },
+      "type": "kpi",
+      "uid": "u-node-analytics-kpi-revenue"
+    },
+    "u-node-analytics-kpi-sessions": {
+      "children": [],
+      "id": "analytics-kpi-sessions",
+      "layout": {
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-kpis",
+      "props": {
+        "comparison": "vs. last month",
+        "count": 20,
+        "data": "",
+        "delta": "+8.7%",
+        "deltaTone": "auto",
+        "label": "Sessions",
+        "seed": 12,
+        "sparkVariant": "area",
+        "sparkline": true,
+        "state": "default",
+        "trend": "up",
+        "value": "48,209"
+      },
+      "type": "kpi",
+      "uid": "u-node-analytics-kpi-sessions"
+    },
+    "u-node-analytics-kpi-users": {
+      "children": [],
+      "id": "analytics-kpi-users",
+      "layout": {
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-kpis",
+      "props": {
+        "comparison": "vs. last month",
+        "count": 20,
+        "data": "",
+        "delta": "+3.1%",
+        "deltaTone": "auto",
+        "label": "Active users",
+        "seed": 8,
+        "sparkVariant": "area",
+        "sparkline": true,
+        "state": "default",
+        "trend": "up",
+        "value": "2,431"
+      },
+      "type": "kpi",
+      "uid": "u-node-analytics-kpi-users"
+    },
+    "u-node-analytics-kpis": {
+      "children": [
+        "u-node-analytics-kpi-revenue",
+        "u-node-analytics-kpi-users",
+        "u-node-analytics-kpi-sessions",
+        "u-node-analytics-kpi-churn"
+      ],
+      "id": "analytics-kpis",
+      "layout": {
+        "columns": 4,
+        "display": "grid",
+        "gap": 16,
+        "minHeight": 48
+      },
+      "parent": "u-node-analytics-content",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "grid",
+      "uid": "u-node-analytics-kpis"
+    },
+    "u-node-analytics-main": {
+      "children": [
+        "u-node-analytics-header",
+        "u-node-analytics-content"
+      ],
+      "id": "analytics-main",
+      "layout": {
+        "display": "stack",
+        "gap": 0,
+        "height": "fill",
+        "minHeight": 48,
+        "padding": 0,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-body",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "stack",
+      "uid": "u-node-analytics-main"
+    },
+    "u-node-analytics-main-grid": {
+      "children": [
+        "u-node-analytics-revenue-card",
+        "u-node-analytics-traffic-card"
+      ],
+      "id": "analytics-main-grid",
+      "layout": {
+        "columns": "2fr 1fr",
+        "display": "grid",
+        "gap": 24,
+        "minHeight": 48,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-content",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "grid",
+      "uid": "u-node-analytics-main-grid"
+    },
+    "u-node-analytics-meta": {
+      "children": [
+        "u-node-analytics-meta-compare",
+        "u-node-analytics-meta-fill",
+        "u-node-analytics-meta-updated"
+      ],
+      "id": "analytics-meta",
+      "layout": {
+        "align": "center",
+        "display": "row",
+        "gap": 16,
+        "minHeight": 48,
+        "padding": 0,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-content",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "row",
+      "uid": "u-node-analytics-meta"
+    },
+    "u-node-analytics-meta-compare": {
+      "children": [],
+      "id": "analytics-meta-compare",
+      "layout": {
+        "width": "hug"
+      },
+      "parent": "u-node-analytics-meta",
+      "props": {
+        "checked": true,
+        "label": "vs previous period"
+      },
+      "type": "comparison-toggle",
+      "uid": "u-node-analytics-meta-compare"
+    },
+    "u-node-analytics-meta-fill": {
+      "children": [],
+      "id": "analytics-meta-fill",
+      "layout": {
+        "height": "fill",
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-meta",
+      "props": {
+        "size": 0
+      },
+      "type": "spacer",
+      "uid": "u-node-analytics-meta-fill"
+    },
+    "u-node-analytics-meta-updated": {
+      "children": [],
+      "id": "analytics-meta-updated",
+      "layout": {
+        "width": "hug"
+      },
+      "parent": "u-node-analytics-meta",
+      "props": {
+        "showRefresh": true,
+        "text": "Updated 2 min ago"
+      },
+      "type": "last-updated",
+      "uid": "u-node-analytics-meta-updated"
+    },
+    "u-node-analytics-page": {
+      "children": [
+        "u-node-analytics-body"
+      ],
+      "id": "analytics-page",
+      "layout": {
+        "display": "stack",
+        "gap": 0,
+        "minHeight": 48,
+        "padding": 0,
+        "width": "fill"
+      },
+      "parent": "u-node-screen-1-root",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "page",
+        "surface": "subtle",
+        "tag": "main"
+      },
+      "type": "box",
+      "uid": "u-node-analytics-page"
+    },
+    "u-node-analytics-page-heading": {
+      "children": [
+        "u-node-analytics-title-block",
+        "u-node-button"
+      ],
+      "id": "analytics-page-heading",
+      "layout": {
+        "align": "center",
+        "display": "row",
+        "gap": 16,
+        "justify": "between",
+        "minHeight": 48,
+        "padding": 0,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-content",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "row",
+      "uid": "u-node-analytics-page-heading"
+    },
+    "u-node-analytics-pages-card": {
+      "children": [
+        "u-node-analytics-pages-list"
+      ],
+      "id": "analytics-pages-card",
+      "layout": {
+        "display": "stack",
+        "gap": 16,
+        "minHeight": 320,
+        "padding": 24,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-detail-grid",
+      "props": {
+        "accent": "neutral",
+        "accentSide": "none",
+        "footer": "",
+        "overline": "",
+        "state": "default",
+        "subtitle": "Unique views this month",
+        "surface": "outlined",
+        "title": "Top pages",
+        "variant": "outlined"
+      },
+      "type": "card",
+      "uid": "u-node-analytics-pages-card"
+    },
+    "u-node-analytics-pages-list": {
+      "children": [],
+      "id": "analytics-pages-list",
+      "layout": {
+        "height": "fill",
+        "minHeight": 256,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-pages-card",
+      "props": {
+        "highlight": 1,
+        "items": "/home | 12,480\n/pricing | 8,210\n/docs/getting-started | 6,940\n/blog/launch | 4,120\n/changelog | 2,860\n/features/analytics | 2,310\n/about | 1,980",
+        "showRank": true,
+        "showValues": true,
+        "state": "default",
+        "title": "",
+        "unit": ""
+      },
+      "type": "bar-list",
+      "uid": "u-node-analytics-pages-list"
+    },
+    "u-node-analytics-revenue-card": {
+      "children": [
+        "u-node-analytics-revenue-chart"
+      ],
+      "id": "analytics-revenue-card",
+      "layout": {
+        "display": "stack",
+        "gap": 16,
+        "minHeight": 448,
+        "padding": 24,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-main-grid",
+      "props": {
+        "accent": "neutral",
+        "accentSide": "none",
+        "footer": "",
+        "overline": "",
+        "state": "default",
+        "subtitle": "Last 12 months, net of refunds",
+        "surface": "outlined",
+        "title": "Revenue",
+        "variant": "outlined"
+      },
+      "type": "card",
+      "uid": "u-node-analytics-revenue-card"
+    },
+    "u-node-analytics-revenue-chart": {
+      "children": [],
+      "id": "analytics-revenue-chart",
+      "layout": {
+        "height": "fill",
+        "minHeight": 256,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-revenue-card",
+      "props": {
+        "axes": true,
+        "chartSpec": {
+          "layers": [
+            {
+              "channels": {
+                "color": {
+                  "column": "series"
+                },
+                "x": {
+                  "column": "x"
+                },
+                "y": {
+                  "column": "y"
+                },
+                "z": {
+                  "column": "series"
+                }
+              },
+              "id": "main",
+              "mark": "line",
+              "source": "data"
+            },
+            {
+              "channels": {
+                "y": {
+                  "constant": 85
+                }
+              },
+              "id": "target",
+              "mark": "rule",
+              "source": "data",
+              "style": {
+                "stroke": "#9aa5b1",
+                "strokeWidth": 1
+              }
+            }
+          ],
+          "mode": "preset",
+          "scales": {
+            "x": {
+              "axis": true,
+              "grid": false,
+              "type": "point"
+            },
+            "y": {
+              "axis": true,
+              "grid": true,
+              "nice": true,
+              "type": "linear"
+            }
+          },
+          "sources": [
+            {
+              "id": "data",
+              "kind": "binding"
+            }
+          ],
+          "version": 1
+        },
+        "count": 12,
+        "data": "42, 48, 45, 58, 54, 63, 71, 68, 76, 84, 81, 92\n28, 31, 30, 36, 34, 38, 41, 39, 44, 47, 46, 51",
+        "gridlines": "horizontal",
+        "labels": "Jan\nFeb\nMar\nApr\nMay\nJun\nJul\nAug\nSep\nOct\nNov\nDec",
+        "legend": "bottom",
+        "points": false,
+        "seed": 7,
+        "series": "Revenue\nCosts",
+        "smooth": true,
+        "stacked": false,
+        "state": "default",
+        "target": 85,
+        "targetLabel": "Target",
+        "title": "",
+        "trend": "up",
+        "unit": "$"
+      },
+      "type": "line-chart",
+      "uid": "u-node-analytics-revenue-chart"
+    },
+    "u-node-analytics-sidebar": {
+      "children": [],
+      "id": "analytics-sidebar",
+      "layout": {
+        "display": "stack",
+        "gap": 4,
+        "minHeight": 768,
+        "padding": 16,
+        "width": 256
+      },
+      "parent": "u-node-analytics-body",
+      "props": {
+        "active": 1,
+        "footer": "olivia@acme.com",
+        "heading": "Acme",
+        "items": "Overview\nAnalytics\nRevenue\nCustomers\nReports\nSettings",
+        "variant": "panel"
+      },
+      "type": "sidebar",
+      "uid": "u-node-analytics-sidebar"
+    },
+    "u-node-analytics-title-block": {
+      "children": [
+        "u-node-heading",
+        "u-node-text"
+      ],
+      "id": "analytics-title-block",
+      "layout": {
+        "display": "stack",
+        "gap": 4,
+        "minHeight": 48,
+        "padding": 0
+      },
+      "parent": "u-node-analytics-page-heading",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "stack",
+      "uid": "u-node-analytics-title-block"
+    },
+    "u-node-analytics-traffic-card": {
+      "children": [
+        "u-node-analytics-traffic-donut"
+      ],
+      "id": "analytics-traffic-card",
+      "layout": {
+        "display": "stack",
+        "gap": 16,
+        "minHeight": 448,
+        "padding": 24,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-main-grid",
+      "props": {
+        "accent": "neutral",
+        "accentSide": "none",
+        "footer": "",
+        "overline": "",
+        "state": "default",
+        "subtitle": "Sessions by acquisition channel",
+        "surface": "outlined",
+        "title": "Traffic sources",
+        "variant": "outlined"
+      },
+      "type": "card",
+      "uid": "u-node-analytics-traffic-card"
+    },
+    "u-node-analytics-traffic-donut": {
+      "children": [],
+      "id": "analytics-traffic-donut",
+      "layout": {
+        "height": "fill",
+        "minHeight": 256,
+        "width": "fill"
+      },
+      "parent": "u-node-analytics-traffic-card",
+      "props": {
+        "centerLabel": "Sessions",
+        "centerValue": "48.2k",
+        "chartSpec": {
+          "layers": [
+            {
+              "channels": {
+                "color": {
+                  "column": "x"
+                },
+                "value": {
+                  "column": "value"
+                }
+              },
+              "id": "main",
+              "mark": "donut",
+              "source": "data",
+              "style": {
+                "innerRadius": 0.84
+              }
+            }
+          ],
+          "mode": "preset",
+          "scales": {
+            "x": null,
+            "y": null
+          },
+          "sources": [
+            {
+              "id": "data",
+              "kind": "binding"
+            }
+          ],
+          "version": 1
+        },
+        "legend": "bottom",
+        "segments": "Direct | 42\nOrganic search | 28\nReferral | 18\nSocial | 12",
+        "state": "default",
+        "thickness": 16,
+        "title": "",
+        "unit": ""
+      },
+      "type": "donut-chart",
+      "uid": "u-node-analytics-traffic-donut"
+    },
+    "u-node-button": {
+      "children": [],
+      "id": "button",
+      "layout": {
+        "width": "hug"
+      },
+      "parent": "u-node-analytics-page-heading",
+      "props": {
+        "effect": "none",
+        "icon": "none",
+        "iconName": "none",
+        "label": "Export report",
+        "shape": "small",
+        "size": "md",
+        "state": "default",
+        "variant": "outline"
+      },
+      "type": "button",
+      "uid": "u-node-button"
+    },
+    "u-node-detail-body": {
+      "children": [
+        "u-node-detail-title",
+        "u-node-detail-meta",
+        "u-node-detail-items",
+        "u-node-detail-refund"
+      ],
+      "id": "detail-body",
+      "layout": {
+        "display": "stack",
+        "gap": 24,
+        "minHeight": 48,
+        "padding": 32
+      },
+      "parent": "u-node-order-detail-root",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "stack",
+      "uid": "u-node-detail-body"
+    },
+    "u-node-detail-item-1": {
+      "children": [
+        "u-node-detail-item-1-name",
+        "u-node-detail-item-1-qty",
+        "u-node-detail-item-1-price"
+      ],
+      "id": "detail-item-1",
+      "layout": {
+        "align": "center",
+        "display": "row",
+        "gap": 12,
+        "minHeight": 48
+      },
+      "parent": "u-node-detail-items",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "row",
+      "uid": "u-node-detail-item-1"
+    },
+    "u-node-detail-item-1-name": {
+      "children": [],
+      "id": "detail-item-1-name",
+      "layout": {},
+      "parent": "u-node-detail-item-1",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "Merino wool socks",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-1-name"
+    },
+    "u-node-detail-item-1-price": {
+      "children": [],
+      "id": "detail-item-1-price",
+      "layout": {},
+      "parent": "u-node-detail-item-1",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "$38.00",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-1-price"
+    },
+    "u-node-detail-item-1-qty": {
+      "children": [],
+      "id": "detail-item-1-qty",
+      "layout": {},
+      "parent": "u-node-detail-item-1",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "×2",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-1-qty"
+    },
+    "u-node-detail-item-2": {
+      "children": [
+        "u-node-detail-item-2-name",
+        "u-node-detail-item-2-qty",
+        "u-node-detail-item-2-price"
+      ],
+      "id": "detail-item-2",
+      "layout": {
+        "align": "center",
+        "display": "row",
+        "gap": 12,
+        "minHeight": 48
+      },
+      "parent": "u-node-detail-items",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "row",
+      "uid": "u-node-detail-item-2"
+    },
+    "u-node-detail-item-2-name": {
+      "children": [],
+      "id": "detail-item-2-name",
+      "layout": {},
+      "parent": "u-node-detail-item-2",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "Canvas tote",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-2-name"
+    },
+    "u-node-detail-item-2-price": {
+      "children": [],
+      "id": "detail-item-2-price",
+      "layout": {},
+      "parent": "u-node-detail-item-2",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "$62.50",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-2-price"
+    },
+    "u-node-detail-item-2-qty": {
+      "children": [],
+      "id": "detail-item-2-qty",
+      "layout": {},
+      "parent": "u-node-detail-item-2",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "×1",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-2-qty"
+    },
+    "u-node-detail-item-3": {
+      "children": [
+        "u-node-detail-item-3-name",
+        "u-node-detail-item-3-qty",
+        "u-node-detail-item-3-price"
+      ],
+      "id": "detail-item-3",
+      "layout": {
+        "align": "center",
+        "display": "row",
+        "gap": 12,
+        "minHeight": 48
+      },
+      "parent": "u-node-detail-items",
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "row",
+      "uid": "u-node-detail-item-3"
+    },
+    "u-node-detail-item-3-name": {
+      "children": [],
+      "id": "detail-item-3-name",
+      "layout": {},
+      "parent": "u-node-detail-item-3",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "Shipping",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-3-name"
+    },
+    "u-node-detail-item-3-price": {
+      "children": [],
+      "id": "detail-item-3-price",
+      "layout": {},
+      "parent": "u-node-detail-item-3",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "$27.90",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-3-price"
+    },
+    "u-node-detail-item-3-qty": {
+      "children": [],
+      "id": "detail-item-3-qty",
+      "layout": {},
+      "parent": "u-node-detail-item-3",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "×1",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-item-3-qty"
+    },
+    "u-node-detail-items": {
+      "children": [
+        "u-node-detail-item-1",
+        "u-node-detail-item-2",
+        "u-node-detail-item-3"
+      ],
+      "id": "detail-items",
+      "layout": {
+        "display": "stack",
+        "gap": 8,
+        "padding": 16,
+        "width": "fill"
+      },
+      "parent": "u-node-detail-body",
+      "props": {
+        "accent": "neutral",
+        "accentSide": "none",
+        "footer": "",
+        "overline": "",
+        "state": "default",
+        "subtitle": "Supporting detail for this panel.",
+        "surface": "outlined",
+        "title": "Items",
+        "variant": "outlined"
+      },
+      "type": "card",
+      "uid": "u-node-detail-items"
+    },
+    "u-node-detail-meta": {
+      "children": [],
+      "id": "detail-meta",
+      "layout": {},
+      "parent": "u-node-detail-body",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "md",
+        "text": "Placed 12 March 2026 · 3 items · $128.40",
+        "tone": "default",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-detail-meta"
+    },
+    "u-node-detail-orders-chart": {
+      "chart": {
+        "chart": "chart-orders-by-region"
+      },
+      "children": [],
+      "id": "detail-orders-chart",
+      "layout": {
+        "display": "stack",
+        "height": 260,
+        "width": 480
+      },
+      "parent": "u-node-order-detail-root",
+      "props": {
+        "title": "Orders by region"
+      },
+      "type": "chart",
+      "uid": "u-node-detail-orders-chart"
+    },
+    "u-node-detail-refund": {
+      "children": [],
+      "id": "detail-refund",
+      "layout": {
+        "width": "hug"
+      },
+      "parent": "u-node-detail-body",
+      "props": {
+        "effect": "none",
+        "icon": "none",
+        "iconName": "none",
+        "label": "Refund this order",
+        "shape": "small",
+        "size": "md",
+        "state": "default",
+        "variant": "danger"
+      },
+      "type": "button",
+      "uid": "u-node-detail-refund"
+    },
+    "u-node-detail-title": {
+      "children": [],
+      "id": "detail-title",
+      "layout": {},
+      "parent": "u-node-detail-body",
+      "props": {
+        "eyebrow": "",
+        "level": 1,
+        "size": "auto",
+        "text": "Order #10482",
+        "tone": "default",
+        "weight": "semibold"
+      },
+      "type": "heading",
+      "uid": "u-node-detail-title"
+    },
+    "u-node-heading": {
+      "children": [],
+      "id": "heading",
+      "layout": {},
+      "parent": "u-node-analytics-title-block",
+      "props": {
+        "eyebrow": "",
+        "level": "2",
+        "size": "auto",
+        "text": "Analytics",
+        "tone": "default",
+        "weight": "semibold"
+      },
+      "type": "heading",
+      "uid": "u-node-heading"
+    },
+    "u-node-order-detail-root": {
+      "children": [
+        "u-node-detail-body",
+        "u-node-detail-orders-chart"
+      ],
+      "id": "order-detail-root",
+      "layout": {
+        "display": "stack",
+        "gap": 0,
+        "padding": 0
+      },
+      "parent": null,
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "page",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "frame",
+      "uid": "u-node-order-detail-root"
+    },
+    "u-node-screen-1-root": {
+      "children": [
+        "u-node-analytics-page"
+      ],
+      "id": "screen-1-root",
+      "layout": {
+        "display": "stack",
+        "gap": 0,
+        "padding": 0
+      },
+      "parent": null,
+      "props": {
+        "accent": "none",
+        "accentSide": "none",
+        "role": "page",
+        "surface": "none",
+        "tag": "div"
+      },
+      "type": "frame",
+      "uid": "u-node-screen-1-root"
+    },
+    "u-node-text": {
+      "children": [],
+      "id": "text",
+      "layout": {},
+      "parent": "u-node-analytics-title-block",
+      "props": {
+        "lines": 0,
+        "maxWidth": "65ch",
+        "size": "sm",
+        "text": "Monday, 12 October · Last 30 days",
+        "tone": "muted",
+        "weight": "regular"
+      },
+      "type": "text",
+      "uid": "u-node-text"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "refund-order",
+      "name": "Refund an order",
+      "notes": "Partial on purpose: who may refund is still undecided.",
+      "screen": "u-screen-order-detail",
+      "steps": [
+        {
+          "action": "The agent opens an order from the dashboard table.",
+          "outcomes": [
+            {
+              "text": "The detail screen shows that order and its items.",
+              "uid": "u-outcome-refund-order-1-1"
+            }
+          ],
+          "uid": "u-step-refund-order-1"
+        },
+        {
+          "action": "They press \"Refund this order\".",
+          "outcomes": [
+            {
+              "text": "A reason is requested; nothing is refunded yet.",
+              "uid": "u-outcome-refund-order-2-1"
+            }
+          ],
+          "uid": "u-step-refund-order-2"
+        },
+        {
+          "action": "They choose a reason and confirm.",
+          "outcomes": [
+            {
+              "text": "The order shows as refunded and the amount is recorded.",
+              "uid": "u-outcome-refund-order-3-1"
+            }
+          ],
+          "uid": "u-step-refund-order-3"
+        }
+      ],
+      "uid": "u-ref-refund-order"
+    }
+  ],
+  "schema": 32,
+  "screens": [
+    {
+      "brief": "The team lead opens this every morning to see whether today is on track against the revenue target.",
+      "height": 800,
+      "id": "screen-1",
+      "name": "Orders dashboard",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "root": "u-node-screen-1-root",
+      "states": [
+        {
+          "id": "empty",
+          "name": "Empty",
+          "note": "Shown before any collection data exists.",
+          "overrides": {
+            "u-node-analytics-conversions-table": {
+              "state": "empty"
+            }
+          },
+          "uid": "u-state-screen-1-empty"
+        }
+      ],
+      "uid": "u-screen-screen-1",
+      "width": 1280
+    },
+    {
+      "brief": "Opened from a dashboard row: one order, its line items, and the refund action.",
+      "height": 800,
+      "id": "order-detail",
+      "name": "Order detail",
+      "position": {
+        "x": 1440,
+        "y": 0
+      },
+      "root": "u-node-order-detail-root",
+      "uid": "u-screen-order-detail",
+      "width": 1280
+    }
+  ],
+  "theme": {
+    "projectTokens": {
+      "format": "flat",
+      "mappings": {
+        "color.primary.600": "/color.primary.600",
+        "spacing.16": "/spacing.16"
+      },
+      "name": "Sample tokens",
+      "source": {
+        "color.primary.600": "#0967d2",
+        "spacing.16": "16px"
+      },
+      "version": 1
+    }
+  },
+  "title": "Orders — sample project",
+  "version": 1
+}

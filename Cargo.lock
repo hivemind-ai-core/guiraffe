@@ -3363,6 +3363,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-mocket"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-components",
+ "guiraffe-core",
+ "guiraffe-test",
+ "guiraffe-ui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "guiraffe-motion"
 version = "0.1.0"
 dependencies = [
