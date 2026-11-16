@@ -1,0 +1,24 @@
+[package]
+name = "guiraffe-commands"
+description = "Context-aware command registry, keybindings, menu and Spotlight adapter."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-overlays.workspace = true
+serde.workspace = true
+schemars = "1"
+thiserror = "2"
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["render", "snapshot"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
