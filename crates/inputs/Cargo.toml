@@ -1,0 +1,22 @@
+[package]
+name = "guiraffe-inputs"
+description = "Mantine-style inputs missing from GPUI Controls: Chip/ChipGroup, TagsInput, RangeSlider, PasswordStrength, Dropzone."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-components.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
