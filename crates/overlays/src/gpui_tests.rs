@@ -1112,3 +1112,51 @@ fn review_5_managed_dialog_can_open_above_existing_native(cx: &mut TestAppContex
     })
     .expect("window");
 }
+#[gpui_kit::test]
+fn review_5_drawer_and_modals_rechain_focus_on_middle_removal(cx: &mut TestAppContext) {
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let original = window.focused(cx);
+        let drawer = Drawer::new()
+            .open(window, cx, |sheet, _, _| sheet.title("drawer"))
+            .expect("drawer");
+        let a = OverlayHost::open(
+            window,
+            cx,
+            Policy {
+                escape: false,
+                outside: false,
+            },
+            |dialog, _, _| dialog.title("a"),
+        )
+        .expect("a");
+        let b = OverlayHost::open(
+            window,
+            cx,
+            Policy {
+                escape: true,
+                outside: false,
+            },
+            |dialog, _, _| dialog.title("b"),
+        )
+        .expect("b");
+        window.render_frame(cx);
+        let top_focus = window.focused(cx);
+        OverlayHost::close(window, cx, drawer).expect("remove drawer");
+        assert_eq!(window.focused(cx), top_focus);
+        OverlayHost::close(window, cx, a).expect("remove middle");
+        assert_eq!(window.focused(cx), top_focus);
+        OverlayHost::close(window, cx, b).expect("close last");
+        assert_eq!(window.focused(cx), original);
+        assert!(
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .read(cx)
+                .stack()
+                .entries()
+                .is_empty()
+        );
+    })
+    .expect("window");
+}
