@@ -8,29 +8,30 @@ Workflow:
 
 Status legend: ✅ merged · 🔧 in progress · 🔍 in review · ⏳ queued
 
-## Phase 1: foundations (current)
+## Phase 1: foundations
 | Item | Owner | Status |
 |---|---|---|
 | core: tokens, palettes, variants, Controls bridge | foreman | ✅ |
 | windows: registry, guards, bus, persistence | foreman | ✅ |
 | gpui-kit 0.9.1 upgrade | foreman | ✅ |
 | DESIGN.md, API conventions, specs | foreman | ✅ |
-| flow-core + flow | codex | 🔧 review #1 fixes |
-| layout | kilo | 🔍 |
-| mermaid + markdown | omp | 🔧 |
-| overlays | codex | 🔧 |
+| flow-core + flow | codex | ✅ merged with follow-ups (reviews/flow-review-2.md) |
+| overlays | codex | ✅ merged; review fixes 🔧 (reviews/overlays-review-1.md) |
+| layout | kilo | 🔧 review #2 fixes (blocked merge) |
+| mermaid, then markdown | omp | 🔧 slow; scope narrowed |
 
-## Phase 2: quality and performance infrastructure (before more widgets)
-These land early so everything after them is measured and tested from day one.
-1. `guiraffe-test`: helpers, test ids, RenderCounter, allocation counter. *(foreman)*
-2. Spike: visual snapshots on Linux (Xvfb/weston + lavapipe, capture, determinism). *(agent)*
-3. `guiraffe-bench` + baselines + `compare` (criterion, iai-callgrind, frame benches). Record baselines for flow/layout/windows. *(agent)*
-4. CI: gates, both GPUI backends (upstream + gpui-fast), coverage, deny/audit, nightly suites. *(agent)*
-5. `guiraffe-motion`: easing, springs, Transition, Presence, AnimatedValue. *(foreman)*
-6. `guiraffe-macros`: `#[derive(Props)]` (builder, schema, IR registration). *(foreman)*
+## Phase 2: quality and performance infrastructure
+| Item | Owner | Status |
+|---|---|---|
+| guiraffe-bench: stats, interleaved compare, baselines, CI, allocator | codex | ✅ |
+| visual snapshot spike: offscreen wgpu + Xvfb e2e probe | codex | ✅ (spikes/visual-snapshots.md) |
+| guiraffe-motion: easing, springs, presence, Animated | foreman | ✅ |
+| backend decision: gpui-fast default for apps (measured) | foreman | ✅ |
+| guiraffe-test helpers: TestId, RenderCounter, snapshot API on the offscreen path | foreman | ⏳ |
+| guiraffe-macros `#[derive(Props)]` | foreman | ⏳ |
 
 ## Phase 3: app framework (React parity)
-`guiraffe-state` (selectors) → `guiraffe-router` (typed, nested, per-window) → `guiraffe-commands`
+✅ `guiraffe-state` (re-frame-inspired; reviewed and fixed) → 🔍 `guiraffe-router` (typed, guards; built on state) → `guiraffe-commands`
 → `guiraffe-form` → `guiraffe-query` → `guiraffe-machine`. Flow and overlays then migrate onto the machine and commands.
 
 ## Phase 4: widgets
