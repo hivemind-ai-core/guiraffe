@@ -3,36 +3,16 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{LazyLock, Mutex};
 
+use gpui_kit::component::ResizableState;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
-use gpui_kit::component::{ResizablePanelEvent, ResizableState};
 use gpui_kit::{
-    AnyElement, App, ElementId, Entity, Global, InteractiveElement as _, ParentElement as _,
-    Pixels, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, Global,
+    InteractiveElement as _, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _,
+    Window, div, px,
 };
 
 use crate::gpui::IntoElement;
-
-/// The state a [`Splitter`] keeps its pane sizes in.
-///
-/// The state is an entity, so it outlives a frame and an application can hold
-/// on to it: read the sizes with [`SplitterState::sizes`] and put them back
-/// when the application starts again.
-pub type SplitterState = ResizableState;
-
-/// The event a [`Splitter`] emits when its panes are resized.
-pub type SplitterEvent = ResizablePanelEvent;
-
-/// Which way a [`Splitter`] divides its panes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum SplitterAxis {
-    /// The panes sit side by side.
-    #[default]
-    Horizontal,
-    /// The panes sit one above the other.
-    Vertical,
-}
 
 /// The sizes of a splitter's panes, ready to be stored and restored.
 ///
@@ -79,57 +59,310 @@ impl SplitterSizes {
     pub fn as_slice(&self) -> &[f32] {
         &self.0
     }
+
+    /// The sizes that are fit to use for `panes` panes.
+    ///
+    /// A size has to be a number and it has to be positive, and there has to
+    /// be one for every pane. The sizes that are fit to use add up to the
+    /// total the panes share: the ones that are there are scaled to it, and
+    /// a pane without a size of its own takes an equal share of what is
+    /// left.
+    ///
+    /// ```
+    /// use guiraffe_layout::SplitterSizes;
+    /// use gpui_kit::px;
+    ///
+    /// let sizes = SplitterSizes::from_pixels(&[px(100.), px(300.)]);
+    /// assert_eq!(sizes.usable(2, 800.), vec![200., 600.]);
+    /// ```
+    pub fn usable(&self, panes: usize, total: f32) -> Vec<f32> {
+        let panes = panes.max(1);
+        let mut sizes: Vec<f32> = self
+            .0
+            .iter()
+            .take(panes)
+            .map(|size| {
+                if size.is_finite() && *size > 0. {
+                    *size
+                } else {
+                    0.
+                }
+            })
+            .collect();
+        while sizes.len() < panes {
+            sizes.push(0.);
+        }
+
+        let known: f32 = sizes.iter().sum();
+        let missing = sizes.iter().filter(|size| **size <= 0.).count();
+        let total = if total.is_finite() && total > 0. {
+            total
+        } else {
+            known
+        };
+
+        if missing > 0 {
+            // The panes without a size of their own share what is left.
+            let share = (total - known).max(0.) / missing as f32;
+            for size in sizes.iter_mut() {
+                if *size <= 0. {
+                    *size = share;
+                }
+            }
+        } else if known > 0. && (known - total).abs() > f32::EPSILON {
+            // The sizes are scaled so they add up to the total.
+            for size in sizes.iter_mut() {
+                *size *= total / known;
+            }
+        }
+        sizes
+    }
 }
 
-/// The sizes of the splitters of an application.
+/// The event a [`Splitter`] emits when its panes are resized.
 ///
-/// A splitter that is given a [`persist_key`](Splitter::persist_key) stores
-/// its sizes here and picks them up again the next time it is built. The
-/// store belongs to the application, not to a window, so the sizes survive a
-/// window being closed.
-#[derive(Default)]
-pub struct SplitterStore {
-    sizes: Mutex<HashMap<String, SplitterSizes>>,
+/// ```
+/// use guiraffe_layout::SplitterEvent;
+///
+/// # fn read(event: SplitterEvent) {
+/// match event {
+///     SplitterEvent::Resized { sizes } => {
+///         assert_eq!(sizes.len(), 2);
+///     }
+/// }
+/// # }
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub enum SplitterEvent {
+    /// The panes were resized.
+    ///
+    /// The sizes are the sizes the panes have now.
+    Resized {
+        /// The sizes of the panes, in pixels.
+        sizes: Vec<Pixels>,
+    },
 }
 
-impl SplitterStore {
-    /// The sizes stored under a key.
-    pub fn get(&self, key: &str) -> Option<SplitterSizes> {
-        let sizes = self.sizes.lock().ok()?;
-        sizes.get(key).cloned()
+/// The state a [`Splitter`] keeps its pane sizes in.
+///
+/// The state is an entity, so it outlives a frame and an application can
+/// hold on to it: read the sizes with [`SplitterState::sizes`] and put them
+/// back when the application starts again.
+///
+/// The state emits [`SplitterEvent`] when the panes are resized.
+///
+/// ```
+/// use guiraffe_layout::SplitterState;
+///
+/// # fn build(cx: &mut gpui_kit::App) {
+/// let state = SplitterState::new(cx);
+/// let splitter = guiraffe_layout::Splitter::new(&state).first("sidebar").second("content");
+/// # }
+/// ```
+pub struct SplitterState {
+    /// The state the resizable group keeps its sizes in.
+    group: Entity<ResizableState>,
+    /// The sizes the panes had the last time they were reported.
+    ///
+    /// The buffer lives in the state, so it survives from one render to the
+    /// next: a drag that leaves the panes where they were is not reported,
+    /// and the report happens once per drag.
+    reported: RefCell<Vec<Pixels>>,
+}
+
+impl EventEmitter<SplitterEvent> for SplitterState {}
+
+impl SplitterState {
+    /// A state with no panes yet.
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        let group = cx.new(|_| ResizableState::default());
+        cx.new(|_| Self {
+            group,
+            reported: RefCell::new(Vec::new()),
+        })
     }
 
-    /// Stores the sizes under a key.
-    pub fn set(&self, key: &str, sizes: SplitterSizes) {
-        if let Ok(mut stored) = self.sizes.lock() {
-            stored.insert(key.to_string(), sizes);
+    /// The sizes of the panes.
+    pub fn sizes(&self, cx: &App) -> Vec<Pixels> {
+        self.group.read(cx).sizes().clone()
+    }
+
+    /// The state the resizable group keeps its sizes in.
+    ///
+    /// The group is the one `gpui-kit` ships; it is here for the
+    /// applications that resize a pane themselves.
+    pub fn group(&self) -> &Entity<ResizableState> {
+        &self.group
+    }
+
+    /// Remembers the sizes the panes have, the first time the splitter is
+    /// built.
+    ///
+    /// The buffer is only filled once: the report compares the sizes of a
+    /// drag with the sizes of the last report, so a drag that leaves the
+    /// panes where they were is not a resize.
+    fn begin(&self, sizes: &[Pixels]) {
+        let mut reported = self.reported.borrow_mut();
+        if reported.is_empty() {
+            reported.extend_from_slice(sizes);
         }
+    }
+
+    /// Reports the sizes a drag ended with.
+    ///
+    /// The answer is whether the sizes changed: a drag that leaves the panes
+    /// where they were is not a resize, and it is not reported.
+    fn report(&self, sizes: &[Pixels], key: Option<&str>, cx: &mut Context<Self>) -> bool {
+        if self.reported.borrow().as_slice() == sizes {
+            return false;
+        }
+        {
+            let mut reported = self.reported.borrow_mut();
+            reported.clear();
+            reported.extend_from_slice(sizes);
+        }
+        if let Some(key) = key {
+            save_sizes(key, sizes, cx);
+        }
+        cx.emit(SplitterEvent::Resized {
+            sizes: sizes.to_vec(),
+        });
+        true
+    }
+}
+
+/// Where a layout is kept between runs.
+///
+/// The core crate has the store that writes to disk; this trait is the shape
+/// the layout widgets ask for, so an application can put a store of its own
+/// behind it.
+///
+/// ```
+/// use guiraffe_layout::{LayoutPersist, MemoryPersist};
+///
+/// let store = MemoryPersist::new();
+/// store.save("sidebar", "200");
+/// assert_eq!(store.load("sidebar").as_deref(), Some("200"));
+/// ```
+pub trait LayoutPersist {
+    /// The value stored under a key.
+    fn load(&self, key: &str) -> Option<String>;
+
+    /// Keeps a value under a key.
+    fn save(&self, key: &str, value: &str);
+}
+
+/// A store that keeps the values in memory.
+///
+/// The values are gone when the application ends. It is the store the layout
+/// widgets use when the application has not installed one of its own.
+#[derive(Default)]
+pub struct MemoryPersist {
+    values: RefCell<HashMap<String, String>>,
+}
+
+impl MemoryPersist {
+    /// A store with nothing in it.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// The keys the store holds.
     pub fn keys(&self) -> Vec<String> {
-        let Ok(sizes) = self.sizes.lock() else {
-            return Vec::new();
-        };
-        let mut keys: Vec<String> = sizes.keys().cloned().collect();
+        let mut keys: Vec<String> = self.values.borrow().keys().cloned().collect();
         keys.sort();
         keys
     }
 }
 
-impl Global for SplitterStore {}
+impl LayoutPersist for MemoryPersist {
+    fn load(&self, key: &str) -> Option<String> {
+        self.values.borrow().get(key).cloned()
+    }
 
-/// The store the splitter sizes live in.
+    fn save(&self, key: &str, value: &str) {
+        self.values
+            .borrow_mut()
+            .insert(key.to_string(), value.to_string());
+    }
+}
+
+/// The store the layout widgets keep their sizes in.
+///
+/// The store belongs to the application, not to a window, so the sizes
+/// survive a window being closed.
+pub struct LayoutStore {
+    persist: Box<dyn LayoutPersist>,
+}
+
+impl LayoutStore {
+    /// A store that keeps the values in memory.
+    pub fn in_memory() -> Self {
+        Self {
+            persist: Box::new(MemoryPersist::new()),
+        }
+    }
+
+    /// A store that keeps the values in a store of your own.
+    pub fn new(persist: Box<dyn LayoutPersist>) -> Self {
+        Self { persist }
+    }
+
+    /// The store the values live in.
+    pub fn persist(&self) -> &dyn LayoutPersist {
+        self.persist.as_ref()
+    }
+
+    /// The sizes of a splitter stored under a key.
+    ///
+    /// The sizes are read back as they were stored: a value that is not a
+    /// size is not a size, and it is not returned.
+    pub fn splitter_sizes(&self, key: &str) -> Option<SplitterSizes> {
+        let json = self.persist.load(key)?;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// Keeps the sizes of a splitter under a key.
+    pub fn save_splitter_sizes(&self, key: &str, sizes: &SplitterSizes) {
+        if let Ok(json) = serde_json::to_string(sizes) {
+            self.persist.save(key, &json);
+        }
+    }
+}
+
+impl Global for LayoutStore {}
+
+/// The store the layout widgets keep their sizes in.
 ///
 /// The store is installed by [`init`](crate::init). An application that has
 /// not installed one still gets a store: the sizes are then kept for as long
 /// as the application runs.
-pub fn splitter_store(cx: &App) -> &SplitterStore {
-    cx.try_global::<SplitterStore>().unwrap_or(&EMPTY_STORE)
+pub fn layout_store(cx: &App) -> Option<&LayoutStore> {
+    cx.try_global::<LayoutStore>()
 }
 
-/// The store used when the application has not installed one.
-static EMPTY_STORE: LazyLock<SplitterStore> = LazyLock::new(SplitterStore::default);
+/// Keeps the sizes of a splitter under a key.
+fn save_sizes(key: &str, sizes: &[Pixels], cx: &App) {
+    let Some(store) = layout_store(cx) else {
+        return;
+    };
+    store.save_splitter_sizes(key, &SplitterSizes::from_pixels(sizes));
+}
+
+/// The sizes a splitter stored under a key.
+fn load_sizes(key: &str, cx: &App) -> Option<SplitterSizes> {
+    layout_store(cx)?.splitter_sizes(key)
+}
+
+/// Which way a [`Splitter`] divides its panes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SplitterAxis {
+    /// The panes sit side by side.
+    #[default]
+    Horizontal,
+    /// The panes sit one above the other.
+    Vertical,
+}
 
 /// Panes with a divider the user can drag.
 ///
@@ -160,10 +393,6 @@ pub struct Splitter {
     max_size: Option<Pixels>,
     on_resize: Option<ResizeCallback>,
     persist_key: Option<String>,
-    /// The sizes as they were last reported.
-    ///
-    /// The buffer is reused, so a drag does not allocate a vector per event.
-    reported: Rc<RefCell<Vec<Pixels>>>,
     style: StyleRefinement,
 }
 
@@ -183,7 +412,6 @@ impl Splitter {
             max_size: None,
             on_resize: None,
             persist_key: None,
-            reported: Rc::new(RefCell::new(Vec::new())),
             style: StyleRefinement::default(),
         }
     }
@@ -278,12 +506,27 @@ impl Splitter {
     }
 
     /// The range a pane may take.
-    fn size_range(&self) -> std::ops::Range<Pixels> {
-        let min = self.min_size;
-        let max = self.max_size.unwrap_or(Pixels::MAX);
-        debug_assert!(min <= max, "a pane cannot be narrower than it is wide");
-        min..max.max(min)
+    ///
+    /// A pane cannot be narrower than the widest it may become, and it
+    /// cannot be wider than the narrowest it may become: a pane that is
+    /// given both is a mistake the developer is told about.
+    pub(crate) fn size_range(&self) -> std::ops::Range<Pixels> {
+        size_range(self.min_size, self.max_size)
     }
+}
+
+/// The range a pane may take.
+///
+/// The range is checked here, in one place, so the rule can be tested
+/// without a window.
+fn size_range(min: Pixels, max: Option<Pixels>) -> std::ops::Range<Pixels> {
+    let max = max.unwrap_or(Pixels::MAX);
+    debug_assert!(
+        min <= max,
+        "a pane cannot be wider than the narrowest it may become: \
+         the narrowest is {min:?} and the widest is {max:?}"
+    );
+    min..max.max(min)
 }
 
 impl gpui_kit::Styled for Splitter {
@@ -299,45 +542,46 @@ impl RenderOnce for Splitter {
             SplitterAxis::Vertical => v_resizable(self.id.clone()),
         };
 
-        group = group.with_state(&self.state);
+        let group_state = self.state.read(cx).group().clone();
+        group = group.with_state(&group_state);
 
-        // The sizes the panes start at: the ones the caller gave, or the ones
-        // that were stored under the splitter's key.
+        // The sizes the panes start at: the ones the caller gave, or the
+        // ones that were stored under the splitter's key. The stored sizes
+        // are checked first: a size that is not a number, or not positive,
+        // is not a size a pane can have.
         let stored = self
             .persist_key
             .as_deref()
-            .and_then(|key| splitter_store(cx).get(key));
-        let sizes: Vec<Option<Pixels>> = (0..self.panes.len())
+            .and_then(|key| load_sizes(key, cx));
+        let panes = self.panes.len();
+        let stored = stored
+            .map(|sizes| sizes.usable(panes, 0.))
+            .unwrap_or_default();
+        let sizes: Vec<Option<Pixels>> = (0..panes)
             .map(|index| {
                 self.sizes
                     .get(index)
                     .copied()
                     .flatten()
-                    .or_else(|| stored.as_ref().and_then(|sizes| sizes.get(index)).map(px))
+                    .or_else(|| stored.get(index).copied().map(px))
             })
             .collect();
 
-        if let Some(on_resize) = &self.on_resize {
-            let on_resize = on_resize.clone();
-            let reported = self.reported.clone();
-            let key = self.persist_key.clone();
-            group = group.on_resize(move |state, window, cx| {
-                let mut buffer = reported.borrow_mut();
-                if state.read(cx).sizes().as_slice() == buffer.as_slice() {
-                    // The drag left the sizes where they were: nothing to report.
-                    return;
-                }
-                buffer.clear();
-                buffer.extend_from_slice(state.read(cx).sizes());
-                drop(buffer);
-
-                let sizes = reported.borrow();
-                if let Some(key) = &key {
-                    splitter_store(cx).set(key, SplitterSizes::from_pixels(&sizes));
-                }
+        // The report happens for every drag that ends, and only for the
+        // drags that changed the sizes.
+        let state = self.state.clone();
+        let key = self.persist_key.clone();
+        let on_resize = self.on_resize.clone();
+        group = group.on_resize(move |group, window, cx| {
+            let sizes = group.read(cx).sizes().clone();
+            let changed = state.update(cx, |state, cx| state.report(&sizes, key.as_deref(), cx));
+            if !changed {
+                return;
+            }
+            if let Some(on_resize) = &on_resize {
                 on_resize(&sizes, window, cx);
-            });
-        }
+            }
+        });
 
         let range = self.size_range();
         for (index, pane) in self.panes.into_iter().enumerate() {
@@ -348,27 +592,24 @@ impl RenderOnce for Splitter {
             group = group.child(panel.child(pane));
         }
 
-        // The sizes the splitter had before the drag: they are what a drag
-        // that changes nothing is measured against.
-        let reported = self.reported.clone();
+        // The sizes the panes have now are what the next report is measured
+        // against, until the panes are resized.
         let state = self.state.clone();
-        let element = div()
-            .id(self.id.clone())
-            .size_full()
-            .on_mouse_down(gpui_kit::MouseButton::Left, move |_, _, cx| {
-                let mut buffer = reported.borrow_mut();
-                buffer.clear();
-                buffer.extend_from_slice(state.read(cx).sizes());
-            })
-            .child(group);
+        let sizes = group_state.read(cx).sizes().clone();
+        state.update(cx, |state, _| state.begin(&sizes));
+
+        let element = div().id(self.id.clone()).size_full().child(group);
         gpui_kit::base::StyledExt::refine_style(element, &self.style)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Splitter, SplitterAxis, SplitterSizes, SplitterStore, splitter_store};
-    use gpui_kit::{AppContext as _, px};
+    use super::{
+        LayoutPersist, LayoutStore, MemoryPersist, Splitter, SplitterAxis, SplitterSizes,
+        SplitterState, size_range,
+    };
+    use gpui_kit::{Pixels, px};
 
     #[test]
     fn sizes_survive_a_round_trip_through_plain_numbers() {
@@ -398,9 +639,44 @@ mod tests {
     }
 
     #[test]
+    fn the_sizes_that_are_stored_are_checked_before_they_are_used() {
+        let sizes = SplitterSizes::from_pixels(&[px(200.), px(f32::NAN), px(-100.)]);
+        let usable = sizes.usable(3, 600.);
+        assert_eq!(usable[0], 200., "the size that is a number is kept");
+        assert!(usable[1] > 0., "a size that is not a number is replaced");
+        assert!(usable[2] > 0., "a size that is negative is replaced");
+        assert_eq!(
+            usable.iter().sum::<f32>(),
+            600.,
+            "the sizes that are fit to use add up to the total"
+        );
+    }
+
+    #[test]
+    fn sizes_for_another_number_of_panes_are_fitted_to_the_panes() {
+        let sizes = SplitterSizes::from_pixels(&[px(100.), px(100.), px(100.)]);
+        assert_eq!(
+            sizes.usable(2, 400.),
+            vec![200., 200.],
+            "the size that does not belong to a pane is dropped"
+        );
+        assert_eq!(
+            sizes.usable(4, 400.),
+            vec![100., 100., 100., 100.],
+            "a pane without a size of its own takes an equal share"
+        );
+    }
+
+    #[test]
+    fn the_sizes_are_scaled_to_the_total_the_panes_share() {
+        let sizes = SplitterSizes::from_pixels(&[px(100.), px(300.)]);
+        assert_eq!(sizes.usable(2, 800.), vec![200., 600.]);
+    }
+
+    #[test]
     fn a_new_splitter_is_a_horizontal_split_with_two_empty_panes() {
         let cx = gpui_kit::TestAppContext::single();
-        let state = cx.update(|cx| cx.new(|_| super::SplitterState::default()));
+        let state = cx.update(SplitterState::new);
         let splitter = Splitter::new(&state);
         assert_eq!(splitter.axis, SplitterAxis::Horizontal);
         assert!(splitter.panes.is_empty());
@@ -415,7 +691,7 @@ mod tests {
     #[test]
     fn the_axis_can_be_changed() {
         let cx = gpui_kit::TestAppContext::single();
-        let state = cx.update(|cx| cx.new(|_| super::SplitterState::default()));
+        let state = cx.update(SplitterState::new);
         assert_eq!(
             Splitter::new(&state).axis(SplitterAxis::Vertical).axis,
             SplitterAxis::Vertical
@@ -425,38 +701,64 @@ mod tests {
     #[test]
     fn a_splitter_can_hold_any_number_of_panes() {
         let cx = gpui_kit::TestAppContext::single();
-        let state = cx.update(|cx| cx.new(|_| super::SplitterState::default()));
+        let state = cx.update(SplitterState::new);
         let splitter = Splitter::new(&state).pane("one").pane("two").pane("three");
         assert_eq!(splitter.panes.len(), 3);
     }
 
     #[test]
-    #[should_panic(expected = "a pane cannot be narrower than it is wide")]
+    #[should_panic(expected = "a pane cannot be wider than the narrowest it may become")]
     fn a_pane_that_is_narrower_than_it_is_wide_is_noticed() {
-        let cx = gpui_kit::TestAppContext::single();
-        let state = cx.update(|cx| cx.new(|_| super::SplitterState::default()));
-        let splitter = Splitter::new(&state).min_size(px(200.)).max_size(px(100.));
-        let _ = splitter.size_range();
+        let _ = size_range(px(200.), Some(px(100.)));
     }
 
     #[test]
-    fn the_store_keeps_the_sizes_of_a_key() {
-        let store = SplitterStore::default();
-        assert!(store.get("sidebar").is_none());
-        store.set("sidebar", SplitterSizes::from_pixels(&[px(120.)]));
-        assert_eq!(
-            store.get("sidebar").map(|sizes| sizes.get(0)),
-            Some(Some(120.))
-        );
+    fn a_pane_may_be_as_wide_as_it_wants() {
+        let range = size_range(px(100.), None);
+        assert_eq!(range.start, px(100.));
+        assert_eq!(range.end, Pixels::MAX);
+    }
+
+    #[test]
+    fn the_store_keeps_the_values_of_a_key() {
+        let store = MemoryPersist::new();
+        assert!(store.load("sidebar").is_none());
+        store.save("sidebar", "200");
+        assert_eq!(store.load("sidebar").as_deref(), Some("200"));
         assert_eq!(store.keys(), vec!["sidebar".to_string()]);
     }
 
     #[test]
-    fn an_application_without_a_store_still_has_one() {
+    fn an_application_without_a_store_has_none() {
         let cx = gpui_kit::TestAppContext::single();
         cx.update(|cx| {
-            let store = splitter_store(cx);
-            assert!(store.get("sidebar").is_none());
+            assert!(super::layout_store(cx).is_none());
         });
+    }
+
+    #[test]
+    fn a_store_can_be_installed_by_the_application() {
+        let cx = gpui_kit::TestAppContext::single();
+        cx.update(|cx| {
+            cx.set_global(LayoutStore::new(Box::new(MemoryPersist::new())));
+        });
+        cx.update(|cx| {
+            let store = super::layout_store(cx).expect("the store is installed");
+            store.persist().save("sidebar", "200");
+            assert_eq!(store.persist().load("sidebar").as_deref(), Some("200"));
+        });
+    }
+
+    #[test]
+    fn a_store_of_your_own_can_be_used() {
+        struct Own;
+        impl LayoutPersist for Own {
+            fn load(&self, _key: &str) -> Option<String> {
+                Some("own".to_string())
+            }
+            fn save(&self, _key: &str, _value: &str) {}
+        }
+        let store = LayoutStore::new(Box::new(Own));
+        assert_eq!(store.persist().load("sidebar").as_deref(), Some("own"));
     }
 }

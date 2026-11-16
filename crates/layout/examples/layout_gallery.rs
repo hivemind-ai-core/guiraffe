@@ -235,7 +235,7 @@ fn main() {
     gpui_kit::application().run(|cx| {
         guiraffe_layout::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            let splitter = cx.new(|_| SplitterState::default());
+            let splitter = SplitterState::new(cx);
             let shell = AppShellState::new(cx);
             cx.new(|_| Gallery { shell, splitter })
         })

@@ -132,12 +132,12 @@ impl ContainerWidthState {
     /// width crosses into another one. The answer is whether the band
     /// changed.
     fn take(&mut self, width: f32, owner: u64) -> bool {
-        if let Some(current) = self.owner {
-            if current != owner {
-                // Another widget measures this box: the measurement is
-                // refused, so the band does not flip back and forth.
-                return false;
-            }
+        if let Some(current) = self.owner
+            && current != owner
+        {
+            // Another widget measures this box: the measurement is
+            // refused, so the band does not flip back and forth.
+            return false;
         }
         self.owner = Some(owner);
         self.width = width;

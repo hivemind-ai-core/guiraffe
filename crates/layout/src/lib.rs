@@ -70,11 +70,15 @@ mod width;
 
 /// Install what the layout widgets need before they are shown.
 ///
-/// The widgets draw their rules and their dimmed text from the core theme, so
-/// this installs that theme. It is idempotent: calling it twice changes
-/// nothing.
+/// The widgets draw their rules and their dimmed text from the core theme,
+/// so this installs that theme. It also installs the store the layout
+/// widgets keep their sizes in, unless the application has installed one of
+/// its own. It is idempotent: calling it twice changes nothing.
 pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_core::init(cx);
+    if cx.try_global::<LayoutStore>().is_none() {
+        cx.set_global(LayoutStore::in_memory());
+    }
 }
 
 pub use align::{Align, Justify};
@@ -91,8 +95,8 @@ pub use scroll_area::ScrollArea;
 pub use simple_grid::{SimpleGrid, columns_for_min_width};
 pub use space::Space;
 pub use splitter::{
-    Splitter, SplitterAxis, SplitterEvent, SplitterSizes, SplitterState, SplitterStore,
-    splitter_store,
+    LayoutPersist, LayoutStore, MemoryPersist, Splitter, SplitterAxis, SplitterEvent,
+    SplitterSizes, SplitterState, layout_store,
 };
 pub use stack::Stack;
 pub use tokens::Size;
