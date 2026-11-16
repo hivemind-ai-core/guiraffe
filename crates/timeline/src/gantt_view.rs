@@ -37,6 +37,8 @@ pub struct GanttView {
     format: TimeFormat,
     drag: Option<Drag>,
     body: Rc<std::cell::Cell<Bounds<Pixels>>>,
+    /// Range to fit once the real width is known.
+    pending_fit: Option<(f64, f64)>,
 }
 
 impl EventEmitter<GanttEvent> for GanttView {}
@@ -54,6 +56,7 @@ impl GanttView {
             format,
             drag: None,
             body: Rc::default(),
+            pending_fit: Some((lo, hi)),
         })
     }
 
@@ -137,7 +140,7 @@ fn arrow(
     let mid = px((f32::from(from.x) + f32::from(to.x)) / 2.0).max(from.x + px(8.0));
     let mut b = PathBuilder::stroke(px(1.5));
     b.move_to(from);
-    b.cubic_bezier_to(point(mid, to.y), point(mid, from.y), to);
+    b.cubic_bezier_to(to, point(mid, from.y), point(mid, to.y));
     if let Ok(p) = b.build() {
         window.paint_path(p, color);
     }
@@ -157,8 +160,12 @@ impl Render for GanttView {
         let s = t.surfaces();
         let normal = t.variant(None, Variant::Light);
         let critical = t.variant(Some(ColorName::Red), Variant::Filled);
-        let body_w = f64::from(f32::from(self.body.get().size.width)).max(1.0);
-        self.axis.set_width(body_w);
+        if let Some(w) = crate::measure::width(&self.body) {
+            self.axis.set_width(w);
+            if let Some((a, b)) = self.pending_fit.take() {
+                self.axis.fit(a, b, 0.05);
+            }
+        }
         let axis = self.axis;
         let step = axis.tick_step(90.0, self.format);
         let ticks = axis.ticks(step);
@@ -312,9 +319,12 @@ impl Render for GanttView {
                                 cx.listener(|this, _, _, _| this.drag = None),
                             )
                             .child(
-                                canvas(move |b, _, _| body.set(b), |_, _, _, _| {})
-                                    .absolute()
-                                    .size_full(),
+                                canvas(
+                                    move |b, window, _| crate::measure::record(&body, b, window),
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
                             )
                             .children(rows.iter().enumerate().map(|(i, (_, _, sc))| {
                                 let bar = sc.map(|x| {

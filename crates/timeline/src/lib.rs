@@ -7,6 +7,7 @@ pub mod curves;
 pub mod dope_sheet;
 pub mod gantt;
 pub mod gantt_view;
+mod measure;
 pub mod tracks_view;
 
 pub use axis::{Axis, TimeFormat};

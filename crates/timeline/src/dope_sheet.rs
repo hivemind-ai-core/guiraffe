@@ -73,6 +73,8 @@ pub struct DopeSheet {
     format: TimeFormat,
     drag: Option<(usize, usize)>,
     body: Rc<Cell<Bounds<Pixels>>>,
+    /// Range to fit once the real width is known.
+    pending_fit: Option<(f64, f64)>,
 }
 
 impl EventEmitter<DopeEvent> for DopeSheet {}
@@ -90,6 +92,7 @@ impl DopeSheet {
             format,
             drag: None,
             body: Rc::default(),
+            pending_fit: Some((0.0, length.max(1e-3))),
         })
     }
 
@@ -152,9 +155,11 @@ impl Render for DopeSheet {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
-        let w = f64::from(f32::from(self.body.get().size.width));
-        if w > 0.0 {
+        if let Some(w) = crate::measure::width(&self.body) {
             self.axis.set_width(w);
+            if let Some((a, b)) = self.pending_fit.take() {
+                self.axis.fit(a, b, 0.03);
+            }
         }
         let axis = self.axis;
         let line = s.border.to_hsla();
@@ -209,9 +214,12 @@ impl Render for DopeSheet {
                         cx.listener(|this, _, _, _| this.release()),
                     )
                     .child(
-                        canvas(move |b, _, _| body.set(b), |_, _, _, _| {})
-                            .absolute()
-                            .size_full(),
+                        canvas(
+                            move |b, window, _| crate::measure::record(&body, b, window),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
                     )
                     .children(self.channels.iter().enumerate().flat_map(|(r, c)| {
                         c.keys()

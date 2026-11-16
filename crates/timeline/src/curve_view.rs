@@ -58,6 +58,8 @@ pub struct CurveView {
     range: ValueRange,
     drag: Option<usize>,
     body: Rc<Cell<Bounds<Pixels>>>,
+    /// Range to fit once the real width is known.
+    pending_fit: Option<(f64, f64)>,
 }
 
 impl EventEmitter<CurveEvent> for CurveView {}
@@ -74,6 +76,7 @@ impl CurveView {
             },
             drag: None,
             body: Rc::default(),
+            pending_fit: Some((t0, t1)),
         })
     }
 
@@ -134,6 +137,9 @@ impl Render for CurveView {
         if w > 0.0 && h > 0.0 {
             self.axis.set_width(w);
             self.range.height = h;
+            if let Some((a, b)) = self.pending_fit.take() {
+                self.axis.fit(a, b, 0.02);
+            }
         }
         let (axis, range, curve) = (self.axis, self.range, self.curve.clone());
         let stroke = ColorName::Blue.shade(6).to_hsla();
@@ -165,7 +171,7 @@ impl Render for CurveView {
             )
             .child(
                 canvas(
-                    move |b, _, _| body.set(b),
+                    move |b, window, _| crate::measure::record(&body, b, window),
                     move |b, _, window, _| {
                         let o = b.origin;
                         let at = |x: f64, y: f64| point(o.x + px(x as f32), o.y + px(y as f32));
