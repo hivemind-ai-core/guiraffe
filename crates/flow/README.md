@@ -1,16 +1,28 @@
 # guiraffe-flow
 
-A GPUI flow editor on `gpui-kit =0.7.0`, with a GPUI-independent document and
+A GPUI flow editor on `gpui-kit =0.9.1`, with a GPUI-independent document and
 editing model in `guiraffe-flow-core`. Initialize `guiraffe_core::init(cx)` before
 opening a window so Controls and the canvas share GUIraffe theme tokens.
 
 ```rust,ignore
 let graph = Graph::from_parts(nodes, edges)?;
-let flow = cx.new(|cx| Flow::new(graph, cx)
+let state = cx.new(|cx| FlowState::new(graph, cx)
     .expect("validated graph")
     .options(FlowOptions::default())
     .node_renderer(MyRenderer));
+// In the host view:
+let canvas = FlowCanvas::new(&state);
 ```
+
+`Flow` remains an alias for `FlowState`, including its lightweight Render host,
+so existing `.child(flow_entity)` compositions continue to work. `FlowCanvas`
+provides the state/element control shape. Camera and pointer feedback live in
+`FlowViewport` and `FlowGesture` leaf entities; document/history/selection remain
+in the model. Hosts that read the document do not depend on pan or gesture state.
+
+The graph fits once after its first nonempty, measured layout by default. Set
+`FlowOptions::fit_on_init = false` or explicitly set a camera before layout to
+opt out; later graph edits and resizes preserve the user camera.
 
 See `examples/editor.rs` for a complete runnable application:
 `cargo run -p guiraffe-flow --example editor`.
@@ -29,7 +41,8 @@ Pointer gestures:
   zoom about the pointer.
 - Click a node to select; Shift/Control/platform + click toggles selection.
   Drag a selected node to move selected draggable roots and their descendants.
-- Shift + drag on empty canvas adds the touched nodes to the selection.
+- Shift + drag on empty canvas replaces the selection; Control/platform + Shift
+  + drag adds the touched nodes.
 - Drag a source handle onto a target handle to connect. Structural and optional
   host semantic validators run before the edge is accepted.
 - Click the minimap to recenter the camera. Controls offer zoom, fit, undo and
@@ -41,8 +54,11 @@ Escape cancels a preview, Delete/Backspace deletes selected edges, nodes and des
 Control/platform + A selects all, Z undoes, Shift+Z/Y redoes.
 
 Use `Flow::edit` for document changes so history and caches remain coherent.
-Subscribe to `FlowEvent` for accepted edits, selection/camera changes and rejected
-connections; `last_error` also exposes the most recent rejected interaction.
+Subscribe to `FlowEvent` on the state for accepted edits, selection changes and
+rejected connections. Camera events are emitted by `state.viewport_entity()`;
+subscribe there for `ViewportChanged` so panning never writes the document entity.
+No-op input and document operations emit no redundant events or notifications.
+`last_error` exposes the most recent rejected interaction.
 `FlowOptions` controls snapping, background (dots/lines/cross/none), minimap,
 controls and the selected-node toolbar. Bezier, smooth-step, step and straight
 edges support labels, start/end arrow markers and optional animated beads.
@@ -62,9 +78,16 @@ without rebuilding dependency optimization settings, run
 Use `-- --no-minimap` for an explicit diagnostic comparison. `flow-core` offers an independent
 release geometry benchmark.
 
-Current limits: document edits rebuild spatial indexes and route geometry;
-undo stores bounded full-document snapshots. The UI creates GPUI elements and
-copies visible triangles each frame, so it does not promise zero allocations.
+History snapshots share unchanged document pages. Moves/deletes refit BVHs and
+update affected routes; quality degradation triggers a balanced rebuild. Deleting
+a child removes its depth entry without rebuilding unrelated depths. Arbitrary
+`edit` closures still perform full structural validation (O(n)), and hierarchy
+reparenting may update the affected subtree. Selection remains view state and is
+not serialized. Base and selected minimap geometry are cached independently.
+
+The UI creates GPUI elements and submits owned visible triangles each frame, so
+it does not promise zero allocations. Edge transformations are batched by colour,
+with an owned vertex buffer per batch instead of one allocation per edge.
 Every visible node gets full content; fitting a graph so all 5,000 nodes are
 visible needs separate performance evaluation. Parent ownership has no implicit
 group frames or relative child transforms, parallel edges share their paths,
@@ -74,3 +97,9 @@ and keyboard focus does not yet navigate individual handles/edge labels.
 and clamp finite positive zooms. Selection stays outside document/history and does
 not invalidate minimap geometry. Parent and child coordinates are absolute world
 coordinates; parent moves translate descendants and preserve their offsets.
+
+Run both backends with `cargo test -p guiraffe-flow-core -p guiraffe-flow` and
+`cargo test -p guiraffe-flow-core -p guiraffe-flow --features gpui-kit/gpui-fast`.
+The local `gpui-fast` feature also forwards the backend feature. Render-isolation
+tests use `gpui_kit::GPUI_FAST` to distinguish the selected backend; upstream GPUI
+can redraw ancestors for a child change, whereas gpui-fast isolates these leaves.

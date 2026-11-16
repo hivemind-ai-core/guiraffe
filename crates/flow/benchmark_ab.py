@@ -13,15 +13,20 @@ parser = argparse.ArgumentParser(description=__doc__)
 for mode in ("core", "edit", "ui"):
     for variant in ("old", "new"):
         parser.add_argument(f"--{variant}-{mode}", required=True)
+parser.add_argument("--old-delete")
+parser.add_argument("--new-delete")
 parser.add_argument("--cpu", type=int, required=True)
 parser.add_argument("--runs", type=int, default=10)
 parser.add_argument("--old-revision", required=True)
 parser.add_argument("--new-revision", required=True)
 parser.add_argument("--output", type=pathlib.Path, required=True)
 args = parser.parse_args()
+if bool(args.old_delete)!=bool(args.new_delete):
+    parser.error("provide both child-delete binaries")
+modes=("core","edit","ui")+(("delete",) if args.old_delete else ())
 rows = []
 for run in range(args.runs):
-    for mode in ("core", "edit", "ui"):
+    for mode in modes:
         for variant in (("old", "new") if run % 2 == 0 else ("new", "old")):
             started = time.monotonic()
             result = subprocess.run(
@@ -44,7 +49,7 @@ for run in range(args.runs):
                              wall_seconds=time.monotonic()-started, stdout=output))
             print(f"run={run+1}/{args.runs} {mode} {variant}: {metrics}", flush=True)
 summary = {}
-for mode in ("core", "edit", "ui"):
+for mode in modes:
     summary[mode] = {}
     for variant in ("old", "new"):
         samples = [r["metrics"] for r in rows if r["mode"] == mode and r["variant"] == variant]

@@ -1,3 +1,31 @@
+# Flow review #2 follow-ups
+
+Implementation source: `a0dae350e54c565dcae9b532442ff1cc77631098`; baseline
+`aa82bb4c0c9ee98310fcc9dee8696fb59d19a6f7`, both on gpui-kit 0.9.1.
+Both backend suites pass 90 tests, including gpui-fast host/sibling render isolation.
+See [REVIEW-2.md](REVIEW-2.md) for per-item status, exact verification limits and
+[raw alternating measurements](review-2-benchmark.json).
+
+Ten alternating AB/BA runs per variant, pinned to CPU 15, give median results:
+
+| Workload | Before | After |
+|---|---:|---:|
+| Scene build | 13.349 ms | 13.427 ms |
+| Query p50 | 8 us | 8 us |
+| Move p50 | 58 us | 57.5 us |
+| Child delete + undo p50 | 1.085 ms | 0.105 ms |
+| Headless frame p50 | 4.788 ms | 4.610 ms |
+| Headless frame p99 | 7.783 ms | 7.713 ms |
+
+Child deletion is about 10.3x faster; the other run distributions substantially overlap.
+These remain CPU/headless observations, not a GPU or formal frame-budget acceptance.
+`guiraffe-bench compare` passed its existing core/window suites, recorded separately in
+[the harness smoke output](review-2-harness-smoke.json); it has no registered flow suite
+yet, so those results are not flow evidence. Registration is proposed in the unapplied
+[benchmark patch](review2-bench.patch), awaiting scope approval.
+
+---
+
 # Flow review #1 validation and alternating benchmarks
 
 Validated source: `77530eabec54379ef1cbc34a50716cd59803245e`, rebased onto

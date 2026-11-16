@@ -1,0 +1,1146 @@
+{
+  "utc": "2026-11-16T15:25:22.541325+00:00",
+  "cpu": 15,
+  "runs": 10,
+  "old_revision": "aa82bb4c0c9ee98310fcc9dee8696fb59d19a6f7",
+  "new_revision": "a0dae35",
+  "protocol": "Alternating AB/BA by run, same CPU and gpui-kit 0.9.1; shared host, no GPU/presentation",
+  "summary": {
+    "core": {
+      "old": {
+        "build_us": {
+          "median": 13349.0275,
+          "minimum": 13135.381000000001,
+          "maximum": 15234.937
+        },
+        "p50_us": {
+          "median": 8.0,
+          "minimum": 7,
+          "maximum": 8
+        },
+        "p95_us": {
+          "median": 9.0,
+          "minimum": 9,
+          "maximum": 10
+        },
+        "p99_us": {
+          "median": 12.0,
+          "minimum": 11,
+          "maximum": 13
+        }
+      },
+      "new": {
+        "build_us": {
+          "median": 13426.877499999999,
+          "minimum": 12968.591999999999,
+          "maximum": 15034.856
+        },
+        "p50_us": {
+          "median": 8.0,
+          "minimum": 8,
+          "maximum": 8
+        },
+        "p95_us": {
+          "median": 9.0,
+          "minimum": 9,
+          "maximum": 10
+        },
+        "p99_us": {
+          "median": 12.0,
+          "minimum": 11,
+          "maximum": 13
+        }
+      }
+    },
+    "edit": {
+      "old": {
+        "p50_us": {
+          "median": 58.0,
+          "minimum": 55,
+          "maximum": 76
+        },
+        "p95_us": {
+          "median": 92.0,
+          "minimum": 84,
+          "maximum": 156
+        },
+        "p99_us": {
+          "median": 120.5,
+          "minimum": 96,
+          "maximum": 482
+        }
+      },
+      "new": {
+        "p50_us": {
+          "median": 57.5,
+          "minimum": 55,
+          "maximum": 63
+        },
+        "p95_us": {
+          "median": 87.0,
+          "minimum": 82,
+          "maximum": 98
+        },
+        "p99_us": {
+          "median": 109.5,
+          "minimum": 85,
+          "maximum": 438
+        }
+      }
+    },
+    "ui": {
+      "old": {
+        "p50_us": {
+          "median": 4787.5,
+          "minimum": 4336,
+          "maximum": 5836
+        },
+        "p95_us": {
+          "median": 6734.0,
+          "minimum": 6093,
+          "maximum": 7923
+        },
+        "p99_us": {
+          "median": 7783.0,
+          "minimum": 7396,
+          "maximum": 9491
+        }
+      },
+      "new": {
+        "p50_us": {
+          "median": 4609.5,
+          "minimum": 4537,
+          "maximum": 6938
+        },
+        "p95_us": {
+          "median": 6537.0,
+          "minimum": 5703,
+          "maximum": 10740
+        },
+        "p99_us": {
+          "median": 7712.5,
+          "minimum": 6977,
+          "maximum": 13581
+        }
+      }
+    },
+    "delete": {
+      "old": {
+        "p50_us": {
+          "median": 1085.0,
+          "minimum": 1078,
+          "maximum": 1111
+        },
+        "p95_us": {
+          "median": 1164.5,
+          "minimum": 1135,
+          "maximum": 1221
+        },
+        "p99_us": {
+          "median": 2832.0,
+          "minimum": 2650,
+          "maximum": 2906
+        }
+      },
+      "new": {
+        "p50_us": {
+          "median": 105.0,
+          "minimum": 103,
+          "maximum": 107
+        },
+        "p95_us": {
+          "median": 124.0,
+          "minimum": 116,
+          "maximum": 131
+        },
+        "p99_us": {
+          "median": 141.0,
+          "minimum": 125,
+          "maximum": 1131
+        }
+      }
+    }
+  },
+  "rows": [
+    {
+      "run": 0,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13374.484,
+        "p50_us": 8,
+        "p95_us": 10,
+        "p99_us": 13
+      },
+      "wall_seconds": 0.11297984421253204,
+      "stdout": "5000 nodes / 10000 edges; build=13.374484ms; query + cached route access: p50=8us p95=10us p99=13us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 0,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 13164.445,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 11
+      },
+      "wall_seconds": 0.10953429411165416,
+      "stdout": "5000 nodes / 10000 edges; build=13.164445ms; query + cached route access: p50=8us p95=9us p99=11us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 0,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 73,
+        "p95_us": 99,
+        "p99_us": 429
+      },
+      "wall_seconds": 1.5797964949160814,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=73us p95=99us p99=429us; full reconstruction reference p50=12889us p95=15235us p99=15950us\n"
+    },
+    {
+      "run": 0,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 59,
+        "p95_us": 91,
+        "p99_us": 106
+      },
+      "wall_seconds": 1.493126321118325,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=59us p95=91us p99=106us; full reconstruction reference p50=11819us p95=13967us p99=14734us\n"
+    },
+    {
+      "run": 0,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 4336,
+        "p95_us": 6093,
+        "p99_us": 7474
+      },
+      "wall_seconds": 1.0427790600806475,
+      "stdout": "last paint grid/edges/minimap (us): (97, 484, 125)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4336us p95=6093us p99=7474us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 0,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4542,
+        "p95_us": 5975,
+        "p99_us": 7152
+      },
+      "wall_seconds": 1.802273100009188,
+      "stdout": "last paint grid/edges/minimap (us): (102, 367, 135)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4542us p95=5975us p99=7152us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 0,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1078,
+        "p95_us": 1150,
+        "p99_us": 2838
+      },
+      "wall_seconds": 0.15892163082025945,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1078us p95=1150us p99=2838us\n"
+    },
+    {
+      "run": 0,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 104,
+        "p95_us": 126,
+        "p99_us": 1131
+      },
+      "wall_seconds": 0.03904803982004523,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=104us p95=126us p99=1131us\n"
+    },
+    {
+      "run": 1,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 13680.802,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 11
+      },
+      "wall_seconds": 0.10828994819894433,
+      "stdout": "5000 nodes / 10000 edges; build=13.680802ms; query + cached route access: p50=8us p95=9us p99=11us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 1,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13138.427,
+        "p50_us": 7,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.10923612187616527,
+      "stdout": "5000 nodes / 10000 edges; build=13.138427ms; query + cached route access: p50=7us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 1,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 59,
+        "p95_us": 97,
+        "p99_us": 438
+      },
+      "wall_seconds": 1.492454030085355,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=59us p95=97us p99=438us; full reconstruction reference p50=11861us p95=13948us p99=14931us\n"
+    },
+    {
+      "run": 1,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 76,
+        "p95_us": 156,
+        "p99_us": 404
+      },
+      "wall_seconds": 1.6336803380399942,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=76us p95=156us p99=404us; full reconstruction reference p50=13637us p95=15951us p99=16598us\n"
+    },
+    {
+      "run": 1,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 6938,
+        "p95_us": 10740,
+        "p99_us": 13581
+      },
+      "wall_seconds": 2.4605393488891423,
+      "stdout": "last paint grid/edges/minimap (us): (142, 450, 160)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=6938us p95=10740us p99=13581us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 1,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 5279,
+        "p95_us": 7267,
+        "p99_us": 7863
+      },
+      "wall_seconds": 1.2424650769680738,
+      "stdout": "last paint grid/edges/minimap (us): (103, 491, 141)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=5279us p95=7267us p99=7863us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 1,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 107,
+        "p95_us": 120,
+        "p99_us": 138
+      },
+      "wall_seconds": 0.039990697987377644,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=107us p95=120us p99=138us\n"
+    },
+    {
+      "run": 1,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1111,
+        "p95_us": 1221,
+        "p99_us": 2650
+      },
+      "wall_seconds": 0.16176700009964406,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1111us p95=1221us p99=2650us\n"
+    },
+    {
+      "run": 2,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13135.381000000001,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 13
+      },
+      "wall_seconds": 0.11176678794436157,
+      "stdout": "5000 nodes / 10000 edges; build=13.135381ms; query + cached route access: p50=8us p95=9us p99=13us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 2,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 13565.419,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.11179213388822973,
+      "stdout": "5000 nodes / 10000 edges; build=13.565419ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 2,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 65,
+        "p95_us": 93,
+        "p99_us": 121
+      },
+      "wall_seconds": 1.5661899680271745,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=65us p95=93us p99=121us; full reconstruction reference p50=12490us p95=14665us p99=15384us\n"
+    },
+    {
+      "run": 2,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 56,
+        "p95_us": 83,
+        "p99_us": 93
+      },
+      "wall_seconds": 1.4862958181183785,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=56us p95=83us p99=93us; full reconstruction reference p50=11778us p95=13903us p99=15625us\n"
+    },
+    {
+      "run": 2,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 5214,
+        "p95_us": 7183,
+        "p99_us": 9491
+      },
+      "wall_seconds": 1.2444720829371363,
+      "stdout": "last paint grid/edges/minimap (us): (116, 487, 147)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=5214us p95=7183us p99=9491us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 2,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4942,
+        "p95_us": 7550,
+        "p99_us": 10467
+      },
+      "wall_seconds": 1.8273603641428053,
+      "stdout": "last paint grid/edges/minimap (us): (141, 424, 361)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4942us p95=7550us p99=10467us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 2,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1080,
+        "p95_us": 1159,
+        "p99_us": 2906
+      },
+      "wall_seconds": 0.1601535698864609,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1080us p95=1159us p99=2906us\n"
+    },
+    {
+      "run": 2,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 106,
+        "p95_us": 120,
+        "p99_us": 130
+      },
+      "wall_seconds": 0.03806944587267935,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=106us p95=120us p99=130us\n"
+    },
+    {
+      "run": 3,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 13294.767,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.10947146196849644,
+      "stdout": "5000 nodes / 10000 edges; build=13.294767ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 3,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13303.753999999999,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.11135518597438931,
+      "stdout": "5000 nodes / 10000 edges; build=13.303754ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 3,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 57,
+        "p95_us": 82,
+        "p99_us": 85
+      },
+      "wall_seconds": 1.4874736990313977,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=57us p95=82us p99=85us; full reconstruction reference p50=11799us p95=13981us p99=14432us\n"
+    },
+    {
+      "run": 3,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 58,
+        "p95_us": 89,
+        "p99_us": 113
+      },
+      "wall_seconds": 1.4947820780798793,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=58us p95=89us p99=113us; full reconstruction reference p50=11858us p95=14112us p99=14594us\n"
+    },
+    {
+      "run": 3,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4586,
+        "p95_us": 5703,
+        "p99_us": 7168
+      },
+      "wall_seconds": 1.7016121649648994,
+      "stdout": "last paint grid/edges/minimap (us): (90, 353, 142)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4586us p95=5703us p99=7168us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 3,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 4722,
+        "p95_us": 6413,
+        "p99_us": 7396
+      },
+      "wall_seconds": 1.1145629871170968,
+      "stdout": "last paint grid/edges/minimap (us): (91, 431, 594)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4722us p95=6413us p99=7396us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 3,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 106,
+        "p95_us": 128,
+        "p99_us": 208
+      },
+      "wall_seconds": 0.039740053936839104,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=106us p95=128us p99=208us\n"
+    },
+    {
+      "run": 3,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1095,
+        "p95_us": 1180,
+        "p99_us": 2805
+      },
+      "wall_seconds": 0.16063568694517016,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1095us p95=1180us p99=2805us\n"
+    },
+    {
+      "run": 4,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13145.571,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.1092520069796592,
+      "stdout": "5000 nodes / 10000 edges; build=13.145571ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 4,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 12968.591999999999,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.10852849506773055,
+      "stdout": "5000 nodes / 10000 edges; build=12.968592ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 4,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 57,
+        "p95_us": 86,
+        "p99_us": 120
+      },
+      "wall_seconds": 1.489585154922679,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=57us p95=86us p99=120us; full reconstruction reference p50=11815us p95=13808us p99=14289us\n"
+    },
+    {
+      "run": 4,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 58,
+        "p95_us": 89,
+        "p99_us": 329
+      },
+      "wall_seconds": 1.4917851800564677,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=58us p95=89us p99=329us; full reconstruction reference p50=11913us p95=14030us p99=14575us\n"
+    },
+    {
+      "run": 4,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 4764,
+        "p95_us": 6659,
+        "p99_us": 7522
+      },
+      "wall_seconds": 1.1119513639714569,
+      "stdout": "last paint grid/edges/minimap (us): (116, 491, 141)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4764us p95=6659us p99=7522us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 4,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4537,
+        "p95_us": 6133,
+        "p99_us": 7234
+      },
+      "wall_seconds": 1.6980378420557827,
+      "stdout": "last paint grid/edges/minimap (us): (119, 370, 135)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4537us p95=6133us p99=7234us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 4,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1091,
+        "p95_us": 1166,
+        "p99_us": 2823
+      },
+      "wall_seconds": 0.1616123199928552,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1091us p95=1166us p99=2823us\n"
+    },
+    {
+      "run": 4,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 103,
+        "p95_us": 122,
+        "p99_us": 132
+      },
+      "wall_seconds": 0.03753801085986197,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=103us p95=122us p99=132us\n"
+    },
+    {
+      "run": 5,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 13435.338,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.11247717984952033,
+      "stdout": "5000 nodes / 10000 edges; build=13.435338ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 5,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13323.571,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.11009096400812268,
+      "stdout": "5000 nodes / 10000 edges; build=13.323571ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 5,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 57,
+        "p95_us": 83,
+        "p99_us": 102
+      },
+      "wall_seconds": 1.4834128769580275,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=57us p95=83us p99=102us; full reconstruction reference p50=11814us p95=13748us p99=14087us\n"
+    },
+    {
+      "run": 5,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 55,
+        "p95_us": 87,
+        "p99_us": 482
+      },
+      "wall_seconds": 1.4905502100009471,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=55us p95=87us p99=482us; full reconstruction reference p50=11848us p95=13905us p99=14700us\n"
+    },
+    {
+      "run": 5,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4604,
+        "p95_us": 6338,
+        "p99_us": 6977
+      },
+      "wall_seconds": 1.7074720689561218,
+      "stdout": "last paint grid/edges/minimap (us): (111, 366, 140)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4604us p95=6338us p99=6977us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 5,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 5107,
+        "p95_us": 6767,
+        "p99_us": 7630
+      },
+      "wall_seconds": 1.1734936961438507,
+      "stdout": "last paint grid/edges/minimap (us): (93, 447, 971)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=5107us p95=6767us p99=7630us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 5,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 105,
+        "p95_us": 129,
+        "p99_us": 157
+      },
+      "wall_seconds": 0.0401941379532218,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=105us p95=129us p99=157us\n"
+    },
+    {
+      "run": 5,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1078,
+        "p95_us": 1155,
+        "p99_us": 2799
+      },
+      "wall_seconds": 0.16091194306500256,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1078us p95=1155us p99=2799us\n"
+    },
+    {
+      "run": 6,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13425.048999999999,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 13
+      },
+      "wall_seconds": 0.11092022410593927,
+      "stdout": "5000 nodes / 10000 edges; build=13.425049ms; query + cached route access: p50=8us p95=9us p99=13us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 6,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 13418.417,
+        "p50_us": 8,
+        "p95_us": 10,
+        "p99_us": 13
+      },
+      "wall_seconds": 0.11256383289583027,
+      "stdout": "5000 nodes / 10000 edges; build=13.418417ms; query + cached route access: p50=8us p95=10us p99=13us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 6,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 58,
+        "p95_us": 91,
+        "p99_us": 108
+      },
+      "wall_seconds": 1.5051927519962192,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=58us p95=91us p99=108us; full reconstruction reference p50=11896us p95=13826us p99=15824us\n"
+    },
+    {
+      "run": 6,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 55,
+        "p95_us": 87,
+        "p99_us": 110
+      },
+      "wall_seconds": 1.4817906329408288,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=55us p95=87us p99=110us; full reconstruction reference p50=11802us p95=13815us p99=14566us\n"
+    },
+    {
+      "run": 6,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 4811,
+        "p95_us": 6701,
+        "p99_us": 7703
+      },
+      "wall_seconds": 1.1384092960506678,
+      "stdout": "last paint grid/edges/minimap (us): (97, 450, 653)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4811us p95=6701us p99=7703us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 6,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4668,
+        "p95_us": 6870,
+        "p99_us": 8530
+      },
+      "wall_seconds": 1.7570924670435488,
+      "stdout": "last paint grid/edges/minimap (us): (263, 585, 307)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4668us p95=6870us p99=8530us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 6,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1080,
+        "p95_us": 1135,
+        "p99_us": 2904
+      },
+      "wall_seconds": 0.1604326160158962,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1080us p95=1135us p99=2904us\n"
+    },
+    {
+      "run": 6,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 104,
+        "p95_us": 116,
+        "p99_us": 125
+      },
+      "wall_seconds": 0.03927865088917315,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=104us p95=116us p99=125us\n"
+    },
+    {
+      "run": 7,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 14942.404,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 11
+      },
+      "wall_seconds": 0.1105707969982177,
+      "stdout": "5000 nodes / 10000 edges; build=14.942404ms; query + cached route access: p50=8us p95=9us p99=11us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 7,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 13392.408,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 11
+      },
+      "wall_seconds": 0.10976875992491841,
+      "stdout": "5000 nodes / 10000 edges; build=13.392408ms; query + cached route access: p50=8us p95=9us p99=11us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 7,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 56,
+        "p95_us": 82,
+        "p99_us": 129
+      },
+      "wall_seconds": 1.5005559620913118,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=56us p95=82us p99=129us; full reconstruction reference p50=11884us p95=14076us p99=15904us\n"
+    },
+    {
+      "run": 7,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 67,
+        "p95_us": 116,
+        "p99_us": 136
+      },
+      "wall_seconds": 1.5734688700176775,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=67us p95=116us p99=136us; full reconstruction reference p50=12722us p95=14672us p99=17809us\n"
+    },
+    {
+      "run": 7,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 5521,
+        "p95_us": 7493,
+        "p99_us": 8082
+      },
+      "wall_seconds": 1.9779015169478953,
+      "stdout": "last paint grid/edges/minimap (us): (136, 430, 148)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=5521us p95=7493us p99=8082us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 7,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 5836,
+        "p95_us": 7923,
+        "p99_us": 8928
+      },
+      "wall_seconds": 1.3216778300702572,
+      "stdout": "last paint grid/edges/minimap (us): (92, 433, 116)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=5836us p95=7923us p99=8928us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 7,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 105,
+        "p95_us": 131,
+        "p99_us": 144
+      },
+      "wall_seconds": 0.03798185591585934,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=105us p95=131us p99=144us\n"
+    },
+    {
+      "run": 7,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1093,
+        "p95_us": 1181,
+        "p99_us": 2881
+      },
+      "wall_seconds": 0.16054399590939283,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1093us p95=1181us p99=2881us\n"
+    },
+    {
+      "run": 8,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 15206.273,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.11092565697617829,
+      "stdout": "5000 nodes / 10000 edges; build=15.206273ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 8,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 15034.856,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.11145191290415823,
+      "stdout": "5000 nodes / 10000 edges; build=15.034856ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 8,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 56,
+        "p95_us": 84,
+        "p99_us": 96
+      },
+      "wall_seconds": 1.5002192601095885,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=56us p95=84us p99=96us; full reconstruction reference p50=11889us p95=13924us p99=15191us\n"
+    },
+    {
+      "run": 8,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 63,
+        "p95_us": 87,
+        "p99_us": 109
+      },
+      "wall_seconds": 1.5117841840256006,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=63us p95=87us p99=109us; full reconstruction reference p50=12158us p95=14190us p99=16260us\n"
+    },
+    {
+      "run": 8,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 4496,
+        "p95_us": 6517,
+        "p99_us": 8064
+      },
+      "wall_seconds": 1.0792485990095884,
+      "stdout": "last paint grid/edges/minimap (us): (120, 461, 131)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4496us p95=6517us p99=8064us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 8,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4615,
+        "p95_us": 6668,
+        "p99_us": 7715
+      },
+      "wall_seconds": 1.749392303172499,
+      "stdout": "last paint grid/edges/minimap (us): (105, 376, 134)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4615us p95=6668us p99=7715us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 8,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1085,
+        "p95_us": 1169,
+        "p99_us": 2864
+      },
+      "wall_seconds": 0.15928329899907112,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1085us p95=1169us p99=2864us\n"
+    },
+    {
+      "run": 8,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 105,
+        "p95_us": 117,
+        "p99_us": 125
+      },
+      "wall_seconds": 0.03837648895569146,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=105us p95=117us p99=125us\n"
+    },
+    {
+      "run": 9,
+      "mode": "core",
+      "variant": "new",
+      "metrics": {
+        "build_us": 13182.31,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 12
+      },
+      "wall_seconds": 0.1089657440315932,
+      "stdout": "5000 nodes / 10000 edges; build=13.18231ms; query + cached route access: p50=8us p95=9us p99=12us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 9,
+      "mode": "core",
+      "variant": "old",
+      "metrics": {
+        "build_us": 15234.937,
+        "p50_us": 8,
+        "p95_us": 9,
+        "p99_us": 11
+      },
+      "wall_seconds": 0.1115886380430311,
+      "stdout": "5000 nodes / 10000 edges; build=15.234937ms; query + cached route access: p50=8us p95=9us p99=11us; visible=63 nodes/146 edges; branches=258; checksum=49365063\n"
+    },
+    {
+      "run": 9,
+      "mode": "edit",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 59,
+        "p95_us": 98,
+        "p99_us": 262
+      },
+      "wall_seconds": 1.5021976470015943,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=59us p95=98us p99=262us; full reconstruction reference p50=11957us p95=13929us p99=14852us\n"
+    },
+    {
+      "run": 9,
+      "mode": "edit",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 55,
+        "p95_us": 96,
+        "p99_us": 118
+      },
+      "wall_seconds": 1.5008697099983692,
+      "stdout": "5000 nodes/10000 edges; 100 measured moves after 20 warmups; history limit=100; persistent edit p50=55us p95=96us p99=118us; full reconstruction reference p50=11889us p95=14078us p99=15548us\n"
+    },
+    {
+      "run": 9,
+      "mode": "ui",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 4574,
+        "p95_us": 6406,
+        "p99_us": 7710
+      },
+      "wall_seconds": 1.708806033944711,
+      "stdout": "last paint grid/edges/minimap (us): (97, 400, 180)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4574us p95=6406us p99=7710us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 9,
+      "mode": "ui",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 4539,
+        "p95_us": 7193,
+        "p99_us": 9107
+      },
+      "wall_seconds": 1.1037179310806096,
+      "stdout": "last paint grid/edges/minimap (us): (95, 457, 125)\nvisible nodes/edges: (49, 122)\n5000 nodes / 10000 edges; GPUI headless render+paint CPU, 200 pan frames: p50=4539us p95=7193us p99=9107us (no GPU/presentation; minimap=true)\n"
+    },
+    {
+      "run": 9,
+      "mode": "delete",
+      "variant": "new",
+      "metrics": {
+        "p50_us": 106,
+        "p95_us": 127,
+        "p99_us": 158
+      },
+      "wall_seconds": 0.040775909088552,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=106us p95=127us p99=158us\n"
+    },
+    {
+      "run": 9,
+      "mode": "delete",
+      "variant": "old",
+      "metrics": {
+        "p50_us": 1085,
+        "p95_us": 1163,
+        "p99_us": 2826
+      },
+      "wall_seconds": 0.1606723670847714,
+      "stdout": "5000 nodes / 10000 edges; child delete + undo, 100 samples after 20 warmups: p50=1085us p95=1163us p99=2826us\n"
+    }
+  ]
+}
