@@ -1,13 +1,43 @@
 # App framework: state, router, query, form, machine, commands
 
-## guiraffe-state
-- `Store<T>` is a GPUI entity. Writes go through `store.update(cx, |s| ..)` and actions.
-- **Selectors**: `store.select(cx, |s| s.items.len())` subscribes the calling view to a projection.
-  The view is notified only when the projection changes (`PartialEq`). This is the main defence against
-  unnecessary re-renders in app code.
-- Derived stores (`computed`). Middleware: undo/redo (structural sharing), persist (through the core persist
-  store), logger, devtools time-travel.
-- Per-window or app-wide scopes. Tests use `Store::test(..)` and assert notify counts.
+## guiraffe-state (implemented, re-frame inspired)
+
+**Taken from re-frame:**
+- Events are data, processed run-to-completion in FIFO order.
+- Handlers are pure functions of (state, event, coeffects). They return a new state and **effects as data**, and registered effect handlers execute those effects. So a handler is tested by feeding an `Engine` events, with no GPUI and no mocks.
+- Coeffects are injected inputs (the clock, configuration, fakes in tests).
+- Interceptors observe every event, for logging, devtools and validation.
+- Layered subscriptions: `select` is a cheap extractor; `select_memo` adds an input stage plus an expensive computation that runs only when the input changes.
+
+**Changed for Rust and GPUI:**
+- Events are typed, one type per feature module, instead of keyword ids. They're checked at compile time and there's no giant enum.
+- State is held in an `Arc` with clone-on-write, and must be `Clone + PartialEq`. A no-op `update` therefore isn't a change: it creates no undo step and notifies no view.
+- Dispatches in one tick are **batched** into one flush, so a view re-renders at most once.
+- Selections are tiny GPUI entities. A view observes only its own selections, which on gpui-fast means fully isolated re-renders.
+- Undo/redo is built in, using `Arc` snapshots that are shared rather than deep-copied.
+- A cascade limit turns accidental dispatch loops into a reported error instead of a hung UI.
+
+**Deliberate differences from the first draft of this spec:**
+- There is no `store.update(cx, |s| ..)`. All writes go through events, as in re-frame, so every change is logged, undoable and testable.
+- There is no `Store::test`. The pure `Engine` *is* the test harness.
+- `computed` is `select_memo`.
+- Logger, persist and devtools are interceptors or effects (next).
+- Scopes: create one `Store` per app, or per window. There's no implicit global.
+
+**Robustness (from review #1):**
+- A drop-guarded processing flag, so a panic can't wedge the store.
+- A cascade budget per flush, which also catches loops that go through effects.
+- `WeakStore`, plus weak timers, so handlers and timers create no leaks.
+- Keyed debounce (`dispatch_debounced`).
+- Lens-scoped undo (`enable_undo_lens`), so undo never reverts loaded data.
+- A `compare_state` opt-out for hot events on large states.
+- Effect type names in diagnostics, and an `on_error` hook.
+
+**Next:**
+- A subscription registry (dedup by key).
+- An `EventLog` interceptor for devtools time-travel.
+- Async effects: futures whose results dispatch events.
+- Integration with guiraffe-query and the router.
 
 ## guiraffe-router
 - `#[derive(Route)] enum AppRoute { Home, Project { id: ProjectId, #[search] tab: Tab }, ... }`

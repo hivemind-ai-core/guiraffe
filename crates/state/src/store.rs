@@ -1,0 +1,466 @@
+//! The GPUI side: a [`Store`] entity that batches dispatches, runs effects, and keeps
+//! memoized [`Selected`] values that notify *only* the views whose selection changed.
+//!
+//! Robustness rules:
+//! - `processing`/`scheduled` live outside the entity and are reset by a drop guard, so a
+//!   panic in a handler, selector or effect never leaves the store wedged.
+//! - One cascade budget is shared by a whole flush, so loops that go through effect handlers
+//!   and back are reported instead of hanging the UI.
+//! - Timers hold a weak handle; a dropped store's pending events are discarded.
+//! - Effect handlers receive `&Store`; capture [`WeakStore`] (never `Store`) inside them.
+
+use std::{
+    any::TypeId,
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+    sync::Arc,
+};
+
+use gpui_kit::{App, AppContext, Context, Entity, Subscription, WeakEntity};
+
+use crate::engine::{Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor};
+
+type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
+type ErrorHandler = Rc<dyn Fn(&EngineError, &mut App)>;
+
+trait Slot<S> {
+    /// Recompute against `state`, notifying the backing entity if the value changed.
+    fn refresh(&self, state: &S, cx: &mut App);
+    fn alive(&self) -> bool;
+}
+
+struct Inner<S: Clone + PartialEq + 'static> {
+    engine: Engine<S>,
+    cofx: Rc<RefCell<Coeffects>>,
+    effects: HashMap<TypeId, EffectHandler<S>>,
+    on_error: Option<ErrorHandler>,
+    slots: Vec<Rc<dyn Slot<S>>>,
+    debounce: HashMap<&'static str, u64>,
+    next_timer: u64,
+    stats: StoreStats,
+}
+
+/// An event-driven state container. Cheap to clone (it is a handle).
+pub struct Store<S: Clone + PartialEq + 'static> {
+    inner: Entity<Inner<S>>,
+    scheduled: Rc<Cell<bool>>,
+    processing: Rc<Cell<bool>>,
+}
+
+impl<S: Clone + PartialEq + 'static> Clone for Store<S> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            scheduled: self.scheduled.clone(),
+            processing: self.processing.clone(),
+        }
+    }
+}
+
+/// A weak handle for capturing in effect handlers, timers and long-lived closures.
+pub struct WeakStore<S: Clone + PartialEq + 'static> {
+    inner: WeakEntity<Inner<S>>,
+    scheduled: Rc<Cell<bool>>,
+    processing: Rc<Cell<bool>>,
+}
+
+impl<S: Clone + PartialEq + 'static> Clone for WeakStore<S> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            scheduled: self.scheduled.clone(),
+            processing: self.processing.clone(),
+        }
+    }
+}
+
+impl<S: Clone + PartialEq + 'static> WeakStore<S> {
+    pub fn upgrade(&self) -> Option<Store<S>> {
+        Some(Store {
+            inner: self.inner.upgrade()?,
+            scheduled: self.scheduled.clone(),
+            processing: self.processing.clone(),
+        })
+    }
+}
+
+/// Diagnostics for devtools and tests.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StoreStats {
+    pub events_processed: u64,
+    pub flushes: u64,
+    pub selections: usize,
+    /// Type names of effects with no registered handler (most recent last, capped).
+    pub unhandled_effects: Vec<&'static str>,
+    pub last_error: Option<EngineError>,
+}
+
+/// Resets a flag when dropped, including during unwinding.
+struct FlagGuard(Rc<Cell<bool>>);
+
+impl Drop for FlagGuard {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+impl<S: Clone + PartialEq + 'static> Store<S> {
+    pub fn new(state: S, cx: &mut App) -> Self {
+        let inner = cx.new(|_| Inner {
+            engine: Engine::new(state),
+            cofx: Rc::new(RefCell::new(Coeffects::default())),
+            effects: HashMap::new(),
+            on_error: None,
+            slots: Vec::new(),
+            debounce: HashMap::new(),
+            next_timer: 0,
+            stats: StoreStats::default(),
+        });
+        Self {
+            inner,
+            scheduled: Rc::new(Cell::new(false)),
+            processing: Rc::new(Cell::new(false)),
+        }
+    }
+
+    pub fn downgrade(&self) -> WeakStore<S> {
+        WeakStore {
+            inner: self.inner.downgrade(),
+            scheduled: self.scheduled.clone(),
+            processing: self.processing.clone(),
+        }
+    }
+
+    /// Current state snapshot (cheap `Arc` clone). Views should prefer [`Store::select`].
+    /// Between a dispatch and its flush this is the last flushed state.
+    pub fn state(&self, cx: &App) -> Arc<S> {
+        self.inner.read(cx).engine.state().clone()
+    }
+
+    /// Whole-state undo (see [`Engine::enable_undo`] for the caveat).
+    pub fn enable_undo(&self, limit: usize, cx: &mut App) {
+        self.inner.update(cx, |i, _| i.engine.enable_undo(limit));
+    }
+
+    /// Undo scoped to part of the state (see [`Engine::enable_undo_lens`]).
+    pub fn enable_undo_lens<U: Clone + 'static>(
+        &self,
+        limit: usize,
+        get: impl Fn(&S) -> U + 'static,
+        set: impl Fn(&mut S, U) + 'static,
+        cx: &mut App,
+    ) {
+        self.inner
+            .update(cx, |i, _| i.engine.enable_undo_lens(limit, get, set));
+    }
+
+    pub fn can_undo(&self, cx: &App) -> bool {
+        self.inner.read(cx).engine.can_undo()
+    }
+
+    pub fn can_redo(&self, cx: &App) -> bool {
+        self.inner.read(cx).engine.can_redo()
+    }
+
+    pub fn add_interceptor(&self, i: impl Interceptor<S>, cx: &mut App) {
+        self.inner
+            .update(cx, |inner, _| inner.engine.add_interceptor(i));
+    }
+
+    pub fn set_cascade_limit(&self, limit: usize, cx: &mut App) {
+        self.inner
+            .update(cx, |i, _| i.engine.cascade_limit = limit.max(1));
+    }
+
+    /// Provide a coeffect value readable by handlers via `fx.cofx::<T>()`.
+    pub fn provide<T: 'static>(&self, value: T, cx: &mut App) {
+        self.inner
+            .update(cx, |i, _| i.cofx.borrow_mut().provide(value));
+    }
+
+    /// Register the executor for effects of type `E` (replaces an existing one).
+    /// Use the `&Store` argument (or a [`WeakStore`]) rather than capturing a `Store`,
+    /// which would keep the store alive forever.
+    pub fn on_effect<E: 'static>(
+        &self,
+        cx: &mut App,
+        f: impl Fn(E, &Store<S>, &mut App) + 'static,
+    ) {
+        let handler: EffectHandler<S> = Rc::new(move |boxed, store, cx| {
+            if let Ok(e) = boxed.downcast::<E>() {
+                f(*e, store, cx);
+            }
+        });
+        self.inner.update(cx, |i, _| {
+            i.effects.insert(TypeId::of::<E>(), handler);
+        });
+    }
+
+    /// Called when a flush reports an error (e.g. a dispatch loop).
+    pub fn on_error(&self, cx: &mut App, f: impl Fn(&EngineError, &mut App) + 'static) {
+        self.inner.update(cx, |i, _| i.on_error = Some(Rc::new(f)));
+    }
+
+    /// Queue an event. All events dispatched in the same tick are processed together
+    /// (one refresh of selections, so views re-render at most once).
+    pub fn dispatch(&self, event: impl Event<S>, cx: &mut App) {
+        self.inner.update(cx, |i, _| i.engine.dispatch(event));
+        self.schedule(cx);
+    }
+
+    fn schedule(&self, cx: &mut App) {
+        if self.scheduled.get() || self.processing.get() {
+            return; // the pending or running flush will pick it up
+        }
+        self.scheduled.set(true);
+        let weak = self.downgrade();
+        cx.defer(move |cx| {
+            if let Some(store) = weak.upgrade() {
+                store.flush(cx);
+            }
+        });
+    }
+
+    /// Process everything queued now. Reentrant calls (from effect handlers or renders during
+    /// the flush) are folded into the running flush.
+    pub fn flush(&self, cx: &mut App) {
+        if self.processing.get() {
+            return;
+        }
+        self.processing.set(true);
+        let _processing = FlagGuard(self.processing.clone());
+        self.scheduled.set(false);
+        let mut budget = self.inner.read(cx).engine.cascade_limit;
+        let mut error = None;
+        loop {
+            let (outcome, state) = self.inner.update(cx, |i, cx| {
+                let cofx = i.cofx.clone();
+                let mut cofx = cofx.borrow_mut();
+                cofx.now = Some(cx.background_executor().now());
+                let out = i.engine.process_with_budget(&cofx, &mut budget);
+                i.stats.events_processed += out.processed as u64;
+                (out, i.engine.state().clone())
+            });
+            if outcome.changed {
+                let slots: Vec<Rc<dyn Slot<S>>> = self.inner.read(cx).slots.clone();
+                for slot in &slots {
+                    slot.refresh(&state, cx);
+                }
+                self.prune(cx);
+            }
+            if outcome.error.is_some() {
+                error = outcome.error;
+                break;
+            }
+            for effect in outcome.effects {
+                self.run_effect(effect, cx);
+            }
+            if !self.inner.read(cx).engine.has_pending() {
+                break;
+            }
+        }
+        let handler = self.inner.update(cx, |i, _| {
+            i.stats.flushes += 1;
+            i.stats.last_error = error.clone();
+            i.on_error.clone()
+        });
+        if let (Some(e), Some(h)) = (error, handler) {
+            h(&e, cx);
+        }
+    }
+
+    fn prune(&self, cx: &mut App) {
+        self.inner.update(cx, |i, _| i.slots.retain(|s| s.alive()));
+    }
+
+    fn run_effect(&self, effect: Effect, cx: &mut App) {
+        let Effect { name, value } = effect;
+        let value = match value.downcast::<DispatchLater<S>>() {
+            Ok(later) => return self.schedule_later(*later, cx),
+            Err(other) => other,
+        };
+        let ty = (*value).type_id();
+        let handler = self.inner.read(cx).effects.get(&ty).cloned();
+        match handler {
+            Some(h) => h(value, self, cx),
+            None => self.inner.update(cx, |i, _| {
+                let list = &mut i.stats.unhandled_effects;
+                list.push(name);
+                if list.len() > 32 {
+                    list.remove(0);
+                }
+            }),
+        }
+    }
+
+    fn schedule_later(&self, later: DispatchLater<S>, cx: &mut App) {
+        let delay = later.delay;
+        let key = later.key;
+        let ticket = self.inner.update(cx, |i, _| {
+            i.next_timer += 1;
+            if let Some(k) = key {
+                i.debounce.insert(k, i.next_timer);
+            }
+            i.next_timer
+        });
+        let queued = later.into_queued();
+        let weak = self.downgrade();
+        let timer = cx.background_executor().timer(delay);
+        cx.spawn(async move |cx| {
+            timer.await;
+            cx.update(|cx| {
+                let Some(store) = weak.upgrade() else { return };
+                let current = store.inner.update(cx, |i, _| match key {
+                    Some(k) if i.debounce.get(k) != Some(&ticket) => false,
+                    Some(k) => {
+                        i.debounce.remove(k);
+                        true
+                    }
+                    None => true,
+                });
+                if current {
+                    store
+                        .inner
+                        .update(cx, |i, _| i.engine.dispatch_queued(queued));
+                    store.schedule(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub fn stats(&self, cx: &App) -> StoreStats {
+        let i = self.inner.read(cx);
+        StoreStats {
+            selections: i.slots.iter().filter(|s| s.alive()).count(),
+            ..i.stats.clone()
+        }
+    }
+
+    /// Select a value for view `V`; the view is notified only when the value changes.
+    ///
+    /// Call in the view's constructor and keep the [`Selected`]; read it in `render`.
+    pub fn select<V: 'static, T: Clone + PartialEq + 'static>(
+        &self,
+        cx: &mut Context<V>,
+        f: impl Fn(&S) -> T + 'static,
+    ) -> Selected<T> {
+        let value = f(&self.state(cx));
+        let entity = cx.new(|_| SelectionCell { value });
+        let slot: Rc<dyn Slot<S>> = Rc::new(SelectSlot {
+            entity: entity.downgrade(),
+            select: Box::new(f),
+        });
+        self.register(slot, cx);
+        let observation = cx.observe(&entity, |_, _, cx| cx.notify());
+        Selected {
+            entity,
+            _observation: observation,
+        }
+    }
+
+    /// Two-stage selection (re-frame "layer 3"): `input` is cheap and runs after every state
+    /// change; `compute` (possibly expensive) runs only when the input changed.
+    pub fn select_memo<
+        V: 'static,
+        I: Clone + PartialEq + 'static,
+        T: Clone + PartialEq + 'static,
+    >(
+        &self,
+        cx: &mut Context<V>,
+        input: impl Fn(&S) -> I + 'static,
+        compute: impl Fn(&I) -> T + 'static,
+    ) -> Selected<T> {
+        let first_input = input(&self.state(cx));
+        let value = compute(&first_input);
+        let entity = cx.new(|_| SelectionCell { value });
+        let slot: Rc<dyn Slot<S>> = Rc::new(MemoSlot {
+            entity: entity.downgrade(),
+            last_input: RefCell::new(first_input),
+            input: Box::new(input),
+            compute: Box::new(compute),
+        });
+        self.register(slot, cx);
+        let observation = cx.observe(&entity, |_, _, cx| cx.notify());
+        Selected {
+            entity,
+            _observation: observation,
+        }
+    }
+
+    fn register(&self, slot: Rc<dyn Slot<S>>, cx: &mut App) {
+        self.inner.update(cx, |i, _| {
+            // Prune here too, so selections created repeatedly (e.g. in render) can't pile up.
+            i.slots.retain(|s| s.alive());
+            i.slots.push(slot);
+        });
+    }
+}
+
+struct SelectionCell<T> {
+    value: T,
+}
+
+fn set_cell<T: PartialEq + 'static>(entity: &Entity<SelectionCell<T>>, value: T, cx: &mut App) {
+    entity.update(cx, |cell, cx| {
+        if cell.value != value {
+            cell.value = value;
+            cx.notify();
+        }
+    });
+}
+
+struct SelectSlot<S, T: 'static> {
+    entity: WeakEntity<SelectionCell<T>>,
+    select: Box<dyn Fn(&S) -> T>,
+}
+
+impl<S, T: PartialEq + 'static> Slot<S> for SelectSlot<S, T> {
+    fn refresh(&self, state: &S, cx: &mut App) {
+        if let Some(entity) = self.entity.upgrade() {
+            set_cell(&entity, (self.select)(state), cx);
+        }
+    }
+    fn alive(&self) -> bool {
+        self.entity.upgrade().is_some()
+    }
+}
+
+struct MemoSlot<S, I, T: 'static> {
+    entity: WeakEntity<SelectionCell<T>>,
+    last_input: RefCell<I>,
+    input: Box<dyn Fn(&S) -> I>,
+    compute: Box<dyn Fn(&I) -> T>,
+}
+
+impl<S, I: PartialEq, T: PartialEq + 'static> Slot<S> for MemoSlot<S, I, T> {
+    fn refresh(&self, state: &S, cx: &mut App) {
+        let Some(entity) = self.entity.upgrade() else {
+            return;
+        };
+        let input = (self.input)(state);
+        if *self.last_input.borrow() == input {
+            return;
+        }
+        let value = (self.compute)(&input);
+        *self.last_input.borrow_mut() = input;
+        set_cell(&entity, value, cx);
+    }
+    fn alive(&self) -> bool {
+        self.entity.upgrade().is_some()
+    }
+}
+
+/// A memoized selection held by a view. Dropping it unsubscribes.
+pub struct Selected<T: 'static> {
+    entity: Entity<SelectionCell<T>>,
+    _observation: Subscription,
+}
+
+impl<T: 'static> Selected<T> {
+    /// The value as of the last flush.
+    pub fn get<'a>(&self, cx: &'a App) -> &'a T {
+        &self.entity.read(cx).value
+    }
+}
