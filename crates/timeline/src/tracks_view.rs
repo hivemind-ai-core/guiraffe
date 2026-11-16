@@ -254,6 +254,7 @@ impl Render for TracksView {
                                     .border_l_1()
                                     .border_color(line)
                                     .text_color(s.dimmed.to_hsla())
+                                    .whitespace_nowrap()
                                     .child(label(tt, format))
                             })),
                     ),

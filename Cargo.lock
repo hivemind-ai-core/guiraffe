@@ -3486,6 +3486,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-showcase"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "guiraffe-components",
+ "guiraffe-core",
+ "guiraffe-icons",
+ "guiraffe-layout",
+ "guiraffe-test",
+ "guiraffe-timeline",
+]
+
+[[package]]
 name = "guiraffe-state"
 version = "0.1.0"
 dependencies = [
