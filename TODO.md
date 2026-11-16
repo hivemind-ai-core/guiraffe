@@ -21,3 +21,4 @@
 ## Next (user request 2026-11-16)
 - [ ] **Showcase app** (`apps/showcase`): every component from every crate, one page each, real data, both themes; doubles as e2e/snapshot target. Gate: a test enumerates exported components and fails if any lacks a showcase page.
 - [ ] **Tooling DX**: `guiraffe new --template {blank,dashboard,editor,chat}`, `guiraffe dev` (watch+rebuild+relaunch), `guiraffe add <crate>`, `guiraffe doctor` (toolchain, gpui-fast pin, system deps), `guiraffe snapshot`/`bench` wrappers, docs site generated from showcase.
+- [ ] **After current work:** study the Refactoring UI book (in repo root, user-provided; do not commit it) — its component list and principles → design-quality styling + layout presets (theme recipes, spacing/type scales, hierarchy, color, depth) in core/layout, applied across showcase.
