@@ -43,6 +43,7 @@ struct Fixture {
     _host: Entity<DataUi>,
     toggle: bool,
     replacements: [Arc<[Value]>; 2],
+    structural: [Arc<[Value]>; 2],
 }
 impl Fixture {
     fn new() -> anyhow::Result<Self> {
@@ -102,6 +103,16 @@ impl Fixture {
                 .collect(),
             ))])
         });
+        let structural = ["item-5000", "alternate-5000"].map(|id| {
+            Arc::from([Value::Record(Arc::new(
+                [
+                    ("id".into(), Value::from(id)),
+                    ("title".into(), Value::from("structural")),
+                ]
+                .into_iter()
+                .collect(),
+            ))])
+        });
         Ok(Self {
             cx,
             registry,
@@ -111,6 +122,7 @@ impl Fixture {
             _host: host,
             toggle: false,
             replacements,
+            structural,
         })
     }
 }
@@ -159,5 +171,40 @@ pub fn splice() {
                 cx,
             )
         });
+    });
+}
+
+/// Replace the middle row's key so reconciliation must create/dispose a row and
+/// update live position paths, rather than only editing an existing keyed item.
+pub fn structural_splice() {
+    FIXTURE.with(|fixture| {
+        let mut fixture = fixture.borrow_mut();
+        fixture.toggle = !fixture.toggle;
+        let values = fixture.structural[usize::from(fixture.toggle)].clone();
+        let handle = fixture.handle.clone();
+        fixture.cx.update(|cx| {
+            handle.patch(
+                |names, out| {
+                    if let Some(slot) = names.slot("items") {
+                        out.splice(slot, 5000..5001, values);
+                    }
+                },
+                cx,
+            )
+        });
+    });
+}
+
+/// Drain setup notifications before a one-shot instruction measurement.
+pub fn settle() {
+    FIXTURE.with(|fixture| {
+        let mut fixture = fixture.borrow_mut();
+        let window = fixture._window;
+        if let Err(error) = fixture.cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        }) {
+            panic!("cannot settle benchmark fixture: {error:#}");
+        }
+        fixture.cx.run_until_parked();
     });
 }

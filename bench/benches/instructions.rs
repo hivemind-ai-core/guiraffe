@@ -20,6 +20,12 @@ macro_rules! define_instruction {
             guiraffe_bench::suites::data_ui_splice();
         }
     };
+    (data_ui_structural_splice) => {
+        #[library_benchmark(setup = guiraffe_bench::suites::prepare_data_ui)]
+        fn data_ui_structural_splice(_: ()) {
+            guiraffe_bench::suites::data_ui_structural_splice();
+        }
+    };
     ($function:ident) => {
         #[library_benchmark]
         fn $function() {
