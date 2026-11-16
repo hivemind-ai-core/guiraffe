@@ -1,13 +1,27 @@
 # App framework: state, router, query, form, machine, commands
 
-## guiraffe-state
-- `Store<T>` is a GPUI entity. Writes go through `store.update(cx, |s| ..)` and actions.
-- **Selectors**: `store.select(cx, |s| s.items.len())` subscribes the calling view to a projection.
-  The view is notified only when the projection changes (`PartialEq`). This is the main defence against
-  unnecessary re-renders in app code.
-- Derived stores (`computed`). Middleware: undo/redo (structural sharing), persist (through the core persist
-  store), logger, devtools time-travel.
-- Per-window or app-wide scopes. Tests use `Store::test(..)` and assert notify counts.
+## guiraffe-state (implemented, re-frame inspired)
+
+**Taken from re-frame:**
+- Events are data, processed run-to-completion in FIFO order.
+- Handlers are pure functions of (state, event, coeffects). They return a new state and **effects as data**, and registered effect handlers execute those effects. So a handler is tested by feeding an `Engine` events, with no GPUI and no mocks.
+- Coeffects are injected inputs (the clock, configuration, fakes in tests).
+- Interceptors observe every event, for logging, devtools and validation.
+- Layered subscriptions: `select` is a cheap extractor; `select_memo` adds an input stage plus an expensive computation that runs only when the input changes.
+
+**Changed for Rust and GPUI:**
+- Events are typed, one type per feature module, instead of keyword ids. They're checked at compile time and there's no giant enum.
+- State is held in an `Arc` with clone-on-write, and must be `Clone + PartialEq`. A no-op `update` therefore isn't a change: it creates no undo step and notifies no view.
+- Dispatches in one tick are **batched** into one flush, so a view re-renders at most once.
+- Selections are tiny GPUI entities. A view observes only its own selections, which on gpui-fast means fully isolated re-renders.
+- Undo/redo is built in, using `Arc` snapshots that are shared rather than deep-copied.
+- A cascade limit turns accidental dispatch loops into a reported error instead of a hung UI.
+
+**Next:**
+- A subscription registry (dedup by key).
+- An `EventLog` interceptor for devtools time-travel.
+- Async effects: futures whose results dispatch events.
+- Integration with guiraffe-query and the router.
 
 ## guiraffe-router
 - `#[derive(Route)] enum AppRoute { Home, Project { id: ProjectId, #[search] tab: Tab }, ... }`
