@@ -3374,6 +3374,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "guiraffe-motion",
  "guiraffe-windows",
  "notify-rust",
 ]

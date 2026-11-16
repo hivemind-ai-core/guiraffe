@@ -2,7 +2,8 @@
 //!
 //! Call [`init`] before opening windows. Kit `open_window` mounts a Root automatically;
 //! with guiraffe-windows, return [`root`] from the window builder. Use [`OverlayHost`]
-//! for managed modal/drawer operations so native Controls state and IDs stay aligned.
+//! for owned layers. Managed modal storage is independent of native dialogs,
+//! with Base focus/actions, Controls surface parts and shared motion transitions.
 mod confirm;
 mod host;
 pub mod position;
@@ -27,3 +28,8 @@ pub type Modals = OverlayHost;
 pub mod modals;
 pub mod notifications;
 pub use host::OverlayError as Error;
+mod floating;
+pub use floating::FloatingTooltip;
+
+mod modal;
+pub use modal::Modal;

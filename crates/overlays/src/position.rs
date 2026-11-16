@@ -142,8 +142,10 @@ pub fn position(
         }
     }
     if options.shift {
-        p.0 = p.0.clamp(min_x, max_x);
-        p.1 = p.1.clamp(min_y, max_y);
+        match side {
+            Side::Top | Side::Bottom => p.0 = p.0.clamp(min_x, max_x),
+            Side::Left | Side::Right => p.1 = p.1.clamp(min_y, max_y),
+        }
     }
     let (center, origin, extent) = match side {
         Side::Top | Side::Bottom => (anchor.x + anchor.width / 2., p.0, w),
@@ -243,7 +245,7 @@ mod tests {
             Default::default(),
         )
         .expect("position");
-        assert_eq!((p.x, p.y), (28., 38.));
+        assert_eq!((p.x, p.y), (28., -6.));
         assert!(p.arrow.is_finite());
     }
     #[test]
@@ -354,5 +356,37 @@ mod directional_tests {
                 assert_eq!(actual.side, if flip { side.opposite() } else { side });
             }
         }
+    }
+}
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    #[test]
+    fn review_8_default_shift_never_moves_across_anchor() {
+        let anchor = Rect {
+            x: 40.,
+            y: 90.,
+            width: 20.,
+            height: 10.,
+        };
+        let actual = position(
+            anchor,
+            (40., 30.),
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 100.,
+                height: 100.,
+            },
+            FloatingOptions {
+                flip: false,
+                ..Default::default()
+            },
+        )
+        .expect("position");
+        assert_eq!(
+            actual.y, 104.,
+            "cross-axis shift must not cover the anchor on the main axis"
+        );
     }
 }

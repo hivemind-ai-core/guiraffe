@@ -1,9 +1,9 @@
 //! Window-local modal service. Callbacks run through Controls' native focus scopes.
+use crate::Modal as Dialog;
 use crate::{
     ConfirmResult, ContextBuilder, OverlayError, OverlayHost,
     stack::{OverlayId, Policy},
 };
-use gpui_kit::component::dialog::Dialog;
 use gpui_kit::{App, SharedString, Window};
 pub fn open(
     window: &mut Window,

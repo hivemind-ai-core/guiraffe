@@ -1,7 +1,7 @@
 //! Command palette: Controls Input + Dialog, with independent fuzzy matching.
 use crate::{
     OverlayError, OverlayHost,
-    search::{Command, search_indices},
+    search::{Command, SearchIndex},
     stack::{OverlayId, OverlayKind, Policy},
 };
 use gpui_kit::StatefulInteractiveElement;
@@ -35,6 +35,7 @@ type Handler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 pub struct Spotlight {
     input: Entity<InputState>,
     commands: Vec<Command>,
+    index: SearchIndex,
     labels: Vec<gpui_kit::SharedString>,
     selected: usize,
     matches: Vec<usize>,
@@ -53,7 +54,7 @@ impl Spotlight {
         let subscription =
             cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
                 InputEvent::Change => {
-                    let matches = search_indices(&this.input.read(cx).value(), &this.commands, 50);
+                    let matches = this.index.search(&this.input.read(cx).value(), 50).to_vec();
                     if this.selected != 0 || this.matches != matches {
                         this.selected = 0;
                         this.matches = matches;
@@ -63,13 +64,15 @@ impl Spotlight {
                 InputEvent::PressEnter { .. } => this.activate(window, cx),
                 _ => {}
             });
-        let matches = search_indices("", &commands, 50);
+        let mut index = SearchIndex::new(&commands);
+        let matches = index.search("", 50).to_vec();
         let labels = commands.iter().map(|c| c.label.clone().into()).collect();
         Self {
             input,
             matches,
             labels,
             commands,
+            index,
             selected: 0,
             on_select: Rc::new(on_select),
             overlay: None,
@@ -117,13 +120,14 @@ impl Spotlight {
             return;
         }
         self.labels = commands.iter().map(|c| c.label.clone().into()).collect();
+        self.index = SearchIndex::new(&commands);
         self.commands = commands;
-        self.matches = search_indices(&self.input.read(cx).value(), &self.commands, 50);
+        self.matches = self.index.search(&self.input.read(cx).value(), 50).to_vec();
         self.selected = 0;
         cx.notify();
     }
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let matches = search_indices(&self.input.read(cx).value(), &self.commands, 50);
+        let matches = self.index.search(&self.input.read(cx).value(), 50).to_vec();
         if self.matches != matches {
             self.selected = 0;
             self.matches = matches;

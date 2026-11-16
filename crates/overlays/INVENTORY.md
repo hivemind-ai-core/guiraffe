@@ -28,3 +28,17 @@ must be presented by its native NotificationList, which owns close/transition
 completion. Managed toasts therefore use the native list, with custom content for
 hover/progress and a pure scheduler for admission and lifetime. Progress ticks
 notify individual notification entities, without notifying the overlay Root plugin.
+
+## Review 1 boundary corrections
+
+Controls WindowExt has only top-pop dialog operations and private per-dialog state.
+Managed modals therefore use independent Base Dialog scopes with Controls surface
+parts, preserving native dialogs and allowing removal by owned ID. Existing inferred
+builder closures remain compatible; the explicit builder type is now `Modal`.
+Shared motion Presence/Transition/framed owns managed enter/exit retention.
+
+Native notifications expose no public list mutation/update API. The adapter forces
+InApp admission, preserves native entities on content updates, reconciles capacity
+with unmanaged notes, and queues until shared capacity is available. Native close
+and notification-stack transitions remain upstream. `FloatingTooltip` measures
+its actual child layout before calling the pure cross-axis placement solver.
