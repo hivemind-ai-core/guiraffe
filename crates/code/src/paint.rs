@@ -191,7 +191,12 @@ pub(crate) fn prepare(
 ) -> TextFrame {
     let options = shared.options.borrow();
     let token_size = options.size.unwrap_or(context.control_size);
-    let font_size = token_size.font_size() * theme.scale.max(0.1);
+    let scale = if theme.scale.is_finite() {
+        theme.scale.clamp(0.1, 10.)
+    } else {
+        1.
+    };
+    let font_size = token_size.font_size() * scale;
     let family = cx
         .global::<gpui_kit::component::Theme>()
         .mono_font_family
@@ -454,7 +459,7 @@ pub(crate) fn anchor(shared: &Shared, position: Position) -> Option<Point<Pixels
     }
     let doc = shared.highlighted.borrow();
     doc.document.offset(position)?;
-    Some(point(
+    let anchor = point(
         g.bounds.origin.x
             + px(g.gutter - viewport.x)
             + shape.x_for_index(
@@ -466,7 +471,13 @@ pub(crate) fn anchor(shared: &Shared, position: Position) -> Option<Point<Pixels
                     .unwrap_or(position.column),
             ),
         g.bounds.origin.y + px(y),
-    ))
+    );
+    if anchor.x < g.bounds.origin.x + px(g.gutter)
+        || anchor.x > g.bounds.right() - px(g.margin + g.mini)
+    {
+        return None;
+    }
+    Some(anchor)
 }
 fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
     let g = shared.geometry.borrow();
@@ -504,16 +515,18 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
             .unwrap_or(end);
         let x = g.bounds.origin.x + px(g.gutter - viewport.x) + shape.x_for_index(start);
         let end_x = shape.x_for_index(end);
-        result.push(Bounds::new(
-            point(
-                x,
-                g.bounds.origin.y + px(row as f32 * g.line_height - viewport.y),
-            ),
-            size(
-                (end_x - shape.x_for_index(start)).max(px(1.)),
-                px(g.line_height),
-            ),
-        ));
+        let right = (x + (end_x - shape.x_for_index(start)).max(px(1.)))
+            .min(g.bounds.right() - px(g.margin + g.mini));
+        let left = x.max(g.bounds.origin.x + px(g.gutter));
+        if right > left {
+            result.push(Bounds::new(
+                point(
+                    left,
+                    g.bounds.origin.y + px(row as f32 * g.line_height - viewport.y),
+                ),
+                size(right - left, px(g.line_height)),
+            ));
+        }
     }
     result
 }

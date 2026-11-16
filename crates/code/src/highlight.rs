@@ -8,13 +8,16 @@ use std::{ops::Range, sync::Arc, time::Duration};
 
 #[derive(Debug, Clone)]
 pub struct Highlighted {
-    pub document: Arc<CodeDocument>,
-    pub spans: Arc<[(Range<usize>, HighlightStyle)]>,
+    pub(crate) document: Arc<CodeDocument>,
+    pub(crate) spans: Arc<[(Range<usize>, HighlightStyle)]>,
     pub error: Option<Arc<str>>,
     alternate: Arc<[(Range<usize>, HighlightStyle)]>,
     dark: bool,
 }
 impl Highlighted {
+    pub fn document(&self) -> &Arc<CodeDocument> {
+        &self.document
+    }
     pub fn plain(document: Arc<CodeDocument>) -> Self {
         Self {
             document,

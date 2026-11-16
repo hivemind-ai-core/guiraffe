@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! Read-only code surfaces. Source and analysis are immutable snapshots; rendering and
 //! interactive overlays live in independent leaf entities. See the stress example.
 mod document;

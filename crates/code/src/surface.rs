@@ -572,14 +572,20 @@ impl Render for OverlayLayer {
         let mut stats = self.shared.stats.get();
         stats.visible_bubbles = placements.len();
         self.shared.stats.set(stats);
-        let mut root = div().absolute().top_0().left_0().size_full().child(
-            canvas(
-                |_, _, _| (),
-                move |_, _, window, cx| crate::paint::paint_overlay(&shared, window, cx),
-            )
+        let mut root = div()
             .absolute()
-            .size_full(),
-        );
+            .top_0()
+            .left_0()
+            .size_full()
+            .text_color(s.text.to_hsla())
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, cx| crate::paint::paint_overlay(&shared, window, cx),
+                )
+                .absolute()
+                .size_full(),
+            );
         if margin > 0. {
             for p in placements {
                 if !self.shared.bubbles.borrow().contains_key(&p.id)
@@ -603,6 +609,8 @@ impl Render for OverlayLayer {
                             .h(px(p.height))
                             .overflow_hidden()
                             .bg(s.surface.to_hsla())
+                            .p(px(Size::Xs.spacing() * 0.5))
+                            .rounded(px(Size::Sm.radius()))
                             .border_1()
                             .border_color(s.border.to_hsla())
                             .child(
@@ -623,6 +631,8 @@ impl Render for OverlayLayer {
                     .h(px(lh * 4.))
                     .overflow_hidden()
                     .bg(s.surface.to_hsla())
+                    .p(px(Size::Xs.spacing() * 0.5))
+                    .rounded(px(Size::Sm.radius()))
                     .border_1()
                     .border_color(s.border.to_hsla())
                     .child(MarkdownView::new(format!("code-detail-{}", self.shared.id)).state(md)),

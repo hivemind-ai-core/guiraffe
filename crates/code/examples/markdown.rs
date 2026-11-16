@@ -1,13 +1,19 @@
 //! CodeViewer embedded in Markdown using a shared extension registry.
 use gpui_kit::component::text::{MarkdownExtensions, TextView, TextViewState};
 use gpui_kit::{App, AppContext, Context, Entity, IntoElement, Render, Window};
+use gpui_kit::{ParentElement, Styled, div};
 struct Demo {
     text: Entity<TextViewState>,
     extensions: MarkdownExtensions,
 }
 impl Render for Demo {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        TextView::new(&self.text).markdown_extensions(self.extensions.clone())
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = guiraffe_core::GuiraffeTheme::global(cx).surfaces();
+        div()
+            .size_full()
+            .bg(s.body.to_hsla())
+            .text_color(s.text.to_hsla())
+            .child(TextView::new(&self.text).markdown_extensions(self.extensions.clone()))
     }
 }
 fn main() {

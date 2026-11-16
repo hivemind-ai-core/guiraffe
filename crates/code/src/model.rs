@@ -375,6 +375,7 @@ mod tests {
             }
         }
         assert_eq!(rows.source_row(3), None);
+        assert_eq!(rows.source_row_or_before(3), Some(2));
     }
     #[test]
     fn interval_query_is_sublinear_and_finds_spanning_ranges() {

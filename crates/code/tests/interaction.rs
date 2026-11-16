@@ -480,3 +480,12 @@ fn real_symbol_hover_and_definition_callback_allow_reentry(cx: &mut TestAppConte
     vcx.run_until_parked();
     assert!(activated.get());
 }
+
+#[gpui_kit::test]
+fn trace_anchors_outside_the_horizontal_viewport_are_hidden(cx: &mut TestAppContext) {
+    let (code, _, vcx) = mount(cx, Arc::from("let value = 42;\n"));
+    assert!(code.anchor_in_window(Position::new(0, 4)).is_some());
+    vcx.update(|_, cx| code.scroll_to(guiraffe_code::Viewport { x: 1000., y: 0. }, cx));
+    vcx.run_until_parked();
+    assert!(code.anchor_in_window(Position::new(0, 4)).is_none());
+}

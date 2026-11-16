@@ -2,8 +2,9 @@
 //! its existing registry so Mermaid and other renderers remain installed.
 use crate::{CodeDocument, CodeHandle, CodeOptions, CodeViewer, content_hash};
 use gpui_kit::{
+    ElementId, IntoElement, ParentElement, Styled,
     component::text::{MarkdownExtensions, MarkdownNode},
-    AppContext, ElementId, IntoElement, ParentElement, Styled, div, px,
+    div, px,
 };
 use guiraffe_core::StyleContext;
 use std::sync::Arc;
@@ -19,7 +20,7 @@ struct FenceState(CodeHandle);
 /// Rendering, source selection/copy, shaping, highlighting and scrolling all reuse CodeViewer.
 /// A block taller than `max_lines` scrolls within its own viewport.
 pub fn code_fences(base: MarkdownExtensions, max_lines: usize) -> MarkdownExtensions {
-    base.block_parser(|node, _| parse_fence(node))
+    base.block_parser(|node, context| parse_fence(node, context.node_source(node)))
         .block_renderer(NODE, move |node, window, cx| {
             let Some(fence) = node.data::<Fence>() else {
                 return div().into_any_element();
@@ -59,7 +60,7 @@ pub fn code_fences(base: MarkdownExtensions, max_lines: usize) -> MarkdownExtens
         })
 }
 
-fn parse_fence(node: &::markdown::mdast::Node) -> Option<MarkdownNode> {
+fn parse_fence(node: &::markdown::mdast::Node, original: Option<&str>) -> Option<MarkdownNode> {
     let ::markdown::mdast::Node::Code(code) = node else {
         return None;
     };
@@ -79,11 +80,20 @@ fn parse_fence(node: &::markdown::mdast::Node) -> Option<MarkdownNode> {
             },
         )
         .text(code.value.clone())
-        .markdown(format!(
-            "```{}\n{}\n```",
-            code.lang.as_deref().unwrap_or(""),
-            code.value
-        )),
+        .markdown(original.map(str::to_owned).unwrap_or_else(|| {
+            let longest = code
+                .value
+                .split(|c| c != '`')
+                .map(str::len)
+                .max()
+                .unwrap_or_default();
+            let fence = "`".repeat((longest + 1).max(3));
+            format!(
+                "{fence}{}\n{}\n{fence}",
+                code.lang.as_deref().unwrap_or(""),
+                code.value
+            )
+        })),
     )
 }
 
@@ -103,7 +113,7 @@ mod tests {
         let code = root
             .children
             .first()
-            .and_then(parse_fence)
+            .and_then(|node| parse_fence(node, None))
             .unwrap_or_else(|| panic!("code routed to shared viewer"));
         assert_eq!(code.as_text(), "let α = 1;");
         assert_eq!(
@@ -111,7 +121,10 @@ mod tests {
             Some("rust")
         );
         assert!(
-            root.children.get(1).and_then(parse_fence).is_none(),
+            root.children
+                .get(1)
+                .and_then(|node| parse_fence(node, None))
+                .is_none(),
             "Mermaid keeps its own component renderer"
         );
     }

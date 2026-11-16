@@ -1,4 +1,5 @@
 use gpui_kit::{AppContext, Context, IntoElement, Render, Window, px, size};
+use gpui_kit::{ParentElement, Styled, div};
 use guiraffe_code::{
     Anchor, Annotation, AnnotationKind, CodeDocument, CodeHandle, CodeViewer, Fold, GutterColumn,
     Highlighted, Position, SourceRange, Trace,
@@ -53,7 +54,7 @@ fn code_surface_in_light_and_dark() -> Result<(), Box<dyn std::error::Error>> {
         let handle = Rc::new(RefCell::new(None::<CodeHandle>));
         let captured = handle.clone();
         let image = snapshot.render(size(px(900.), px(360.)), move |_, cx| {
-            let code = CodeHandle::new(1, highlighted.document.clone(), cx);
+            let code = CodeHandle::new(1, highlighted.document().clone(), cx);
             code.set_highlighted(highlighted, cx);
             let range = |line, start, end| {
                 SourceRange::new(Position::new(line, start), Position::new(line, end))
@@ -178,8 +179,13 @@ fn shared_code_viewer_inside_markdown() -> Result<(), Box<dyn std::error::Error>
         extensions: MarkdownExtensions,
     }
     impl Render for Embedded {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            TextView::new(&self.state).markdown_extensions(self.extensions.clone())
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let s = guiraffe_core::GuiraffeTheme::global(cx).surfaces();
+            div()
+                .size_full()
+                .bg(s.body.to_hsla())
+                .text_color(s.text.to_hsla())
+                .child(TextView::new(&self.state).markdown_extensions(self.extensions.clone()))
         }
     }
     let config = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))

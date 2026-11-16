@@ -51,11 +51,13 @@ fn scopes_are_thread_local() -> anyhow::Result<()> {
     Ok(())
 }
 #[test]
-fn initial_hot_paths_allocate_nothing() -> anyhow::Result<()> {
+fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
     for suite in guiraffe_bench::suites::registered()
         .into_iter()
         .filter(|s| !s.name.starts_with("flow-") && !s.name.starts_with("data-ui-"))
     {
+        // Immutable code fixtures, like flow fixtures, are initialized during warmup.
+        (suite.run)();
         let (_, counts) = count_allocations(suite.run)?;
         assert_eq!(counts.allocations, 0, "{} allocates", suite.name);
     }

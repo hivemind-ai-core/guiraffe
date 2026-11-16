@@ -55,6 +55,49 @@ pub fn windows_placement() {
     ));
 }
 
+// Immutable source/index setup is paid by warmup. These suites measure the code model,
+// not native frame rate: actual visible-line shaping is asserted in code's GPUI tests.
+fn code_document() -> &'static guiraffe_code::CodeDocument {
+    static DOCUMENT: std::sync::OnceLock<guiraffe_code::CodeDocument> = std::sync::OnceLock::new();
+    DOCUMENT.get_or_init(|| {
+        guiraffe_code::CodeDocument::new(std::sync::Arc::<str>::from(
+            "let value = compute(42);\n".repeat(999_999),
+        ))
+    })
+}
+/// 32 viewport jumps in a million-line file, reading only the visible lines and hashes.
+pub fn code_scroll_million() {
+    use guiraffe_code::{Row, RowMap, Viewport};
+    let document = code_document();
+    static ROWS: std::sync::OnceLock<RowMap> = std::sync::OnceLock::new();
+    let rows = ROWS.get_or_init(|| RowMap::new(document.line_count(), &[], &[]));
+    for step in 0..32 {
+        let viewport = Viewport {
+            x: 0.,
+            y: (step * 29_000 * 20) as f32,
+        };
+        for row in viewport.visible(rows.len(), 20., 800.) {
+            if let Some(Row::Source(line)) = rows.row(row) {
+                black_box(document.line(line));
+                black_box(document.line_hash(line));
+            }
+        }
+    }
+}
+/// Publish a shared immutable document handle; no source bytes move across the hand-off.
+pub fn code_snapshot_handoff() {
+    static DOCUMENT: std::sync::OnceLock<std::sync::Arc<guiraffe_code::CodeDocument>> =
+        std::sync::OnceLock::new();
+    let document = DOCUMENT.get_or_init(|| {
+        std::sync::Arc::new(guiraffe_code::CodeDocument::new(
+            std::sync::Arc::<str>::from("fn main() {}\n".repeat(999_999)),
+        ))
+    });
+    for _ in 0..1024 {
+        black_box(std::sync::Arc::clone(document));
+    }
+}
+
 // Each flow invocation is described below. Fixture creation is paid only by
 // warmup; the measured move/delete workloads restore their document each time.
 fn flow_graph() -> &'static guiraffe_flow_core::Graph {
@@ -188,6 +231,8 @@ macro_rules! with_suites {
     ($callback:ident) => {
         $callback! {
             (core_variants, "core-variants"),
+            (code_scroll_million,"code-scroll-1m"),
+            (code_snapshot_handoff,"code-snapshot-handoff"),
             (flow_build,"flow-build-5k"),
             (flow_query,"flow-query-5k"),
             (flow_move,"flow-move-5k"),
