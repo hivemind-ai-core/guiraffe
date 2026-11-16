@@ -3390,6 +3390,7 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

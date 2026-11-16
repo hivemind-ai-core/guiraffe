@@ -13,12 +13,17 @@ default = []
 e2e = ["dep:serde", "dep:serde_json", "dep:anyhow", "dep:gpui-kit"]
 
 offscreen = ["e2e", "gpui-kit/test-support"]
+# Visual snapshots on GPUI's headless wgpu renderer (no display server needed).
+snapshot = ["dep:gpui-kit", "dep:anyhow", "dep:image", "gpui-kit/test-support"]
+# Render-count helpers for interaction tests.
+render = []
 
 [dependencies]
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 gpui-kit = { workspace = true, optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [[example]]
 name = "probe_app"
@@ -30,7 +35,12 @@ required-features = ["e2e"]
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"
 
 [[example]]
 name = "offscreen"
 required-features = ["offscreen"]
+
+[[test]]
+name = "snapshot"
+required-features = ["snapshot"]

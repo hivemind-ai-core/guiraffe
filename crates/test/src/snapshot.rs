@@ -1,0 +1,160 @@
+//! Visual snapshot testing on GPUI's headless wgpu renderer.
+//!
+//! ```ignore
+//! let mut snap = Snapshotter::new()?.with_setup(|cx| guiraffe_core::init(cx));
+//! let image = snap.render(size(px(320.), px(200.)), |_, cx| cx.new(|_| MyView))?;
+//! assert_snapshot("button/filled-light", &image, &SnapshotConfig::new("tests/snapshots"))?;
+//! ```
+//! Goldens live at `<dir>/<name>.png`. When a golden is missing (or `update` is set) the image
+//! is written and the check passes; on mismatch `<name>.actual.png` and `<name>.diff.png` are
+//! written next to it for review.
+
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use anyhow::{Context as _, Result, bail};
+use gpui_kit::{App, Entity, HeadlessAppContext, Pixels, Render, Size, Window};
+use image::RgbaImage;
+
+use crate::diff::{DiffReport, Tolerance, diff, diff_image};
+
+type Setup = Box<dyn Fn(&mut App)>;
+
+pub struct Snapshotter {
+    setup: Option<Setup>,
+}
+
+impl Snapshotter {
+    pub fn new() -> Result<Self> {
+        Ok(Self { setup: None })
+    }
+
+    /// Run `f` in every fresh app before building the view (init themes, fonts, globals).
+    pub fn with_setup(mut self, f: impl Fn(&mut App) + 'static) -> Self {
+        self.setup = Some(Box::new(f));
+        self
+    }
+
+    /// Render `build` into a fresh headless window of `size` (logical pixels; the test window
+    /// scale is 2, so the image is twice as large) and capture it.
+    pub fn render<V: Render + 'static>(
+        &mut self,
+        size: Size<Pixels>,
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> Result<RgbaImage> {
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut cx = HeadlessAppContext::with_platform(
+            text,
+            Arc::new(()),
+            gpui_kit::platform::current_headless_renderer,
+        );
+        if let Some(setup) = &self.setup {
+            cx.update(|cx| setup(cx));
+        }
+        let window = cx
+            .open_window(size, build)
+            .context("open headless window")?;
+        cx.update_window(window.into(), |_, window, cx| {
+            let _ = window.draw(cx);
+        })?;
+        cx.run_until_parked();
+        cx.capture_screenshot(window.into())
+            .context("capture (is a wgpu adapter available?)")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapshotConfig {
+    pub dir: PathBuf,
+    pub tolerance: Tolerance,
+    /// Overwrite goldens instead of comparing (accepting new output).
+    pub update: bool,
+}
+
+impl SnapshotConfig {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self {
+            dir: dir.into(),
+            tolerance: Tolerance::DEFAULT,
+            update: false,
+        }
+    }
+
+    /// Opt-in convenience for test binaries: `update` when `GUIRAFFE_UPDATE_SNAPSHOTS=1`.
+    /// (Read explicitly by the caller, never implicitly by the library.)
+    pub fn update_from_env(mut self) -> Self {
+        self.update = std::env::var("GUIRAFFE_UPDATE_SNAPSHOTS").is_ok_and(|v| v == "1");
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotOutcome {
+    Matched(DiffReport),
+    Written(PathBuf),
+}
+
+fn safe_name(name: &str) -> Result<()> {
+    let ok = !name.is_empty()
+        && !name.starts_with('/')
+        && name
+            .split('/')
+            .all(|p| !p.is_empty() && p != "." && p != "..")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | '.'));
+    if ok {
+        Ok(())
+    } else {
+        bail!("invalid snapshot name {name:?}: use [A-Za-z0-9-_./], no '..'")
+    }
+}
+
+/// Compare `image` against the golden `name`, writing it if absent or when updating.
+pub fn assert_snapshot(
+    name: &str,
+    image: &RgbaImage,
+    cfg: &SnapshotConfig,
+) -> Result<SnapshotOutcome> {
+    safe_name(name)?;
+    let golden = cfg.dir.join(format!("{name}.png"));
+    if cfg.update || !golden.exists() {
+        write(&golden, image)?;
+        return Ok(SnapshotOutcome::Written(golden));
+    }
+    let expected = image::open(&golden)
+        .with_context(|| format!("read golden {}", golden.display()))?
+        .to_rgba8();
+    let report = diff(
+        (expected.as_raw(), expected.width(), expected.height()),
+        (image.as_raw(), image.width(), image.height()),
+        cfg.tolerance,
+    );
+    if report.matches(cfg.tolerance) {
+        return Ok(SnapshotOutcome::Matched(report));
+    }
+    let actual = cfg.dir.join(format!("{name}.actual.png"));
+    write(&actual, image)?;
+    if report.size_mismatch.is_none() {
+        let d = diff_image(expected.as_raw(), image.as_raw(), cfg.tolerance);
+        if let Some(img) = RgbaImage::from_raw(image.width(), image.height(), d) {
+            write(&cfg.dir.join(format!("{name}.diff.png")), &img)?;
+        }
+    }
+    bail!(
+        "snapshot {name:?} differs: {report:?}\n  golden: {}\n  actual: {}\n  accept with SnapshotConfig::update",
+        golden.display(),
+        actual.display()
+    )
+}
+
+fn write(path: &Path, image: &RgbaImage) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    image
+        .save(path)
+        .with_context(|| format!("write {}", path.display()))
+}
