@@ -133,6 +133,8 @@ pub(crate) struct Frame {
     accent: Rgb,
     selected: Arc<BTreeSet<u64>>,
     selected_edges: Arc<BTreeSet<u64>>,
+    /// Animated-edge phase in [0, 1); `None` disables edge animation (reduced motion).
+    phase: Option<f32>,
 }
 impl Frame {
     pub fn new(
@@ -141,6 +143,7 @@ impl Frame {
         background: Background,
         minimap: bool,
         theme: &GuiraffeTheme,
+        phase: Option<f32>,
     ) -> Self {
         Self {
             scene: i.editor.scene_shared(),
@@ -154,6 +157,7 @@ impl Frame {
             accent: theme.primary_color(),
             selected: i.editor.selected_nodes_shared(),
             selected_edges: i.editor.selected_edges_shared(),
+            phase,
         }
     }
     fn preview(&self, id: u64) -> Option<WorldPoint> {
@@ -192,11 +196,11 @@ impl Frame {
                     paint_mesh(path, self.viewport, bounds.origin, window, color);
                 }
                 self.markers(route, edge.marker_start, edge.marker_end, bounds, window);
-                if edge.animated {
-                    // A moving bead follows the cached polyline; only visible animated edges request frames.
-                    let t = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0., |d| (d.as_millis() % 1000) as f32 / 1000.);
+                if edge.animated
+                    && let Some(t) = self.phase
+                {
+                    // A moving bead follows the cached polyline; only visible animated edges request
+                    // frames, and never under reduced motion.
                     let i = (t * (route.points.len().saturating_sub(1)) as f32) as usize;
                     if let Some(p) = route.points.get(i) {
                         let p = pixel(self.viewport.screen(*p)) + bounds.origin;
@@ -564,6 +568,7 @@ mod tests {
             Background::None,
             false,
             &GuiraffeTheme::default(),
+            None,
         );
         assert_eq!(frame.edges.as_ptr(), storage);
     }
@@ -667,6 +672,7 @@ mod tests {
             Background::None,
             false,
             &GuiraffeTheme::default(),
+            None,
         );
         let b = Frame::new(
             &i,
@@ -674,6 +680,7 @@ mod tests {
             Background::None,
             false,
             &GuiraffeTheme::default(),
+            None,
         );
         assert_eq!(
             a.selected.iter().next().map(|id| id as *const u64),
