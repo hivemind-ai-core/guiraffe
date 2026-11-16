@@ -39,6 +39,11 @@ Status legend: ✅ merged · 🔧 in progress · 🔍 in review · ⏳ queued
 Agent Chat UI (Mocket-inspired: virtualized streaming list, tool-call cards, composer),
 windows tear-off and parent/modal windows, overlays per-window integration.
 
+Required display component: ⏳ syntax-highlighting code viewer (`CodeBlock`), read-only for now;
+selection/copy, theme-aware highlighting, plain-text fallback and large-file responsiveness (spec/03).
+Both code and Mermaid viewers must work standalone and embedded in Markdown using the same
+viewer implementations (spec/06); Markdown owns fence dispatch and embedding layout.
+
 ## Phase 5: data-driven UI and Mocket
 Status:
 - ✅ `guiraffe-ui`: IR, schema-compiled templates, DataUi host with per-node invalidation, hot reload.
