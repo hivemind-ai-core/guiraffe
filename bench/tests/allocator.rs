@@ -64,6 +64,7 @@ fn initial_hot_paths_allocate_nothing() -> anyhow::Result<()> {
 
 #[test]
 fn data_ui_native_workloads_have_bounded_allocation_traffic() -> anyhow::Result<()> {
+    guiraffe_bench::suites::prepare_data_ui();
     for suite in guiraffe_bench::suites::registered()
         .into_iter()
         .filter(|suite| suite.name.starts_with("data-ui-"))
@@ -91,6 +92,7 @@ fn data_ui_native_workloads_have_bounded_allocation_traffic() -> anyhow::Result<
             suite.name
         );
     }
+    guiraffe_bench::suites::prepare_data_ui();
     Ok(())
 }
 
