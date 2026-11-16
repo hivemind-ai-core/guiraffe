@@ -429,7 +429,7 @@ mod tests {
     fn cycles_surface_as_errors_not_panics() {
         let mut t = tasks();
         t[0].after = vec![2];
-        let mut cx = gpui_kit::TestAppContext::single();
+        let cx = gpui_kit::TestAppContext::single();
         let view = cx.update(|cx| GanttView::new(t, TimeFormat::Seconds, cx));
         assert!(view.read_with(&cx, |v, _| v.schedule().is_err()));
     }
