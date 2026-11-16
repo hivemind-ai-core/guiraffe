@@ -17,6 +17,22 @@
 - Undo/redo is built in, using `Arc` snapshots that are shared rather than deep-copied.
 - A cascade limit turns accidental dispatch loops into a reported error instead of a hung UI.
 
+**Deliberate differences from the first draft of this spec:**
+- There is no `store.update(cx, |s| ..)`. All writes go through events, as in re-frame, so every change is logged, undoable and testable.
+- There is no `Store::test`. The pure `Engine` *is* the test harness.
+- `computed` is `select_memo`.
+- Logger, persist and devtools are interceptors or effects (next).
+- Scopes: create one `Store` per app, or per window. There's no implicit global.
+
+**Robustness (from review #1):**
+- A drop-guarded processing flag, so a panic can't wedge the store.
+- A cascade budget per flush, which also catches loops that go through effects.
+- `WeakStore`, plus weak timers, so handlers and timers create no leaks.
+- Keyed debounce (`dispatch_debounced`).
+- Lens-scoped undo (`enable_undo_lens`), so undo never reverts loaded data.
+- A `compare_state` opt-out for hot events on large states.
+- Effect type names in diagnostics, and an `on_error` hook.
+
 **Next:**
 - A subscription registry (dedup by key).
 - An `EventLog` interceptor for devtools time-travel.

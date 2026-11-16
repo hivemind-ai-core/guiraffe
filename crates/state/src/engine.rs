@@ -36,11 +36,19 @@ pub trait Event<S>: fmt::Debug + 'static {
     fn undoable(&self) -> bool {
         true
     }
+
+    /// Whether to confirm a change by comparing old and new state (`PartialEq`). Return
+    /// `false` for hot events on large states where every `update` is a real change; the
+    /// engine then trusts that `update`/`set` was called.
+    fn compare_state(&self) -> bool {
+        true
+    }
 }
 
 trait ErasedEvent<S> {
     fn handle(self: Box<Self>, fx: &mut Fx<'_, S>);
     fn undoable(&self) -> bool;
+    fn compare_state(&self) -> bool;
     fn describe(&self) -> String;
     fn event_type(&self) -> TypeId;
 }
@@ -55,17 +63,26 @@ impl<S, E: Event<S>> ErasedEvent<S> for E {
     fn undoable(&self) -> bool {
         Event::undoable(self)
     }
+    fn compare_state(&self) -> bool {
+        Event::compare_state(self)
+    }
     fn describe(&self) -> String {
         format!("{self:?}")
     }
 }
 
 /// An effect is plain data; the host runs the handler registered for its type.
-pub type Effect = Box<dyn Any>;
+pub struct Effect {
+    /// `std::any::type_name` of the effect, for diagnostics.
+    pub name: &'static str,
+    pub value: Box<dyn Any>,
+}
 
 /// Effect: dispatch an event after a delay.
 pub struct DispatchLater<S> {
     pub delay: Duration,
+    /// Debounce key: a newer `DispatchLater` with the same key cancels the pending one.
+    pub key: Option<&'static str>,
     pub(crate) event: Box<dyn ErasedEventSend<S>>,
 }
 
@@ -142,15 +159,33 @@ impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
 
     /// Ask the host to dispatch `event` after `delay`.
     pub fn dispatch_later(&mut self, delay: Duration, event: impl Event<S>) {
-        self.effects.push(Box::new(DispatchLater {
+        self.push_effect(DispatchLater {
             delay,
+            key: None,
             event: Box::new(event) as Box<dyn ErasedEventSend<S>>,
-        }));
+        });
+    }
+
+    /// Dispatch `event` after `delay`, cancelling any pending debounced event with the same
+    /// `key` (search-as-you-type, autosave).
+    pub fn dispatch_debounced(&mut self, key: &'static str, delay: Duration, event: impl Event<S>) {
+        self.push_effect(DispatchLater {
+            delay,
+            key: Some(key),
+            event: Box::new(event) as Box<dyn ErasedEventSend<S>>,
+        });
     }
 
     /// Emit an effect as data, executed by the handler registered for `E`.
     pub fn effect<E: 'static>(&mut self, effect: E) {
-        self.effects.push(Box::new(effect));
+        self.push_effect(effect);
+    }
+
+    fn push_effect<E: 'static>(&mut self, effect: E) {
+        self.effects.push(Effect {
+            name: std::any::type_name::<E>(),
+            value: Box::new(effect),
+        });
     }
 
     pub fn now(&self) -> Option<Instant> {
@@ -202,10 +237,16 @@ pub struct Outcome {
     pub error: Option<EngineError>,
 }
 
+type Capture<S> = Box<dyn Fn(&Arc<S>) -> Box<dyn Any>>;
+type Restore<S> = Box<dyn Fn(&mut Arc<S>, Box<dyn Any>)>;
+
+/// Undo history over a *scope* of the state (the whole state, or a lens onto part of it).
 struct Undo<S> {
     limit: usize,
-    past: VecDeque<Arc<S>>,
-    future: Vec<Arc<S>>,
+    past: VecDeque<Box<dyn Any>>,
+    future: Vec<Box<dyn Any>>,
+    capture: Capture<S>,
+    restore: Restore<S>,
 }
 
 pub struct Engine<S> {
@@ -257,12 +298,50 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
         self.interceptors.push(Box::new(i));
     }
 
-    /// Keep up to `limit` undo steps. Use [`UndoEvent`]/[`RedoEvent`] (or [`Engine::undo`]).
+    /// Undo/redo over the **whole** state, keeping up to `limit` steps (0 disables undo).
+    /// Calling again replaces (and clears) any existing history.
+    ///
+    /// Caveat: undo restores the entire state, so it also reverts changes made by
+    /// non-undoable events since that step (e.g. data that was loaded). Prefer
+    /// [`Engine::enable_undo_lens`] to scope undo to the document part of the state.
     pub fn enable_undo(&mut self, limit: usize) {
-        self.undo = Some(Undo {
-            limit: limit.max(1),
+        self.set_undo(
+            limit,
+            Box::new(|s: &Arc<S>| Box::new(s.clone()) as Box<dyn Any>),
+            Box::new(|st: &mut Arc<S>, snap: Box<dyn Any>| {
+                if let Ok(prev) = snap.downcast::<Arc<S>>() {
+                    *st = *prev;
+                }
+            }),
+        );
+    }
+
+    /// Undo/redo scoped to the part of the state reached by `get`/`set` (re-frame's
+    /// undo `:path`). State outside the lens is never touched by undo or redo.
+    pub fn enable_undo_lens<U: Clone + 'static>(
+        &mut self,
+        limit: usize,
+        get: impl Fn(&S) -> U + 'static,
+        set: impl Fn(&mut S, U) + 'static,
+    ) {
+        self.set_undo(
+            limit,
+            Box::new(move |s: &Arc<S>| Box::new(get(s)) as Box<dyn Any>),
+            Box::new(move |st: &mut Arc<S>, snap: Box<dyn Any>| {
+                if let Ok(u) = snap.downcast::<U>() {
+                    set(Arc::make_mut(st), *u);
+                }
+            }),
+        );
+    }
+
+    fn set_undo(&mut self, limit: usize, capture: Capture<S>, restore: Restore<S>) {
+        self.undo = (limit > 0).then(|| Undo {
+            limit,
             past: VecDeque::new(),
             future: Vec::new(),
+            capture,
+            restore,
         });
     }
 
@@ -275,54 +354,71 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
 
     /// Restore the previous undoable state. Returns whether anything changed.
     pub fn undo(&mut self) -> bool {
-        let Some(u) = self.undo.as_mut() else {
-            return false;
-        };
-        let Some(prev) = u.past.pop_back() else {
-            return false;
-        };
-        u.future.push(std::mem::replace(&mut self.state, prev));
-        true
+        self.step(true)
     }
 
     /// Re-apply an undone state. Returns whether anything changed.
     pub fn redo(&mut self) -> bool {
+        self.step(false)
+    }
+
+    fn step(&mut self, back: bool) -> bool {
         let Some(u) = self.undo.as_mut() else {
             return false;
         };
-        let Some(next) = u.future.pop() else {
-            return false;
+        let target = if back {
+            u.past.pop_back()
+        } else {
+            u.future.pop()
         };
-        u.past.push_back(std::mem::replace(&mut self.state, next));
-        true
+        let Some(target) = target else { return false };
+        let current = (u.capture)(&self.state);
+        if back {
+            u.future.push(current);
+        } else {
+            u.past.push_back(current);
+        }
+        let before = self.state.clone();
+        (u.restore)(&mut self.state, target);
+        !Arc::ptr_eq(&before, &self.state) && *before != *self.state
     }
 
-    /// Process queued events until the queue is empty (or the cascade limit trips, which
-    /// drops the remaining queue and reports an error instead of hanging the UI).
+    /// Process queued events until the queue is empty, with a fresh cascade budget.
     pub fn process(&mut self, cofx: &Coeffects) -> Outcome {
+        let mut budget = self.cascade_limit;
+        self.process_with_budget(cofx, &mut budget)
+    }
+
+    /// Process queued events, spending from `budget` (shared across calls, so loops that go
+    /// through effects and back are caught too). When the budget runs out the remaining queue
+    /// **and this batch's effects** are dropped and an error is reported, instead of hanging.
+    pub fn process_with_budget(&mut self, cofx: &Coeffects, budget: &mut usize) -> Outcome {
         let mut effects = Vec::new();
         let mut processed = 0;
         let mut any_change = false;
         let mut error = None;
         while let Some(Queued(event)) = self.queue.pop_front() {
-            if processed >= self.cascade_limit {
+            if *budget == 0 {
                 self.queue.clear();
+                effects.clear();
                 error = Some(EngineError::CascadeLimit {
                     limit: self.cascade_limit,
                 });
                 break;
             }
+            *budget -= 1;
             processed += 1;
             self.seq += 1;
             let description = event.describe();
-            let before = self.state.clone();
             let ty = event.event_type();
+            let before = self.state.clone();
             let changed = if ty == TypeId::of::<UndoEvent>() {
                 self.undo()
             } else if ty == TypeId::of::<RedoEvent>() {
                 self.redo()
             } else {
                 let undoable = event.undoable();
+                let compare = event.compare_state();
                 let mut fx = Fx {
                     state: &mut self.state,
                     changed: false,
@@ -332,11 +428,11 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                 };
                 event.handle(&mut fx);
                 let touched = fx.changed;
-                // `update` may have been called without a real change: only a different value
-                // counts, so no-op updates create no undo step and notify nobody.
-                let changed =
-                    touched && !Arc::ptr_eq(&before, &self.state) && *before != *self.state;
-                if touched && !changed {
+                let moved = touched && !Arc::ptr_eq(&before, &self.state);
+                // Only a different value counts (unless the event opted out of comparing), so
+                // no-op updates create no undo step and notify nobody.
+                let changed = moved && (!compare || *before != *self.state);
+                if moved && !changed {
                     // Keep the original allocation so pointer-equality fast paths stay valid.
                     self.state = before.clone();
                 }
@@ -344,7 +440,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                     && undoable
                     && let Some(u) = self.undo.as_mut()
                 {
-                    u.past.push_back(before.clone());
+                    u.past.push_back((u.capture)(&before));
                     while u.past.len() > u.limit {
                         u.past.pop_front();
                     }
@@ -510,7 +606,8 @@ mod tests {
         cofx.provide::<&'static str>("injected");
         let out = e.process(&cofx);
         assert_eq!(out.effects.len(), 1);
-        assert_eq!(out.effects[0].downcast_ref::<Save>(), Some(&Save(7)));
+        assert_eq!(out.effects[0].value.downcast_ref::<Save>(), Some(&Save(7)));
+        assert!(out.effects[0].name.ends_with("Save"));
         assert_eq!(e.state().log, vec!["injected"]);
     }
 
@@ -554,6 +651,151 @@ mod tests {
         assert!(!run(&mut plain).changed, "undo without history is a no-op");
     }
 
+    #[derive(Clone, Debug, Default, PartialEq)]
+    struct Doc {
+        title: String,
+        loaded: Vec<i32>,
+        big: Arc<Vec<u8>>,
+    }
+
+    #[derive(Debug)]
+    struct Rename(&'static str);
+    impl Event<Doc> for Rename {
+        fn handle(self, fx: &mut Fx<'_, Doc>) {
+            fx.update(|d| d.title = self.0.into());
+        }
+    }
+
+    #[derive(Debug)]
+    struct Loaded(i32);
+    impl Event<Doc> for Loaded {
+        fn handle(self, fx: &mut Fx<'_, Doc>) {
+            fx.update(|d| d.loaded.push(self.0));
+        }
+        fn undoable(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn lens_undo_never_reverts_state_outside_the_lens() {
+        let mut e = Engine::new(Doc::default());
+        e.enable_undo_lens(10, |d: &Doc| d.title.clone(), |d: &mut Doc, t| d.title = t);
+        e.dispatch(Rename("a"));
+        e.dispatch(Loaded(1));
+        e.dispatch(UndoEvent);
+        e.process(&Coeffects::default());
+        assert_eq!(e.state().title, "");
+        assert_eq!(e.state().loaded, vec![1], "loaded data survives undo");
+        e.dispatch(Loaded(2));
+        e.dispatch(RedoEvent);
+        e.process(&Coeffects::default());
+        assert_eq!(e.state().title, "a");
+        assert_eq!(
+            e.state().loaded,
+            vec![1, 2],
+            "redo doesn't resurrect stale data"
+        );
+    }
+
+    #[test]
+    fn whole_state_undo_caveat_is_real_and_documented() {
+        let mut e = Engine::new(Doc::default());
+        e.enable_undo(10);
+        e.dispatch(Rename("a"));
+        e.dispatch(Loaded(1));
+        e.dispatch(UndoEvent);
+        e.process(&Coeffects::default());
+        assert!(
+            e.state().loaded.is_empty(),
+            "whole-state undo reverts everything (see enable_undo docs)"
+        );
+    }
+
+    #[test]
+    fn undo_limit_zero_disables_and_reenabling_clears() {
+        let mut e = Engine::new(S::default());
+        e.enable_undo(0);
+        e.dispatch(Add(1));
+        run(&mut e);
+        assert!(!e.can_undo());
+        e.enable_undo(5);
+        e.dispatch(Add(1));
+        run(&mut e);
+        assert!(e.can_undo());
+        e.enable_undo(5);
+        assert!(!e.can_undo(), "re-enabling replaces history");
+    }
+
+    #[test]
+    fn structurally_shared_fields_are_not_deep_cloned() {
+        let big = Arc::new(vec![0u8; 1_000_000]);
+        let mut e = Engine::new(Doc {
+            big: big.clone(),
+            ..Default::default()
+        });
+        e.enable_undo(10);
+        e.dispatch(Rename("x"));
+        run_doc(&mut e);
+        assert!(
+            Arc::ptr_eq(&e.state().big, &big),
+            "Arc field shared, not copied, by update + undo snapshot"
+        );
+    }
+
+    fn run_doc(e: &mut Engine<Doc>) -> Outcome {
+        e.process(&Coeffects::default())
+    }
+
+    #[test]
+    fn compare_state_opt_out_trusts_update() {
+        #[derive(Debug)]
+        struct Hot;
+        impl Event<S> for Hot {
+            fn handle(self, fx: &mut Fx<'_, S>) {
+                fx.update(|s| s.n += 0);
+            }
+            fn compare_state(&self) -> bool {
+                false
+            }
+        }
+        let mut e = Engine::new(S::default());
+        e.dispatch(Hot);
+        assert!(
+            run(&mut e).changed,
+            "no comparison: update is trusted as a change"
+        );
+    }
+
+    #[test]
+    fn shared_budget_catches_loops_across_process_calls_and_drops_effects() {
+        #[derive(Debug)]
+        struct Ping;
+        impl Event<S> for Ping {
+            fn handle(self, fx: &mut Fx<'_, S>) {
+                fx.effect(Save(0));
+            }
+        }
+        let mut e = Engine::new(S::default());
+        e.cascade_limit = 10;
+        let mut budget = 10;
+        let mut errors = 0;
+        for _ in 0..50 {
+            // Simulates an effect handler that dispatches Ping again.
+            e.dispatch(Ping);
+            let out = e.process_with_budget(&Coeffects::default(), &mut budget);
+            if out.error.is_some() {
+                errors += 1;
+                assert!(
+                    out.effects.is_empty(),
+                    "effects of the aborted batch are dropped"
+                );
+                break;
+            }
+        }
+        assert_eq!(errors, 1);
+    }
+
     struct Recorder(std::rc::Rc<std::cell::RefCell<Vec<EventRecord>>>);
     impl Interceptor<S> for Recorder {
         fn after(&mut self, record: &EventRecord, before: &Arc<S>, after: &Arc<S>) {
@@ -595,7 +837,7 @@ mod tests {
             .effects
             .into_iter()
             .next()
-            .and_then(|b| b.downcast::<DispatchLater<S>>().ok())
+            .and_then(|b| b.value.downcast::<DispatchLater<S>>().ok())
             .map(|l| *l);
         let Some(later) = later else {
             panic!("expected DispatchLater")

@@ -181,10 +181,11 @@ fn effects_run_and_may_dispatch_reentrantly(cx: &mut TestAppContext) {
     }
     vcx.update(|_, cx| f.store.dispatch(Unknown, cx));
     vcx.run_until_parked();
+    let unhandled = vcx.update(|_, cx| f.store.stats(cx).unhandled_effects);
     assert_eq!(
-        vcx.update(|_, cx| f.store.stats(cx).unhandled_effects),
-        1,
-        "unhandled effect is counted, not a panic"
+        unhandled,
+        vec!["u64"],
+        "unhandled effect is recorded by type name, not a panic"
     );
 }
 
@@ -302,4 +303,135 @@ fn dispatch_loop_is_reported_not_hung(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let err = cx.update(|cx| store.stats(cx).last_error);
     assert!(matches!(err, Some(EngineError::CascadeLimit { .. })));
+}
+
+#[gpui_kit::test]
+fn panic_in_an_effect_does_not_wedge_the_store(cx: &mut TestAppContext) {
+    let store = cx.update(|cx| Store::new(App::default(), cx));
+    #[derive(Debug)]
+    struct Boom;
+    #[derive(Debug)]
+    struct Explode;
+    impl Event<App> for Explode {
+        fn handle(self, fx: &mut Fx<'_, App>) {
+            fx.effect(Boom);
+        }
+    }
+    cx.update(|cx| store.on_effect::<Boom>(cx, |_, _, _| panic!("effect exploded")));
+    let s2 = store.clone();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        cx.update(|cx| {
+            s2.dispatch(Explode, cx);
+            s2.flush(cx);
+        })
+    }));
+    assert!(result.is_err());
+    cx.update(|cx| {
+        store.dispatch(IncA, cx);
+        store.flush(cx);
+    });
+    assert_eq!(
+        cx.update(|cx| store.state(cx).a),
+        1,
+        "store keeps working after a panic"
+    );
+}
+
+#[gpui_kit::test]
+fn loops_through_effects_are_caught(cx: &mut TestAppContext) {
+    let store = cx.update(|cx| Store::new(App::default(), cx));
+    #[derive(Debug)]
+    struct Again;
+    #[derive(Debug)]
+    struct Ping;
+    impl Event<App> for Ping {
+        fn handle(self, fx: &mut Fx<'_, App>) {
+            fx.effect(Again);
+        }
+    }
+    let errors = Rc::new(Cell::new(0));
+    let e2 = errors.clone();
+    cx.update(|cx| {
+        store.set_cascade_limit(50, cx);
+        store.on_effect::<Again>(cx, |_, store, cx| store.dispatch(Ping, cx));
+        store.on_error(cx, move |_, _| e2.set(e2.get() + 1));
+        store.dispatch(Ping, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(errors.get(), 1);
+    assert!(matches!(
+        cx.update(|cx| store.stats(cx).last_error),
+        Some(EngineError::CascadeLimit { .. })
+    ));
+}
+
+#[gpui_kit::test]
+fn store_is_freed_when_handles_drop_even_with_effect_handlers_and_timers(cx: &mut TestAppContext) {
+    #[derive(Debug)]
+    struct Later;
+    impl Event<App> for Later {
+        fn handle(self, fx: &mut Fx<'_, App>) {
+            fx.dispatch_later(Duration::from_secs(30), IncA);
+        }
+    }
+    let weak = cx.update(|cx| {
+        let store = Store::new(App::default(), cx);
+        store.on_effect::<Save>(cx, |_, store, cx| store.dispatch(IncB, cx));
+        store.dispatch(Later, cx);
+        store.flush(cx);
+        store.downgrade()
+    });
+    cx.run_until_parked();
+    assert!(
+        weak.upgrade().is_none(),
+        "no cycle: handler uses &Store, timer holds a weak handle"
+    );
+    cx.executor().advance_clock(Duration::from_secs(31));
+    cx.run_until_parked(); // the timer fires against a dead store without panicking
+}
+
+#[gpui_kit::test]
+fn debounced_dispatch_keeps_only_the_latest(cx: &mut TestAppContext) {
+    let store = cx.update(|cx| Store::new(App::default(), cx));
+    #[derive(Debug)]
+    struct Typed;
+    impl Event<App> for Typed {
+        fn handle(self, fx: &mut Fx<'_, App>) {
+            fx.dispatch_debounced("search", Duration::from_millis(200), IncA);
+        }
+    }
+    for _ in 0..5 {
+        cx.update(|cx| store.dispatch(Typed, cx));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(50));
+    }
+    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|cx| store.state(cx).a),
+        1,
+        "five keystrokes, one search"
+    );
+}
+
+#[gpui_kit::test]
+fn selections_created_repeatedly_do_not_pile_up(cx: &mut TestAppContext) {
+    let store = cx.update(|cx| Store::new(App::default(), cx));
+    let s = store.clone();
+    let (view, vcx) = cx.add_window_view(move |_, cx| Field {
+        value: s.select(cx, |st: &App| st.a),
+        renders: Rc::new(Cell::new(0)),
+    });
+    for _ in 0..20 {
+        vcx.update(|_, cx| {
+            view.update(cx, |field, cx| {
+                field.value = store.select(cx, |st: &App| st.a)
+            });
+        });
+    }
+    assert_eq!(
+        vcx.update(|_, cx| store.stats(cx).selections),
+        1,
+        "replaced selections are pruned on registration"
+    );
 }

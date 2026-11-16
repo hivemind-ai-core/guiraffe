@@ -20,7 +20,11 @@ pub use engine::{
     Coeffects, DispatchLater, Effect, Engine, EngineError, Event, EventRecord, Fx, Interceptor,
     Outcome, RedoEvent, UndoEvent,
 };
-pub use store::{Selected, Store, StoreStats};
+pub use store::{Selected, Store, StoreStats, WeakStore};
+
+/// Conventions §4: every crate has an idempotent `init`. The state crate keeps no globals
+/// (stores are explicit values, one per app or per window), so this is a no-op today.
+pub fn init(_cx: &mut gpui_kit::App) {}
 
 #[cfg(test)]
 mod gpui_tests;
