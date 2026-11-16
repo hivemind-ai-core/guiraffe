@@ -357,16 +357,15 @@ fn a_growing_grid_fills_the_room_with_its_last_row(cx: &mut TestAppContext) {
     );
 }
 
-struct MeasuredGridHarness {
-    width: Entity<ContainerWidthState>,
-}
+/// A grid in a container that is narrower than the smallest band, inside a
+/// window that is wider than it.
+struct MeasuredGridHarness;
 
 impl Render for MeasuredGridHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(600.)).h(px(120.)).child(
+        div().w(px(400.)).h(px(120.)).child(
             Grid::new()
                 .gutter_px(0.)
-                .container_width(ContainerWidth::Measured(self.width.clone()))
                 .child(
                     Col::span(Responsive::base(12).at(Breakpoint::Xs, 6))
                         .child(div().h(px(10.)).debug_selector(|| "a".into())),
@@ -381,10 +380,7 @@ impl Render for MeasuredGridHarness {
 
 #[gpui_kit::test]
 fn a_grid_follows_the_container_it_is_in_and_not_the_window(cx: &mut TestAppContext) {
-    let width = cx.update(ContainerWidthState::new);
-    let (_, cx): (Entity<MeasuredGridHarness>, _) =
-        cx.add_window_view(|_, _| MeasuredGridHarness { width });
-    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let cx = harness!(cx, MeasuredGridHarness);
     // The measurement happens while the grid is painted, so the grid answers
     // to the width of its container on the frame after that.
     cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -394,11 +390,102 @@ fn a_grid_follows_the_container_it_is_in_and_not_the_window(cx: &mut TestAppCont
 
     assert_eq!(
         first.size.width,
-        px(300.),
-        "the column is half of the container, not of the window"
+        px(400.),
+        "the container is narrower than the smallest band, so the column fills it"
     );
-    assert_eq!(second.size.width, px(300.));
-    assert_eq!(second.left(), px(300.));
+    assert_eq!(second.size.width, px(400.));
+    assert_eq!(
+        second.top(),
+        px(10.),
+        "the column that does not fit in the row moves down"
+    );
+}
+
+/// A simple grid whose cells have a minimum width, in a container that is
+/// narrower than the window.
+struct MeasuredSimpleGridHarness;
+
+impl Render for MeasuredSimpleGridHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(500.)).h(px(120.)).child(
+            SimpleGrid::new()
+                .min_child_width(px(120.))
+                .spacing(0.)
+                .child(div().h(px(10.)).debug_selector(|| "a".into()))
+                .child(div().h(px(10.)).debug_selector(|| "b".into()))
+                .child(div().h(px(10.)).debug_selector(|| "c".into()))
+                .child(div().h(px(10.)).debug_selector(|| "d".into()))
+                .child(div().h(px(10.)).debug_selector(|| "e".into())),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_simple_grid_counts_its_cells_against_the_container_it_is_in(cx: &mut TestAppContext) {
+    let cx = harness!(cx, MeasuredSimpleGridHarness);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    let first = cx.debug_bounds("a").expect("the first cell");
+    let fourth = cx.debug_bounds("d").expect("the fourth cell");
+    let fifth = cx.debug_bounds("e").expect("the fifth cell");
+
+    assert_eq!(
+        first.size.width,
+        px(125.),
+        "four cells of a hundred and twenty pixels fit in five hundred"
+    );
+    assert_eq!(
+        fourth.left(),
+        px(375.),
+        "the fourth cell is the last one in the row"
+    );
+    assert!(
+        fifth.top() > first.top(),
+        "the fifth cell does not fit, so the grid has four columns"
+    );
+}
+
+/// Two grids that share one measurement.
+struct SharedWidthHarness {
+    width: Entity<ContainerWidthState>,
+}
+
+impl Render for SharedWidthHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_row()
+            .child(
+                div().w(px(400.)).child(
+                    Grid::new()
+                        .gutter_px(0.)
+                        .container_width(ContainerWidth::Measured(self.width.clone()))
+                        .child(
+                            Col::span(Responsive::base(12).at(Breakpoint::Xs, 6))
+                                .child(div().h(px(10.)).debug_selector(|| "a".into())),
+                        ),
+                ),
+            )
+            .child(
+                div().w(px(1000.)).child(
+                    Grid::new()
+                        .gutter_px(0.)
+                        .container_width(ContainerWidth::Measured(self.width.clone()))
+                        .child(
+                            Col::span(Responsive::base(12).at(Breakpoint::Xs, 6))
+                                .child(div().h(px(10.)).debug_selector(|| "b".into())),
+                        ),
+                ),
+            )
+    }
+}
+
+#[gpui_kit::test]
+#[should_panic(expected = "one measurement belongs to one widget")]
+fn a_measurement_that_is_shared_by_two_widgets_is_noticed(cx: &mut TestAppContext) {
+    let width = cx.update(ContainerWidthState::new);
+    let cx = harness!(cx, SharedWidthHarness { width });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 struct SimpleGridHarness;

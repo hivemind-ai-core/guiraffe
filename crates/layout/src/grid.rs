@@ -4,14 +4,15 @@ use crate::gpui::IntoElement;
 use gpui_kit::base::ElementExt as _;
 
 use gpui_kit::{
-    AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
+    AnyElement, App, ElementId, ParentElement as _, RenderOnce, StyleRefinement, Styled as _,
+    Window, div, px,
 };
 
 use crate::align::Justify;
 use crate::responsive::Responsive;
 use crate::style::justify_content;
 use crate::tokens::Size;
-use crate::width::{ContainerWidth, measure};
+use crate::width::{ContainerWidth, ContainerWidthState, measure, measured_width};
 
 /// The number of columns a grid has unless it is told otherwise.
 pub const DEFAULT_COLUMNS: u16 = 12;
@@ -60,6 +61,12 @@ fn to_i16(line: u16) -> i16 {
 /// columns and may leave an offset before it. Both can change with the width
 /// the grid is laid out in.
 ///
+/// The grid follows the box it is laid out in: it measures that box and
+/// resolves its columns against it, so a grid inside a narrow pane answers
+/// to the pane and not to the window. Name a width of your own with
+/// [`container_width`](Grid::container_width) to resolve against something
+/// else.
+///
 /// A column that does not fit in the row it is placed in moves down to the
 /// next one, the way a grid of columns wraps.
 ///
@@ -77,9 +84,17 @@ pub struct Grid {
     gutter: f32,
     justify: Justify,
     grow: bool,
-    container_width: ContainerWidth,
+    /// The width the grid resolves against, or nothing when the grid
+    /// measures the box it is laid out in.
+    container_width: Option<ContainerWidth>,
     children: Vec<Col>,
     style: StyleRefinement,
+    /// The key the measurement of the grid is kept under.
+    ///
+    /// The measurement is keyed by the place the grid was built: two grids
+    /// built in the same place share their measurement, because they are in
+    /// the same container and have the same width.
+    key: ElementId,
 }
 
 impl Default for Grid {
@@ -90,15 +105,18 @@ impl Default for Grid {
 
 impl Grid {
     /// A grid with twelve columns and the default gutter.
+    #[track_caller]
     pub fn new() -> Self {
+        let location = std::panic::Location::caller();
         Self {
             columns: DEFAULT_COLUMNS,
             gutter: Size::Md.spacing(),
             justify: Justify::Start,
             grow: false,
-            container_width: ContainerWidth::Viewport,
+            container_width: None,
             children: Vec::new(),
             style: StyleRefinement::default(),
+            key: ElementId::CodeLocation(*location),
         }
     }
 
@@ -135,8 +153,12 @@ impl Grid {
     }
 
     /// The width the grid resolves its responsive columns against.
+    ///
+    /// The grid measures the box it is laid out in by default. Name a width
+    /// of your own to resolve against something else: the width of the
+    /// window, a width you know, or a box you measure yourself.
     pub fn container_width(mut self, container_width: ContainerWidth) -> Self {
-        self.container_width = container_width;
+        self.container_width = Some(container_width);
         self
     }
 
@@ -207,7 +229,24 @@ impl gpui_kit::Styled for Grid {
 
 impl RenderOnce for Grid {
     fn render(self, window: &mut Window, cx: &mut App) -> impl gpui_kit::IntoElement {
-        let width = self.container_width.resolve(window, cx).as_f32();
+        // The grid keeps the measurement of its own container in a state of
+        // its own, so it can answer to the box it is laid out in.
+        let own =
+            window.use_keyed_state(self.key.clone(), cx, |_, _| ContainerWidthState::default());
+        let owner = own.entity_id().as_u64();
+
+        let (width, measurement) = match &self.container_width {
+            Some(ContainerWidth::Measured(state)) => (
+                measured_width(state, window.viewport_size().width, cx),
+                Some(state.clone()),
+            ),
+            Some(width) => (width.resolve(window, cx), None),
+            None => (
+                measured_width(&own, window.viewport_size().width, cx),
+                Some(own.clone()),
+            ),
+        };
+        let width = width.as_f32();
         let placements = self.layout(width);
 
         let mut rows: Vec<Vec<(GridPlacement, Col)>> = Vec::new();
@@ -231,7 +270,7 @@ impl RenderOnce for Grid {
             // takes what is left of it.
             grid = grid.h_full().flex_grow_1();
         }
-        if self.container_width.measurement().is_some() {
+        if measurement.is_some() {
             // A grid that measures its container fills it, so the measurement
             // is the width of the container and not the width of the columns.
             grid = grid.relative().w_full();
@@ -248,10 +287,10 @@ impl RenderOnce for Grid {
             }
             grid = grid.child(line);
         }
-        if let Some(state) = self.container_width.measurement() {
+        if let Some(state) = measurement {
             let state = state.clone();
-            grid = grid.on_prepaint(move |bounds, _, cx| {
-                measure(&state, bounds, cx);
+            grid = grid.on_prepaint(move |bounds, window, cx| {
+                measure(&state, owner, bounds, window, cx);
             });
         }
 
@@ -423,7 +462,6 @@ mod tests {
     use crate::align::Justify;
     use crate::responsive::{Breakpoint, Responsive};
     use crate::tokens::Size;
-    use crate::width::ContainerWidth;
 
     fn placement(row: u16, start: u16, end: u16) -> GridPlacement {
         GridPlacement { row, start, end }
@@ -435,7 +473,10 @@ mod tests {
         assert_eq!(grid.columns, DEFAULT_COLUMNS);
         assert_eq!(grid.gutter, Size::Md.spacing());
         assert_eq!(grid.justify, Justify::Start);
-        assert_eq!(grid.container_width, ContainerWidth::Viewport);
+        assert_eq!(
+            grid.container_width, None,
+            "the grid measures the box it is laid out in"
+        );
         assert!(grid.children.is_empty());
     }
 

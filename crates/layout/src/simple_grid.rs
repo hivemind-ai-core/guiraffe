@@ -4,13 +4,13 @@ use crate::gpui::IntoElement;
 use gpui_kit::base::ElementExt as _;
 
 use gpui_kit::{
-    AnyElement, App, ParentElement as _, Pixels, RenderOnce, StyleRefinement, Styled as _, Window,
-    div, px,
+    AnyElement, App, ElementId, ParentElement as _, Pixels, RenderOnce, StyleRefinement,
+    Styled as _, Window, div, px,
 };
 
 use crate::responsive::Responsive;
 use crate::tokens::Size;
-use crate::width::{ContainerWidth, measure};
+use crate::width::{ContainerWidth, ContainerWidthState, measure, measured_width};
 
 impl From<Size> for Responsive<f32> {
     fn from(size: Size) -> Self {
@@ -39,6 +39,12 @@ pub fn columns_for_min_width(width: f32, min_child_width: f32, spacing: f32) -> 
 /// grid is laid out in. The columns and the spacing can change with the width
 /// as well.
 ///
+/// The grid follows the box it is laid out in: it measures that box and
+/// resolves its columns against it, so a grid inside a narrow pane answers
+/// to the pane and not to the window. Name a width of your own with
+/// [`container_width`](SimpleGrid::container_width) to resolve against
+/// something else.
+///
 /// ```
 /// use guiraffe_layout::{Breakpoint, Responsive, SimpleGrid, Size};
 ///
@@ -55,9 +61,17 @@ pub struct SimpleGrid {
     spacing: Responsive<f32>,
     vertical_spacing: Option<Responsive<f32>>,
     min_child_width: Option<Pixels>,
-    container_width: ContainerWidth,
+    /// The width the grid resolves against, or nothing when the grid
+    /// measures the box it is laid out in.
+    container_width: Option<ContainerWidth>,
     children: Vec<AnyElement>,
     style: StyleRefinement,
+    /// The key the measurement of the grid is kept under.
+    ///
+    /// The measurement is keyed by the place the grid was built: two grids
+    /// built in the same place share their measurement, because they are in
+    /// the same container and have the same width.
+    key: ElementId,
 }
 
 impl Default for SimpleGrid {
@@ -68,15 +82,18 @@ impl Default for SimpleGrid {
 
 impl SimpleGrid {
     /// A grid with two columns and the default spacing.
+    #[track_caller]
     pub fn new() -> Self {
+        let location = std::panic::Location::caller();
         Self {
             cols: Responsive::value(2),
             spacing: Responsive::value(Size::Md.spacing()),
             vertical_spacing: None,
             min_child_width: None,
-            container_width: ContainerWidth::Viewport,
+            container_width: None,
             children: Vec::new(),
             style: StyleRefinement::default(),
+            key: ElementId::CodeLocation(*location),
         }
     }
 
@@ -105,8 +122,12 @@ impl SimpleGrid {
     }
 
     /// The width the grid resolves its column count against.
+    ///
+    /// The grid measures the box it is laid out in by default. Name a width
+    /// of your own to resolve against something else: the width of the
+    /// window, a width you know, or a box you measure yourself.
     pub fn container_width(mut self, container_width: ContainerWidth) -> Self {
-        self.container_width = container_width;
+        self.container_width = Some(container_width);
         self
     }
 
@@ -152,7 +173,24 @@ impl gpui_kit::Styled for SimpleGrid {
 
 impl RenderOnce for SimpleGrid {
     fn render(self, window: &mut Window, cx: &mut App) -> impl gpui_kit::IntoElement {
-        let width = self.container_width.resolve(window, cx).as_f32();
+        // The grid keeps the measurement of its own container in a state of
+        // its own, so it can answer to the box it is laid out in.
+        let own =
+            window.use_keyed_state(self.key.clone(), cx, |_, _| ContainerWidthState::default());
+        let owner = own.entity_id().as_u64();
+
+        let (width, measurement) = match &self.container_width {
+            Some(ContainerWidth::Measured(state)) => (
+                measured_width(state, window.viewport_size().width, cx),
+                Some(state.clone()),
+            ),
+            Some(width) => (width.resolve(window, cx), None),
+            None => (
+                measured_width(&own, window.viewport_size().width, cx),
+                Some(own.clone()),
+            ),
+        };
+        let width = width.as_f32();
         let spacing = self.spacing_at(width);
         let cols = match self.min_child_width {
             Some(min_child_width) => {
@@ -164,10 +202,10 @@ impl RenderOnce for SimpleGrid {
         if let Some(vertical_spacing) = self.vertical_spacing_at(width) {
             element = element.gap_y(px(vertical_spacing));
         }
-        if let Some(state) = self.container_width.measurement() {
+        if let Some(state) = measurement {
             let state = state.clone();
-            element = element.w_full().on_prepaint(move |bounds, _, cx| {
-                measure(&state, bounds, cx);
+            element = element.w_full().on_prepaint(move |bounds, window, cx| {
+                measure(&state, owner, bounds, window, cx);
             });
         }
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
