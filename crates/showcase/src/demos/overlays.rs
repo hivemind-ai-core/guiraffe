@@ -3,9 +3,11 @@
 
 use std::{cell::Cell, rc::Rc};
 
+use gpui_kit::base::TestSupportExt;
 use gpui_kit::{
-    AnyView, App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Pixels, Render,
-    SharedString, Styled, Window, canvas, component::button::Button, div, px,
+    AnyView, App, AppContext, Bounds, Context, Entity, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    canvas, component::button::Button, div, px,
 };
 use guiraffe_components::{Text, Title};
 use guiraffe_core::{ColorName, GuiraffeTheme, Size, Variant};
@@ -192,11 +194,13 @@ impl Render for SpotlightDemo {
 /// tooltip follows on the next frame.
 struct FloatingDemo {
     anchors: [Rc<Cell<Option<Bounds<Pixels>>>>; 3],
+    hovered: [bool; 3],
 }
 
 fn floating(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|_| FloatingDemo {
         anchors: Default::default(),
+        hovered: [false; 3],
     })
     .into()
 }
@@ -224,6 +228,14 @@ impl Render for FloatingDemo {
             let record = cell.clone();
             row = row.child(
                 div()
+                    .id(("tooltip-trigger", i))
+                    .test_support()
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        if this.hovered[i] != *hovered {
+                            this.hovered[i] = *hovered;
+                            cx.notify();
+                        }
+                    }))
                     .relative()
                     .px(px(Size::Md.spacing()))
                     .py(px(Size::Xs.spacing()))
@@ -248,7 +260,9 @@ impl Render for FloatingDemo {
                         .inset_0(),
                     ),
             );
-            if let Some(b) = cell.get() {
+            if self.hovered[i]
+                && let Some(b) = cell.get()
+            {
                 tips.push(
                     FloatingTooltip::new(("showcase-tip", i), tip, rect(b)).options(
                         FloatingOptions {
@@ -384,4 +398,36 @@ fn chip(label: &'static str, color: ColorName, cx: &App) -> gpui_kit::Div {
         .text_color(v.foreground.to_hsla())
         .text_size(px(Size::Xs.font_size()))
         .child(label)
+}
+
+#[cfg(test)]
+mod tooltip_tests {
+    use super::*;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{TestAppContext, point};
+
+    #[gpui_kit::test]
+    fn showcase_tooltips_follow_hover_and_disappear_on_leave(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let (view, vcx) = cx.add_window_view(|_, _| FloatingDemo {
+            anchors: Default::default(),
+            hovered: [false; 3],
+        });
+        vcx.update(|window, cx| window.render_frame(cx));
+        vcx.update(|window, cx| window.render_frame(cx));
+        vcx.update(|window, _| assert!(window.try_find(("showcase-tip", 0usize)).is_none()));
+        vcx.update(|window, cx| window.hover(("tooltip-trigger", 0usize), cx));
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find(("showcase-tip", 0usize)).is_some());
+        });
+        vcx.simulate_mouse_move(point(px(5.), px(5.)), None, Default::default());
+        vcx.run_until_parked();
+        assert!(!view.read_with(vcx, |view, _| view.hovered[0]));
+        vcx.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find(("showcase-tip", 0usize)).is_none());
+        });
+    }
 }

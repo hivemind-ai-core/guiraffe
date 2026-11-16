@@ -18,3 +18,5 @@ Agent chat (inspired by mocket): message list (virtualized, streaming markdown),
 - Git history graph (GitKraken-style)
 - Hex view and assembler view
 - Timeline family: Gantt, DAW/animation timeline, dope sheet, curve editor
+
+- Efficient spreadsheet / data sheet: two-axis virtualization, large host-owned datasets, spreadsheet navigation/selection and optional cell editing (required; see spec/16).

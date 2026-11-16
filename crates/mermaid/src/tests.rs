@@ -59,6 +59,15 @@ fn a_flowchart_renders_to_a_visible_image(cx: &mut TestAppContext) {
     // The element really lays out and paints.
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .expect("frame renders");
+    settle(cx);
+    cx.update(|cx| {
+        let state = host.read(cx).diagram.clone();
+        let (width, height) = state.read(cx).viewport().bounds();
+        assert!(
+            width > 800. && height > 500.,
+            "diagram body must fill the host, got {width} x {height}"
+        );
+    });
 }
 
 #[gpui_kit::test]

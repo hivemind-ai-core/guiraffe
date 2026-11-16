@@ -810,3 +810,30 @@ fn a_grid_in_a_pane_follows_the_pane_and_not_the_window(cx: &mut TestAppContext)
         "the column follows the pane it is in, and not the window"
     );
 }
+
+#[gpui_kit::test]
+fn scroll_area_scrolls_inside_a_height_constrained_host(cx: &mut TestAppContext) {
+    let cx = harness!(cx, ScrollHarness);
+    let before = cx.debug_bounds("content").expect("content before scroll");
+    cx.update(|window, cx| {
+        use gpui_kit::InputEvent;
+        window.dispatch_event(
+            gpui_kit::ScrollEvent {
+                position: gpui_kit::point(px(25.), px(25.)),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-100.))),
+                modifiers: Default::default(),
+                touch_phase: gpui_kit::TouchPhase::Moved,
+                source: gpui_kit::ScrollSource::Pointer,
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.draw(cx).clear(cx);
+    });
+    let after = cx.debug_bounds("content").expect("content after scroll");
+    assert!(
+        after.top() < before.top(),
+        "scroll must move content: {before:?} -> {after:?}"
+    );
+    assert_eq!(after.size.height, px(400.));
+}

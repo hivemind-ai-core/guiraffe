@@ -334,6 +334,18 @@ mod tests {
         assert_eq!(engine.layouts(), 1);
         assert_eq!(engine.rasterizations(), 1);
 
+        let pixels = first.image.as_bytes(0).expect("raster bytes");
+        assert!(
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[3] > 0 && p[..3].iter().any(|c| *c < 220))
+                .count()
+                > 100,
+            "a successful raster must contain diagram ink, not only an opaque background"
+        );
+
         let second = engine.render(&request).expect("second");
         assert!(second.cached);
         assert!(Arc::ptr_eq(&first.image, &second.image));

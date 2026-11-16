@@ -59,18 +59,10 @@ struct FlowDemo {
 }
 
 fn flow(_: &mut Window, cx: &mut App) -> AnyView {
-    // `FlowState::new` fails exactly when `Editor::new` does, so validate first and only
-    // construct the entity from a graph known to be valid.
-    let checked = graph().and_then(|g| {
-        guiraffe_flow::core::Editor::new(g.clone())?;
-        Ok(g)
-    });
+    let checked = graph().and_then(guiraffe_flow::core::Editor::new);
     let demo = match checked {
-        Ok(g) => FlowDemo {
-            state: Some(cx.new(|cx| match FlowState::new(g, cx) {
-                Ok(s) => s,
-                Err(e) => unreachable!("graph was validated: {e}"),
-            })),
+        Ok(editor) => FlowDemo {
+            state: Some(cx.new(|cx| FlowState::from_editor(editor, cx))),
             error: None,
         },
         Err(e) => FlowDemo {

@@ -193,7 +193,7 @@ impl Frame {
             .as_ref()
             .and_then(|g| g.preview(id, self.scene.graph(), self.grid))
     }
-    pub fn paint(mut self, bounds: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
+    pub fn paint(&mut self, bounds: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
         cache.misses = 0;
         let started = std::time::Instant::now();
         self.grid(bounds, cache, window);
@@ -275,11 +275,7 @@ impl Frame {
             }
         }
         let edge_us = edge_started.elapsed().as_micros();
-        let minimap_started = std::time::Instant::now();
-        if self.minimap {
-            self.minimap(bounds, cache, window);
-        }
-        cache.timings = (grid_us, edge_us, minimap_started.elapsed().as_micros());
+        cache.timings = (grid_us, edge_us, 0);
         cache.edge_buffer = std::mem::take(&mut self.edges);
     }
     fn grid(&self, b: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
@@ -366,16 +362,9 @@ impl Frame {
             if marker == Marker::None {
                 continue;
             }
-            let direction = tip - neighbor;
-            let distance = direction.distance(WorldPoint::default());
-            if distance < 0.001 {
+            let Some([left, tip, right]) = marker_triangle(tip, neighbor, self.viewport) else {
                 continue;
-            }
-            let d = direction * (1. / distance);
-            let side = WorldPoint::new(-d.y, d.x);
-            let tip = self.viewport.screen(tip);
-            let left = tip - d * 10. + side * 4.;
-            let right = tip - d * 10. - side * 4.;
+            };
             let mut builder = if marker == Marker::ArrowClosed {
                 PathBuilder::fill()
             } else {
@@ -392,16 +381,22 @@ impl Frame {
             }
         }
     }
+    pub(crate) fn paint_minimap(
+        &self,
+        b: Bounds<Pixels>,
+        cache: &mut MeshCache,
+        window: &mut Window,
+    ) {
+        if !self.minimap {
+            return;
+        }
+        let started = std::time::Instant::now();
+        self.minimap(b, cache, window);
+        cache.timings.2 = started.elapsed().as_micros();
+    }
     fn minimap(&self, b: Bounds<Pixels>, cache: &mut MeshCache, window: &mut Window) {
         let size = WorldPoint::new(b.size.width.as_f32(), b.size.height.as_f32());
         let map = minimap_rect(size);
-        window.paint_quad(fill(
-            Bounds::new(
-                b.origin + pixel(map.origin),
-                gpui_kit::size(px(map.size.x), px(map.size.y)),
-            ),
-            self.surfaces.surface.to_hsla(),
-        ));
         let Some(bounds) = self.scene.bounds() else {
             return;
         };
@@ -491,6 +486,14 @@ impl Frame {
                 ),
                 self.accent.alpha(0.27).to_hsla(),
             ));
+            window.paint_quad(gpui_kit::outline(
+                Bounds::new(
+                    b.origin + pixel(min),
+                    gpui_kit::size(px(max.x - min.x), px(max.y - min.y)),
+                ),
+                self.accent.to_hsla(),
+                gpui_kit::BorderStyle::default(),
+            ));
         }
     }
 }
@@ -524,6 +527,23 @@ pub(crate) fn paint_gesture(
         ));
     }
 }
+// Marker geometry is screen-sized, like the 10px handle dots.
+fn marker_triangle(
+    tip: WorldPoint,
+    neighbor: WorldPoint,
+    viewport: Viewport,
+) -> Option<[WorldPoint; 3]> {
+    let direction = tip - neighbor;
+    let distance = direction.distance(WorldPoint::default());
+    if distance < 0.001 {
+        return None;
+    }
+    let d = direction * (1. / distance);
+    let side = WorldPoint::new(-d.y, d.x);
+    // Leave half the open marker stroke outside the handle as well.
+    let tip = viewport.screen(tip) - d * 5.75;
+    Some([tip - d * 10. + side * 4., tip, tip - d * 10. - side * 4.])
+}
 pub(crate) fn minimap_rect(size: WorldPoint) -> Rect {
     Rect::new((size.x - 196.).max(0.), (size.y - 136.).max(0.), 180., 120.)
 }
@@ -543,6 +563,32 @@ pub(crate) fn minimap_world(at: WorldPoint, size: WorldPoint, bounds: Rect) -> W
 mod tests {
     use super::*;
     use guiraffe_flow_core::{Edge, Graph, Node};
+    #[test]
+    fn arrow_tip_stays_outside_handle_boundary_at_all_zooms() {
+        for zoom in [0.6, 1., 2.] {
+            let viewport = Viewport {
+                zoom,
+                pan: WorldPoint::new(15., -20.),
+            };
+            for direction in [
+                WorldPoint::new(1., 0.),
+                WorldPoint::new(0., 1.),
+                WorldPoint::new(-1., 0.),
+            ] {
+                let center = WorldPoint::new(200., 300.);
+                let triangle =
+                    marker_triangle(center, center - direction * 20., viewport).expect("marker");
+                assert!(triangle[1].distance(viewport.screen(center)) >= 5.74);
+                for point in triangle {
+                    assert!(
+                        (point.x - viewport.screen(center).x) * direction.x
+                            + (point.y - viewport.screen(center).y) * direction.y
+                            <= -5.74
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn cache_reuses_mesh_and_bounds_triangle_storage() {
         let graph = Graph::from_parts(

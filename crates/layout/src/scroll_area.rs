@@ -4,7 +4,7 @@ use crate::gpui::IntoElement;
 
 use gpui_kit::{
     AnyElement, App, ElementId, InteractiveElement as _, ParentElement as _, RenderOnce,
-    StatefulInteractiveElement as _, StyleRefinement, Window, div,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
 };
 
 /// A region whose content scrolls when it does not fit.
@@ -83,7 +83,7 @@ impl gpui_kit::Styled for ScrollArea {
 
 impl RenderOnce for ScrollArea {
     fn render(self, _: &mut Window, _: &mut App) -> impl gpui_kit::IntoElement {
-        let mut element = div().id(self.id);
+        let mut element = div().id(self.id).size_full().min_w_0().min_h_0();
         if self.scroll_x {
             element = element.overflow_x_scroll();
         }

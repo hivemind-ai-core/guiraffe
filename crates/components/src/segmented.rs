@@ -152,19 +152,19 @@ impl SegmentedControl {
     }
 
     /// Called once per prepaint, after all segments recorded their boxes.
-    fn sync_indicator(&mut self, container: Bounds<Pixels>, cx: &mut Context<Self>) {
+    fn sync_indicator(&mut self, container: Bounds<Pixels>, cx: &mut Context<Self>) -> bool {
         let target = indicator_box(
             &self.layout.borrow().segments,
             f32::from(container.origin.x),
             self.selected,
         );
-        let Some(target) = target else { return };
+        let Some(target) = target else { return false };
         if !self.laid_out {
             self.laid_out = true;
             self.indicator.jump(target);
-            cx.notify();
-        } else if self.indicator.set(target, cx) {
-            cx.notify();
+            true
+        } else {
+            self.indicator.set(target, cx)
         }
     }
 }
@@ -208,6 +208,7 @@ impl Render for SegmentedControl {
             .when(self.laid_out && !self.items.is_empty(), |el| {
                 el.child(
                     div()
+                        .debug_selector(|| "segment-indicator".into())
                         .absolute()
                         .top(px(pad))
                         .left(px(left))
@@ -254,8 +255,14 @@ impl Render for SegmentedControl {
             // Last child: prepaints after every segment, so the target is computed once per frame.
             .child(
                 canvas(
-                    move |bounds, _, cx| {
-                        entity.update(cx, |this, cx| this.sync_indicator(bounds, cx))
+                    move |bounds, window, cx| {
+                        if entity.update(cx, |this, cx| this.sync_indicator(bounds, cx)) {
+                            // Retargeting happens after render sampled the old spring. Notify
+                            // on the next frame so paint-time invalidation cannot be consumed
+                            // by this frame, and sample() can start driving the animation.
+                            let id = entity.entity_id();
+                            window.on_next_frame(move |_, cx| cx.notify(id));
+                        }
                     },
                     |_, _, _, _| {},
                 )

@@ -309,7 +309,19 @@ impl EdgePath {
                     let y = (c1.y + c2.y) * 0.5;
                     (Point::new(from.x, y), Point::new(to.x, y))
                 };
-                let corners = [from, c1, a, b, c2, to];
+                // Facing handles with room between them need only the two bends.
+                // The Bezier control distance can exceed half the gap: inserting
+                // those controls into a step route creates visible reverse stubs.
+                let direction = sh.side.direction();
+                let facing = direction + th.side.direction() == Point::default();
+                let gap = to - from;
+                let forward = gap.x * direction.x + gap.y * direction.y >= 0.;
+                let mut corners = if facing && forward {
+                    vec![from, a, b, to]
+                } else {
+                    vec![from, c1, a, b, c2, to]
+                };
+                corners.dedup();
                 if edge.edge_type == EdgeType::Step {
                     corners.to_vec()
                 } else {
@@ -682,5 +694,39 @@ mod review_2_tests {
             before.depths.get(&200).map(|d| d as *const usize),
             editor.scene().depths.get(&200).map(|d| d as *const usize)
         );
+    }
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::*;
+    #[test]
+    fn forward_step_edges_do_not_backtrack_at_corners() {
+        for kind in [EdgeType::Step, EdgeType::SmoothStep] {
+            let edge = Edge {
+                edge_type: kind,
+                ..Edge::new(1, 1, 2)
+            };
+            let graph = Graph::from_parts(
+                [
+                    crate::Node::new(1, "", Point::new(240., 240.)),
+                    crate::Node::new(2, "", Point::new(500., 300.)),
+                ],
+                [edge.clone()],
+            )
+            .expect("graph");
+            let path = EdgePath::new(&graph, &edge, None, None).expect("path");
+            for pair in path.points.windows(2) {
+                assert!(
+                    pair[1].x >= pair[0].x,
+                    "forward route backtracks: {:?}",
+                    path.points
+                );
+                assert!(
+                    pair[1].y >= pair[0].y,
+                    "forward route doubles back vertically"
+                );
+            }
+        }
     }
 }

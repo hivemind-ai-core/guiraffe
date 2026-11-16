@@ -681,3 +681,76 @@ fn review2_portable_host_isolation(cx: &mut TestAppContext) {
         );
     }
 }
+
+#[gpui_kit::test]
+fn handle_centers_match_world_endpoints_at_every_zoom(cx: &mut TestAppContext) {
+    let (w, view) = open(cx);
+    for zoom in [0.6, 1.0, 2.0] {
+        view.update(cx, |view, cx| {
+            view.set_viewport(
+                Viewport {
+                    pan: WorldPoint::new(20., 30.),
+                    zoom,
+                },
+                cx,
+            )
+        })
+        .expect("set viewport");
+        w.update(cx, |_, window, cx| {
+            window.render_frame(cx);
+            let node = window.find(("flow-node", 1u64)).bounds();
+            let input = window
+                .within(("flow-node", 1u64))
+                .find("handle-in")
+                .bounds();
+            let output = window
+                .within(("flow-node", 1u64))
+                .find("handle-out")
+                .bounds();
+            assert!(
+                (input.center().x - node.left()).abs() < px(0.01),
+                "input must lie on node edge: {input:?} {node:?}"
+            );
+            assert!(
+                (output.center().x - node.right()).abs() < px(0.01),
+                "output must lie on node edge"
+            );
+            assert!(
+                (input.center().y - node.center().y).abs() < px(0.01),
+                "handle y must match edge route"
+            );
+        })
+        .expect("frame");
+    }
+}
+
+#[gpui_kit::test]
+fn minimap_drag_continuously_updates_camera_without_moving_nodes(cx: &mut TestAppContext) {
+    let (w, view) = open(cx);
+    let old_graph = view.read_with(cx, |v, _| v.graph().clone());
+    let before = view.read_with(cx, |v, _| v.viewport());
+    let (from, to, expected) = w
+        .update(cx, |_, window, _| {
+            let b = window.find("flow").bounds();
+            let size = WorldPoint::new(b.size.width.as_f32(), b.size.height.as_f32());
+            let from = crate::paint::minimap_rect(size).center();
+            let to = from + WorldPoint::new(20., 10.);
+            let bounds = old_graph.bounds().expect("graph bounds");
+            let world = crate::paint::minimap_world(to, size, bounds);
+            (
+                b.origin + point(px(from.x), px(from.y)),
+                b.origin + point(px(to.x), px(to.y)),
+                size * 0.5 - world * before.zoom,
+            )
+        })
+        .expect("map");
+    w.update(cx, |_, w, cx| w.drag(from, to, cx)).expect("drag");
+    let after = view.read_with(cx, |v, _| v.viewport());
+    assert!(
+        after.pan.distance(expected) < 0.01,
+        "minimap only handled press: {:?}, expected {:?}",
+        after.pan,
+        expected
+    );
+    assert_eq!(view.read_with(cx, |v, _| v.graph().clone()), old_graph);
+}

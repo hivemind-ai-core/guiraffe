@@ -135,3 +135,56 @@ fn items_can_change_and_empty_is_safe(cx: &mut TestAppContext) {
         "selecting in an empty control is a no-op"
     );
 }
+
+#[gpui_kit::test]
+fn the_first_click_selects_and_focuses_a_segment(cx: &mut TestAppContext) {
+    let (control, _, vcx, events) = setup(cx, &["A", "B", "C"]);
+    frames(vcx, 4);
+    let position = gpui_kit::point(px(333.), px(10.));
+    vcx.simulate_mouse_down(position, gpui_kit::MouseButton::Left, Default::default());
+    frames(vcx, 2);
+    vcx.simulate_mouse_up(position, gpui_kit::MouseButton::Left, Default::default());
+    frames(vcx, 2);
+    assert_eq!(control.read_with(vcx, |c, _| c.selected()), 2);
+    assert_eq!(*events.borrow(), vec![SegmentedEvent::Changed(2)]);
+    assert!(vcx.update(|w, cx| control.read(cx).focus_handle(cx).is_focused(w)));
+    vcx.simulate_keystrokes("left");
+    assert_eq!(control.read_with(vcx, |c, _| c.selected()), 1);
+}
+
+#[gpui_kit::test]
+fn the_first_click_moves_the_painted_indicator_without_another_input(cx: &mut TestAppContext) {
+    let (_, _, vcx, _) = setup(cx, &["A", "B", "C"]);
+    for _ in 0..4 {
+        vcx.update(|w, cx| {
+            w.draw(cx).clear(cx);
+            w.simulate_next_frame(cx);
+        });
+        vcx.run_until_parked();
+    }
+    let before = vcx
+        .debug_bounds("segment-indicator")
+        .expect("initial indicator");
+    vcx.simulate_click(gpui_kit::point(px(333.), px(10.)), Default::default());
+    vcx.update(|w, cx| w.draw(cx).clear(cx));
+    let scheduled = vcx.update(|w, cx| w.simulate_next_frame(cx));
+    assert!(
+        scheduled > 0,
+        "retargeting a resting indicator must schedule its next frame"
+    );
+    for _ in 0..40 {
+        vcx.executor().advance_clock(Duration::from_millis(16));
+        vcx.update(|w, cx| {
+            w.simulate_next_frame(cx);
+            w.draw(cx).clear(cx);
+        });
+        vcx.run_until_parked();
+    }
+    let after = vcx
+        .debug_bounds("segment-indicator")
+        .expect("indicator after one click");
+    assert!(
+        after.left() > before.left() + px(200.),
+        "indicator stayed on the old segment: {before:?} -> {after:?}"
+    );
+}
