@@ -19,10 +19,15 @@ Ten alternating AB/BA runs per variant, pinned to CPU 15, give median results:
 
 Child deletion is about 10.3x faster; the other run distributions substantially overlap.
 These remain CPU/headless observations, not a GPU or formal frame-budget acceptance.
-`guiraffe-bench compare` passed its existing core/window suites, recorded separately in
-[the harness smoke output](review-2-harness-smoke.json); it has no registered flow suite
-yet, so those results are not flow evidence. Registration is proposed in the unapplied
-[benchmark patch](review2-bench.patch), awaiting scope approval.
+The approved benchmark registration is now applied. The accepted
+[`guiraffe-bench compare` output](review-2-harness-comparison.json) pins identical
+harness source on baseline `4343b6f` and implementation `ceab4c8`, ten alternating
+pairs on CPU 15. Child select/delete + undo improves from 3.086 ms to 0.267 ms
+(about 11.6x; relative 95% CI -95.73% to -84.72%). Scene build, twenty-query and
+move+undo intervals are wide and inconclusive on the noisy shared host. These
+workloads differ from the custom protocol above; see REVIEW-2.md for exact scope.
+Both backend combined suites pass 122 tests (90 flow, 32 benchmark).
+The earlier [harness smoke output](review-2-harness-smoke.json) is historical only.
 
 ---
 

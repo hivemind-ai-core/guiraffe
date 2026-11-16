@@ -1,7 +1,7 @@
 # Flow review #2 follow-ups
 
 Source baseline: `aa82bb4c0c9ee98310fcc9dee8696fb59d19a6f7` on release/0.1.
-Implementation/benchmark source: `a0dae350e54c565dcae9b532442ff1cc77631098`.
+Flow implementation/custom-benchmark source: `a0dae350e54c565dcae9b532442ff1cc77631098`.
 The rebase was clean and preserves the foreman's app-clock/reduced-motion edge-animation fix.
 No merge or push was performed.
 
@@ -85,13 +85,63 @@ Child deletion's median is about **10.3x faster**; scene/query/move costs are es
 unchanged in this sample. Frame medians overlap and the new tail includes an outlier;
 this is not a formal frame-budget or GPU-presentation claim.
 
-The requested `guiraffe-bench compare` command was exercised separately at ten pairs
-per existing suite. Its registry currently has only core-variants and window-placement:
-`review-2-harness-smoke.json` records both as pass. These suites do **not** measure flow,
-and their result is not presented as flow-performance evidence. Flow suite registration
-requires approval under the crate boundary; `review2-bench.patch` is the prepared,
-unapplied proposal. It also includes a regression/check for fresh second-revision
-checkout ordering when shared build caches are used. No benchmark crate was edited.
+## Registered harness comparison
+
+The user approved the other-crate benchmark patch. Four flow suites now share the
+CLI/criterion/instruction registration table; the original proposal remains in
+`review2-bench.patch` for provenance. The harness adds a warmed-query zero-allocation
+assertion and two cache regressions, both observed failing before their fixes.
+Benchmark fixtures reject unexpected edits rather than silently timing a no-op.
+
+The first comparison reused old local-package artifacts for the new revision despite
+fresh checkout mtimes: child deletion reported about 1.26 ms on both sides while an
+independent current binary measured about 0.13 ms. That run is excluded. The harness
+now records old metadata and removes the old source checkout after copying its binary,
+before building new sources. This invalidates stale local source paths while retaining
+registry-dependency caches. The new cached-source-path regression passes.
+
+The accepted `review-2-harness-comparison.json` pins old
+`4343b6f06fe44932969910fbbe7dc0eb49832096` (aa82 plus the two harness-only commits)
+and new `ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97`. The harness source and lockfile
+are identical on both sides. Each suite has ten alternating pairs, CPU 15, release
+builds, a warmup before each subprocess sample, median/MAD and seeded bootstrap
+95% confidence intervals. All six suites exit successfully; the non-flow core/window
+suites remain controls. The earlier `review-2-harness-smoke.json` is retained only
+as historical smoke evidence and is superseded by this registered run.
+
+| Registered workload | Before median | After median | Relative 95% CI | Classification |
+|---|---:|---:|---:|---|
+| Scene build/drop (5k/10k) | 40.039 ms | 35.102 ms | -49.38% to +92.57% | Uncertain/pass |
+| Twenty queries + route lookup | 302.571 us | 312.893 us | -64.07% to +214.33% | Uncertain/pass |
+| Move child + undo | 73.512 us | 92.794 us | -68.15% to +418.10% | Uncertain/pass |
+| Select/delete child + undo | 3.086 ms | 0.267 ms | -95.73% to -84.72% | Improvement |
+
+The shared host was substantially noisier during this run than during the earlier
+custom measurements. Child deletion improves about **11.6x** in this protocol;
+other suites have wide intervals and support no stable improvement/regression claim.
+The query row covers twenty queries, and edit rows include undo, so these timings
+are not interchangeable with the custom protocol above. No real-renderer or GPU
+frame timing is measured by this harness.
+
+Reproduce with both recorded refs retained locally:
+
+```sh
+guiraffe-bench compare 4343b6f06fe44932969910fbbe7dc0eb49832096 ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97 --profile orca-flow-review-2 --samples 10 --iterations 1 --cpu 15 --output crates/flow/review-2-harness-comparison.json
+```
+
+Final combined validation includes **32 benchmark tests** in addition to the **90 flow
+tests**, on each backend, plus Clippy with warnings denied and formatting:
+
+```sh
+cargo test -p guiraffe-flow-core -p guiraffe-flow -p guiraffe-bench
+cargo test -p guiraffe-flow-core -p guiraffe-flow -p guiraffe-bench --features gpui-kit/gpui-fast
+cargo clippy -p guiraffe-flow-core -p guiraffe-flow -p guiraffe-bench --all-targets -- -D warnings
+cargo clippy -p guiraffe-flow-core -p guiraffe-flow -p guiraffe-bench --all-targets --features gpui-kit/gpui-fast -- -D warnings
+cargo fmt -p guiraffe-flow-core -p guiraffe-flow -p guiraffe-bench -- --check
+```
+
+The temporary Orca baseline worktree was removed after measurement; its baseline branch is retained
+for reproducibility. No merge or push was performed.
 
 ## API/integration notes
 

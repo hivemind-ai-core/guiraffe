@@ -1,0 +1,560 @@
+[
+  {
+    "old": {
+      "schema_version": 1,
+      "suite": "core-variants",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "4343b6f06fe44932969910fbbe7dc0eb49832096",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "10.86 7.13 5.41 13/4666 4093796",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859630,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        392.83228593872735,
+        413.9954470198675,
+        425.1291967700808,
+        419.2581726739312,
+        409.3884568153909,
+        2961.4675652906485,
+        408.0897592819257,
+        424.376750106067,
+        410.58620689655174,
+        410.15703157031567
+      ],
+      "summary": {
+        "median": 412.29082695820966,
+        "mad": 5.584206696002752,
+        "ci95": {
+          "low": 409.1233954261207,
+          "high": 424.376750106067
+        }
+      }
+    },
+    "new": {
+      "schema_version": 1,
+      "suite": "core-variants",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "12.17 7.52 5.55 24/4739 4094499",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859637,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        394.0843183609141,
+        402.61473429951695,
+        417.5478079331941,
+        412.42845360824737,
+        421.1212631578947,
+        406.2932575142161,
+        409.3708555055261,
+        409.4809660253787,
+        412.88728323699416,
+        419.1131601005868
+      ],
+      "summary": {
+        "median": 410.954709816813,
+        "mad": 5.6272752094889995,
+        "ci95": {
+          "low": 405.9927949025215,
+          "high": 417.5478079331941
+        }
+      }
+    },
+    "relative_ci95": {
+      "low": -0.03510037738157268,
+      "high": 0.018019382319455435
+    },
+    "threshold": 0.1,
+    "regression": false,
+    "status": "uncertain",
+    "cpu": 15,
+    "order": "AB, BA, repeated; warmup before every sample"
+  },
+  {
+    "old": {
+      "schema_version": 1,
+      "suite": "flow-build-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "4343b6f06fe44932969910fbbe7dc0eb49832096",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "10.86 7.13 5.41 13/4666 4093796",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859630,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        51293142.0,
+        46203952.0,
+        46973170.0,
+        33873085.0,
+        23536663.0,
+        23104020.0,
+        49406588.0,
+        24028196.0,
+        23577229.0,
+        49812432.0
+      ],
+      "summary": {
+        "median": 40038518.5,
+        "mad": 10514268.5,
+        "ci95": {
+          "low": 23577229.0,
+          "high": 49406588.0
+        }
+      }
+    },
+    "new": {
+      "schema_version": 1,
+      "suite": "flow-build-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "12.17 7.52 5.55 24/4739 4094499",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859637,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        61547632.0,
+        24345815.0,
+        44988034.0,
+        47748389.0,
+        49374189.0,
+        45363241.0,
+        23753846.0,
+        23153592.0,
+        22694429.0,
+        25215570.0
+      ],
+      "summary": {
+        "median": 35101802.0,
+        "mad": 11648083.0,
+        "ci95": {
+          "low": 23749703.5,
+          "high": 47748389.0
+        }
+      }
+    },
+    "relative_ci95": {
+      "low": -0.49378962263878223,
+      "high": 0.9256842971071038
+    },
+    "threshold": 0.1,
+    "regression": false,
+    "status": "uncertain",
+    "cpu": 15,
+    "order": "AB, BA, repeated; warmup before every sample"
+  },
+  {
+    "old": {
+      "schema_version": 1,
+      "suite": "flow-query-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "4343b6f06fe44932969910fbbe7dc0eb49832096",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "10.86 7.13 5.41 13/4666 4093796",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859630,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        306178.5,
+        300260.0,
+        1968425.0,
+        3297903.0,
+        314634.25,
+        302454.25,
+        299353.25,
+        292931.5,
+        302686.75,
+        275947.5
+      ],
+      "summary": {
+        "median": 302570.5,
+        "mad": 6623.5,
+        "ci95": {
+          "low": 296595.75,
+          "high": 1137301.75
+        }
+      }
+    },
+    "new": {
+      "schema_version": 1,
+      "suite": "flow-query-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "12.17 7.52 5.55 24/4739 4094499",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859637,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        296999.0,
+        3277916.0,
+        1311327.6666666667,
+        311303.25,
+        410095.0,
+        307025.25,
+        942396.6666666666,
+        302904.25,
+        314481.75,
+        294509.5
+      ],
+      "summary": {
+        "median": 312892.5,
+        "mad": 17138.25,
+        "ci95": {
+          "low": 302012.125,
+          "high": 942396.6666666666
+        }
+      }
+    },
+    "relative_ci95": {
+      "low": -0.6407495775679058,
+      "high": 2.1433483721937985
+    },
+    "threshold": 0.1,
+    "regression": false,
+    "status": "uncertain",
+    "cpu": 15,
+    "order": "AB, BA, repeated; warmup before every sample"
+  },
+  {
+    "old": {
+      "schema_version": 1,
+      "suite": "flow-move-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "4343b6f06fe44932969910fbbe7dc0eb49832096",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "10.86 7.13 5.41 13/4666 4093796",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859630,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        448466.9285714286,
+        1103125.0,
+        67284.4,
+        67910.00000000001,
+        74660.64285714286,
+        70004.0,
+        75266.85714285714,
+        72760.21428571429,
+        72838.85714285714,
+        74185.71428571429
+      ],
+      "summary": {
+        "median": 73512.28571428571,
+        "mad": 2631.4285714285725,
+        "ci95": {
+          "low": 70004.0,
+          "high": 261563.78571428574
+        }
+      }
+    },
+    "new": {
+      "schema_version": 1,
+      "suite": "flow-move-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "12.17 7.52 5.55 24/4739 4094499",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859637,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        78702.23076923077,
+        83406.58333333334,
+        98434.41666666669,
+        3234260.0,
+        73432.14285714286,
+        87152.74999999999,
+        77785.15384615386,
+        168782.58333333334,
+        293954.4285714286,
+        599930.6666666666
+      ],
+      "summary": {
+        "median": 92793.58333333334,
+        "mad": 17184.934981684986,
+        "ci95": {
+          "low": 78702.23076923077,
+          "high": 384356.625
+        }
+      }
+    },
+    "relative_ci95": {
+      "low": -0.6814924467033164,
+      "high": 4.181005921432698
+    },
+    "threshold": 0.1,
+    "regression": false,
+    "status": "uncertain",
+    "cpu": 15,
+    "order": "AB, BA, repeated; warmup before every sample"
+  },
+  {
+    "old": {
+      "schema_version": 1,
+      "suite": "flow-delete-child-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "4343b6f06fe44932969910fbbe7dc0eb49832096",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "10.86 7.13 5.41 13/4666 4093796",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859630,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        3031199.0,
+        3141714.0,
+        2988830.0,
+        2974683.0,
+        2959516.0,
+        5984732.0,
+        6198750.0,
+        5889265.0,
+        2930682.0,
+        8365904.0
+      ],
+      "summary": {
+        "median": 3086456.5,
+        "mad": 141357.5,
+        "ci95": {
+          "low": 2974173.0,
+          "high": 6044007.5
+        }
+      }
+    },
+    "new": {
+      "schema_version": 1,
+      "suite": "flow-delete-child-5k",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "12.17 7.52 5.55 24/4739 4094499",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859637,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        631042.0,
+        295258.5,
+        236224.8,
+        258825.25,
+        219688.0,
+        213510.2,
+        274599.75,
+        1000287.3333333334,
+        233605.6,
+        1932358.0
+      ],
+      "summary": {
+        "median": 266712.5,
+        "mad": 40065.7,
+        "ci95": {
+          "low": 227956.4,
+          "high": 637443.5416666667
+        }
+      }
+    },
+    "relative_ci95": {
+      "low": -0.9573226879666458,
+      "high": -0.8472055942219564
+    },
+    "threshold": 0.1,
+    "regression": false,
+    "status": "improvement",
+    "cpu": 15,
+    "order": "AB, BA, repeated; warmup before every sample"
+  },
+  {
+    "old": {
+      "schema_version": 1,
+      "suite": "windows-placement",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "4343b6f06fe44932969910fbbe7dc0eb49832096",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "10.86 7.13 5.41 13/4666 4093796",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859630,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        68.39153330597729,
+        67.33647565820483,
+        68.39894672047056,
+        67.72497629689828,
+        66.09974221693436,
+        286.1579867433899,
+        70.22421178288042,
+        68.17404049355784,
+        70.36405854207712,
+        68.69233411182854
+      ],
+      "summary": {
+        "median": 68.39524001322393,
+        "mad": 0.8645140356723715,
+        "ci95": {
+          "low": 67.72497629689828,
+          "high": 70.22421178288042
+        }
+      }
+    },
+    "new": {
+      "schema_version": 1,
+      "suite": "windows-placement",
+      "metric": "wall_ns",
+      "metadata": {
+        "commit": "ceab4c85c0301fa6342eb0e9f3437f0eabfbbd97",
+        "dirty": false,
+        "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+        "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+        "governor": "powersave",
+        "load_average": "12.17 7.52 5.55 24/4739 4094499",
+        "profile": "orca-flow-review-2",
+        "build_profile": "release",
+        "unix_seconds": 1794859637,
+        "notes": "Flow review 2: same harness on aa82 baseline and updated flow source; old source checkout removed before new build to invalidate Cargo paths; 10 alternating AB/BA pairs CPU 15; shared host exploratory, no GUI/GPU timing."
+      },
+      "iterations": 1,
+      "warmup_iterations": 1,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 7640891576956012809,
+      "samples": [
+        76.5518528761062,
+        68.94470872113064,
+        68.47360492981855,
+        67.99605629972123,
+        69.15663900414938,
+        267.1255567338282,
+        68.4122314954166,
+        66.7680598210709,
+        68.06990674562657,
+        67.79135032537961
+      ],
+      "summary": {
+        "median": 68.44291821261757,
+        "mad": 0.5766791978755137,
+        "ci95": {
+          "low": 67.93062853550309,
+          "high": 72.74828079861842
+        }
+      }
+    },
+    "relative_ci95": {
+      "low": -0.0258027856982731,
+      "high": 0.05561602820067768
+    },
+    "threshold": 0.1,
+    "regression": false,
+    "status": "uncertain",
+    "cpu": 15,
+    "order": "AB, BA, repeated; warmup before every sample"
+  }
+]
