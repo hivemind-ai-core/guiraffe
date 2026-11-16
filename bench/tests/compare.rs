@@ -47,13 +47,16 @@ impl Fixture {
         fs::write(
             &cargo,
             r#"#!/usr/bin/env python3
-import json, os, pathlib, sys, time
+import json, os, pathlib, subprocess, sys, time
 args = sys.argv[1:]
 assert '--message-format=json' in args
 base = pathlib.Path(args[args.index('--target-dir') + 1])
 assert base.name == 'bench-compare'
 if os.environ.get('BENCH_FIXTURE_MARKER'):
+    subprocess.Popen(['sleep', '30'])
     pathlib.Path(os.environ['BENCH_FIXTURE_MARKER']).write_text(str(os.getpid()))
+    if os.environ.get('BENCH_FIXTURE_EXIT_EARLY'):
+        sys.exit(0)
     time.sleep(30)
 # Deliberately unrelated to the host target triple and conventional release path.
 exe = base / 'custom-target' / 'unexpected-artifact'
@@ -194,43 +197,51 @@ fn ctrl_c_kills_build_group_and_removes_checkouts() -> Result<()> {
         sys::signal::{Signal, kill},
         unistd::Pid,
     };
-    let fixture = Fixture::new(100., 100.)?;
-    let marker = fixture._directory.path().join("started");
-    let mut child = fixture
-        .command()?
-        .env("BENCH_FIXTURE_MARKER", &marker)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !marker.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    if !marker.exists() {
-        let _ = child.kill();
-        let _ = child.wait();
-        anyhow::bail!("build did not start");
-    }
-    let build_pid = fs::read_to_string(marker)?.parse::<i32>()?;
-    kill(Pid::from_raw(i32::try_from(child.id())?), Signal::SIGINT)?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while child.try_wait()?.is_none() {
-        if Instant::now() >= deadline {
-            let _ = kill(Pid::from_raw(build_pid), Signal::SIGKILL);
+    for early_exit in [false, true] {
+        let fixture = Fixture::new(100., 100.)?;
+        let marker = fixture._directory.path().join("started");
+        let mut command = fixture.command()?;
+        if early_exit {
+            command.env("BENCH_FIXTURE_EXIT_EARLY", "1");
+        }
+        let mut child = command
+            .env("BENCH_FIXTURE_MARKER", &marker)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !marker.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !marker.exists() {
             let _ = child.kill();
             let _ = child.wait();
-            anyhow::bail!("interrupted compare did not exit");
+            anyhow::bail!("build did not start");
         }
-        std::thread::sleep(Duration::from_millis(10));
+        let build_pid = fs::read_to_string(marker)?.parse::<i32>()?;
+        if early_exit {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        kill(Pid::from_raw(i32::try_from(child.id())?), Signal::SIGINT)?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while child.try_wait()?.is_none() {
+            if Instant::now() >= deadline {
+                let _ = kill(Pid::from_raw(build_pid), Signal::SIGKILL);
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!("interrupted compare did not exit");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output()?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("interrupted"));
+        assert!(
+            kill(Pid::from_raw(build_pid), None).is_err(),
+            "build child was not reaped"
+        );
+        fixture.assert_clean_worktrees()?;
     }
-    let output = child.wait_with_output()?;
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("interrupted"));
-    assert!(
-        kill(Pid::from_raw(build_pid), None).is_err(),
-        "build child was not reaped"
-    );
-    fixture.assert_clean_worktrees()?;
     Ok(())
 }
 

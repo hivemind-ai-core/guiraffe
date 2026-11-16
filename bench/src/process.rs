@@ -74,16 +74,21 @@ pub fn checked(command: &mut Command) -> Result<Output> {
     // Drain both pipes while Cargo runs so a full pipe cannot deadlock cancellation.
     let out = thread::spawn(move || read_pipe(stdout));
     let err = thread::spawn(move || read_pipe(stderr));
-    let mut cancelled = false;
     let status = loop {
         if interrupted() {
-            cancelled = true;
             guard.terminate();
-            let status = guard.child.wait()?;
+            guard.child.wait()?;
             guard.reaped = true;
-            break status;
+            // Do not block on inherited stdout held by an escaped descendant.
+            // Reader threads are detached on this terminal error; main exits next.
+            anyhow::bail!("benchmark interrupted; child process group terminated");
         }
-        if let Some(status) = guard.child.try_wait()? {
+        // Keep the leader unreaped (and its PGID reserved) while descendants can
+        // still hold output pipes. Cancellation remains observable during draining.
+        if out.is_finished()
+            && err.is_finished()
+            && let Some(status) = guard.child.try_wait()?
+        {
             guard.reaped = true;
             break status;
         }
@@ -95,10 +100,6 @@ pub fn checked(command: &mut Command) -> Result<Output> {
     let stderr = err
         .join()
         .map_err(|_| anyhow::anyhow!("stderr reader panicked"))??;
-    ensure!(
-        !cancelled,
-        "benchmark interrupted; child process group terminated"
-    );
     ensure!(
         status.success(),
         "{command:?} failed: {}",
