@@ -17,6 +17,9 @@ pub(crate) struct MeshCache {
     vertices: usize,
     pub misses: usize,
     pub timings: (u128, u128, u128),
+    batch_capacity: (usize, usize),
+    #[cfg(test)]
+    pub batches: usize,
     minimap: Option<MinimapMeshes>,
     grid: Option<GridMesh>,
 }
@@ -112,6 +115,31 @@ fn transformed_mesh(
         }));
     screen
 }
+fn append_transformed(
+    output: &mut Path<Pixels>,
+    path: &Path<Pixels>,
+    viewport: Viewport,
+    origin: gpui_kit::Point<Pixels>,
+) {
+    let bounds = Bounds::new(
+        path.bounds.origin * viewport.zoom + origin + pixel(viewport.pan) - point(px(1.), px(1.)),
+        gpui_kit::size(
+            path.bounds.size.width * viewport.zoom + px(2.),
+            path.bounds.size.height * viewport.zoom + px(2.),
+        ),
+    );
+    output.bounds = if output.vertices.is_empty() {
+        bounds
+    } else {
+        output.bounds.union(&bounds)
+    };
+    output
+        .vertices
+        .extend(path.vertices.iter().cloned().map(|mut vertex| {
+            vertex.xy_position = vertex.xy_position * viewport.zoom + origin + pixel(viewport.pan);
+            vertex
+        }));
+}
 fn paint_mesh(
     path: &Path<Pixels>,
     viewport: Viewport,
@@ -172,47 +200,78 @@ impl Frame {
         let grid_us = started.elapsed().as_micros();
         let edge_started = std::time::Instant::now();
         let graph = self.scene.graph();
+        // GPUI takes ownership of submitted vertices. Batch by colour, so its
+        // ownership boundary requires one allocation per batch, not per edge.
+        let mut normal = Path::new(bounds.origin);
+        let mut selected = Path::new(bounds.origin);
+        normal.vertices.reserve_exact(cache.batch_capacity.0);
+        selected.vertices.reserve_exact(cache.batch_capacity.1);
         for id in &self.edges {
             let Some(edge) = graph.edges.get(id) else {
                 continue;
             };
-            let color = if self.selected_edges.contains(id) {
-                self.accent
+            let output = if self.selected_edges.contains(id) {
+                &mut selected
             } else {
-                self.surfaces.dimmed
+                &mut normal
             };
             let from = self.preview(edge.source.node);
             let to = self.preview(edge.target.node);
             if from.is_some() || to.is_some() {
-                if let Ok(route) = EdgePath::new(graph, edge, from, to) {
-                    if let Some(path) = mesh(&route) {
-                        paint_mesh(&path, self.viewport, bounds.origin, window, color);
-                    }
-                    self.markers(&route, edge.marker_start, edge.marker_end, bounds, window);
+                if let Ok(route) = EdgePath::new(graph, edge, from, to)
+                    && let Some(path) = mesh(&route)
+                {
+                    append_transformed(output, &path, self.viewport, bounds.origin);
                 }
+            } else if let Some(route) = self.scene.paths().get(id)
+                && let Some(path) = cache.get(*id, route)
+            {
+                append_transformed(output, path, self.viewport, bounds.origin);
+            }
+        }
+        cache.batch_capacity = (normal.vertices.len(), selected.vertices.len());
+        #[cfg(test)]
+        {
+            cache.batches = usize::from(!normal.vertices.is_empty())
+                + usize::from(!selected.vertices.is_empty());
+        }
+        if !normal.vertices.is_empty() {
+            window.paint_path(normal, self.surfaces.dimmed.to_hsla());
+        }
+        if !selected.vertices.is_empty() {
+            window.paint_path(selected, self.accent.to_hsla());
+        }
+        // Markers and animated beads retain their order above the edge strokes.
+        for id in &self.edges {
+            let Some(edge) = graph.edges.get(id) else {
+                continue;
+            };
+            let from = self.preview(edge.source.node);
+            let to = self.preview(edge.target.node);
+            let route = if from.is_some() || to.is_some() {
+                let Ok(route) = EdgePath::new(graph, edge, from, to) else {
+                    continue;
+                };
+                std::borrow::Cow::Owned(route)
             } else {
                 let Some(route) = self.scene.paths().get(id) else {
                     continue;
                 };
-                if let Some(path) = cache.get(*id, route) {
-                    paint_mesh(path, self.viewport, bounds.origin, window, color);
+                std::borrow::Cow::Borrowed(route.as_ref())
+            };
+            self.markers(&route, edge.marker_start, edge.marker_end, bounds, window);
+            if edge.animated
+                && let Some(t) = self.phase
+            {
+                let i = (t * (route.points.len().saturating_sub(1)) as f32) as usize;
+                if let Some(p) = route.points.get(i) {
+                    let p = pixel(self.viewport.screen(*p)) + bounds.origin;
+                    window.paint_quad(fill(
+                        Bounds::new(p - point(px(2.), px(2.)), gpui_kit::size(px(4.), px(4.))),
+                        self.accent.to_hsla(),
+                    ));
                 }
-                self.markers(route, edge.marker_start, edge.marker_end, bounds, window);
-                if edge.animated
-                    && let Some(t) = self.phase
-                {
-                    // A moving bead follows the cached polyline; only visible animated edges request
-                    // frames, and never under reduced motion.
-                    let i = (t * (route.points.len().saturating_sub(1)) as f32) as usize;
-                    if let Some(p) = route.points.get(i) {
-                        let p = pixel(self.viewport.screen(*p)) + bounds.origin;
-                        window.paint_quad(fill(
-                            Bounds::new(p - point(px(2.), px(2.)), gpui_kit::size(px(4.), px(4.))),
-                            self.accent.to_hsla(),
-                        ));
-                    }
-                    window.request_animation_frame();
-                }
+                window.request_animation_frame();
             }
         }
         let edge_us = edge_started.elapsed().as_micros();
@@ -748,6 +807,7 @@ mod tests {
         w.update(cx, |_, w, cx| w.render_frame(cx))
             .expect("warm frame");
         assert_eq!(v.read_with(cx, |v, _| v.meshes.borrow().misses), 0);
+        assert_eq!(v.read_with(cx, |v, _| v.meshes.borrow().batches), 1);
     }
     #[test]
     fn review2_drag_frames_share_origin_storage() {
@@ -780,5 +840,36 @@ mod tests {
         };
         assert!(storage(&a).is_some());
         assert_eq!(storage(&a), storage(&b));
+    }
+    #[test]
+    fn review2_batched_transform_preserves_geometry_and_reserved_storage() {
+        let graph = Graph::from_parts(
+            [
+                Node::new(1, "", WorldPoint::default()),
+                Node::new(2, "", WorldPoint::new(400., 100.)),
+            ],
+            [],
+        )
+        .expect("graph");
+        let route = EdgePath::new(&graph, &Edge::new(1, 1, 2), None, None).expect("route");
+        let source = mesh(&route).expect("mesh");
+        let viewport = Viewport {
+            pan: WorldPoint::new(-100., 50.),
+            zoom: 1.5,
+        };
+        let origin = point(px(20.), px(30.));
+        let expected = transformed_mesh(&source, viewport, origin);
+        let mut batch = Path::new(origin);
+        batch.vertices.reserve_exact(source.vertices.len() * 20);
+        let ptr = batch.vertices.as_ptr();
+        for _ in 0..20 {
+            append_transformed(&mut batch, &source, viewport, origin);
+            assert_eq!(batch.vertices.as_ptr(), ptr);
+        }
+        assert_eq!(batch.vertices.len(), expected.vertices.len() * 20);
+        for (actual, expected) in batch.vertices.iter().zip(&expected.vertices) {
+            assert_eq!(actual.xy_position, expected.xy_position);
+            assert!(batch.bounds.contains(&actual.xy_position));
+        }
     }
 }
