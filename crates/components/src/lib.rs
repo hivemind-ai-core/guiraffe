@@ -13,7 +13,7 @@ pub mod segmented;
 mod style;
 pub mod typography;
 
-pub use highlight::{Highlight, Mark, split_highlights};
+pub use highlight::{Highlight, Mark, highlight_ranges};
 pub use icons::{ActionIcon, ThemeIcon, close_button};
 pub use misc::{Blockquote, Indicator, IndicatorPosition, Pill};
 pub use paper::{Card, CardSection, Paper};
@@ -25,4 +25,5 @@ pub use typography::{Text, Title};
 pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_core::init(cx);
     guiraffe_motion::init(cx);
+    segmented::init(cx);
 }

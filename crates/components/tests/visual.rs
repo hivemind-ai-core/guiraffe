@@ -9,7 +9,9 @@ use guiraffe_components::*;
 use guiraffe_core::{ColorName, GuiraffeTheme, Scheme, Size, Variant, apply};
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 
-struct KitchenSink;
+struct KitchenSink {
+    segmented: gpui_kit::Entity<SegmentedControl>,
+}
 
 impl Render for KitchenSink {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -23,6 +25,7 @@ impl Render for KitchenSink {
             .gap(px(12.0))
             .child(Title::new("GUIraffe").order(2))
             .child(Text::new("Rich, fast desktop UI").dimmed(true))
+            .child(self.segmented.clone())
             .child(Highlight::new("Highlight the important words").term("important"))
             .child(
                 div()
@@ -40,21 +43,31 @@ impl Render for KitchenSink {
                         Indicator::new(ThemeIcon::new(IconName::Inbox).color(ColorName::Grape))
                             .label("3"),
                     )
-                    .child(Pill::new("p", "React").on_remove(|_, _| {}))
+                    .child(Pill::new("p", "React").on_remove(|_, _, _| {}))
                     .child(
                         RingProgress::new()
-                            .size(56.0)
+                            .diameter(56.0)
                             .thickness(7.0)
                             .section(40.0, ColorName::Blue)
                             .section(25.0, ColorName::Orange),
                     ),
             )
             .child(
-                Card::new().child(Title::new("Card title").order(4)).child(
-                    Text::new("Cards group related content on a raised surface.")
-                        .size(Size::Sm)
-                        .dimmed(true),
-                ),
+                Card::new()
+                    .section(
+                        CardSection::new().child(
+                            div().h(px(36.)).bg(GuiraffeTheme::global(cx)
+                                .variant(Some(ColorName::Violet), Variant::Light)
+                                .background
+                                .to_hsla()),
+                        ),
+                    )
+                    .child(Title::new("Card title").order(4))
+                    .child(
+                        Text::new("Cards group related content on a raised surface.")
+                            .size(Size::Sm)
+                            .dimmed(true),
+                    ),
             )
             .child(
                 Blockquote::new()
@@ -78,8 +91,12 @@ fn render(scheme: Scheme) -> image::RgbaImage {
                 cx,
             );
         });
-    snap.render(size(px(560.), px(420.)), |_, cx| cx.new(|_| KitchenSink))
-        .unwrap_or_else(|e| panic!("{e:#}"))
+    snap.render(size(px(560.), px(500.)), |_, cx| {
+        let segmented = SegmentedControl::new(["Preview", "Code", "Export"], cx);
+        segmented.update(cx, |s, cx| s.select(1, cx));
+        cx.new(|_| KitchenSink { segmented })
+    })
+    .unwrap_or_else(|e| panic!("{e:#}"))
 }
 
 #[test]

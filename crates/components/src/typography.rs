@@ -36,7 +36,7 @@ impl Text {
 crate::props!(Text { size: Size => size, dimmed: bool => dimmed, truncate: bool => truncate });
 
 impl Text {
-    pub fn c(mut self, color: ColorName) -> Self {
+    pub fn color(mut self, color: ColorName) -> Self {
         self.color = Some(color);
         self
     }
@@ -75,7 +75,7 @@ impl RenderOnce for Text {
         if self.truncate {
             el = el.truncate();
         }
-        let el = gpui_kit::base::StyledExt::refine_style(el, &self.style);
+        let el = crate::style::refine(el, &self.style);
         el.child(self.text)
     }
 }
@@ -129,7 +129,7 @@ impl RenderOnce for Title {
             .line_height(px(fs * lh))
             .font_weight(FontWeight::BOLD)
             .text_color(hsla(surfaces(cx).text));
-        let el = gpui_kit::base::StyledExt::refine_style(el, &self.style);
+        let el = crate::style::refine(el, &self.style);
         el.child(self.text)
     }
 }

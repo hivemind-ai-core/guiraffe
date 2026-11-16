@@ -1,8 +1,8 @@
 //! ThemeIcon, ActionIcon and CloseButton.
 
 use gpui_kit::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, Styled, Window,
-    component::IconName, div, prelude::*, px,
+    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, StyleRefinement, Styled,
+    Window, component::IconName, div, prelude::*, px,
 };
 use guiraffe_core::{ColorName, Size, Variant};
 
@@ -16,6 +16,7 @@ pub struct ThemeIcon {
     color: Option<ColorName>,
     variant: Variant,
     radius: Option<Size>,
+    style: StyleRefinement,
 }
 
 impl ThemeIcon {
@@ -26,6 +27,7 @@ impl ThemeIcon {
             color: None,
             variant: Variant::Filled,
             radius: None,
+            style: StyleRefinement::default(),
         }
     }
     pub fn color(mut self, c: ColorName) -> Self {
@@ -35,6 +37,7 @@ impl ThemeIcon {
 }
 
 crate::props!(ThemeIcon { size: Size => size, variant: Variant => variant });
+crate::styled!(ThemeIcon, ActionIcon);
 
 impl ThemeIcon {
     pub fn radius(mut self, r: Size) -> Self {
@@ -52,7 +55,7 @@ impl RenderOnce for ThemeIcon {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let v = variant(cx, self.color, self.variant);
         let side = px(icon_box(self.size));
-        div()
+        let el = div()
             .size(side)
             .flex()
             .items_center()
@@ -63,7 +66,8 @@ impl RenderOnce for ThemeIcon {
             .border_color(hsla(v.border))
             .text_color(hsla(v.foreground))
             .text_size(px(self.size.icon_size()))
-            .child(self.icon)
+            .child(self.icon);
+        crate::style::refine(el, &self.style)
     }
 }
 
@@ -79,6 +83,7 @@ pub struct ActionIcon {
     variant: Variant,
     disabled: bool,
     on_click: Option<OnClick>,
+    style: StyleRefinement,
 }
 
 impl ActionIcon {
@@ -91,6 +96,7 @@ impl ActionIcon {
             variant: Variant::Subtle,
             disabled: false,
             on_click: None,
+            style: StyleRefinement::default(),
         }
     }
     pub fn color(mut self, c: ColorName) -> Self {
@@ -110,7 +116,7 @@ impl RenderOnce for ActionIcon {
         let v = variant(cx, self.color, self.variant);
         let side = px(icon_box(self.size));
         let hover = hsla(v.hover);
-        let mut el = div()
+        let mut el = crate::style::refine(div(), &self.style)
             .id(self.id)
             .size(side)
             .flex()

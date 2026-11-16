@@ -1,27 +1,24 @@
 //! Blockquote, Indicator and Pill.
 
 use gpui_kit::{
-    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
-    Window, div, prelude::*, px,
+    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    StyleRefinement, Window, div, prelude::*, px,
 };
 use guiraffe_core::{ColorName, Size, Variant};
 
-use crate::style::{hsla, radius, surfaces, theme, variant};
+use crate::style::{hsla, metrics, radius, refine, surfaces, variant};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, Default)]
 pub struct Blockquote {
     color: Option<ColorName>,
     cite: Option<SharedString>,
     children: Vec<AnyElement>,
+    style: StyleRefinement,
 }
 
 impl Blockquote {
     pub fn new() -> Self {
-        Self {
-            color: None,
-            cite: None,
-            children: Vec::new(),
-        }
+        Self::default()
     }
     pub fn color(mut self, c: ColorName) -> Self {
         self.color = Some(c);
@@ -33,11 +30,7 @@ impl Blockquote {
     }
 }
 
-impl Default for Blockquote {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+crate::styled!(Blockquote, Indicator, Pill);
 
 impl ParentElement for Blockquote {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
@@ -50,7 +43,7 @@ impl RenderOnce for Blockquote {
         let v = variant(cx, self.color, Variant::Light);
         let accent = variant(cx, self.color, Variant::Filled).background;
         let s = surfaces(cx);
-        div()
+        let el = div()
             .flex()
             .flex_col()
             .gap(px(Size::Xs.spacing()))
@@ -59,7 +52,8 @@ impl RenderOnce for Blockquote {
             .text_color(hsla(s.text))
             .border_l_4()
             .border_color(hsla(accent))
-            .rounded_r(radius(None, cx))
+            .rounded_r(radius(None, cx));
+        refine(el, &self.style)
             .children(self.children)
             .when_some(self.cite, |el, c| {
                 el.child(
@@ -89,7 +83,9 @@ pub struct Indicator {
     label: Option<SharedString>,
     color: Option<ColorName>,
     position: IndicatorPosition,
+    size: Size,
     disabled: bool,
+    style: StyleRefinement,
 }
 
 impl Indicator {
@@ -99,7 +95,9 @@ impl Indicator {
             label: None,
             color: None,
             position: IndicatorPosition::TopEnd,
+            size: Size::Sm,
             disabled: false,
+            style: StyleRefinement::default(),
         }
     }
     pub fn label(mut self, l: impl Into<SharedString>) -> Self {
@@ -110,52 +108,47 @@ impl Indicator {
         self.color = Some(c);
         self
     }
-    pub fn position(mut self, p: IndicatorPosition) -> Self {
-        self.position = p;
-        self
-    }
-    pub fn disabled(mut self, d: bool) -> Self {
-        self.disabled = d;
-        self
-    }
 }
+
+crate::props!(Indicator { position: IndicatorPosition => position, size: Size => size, disabled: bool => disabled });
 
 impl RenderOnce for Indicator {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let v = variant(cx, self.color, Variant::Filled);
-        let body = hsla(surfaces(cx).body);
-        let dot = match &self.label {
+        let ring = hsla(surfaces(cx).body);
+        let (dot, badge) = (metrics::dot(self.size), metrics::badge_height(self.size));
+        let offset = px(-(if self.label.is_some() { badge } else { dot }) / 3.0);
+        let mark = match &self.label {
             Some(_) => div()
-                .min_w(px(16.0))
-                .h(px(16.0))
-                .px(px(4.0))
-                .text_size(px(10.0)),
-            None => div().size(px(10.0)),
+                .min_w(px(badge))
+                .h(px(badge))
+                .px(px(metrics::gap(self.size)))
+                .text_size(px(Size::Xs.font_size() * 0.85)),
+            None => div().size(px(dot)),
         }
         .absolute()
         .rounded_full()
         .bg(hsla(v.background))
         .text_color(hsla(v.foreground))
         .border_2()
-        .border_color(body)
+        .border_color(ring)
         .flex()
         .items_center()
         .justify_center()
         .when_some(self.label, |el, l| el.child(l));
-        let dot = match self.position {
-            IndicatorPosition::TopEnd => dot.top(px(-4.0)).right(px(-4.0)),
-            IndicatorPosition::TopStart => dot.top(px(-4.0)).left(px(-4.0)),
-            IndicatorPosition::BottomEnd => dot.bottom(px(-4.0)).right(px(-4.0)),
-            IndicatorPosition::BottomStart => dot.bottom(px(-4.0)).left(px(-4.0)),
+        let mark = match self.position {
+            IndicatorPosition::TopEnd => mark.top(offset).right(offset),
+            IndicatorPosition::TopStart => mark.top(offset).left(offset),
+            IndicatorPosition::BottomEnd => mark.bottom(offset).right(offset),
+            IndicatorPosition::BottomStart => mark.bottom(offset).left(offset),
         };
-        div()
-            .relative()
+        refine(div().relative(), &self.style)
             .child(self.child)
-            .when(!self.disabled, |el| el.child(dot))
+            .when(!self.disabled, |el| el.child(mark))
     }
 }
 
-type OnRemove = Box<dyn Fn(&mut Window, &mut App) + 'static>;
+type OnRemove = Box<dyn Fn(&ElementId, &mut Window, &mut App) + 'static>;
 
 /// A compact rounded label, optionally removable.
 #[derive(IntoElement)]
@@ -164,6 +157,7 @@ pub struct Pill {
     label: SharedString,
     size: Size,
     on_remove: Option<OnRemove>,
+    style: StyleRefinement,
 }
 
 impl Pill {
@@ -173,45 +167,41 @@ impl Pill {
             label: label.into(),
             size: Size::Sm,
             on_remove: None,
+            style: StyleRefinement::default(),
         }
     }
-    pub fn size(mut self, s: Size) -> Self {
-        self.size = s;
-        self
-    }
-    pub fn on_remove(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+    /// Called with the pill's id when its × is clicked.
+    pub fn on_remove(mut self, f: impl Fn(&ElementId, &mut Window, &mut App) + 'static) -> Self {
         self.on_remove = Some(Box::new(f));
         self
     }
 }
 
+crate::props!(Pill { size: Size => size });
+
 impl RenderOnce for Pill {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let s = surfaces(cx);
-        let dark = theme(cx).scheme == guiraffe_core::Scheme::Dark;
-        let bg = if dark {
-            s.hover
-        } else {
-            guiraffe_core::ColorName::Gray.shade(1)
-        };
         let id = self.id.clone();
-        div()
-            .id(self.id)
+        let el = div()
             .flex()
             .items_center()
-            .gap(px(4.0))
-            .h(px(self.size.control_height() * 0.6))
+            .gap(px(metrics::gap(self.size)))
+            .h(px(metrics::pill_height(self.size)))
             .px(px(self.size.spacing() * 0.75))
             .rounded_full()
-            .bg(hsla(bg))
+            .bg(hsla(s.track))
             .text_color(hsla(s.text))
-            .text_size(px(self.size.font_size() * 0.9))
+            .text_size(px(self.size.font_size()));
+        refine(el, &self.style)
+            .id(self.id)
             .child(self.label)
             .when_some(self.on_remove, move |el, f| {
+                let pill = id.clone();
                 el.child(
                     crate::icons::close_button((id, "remove"))
                         .size(Size::Xs)
-                        .on_click(move |_, w, cx| f(w, cx)),
+                        .on_click(move |_, w, cx| f(&pill, w, cx)),
                 )
             })
     }

@@ -31,7 +31,7 @@ pub fn arc_spans(values: &[f32]) -> Vec<(f32, f32)> {
 #[derive(IntoElement)]
 pub struct RingProgress {
     sections: Vec<(f32, ColorName)>,
-    size: f32,
+    diameter: f32,
     thickness: f32,
     label: Option<SharedString>,
 }
@@ -40,7 +40,7 @@ impl RingProgress {
     pub fn new() -> Self {
         Self {
             sections: Vec::new(),
-            size: 120.0,
+            diameter: 120.0,
             thickness: 12.0,
             label: None,
         }
@@ -49,8 +49,9 @@ impl RingProgress {
         self.sections.push((value, color));
         self
     }
-    pub fn size(mut self, px: f32) -> Self {
-        self.size = if px.is_finite() { px.max(8.0) } else { 120.0 };
+    /// Outer diameter in pixels.
+    pub fn diameter(mut self, px: f32) -> Self {
+        self.diameter = if px.is_finite() { px.max(8.0) } else { 120.0 };
         self
     }
     pub fn thickness(mut self, px: f32) -> Self {
@@ -89,14 +90,14 @@ fn arc(
         let a = f * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
         point(c.x + px(r * a.cos()), c.y + px(r * a.sin()))
     };
-    // A full circle can't be one arc command; draw two halves.
-    let to = to.min(from + 0.9999);
+    // Arc commands can't draw a full circle and must stay ≤ 180° each, so split into halves.
+    // A full turn ends exactly where it starts (no seam).
+    let span = (to - from).min(1.0);
     let mut b = PathBuilder::stroke(px(thickness));
     b.move_to(at(from));
-    let mid = (from + to) / 2.0;
-    for (seg_end, large) in [(mid, false), (to, false)] {
-        b.arc_to(point(px(r), px(r)), px(0.0), large, true, at(seg_end));
-    }
+    let mid = from + span / 2.0;
+    b.arc_to(point(px(r), px(r)), px(0.0), false, true, at(mid));
+    b.arc_to(point(px(r), px(r)), px(0.0), false, true, at(from + span));
     if let Ok(path) = b.build() {
         window.paint_path(path, color);
     }
@@ -104,15 +105,17 @@ fn arc(
 
 impl RenderOnce for RingProgress {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let track = hsla(surfaces(cx).hover);
+        let s = surfaces(cx);
+        let track = hsla(s.track);
         let spans = arc_spans(&self.sections.iter().map(|(v, _)| *v).collect::<Vec<_>>());
         let colors: Vec<Hsla> = self
             .sections
             .iter()
             .map(|(_, c)| hsla(variant(cx, Some(*c), Variant::Filled).background))
             .collect();
-        let thickness = self.thickness.min(self.size / 2.0);
-        let side = px(self.size);
+        // Keep a positive radius so even an over-thick ring draws (as a near-solid disc).
+        let thickness = self.thickness.min(self.diameter / 2.0 - 1.0).max(1.0);
+        let side = px(self.diameter);
         div()
             .relative()
             .size(side)
@@ -132,6 +135,7 @@ impl RenderOnce for RingProgress {
                 .absolute()
                 .size_full(),
             )
+            .text_color(hsla(s.text))
             .when_some(self.label, |el, l| el.child(l))
     }
 }
