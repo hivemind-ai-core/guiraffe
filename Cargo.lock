@@ -3375,6 +3375,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-router"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-state",
+]
+
+[[package]]
 name = "guiraffe-state"
 version = "0.1.0"
 dependencies = [

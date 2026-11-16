@@ -54,7 +54,11 @@ impl Location {
             Some((p, q)) => (p, Some(q)),
             None => (input, None),
         };
-        let segments = path.split('/').filter(|s| !s.is_empty()).map(decode).collect::<Option<Vec<_>>>()?;
+        let segments = path
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(decode)
+            .collect::<Option<Vec<_>>>()?;
         let query = match query {
             None => Vec::new(),
             Some(q) => q
@@ -70,16 +74,33 @@ impl Location {
     }
 
     pub fn query_value(&self, key: &str) -> Option<&str> {
-        self.query.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.query
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Format back to a string (canonical: leading `/`, encoded components).
     pub fn format(&self) -> String {
         let mut s = String::from("/");
-        s.push_str(&self.segments.iter().map(|x| encode(x)).collect::<Vec<_>>().join("/"));
+        s.push_str(
+            &self
+                .segments
+                .iter()
+                .map(|x| encode(x))
+                .collect::<Vec<_>>()
+                .join("/"),
+        );
         if !self.query.is_empty() {
             s.push('?');
-            s.push_str(&self.query.iter().map(|(k, v)| format!("{}={}", encode(k), encode(v))).collect::<Vec<_>>().join("&"));
+            s.push_str(
+                &self
+                    .query
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
+                    .collect::<Vec<_>>()
+                    .join("&"),
+            );
         }
         s
     }
@@ -108,7 +129,10 @@ mod tests {
         assert_eq!(l.query_value("q"), Some("a b"));
         assert_eq!(l.query_value("flag"), Some(""));
         assert_eq!(l.format(), "/projects/42?tab=files&q=a%20b&flag=");
-        assert_eq!(Location::parse("/").map(|l| l.format()).as_deref(), Some("/"));
+        assert_eq!(
+            Location::parse("/").map(|l| l.format()).as_deref(),
+            Some("/")
+        );
         assert_eq!(Location::parse("/a%zz"), None);
     }
 }

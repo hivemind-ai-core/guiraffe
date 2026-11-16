@@ -64,6 +64,7 @@ macro_rules! routes {
             fn parse_location(loc: &$crate::Location) -> ::core::option::Option<Self> {
                 $(
                     if let ::core::option::Option::Some(caps) = $crate::matcher::match_pattern($pat, &loc.segments) {
+                        #[allow(clippy::redundant_closure_call)]
                         let built: ::core::option::Option<Self> = (|| {
                             ::core::option::Option::Some($name::$var {
                                 $($( $f: $crate::matcher::field::<$t>(stringify!($f), &caps, loc)? ),*)?

@@ -10,9 +10,10 @@ workspace = true
 
 [dependencies]
 gpui-kit.workspace = true
+guiraffe-state.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
 
 [features]
-gpui-fast = ["gpui-kit/gpui-fast"]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-state/gpui-fast"]
