@@ -16,3 +16,4 @@
 - [ ] windows: tear-off panels between windows (dock-host port), parent/child + modal windows
 - [ ] windows: example app (examples/multi.rs)
 - [ ] core: style helper traits (.p_size, .radius_size, .shadow_size) once layout lands
+- [ ] timeline follow-ups (review nits): Days ticks align to epoch (weeks start Thursday; "months" are 30d) — use calendar-aware steps; Gantt rows are not virtualized (fine < ~1k tasks); dope sheet has no ruler yet.
