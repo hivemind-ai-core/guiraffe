@@ -8,7 +8,8 @@
 use std::cell::RefCell;
 
 use gpui_kit::{
-    AnyElement, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Window,
+    AnyElement, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
+    LayoutId, Pixels, Window,
 };
 
 use crate::tokens::Size;
@@ -62,7 +63,12 @@ pub struct StyleContext {
 
 impl Default for StyleContext {
     fn default() -> Self {
-        Self { density: Density::Comfortable, control_size: Size::Sm, surface: SurfaceKind::Body, emphasis: Emphasis::Default }
+        Self {
+            density: Density::Comfortable,
+            control_size: Size::Sm,
+            surface: SurfaceKind::Body,
+            emphasis: Emphasis::Default,
+        }
     }
 }
 
@@ -73,7 +79,9 @@ thread_local! {
 impl StyleContext {
     /// The context in effect for the widget currently rendering.
     pub fn current() -> StyleContext {
-        STACK.with(|s| s.borrow().last().copied()).unwrap_or_default()
+        STACK
+            .with(|s| s.borrow().last().copied())
+            .unwrap_or_default()
     }
 
     /// Run `f` with `self` as the current context (for code that builds elements eagerly).
@@ -86,7 +94,10 @@ impl StyleContext {
         Self { density, ..self }
     }
     pub fn with_control_size(self, control_size: Size) -> Self {
-        Self { control_size, ..self }
+        Self {
+            control_size,
+            ..self
+        }
     }
     pub fn with_surface(self, surface: SurfaceKind) -> Self {
         Self { surface, ..self }
@@ -114,21 +125,65 @@ impl Drop for Push {
     }
 }
 
-/// Provide `context` (computed from the parent's) to everything rendered inside `child`.
-pub fn provide(f: impl FnOnce(StyleContext) -> StyleContext, child: impl IntoElement) -> Provide {
-    Provide { context: f(StyleContext::current()), resolved: None, child: Some(child.into_any_element()), make: None }
+/// A partial override of the inherited context. Applied at *layout time* to whatever context
+/// encloses the provider, so nested providers compose correctly. `Copy`, no allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct StylePatch {
+    pub density: Option<Density>,
+    pub control_size: Option<Size>,
+    pub surface: Option<SurfaceKind>,
+    pub emphasis: Option<Emphasis>,
 }
 
-/// A provider that derives its context lazily at layout time from the enclosing one.
-pub fn provide_with(f: impl Fn(StyleContext) -> StyleContext + 'static, child: impl IntoElement) -> Provide {
-    Provide { context: StyleContext::default(), resolved: None, child: Some(child.into_any_element()), make: Some(Box::new(f)) }
+impl StylePatch {
+    pub const fn new() -> Self {
+        Self {
+            density: None,
+            control_size: None,
+            surface: None,
+            emphasis: None,
+        }
+    }
+    pub const fn density(mut self, v: Density) -> Self {
+        self.density = Some(v);
+        self
+    }
+    pub const fn control_size(mut self, v: Size) -> Self {
+        self.control_size = Some(v);
+        self
+    }
+    pub const fn surface(mut self, v: SurfaceKind) -> Self {
+        self.surface = Some(v);
+        self
+    }
+    pub const fn emphasis(mut self, v: Emphasis) -> Self {
+        self.emphasis = Some(v);
+        self
+    }
+    /// Apply on top of `base`.
+    pub fn apply(self, base: StyleContext) -> StyleContext {
+        StyleContext {
+            density: self.density.unwrap_or(base.density),
+            control_size: self.control_size.unwrap_or(base.control_size),
+            surface: self.surface.unwrap_or(base.surface),
+            emphasis: self.emphasis.unwrap_or(base.emphasis),
+        }
+    }
+}
+
+/// Provide `patch` (over the enclosing context) to everything rendered inside `child`.
+pub fn provide(patch: StylePatch, child: impl IntoElement) -> Provide {
+    Provide {
+        patch,
+        resolved: None,
+        child: Some(child.into_any_element()),
+    }
 }
 
 pub struct Provide {
-    context: StyleContext,
+    patch: StylePatch,
     resolved: Option<StyleContext>,
     child: Option<AnyElement>,
-    make: Option<Box<dyn Fn(StyleContext) -> StyleContext>>,
 }
 
 impl IntoElement for Provide {
@@ -150,25 +205,54 @@ impl Element for Provide {
         None
     }
 
-    fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, AnyElement) {
-        let ctx = match &self.make {
-            Some(f) => f(StyleContext::current()),
-            None => self.context,
-        };
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, AnyElement) {
+        let ctx = self.patch.apply(StyleContext::current());
         self.resolved = Some(ctx);
         let _guard = Push::new(ctx);
-        let mut child = self.child.take().unwrap_or_else(|| gpui_kit::Empty.into_any_element());
+        let mut child = self
+            .child
+            .take()
+            .unwrap_or_else(|| gpui_kit::Empty.into_any_element());
         let id = child.request_layout(window, cx);
         (id, child)
     }
 
-    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, child: &mut AnyElement, window: &mut Window, cx: &mut App) {
-        let _guard = Push::new(self.resolved.unwrap_or(self.context));
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        child: &mut AnyElement,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let _guard = Push::new(
+            self.resolved
+                .unwrap_or_else(|| self.patch.apply(StyleContext::current())),
+        );
         child.prepaint(window, cx);
     }
 
-    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, child: &mut AnyElement, _: &mut (), window: &mut Window, cx: &mut App) {
-        let _guard = Push::new(self.resolved.unwrap_or(self.context));
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        child: &mut AnyElement,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let _guard = Push::new(
+            self.resolved
+                .unwrap_or_else(|| self.patch.apply(StyleContext::current())),
+        );
         child.paint(window, cx);
     }
 }
@@ -180,23 +264,57 @@ mod tests {
     #[test]
     fn default_and_scoped_nesting_restores() {
         assert_eq!(StyleContext::current(), StyleContext::default());
-        let toolbar = StyleContext::default().with_control_size(Size::Xs).with_emphasis(Emphasis::Quiet);
+        let toolbar = StyleContext::default()
+            .with_control_size(Size::Xs)
+            .with_emphasis(Emphasis::Quiet);
         toolbar.scope(|| {
             assert_eq!(StyleContext::current().control_size, Size::Xs);
-            StyleContext::current().with_density(Density::Compact).scope(|| {
-                let c = StyleContext::current();
-                assert_eq!((c.control_size, c.density, c.emphasis), (Size::Xs, Density::Compact, Emphasis::Quiet), "inherits");
-            });
-            assert_eq!(StyleContext::current().density, Density::Comfortable, "restored after inner scope");
+            StyleContext::current()
+                .with_density(Density::Compact)
+                .scope(|| {
+                    let c = StyleContext::current();
+                    assert_eq!(
+                        (c.control_size, c.density, c.emphasis),
+                        (Size::Xs, Density::Compact, Emphasis::Quiet),
+                        "inherits"
+                    );
+                });
+            assert_eq!(
+                StyleContext::current().density,
+                Density::Comfortable,
+                "restored after inner scope"
+            );
         });
         assert_eq!(StyleContext::current(), StyleContext::default());
     }
 
     #[test]
     fn panic_inside_scope_restores_stack() {
-        let r = std::panic::catch_unwind(|| StyleContext::default().with_control_size(Size::Xl).scope(|| panic!("boom")));
+        let r = std::panic::catch_unwind(|| {
+            StyleContext::default()
+                .with_control_size(Size::Xl)
+                .scope(|| panic!("boom"))
+        });
         assert!(r.is_err());
         assert_eq!(StyleContext::current(), StyleContext::default());
+    }
+
+    #[test]
+    fn patches_compose_over_the_enclosing_context() {
+        let outer = StylePatch::new()
+            .control_size(Size::Xs)
+            .emphasis(Emphasis::Quiet)
+            .apply(StyleContext::default());
+        let inner = StylePatch::new().density(Density::Compact).apply(outer);
+        assert_eq!(
+            (inner.control_size, inner.emphasis, inner.density),
+            (Size::Xs, Emphasis::Quiet, Density::Compact)
+        );
+        assert_eq!(
+            StylePatch::new().apply(outer),
+            outer,
+            "empty patch is identity"
+        );
     }
 
     #[test]

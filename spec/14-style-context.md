@@ -33,8 +33,11 @@ hatches, not the normal way to style things.
   nothing per frame when cached.
 - Cached and retained subtrees: a context change (density or scheme switch) refreshes the window,
   which is rare and acceptable. Views take the context into their cache key.
-- ⚠ The first implementation task is a spike that verifies the render-order assumption on both
-  backends (upstream and gpui-fast retained rendering), with tests.
+- ✅ **Verified** (`crates/core/src/gpui_tests.rs::style_context`, on both backends). Context reaches stateless
+  components, nested providers and child views, and the stack is restored after each provider and after the frame.
+- Providers carry a `Copy` **`StylePatch`** (optional fields) that is applied *at layout time* over the enclosing
+  context. The spike showed that resolving eagerly at build time breaks nesting, because a nested provider is built
+  while its parent is still rendering, before the outer provider is on the stack.
 
 ## Consequences for existing crates
 - **layout:** Stack, Group, Grid, AppShell and Card become context providers with recipe defaults.
