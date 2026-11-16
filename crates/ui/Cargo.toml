@@ -1,0 +1,26 @@
+[package]
+name = "guiraffe-ui"
+description = "Data-driven UI for GUIraffe: a document IR, pre-compiled templates with slot-indexed bindings, and a DataUi host embeddable anywhere in a static UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-components.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+guiraffe-ui = { path = ".", features = ["test-support"] }
+serde_json.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
+# Exposes document ids as debug selectors for interaction/e2e tests.
+test-support = ["gpui-kit/test-support"]

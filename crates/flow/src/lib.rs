@@ -436,7 +436,7 @@ impl Render for Flow {
                         if bounds.get() != b {
                             bounds.set(b);
                             cx.defer(move |cx| {
-                                let _ = weak.update(cx, |_, cx| cx.notify());
+                                cx.notify(weak.entity_id());
                             });
                         }
                     },
