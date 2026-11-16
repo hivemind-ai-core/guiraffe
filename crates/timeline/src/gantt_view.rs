@@ -369,3 +369,68 @@ impl Render for GanttView {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tasks() -> Vec<Task> {
+        vec![
+            Task {
+                id: 1,
+                name: "a".into(),
+                not_before: 0.0,
+                duration: 2.0,
+                after: vec![],
+            },
+            Task {
+                id: 2,
+                name: "b".into(),
+                not_before: 0.0,
+                duration: 1.0,
+                after: vec![1],
+            },
+        ]
+    }
+
+    #[test]
+    fn rescheduling_moves_dependents_and_emits() {
+        let mut cx = gpui_kit::TestAppContext::single();
+        let view = cx.update(|cx| GanttView::new(tasks(), TimeFormat::Seconds, cx));
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let ev = events.clone();
+        let _sub = cx.update(|cx| {
+            cx.subscribe(&view, move |_, e: &GanttEvent, _| {
+                ev.borrow_mut().push(e.clone())
+            })
+        });
+        view.update(&mut cx, |v, cx| v.reschedule(1, 5.0, cx));
+        let b = view.read_with(&cx, |v, _| {
+            v.schedule().as_ref().ok().and_then(|m| m.get(&2).copied())
+        });
+        assert_eq!(b.map(|s| s.early_start), Some(7.0));
+        assert_eq!(
+            *events.borrow(),
+            vec![GanttEvent::Rescheduled {
+                id: 1,
+                not_before: 5.0
+            }]
+        );
+        // No-op and non-finite moves emit nothing.
+        view.update(&mut cx, |v, cx| {
+            v.reschedule(1, 5.0, cx);
+            v.reschedule(1, f64::NAN, cx);
+            v.reschedule(99, 1.0, cx);
+        });
+        assert_eq!(events.borrow().len(), 1);
+    }
+
+    #[test]
+    fn cycles_surface_as_errors_not_panics() {
+        let mut t = tasks();
+        t[0].after = vec![2];
+        let mut cx = gpui_kit::TestAppContext::single();
+        let view = cx.update(|cx| GanttView::new(t, TimeFormat::Seconds, cx));
+        assert!(view.read_with(&cx, |v, _| v.schedule().is_err()));
+    }
+}
