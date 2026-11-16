@@ -1,0 +1,30 @@
+[package]
+name = "guiraffe-cli"
+description = "The guiraffe command: scaffold apps, preview data-UI documents with hot reload, import Mocket designs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "guiraffe"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-components.workspace = true
+guiraffe-ui.workspace = true
+guiraffe-mocket.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+toml = "0.8"
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
