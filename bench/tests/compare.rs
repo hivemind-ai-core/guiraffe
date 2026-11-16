@@ -288,3 +288,27 @@ fn startup_recovers_stale_prefixed_checkout_but_preserves_locked_owner() -> Resu
     fixture.assert_clean_worktrees()?;
     Ok(())
 }
+
+#[test]
+fn comparison_creates_fresh_new_sources_after_old_build() -> Result<()> {
+    let fixture = Fixture::new(100., 50.)?;
+    let cargo = fixture.tools.join("cargo");
+    let script=fs::read_to_string(&cargo)?.replace(
+        "value = float(pathlib.Path('timing').read_text())",
+        "if exe.exists() and exe.stat().st_mtime_ns >= pathlib.Path('timing').stat().st_mtime_ns:\n    print(json.dumps({'reason': 'compiler-artifact', 'target': {'name': 'guiraffe-bench', 'kind': ['bin']}, 'executable': str(exe)}))\n    sys.exit(0)\nvalue = float(pathlib.Path('timing').read_text())",
+    );
+    fs::write(cargo, script)?;
+    let output = fixture.compare()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("improvement"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fixture.assert_clean_worktrees()?;
+    Ok(())
+}

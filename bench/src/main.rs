@@ -227,9 +227,11 @@ fn compare(args: CompareOptions) -> Result<()> {
     let new_commit = revision::resolve(&root, &new_ref, &source.commit, source.dirty)?;
     revision::recover(&root)?;
     let old = Revision::create(&root, &old_commit)?;
-    let new = Revision::create(&root, &new_commit)?;
     eprintln!("building old revision {old_ref}");
     let old_binary = old.build()?;
+    // Create the second checkout after the first build: shared Cargo caches
+    // must see new source mtimes rather than reuse the first revision's locals.
+    let new = Revision::create(&root, &new_commit)?;
     eprintln!("building new revision {new_ref}");
     let new_binary = new.build()?;
     let mut old_meta = metadata(&old.path, &options.profile, &options.notes)?;
