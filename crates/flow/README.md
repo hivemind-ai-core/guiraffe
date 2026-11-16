@@ -103,3 +103,10 @@ Run both backends with `cargo test -p guiraffe-flow-core -p guiraffe-flow` and
 The local `gpui-fast` feature also forwards the backend feature. Render-isolation
 tests use `gpui_kit::GPUI_FAST` to distinguish the selected backend; upstream GPUI
 can redraw ancestors for a child change, whereas gpui-fast isolates these leaves.
+
+## Migration note (review 2)
+- `Flow` is now an alias of `FlowState` (the model). Camera changes live on a separate leaf entity, so
+  **`FlowEvent::ViewportChanged` is emitted on `flow.viewport_entity()`, not on `Flow`**. Subscribe there
+  for pan/zoom. This split is what keeps panning from re-rendering the host on gpui-fast.
+- `Changed` / `SelectionChanged` are currently emitted on both the model and the viewport entity:
+  subscribe to one of them (follow-up: emit on the model only).
