@@ -1,0 +1,24 @@
+[package]
+name = "guiraffe-mocket"
+description = "Import Mocket designs into GUIraffe data-UI documents (library, CLI, and mocket.plugin/1 plugin)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+guiraffe-ui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "guiraffe-mocket"
+path = "src/main.rs"
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot"] }
+guiraffe-components.workspace = true
+guiraffe-core.workspace = true
