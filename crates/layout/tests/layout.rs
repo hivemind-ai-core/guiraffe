@@ -170,15 +170,24 @@ impl Render for OffsetGridHarness {
 }
 
 #[gpui_kit::test]
-fn an_offset_leaves_the_columns_before_it_empty(cx: &mut TestAppContext) {
+fn an_offset_leaves_the_room_after_the_previous_column_empty(cx: &mut TestAppContext) {
     let cx = harness!(cx, OffsetGridHarness);
 
     let first = cx.debug_bounds("a").expect("the first column");
     let second = cx.debug_bounds("b").expect("the offset column");
 
     assert_eq!(first.left(), px(0.));
-    assert_eq!(second.left(), px(40.), "two empty columns of twenty pixels");
+    assert_eq!(first.size.width, px(80.), "four of twelve columns");
+    assert_eq!(
+        second.left(),
+        px(120.),
+        "the offset is the room after the column before it: two empty columns of twenty pixels"
+    );
     assert_eq!(second.size.width, px(80.), "four of twelve columns");
+    assert!(
+        second.left() >= first.right(),
+        "the offset column does not sit on top of the column before it"
+    );
 }
 
 struct ResponsiveGridHarness;

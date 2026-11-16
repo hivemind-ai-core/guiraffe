@@ -157,6 +157,13 @@ impl Grid {
     /// The columns fill the grid one after another. A column that does not
     /// fit in the row it would land in moves down to the next row, and the
     /// grid never grows past the columns it has.
+    ///
+    /// An offset is the room a column leaves empty *after* the column before
+    /// it, the way Mantine counts it: the offset of the first column of a row
+    /// counts from the edge of the grid, and the offset of any other column
+    /// counts from where the column before it ends. A column that does not
+    /// fit in the room its offset leaves moves down to the next row, where
+    /// the offset is trimmed to what that row can afford.
     pub fn layout(&self, width: f32) -> Vec<GridPlacement> {
         let columns = u32::from(self.columns.max(1));
         let mut placements = Vec::with_capacity(self.children.len());
@@ -167,24 +174,16 @@ impl Grid {
             let span = u32::from(column.span_at(self.columns, width));
             let offset = u32::from(column.offset_at(self.columns, width));
 
-            let (start, end) = if offset > 0 {
-                if offset + span > columns {
-                    // The offset pushes the column past the last column of the
-                    // grid: it moves down and takes the offset it can afford.
-                    row += 1;
-                    cursor = 0;
-                    let offset = columns.saturating_sub(span);
-                    (offset + 1, offset + 1 + span)
-                } else {
-                    (offset + 1, offset + 1 + span)
-                }
-            } else if cursor + span > columns {
-                // The column does not fit in what is left of the row.
+            let (start, end) = if cursor + offset + span > columns {
+                // The column does not fit in what is left of the row: it
+                // moves down, and the offset it asked for is trimmed to what
+                // the new row can afford.
                 row += 1;
                 cursor = 0;
-                (1, 1 + span)
+                let offset = offset.min(columns.saturating_sub(span));
+                (offset + 1, offset + 1 + span)
             } else {
-                let start = cursor + 1;
+                let start = cursor + offset + 1;
                 (start, start + span)
             };
 
@@ -312,7 +311,12 @@ impl Col {
         self
     }
 
-    /// How many of the grid's columns are left empty before this one.
+    /// How many of the grid's columns are left empty after the column before
+    /// this one.
+    ///
+    /// The offset counts from where the column before it ends, the way
+    /// Mantine counts it: the first column of a row leaves its offset empty
+    /// from the edge of the grid.
     pub fn offset(mut self, offset: impl Into<Responsive<u16>>) -> Self {
         self.offset = offset.into();
         self
@@ -457,6 +461,40 @@ mod tests {
     fn an_offset_pushes_the_column_to_the_right() {
         let grid = Grid::new().child(Col::span(6).offset(2));
         assert_eq!(grid.layout(1200.), vec![placement(1, 3, 9)]);
+    }
+
+    #[test]
+    fn an_offset_counts_from_where_the_column_before_it_ends() {
+        let grid = Grid::new()
+            .child(Col::span(4))
+            .child(Col::span(4).offset(2));
+        assert_eq!(
+            grid.layout(1200.),
+            vec![placement(1, 1, 5), placement(1, 7, 11)],
+            "the offset is the room after the column before it, so the two do not overlap"
+        );
+    }
+
+    #[test]
+    fn an_offset_after_a_column_that_fills_the_row_moves_the_column_down() {
+        let grid = Grid::new()
+            .child(Col::span(8))
+            .child(Col::span(4).offset(2));
+        assert_eq!(
+            grid.layout(1200.),
+            vec![placement(1, 1, 9), placement(2, 3, 7)],
+            "the column does not fit in what is left of the row"
+        );
+    }
+
+    #[test]
+    fn an_offset_that_does_not_fit_the_row_is_trimmed() {
+        let grid = Grid::new().child(Col::span(2).offset(20));
+        assert_eq!(
+            grid.layout(1200.),
+            vec![placement(2, 11, 13)],
+            "the offset is trimmed to what the row can afford, and the column stays inside the grid"
+        );
     }
 
     #[test]
