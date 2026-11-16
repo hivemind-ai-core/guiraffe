@@ -17,6 +17,31 @@ impl<R: Clone + PartialEq> History<R> {
         }
     }
 
+    /// Rebuild a persisted history. `None` if `entries` is empty or `index` is out of range.
+    pub fn from_parts(entries: Vec<R>, index: usize, cap: usize) -> Option<Self> {
+        let cap = cap.max(1);
+        if entries.is_empty() || index >= entries.len() {
+            return None;
+        }
+        let excess = entries.len().saturating_sub(cap);
+        let index = index.checked_sub(excess)?;
+        Some(Self {
+            entries: entries.into_iter().skip(excess).collect(),
+            index,
+            cap,
+        })
+    }
+
+    /// Jump to `index` if it holds `expect` (guards against stale requests). Returns whether
+    /// the position changed.
+    pub fn go_to(&mut self, index: usize, expect: &R) -> bool {
+        if index == self.index || self.entries.get(index) != Some(expect) {
+            return false;
+        }
+        self.index = index;
+        true
+    }
+
     pub fn current(&self) -> &R {
         // Invariant: entries is never empty and index < len.
         &self.entries[self.index]
@@ -118,6 +143,36 @@ mod tests {
         one.push(1);
         assert_eq!(one.entries(), &[1], "cap clamps to 1");
         assert!(!one.can_back());
+    }
+
+    #[test]
+    fn from_parts_and_go_to() {
+        assert!(History::<u8>::from_parts(vec![], 0, 5).is_none());
+        assert!(History::from_parts(vec![1], 3, 5).is_none());
+        let mut h =
+            History::from_parts(vec![1, 2, 3, 4], 3, 2).unwrap_or_else(|| History::new(0, 1));
+        assert_eq!((h.entries(), h.index()), (&[3, 4][..], 1));
+        assert!(
+            History::from_parts(vec![1, 2, 3, 4], 0, 2).is_none(),
+            "index trimmed away"
+        );
+        assert!(!h.go_to(0, &9), "stale expectation refused");
+        assert!(h.go_to(0, &3));
+        assert!(!h.go_to(0, &3), "already there");
+    }
+
+    #[test]
+    fn duplicates_do_not_trap_back_forward() {
+        let mut h = History::new(1, 10);
+        h.push(2);
+        h.push(3);
+        h.back();
+        h.replace(3);
+        assert_eq!(h.entries(), &[1, 3, 3]);
+        assert!(
+            h.go_to(2, &3),
+            "index-based moves work with duplicate neighbours"
+        );
     }
 
     #[test]

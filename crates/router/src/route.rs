@@ -18,14 +18,29 @@ pub trait Route: Sized + Clone + PartialEq + Debug + 'static {
     fn to_path(&self) -> String {
         self.to_location().format()
     }
+
+    /// Problems with the declared patterns (param without a field, duplicates, misplaced
+    /// `*rest`). Call `assert!(R::check().is_empty())` in a test; the router also
+    /// `debug_assert`s it on creation.
+    fn check() -> Vec<String>;
+
+    /// Whether this value survives `parse(to_path())`. In-app navigation works regardless;
+    /// a route that does not round-trip cannot be deep-linked or restored from a saved
+    /// history (e.g. an empty path param).
+    fn round_trips(&self) -> bool {
+        Self::parse(&self.to_path()).as_ref() == Some(self)
+    }
 }
 
 /// Declare a typed route enum with path patterns.
 ///
-/// Fields bound by the pattern (`:id`, or `*rest` for the remainder) come from the path;
-/// other fields are **search params** (query string), defaulting when absent and omitted
-/// when equal to their default. Field types need `FromStr + Display + Default + PartialEq`.
+/// Fields bound by the pattern (`:id`, or `*rest` for the remainder) come from the path and
+/// are strict (empty or unparsable values don't match). Other fields are **search params**
+/// (query string): lenient, defaulting when absent or unparsable, and omitted when equal to
+/// their default. Field types need `FromStr + Display + Default + PartialEq`.
 /// Patterns are tried in order: put specific routes before general ones.
+/// `*rest` is normalised: empty segments are dropped (`a//b/` becomes `a/b`).
+/// Unknown query keys are ignored and not preserved.
 ///
 /// ```
 /// use guiraffe_router::{Route, routes};
@@ -58,6 +73,14 @@ macro_rules! routes {
         impl $crate::Route for $name {
             fn patterns() -> &'static [&'static str] {
                 &[$($pat),*]
+            }
+
+            fn check() -> ::std::vec::Vec<::std::string::String> {
+                let mut problems = ::std::vec::Vec::new();
+                $(
+                    problems.extend($crate::matcher::check(stringify!($var), $pat, &[$($(stringify!($f)),*)?]));
+                )*
+                problems
             }
 
             #[allow(unused_variables)]

@@ -13,8 +13,17 @@ pub fn encode(s: &str) -> String {
     out
 }
 
-/// Decode percent-encoding; `None` on malformed escapes or invalid UTF-8.
+/// Decode a path segment: percent-escapes only (`+` is literal in paths).
+pub fn decode_segment(s: &str) -> Option<String> {
+    decode_impl(s, false)
+}
+
+/// Decode a query component: percent-escapes, and `+` as space (form encoding).
 pub fn decode(s: &str) -> Option<String> {
+    decode_impl(s, true)
+}
+
+fn decode_impl(s: &str, plus_is_space: bool) -> Option<String> {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -25,7 +34,7 @@ pub fn decode(s: &str) -> Option<String> {
                 out.push(u8::from_str_radix(hex, 16).ok()?);
                 i += 3;
             }
-            b'+' => {
+            b'+' if plus_is_space => {
                 out.push(b' ');
                 i += 1;
             }
@@ -57,7 +66,7 @@ impl Location {
         let segments = path
             .split('/')
             .filter(|s| !s.is_empty())
-            .map(decode)
+            .map(decode_segment)
             .collect::<Option<Vec<_>>>()?;
         let query = match query {
             None => Vec::new(),
@@ -119,6 +128,15 @@ mod tests {
         assert_eq!(decode("%4"), None);
         assert_eq!(decode("%FF"), None, "invalid utf-8");
         assert_eq!(decode("a+b").as_deref(), Some("a b"));
+        assert_eq!(
+            decode_segment("c++").as_deref(),
+            Some("c++"),
+            "+ is literal in paths"
+        );
+        assert_eq!(
+            Location::parse("/docs/c++").map(|l| l.segments),
+            Some(vec!["docs".into(), "c++".into()])
+        );
     }
 
     #[test]

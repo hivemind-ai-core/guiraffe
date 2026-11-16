@@ -83,8 +83,11 @@ fn order_matters_and_invalid_input_does_not_match() {
     );
     assert_eq!(
         AppRoute::parse("/search?page=x"),
-        None,
-        "typed search params must parse"
+        Some(AppRoute::Search {
+            q: String::new(),
+            page: 0
+        }),
+        "bad search param falls back to default"
     );
     assert_eq!(AppRoute::parse("/nope"), None);
     assert_eq!(AppRoute::parse("/projects/1/extra"), None);
@@ -107,6 +110,60 @@ fn awkward_values_round_trip() {
         };
         assert_eq!(AppRoute::parse(&r.to_path()), Some(r.clone()), "{p}");
     }
+}
+
+#[test]
+fn declared_routes_are_valid_and_round_trip_checks_work() {
+    assert!(AppRoute::check().is_empty(), "{:?}", AppRoute::check());
+    assert!(
+        AppRoute::Project {
+            id: 1,
+            tab: "x".into()
+        }
+        .round_trips()
+    );
+    routes! {
+        #[derive(Debug, Clone, PartialEq)]
+        enum Bad {
+            Orphan = "/u/:id",
+            Named { name: String } = "/n/:name",
+        }
+    }
+    assert_eq!(Bad::check().len(), 1, "param without a field is reported");
+    assert!(
+        !Bad::Named {
+            name: String::new()
+        }
+        .round_trips(),
+        "empty path param can't be deep-linked"
+    );
+    assert_eq!(Bad::parse("/n/"), None);
+}
+
+#[test]
+fn lenient_search_params_and_literal_plus_in_paths() {
+    assert_eq!(
+        AppRoute::parse("/search?q=x&page=garbage"),
+        Some(AppRoute::Search {
+            q: "x".into(),
+            page: 0
+        })
+    );
+    assert_eq!(
+        AppRoute::parse("/projects/1/files/c++/a+b"),
+        Some(AppRoute::File {
+            id: 1,
+            path: "c++/a+b".into()
+        })
+    );
+    assert_eq!(
+        AppRoute::parse("/search?q=a+b"),
+        Some(AppRoute::Search {
+            q: "a b".into(),
+            page: 0
+        }),
+        "+ is a space in queries"
+    );
 }
 
 #[test]
@@ -211,7 +268,13 @@ fn guards_block_and_can_be_removed(cx: &mut TestAppContext) {
     let router = cx.update(|cx| Router::new(AppRoute::Home, cx));
     let dirty = Rc::new(Cell::new(true));
     let d = dirty.clone();
-    let id = router.add_guard(move |from, _to, _| !(matches!(from, AppRoute::Home) && d.get()));
+    let id = router.add_guard(move |from, _to, _| {
+        if matches!(from, AppRoute::Home) && d.get() {
+            GuardOutcome::Block
+        } else {
+            GuardOutcome::Allow
+        }
+    });
     assert_eq!(
         cx.update(|cx| router.navigate(AppRoute::NewProject, cx)),
         crate::Nav::Blocked
@@ -238,4 +301,111 @@ fn history_restores_and_store_logs_navigation(cx: &mut TestAppContext) {
         1,
         "navigation flows through the event store"
     );
+}
+
+#[gpui_kit::test]
+fn redirect_guard_and_reentrancy(cx: &mut TestAppContext) {
+    let router = cx.update(|cx| Router::new(AppRoute::Home, cx));
+    // Redirect anything under Search to Home-with-NewProject (e.g. "log in first").
+    router.add_guard(|_, to, _| match to {
+        AppRoute::Search { .. } => GuardOutcome::Redirect(AppRoute::NewProject),
+        _ => GuardOutcome::Allow,
+    });
+    assert_eq!(
+        cx.update(|cx| router.navigate(
+            AppRoute::Search {
+                q: "x".into(),
+                page: 0
+            },
+            cx
+        )),
+        crate::Nav::Navigated
+    );
+    assert_eq!(cx.update(|cx| router.current(cx)), AppRoute::NewProject);
+    assert_eq!(
+        cx.update(|cx| router.history(cx)).entries().len(),
+        2,
+        "one entry: the redirect, not both"
+    );
+    // A guard that tries to navigate itself is refused (it must Redirect instead).
+    let r2 = router.clone();
+    let inner = Rc::new(Cell::new(None));
+    let i2 = inner.clone();
+    router.add_guard(move |_, to, cx| {
+        if matches!(to, AppRoute::Project { .. }) {
+            i2.set(Some(r2.navigate(AppRoute::Home, cx)));
+        }
+        GuardOutcome::Allow
+    });
+    assert_eq!(
+        cx.update(|cx| router.navigate(
+            AppRoute::Project {
+                id: 2,
+                tab: String::new()
+            },
+            cx
+        )),
+        crate::Nav::Navigated
+    );
+    assert_eq!(inner.get(), Some(crate::Nav::Blocked));
+    assert_eq!(
+        cx.update(|cx| router.current(cx)),
+        AppRoute::Project {
+            id: 2,
+            tab: String::new()
+        },
+        "history not corrupted"
+    );
+}
+
+#[gpui_kit::test]
+fn redirect_loops_are_blocked_and_unguarded_escape_hatch_works(cx: &mut TestAppContext) {
+    let router = cx.update(|cx| Router::new(AppRoute::Home, cx));
+    router.add_guard(|_, to, _| match to {
+        AppRoute::NewProject => GuardOutcome::Redirect(AppRoute::Search {
+            q: String::new(),
+            page: 1,
+        }),
+        AppRoute::Search { .. } => GuardOutcome::Redirect(AppRoute::NewProject),
+        _ => GuardOutcome::Allow,
+    });
+    assert_eq!(
+        cx.update(|cx| router.navigate(AppRoute::NewProject, cx)),
+        crate::Nav::Blocked
+    );
+    assert_eq!(
+        cx.update(|cx| router.navigate_unguarded(AppRoute::NewProject, cx)),
+        crate::Nav::Navigated
+    );
+    assert_eq!(cx.update(|cx| router.current(cx)), AppRoute::NewProject);
+}
+
+#[gpui_kit::test]
+fn back_forward_work_with_duplicate_neighbours(cx: &mut TestAppContext) {
+    let router = cx.update(|cx| Router::new(AppRoute::Home, cx));
+    cx.update(|cx| {
+        router.navigate(AppRoute::NewProject, cx);
+        router.navigate(
+            AppRoute::Search {
+                q: "a".into(),
+                page: 0,
+            },
+            cx,
+        );
+        router.back(cx);
+        router.replace(
+            AppRoute::Search {
+                q: "a".into(),
+                page: 0,
+            },
+            cx,
+        );
+    });
+    // History is now [Home, Search(a), Search(a)] at index 1.
+    assert_eq!(
+        cx.update(|cx| router.forward(cx)),
+        crate::Nav::Navigated,
+        "not stuck on equal neighbour"
+    );
+    assert_eq!(cx.update(|cx| router.history(cx)).index(), 2);
 }

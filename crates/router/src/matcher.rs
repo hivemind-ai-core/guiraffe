@@ -37,17 +37,55 @@ pub fn match_pattern(pattern: &'static str, segments: &[String]) -> Option<Captu
     (segments.len() == parts.len()).then_some(Captures(caps))
 }
 
-/// Read field `name`: from the path captures if the pattern binds it, else from the query.
-/// A missing query value yields `T::default()`; an unparsable value fails the match.
+/// Read field `name`. **Path params** are strict: an empty or unparsable value fails the
+/// match. **Search params** are lenient (like a browser): missing or unparsable values fall
+/// back to `T::default()`, so a bad `?tab=` never breaks a deep link. First value wins for
+/// repeated keys.
 pub fn field<T: FromStr + Default>(
     name: &'static str,
     caps: &Captures,
     loc: &Location,
 ) -> Option<T> {
-    match caps.get(name).or_else(|| loc.query_value(name)) {
+    match caps.get(name) {
+        Some("") => None,
         Some(raw) => raw.parse().ok(),
-        None => Some(T::default()),
+        None => Some(
+            loc.query_value(name)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_default(),
+        ),
     }
+}
+
+/// Check one variant's pattern against its field names: every `:param`/`*rest` must be a field,
+/// names must be unique, and `*rest` must be last. Returns human-readable problems.
+pub fn check(variant: &'static str, pattern: &'static str, fields: &[&'static str]) -> Vec<String> {
+    let mut problems = Vec::new();
+    if !pattern.starts_with('/') {
+        problems.push(format!(
+            "{variant}: pattern {pattern:?} must start with '/'"
+        ));
+    }
+    let parts: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+    let mut seen = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        let name = part.strip_prefix(':').or_else(|| part.strip_prefix('*'));
+        if part.starts_with('*') && i + 1 != parts.len() {
+            problems.push(format!(
+                "{variant}: {part} must be the last segment of {pattern:?}"
+            ));
+        }
+        if let Some(name) = name {
+            if !fields.contains(&name) {
+                problems.push(format!("{variant}: pattern {pattern:?} binds `{name}` but the variant has no such field"));
+            }
+            if seen.contains(&name) {
+                problems.push(format!("{variant}: `{name}` appears twice in {pattern:?}"));
+            }
+            seen.push(name);
+        }
+    }
+    problems
 }
 
 pub fn is_default<T: Default + PartialEq>(v: &T) -> bool {
@@ -108,4 +146,23 @@ pub fn params(pattern: &'static str) -> Vec<&'static str> {
         .split('/')
         .filter_map(|p| p.strip_prefix(':').or_else(|| p.strip_prefix('*')))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_reports_pattern_problems() {
+        assert!(check("P", "/p/:id", &["id"]).is_empty());
+        assert_eq!(check("U", "/u/:id", &[]).len(), 1, "param without field");
+        assert_eq!(check("T", "/p/:Id", &["id"]).len(), 1, "typo");
+        assert_eq!(check("D", "/a/:id/:id", &["id"]).len(), 1, "duplicate");
+        assert_eq!(
+            check("R", "/a/*rest/b", &["rest"]).len(),
+            1,
+            "rest not last"
+        );
+        assert_eq!(check("S", "nope", &[]).len(), 1, "leading slash");
+    }
 }

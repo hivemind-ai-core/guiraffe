@@ -19,7 +19,7 @@ mod router;
 pub use history::History;
 pub use path::Location;
 pub use route::Route;
-pub use router::{Guard, GuardId, Nav, Router, RouterState};
+pub use router::{Guard, GuardId, GuardOutcome, Nav, Router, RouterState};
 
 /// Idempotent init (conventions §4); the router keeps no globals.
 pub fn init(_cx: &mut gpui_kit::App) {}
