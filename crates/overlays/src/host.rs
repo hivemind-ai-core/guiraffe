@@ -15,7 +15,11 @@ use gpui_kit::{
     Render, Styled, Task, Window, div, px,
 };
 use guiraffe_core::{GuiraffeTheme, Size};
-use std::{collections::HashMap, rc::Rc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    time::Duration,
+};
 
 struct ToastCard {
     entity: Entity<Notification>,
@@ -50,6 +54,11 @@ pub struct OverlayHost {
     cards: HashMap<ToastId, ToastCard>,
     timer: Option<Task<()>>,
     next_generation: u64,
+    requested_toast_limit: Option<usize>,
+    owned_notes: HashSet<gpui_kit::EntityId>,
+    native_snapshot: Vec<gpui_kit::EntityId>,
+    native_cap: usize,
+    reconcile_pending: bool,
 }
 impl RootPlugin for OverlayHost {
     fn decorate(
@@ -249,10 +258,6 @@ impl OverlayHost {
     pub fn notify(window: &mut Window, cx: &mut App, toast: Toast) -> Result<(), OverlayError> {
         let host = Self::entity(window, cx)?;
         host.update(cx, |host, cx| {
-            let cap = gpui_kit::component::theme::Theme::global(cx)
-                .notification
-                .max_items;
-            host.toasts.set_limit(host.toasts.limit().min(cap));
             host.toasts.push(toast);
             host.sync_cards(window, cx);
         });
@@ -275,10 +280,7 @@ impl OverlayHost {
         limit: usize,
     ) -> Result<(), OverlayError> {
         Self::entity(window, cx)?.update(cx, |host, cx| {
-            let cap = gpui_kit::component::theme::Theme::global(cx)
-                .notification
-                .max_items;
-            host.toasts.set_limit(limit.min(cap));
+            host.requested_toast_limit = Some(limit);
             host.sync_cards(window, cx);
         });
         Ok(())
@@ -322,6 +324,21 @@ impl OverlayHost {
         }));
     }
     fn sync_cards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let notes = window.notifications(cx);
+        self.owned_notes
+            .retain(|id| notes.iter().any(|n| n.entity_id() == *id));
+        let unmanaged = notes
+            .iter()
+            .filter(|n| !self.owned_notes.contains(&n.entity_id()))
+            .count();
+        let cap = gpui_kit::component::theme::Theme::global(cx)
+            .notification
+            .max_items;
+        self.toasts.set_limit(
+            self.requested_toast_limit
+                .unwrap_or(5)
+                .min(cap.saturating_sub(unmanaged)),
+        );
         self.cards.retain(|id, _| {
             if self.toasts.visible().iter().any(|t| t.id == *id) {
                 true
@@ -330,15 +347,26 @@ impl OverlayHost {
                 false
             }
         });
+        let mut failed = Vec::new();
         for toast in self.toasts.visible() {
-            if let Some(card) = self.cards.get_mut(&toast.id)
-                && card.message == toast.message
-                && card.position == toast.position
-            {
-                if card.elapsed != toast.elapsed || card.auto_close != toast.auto_close {
+            if let Some(card) = self.cards.get_mut(&toast.id) {
+                let content_changed =
+                    card.message != toast.message || card.position != toast.position;
+                let progress_changed =
+                    card.elapsed != toast.elapsed || card.auto_close != toast.auto_close;
+                if content_changed || progress_changed {
+                    let host = cx.weak_entity();
+                    let generation = card.generation;
+                    card.entity.update(cx, |note, cx| {
+                        if content_changed {
+                            *note = notification(toast, host, generation);
+                        }
+                        cx.notify();
+                    });
+                    card.message = toast.message.clone();
+                    card.position = toast.position;
                     card.elapsed = toast.elapsed;
                     card.auto_close = toast.auto_close;
-                    card.entity.update(cx, |_, cx| cx.notify());
                 }
                 continue;
             }
@@ -353,6 +381,7 @@ impl OverlayHost {
                     .iter()
                     .any(|old| old.entity_id() == entity.entity_id())
             }) {
+                self.owned_notes.insert(entity.entity_id());
                 self.cards.insert(
                     toast.id,
                     ToastCard {
@@ -364,8 +393,23 @@ impl OverlayHost {
                         generation,
                     },
                 );
+            } else {
+                eprintln!(
+                    "GUIraffe: native toast admission failed for {:?}; dropping it",
+                    toast.id
+                );
+                failed.push(toast.id);
             }
         }
+        for id in failed {
+            self.toasts.remove(id);
+        }
+        self.native_snapshot = window
+            .notifications(cx)
+            .iter()
+            .map(|n| n.entity_id())
+            .collect();
+        self.native_cap = cap;
         self.ensure_timer(window, cx);
     }
 }
@@ -381,6 +425,7 @@ fn notification(
     Notification::new()
         .id1::<ManagedToast>(id.0)
         .autohide(false)
+        .delivery(gpui_kit::component::notification::NotificationDelivery::InApp)
         .placement(anchor(toast.position))
         .on_close(move |window, cx| {
             let closed = closed.clone();
@@ -435,7 +480,24 @@ fn anchor(position: ToastPosition) -> Anchor {
     }
 }
 impl Render for OverlayHost {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let notes = window.notifications(cx);
+        let changed = notes.len() != self.native_snapshot.len()
+            || notes
+                .iter()
+                .zip(&self.native_snapshot)
+                .any(|(n, id)| n.entity_id() != *id)
+            || self.native_cap
+                != gpui_kit::component::theme::Theme::global(cx)
+                    .notification
+                    .max_items;
+        if changed && !self.reconcile_pending {
+            self.reconcile_pending = true;
+            cx.defer_in(window, |host, window, cx| {
+                host.reconcile_pending = false;
+                host.sync_cards(window, cx);
+            });
+        }
         div()
     }
 }

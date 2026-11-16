@@ -64,7 +64,7 @@ fn open_with_content(cx: &mut TestAppContext) -> (WindowHandle<Root>, gpui_kit::
         (handle, content.expect("content"))
     })
 }
-fn open(cx: &mut TestAppContext) -> WindowHandle<Root> {
+pub(crate) fn open(cx: &mut TestAppContext) -> WindowHandle<Root> {
     open_with_content(cx).0
 }
 
@@ -710,4 +710,66 @@ fn affix_anchors_all_six_positions(cx: &mut TestAppContext) {
         })
         .expect("position");
     }
+}
+
+#[gpui_kit::test]
+fn review_1_system_delivery_still_stores_managed_toast(cx: &mut TestAppContext) {
+    use gpui_kit::component::{WindowExt, notification::NotificationDelivery, theme::Theme};
+    cx.update(init);
+    let handle = open(cx);
+    cx.update(|cx| Theme::global_mut(cx).notification.delivery = NotificationDelivery::System);
+    cx.update_window(handle.into(), |_, window, cx| {
+        OverlayHost::notify(window, cx, Toast::new(ToastId(99), "managed")).expect("toast");
+        assert_eq!(
+            window.notifications(cx).len(),
+            1,
+            "managed delivery must be InApp"
+        );
+    })
+    .expect("window");
+}
+#[gpui_kit::test]
+fn review_1_unmanaged_notifications_do_not_hide_admitted_toasts(cx: &mut TestAppContext) {
+    use gpui_kit::component::{WindowExt, notification::Notification, theme::Theme};
+    cx.update(init);
+    let handle = open(cx);
+    cx.update(|cx| Theme::global_mut(cx).notification.max_items = 1);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.push_notification(Notification::new().message("unmanaged").autohide(false), cx);
+        OverlayHost::notify(window, cx, Toast::new(ToastId(1), "managed")).expect("toast");
+        let host = OverlayHost::entity(window, cx).expect("host");
+        assert!(
+            host.read(cx).toasts().visible().is_empty(),
+            "occupied native capacity must queue managed work"
+        );
+        assert_eq!(host.read(cx).toasts().queued().len(), 1);
+    })
+    .expect("window");
+}
+#[gpui_kit::test]
+fn review_2_update_retains_native_entity_and_order(cx: &mut TestAppContext) {
+    use gpui_kit::component::WindowExt;
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        for id in [1, 2] {
+            OverlayHost::notify(window, cx, Toast::new(ToastId(id), "old")).expect("toast");
+        }
+        let before: Vec<_> = window
+            .notifications(cx)
+            .iter()
+            .map(|n| n.entity_id())
+            .collect();
+        OverlayHost::notify(window, cx, Toast::new(ToastId(1), "new")).expect("update");
+        let after: Vec<_> = window
+            .notifications(cx)
+            .iter()
+            .map(|n| n.entity_id())
+            .collect();
+        assert_eq!(
+            before, after,
+            "updating must not reinsert native notifications"
+        );
+    })
+    .expect("window");
 }

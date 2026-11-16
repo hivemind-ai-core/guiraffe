@@ -91,6 +91,7 @@ impl ToastQueue {
             .chain(self.queued.iter_mut())
             .find(|t| t.id == toast.id)
         {
+            toast.paused = old.paused;
             *old = toast;
         } else {
             self.queued.push_back(toast);
@@ -213,5 +214,19 @@ mod tests {
         q.remove(ToastId(2));
         q.remove(ToastId(0));
         assert_eq!(q.visible()[0].id, ToastId(1));
+    }
+}
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    #[test]
+    fn review_3_updating_visible_toast_preserves_hover_pause() {
+        let mut queue = ToastQueue::new(1);
+        queue.push(Toast::new(ToastId(1), "old"));
+        queue.pause(ToastId(1), true);
+        queue.push(Toast::new(ToastId(1), "new"));
+        assert!(queue.visible()[0].paused);
+        queue.advance(Duration::from_secs(20));
+        assert_eq!(queue.visible().len(), 1);
     }
 }
