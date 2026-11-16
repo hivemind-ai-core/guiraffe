@@ -4,13 +4,29 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MessageId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Role { User, Assistant }
+pub enum Role {
+    User,
+    Assistant,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Attachment { pub id: String, pub name: String }
+pub struct Attachment {
+    pub id: String,
+    pub name: String,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolStatus { Running, Succeeded, Failed }
+pub enum ToolStatus {
+    Running,
+    Succeeded,
+    Failed,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolCall { pub id: String, pub name: String, pub status: ToolStatus, pub arguments: String, pub result: String }
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub status: ToolStatus,
+    pub arguments: String,
+    pub result: String,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub id: MessageId,
@@ -24,6 +40,14 @@ pub struct Message {
 }
 impl Message {
     pub fn new(id: MessageId, role: Role, text: impl Into<String>) -> Self {
-        Self {id, role, text: text.into(), timestamp: String::new(), attachments: vec![], tools: vec![], reasoning: String::new()}
+        Self {
+            id,
+            role,
+            text: text.into(),
+            timestamp: String::new(),
+            attachments: vec![],
+            tools: vec![],
+            reasoning: String::new(),
+        }
     }
 }

@@ -16,8 +16,10 @@ guiraffe-motion.workspace = true
 guiraffe-overlays.workspace = true
 crossbeam-queue = "0.3.12"
 serde.workspace = true
+schemars = "1"
 
 [dev-dependencies]
+proptest = "1"
 gpui-kit = { workspace = true, features = ["test-support"] }
 guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
 

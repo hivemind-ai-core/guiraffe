@@ -3293,6 +3293,8 @@ dependencies = [
  "guiraffe-motion",
  "guiraffe-overlays",
  "guiraffe-test",
+ "proptest",
+ "schemars",
  "serde",
 ]
 
@@ -3338,6 +3340,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "guiraffe-chat",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-flow",

@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+guiraffe-chat.workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-components.workspace = true
