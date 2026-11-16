@@ -22,13 +22,46 @@ use crate::{
     streaming::{Change, classify},
 };
 
+/// Work counters, for tests and devtools (proving streaming stays incremental).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MarkdownStats {
+    /// Background analyses started (coalesced: at most one in flight).
+    pub analyses: u64,
+    /// Bytes parsed by those analyses (incremental: only the unsettled tail).
+    pub analyzed_bytes: u64,
+    /// Full text replacements handed to the text view.
+    pub replacements: u64,
+    /// Appends handed to the text view.
+    pub appends: u64,
+}
+
+/// How much of `source` may be shown: everything except an unfinished mermaid fence,
+/// which would otherwise be laid out (and re-rendered) on every token.
+fn showable(source: &str) -> usize {
+    if cfg!(feature = "mermaid") {
+        crate::streaming::unfinished_mermaid_fence(source).unwrap_or(source.len())
+    } else {
+        source.len()
+    }
+}
+
 /// State of one Markdown viewer.
 pub struct MarkdownState {
     text: Entity<TextViewState>,
     source: SharedString,
+    /// How much of `source` the text view has (an unfinished mermaid fence is held back).
+    pushed: usize,
     revision: u64,
     analyzed: u64,
     document: Arc<Document>,
+    /// Settled prefix of the source the current `document` was computed from.
+    settled: usize,
+    analyzing: bool,
+    dirty: bool,
+    /// Bumped on every full replacement: an analysis started before it must not seed later
+    /// incremental runs (its settled point belongs to different text).
+    replaced: u64,
+    stats: MarkdownStats,
     /// Markdown extensions, built once so a re-parse never happens because a
     /// host rebuilt the element.
     #[cfg(feature = "mermaid")]
@@ -58,13 +91,21 @@ impl MarkdownState {
     /// Create the state for `source`, parsed as GFM Markdown.
     pub fn new(source: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let source = source.into();
-        let text = cx.new(|cx| TextViewState::markdown(&source, cx));
+        let pushed = showable(&source);
+        let initial = source.get(..pushed).unwrap_or_default().to_owned();
+        let text = cx.new(|cx| TextViewState::markdown(&initial, cx));
         let mut state = Self {
             text,
             source,
+            pushed,
             revision: 0,
             analyzed: 0,
             document: Arc::default(),
+            settled: 0,
+            analyzing: false,
+            dirty: false,
+            replaced: 0,
+            stats: MarkdownStats::default(),
             #[cfg(feature = "mermaid")]
             extensions: Self::extensions(),
         };
@@ -103,12 +144,16 @@ impl MarkdownState {
         match classify(&self.source, &source) {
             Change::None => return,
             Change::Append { .. } => {
-                self.source = source.clone();
-                self.text.update(cx, |text, cx| text.set_text(&source, cx));
+                self.source = source;
+                self.sync_text(false, cx);
             }
             Change::Replace { .. } => {
-                self.source = source.clone();
-                self.text.update(cx, |text, cx| text.set_text(&source, cx));
+                self.source = source;
+                // Earlier blocks changed: the analysis can't reuse anything.
+                self.replaced += 1;
+                self.settled = 0;
+                self.document = Arc::default();
+                self.sync_text(true, cx);
             }
         }
         self.revision += 1;
@@ -116,11 +161,8 @@ impl MarkdownState {
         cx.notify();
     }
 
-    /// Append one chunk of streamed Markdown.
-    ///
-    /// Prefer this over `set_source` while text is arriving: it appends the
-    /// chunk and nothing else, so the text view keeps the layout of every
-    /// settled block.
+    /// Append one chunk of streamed Markdown. Costs O(chunk) for the text view and
+    /// O(unsettled tail) for analysis, never O(document).
     pub fn append(&mut self, chunk: &str, cx: &mut Context<Self>) {
         if chunk.is_empty() {
             return;
@@ -129,11 +171,38 @@ impl MarkdownState {
         source.push_str(&self.source);
         source.push_str(chunk);
         self.source = source.into();
-        let chunk = chunk.to_string();
-        self.text.update(cx, |text, cx| text.push_str(&chunk, cx));
+        self.sync_text(false, cx);
         self.revision += 1;
         self.reanalyze(cx);
         cx.notify();
+    }
+
+    /// Hand the text view what it doesn't have yet (or everything, on `replace`).
+    fn sync_text(&mut self, replace: bool, cx: &mut Context<Self>) {
+        let target = showable(&self.source);
+        if replace {
+            let shown = self.source.get(..target).unwrap_or_default().to_owned();
+            self.text.update(cx, |text, cx| text.set_text(&shown, cx));
+            self.stats.replacements += 1;
+        } else if target > self.pushed {
+            let tail = self
+                .source
+                .get(self.pushed..target)
+                .unwrap_or_default()
+                .to_owned();
+            self.text.update(cx, |text, cx| text.push_str(&tail, cx));
+            self.stats.appends += 1;
+        }
+        self.pushed = target;
+    }
+
+    pub fn stats(&self) -> MarkdownStats {
+        self.stats
+    }
+
+    /// Bytes of the source currently handed to the text view.
+    pub fn shown_len(&self) -> usize {
+        self.pushed
     }
 
     /// Scroll the heading into view.
@@ -150,24 +219,44 @@ impl MarkdownState {
         range.is_some()
     }
 
-    /// Re-analyze the source off the UI thread.
-    ///
-    /// The result is applied only if it is still the newest revision, so a
-    /// fast stream cannot publish an older table of contents over a newer one.
+    /// Re-analyze off the UI thread, **coalesced**: at most one analysis is in flight; updates
+    /// arriving meanwhile set `dirty` and trigger exactly one follow-up with the latest text.
+    /// Each analysis parses only the tail after the last settled block (incremental).
     fn reanalyze(&mut self, cx: &mut Context<Self>) {
+        if self.analyzing {
+            self.dirty = true;
+            return;
+        }
+        self.analyzing = true;
+        self.dirty = false;
         let revision = self.revision;
+        let replaced = self.replaced;
         let source = self.source.to_string();
+        let prev = self.document.clone();
+        let base = self.settled.min(source.len());
+        self.stats.analyses += 1;
+        self.stats.analyzed_bytes += (source.len() - base) as u64;
         cx.spawn(async move |this, cx| {
-            let document = cx
+            let (document, settled) = cx
                 .background_executor()
-                .spawn(async move { Document::analyze(&source) })
+                .spawn(async move {
+                    let doc = Document::analyze_incremental(&prev, base, &source);
+                    (doc, crate::streaming::settled_prefix(&source))
+                })
                 .await;
             this.update(cx, |this, cx| {
-                if this.revision == revision {
-                    this.analyzed = revision;
+                this.analyzing = false;
+                if this.replaced == replaced {
+                    // Even a superseded *append* result analyses a prefix of the current text,
+                    // so its settled point can seed the next incremental run.
                     this.document = Arc::new(document);
-                    cx.notify();
+                    this.settled = settled;
+                    this.analyzed = revision;
                 }
+                if this.dirty || this.revision != revision {
+                    this.reanalyze(cx);
+                }
+                cx.notify();
             })
             .ok();
         })
@@ -340,10 +429,14 @@ impl RenderOnce for MarkdownView {
         {
             view = view.markdown_extensions(state.read(cx).extensions.clone());
         }
-        if let Some(handler) = on_link {
-            view = view
-                .on_link_click(move |address, _, window, cx| handler(address.as_ref(), window, cx));
-        }
+        // Safe default: Markdown here is often untrusted (agent output, documents), and the
+        // Controls TextView would otherwise open any clicked URL itself. Links do nothing
+        // unless the host decides what they do.
+        view = match on_link {
+            Some(handler) => view
+                .on_link_click(move |address, _, window, cx| handler(address.as_ref(), window, cx)),
+            None => view.on_link_click(|_, _, _, _| {}),
+        };
         if let Some(handler) = on_task_toggle {
             view = view.on_task_toggle(move |event, window, cx| {
                 handler(event.checked(), event.marker_range(), window, cx)

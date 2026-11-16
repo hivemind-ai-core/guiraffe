@@ -85,6 +85,59 @@ impl Document {
         document
     }
 
+    /// Analyze `source` reusing `prev` (the analysis of an earlier prefix of it) for
+    /// everything that ends before `base`, a block boundary both versions share
+    /// (see [`crate::streaming::settled_prefix`]). Only `source[base..]` is parsed,
+    /// so a streamed reply costs O(tail) per update instead of O(document).
+    /// The result equals `Document::analyze(source)` (tested over many chunkings).
+    pub fn analyze_incremental(prev: &Document, base: usize, source: &str) -> Self {
+        let base = (0..=base.min(source.len()))
+            .rev()
+            .find(|b| source.is_char_boundary(*b))
+            .unwrap_or(0);
+        let mut out = Document {
+            headings: prev
+                .headings
+                .iter()
+                .filter(|h| h.range.end <= base)
+                .cloned()
+                .collect(),
+            fences: prev
+                .fences
+                .iter()
+                .filter(|f| f.range.end <= base)
+                .cloned()
+                .collect(),
+            tasks: prev
+                .tasks
+                .iter()
+                .filter(|t| t.text.end <= base && t.marker.end <= base)
+                .cloned()
+                .collect(),
+        };
+        let tail = Document::analyze(&source[base..]);
+        let shift = |r: &Range<usize>| r.start + base..r.end + base;
+        let mut anchors = AnchorSlugs {
+            seen: out.headings.iter().map(|h| h.anchor.clone()).collect(),
+        };
+        out.headings
+            .extend(tail.headings.into_iter().map(|h| Heading {
+                anchor: anchors.unique(&slugify(&h.text)),
+                range: shift(&h.range),
+                ..h
+            }));
+        out.fences.extend(tail.fences.into_iter().map(|f| Fence {
+            range: shift(&f.range),
+            ..f
+        }));
+        out.tasks.extend(tail.tasks.into_iter().map(|t| TaskItem {
+            marker: shift(&t.marker),
+            text: shift(&t.text),
+            ..t
+        }));
+        out
+    }
+
     /// Whether the document has any heading.
     pub fn is_empty(&self) -> bool {
         self.headings.is_empty() && self.fences.is_empty() && self.tasks.is_empty()
@@ -314,6 +367,27 @@ Last line.
         let first = &document.headings[0];
         assert_eq!(&DOC[first.range.clone()], "# Intro");
         assert_eq!(&DOC[document.headings[2].range.clone()], "### Deeper");
+    }
+
+    #[test]
+    fn incremental_analysis_equals_full_analysis_for_every_chunking() {
+        let doc = "# Intro\n\nSome *text* here.\n\n## Install\n\n```rust\nfn main() {}\n```\n\n- [ ] todo one\n- [x] done two\n\n## Install\n\nÜnïcode paragraph 🦒.\n\n```mermaid\ngraph TD; A-->B\n```\n\n### Deeper\ntext\n";
+        for chunk in [1usize, 2, 3, 5, 7, 13, 64] {
+            let mut prev = Document::default();
+            let mut settled = 0;
+            let mut end = 0;
+            while end < doc.len() {
+                end = (end + chunk).min(doc.len());
+                while !doc.is_char_boundary(end) {
+                    end += 1;
+                }
+                let src = &doc[..end];
+                let next = Document::analyze_incremental(&prev, settled, src);
+                assert_eq!(next, Document::analyze(src), "chunk {chunk}, prefix {end}");
+                settled = crate::streaming::settled_prefix(src);
+                prev = next;
+            }
+        }
     }
 
     #[test]

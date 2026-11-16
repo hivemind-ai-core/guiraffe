@@ -95,6 +95,12 @@ pub fn settled_prefix(source: &str) -> usize {
 
     for (index, line) in lines_with_offsets(source) {
         let after = index + line.len() + 1;
+        // Only a line that has ended can settle anything: an unterminated last line may
+        // still grow (`#` → `# Title`, a closing fence may gain another backtick), and the
+        // empty segment after a final `\n` is not a blank line.
+        if after > source.len() {
+            break;
+        }
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
 
@@ -174,33 +180,31 @@ fn is_fence(trimmed: &str, marker: u8, run: usize) -> bool {
 /// The view uses this to avoid handing a half-streamed fence to the renderer:
 /// a diagram re-laid out on every token is both expensive and flickery.
 pub fn unfinished_mermaid_fence(source: &str) -> Option<usize> {
-    let mut fence: Option<(u8, usize, bool)> = None;
+    // (fence char, run length, is mermaid, byte offset where the fence starts)
+    let mut fence: Option<(u8, usize, bool, usize)> = None;
     for (index, line) in lines_with_offsets(source) {
+        let terminated = index + line.len() < source.len();
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
         match fence {
-            Some((marker, run, mermaid)) => {
-                if indent <= 3 && is_fence(trimmed, marker, run) {
-                    fence = None;
-                } else {
-                    fence = Some((marker, run, mermaid));
-                }
+            // A closing run only counts once its line has ended: more characters on the
+            // same line (three backticks then "x") would make it content, not a close.
+            Some((marker, run, _, _))
+                if terminated && indent <= 3 && is_fence(trimmed, marker, run) =>
+            {
+                fence = None
             }
+            Some(_) => {}
             None => {
                 if let Some((marker, run)) = fence_opener(trimmed) {
-                    let info = &trimmed[run..];
-                    let lang = info.split_whitespace().next().unwrap_or_default();
-                    fence = Some((marker, run, lang.eq_ignore_ascii_case("mermaid")));
+                    let lang = trimmed[run..].split_whitespace().next().unwrap_or_default();
+                    fence = Some((marker, run, lang.eq_ignore_ascii_case("mermaid"), index));
                 }
-                let _ = index;
             }
         }
     }
     match fence {
-        Some((marker, run, true)) => {
-            let _ = (marker, run);
-            Some(source.len())
-        }
+        Some((_, _, true, start)) => Some(start),
         _ => None,
     }
 }
@@ -218,6 +222,43 @@ pub fn coalesce_delay(last_render: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unfinished_mermaid_fence_reports_where_it_starts() {
+        let open = "Intro\n\n```mermaid\ngraph TD; A-->";
+        assert_eq!(unfinished_mermaid_fence(open), Some(7));
+        assert_eq!(
+            unfinished_mermaid_fence("Intro\n\n```mermaid\nA-->B\n```"),
+            Some(7),
+            "closing line not ended yet"
+        );
+        assert_eq!(unfinished_mermaid_fence("```mermaid\nA-->B\n```\n"), None);
+        assert_eq!(
+            unfinished_mermaid_fence("```rust\nfn x"),
+            None,
+            "only mermaid fences are held back"
+        );
+        assert_eq!(unfinished_mermaid_fence(""), None);
+    }
+
+    #[test]
+    fn unterminated_lines_never_settle() {
+        assert_eq!(settled_prefix("#"), 0, "may still become a heading");
+        assert_eq!(settled_prefix("# Title"), 0, "the line has not ended");
+        assert_eq!(settled_prefix("# Title\n"), 8);
+        assert_eq!(
+            settled_prefix("text\n"),
+            0,
+            "one newline is not a blank line"
+        );
+        assert_eq!(settled_prefix("text\n\n"), 6);
+        assert_eq!(
+            settled_prefix("```\ncode\n```"),
+            0,
+            "closing fence not ended yet"
+        );
+        assert_eq!(settled_prefix("```\ncode\n```\n"), 13);
+    }
 
     #[test]
     fn identical_text_needs_no_render() {
@@ -326,7 +367,8 @@ mod tests {
     fn an_unfinished_mermaid_fence_is_reported() {
         assert_eq!(
             unfinished_mermaid_fence("```mermaid\nflowchart LR\n  A-->B"),
-            Some(31)
+            Some(0),
+            "reports where the open fence starts (it used to return the source length)"
         );
         assert_eq!(
             unfinished_mermaid_fence("```mermaid\nflowchart LR\n```\nafter"),

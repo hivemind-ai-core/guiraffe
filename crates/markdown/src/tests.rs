@@ -321,3 +321,66 @@ fn the_kit_installs_a_code_block_highlighter(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     cx.update(|cx| assert!(markdown.read(cx).document().fences.is_empty()));
 }
+
+mod streaming_cost {
+    use gpui_kit::{AppContext as _, TestAppContext};
+
+    use crate::{Document, MarkdownState};
+
+    fn reply(paragraphs: usize) -> String {
+        (0..paragraphs).map(|i| format!("## Section {i}\n\nSome streamed text for paragraph {i}, with *emphasis* and `code`.\n\n")).collect()
+    }
+
+    #[gpui_kit::test]
+    fn streaming_is_incremental_and_coalesced(cx: &mut TestAppContext) {
+        let full = reply(40);
+        let chunks: Vec<&str> = full
+            .as_bytes()
+            .chunks(12)
+            .map(|c| std::str::from_utf8(c).unwrap_or_default())
+            .collect();
+        let state = cx.new(|cx| MarkdownState::new("", cx));
+        // Tokens arrive in bursts between frames; analysis runs between bursts.
+        for burst in chunks.chunks(10) {
+            cx.update(|cx| state.update(cx, |s, cx| burst.iter().for_each(|c| s.append(c, cx))));
+            cx.run_until_parked();
+        }
+        let (stats, doc_ok) = cx.update(|cx| {
+            let s = state.read(cx);
+            (s.stats(), *s.document() == Document::analyze(s.source()))
+        });
+        let n = chunks.len() as u64;
+        assert!(doc_ok, "final analysis equals a full analysis");
+        assert_eq!(
+            stats.replacements, 0,
+            "streaming never replaces the text view"
+        );
+        assert!(stats.appends <= n, "{stats:?}");
+        assert!(
+            stats.analyses <= n / 10 * 2 + 2,
+            "coalesced to ~one per burst: {stats:?}"
+        );
+        let quadratic = n * full.len() as u64 / 2;
+        assert!(
+            stats.analyzed_bytes * 20 < quadratic,
+            "incremental: parsed {} bytes vs ~{quadratic} for full re-parses",
+            stats.analyzed_bytes
+        );
+    }
+
+    #[cfg(feature = "mermaid")]
+    #[gpui_kit::test]
+    fn an_open_mermaid_fence_is_held_back_until_closed(cx: &mut TestAppContext) {
+        let state = cx.new(|cx| MarkdownState::new("Intro\n\n", cx));
+        cx.update(|cx| state.update(cx, |s, cx| s.append("```mermaid\ngraph TD; A-->", cx)));
+        assert_eq!(
+            cx.update(|cx| state.read(cx).shown_len()),
+            "Intro\n\n".len(),
+            "unfinished diagram not shown"
+        );
+        cx.update(|cx| state.update(cx, |s, cx| s.append("B\n```\n", cx)));
+        let (shown, len) =
+            cx.update(|cx| (state.read(cx).shown_len(), state.read(cx).source().len()));
+        assert_eq!(shown, len, "closed fence handed over in one piece");
+    }
+}
