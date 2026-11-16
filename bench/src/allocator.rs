@@ -11,15 +11,23 @@
 //! # Ok(()) }
 //! ```
 //! Counts allocations/reallocations on the calling thread only; spawned workers need
-//! their own scope. Bytes are cumulative requested bytes, not live or peak memory.
+//! their own scope. `count_process_allocations` includes every thread, so run its
+//! gates in an isolated executable without unrelated background work. Bytes sum each
+//! successful allocation's requested size; realloc adds the FULL new requested size,
+//! not its growth delta. This is allocation traffic, not live/peak memory.
 #![allow(unsafe_code)]
 use anyhow::{Result, ensure};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
-/// Successful allocations and requested bytes within a counting scope.
+/// Successful allocations and cumulative requested bytes within a counting scope.
+/// Reallocations add one operation and their entire new requested size.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counts {
     pub allocations: u64,
@@ -28,6 +36,9 @@ pub struct Counts {
 thread_local! {
     static COUNTS: Cell<Option<Counts>> = const { Cell::new(None) };
 }
+static PROCESS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static PROCESS_COUNTS: Mutex<Option<Counts>> = Mutex::new(None);
+
 fn allocated(size: usize) {
     let _ = COUNTS.try_with(|cell| {
         if let Some(mut count) = cell.get() {
@@ -36,12 +47,22 @@ fn allocated(size: usize) {
             cell.set(Some(count));
         }
     });
+    if PROCESS_ACTIVE.load(Ordering::Acquire) {
+        let mut counts = PROCESS_COUNTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(count) = counts.as_mut() {
+            count.allocations = count.allocations.saturating_add(1);
+            count.bytes = count.bytes.saturating_add(size as u64);
+        }
+    }
 }
 
 /// System allocator with thread-local instrumentation; inert outside counting scopes.
 pub struct CountingAllocator;
 // SAFETY: Every allocation operation delegates unchanged to System. Instrumentation
-// uses a const-initialized TLS Cell, never allocates, and tolerates TLS teardown.
+// uses a const-initialized TLS Cell and optional mutex counters, never allocates,
+// and tolerates TLS teardown. User callbacks never hold the accounting mutex.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: The caller supplies the valid layout required by GlobalAlloc.
@@ -91,5 +112,57 @@ pub fn count_allocations<T>(operation: impl FnOnce() -> T) -> Result<(T, Counts)
     let value = operation();
     let counts = COUNTS.with(|cell| cell.get().unwrap_or_default());
     drop(scope);
+    Ok((value, counts))
+}
+
+struct ProcessScope {
+    armed: bool,
+}
+impl Drop for ProcessScope {
+    fn drop(&mut self) {
+        if self.armed {
+            let mut counts = PROCESS_COUNTS
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            PROCESS_ACTIVE.store(false, Ordering::Release);
+            *counts = None;
+        }
+    }
+}
+
+/// Count successful allocations from ALL threads during the operation. Only one
+/// process scope may be active; overlap/nesting returns an error. User callbacks
+/// never execute under the accounting mutex. Panic unwinding resets the scope.
+///
+/// Coordinate worker start/finish inside the callback and run gates without other
+/// tests or background work in the same process. Thread-local scopes may coexist.
+/// Allocation hooks serialize count updates; this instrumentation is for allocation
+/// assertions, not wall-clock benchmarking.
+pub fn count_process_allocations<T>(operation: impl FnOnce() -> T) -> Result<(T, Counts)> {
+    let acquired = {
+        let mut counts = PROCESS_COUNTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if counts.is_none() {
+            *counts = Some(Counts::default());
+            PROCESS_ACTIVE.store(true, Ordering::Release);
+            true
+        } else {
+            false
+        }
+    };
+    // Construct errors outside the mutex: anyhow's own allocation is instrumented.
+    ensure!(acquired, "process allocation scopes cannot overlap or nest");
+    let mut scope = ProcessScope { armed: true };
+    let value = operation();
+    let counts = {
+        let mut counts = PROCESS_COUNTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        PROCESS_ACTIVE.store(false, Ordering::Release);
+        counts.take().unwrap_or_default()
+    };
+    // Release ownership before allowing a new scope; Drop must not reset its counts.
+    scope.armed = false;
     Ok((value, counts))
 }
