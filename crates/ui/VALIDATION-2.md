@@ -1,5 +1,7 @@
 # Data UI follow-ups — 2026-11-16
 
+Historical first-pass evidence. Review fixes and current validation are recorded in `VALIDATION-3.md`; the fixed-height and item-write limits below describe the earlier measured revision.
+
 Worktree `feat-data-ui-2`, based on release `fd7ae98`. Implementation commits:
 
 - `d5b311a`: keyed repeats, conditional nodes, persistent splice patches, native two-way Controls, compact payloads, typed bindings, compiled/cached style recipes, example and tests.
