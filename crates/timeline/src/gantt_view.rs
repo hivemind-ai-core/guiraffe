@@ -300,6 +300,7 @@ impl Render for GanttView {
                                     .border_color(line)
                                     .text_size(px(11.))
                                     .text_color(s.dimmed.to_hsla())
+                                    .whitespace_nowrap()
                                     .child(label(*tt, format))
                             })),
                     ),

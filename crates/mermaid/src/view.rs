@@ -237,7 +237,16 @@ impl MermaidViewState {
     fn set_bounds(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
         let before = self.viewport.bounds();
         self.viewport.set_bounds(width, height);
-        if self.viewport.bounds() != before {
+        let after = self.viewport.bounds();
+        if after == before {
+            return;
+        }
+        // The diagram is laid out for a width: re-render (in the background) when it
+        // changes, e.g. a source set before first layout was rendered at width 0.
+        if (after.0 - before.0).abs() >= 1.0 && !self.source.is_empty() {
+            self.revision += 1;
+            self.request(cx);
+        } else {
             cx.notify();
         }
     }

@@ -1,0 +1,33 @@
+[package]
+name = "guiraffe-showcase"
+description = "Showcase app: every GUIraffe component, live, in both themes. A coverage test fails when a public component has no showcase entry."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-components.workspace = true
+guiraffe-layout.workspace = true
+guiraffe-icons.workspace = true
+guiraffe-timeline.workspace = true
+guiraffe-chat.workspace = true
+guiraffe-flow.workspace = true
+guiraffe-inputs.workspace = true
+guiraffe-markdown = { workspace = true, features = ["mermaid", "syntect"] }
+guiraffe-mermaid.workspace = true
+guiraffe-overlays.workspace = true
+guiraffe-ui.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
