@@ -1,13 +1,18 @@
+mod process;
+mod revision;
+
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Parser, Subcommand};
 use guiraffe_bench::{
     RESAMPLES, Record, SEED, metadata, record, stats, suites, validate_profile, write_record,
 };
+use process::{check_interrupt, checked};
+use revision::Revision;
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, ExitCode},
 };
 
 #[derive(Parser)]
@@ -75,17 +80,6 @@ enum Action {
         iterations: usize,
     },
 }
-fn checked(command: &mut Command) -> Result<Output> {
-    let output = command
-        .output()
-        .with_context(|| format!("launching {command:?}"))?;
-    ensure!(
-        output.status.success(),
-        "{command:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(output)
-}
 fn root() -> Result<PathBuf> {
     let output = checked(Command::new("git").args(["rev-parse", "--show-toplevel"]))?;
     Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()))
@@ -104,7 +98,13 @@ fn run(options: Options, output: Option<PathBuf>, baseline: bool) -> Result<()> 
     let meta = metadata(&root, &options.profile, &options.notes)?;
     let mut records = Vec::new();
     for suite in selected(options.suite.as_deref())? {
-        let result = guiraffe_bench::run(suite, meta.clone(), options.samples, options.iterations)?;
+        let values = guiraffe_bench::measure_cancellable(
+            suite,
+            options.samples,
+            options.iterations,
+            process::interrupted,
+        )?;
+        let result = record(suite.name, meta.clone(), values, options.iterations)?;
         if baseline {
             write_record(
                 &root
@@ -131,73 +131,6 @@ fn save(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
-// The CLI owns only these detached temporary worktrees; never touches user branches.
-struct Revision {
-    directory: tempfile::TempDir,
-    root: PathBuf,
-    path: PathBuf,
-}
-impl Revision {
-    fn create(root: &Path, reference: &str) -> Result<Self> {
-        let output = checked(Command::new("git").current_dir(root).args([
-            "rev-parse",
-            "--verify",
-            &format!("{reference}^{{commit}}"),
-        ]))?;
-        let commit = String::from_utf8(output.stdout)?.trim().to_owned();
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("checkout");
-        checked(
-            Command::new("git")
-                .current_dir(root)
-                .args(["worktree", "add", "--detach"])
-                .arg(&path)
-                .arg(commit),
-        )?;
-        Ok(Self {
-            directory,
-            root: root.into(),
-            path,
-        })
-    }
-    fn build(&self) -> Result<PathBuf> {
-        // Share dependency artifacts, then copy each executable out before the next
-        // serial build can overwrite it. Samples never invoke a shared executable.
-        let target = self.root.join("target");
-        checked(
-            Command::new("cargo")
-                .current_dir(&self.path)
-                .args([
-                    "build",
-                    "--release",
-                    "--locked",
-                    "-p",
-                    "guiraffe-bench",
-                    "--target-dir",
-                ])
-                .arg(&target),
-        )?;
-        let binary = self.directory.path().join("guiraffe-bench");
-        fs::copy(target.join("release/guiraffe-bench"), &binary)?;
-        Ok(binary)
-    }
-}
-impl Drop for Revision {
-    fn drop(&mut self) {
-        match Command::new("git")
-            .current_dir(&self.root)
-            .args(["worktree", "remove", "--force"])
-            .arg(&self.path)
-            .output()
-        {
-            Ok(output) if output.status.success() => {}
-            result => eprintln!(
-                "warning: temporary worktree cleanup failed for {}: {result:?}",
-                self.path.display()
-            ),
-        }
-    }
-}
 fn affinity(requested: Option<usize>) -> Result<Option<usize>> {
     if !Command::new("taskset")
         .arg("--version")
@@ -248,6 +181,7 @@ struct Comparison {
     relative_ci95: stats::Interval,
     threshold: f64,
     regression: bool,
+    status: stats::Change,
     cpu: Option<usize>,
     order: &'static str,
 }
@@ -288,14 +222,21 @@ fn compare(args: CompareOptions) -> Result<()> {
         "refusing comparison across profiles; pass --force"
     );
     let root = root()?;
-    let old = Revision::create(&root, &old_ref)?;
-    let new = Revision::create(&root, &new_ref)?;
+    let source = metadata(&root, &options.profile, &options.notes)?;
+    let old_commit = revision::resolve(&root, &old_ref, &source.commit, source.dirty)?;
+    let new_commit = revision::resolve(&root, &new_ref, &source.commit, source.dirty)?;
+    revision::recover(&root)?;
+    let old = Revision::create(&root, &old_commit)?;
+    let new = Revision::create(&root, &new_commit)?;
     eprintln!("building old revision {old_ref}");
     let old_binary = old.build()?;
     eprintln!("building new revision {new_ref}");
     let new_binary = new.build()?;
     let mut old_meta = metadata(&old.path, &options.profile, &options.notes)?;
     let mut new_meta = metadata(&new.path, new_profile, &options.notes)?;
+    // Dirty describes the invoking source root, not the clean detached snapshots.
+    old_meta.dirty = source.dirty;
+    new_meta.dirty = source.dirty;
     old_meta.build_profile = "release".into();
     new_meta.build_profile = "release".into();
     let cpu = affinity(cpu)?;
@@ -304,10 +245,12 @@ fn compare(args: CompareOptions) -> Result<()> {
         "suite                    old ns       new ns       change      95% CI change       status"
     );
     for suite in selected(options.suite.as_deref())? {
+        check_interrupt()?;
         let mut a = Vec::new();
         let mut b = Vec::new();
         // Alternate AB/BA across rounds, not just all of A followed by all of B.
         for round in 0..options.samples {
+            check_interrupt()?;
             let (av, bv) = if round.is_multiple_of(2) {
                 (
                     sample(&old_binary, suite.name, options.iterations, cpu)?,
@@ -327,7 +270,8 @@ fn compare(args: CompareOptions) -> Result<()> {
         let new = record(suite.name, new_meta.clone(), b, options.iterations)?;
         guiraffe_bench::compatible(&old, &new, force)?;
         let ci = stats::relative_change(&old.samples, &new.samples, RESAMPLES, SEED)?;
-        let regression = stats::regressed(ci, threshold);
+        let status = stats::classify(ci, threshold);
+        let regression = status == stats::Change::Regression;
         println!(
             "{:<24} {:>10.2} {:>12.2} {:>9.2}% [{:>6.2}%, {:>6.2}%] {}",
             suite.name,
@@ -336,7 +280,7 @@ fn compare(args: CompareOptions) -> Result<()> {
             (new.summary.median / old.summary.median - 1.) * 100.,
             ci.low * 100.,
             ci.high * 100.,
-            if regression { "REGRESSION" } else { "pass" }
+            status.label()
         );
         comparisons.push(Comparison {
             old,
@@ -344,15 +288,15 @@ fn compare(args: CompareOptions) -> Result<()> {
             relative_ci95: ci,
             threshold,
             regression,
+            status,
             cpu,
             order: "AB, BA, repeated; warmup before every sample",
         });
     }
     save(&output, &serde_json::to_vec_pretty(&comparisons)?)?;
-    ensure!(
-        !comparisons.iter().any(|c| c.regression),
-        "regression exceeds threshold with 95% confidence"
-    );
+    if comparisons.iter().any(|c| c.regression) {
+        return Err(Regression.into());
+    }
     Ok(())
 }
 fn escape(text: &str) -> String {
@@ -443,29 +387,27 @@ fn instructions() -> Result<()> {
         );
         return Ok(());
     }
-    let status = Command::new("cargo")
-        .current_dir(root()?)
-        .args([
-            "bench",
-            "--locked",
-            "-p",
-            "guiraffe-bench",
-            "--features",
-            "instruction-counts",
-            "--bench",
-            "instructions",
-            "--",
-            "--save-summary=json",
-        ])
-        .status()?;
-    ensure!(
-        status.success(),
-        "instruction benchmarks failed (install iai-callgrind-runner --version 0.16.1 if missing)"
-    );
+    let output = checked(Command::new("cargo").current_dir(root()?).args([
+        "bench",
+        "--locked",
+        "-p",
+        "guiraffe-bench",
+        "--features",
+        "instruction-counts",
+        "--bench",
+        "instructions",
+        "--",
+        "--save-summary=json",
+    ]))
+    .context(
+        "instruction benchmarks failed (install iai-callgrind-runner --version 0.16.1 if missing)",
+    )?;
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
     Ok(())
 }
-fn main() -> Result<()> {
-    match Cli::parse().command {
+fn dispatch(action: Action) -> Result<()> {
+    match action {
         Action::Run {
             options,
             output,
@@ -509,12 +451,32 @@ fn main() -> Result<()> {
                 .into_iter()
                 .next()
                 .context("missing suite")?;
-            let values = guiraffe_bench::measure(suite, 1, iterations)?;
+            let values =
+                guiraffe_bench::measure_cancellable(suite, 1, iterations, process::interrupted)?;
             println!(
                 "{}",
                 serde_json::to_string(values.first().context("missing sample")?)?
             );
             Ok(())
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Regression;
+impl std::fmt::Display for Regression {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("regression exceeds threshold with 95% confidence")
+    }
+}
+impl std::error::Error for Regression {}
+fn main() -> ExitCode {
+    let result = process::install_handler().and_then(|()| dispatch(Cli::parse().command));
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error:#}");
+            ExitCode::from(if error.is::<Regression>() { 1 } else { 2 })
         }
     }
 }

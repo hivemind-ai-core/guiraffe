@@ -21,6 +21,9 @@ guiraffe-windows.workspace = true
 gpui-kit.workspace = true
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
+ctrlc = { version = "3", features = ["termination"] }
+fs2 = "0.4"
+nix = { version = "0.31", features = ["signal", "process"] }
 iai-callgrind = { version = "=0.16.1", optional = true }
 
 [dev-dependencies]

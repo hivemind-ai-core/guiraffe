@@ -66,7 +66,7 @@ fn invalid_options_fail_before_mutation() -> Result<()> {
         vec!["compare", "HEAD", "HEAD", "--new-profile", "other"],
         vec!["compare", "HEAD", "HEAD", "--threshold", "NaN"],
     ] {
-        assert!(!binary().args(args).output()?.status.success());
+        assert_eq!(binary().args(args).output()?.status.code(), Some(2));
     }
     Ok(())
 }
