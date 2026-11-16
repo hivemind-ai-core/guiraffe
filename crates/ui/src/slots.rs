@@ -14,6 +14,7 @@ pub struct SlotId(pub u32);
 pub enum Patch {
     Set(SlotId, Value),
     Splice(SlotId, Range<usize>, Arc<[Value]>),
+    SetItem(Arc<crate::ItemChange>),
 }
 
 /// Reusable patch buffer handed to logic (no allocation per event once warm).
@@ -24,6 +25,16 @@ pub struct PatchBuf {
 }
 
 impl PatchBuf {
+    pub fn item(&mut self, change: crate::ItemChange) {
+        self.patches.push(Patch::SetItem(Arc::new(change)));
+    }
+    pub(crate) fn clear(&mut self) {
+        self.patches.clear();
+        self.veto = false;
+    }
+    pub(crate) fn push(&mut self, patch: Patch) {
+        self.patches.push(patch);
+    }
     pub fn veto(&mut self) {
         self.veto = true;
     }
@@ -123,6 +134,24 @@ impl SlotTable {
     ) -> usize {
         let mut changed = 0;
         for p in buf.drain() {
+            let p = if let Patch::SetItem(change) = p {
+                let Some(row) = self.get(change.item.slot).list_get(change.item.index) else {
+                    continue;
+                };
+                if row.field(&change.item.key_path) != &change.item.key {
+                    continue;
+                }
+                let Some(row) = row.with_field(&change.path, change.value.clone()) else {
+                    continue;
+                };
+                Patch::Splice(
+                    change.item.slot,
+                    change.item.index..change.item.index + 1,
+                    Arc::from([row]),
+                )
+            } else {
+                p
+            };
             match p {
                 Patch::Set(id, v) => {
                     let i = id.0 as usize;
@@ -183,6 +212,7 @@ impl SlotTable {
                     }
                     edits.push(Patch::Splice(id, range, values));
                 }
+                Patch::SetItem(_) => {} // Lowered before mutation.
             }
         }
         if changed > 0 {

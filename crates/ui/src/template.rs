@@ -40,7 +40,8 @@ pub struct NodeSpec {
     pub each: Option<SlotId>,
     pub when: Option<SlotId>,
     pub key: Box<[SharedString]>,
-    pub change: Option<(SlotId, EventId)>,
+    pub(crate) change: Option<(crate::payload::ChangeTarget, EventId)>,
+    pub uniform_rows: bool,
     children: (u32, u32),
 }
 
@@ -358,22 +359,39 @@ impl Compiler<'_> {
         if let (Some(i), Some(ev)) = (
             schema.props.iter().position(|p| *p == "value"),
             schema.events.iter().position(|e| *e == "change"),
-        ) && let Some(Prop::Slot(slot)) = props.get(i)
-        {
-            let event = events.get(ev).copied().flatten().unwrap_or_else(|| {
-                let name = format!(
-                    "{}.change",
-                    self.t
-                        .names
-                        .slots
-                        .get(slot.0 as usize)
-                        .map(String::as_str)
-                        .unwrap_or_default()
-                );
-                self.event(&name)
-            });
-            events[ev] = Some(event);
-            change = Some((*slot, event));
+        ) {
+            let target = match props.get(i) {
+                Some(Prop::Slot(slot)) => Some(crate::payload::ChangeTarget::Slot(*slot)),
+                Some(Prop::Item(path)) => {
+                    Some(crate::payload::ChangeTarget::Item(Arc::from(path.as_ref())))
+                }
+                _ => None,
+            };
+            if let Some(target) = target {
+                let event = events.get(ev).copied().flatten().unwrap_or_else(|| {
+                    let name = match &target {
+                        crate::payload::ChangeTarget::Slot(slot) => format!(
+                            "{}.change",
+                            self.t
+                                .names
+                                .slots
+                                .get(slot.0 as usize)
+                                .map(String::as_str)
+                                .unwrap_or_default()
+                        ),
+                        crate::payload::ChangeTarget::Item(path) => format!(
+                            "item.{}.change",
+                            path.iter()
+                                .map(|part| part.as_ref())
+                                .collect::<Vec<_>>()
+                                .join(".")
+                        ),
+                    };
+                    self.event(&name)
+                });
+                events[ev] = Some(event);
+                change = Some((target, event));
+            }
         }
         if let Some(id) = &n.id {
             if self.t.ids.contains_key(id.as_str()) {
@@ -400,6 +418,7 @@ impl Compiler<'_> {
                 .map(|s| s.to_owned().into())
                 .collect(),
             change,
+            uniform_rows: false,
             children: (0, 0),
         });
         let mut kids = Vec::with_capacity(n.children.len());
@@ -407,10 +426,21 @@ impl Compiler<'_> {
             kids.push(self.node(child, format!("{path}/children/{i}"), depth + 1)?);
         }
         let start = self.t.child_index.len() as u32;
+        let uniform_rows = kids.len() == 1
+            && kids
+                .first()
+                .and_then(|i| self.t.node(*i))
+                .is_some_and(|child| {
+                    child.each.is_none()
+                        && child.when.is_none()
+                        && self.t.children(child).is_empty()
+                        && child.widget.uniform_row(&child.props)
+                });
         self.t.child_index.extend(kids);
         let end = self.t.child_index.len() as u32;
         if let Some(node) = self.t.nodes.get_mut(index as usize) {
             node.children = (start, end);
+            node.uniform_rows = uniform_rows;
         }
         Ok(index)
     }

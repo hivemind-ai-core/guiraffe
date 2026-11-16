@@ -55,9 +55,11 @@ impl Fixture {
                         .bind("color", "tone"),
                 )
                 .child(
-                    Node::new("stack")
-                        .each("items")
-                        .child(Node::new("text").prop("text", "@item.title")),
+                    Node::new("stack").each("items").child(
+                        Node::new("text")
+                            .prop("text", "@item.title")
+                            .prop("single-line", true),
+                    ),
                 ),
         );
         let template = Arc::new(Template::compile(&doc, &registry)?);

@@ -1,4 +1,5 @@
-//! Stateful GPUI Controls adapters, cached per template node and keyed item.
+//! Native control views. Model observers synchronize shared control state after patch
+//! transactions, never by writing a control entity from its parent's render.
 use crate::{
     Payload, Value,
     widget::{NodeView, Registry, Schema, Widget},
@@ -11,23 +12,57 @@ use gpui_kit::component::{
     switch::Switch,
 };
 use gpui_kit::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Window, div, px,
+    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Window, div, px,
 };
 use guiraffe_core::{Size, StyleContext};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
 pub(crate) type Change = Rc<dyn Fn(Payload, &mut Window, &mut App)>;
+pub(crate) type PropsRead = Rc<dyn Fn(u32, u64) -> Option<Props>>;
+type Entries = HashMap<u64, HashMap<u32, Rc<Entry>>>;
 #[derive(Default)]
-pub(crate) struct ControlCache(RefCell<HashMap<u64, HashMap<u32, Entity<Control>>>>);
+pub(crate) struct ControlCache {
+    scopes: RefCell<Entries>,
+    nodes: RefCell<BTreeMap<(u32, u64), std::rc::Weak<Entry>>>,
+}
 impl ControlCache {
+    pub fn clear(&self) {
+        self.scopes.borrow_mut().clear();
+        self.nodes.borrow_mut().clear();
+    }
+    pub fn remove_scope(&self, scope: u64) {
+        if let Some(entries) = self.scopes.borrow_mut().remove(&scope) {
+            for node in entries.keys() {
+                self.nodes.borrow_mut().remove(&(*node, scope));
+            }
+        }
+    }
+    pub fn schedule_scope(&self, scope: u64, cx: &mut App) {
+        if let Some(entries) = self.scopes.borrow().get(&scope) {
+            for entry in entries.values() {
+                entry.schedule(cx);
+            }
+        }
+    }
+    pub fn schedule_node(&self, node: u32, cx: &mut App) {
+        for (_, entry) in self.nodes.borrow().range((node, 0)..=(node, u64::MAX)) {
+            if let Some(entry) = entry.upgrade() {
+                entry.schedule(cx);
+            }
+        }
+    }
     #[cfg(feature = "test-support")]
-    pub fn native_value(&self, node: u32, cx: &App) -> Option<Value> {
-        let cache = self.0.borrow();
-        let control = cache.get(&0)?.get(&node)?.read(cx);
-        if let Some(input) = &control.input {
+    pub fn native_value(&self, node: u32, scope: u64, cx: &App) -> Option<Value> {
+        let cache = self.scopes.borrow();
+        let state = &cache.get(&scope)?.get(&node)?.state;
+        if let Some(input) = &state.input {
             Some(Value::Str(input.read(cx).value()))
         } else {
-            control.select.as_ref().map(|select| {
+            state.select.as_ref().map(|select| {
                 select
                     .read(cx)
                     .selected_value()
@@ -37,14 +72,8 @@ impl ControlCache {
             })
         }
     }
-    pub fn clear(&self) {
-        self.0.borrow_mut().clear();
-    }
-    pub fn remove_scope(&self, scope: u64) {
-        self.0.borrow_mut().remove(&scope);
-    }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum Kind {
     Text,
     Checkbox,
@@ -52,7 +81,7 @@ enum Kind {
     Select,
 }
 #[derive(Clone, PartialEq)]
-struct Props {
+pub(crate) struct Props {
     value: Value,
     label: SharedString,
     options: Value,
@@ -60,7 +89,7 @@ struct Props {
     placeholder: SharedString,
 }
 impl Props {
-    fn from_node(n: &NodeView<'_>) -> Self {
+    pub(crate) fn from_node(n: &NodeView<'_>) -> Self {
         Self {
             value: n.prop(0).clone(),
             label: n.text(1),
@@ -70,9 +99,36 @@ impl Props {
         }
     }
 }
-struct Control {
+struct Entry {
+    view: Entity<Control>,
+    state: Rc<State>,
+    reader: PropsRead,
+    node: u32,
+    scope: u64,
+    window: AnyWindowHandle,
+    scheduled: Cell<bool>,
+}
+impl Entry {
+    fn schedule(self: &Rc<Self>, cx: &mut App) {
+        if self.scheduled.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        cx.defer(move |cx| {
+            let Some(entry) = weak.upgrade() else { return };
+            entry.scheduled.set(false);
+            let Some(props) = (entry.reader)(entry.node, entry.scope) else {
+                return;
+            };
+            let _ = entry.window.update(cx, |_, window, cx| {
+                entry.state.sync(props, entry.view.entity_id(), window, cx)
+            });
+        });
+    }
+}
+struct State {
     kind: Kind,
-    props: Props,
+    props: RefCell<Props>,
     change: Change,
     id: gpui_kit::ElementId,
     selector: Option<SharedString>,
@@ -86,7 +142,7 @@ fn options(value: &Value) -> Vec<SharedString> {
         .map(Value::display)
         .collect()
 }
-impl Control {
+impl State {
     fn new(
         kind: Kind,
         props: Props,
@@ -94,106 +150,124 @@ impl Control {
         id: gpui_kit::ElementId,
         selector: Option<SharedString>,
         window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let mut subscriptions = Vec::new();
-        let input = if matches!(kind, Kind::Text) {
-            let input =
-                cx.new(|cx| InputState::new(window, cx).placeholder(props.placeholder.clone()));
-            input.update(cx, |state, cx| {
-                state.set_value(props.value.display(), window, cx)
-            });
-            subscriptions.push(cx.subscribe_in(
-                &input,
-                window,
-                |this, input, event, window, cx| {
-                    if matches!(event, InputEvent::Change) && !this.props.disabled {
-                        (this.change)(Payload::Text(input.read(cx).value()), window, cx);
+        cx: &mut App,
+    ) -> Rc<Self> {
+        Rc::new_cyclic(|weak: &std::rc::Weak<State>| {
+            let mut subscriptions = Vec::new();
+            let handle = window.window_handle();
+            let input = if matches!(kind, Kind::Text) {
+                let input =
+                    cx.new(|cx| InputState::new(window, cx).placeholder(props.placeholder.clone()));
+                input.update(cx, |state, cx| {
+                    state.set_value(props.value.display(), window, cx)
+                });
+                let target = weak.clone();
+                subscriptions.push(App::subscribe(cx, &input, move |input, event, cx| {
+                    if !matches!(event, InputEvent::Change) {
+                        return;
                     }
-                },
-            ));
-            Some(input)
-        } else {
-            None
-        };
-        let select = if matches!(kind, Kind::Select) {
-            let select = cx.new(|cx| SelectState::new(options(&props.options), None, window, cx));
-            select.update(cx, |state, cx| {
-                state.set_selected_value(&props.value.display(), window, cx)
-            });
-            subscriptions.push(
-                cx.subscribe_in(&select, window, |this, _, event, window, cx| {
+                    let Some(state) = target
+                        .upgrade()
+                        .filter(|state| !state.props.borrow().disabled)
+                    else {
+                        return;
+                    };
+                    let value = input.read(cx).value();
+                    let change = state.change.clone();
+                    let _ =
+                        handle.update(cx, |_, window, cx| change(Payload::Text(value), window, cx));
+                }));
+                Some(input)
+            } else {
+                None
+            };
+            let select = if matches!(kind, Kind::Select) {
+                let select =
+                    cx.new(|cx| SelectState::new(options(&props.options), None, window, cx));
+                select.update(cx, |state, cx| {
+                    state.set_selected_value(&props.value.display(), window, cx)
+                });
+                let target = weak.clone();
+                subscriptions.push(App::subscribe(cx, &select, move |_, event, cx| {
                     let SelectEvent::Confirm(value) = event;
-                    if !this.props.disabled {
-                        (this.change)(Payload::Selection(value.clone()), window, cx);
-                    }
-                }),
-            );
-            Some(select)
-        } else {
-            None
-        };
-        Self {
-            kind,
-            props,
-            change,
-            id,
-            selector,
-            input,
-            select,
-            _subscriptions: subscriptions,
-        }
+                    let Some(state) = target
+                        .upgrade()
+                        .filter(|state| !state.props.borrow().disabled)
+                    else {
+                        return;
+                    };
+                    let change = state.change.clone();
+                    let value = value.clone();
+                    let _ = handle.update(cx, |_, window, cx| {
+                        change(Payload::Selection(value), window, cx)
+                    });
+                }));
+                Some(select)
+            } else {
+                None
+            };
+            State {
+                kind,
+                props: RefCell::new(props),
+                change,
+                id,
+                selector,
+                input,
+                select,
+                _subscriptions: subscriptions,
+            }
+        })
     }
-    fn needs_sync(&self, props: &Props, cx: &App) -> bool {
-        self.props != *props
-            || self
-                .input
-                .as_ref()
-                .is_some_and(|state| state.read(cx).value() != props.value.display())
-            || self.select.as_ref().is_some_and(|state| {
-                state.read(cx).selected_value().map(|s| s.as_ref()) != props.value.as_str()
-            })
-    }
-    fn sync(&mut self, props: Props, window: &mut Window, cx: &mut Context<Self>) {
-        if self.props.placeholder != props.placeholder
-            && let Some(input) = &self.input
-        {
-            input.update(cx, |state, cx| {
-                state.set_placeholder(props.placeholder.clone(), window, cx)
-            });
-        }
-        if let Some(input) = &self.input
-            && input.read(cx).value() != props.value.display()
-        {
-            input.update(cx, |state, cx| {
-                state.set_value(props.value.display(), window, cx)
-            });
+    fn sync(&self, props: Props, view: gpui_kit::EntityId, window: &mut Window, cx: &mut App) {
+        let previous = self.props.borrow().clone();
+        let mut changed = previous != props;
+        if let Some(input) = &self.input {
+            if previous.placeholder != props.placeholder {
+                input.update(cx, |state, cx| {
+                    state.set_placeholder(props.placeholder.clone(), window, cx)
+                });
+            }
+            if input.read(cx).value() != props.value.display() {
+                input.update(cx, |state, cx| {
+                    state.set_value(props.value.display(), window, cx)
+                });
+                changed = true;
+            }
         }
         if let Some(select) = &self.select {
-            if props.options != self.props.options {
+            if previous.options != props.options {
                 select.update(cx, |state, cx| {
                     state.set_items(options(&props.options), window, cx)
                 });
             }
-            if select.read(cx).selected_value() != Some(&props.value.display()) {
+            if select.read(cx).selected_value().map(|value| value.as_ref()) != props.value.as_str()
+            {
                 select.update(cx, |state, cx| {
                     state.set_selected_value(&props.value.display(), window, cx)
                 });
+                changed = true;
             }
         }
-        self.props = props;
-        cx.notify();
+        *self.props.borrow_mut() = props;
+        if changed {
+            cx.notify(view);
+        }
     }
+}
+struct Control {
+    state: Rc<State>,
 }
 impl Render for Control {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let state = &self.state;
+        let props = state.props.borrow().clone();
         let size = px(StyleContext::current().control_size.control_height());
-        let change = self.change.clone();
-        let disabled = self.props.disabled;
-        let element = match self.kind {
-            Kind::Checkbox => Checkbox::new(self.id.clone())
-                .label(self.props.label.clone())
-                .checked(self.props.value.as_bool().unwrap_or(false))
+        let change = state.change.clone();
+        let disabled = props.disabled;
+        let element = match state.kind {
+            Kind::Checkbox => Checkbox::new(state.id.clone())
+                .label(props.label)
+                .checked(props.value.as_bool().unwrap_or(false))
                 .disabled(disabled)
                 .with_size(size)
                 .on_change(move |value, w, cx| {
@@ -202,9 +276,9 @@ impl Render for Control {
                     }
                 })
                 .into_any_element(),
-            Kind::Switch => Switch::new(self.id.clone())
-                .label(self.props.label.clone())
-                .checked(self.props.value.as_bool().unwrap_or(false))
+            Kind::Switch => Switch::new(state.id.clone())
+                .label(props.label)
+                .checked(props.value.as_bool().unwrap_or(false))
                 .disabled(disabled)
                 .with_size(size)
                 .on_change(move |value, w, cx| {
@@ -213,7 +287,7 @@ impl Render for Control {
                     }
                 })
                 .into_any_element(),
-            Kind::Text => self
+            Kind::Text => state
                 .input
                 .as_ref()
                 .map(|input| {
@@ -223,13 +297,13 @@ impl Render for Control {
                         .into_any_element()
                 })
                 .unwrap_or_else(|| div().into_any_element()),
-            Kind::Select => self
+            Kind::Select => state
                 .select
                 .as_ref()
-                .map(|state| {
-                    Select::new(state)
-                        .id(self.id.clone())
-                        .placeholder(self.props.placeholder.clone())
+                .map(|select| {
+                    Select::new(select)
+                        .id(state.id.clone())
+                        .placeholder(props.placeholder)
                         .disabled(disabled)
                         .with_size(size)
                         .into_any_element()
@@ -243,7 +317,7 @@ impl Render for Control {
         #[cfg(feature = "test-support")]
         let wrapper = {
             use gpui_kit::InteractiveElement;
-            let selector = self.selector.clone();
+            let selector = state.selector.clone();
             wrapper.debug_selector(move || {
                 selector
                     .as_ref()
@@ -252,7 +326,7 @@ impl Render for Control {
             })
         };
         #[cfg(not(feature = "test-support"))]
-        let _ = &self.selector;
+        let _ = &state.selector;
         wrapper
     }
 }
@@ -262,6 +336,9 @@ static CONTROL: Schema = Schema {
 };
 struct ControlWidget(Kind);
 impl Widget for ControlWidget {
+    fn uniform_row(&self, _: &[crate::Prop]) -> bool {
+        matches!(self.0, Kind::Text | Kind::Select)
+    }
     fn schema(&self) -> &'static Schema {
         &CONTROL
     }
@@ -272,39 +349,52 @@ impl Widget for ControlWidget {
         window: &mut Window,
         cx: &mut App,
     ) -> gpui_kit::AnyElement {
-        let key = (n.index, n.scope);
-        let props = Props::from_node(n);
         let existing = n
             .controls
-            .0
+            .scopes
             .borrow()
-            .get(&key.1)
-            .and_then(|scope| scope.get(&key.0))
+            .get(&n.scope)
+            .and_then(|entries| entries.get(&n.index))
             .cloned();
-        let control = existing.unwrap_or_else(|| {
-            let entity = cx.new(|cx| {
-                Control::new(
-                    self.0,
-                    props.clone(),
-                    n.change_handler(),
-                    n.element_id(),
-                    n.spec.id.clone(),
-                    window,
-                    cx,
-                )
+        let entry = existing.unwrap_or_else(|| {
+            #[cfg(feature = "test-support")]
+            let selector = n.selector();
+            #[cfg(not(feature = "test-support"))]
+            let selector = None;
+            let state = State::new(
+                self.0,
+                Props::from_node(n),
+                n.change_handler(),
+                n.element_id(),
+                selector,
+                window,
+                cx,
+            );
+            let view = cx.new(|_| Control {
+                state: state.clone(),
+            });
+            let entry = Rc::new(Entry {
+                view,
+                state,
+                reader: n.reader.clone(),
+                node: n.index,
+                scope: n.scope,
+                window: window.window_handle(),
+                scheduled: Cell::new(false),
             });
             n.controls
-                .0
+                .scopes
                 .borrow_mut()
-                .entry(key.1)
+                .entry(n.scope)
                 .or_default()
-                .insert(key.0, entity.clone());
-            entity
+                .insert(n.index, entry.clone());
+            n.controls
+                .nodes
+                .borrow_mut()
+                .insert((n.index, n.scope), Rc::downgrade(&entry));
+            entry
         });
-        if control.read(cx).needs_sync(&props, cx) {
-            control.update(cx, |control, cx| control.sync(props, window, cx));
-        }
-        control.into_any_element()
+        entry.view.clone().into_any_element()
     }
 }
 pub(crate) fn register(registry: &mut Registry) {

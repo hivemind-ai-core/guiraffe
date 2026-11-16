@@ -9,6 +9,8 @@ struct Demo {
     title: Slot<SharedString>,
     rows: Slot<Value>,
     add: Event,
+    delete: Event,
+    next_id: usize,
     text: SharedString,
     count: usize,
 }
@@ -18,6 +20,7 @@ impl Logic for Demo {
         self.title = b.slot("title");
         self.rows = b.slot("rows");
         self.add = b.event("add");
+        self.delete = b.event("delete");
         for diagnostic in b.diagnostics() {
             eprintln!("{}: {}", diagnostic.path, diagnostic.message);
         }
@@ -30,18 +33,32 @@ impl Logic for Demo {
         if self.add.matches(event) {
             let record = Value::Record(Arc::new(
                 [
-                    ("id".into(), Value::from(format!("row-{}", self.count))),
+                    ("id".into(), Value::from(format!("row-{}", self.next_id))),
                     ("title".into(), Value::Str(self.text.clone())),
+                    ("done".into(), Value::Bool(false)),
                 ]
                 .into_iter()
                 .collect(),
             ));
             out.splice(self.rows, self.count..self.count, Arc::from([record]));
             self.count += 1;
+            self.next_id += 1;
         }
     }
     fn on_payload(&mut self, event: guiraffe_ui::EventId, payload: &Payload, out: &mut PatchBuf) {
-        if let Payload::Text(text) = payload {
+        if let Some(item) = payload.item() {
+            if self.delete.matches(event) {
+                out.splice(item.slot, item.index..item.index + 1, Arc::from([]));
+                self.count = self.count.saturating_sub(1);
+            }
+            if let Payload::Text(text) = payload.input()
+                && text.len() > 80
+            {
+                out.veto();
+            }
+            return;
+        }
+        if let Payload::Text(text) = payload.input() {
             if text.len() > 80 {
                 out.veto();
             } else {
@@ -59,7 +76,11 @@ const DOC: &str = r#"{"version":1,"root":{"kind":"stack","children":[
 {"kind":"switch","props":{"label":"Rows visible"},"bind":{"value":"visible"}},
 {"kind":"select","props":{"options":["Compact","Comfortable"],"value":"Comfortable"},"bind":{"value":"mode"}},
 {"kind":"text","bind":{"text":"mode"}},
-{"kind":"stack","when":"visible","each":"rows","key":"id","children":[{"kind":"text","props":{"text":"@item.title"}}]}
+{"kind":"stack","when":"visible","each":"rows","key":"id","children":[{"kind":"stack","children":[
+{"kind":"text-input","bind":{"value":"@item.title"}},
+{"kind":"checkbox","props":{"label":"Done"},"bind":{"value":"@item.done"}},
+{"kind":"button","props":{"label":"Delete row"},"on":{"click":"delete"}}
+]}]}
 ]}}"#;
 fn main() {
     gpui_kit::application()

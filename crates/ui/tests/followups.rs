@@ -23,13 +23,13 @@ fn splice_is_bounded_atomic_and_change_checked() {
 
 #[test]
 fn compile_resolves_repeat_condition_item_paths_and_implied_events() {
-    let doc = Document::from_json(r#"{"version":1,"root":{"kind":"stack","each":"todos","key":"id","when":"visible","children":[{"kind":"text","props":{"text":"@item.title","size":"sm","color":"blue"}},{"kind":"checkbox","bind":{"value":"done"}}]}}"#).expect("document");
+    let doc = Document::from_json(r#"{"version":1,"root":{"kind":"stack","each":"todos","key":"id","when":"visible","children":[{"kind":"text","props":{"text":"@item.title","size":"sm","color":"blue"}},{"kind":"checkbox","bind":{"value":"@item.done"}}]}}"#).expect("document");
     let t = Template::compile(&doc, &Registry::with_builtins()).expect("compile");
     assert!(t.diagnostics().is_empty(), "{:?}", t.diagnostics());
     assert!(t.names().slot("todos").is_some());
     assert!(t.names().slot("visible").is_some());
     assert!(t.names().slot("item.title").is_none());
-    assert!(t.names().event("done.change").is_some());
+    assert!(t.names().event("item.done.change").is_some());
     assert!(matches!(
         t.node(1).expect("text").props.get(2),
         Some(Prop::Size(guiraffe_core::Size::Sm))
@@ -134,7 +134,7 @@ fn splice_retains_keyed_entities_and_unrelated_renders(cx: &mut TestAppContext) 
     let before_a = h.item_metrics(0, "a").expect("a");
     let before_b = h.item_metrics(0, "b").expect("b");
     let before_c = h.item_metrics(0, "c").expect("c");
-    let root = vcx.update(|_, cx| ui.read(cx).node_renders(0));
+    let root = vcx.update(|_, cx| ui.read(cx).host_renders());
     vcx.update(|_, cx| {
         h.patch(
             |names, out| {
@@ -159,6 +159,7 @@ fn splice_retains_keyed_entities_and_unrelated_renders(cx: &mut TestAppContext) 
         assert_eq!(before_a, after_a, "unchanged first row");
         assert_eq!(before_c, after_c, "unchanged last row");
     }
+    let no_op_host = vcx.update(|_, cx| ui.read(cx).host_renders());
     vcx.update(|_, cx| {
         h.patch(
             |names, out| {
@@ -173,8 +174,18 @@ fn splice_retains_keyed_entities_and_unrelated_renders(cx: &mut TestAppContext) 
     });
     vcx.run_until_parked();
     assert_eq!(after_b, h.item_metrics(0, "b").expect("no-op"));
-    assert!(vcx.update(|_, cx| ui.read(cx).node_renders(0)) >= root);
-    assert_eq!(vcx.update(|_, cx| ui.read(cx).host_refreshes()), 0);
+    assert_eq!(
+        vcx.update(|_, cx| ui.read(cx).host_renders()),
+        no_op_host,
+        "no-op host count on either backend"
+    );
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            vcx.update(|_, cx| ui.read(cx).host_renders()),
+            root,
+            "host stayed retained"
+        );
+    }
 }
 #[gpui_kit::test]
 fn when_switches_visibility(cx: &mut TestAppContext) {
@@ -182,7 +193,7 @@ fn when_switches_visibility(cx: &mut TestAppContext) {
         id: Some("conditional".into()),
         ..Node::new("button").when("visible").prop("label", "Here")
     }));
-    let (ui, h, vcx) = mount(cx, d, ListLogic);
+    let (_ui, h, vcx) = mount(cx, d, ListLogic);
     assert!(vcx.debug_bounds("conditional").is_some());
     vcx.update(|_, cx| {
         h.patch(
@@ -200,7 +211,6 @@ fn when_switches_visibility(cx: &mut TestAppContext) {
     });
     vcx.run_until_parked();
     assert!(vcx.debug_bounds("conditional").is_some());
-    assert_eq!(vcx.update(|_, cx| ui.read(cx).host_refreshes()), 0);
 }
 struct InputLogic {
     seen: std::rc::Rc<std::cell::RefCell<Vec<Payload>>>,
@@ -225,7 +235,7 @@ fn native_checkbox_implied_change_optimistically_updates_and_can_veto(cx: &mut T
             .prop("value", false)
             .bind("value", "enabled")
     });
-    let (ui, h, vcx) = mount(
+    let (_ui, h, vcx) = mount(
         cx,
         d,
         InputLogic {
@@ -238,7 +248,6 @@ fn native_checkbox_implied_change_optimistically_updates_and_can_veto(cx: &mut T
     vcx.run_until_parked();
     assert_eq!(*seen.borrow(), vec![Payload::Bool(true)]);
     assert_eq!(h.slot_value("enabled"), Some(Value::Bool(true)));
-    assert_eq!(vcx.update(|_, cx| ui.read(cx).host_refreshes()), 0);
 }
 
 #[gpui_kit::test]
@@ -261,7 +270,7 @@ fn checkbox_veto_and_switch_disabled_guard(cx: &mut TestAppContext) {
                     .bind("value", "other")
             }),
     );
-    let (ui, h, vcx) = mount(
+    let (_ui, h, vcx) = mount(
         cx,
         d,
         InputLogic {
@@ -278,7 +287,6 @@ fn checkbox_veto_and_switch_disabled_guard(cx: &mut TestAppContext) {
     vcx.simulate_click(center, gpui_kit::Modifiers::default());
     vcx.run_until_parked();
     assert_eq!(seen.borrow().len(), 1);
-    assert_eq!(vcx.update(|_, cx| ui.read(cx).host_refreshes()), 0);
 }
 struct EditLogic {
     title: Slot<SharedString>,

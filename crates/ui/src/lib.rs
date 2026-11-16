@@ -26,8 +26,10 @@ pub use widget::{FnWidget, NodeView, Registry, Schema, Widget, widget};
 pub mod bindings;
 pub mod payload;
 pub use bindings::{Bindings, Event, Slot, SlotValue};
-pub use payload::Payload;
+pub use payload::{ItemChange, ItemContext, Payload, ScopedPayload};
 
 mod repeat;
 
 mod controls;
+
+mod position;

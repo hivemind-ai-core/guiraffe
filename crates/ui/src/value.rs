@@ -62,6 +62,27 @@ impl Value {
             })
             .unwrap_or(&NULL)
     }
+    /// Copy only record fields along the compiled path; a missing final field may be inserted.
+    /// Invalid intermediate shapes are rejected without mutation.
+    pub fn with_field(&self, path: &[SharedString], value: Value) -> Option<Self> {
+        let Some((head, tail)) = path.split_first() else {
+            return Some(value);
+        };
+        let Self::Record(fields) = self else {
+            return None;
+        };
+        let child = if tail.is_empty() {
+            value
+        } else {
+            fields.get(head)?.with_field(tail, value)?
+        };
+        if fields.get(head) == Some(&child) {
+            return Some(self.clone());
+        }
+        let mut fields = fields.as_ref().clone();
+        fields.insert(head.clone(), child);
+        Some(Self::Record(Arc::new(fields)))
+    }
     pub(crate) fn persistent(self) -> Self {
         match self {
             Self::List(values) => Self::Sequence(values.iter().cloned().collect()),

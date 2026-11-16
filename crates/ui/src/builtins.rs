@@ -44,7 +44,7 @@ static TITLE: Schema = Schema {
     events: &[],
 };
 static TEXT: Schema = Schema {
-    props: &["text", "dimmed", "size", "color"],
+    props: &["text", "dimmed", "size", "color", "single-line"],
     events: &[],
 };
 static HIGHLIGHT: Schema = Schema {
@@ -126,7 +126,19 @@ pub fn register(r: &mut Registry) {
             if let Some(c) = n.color(3) {
                 t = t.color(c);
             }
+            if n.bool(4) {
+                t = t
+                    .truncate(true)
+                    .h(px(Size::Xl.control_height()))
+                    .line_height(px(Size::Xl.control_height()));
+            }
             t.into_any_element()
+        })
+        .uniform_rows_if(|props| {
+            matches!(
+                props.get(4),
+                Some(crate::Prop::Lit(crate::Value::Bool(true)))
+            )
         }),
     );
     r.register(
@@ -172,7 +184,7 @@ pub fn register(r: &mut Registry) {
             };
             // Document ids double as test/automation selectors in `test-support` builds.
             #[cfg(feature = "test-support")]
-            if let Some(id) = n.spec.id.clone() {
+            if let Some(id) = n.selector() {
                 use gpui_kit::InteractiveElement as _;
                 return div()
                     .debug_selector(move || id.to_string())

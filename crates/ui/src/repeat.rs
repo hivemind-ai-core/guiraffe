@@ -1,5 +1,8 @@
 //! Incremental keyed reconciliation. No GPUI types or window operations.
-use crate::Value;
+use crate::{
+    Value,
+    position::{Position, Positions},
+};
 use gpui_kit::SharedString;
 use std::{
     collections::{HashMap, HashSet},
@@ -29,11 +32,14 @@ pub(crate) struct Entry<T: Clone> {
     pub value: Value,
     pub state: T,
     key: Option<Key>,
+    pub position: Position,
 }
 pub(crate) struct KeyedList<T: Clone> {
     pub rows: im::Vector<Entry<T>>,
     keys: HashSet<Key>,
     path: Box<[SharedString]>,
+    positions: Positions,
+    duplicates: bool,
 }
 impl<T: Clone> KeyedList<T> {
     pub fn new(path: Box<[SharedString]>) -> Self {
@@ -41,18 +47,20 @@ impl<T: Clone> KeyedList<T> {
             rows: im::Vector::new(),
             keys: HashSet::new(),
             path,
+            positions: Positions::default(),
+            duplicates: false,
         }
     }
     pub fn splice(
         &mut self,
         range: Range<usize>,
         values: &Arc<[Value]>,
-        mut create: impl FnMut(&Value) -> T,
+        mut create: impl FnMut(&Value, Position) -> T,
         mut update: impl FnMut(&T, &Value),
         mut remove: impl FnMut(T),
-    ) {
+    ) -> bool {
         if range.start > range.end || range.end > self.rows.len() {
-            return;
+            return false;
         }
         let replace = range.len() == values.len();
         let suffix = if replace {
@@ -68,35 +76,56 @@ impl<T: Clone> KeyedList<T> {
         } else {
             self.rows.split_off(range.start).into_iter().collect()
         };
+        let old_positions: Vec<_> = removed.iter().map(|entry| entry.position.id()).collect();
+        let mut new_positions = Vec::with_capacity(values.len());
         let mut reuse = HashMap::new();
-        let mut unkeyed = Vec::new();
-        for entry in removed {
+        let mut unkeyed = HashMap::new();
+        for (offset, entry) in removed.into_iter().enumerate() {
             if let Some(key) = entry.key {
                 self.keys.remove(&key);
-                reuse.insert(key, (entry.value, entry.state));
+                reuse.insert(key, (entry.value, entry.state, entry.position));
             } else {
-                unkeyed.push(entry.state);
+                unkeyed.insert(offset, (entry.value, entry.state, entry.position));
             }
         }
         for (offset, value) in values.iter().enumerate() {
             let key =
                 Key::from_value(value.field(&self.path)).filter(|key| !self.keys.contains(key));
-            let state =
-                if let Some((previous, state)) = key.as_ref().and_then(|key| reuse.remove(key)) {
-                    if &previous != value {
-                        update(&state, value);
-                    }
-                    state
-                } else {
-                    create(value)
-                };
+            let positional = if replace
+                && key.is_none()
+                && unkeyed.get(&offset).is_some_and(|(previous, _, _)| {
+                    Key::from_value(previous.field(&self.path))
+                        == Key::from_value(value.field(&self.path))
+                }) {
+                unkeyed.remove(&offset)
+            } else {
+                None
+            };
+            let (state, position) = if let Some((previous, state, position)) = key
+                .as_ref()
+                .and_then(|key| reuse.remove(key))
+                .or(positional)
+            {
+                if &previous != value {
+                    update(&state, value);
+                }
+                (state, position)
+            } else {
+                let position = self.positions.create();
+                (create(value, position.clone()), position)
+            };
             if let Some(key) = &key {
                 self.keys.insert(key.clone());
             }
+            if key.is_none() && Key::from_value(value.field(&self.path)).is_some() {
+                self.duplicates = true;
+            }
+            new_positions.push(position.clone());
             let entry = Entry {
                 value: value.clone(),
                 state,
                 key,
+                position,
             };
             if replace {
                 self.rows.set(range.start + offset, entry);
@@ -107,12 +136,38 @@ impl<T: Clone> KeyedList<T> {
         if !replace {
             self.rows.append(suffix);
         }
-        for (_, (_, state)) in reuse {
+        let structural = old_positions
+            .iter()
+            .copied()
+            .ne(new_positions.iter().map(Position::id));
+        if structural {
+            self.positions.splice(range, &new_positions);
+        }
+        for (_, (_, state, _)) in reuse {
             remove(state);
         }
-        for state in unkeyed {
+        for (_, (_, state, _)) in unkeyed {
             remove(state);
         }
+        if self.duplicates {
+            self.duplicates = false;
+            for i in 0..self.rows.len() {
+                let Some(mut entry) = self.rows.get(i).cloned() else {
+                    continue;
+                };
+                if entry.key.is_none()
+                    && let Some(key) = Key::from_value(entry.value.field(&self.path))
+                {
+                    if self.keys.insert(key.clone()) {
+                        entry.key = Some(key);
+                        self.rows.set(i, entry);
+                    } else {
+                        self.duplicates = true;
+                    }
+                }
+            }
+        }
+        structural
     }
 }
 #[cfg(test)]
@@ -126,7 +181,7 @@ mod tests {
     fn keyed_splice_updates_only_replaced_items_and_preserves_reorder_identity() {
         let mut list = KeyedList::new(vec!["id".into()].into());
         let next = Cell::new(0);
-        let create = |_: &Value| {
+        let create = |_: &Value, _: Position| {
             let id = next.get();
             next.set(id + 1);
             id
@@ -166,7 +221,7 @@ mod tests {
     fn duplicate_and_missing_keys_never_alias_and_invalid_ranges_are_inert() {
         let mut list = KeyedList::new(vec!["id".into()].into());
         let next = Cell::new(0);
-        let create = |_: &Value| {
+        let create = |_: &Value, _: Position| {
             let id = next.get();
             next.set(id + 1);
             id
@@ -198,7 +253,7 @@ mod tests {
         let string = value("1", "string");
         let mut list = KeyedList::new(vec!["id".into()].into());
         let next = Cell::new(0);
-        let create = |_: &Value| {
+        let create = |_: &Value, _: Position| {
             let id = next.get();
             next.set(id + 1);
             id
@@ -224,5 +279,68 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 0]
         );
+    }
+    #[test]
+    fn surviving_duplicate_recovers_its_key_and_identity() {
+        let mut list = KeyedList::new(vec!["id".into()].into());
+        let next = Cell::new(0);
+        let create = |_: &Value, _: Position| {
+            let n = next.get();
+            next.set(n + 1);
+            n
+        };
+        list.splice(
+            0..0,
+            &Arc::from([value("a", "first"), value("a", "second")]),
+            create,
+            |_, _| {},
+            |_| {},
+        );
+        list.splice(0..1, &Arc::from([]), create, |_, _| {}, |_| {});
+        list.splice(
+            0..1,
+            &Arc::from([value("a", "updated")]),
+            create,
+            |id, _| assert_eq!(*id, 1),
+            |_| panic!("recovered key must reuse"),
+        );
+        assert_eq!(list.rows.front().map(|row| row.state), Some(1));
+        assert_eq!(next.get(), 2);
+    }
+    #[test]
+    fn positional_field_edits_keep_unkeyed_and_duplicate_input_state() {
+        let mut list = KeyedList::new(vec!["id".into()].into());
+        let next = Cell::new(0);
+        let create = |_: &Value, _: Position| {
+            let n = next.get();
+            next.set(n + 1);
+            n
+        };
+        list.splice(
+            0..0,
+            &Arc::from([
+                value("a", "first"),
+                value("a", "second"),
+                Value::from("scalar"),
+            ]),
+            create,
+            |_, _| {},
+            |_| {},
+        );
+        list.splice(
+            1..2,
+            &Arc::from([value("a", "typed")]),
+            create,
+            |id, _| assert_eq!(*id, 1),
+            |_| panic!("retain duplicate"),
+        );
+        list.splice(
+            2..3,
+            &Arc::from([Value::from("edited")]),
+            create,
+            |id, _| assert_eq!(*id, 2),
+            |_| panic!("retain scalar"),
+        );
+        assert_eq!(next.get(), 3);
     }
 }
