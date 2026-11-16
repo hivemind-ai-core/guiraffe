@@ -224,6 +224,18 @@ impl<Run> Registry<Run> {
         self.commands.insert(command.id.clone(), command);
         Ok(true)
     }
+    /// Resolve one shortcut without allocating the complete keymap/conflict report.
+    pub fn resolve_binding(
+        &self,
+        binding: &Keybinding,
+        contexts: &ContextStack,
+    ) -> Option<&Command<Run>> {
+        self.ordered().find(|command| {
+            command.enabled
+                && command.keybinding.as_ref() == Some(binding)
+                && command.when.matches(contexts)
+        })
+    }
     /// Resolve exact binding conflicts among enabled, reachable commands. The first
     /// catalog entry (category/title/id) wins, independently of registration order.
     pub fn bindings<'a>(&'a self, contexts: &'a ContextStack) -> Bindings<'a, Run> {

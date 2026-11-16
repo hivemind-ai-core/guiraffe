@@ -60,12 +60,15 @@ fn key(value: &str) -> Option<String> {
             | "plus"
             | "minus"
     );
-    let function = value
+    if let Some(number) = value
         .strip_prefix('f')
         .and_then(|n| n.parse::<u8>().ok())
-        .is_some_and(|n| (1..=24).contains(&n));
+        .filter(|n| (1..=24).contains(n))
+    {
+        return Some(format!("f{number}"));
+    }
     let single = value.len() == 1 && value.chars().all(|c| c.is_ascii_graphic() && c != '+');
-    (named || function || single).then(|| value.to_owned())
+    (named || single).then(|| value.to_owned())
 }
 impl FromStr for Keybinding {
     type Err = Error;
@@ -158,6 +161,7 @@ mod tests {
             ("Command+Option+Esc", "alt+cmd+escape", "alt-cmd-escape"),
             ("ctrl+minus", "ctrl+minus", "ctrl--"),
             ("ctrl+plus", "ctrl+plus", "ctrl-+"),
+            ("CTRL+F01", "ctrl+f1", "ctrl-f1"),
         ] {
             let b = Keybinding::parse(source).expect("valid");
             assert_eq!(b.as_str(), canonical);

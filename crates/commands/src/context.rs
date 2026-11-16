@@ -1,6 +1,7 @@
 //! The portable subset of GPUI when expressions: flags, equality, negation,
 //! conjunction, disjunction and strict ancestor (`>`) relationships.
 use crate::Error;
+use std::fmt;
 use std::{collections::BTreeMap, ops::Deref};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Context {
@@ -124,6 +125,20 @@ enum Expr {
     Or(Box<Expr>, Box<Expr>),
     Descendant(Box<Expr>, Box<Expr>),
 }
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Always => Ok(()),
+            Self::Has(key) => f.write_str(key),
+            Self::Equal(key, value) => write!(f, "{key} == {value}"),
+            Self::NotEqual(key, value) => write!(f, "{key} != {value}"),
+            Self::Not(inner) => write!(f, "!({inner})"),
+            Self::And(a, b) => write!(f, "({a} && {b})"),
+            Self::Or(a, b) => write!(f, "({a} || {b})"),
+            Self::Descendant(a, b) => write!(f, "({a} > {b})"),
+        }
+    }
+}
 impl Default for When {
     fn default() -> Self {
         Self::always()
@@ -147,7 +162,7 @@ impl When {
             return Err(Error::InvalidContext(source.into()));
         }
         Ok(Self {
-            source: source.trim().to_owned(),
+            source: expr.to_string(),
             expr,
         })
     }
@@ -175,9 +190,14 @@ fn eval(expr: &Expr, frames: &[Context], all: &[Context]) -> bool {
         Expr::Not(inner) => !(1..=all.len()).any(|end| eval(inner, &all[..end], all)),
         Expr::And(a, b) => eval(a, frames, all) && eval(b, frames, all),
         Expr::Or(a, b) => eval(a, frames, all) || eval(b, frames, all),
-        Expr::Descendant(a, b) => (1..frames.len()).any(|split| {
-            eval(a, &frames[..split], all) && eval(b, &frames[split..], &frames[split..])
-        }),
+        Expr::Descendant(a, b) => {
+            for split in 1..frames.len() {
+                if eval(a, &frames[..split], all) {
+                    return eval(b, &frames[split..], &frames[split..]);
+                }
+            }
+            false
+        }
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,23 +272,8 @@ impl Parser {
             .ok_or_else(|| Error::InvalidContext("missing operand".into()))?;
         self.at += 1;
         let mut left = match token {
-            Token::Word(key) => match self.tokens.get(self.at) {
-                Some(Token::Eq | Token::Ne) => {
-                    let unequal = self.tokens.get(self.at) == Some(&Token::Ne);
-                    self.at += 1;
-                    let Some(Token::Word(value)) = self.tokens.get(self.at).cloned() else {
-                        return Err(Error::InvalidContext("missing comparison value".into()));
-                    };
-                    self.at += 1;
-                    if unequal {
-                        Expr::NotEqual(key, value)
-                    } else {
-                        Expr::Equal(key, value)
-                    }
-                }
-                _ => Expr::Has(key),
-            },
-            Token::Not => Expr::Not(Box::new(self.expression(4)?)),
+            Token::Word(key) => Expr::Has(key),
+            Token::Not => Expr::Not(Box::new(self.expression(5)?)),
             Token::Open => {
                 let inner = self.expression(0)?;
                 if self.tokens.get(self.at) != Some(&Token::Close) {
@@ -281,9 +286,10 @@ impl Parser {
         };
         loop {
             let precedence = match self.tokens.get(self.at) {
-                Some(Token::Or) => 1,
-                Some(Token::And) => 2,
-                Some(Token::Child) => 3,
+                Some(Token::Child) => 1,
+                Some(Token::Or) => 2,
+                Some(Token::And) => 3,
+                Some(Token::Eq | Token::Ne) => 4,
                 _ => break,
             };
             if precedence < min {
@@ -295,6 +301,20 @@ impl Parser {
             left = match operator {
                 Some(Token::Or) => Expr::Or(Box::new(left), Box::new(right)),
                 Some(Token::And) => Expr::And(Box::new(left), Box::new(right)),
+                Some(Token::Eq | Token::Ne) => match (left, right) {
+                    (Expr::Has(key), Expr::Has(value)) => {
+                        if operator == Some(Token::Ne) {
+                            Expr::NotEqual(key, value)
+                        } else {
+                            Expr::Equal(key, value)
+                        }
+                    }
+                    _ => {
+                        return Err(Error::InvalidContext(
+                            "comparison operands must be identifiers".into(),
+                        ));
+                    }
+                },
                 _ => Expr::Descendant(Box::new(left), Box::new(right)),
             };
         }
