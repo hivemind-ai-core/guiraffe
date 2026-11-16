@@ -6,7 +6,7 @@ use gpui_kit::{Context, Render, TestAppContext, Window, div, px};
 use guiraffe_layout::{
     AppShell, AppShellState, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth,
     ContainerWidthState, Divider, Flex, FlexDirection, Grid, Group, LabelPosition, Responsive,
-    ScrollArea, SimpleGrid, Size, Space, Stack,
+    ScrollArea, SimpleGrid, Size, Space, Splitter, SplitterState, Stack,
 };
 
 macro_rules! harness {
@@ -773,5 +773,40 @@ fn a_scroll_area_keeps_its_content_in_one_place(cx: &mut TestAppContext) {
         content.size.height,
         px(400.),
         "the content keeps its height"
+    );
+}
+
+/// A grid in a pane of a splitter.
+struct PaneGridHarness {
+    state: Entity<SplitterState>,
+}
+
+impl Render for PaneGridHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(400.)).h(px(200.)).child(
+            Splitter::new(&self.state)
+                .first_size(px(200.))
+                .first(
+                    Grid::new().gutter_px(0.).child(
+                        Col::span(Responsive::base(12).at(Breakpoint::Xs, 6))
+                            .child(div().h(px(10.)).debug_selector(|| "a".into())),
+                    ),
+                )
+                .second(div().size_full().debug_selector(|| "second".into())),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_grid_in_a_pane_follows_the_pane_and_not_the_window(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(SplitterState::new);
+    let cx = harness!(cx, PaneGridHarness { state });
+
+    let column = cx.debug_bounds("a").expect("the column");
+    assert_eq!(
+        column.size.width,
+        px(200.),
+        "the column follows the pane it is in, and not the window"
     );
 }

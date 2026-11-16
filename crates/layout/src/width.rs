@@ -1,4 +1,11 @@
 //! The width a widget resolves its responsive props against.
+//!
+//! A widget that measures its own container measures it while it is painted,
+//! so the measurement lands a frame after the widget was laid out. The width
+//! of the window is the starting point, so a widget answers to something
+//! sensible from the first frame, and the measurement takes over on the next
+//! one. The frame in between is the one that is left: a container that
+//! changes its width between two frames is answered to a frame late.
 
 use gpui_kit::{App, AppContext as _, Entity, Pixels, Window, px};
 
