@@ -35,8 +35,8 @@ impl PreparedText {
     fn new(text: &str) -> Self {
         #[cfg(test)]
         NORMALIZATIONS.set(NORMALIZATIONS.get() + 1);
-        let mut chars = Vec::new();
-        let mut bonuses = Vec::new();
+        let mut chars = Vec::with_capacity(text.len());
+        let mut bonuses = Vec::with_capacity(text.len());
         let mut previous = None;
         for character in text.chars() {
             let boundary = previous.is_none_or(|p: char| {
