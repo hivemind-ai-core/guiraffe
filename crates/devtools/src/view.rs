@@ -43,16 +43,38 @@ pub struct ViewInfo {
     pub last_render: Instant,
 }
 
+impl ViewInfo {
+    /// Highlight lifetime, independent of motion slow-mo and reduced-motion preferences.
+    pub fn is_flashing_at(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.last_render) < Duration::from_millis(180)
+    }
+}
+
 struct Shared {
     open: Cell<bool>,
+    focus: gpui_kit::FocusHandle,
+    trace: RefCell<Option<TraceGuard>>,
+    collection_epoch: Cell<u64>,
     highlight: Cell<bool>,
     inspect: Cell<bool>,
+    paused: Cell<bool>,
+    history_offset: Cell<usize>,
     slow_previous: Cell<Option<f32>>,
     views: RefCell<BTreeMap<SharedString, ViewInfo>>,
     stores: RefCell<Vec<Rc<dyn InspectStore>>>,
 }
 
 /// Per-window handle. Changes notify the tools leaf directly and never write app entities.
+///
+/// ```no_run
+/// use gpui_kit::{App, Entity, Render, Window};
+/// use guiraffe_devtools::{Devtools, DevtoolsRoot, root};
+/// fn attach<V: Render + 'static>(view: Entity<V>, window: &mut Window, cx: &mut App) -> Entity<DevtoolsRoot> {
+///     let tools = Devtools::new(cx);
+///     tools.focus(window, cx);
+///     root(view, &tools, cx)
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Devtools {
     shared: Rc<Shared>,
@@ -63,8 +85,13 @@ impl Devtools {
         init(cx);
         let shared = Rc::new(Shared {
             open: Cell::new(false),
+            focus: cx.focus_handle(),
+            trace: RefCell::new(None),
+            collection_epoch: Cell::new(0),
             highlight: Cell::new(true),
             inspect: Cell::new(false),
+            paused: Cell::new(false),
+            history_offset: Cell::new(0),
             slow_previous: Cell::new(None),
             views: RefCell::default(),
             stores: RefCell::default(),
@@ -73,14 +100,47 @@ impl Devtools {
             shared: shared.clone(),
             frames: FrameLog::new(240),
             collector: FrameTimingCollector::new(),
+            collection_epoch: 0,
         });
         Self { shared, panel }
+    }
+    /// Mount the overlay beside content inside an existing root view. This reads no panel
+    /// state, so retaining the handle in the app does not subscribe it to telemetry.
+    pub fn layer(&self, content: impl IntoElement) -> AnyElement {
+        let tools = self.clone();
+        div()
+            .size_full()
+            .relative()
+            .key_context("GrDevtools")
+            .track_focus(&self.shared.focus)
+            .on_action(move |_: &ToggleDevtools, _, cx| tools.toggle(cx))
+            .child(content)
+            .child(self.panel.clone())
+            .into_any_element()
+    }
+    /// Give an initially unfocused window a keyboard target in GrDevtools. Existing child
+    /// focus also works; applications should call this once when opening an unfocused root.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.shared.focus.focus(window, cx);
     }
     pub fn is_open(&self) -> bool {
         self.shared.open.get()
     }
     pub fn set_open(&self, open: bool, cx: &mut App) {
-        if self.shared.open.replace(open) != open {
+        if self.shared.set_open(open) {
+            cx.notify(self.panel.entity_id());
+        }
+    }
+    /// Freeze sampling and highlights for repeatable visual inspection. No animation frames
+    /// are requested while paused; controls still work normally.
+    pub fn set_paused(&self, paused: bool, cx: &mut App) {
+        if self.shared.set_paused(paused) {
+            cx.notify(self.panel.entity_id());
+        }
+    }
+    /// Enable pointer inspection without mutating any inspected application entity.
+    pub fn set_inspecting(&self, inspecting: bool, cx: &mut App) {
+        if self.shared.inspect.replace(inspecting) != inspecting {
             cx.notify(self.panel.entity_id());
         }
     }
@@ -90,6 +150,21 @@ impl Devtools {
     pub fn add_store(&self, store: Rc<dyn InspectStore>, cx: &mut App) {
         self.shared.stores.borrow_mut().push(store);
         cx.notify(self.panel.entity_id());
+    }
+    /// Smallest tracked view beneath a screen-space pointer (not a GPUI entity read).
+    pub fn inspect_at(&self, point: gpui_kit::Point<Pixels>) -> Option<ViewInfo> {
+        inspect_at(&self.shared.views.borrow(), point)
+    }
+    /// Copy the rolling profiler samples for diagnostics. Avoid calling from an inspected
+    /// view's render: that would deliberately subscribe the view to the tools entity.
+    pub fn frame_samples(&self, cx: &App) -> Vec<FrameSample> {
+        self.panel
+            .read(cx)
+            .frames
+            .samples()
+            .iter()
+            .copied()
+            .collect()
     }
     pub fn views(&self) -> Vec<ViewInfo> {
         self.shared.views.borrow().values().cloned().collect()
@@ -206,14 +281,7 @@ pub fn root<V: Render + 'static>(
 }
 impl Render for DevtoolsRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let tools = self.tools.clone();
-        div()
-            .size_full()
-            .relative()
-            .key_context("GrDevtools")
-            .on_action(move |_: &ToggleDevtools, _, cx| tools.toggle(cx))
-            .child(self.content.clone())
-            .child(self.tools.panel.clone())
+        self.tools.layer(self.content.clone())
     }
 }
 
@@ -222,6 +290,7 @@ pub struct DevtoolsPanel {
     shared: Rc<Shared>,
     frames: FrameLog,
     collector: FrameTimingCollector,
+    collection_epoch: u64,
 }
 impl DevtoolsPanel {
     fn button(
@@ -231,28 +300,32 @@ impl DevtoolsPanel {
         cx: &Context<Self>,
         action: impl Fn(&Shared, &mut App) + 'static,
     ) -> impl IntoElement {
-        let s = GuiraffeTheme::global(cx).surfaces();
-        div()
-            .id(id)
-            .cursor_pointer()
-            .px(px(Size::Xs.spacing()))
-            .py(px(Size::Xs.spacing() / 2.))
-            .rounded(px(Size::Xs.radius()))
-            .bg(s.track.to_hsla())
-            .child(text.into())
-            .on_click(cx.listener(move |panel, _, _, cx| {
-                action(&panel.shared, cx);
-                cx.notify();
-            }))
+        let shared = self.shared.clone();
+        let target = cx.entity_id();
+        div().debug_selector(move || id.to_owned()).child(
+            gpui_kit::component::button::Button::new(id)
+                .label(text.into())
+                .on_click(move |_, _, cx| {
+                    action(&shared, cx);
+                    cx.notify(target);
+                }),
+        )
     }
 }
 impl Render for DevtoolsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // GPUI resets its global event sequence when tracing stops. Start a new cursor
+        // after acquiring a trace lease, otherwise old cursors can skip resumed samples.
+        if self.collection_epoch != self.shared.collection_epoch.get() {
+            self.collection_epoch = self.shared.collection_epoch.get();
+            self.collector = FrameTimingCollector::new();
+        }
         // Discard events from other windows; collectors have independent cursors.
         for event in self.collector.collect_unseen() {
             if let FrameEvent::Draw(frame) = event
-                && frame.window_id == window.window_id()
+                && frame.window_id == window.window_handle().window_id()
                 && self.shared.open.get()
+                && !self.shared.paused.get()
             {
                 self.frames.record(FrameSample {
                     total: frame.draw_duration(),
@@ -266,24 +339,16 @@ impl Render for DevtoolsPanel {
             return div().into_any_element();
         }
         // Pure notify: no entity write and no application/global telemetry dependency.
-        window.request_animation_frame();
+        if !self.shared.paused.get() {
+            window.request_animation_frame();
+        }
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
         let accent = t.primary_color().to_hsla();
         let shared = self.shared.clone();
         let pointer = window.mouse_position();
         let hovered = if shared.inspect.get() {
-            shared
-                .views
-                .borrow()
-                .values()
-                .filter(|v| v.bounds.contains(&pointer))
-                .min_by(|a, b| {
-                    (a.bounds.size.width * a.bounds.size.height)
-                        .partial_cmp(&(b.bounds.size.width * b.bounds.size.height))
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .cloned()
+            inspect_at(&shared.views.borrow(), pointer)
         } else {
             None
         };
@@ -296,8 +361,8 @@ impl Render for DevtoolsPanel {
                     let selected = hovered_id.as_ref() == Some(&info.id);
                     if selected
                         || (shared.highlight.get()
-                            && now.saturating_duration_since(info.last_render)
-                                < Duration::from_millis(180))
+                            && !shared.paused.get()
+                            && info.is_flashing_at(now))
                     {
                         window.paint_quad(outline(info.bounds, accent, BorderStyle::Solid));
                     }
@@ -305,6 +370,7 @@ impl Render for DevtoolsPanel {
             },
         )
         .absolute()
+        .inset_0()
         .size_full();
         let ms = |duration: Option<Duration>| {
             duration
@@ -314,6 +380,7 @@ impl Render for DevtoolsPanel {
         let frame = self.frames.samples().back().copied();
         let mut panel = div()
             .id("devtools-panel")
+            .debug_selector(|| "devtools-panel".into())
             .absolute()
             .top(px(Size::Md.spacing()))
             .right(px(Size::Md.spacing()))
@@ -335,7 +402,9 @@ impl Render for DevtoolsPanel {
                     .flex()
                     .justify_between()
                     .child("GUIraffe Devtools · Ctrl-Shift-I")
-                    .child(self.button("devtools-close", "Close", cx, |s, _| s.open.set(false))),
+                    .child(self.button("devtools-close", "Close", cx, |s, _| {
+                        s.set_open(false);
+                    })),
             )
             .child(
                 div()
@@ -441,13 +510,39 @@ impl Render for DevtoolsPanel {
         if self.shared.stores.borrow().is_empty() {
             panel = panel.child("No Stores connected (inspect_store)");
         }
-        for store in self.shared.stores.borrow().iter() {
-            panel = panel.child(store.name().to_owned());
-            for row in store.rows().into_iter().rev().take(8) {
+        panel = panel.child(
+            div()
+                .flex()
+                .gap(px(Size::Xs.spacing()))
+                .child(self.button("devtools-older", "Older events", cx, |s, _| {
+                    s.history_offset
+                        .set(s.history_offset.get().saturating_add(8))
+                }))
+                .child(self.button("devtools-latest", "Latest events", cx, |s, _| {
+                    s.history_offset.set(0)
+                }))
+                .child(self.button(
+                    "devtools-pause",
+                    if self.shared.paused.get() {
+                        "Resume"
+                    } else {
+                        "Pause"
+                    },
+                    cx,
+                    |s, _| {
+                        s.set_paused(!s.paused.get());
+                    },
+                )),
+        );
+        for (index, store) in self.shared.stores.borrow().iter().enumerate() {
+            let mut store_panel = div()
+                .id(("devtools-store", index))
+                .child(store.name().to_owned());
+            for row in store.rows(self.shared.history_offset.get(), 8) {
                 let seq = row.seq;
                 let before = store.clone();
                 let after = store.clone();
-                panel = panel.child(
+                store_panel = store_panel.child(
                     div()
                         .child(format!(
                             "#{} {}{}",
@@ -458,6 +553,7 @@ impl Render for DevtoolsPanel {
                         .child(
                             div()
                                 .id(("before", seq))
+                                .debug_selector(move || format!("devtools-before-{index}-{seq}"))
                                 .cursor_pointer()
                                 .child("Before")
                                 .on_click(move |_, _, cx| {
@@ -467,6 +563,7 @@ impl Render for DevtoolsPanel {
                         .child(
                             div()
                                 .id(("after", seq))
+                                .debug_selector(move || format!("devtools-after-{index}-{seq}"))
                                 .cursor_pointer()
                                 .child("After")
                                 .on_click(move |_, _, cx| {
@@ -475,7 +572,7 @@ impl Render for DevtoolsPanel {
                         ),
                 );
                 for change in row.changes.iter().take(8) {
-                    panel = panel.child(format!(
+                    store_panel = store_panel.child(format!(
                         "{}: {} → {}",
                         change.path,
                         change
@@ -491,12 +588,149 @@ impl Render for DevtoolsPanel {
                     ));
                 }
             }
+            panel = panel.child(store_panel);
         }
         div()
             .absolute()
+            .inset_0()
             .size_full()
             .child(drawing)
             .child(panel)
             .into_any_element()
+    }
+}
+
+fn inspect_at(
+    views: &BTreeMap<SharedString, ViewInfo>,
+    point: gpui_kit::Point<Pixels>,
+) -> Option<ViewInfo> {
+    views
+        .values()
+        .filter(|v| v.bounds.contains(&point))
+        .min_by(|a, b| {
+            let area =
+                |v: &ViewInfo| f32::from(v.bounds.size.width) * f32::from(v.bounds.size.height);
+            area(a).total_cmp(&area(b))
+        })
+        .cloned()
+}
+
+// Global GPUI tracing is shared with external profilers. Leases only synchronize on
+// open/pause/close, never on the app rendering or telemetry recording path.
+static TRACE_USERS: std::sync::Mutex<(usize, bool)> = std::sync::Mutex::new((0, false));
+struct TraceGuard;
+impl TraceGuard {
+    fn acquire() -> Self {
+        let mut users = TRACE_USERS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if users.0 == 0 {
+            users.1 = gpui_kit::profiler::trace_enabled();
+            gpui_kit::profiler::set_trace_enabled(true);
+        }
+        users.0 += 1;
+        Self
+    }
+}
+impl Drop for TraceGuard {
+    fn drop(&mut self) {
+        let mut users = TRACE_USERS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        users.0 = users.0.saturating_sub(1);
+        if users.0 == 0 {
+            gpui_kit::profiler::set_trace_enabled(users.1);
+        }
+    }
+}
+impl Shared {
+    fn sync_trace(&self) {
+        if self.open.get() && !self.paused.get() {
+            if self.trace.borrow().is_none() {
+                *self.trace.borrow_mut() = Some(TraceGuard::acquire());
+                self.collection_epoch
+                    .set(self.collection_epoch.get().wrapping_add(1));
+            }
+        } else {
+            self.trace.borrow_mut().take();
+        }
+    }
+    fn set_open(&self, open: bool) -> bool {
+        let changed = self.open.replace(open) != open;
+        self.sync_trace();
+        changed
+    }
+    fn set_paused(&self, paused: bool) -> bool {
+        let changed = self.paused.replace(paused) != paused;
+        self.sync_trace();
+        changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use guiraffe_core::Scheme;
+    use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
+
+    #[test]
+    fn populated_profiler_snapshots() {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let mut snap = Snapshotter::new()
+                .unwrap_or_else(|e| panic!("{e}"))
+                .with_setup(move |cx| {
+                    guiraffe_core::init(cx);
+                    guiraffe_core::apply(
+                        GuiraffeTheme {
+                            scheme,
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                });
+            let image = snap
+                .render(gpui_kit::size(px(900.), px(850.)), |_, cx| {
+                    let tools = Devtools::new(cx);
+                    tools.set_open(true, cx);
+                    tools.set_paused(true, cx);
+                    // Fixed samples validate visual formatting independently of wall-clock noise.
+                    tools.panel.update(cx, |panel, _| {
+                        for total in [2, 4, 6, 8, 12, 16, 24, 33, 50, 64] {
+                            panel.frames.record(FrameSample {
+                                total: Duration::from_millis(total),
+                                layout: Duration::from_micros(500),
+                                prepaint: Duration::from_micros(250),
+                                paint: Duration::from_micros(750),
+                            });
+                        }
+                    });
+                    struct AppView;
+                    impl Render for AppView {
+                        fn render(
+                            &mut self,
+                            _: &mut Window,
+                            cx: &mut Context<Self>,
+                        ) -> impl IntoElement {
+                            let surfaces = GuiraffeTheme::global(cx).surfaces();
+                            div().size_full().bg(surfaces.body.to_hsla())
+                        }
+                    }
+                    let app = cx.new(|_| AppView);
+                    root(app, &tools, cx)
+                })
+                .unwrap_or_else(|e| panic!("{e:#}"));
+            let name = if scheme == Scheme::Light {
+                "profile-populated-light"
+            } else {
+                "profile-populated-dark"
+            };
+            assert_snapshot(
+                name,
+                &image,
+                &SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+                    .update_from_env(),
+            )
+            .unwrap_or_else(|e| panic!("{e:#}"));
+        }
     }
 }

@@ -5,11 +5,7 @@
 //! each inspected view's render output with [`Devtools::track`]. Unwrapped views are
 //! deliberately not enumerated: GPUI does not expose their inherited StyleContext.
 //!
-//! ```ignore
-//! let tools = Devtools::new(cx);
-//! // In the app view's render: tools.track("editor", div().child(...))
-//! let window_root = root(app_view, &tools, cx);
-//! ```
+
 #![cfg_attr(not(feature = "devtools"), allow(rustdoc::broken_intra_doc_links))]
 
 #[cfg(feature = "devtools")]
@@ -24,3 +20,6 @@ pub use model::*;
 pub use state::*;
 #[cfg(feature = "devtools")]
 pub use view::*;
+
+#[cfg(feature = "devtools")]
+pub use serde_json::Value as DiagnosticValue;

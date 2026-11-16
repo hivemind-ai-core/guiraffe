@@ -88,7 +88,7 @@ pub struct EventRow {
 /// Adapter for heterogeneous stores in one panel.
 pub trait InspectStore {
     fn name(&self) -> &str;
-    fn rows(&self) -> Vec<EventRow>;
+    fn rows(&self, offset: usize, limit: usize) -> Vec<EventRow>;
     /// Queue a normal, non-undoable restore event; effects are never replayed.
     fn jump(&self, seq: u64, before: bool, cx: &mut App) -> bool;
 }
@@ -104,14 +104,15 @@ impl<S: Clone + PartialEq + 'static> InspectStore for StoreAdapter<S> {
     fn name(&self) -> &str {
         &self.name
     }
-    fn rows(&self) -> Vec<EventRow> {
+    fn rows(&self, offset: usize, limit: usize) -> Vec<EventRow> {
         self.history
             .0
             .borrow()
             .entries
             .iter()
             .rev()
-            .take(8)
+            .skip(offset)
+            .take(limit)
             .map(|e| EventRow {
                 seq: e.event.seq,
                 description: e.event.description.clone(),
