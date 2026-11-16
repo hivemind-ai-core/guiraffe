@@ -6,7 +6,9 @@ use gpui_kit::{
     div, px,
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, Size, Variant};
-/// Place last inside a relatively positioned container to intercept pointer input while loading.
+/// Place last inside a relative container to occlude pointer input.
+/// While mounted and visible, keyboard input is blocked for this window;
+/// background focus is retained and resumes after unmount.
 #[derive(IntoElement)]
 pub struct LoadingOverlay {
     visible: bool,

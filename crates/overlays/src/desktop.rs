@@ -1,4 +1,5 @@
-//! Optional desktop delivery. Call from a background executor; delivery errors are returned.
+//! Optional desktop delivery. `show_async` schedules delivery on the background executor.
+//! Delivery errors are returned; `show` retains the explicit blocking boundary.
 //! Linux notification bodies are markup: escape untrusted text as in Switchboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Urgency {
