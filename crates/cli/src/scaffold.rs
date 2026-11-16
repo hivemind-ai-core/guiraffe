@@ -69,6 +69,13 @@ pub fn new_app(parent: &Path, name: &str, source: &Source) -> Result<PathBuf> {
     std::fs::write(dir.join("Cargo.toml"), manifest)?;
     std::fs::write(dir.join("src/main.rs"), main)?;
     std::fs::write(dir.join(".gitignore"), "target\n")?;
+    // Pin exactly the dependency versions GUIraffe was tested with. A fresh resolve can pick
+    // newer upstream patch releases (e.g. gpui-fast 0.1.16) that break gpui-base 0.9.1.
+    let Source::Path(checkout) = source;
+    let lock = checkout.join("Cargo.lock");
+    if lock.exists() {
+        std::fs::copy(&lock, dir.join("Cargo.lock")).with_context(|| format!("copying {}", lock.display()))?;
+    }
     Ok(dir)
 }
 

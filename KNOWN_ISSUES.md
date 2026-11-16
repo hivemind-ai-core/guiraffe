@@ -8,3 +8,7 @@
    - Plan: check icons through the Xvfb e2e path, which uses the real platform renderer. Report the issue upstream to gpui-kit/gpui, and re-run the probe on each gpui-kit upgrade.
 
 2. **The flow editor doesn't fit its graph to the viewport on first show.** In the gallery, the right-most node is clipped until the user clicks Fit. Owner: flow follow-ups (reviews/flow-review-2.md).
+
+3. **Upstream semver break: gpui-fast 0.1.16 doesn't compile with gpui-base 0.9.1** (conflicting `IntoElement` impls).
+   A fresh dependency resolution picks it. GUIraffe's `Cargo.lock` pins 0.1.15, and `guiraffe new` copies that lockfile into
+   new apps so they build. Verified: a scaffolded app builds without warnings and launches. Report upstream, and drop the pin when fixed.
