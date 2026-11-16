@@ -43,6 +43,23 @@ fn clamp_ratio(ratio: f32) -> f32 {
     ratio.clamp(MIN_RATIO, MAX_RATIO)
 }
 
+/// The ratio a box gets, and a word for the developer when it is not one.
+///
+/// A ratio that is not a number, or one outside the range a box can hold, is
+/// a mistake: the box keeps a ratio that works, and the developer is told
+/// about it.
+fn checked_ratio(ratio: f32) -> f32 {
+    debug_assert!(
+        !ratio.is_nan() && ratio.is_finite(),
+        "a ratio that is not a number is not a ratio: {ratio}"
+    );
+    debug_assert!(
+        (MIN_RATIO..=MAX_RATIO).contains(&ratio),
+        "a ratio outside {MIN_RATIO}..={MAX_RATIO} is not a ratio a box can hold: {ratio}"
+    );
+    clamp_ratio(ratio)
+}
+
 impl Default for AspectRatio {
     fn default() -> Self {
         Self::new(1.)
@@ -53,7 +70,7 @@ impl AspectRatio {
     /// A box with the given width-over-height ratio.
     pub fn new(ratio: f32) -> Self {
         Self {
-            ratio: clamp_ratio(ratio),
+            ratio: checked_ratio(ratio),
             children: Vec::new(),
             style: StyleRefinement::default(),
         }
@@ -61,7 +78,7 @@ impl AspectRatio {
 
     /// The width-over-height ratio of the box.
     pub fn ratio(mut self, ratio: f32) -> Self {
-        self.ratio = clamp_ratio(ratio);
+        self.ratio = checked_ratio(ratio);
         self
     }
 
@@ -107,7 +124,7 @@ impl RenderOnce for AspectRatio {
 
 #[cfg(test)]
 mod tests {
-    use super::AspectRatio;
+    use super::{AspectRatio, clamp_ratio};
 
     #[test]
     fn the_ratio_is_kept() {
@@ -117,24 +134,35 @@ mod tests {
 
     #[test]
     fn a_ratio_never_collapses_to_zero() {
-        assert!(AspectRatio::new(0.).ratio > 0.);
-        assert!(AspectRatio::new(-4.).ratio > 0.);
-        assert!(AspectRatio::new(1.).ratio(-1.).ratio > 0.);
+        assert!(clamp_ratio(0.) > 0.);
+        assert!(clamp_ratio(-4.) > 0.);
+        assert!(clamp_ratio(-1.) > 0.);
     }
 
     #[test]
     fn a_ratio_stays_inside_the_range_a_box_can_hold() {
-        assert_eq!(AspectRatio::new(0.).ratio, 0.01, "the narrowest ratio");
-        assert_eq!(AspectRatio::new(-4.).ratio, 0.01);
-        assert_eq!(AspectRatio::new(1000.).ratio, 100., "the widest ratio");
-        assert_eq!(AspectRatio::new(1.).ratio(1000.).ratio, 100.);
+        assert_eq!(clamp_ratio(0.), 0.01, "the narrowest ratio");
+        assert_eq!(clamp_ratio(-4.), 0.01);
+        assert_eq!(clamp_ratio(1000.), 100., "the widest ratio");
     }
 
     #[test]
     fn a_ratio_that_is_not_a_number_falls_back_to_a_square() {
-        assert_eq!(AspectRatio::new(f32::NAN).ratio, 1.);
-        assert_eq!(AspectRatio::new(f32::INFINITY).ratio, 100.);
-        assert_eq!(AspectRatio::new(f32::NEG_INFINITY).ratio, 0.01);
+        assert_eq!(clamp_ratio(f32::NAN), 1.);
+        assert_eq!(clamp_ratio(f32::INFINITY), 100.);
+        assert_eq!(clamp_ratio(f32::NEG_INFINITY), 0.01);
+    }
+
+    #[test]
+    #[should_panic(expected = "a ratio outside")]
+    fn a_ratio_outside_the_range_a_box_can_hold_is_noticed() {
+        let _ = AspectRatio::new(1000.);
+    }
+
+    #[test]
+    #[should_panic(expected = "a ratio that is not a number")]
+    fn a_ratio_that_is_not_a_number_is_noticed() {
+        let _ = AspectRatio::new(f32::NAN);
     }
 
     #[test]

@@ -53,7 +53,30 @@ fn pill(text: impl Into<gpui_kit::SharedString>) -> Div {
 
 struct Gallery {
     shell: Entity<AppShellState>,
+    main: Entity<GalleryMain>,
+}
+
+/// The main content of the gallery, in a view of its own.
+///
+/// The shell keeps the view, so the content is not rendered again when the
+/// shell collapses a bar.
+struct GalleryMain {
     splitter: Entity<SplitterState>,
+}
+
+impl Render for GalleryMain {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        ScrollArea::new("gallery-scroll").child(
+            Stack::new()
+                .gap_5()
+                .p_5()
+                .w_full()
+                .child(stacks())
+                .child(grids())
+                .child(shapes())
+                .child(shell(&self.splitter)),
+        )
+    }
 }
 
 impl Render for Gallery {
@@ -83,18 +106,7 @@ impl Render for Gallery {
                     .child(pill("AppShell"))
                     .child(pill("Splitter")),
             )
-            .main(
-                ScrollArea::new("gallery-scroll").child(
-                    Stack::new()
-                        .gap_5()
-                        .p_5()
-                        .w_full()
-                        .child(stacks())
-                        .child(grids())
-                        .child(shapes())
-                        .child(shell(&self.splitter)),
-                ),
-            )
+            .main(self.main.clone())
             .footer(
                 Group::new()
                     .justify(Justify::Between)
@@ -237,7 +249,10 @@ fn main() {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             let splitter = SplitterState::new(cx);
             let shell = AppShellState::new(cx);
-            cx.new(|_| Gallery { shell, splitter })
+            let main = cx.new(|_| GalleryMain {
+                splitter: splitter.clone(),
+            });
+            cx.new(|_| Gallery { shell, main })
         })
         .expect("the gallery window opens");
     });

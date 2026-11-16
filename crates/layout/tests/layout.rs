@@ -634,6 +634,16 @@ fn a_space_pushes_what_follows_it_along(cx: &mut TestAppContext) {
 
 struct AppShellHarness {
     state: Entity<AppShellState>,
+    main: Entity<MainContent>,
+}
+
+/// The main content of a shell, in a view of its own.
+struct MainContent;
+
+impl Render for MainContent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().h_full().debug_selector(|| "main".into())
+    }
 }
 
 impl Render for AppShellHarness {
@@ -641,7 +651,7 @@ impl Render for AppShellHarness {
         div().w(px(400.)).h(px(300.)).child(
             AppShell::new(&self.state)
                 .navbar(div().h_full().debug_selector(|| "navbar".into()))
-                .main(div().h_full().debug_selector(|| "main".into()))
+                .main(self.main.clone())
                 .aside(div().h_full().debug_selector(|| "aside".into())),
         )
     }
@@ -662,7 +672,8 @@ fn shell_state(cx: &mut TestAppContext) -> Entity<AppShellState> {
 #[gpui_kit::test]
 fn an_app_shell_keeps_its_parts_where_they_belong(cx: &mut TestAppContext) {
     let state = shell_state(cx);
-    let cx = harness!(cx, AppShellHarness { state });
+    let main = cx.update(|cx| cx.new(|_| MainContent));
+    let cx = harness!(cx, AppShellHarness { state, main });
 
     let navbar = cx.debug_bounds("navbar").expect("the navbar");
     let main = cx.debug_bounds("main").expect("the main content");
@@ -682,6 +693,7 @@ fn an_app_shell_keeps_its_parts_where_they_belong(cx: &mut TestAppContext) {
 
 struct CollapsedShellHarness {
     state: Entity<AppShellState>,
+    main: Entity<MainContent>,
 }
 
 impl Render for CollapsedShellHarness {
@@ -689,7 +701,7 @@ impl Render for CollapsedShellHarness {
         div().w(px(400.)).h(px(300.)).child(
             AppShell::new(&self.state)
                 .navbar(div().h_full().debug_selector(|| "navbar".into()))
-                .main(div().h_full().debug_selector(|| "main".into())),
+                .main(self.main.clone()),
         )
     }
 }
@@ -704,7 +716,8 @@ fn a_collapsed_navbar_takes_no_room_but_stays_where_it_is(cx: &mut TestAppContex
         });
         state
     });
-    let cx = harness!(cx, CollapsedShellHarness { state });
+    let main = cx.update(|cx| cx.new(|_| MainContent));
+    let cx = harness!(cx, CollapsedShellHarness { state, main });
 
     let navbar = cx
         .debug_bounds("navbar")

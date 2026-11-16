@@ -82,7 +82,7 @@ pub fn init(cx: &mut gpui_kit::App) {
 }
 
 pub use align::{Align, Justify};
-pub use app_shell::{AppShell, AppShellState};
+pub use app_shell::{AppShell, AppShellEvent, AppShellState};
 pub use aspect_ratio::AspectRatio;
 pub use center::Center;
 pub use container::Container;

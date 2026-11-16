@@ -1,6 +1,6 @@
 //! Interaction tests: the widgets that answer the pointer.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui_kit::prelude::*;
@@ -10,8 +10,8 @@ use gpui_kit::{
     Point, Render, Subscription, TestAppContext, Window, div, point, px,
 };
 use guiraffe_layout::{
-    AppShell, AppShellState, LayoutPersist, LayoutStore, Size, Splitter, SplitterSizes,
-    SplitterState,
+    AppShell, AppShellEvent, AppShellState, Breakpoint, LayoutPersist, LayoutStore, Size, Splitter,
+    SplitterSizes, SplitterState,
 };
 
 macro_rules! harness {
@@ -401,6 +401,16 @@ fn a_drag_that_changes_nothing_reports_no_resize_and_leaves_the_siblings_alone(
 
 struct ShellHarness {
     state: Entity<AppShellState>,
+    main: Entity<MainContent>,
+}
+
+/// The main content of a shell, in a view of its own.
+struct MainContent;
+
+impl Render for MainContent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().h_full().debug_selector(|| "main".into())
+    }
 }
 
 impl Render for ShellHarness {
@@ -420,7 +430,7 @@ impl Render for ShellHarness {
                             .child("menu"),
                     ),
                 )
-                .main(div().h_full().debug_selector(|| "main".into())),
+                .main(self.main.clone()),
         )
     }
 }
@@ -433,7 +443,8 @@ fn a_button_in_the_navbar_can_collapse_it(cx: &mut TestAppContext) {
         state.update(cx, |state, cx| state.set_navbar_width(px(100.), cx));
         state
     });
-    let cx = harness!(cx, ShellHarness { state });
+    let main = cx.update(|cx| cx.new(|_| MainContent));
+    let cx = harness!(cx, ShellHarness { state, main });
 
     let navbar = cx.debug_bounds("main").expect("the main content");
     assert_eq!(navbar.left(), px(100.), "the navbar takes its room");
@@ -451,6 +462,7 @@ fn a_button_in_the_navbar_can_collapse_it(cx: &mut TestAppContext) {
 
 struct NarrowShellHarness {
     state: Entity<AppShellState>,
+    main: Entity<MainContent>,
 }
 
 impl Render for NarrowShellHarness {
@@ -458,7 +470,8 @@ impl Render for NarrowShellHarness {
         div().w(px(300.)).h(px(200.)).child(
             AppShell::new(&self.state)
                 .navbar(div().h_full().debug_selector(|| "navbar".into()))
-                .main(div().h_full().debug_selector(|| "main".into())),
+                .collapse_below(Breakpoint::Xs)
+                .main(self.main.clone()),
         )
     }
 }
@@ -468,13 +481,11 @@ fn a_narrow_window_collapses_the_navbar(cx: &mut TestAppContext) {
     cx.update(guiraffe_layout::init);
     let state = cx.update(|cx| {
         let state = AppShellState::new(cx);
-        state.update(cx, |state, cx| {
-            state.set_navbar_width(px(100.), cx);
-            state.collapse_below_width(400., cx);
-        });
+        state.update(cx, |state, cx| state.set_navbar_width(px(100.), cx));
         state
     });
-    let cx = harness!(cx, NarrowShellHarness { state });
+    let main = cx.update(|cx| cx.new(|_| MainContent));
+    let cx = harness!(cx, NarrowShellHarness { state, main });
 
     let navbar = cx.debug_bounds("navbar").expect("the navbar");
     assert_eq!(
@@ -733,4 +744,299 @@ fn a_drag_that_changes_nothing_does_not_write_to_the_store(cx: &mut TestAppConte
         0,
         "a drag that changes nothing does not write to the store"
     );
+}
+
+/// A shell whose main content counts how often it is rendered.
+struct CountingShellHarness {
+    state: Entity<AppShellState>,
+    main: Entity<CountingMain>,
+}
+
+struct CountingMain {
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for CountingMain {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        div().h_full().debug_selector(|| "main".into())
+    }
+}
+
+impl Render for CountingShellHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(400.)).h(px(300.)).child(
+            AppShell::new(&self.state)
+                .navbar(div().h_full().debug_selector(|| "navbar".into()))
+                .main(self.main.clone()),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn the_main_content_is_not_rendered_again_when_the_navbar_collapses(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(AppShellState::new);
+    let renders = Rc::new(Cell::new(0));
+    let main = cx.update(|cx| {
+        cx.new(|_| CountingMain {
+            renders: renders.clone(),
+        })
+    });
+    let cx = harness!(
+        cx,
+        CountingShellHarness {
+            state: state.clone(),
+            main,
+        }
+    );
+
+    let renders_before = renders.get();
+    cx.update(|_window, app| state.update(app, |state, cx| state.toggle_navbar(cx)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    assert!(
+        state.read_with(cx, |state, _| state.navbar_collapsed()),
+        "the navbar collapsed"
+    );
+    assert!(
+        renders.get() <= renders_before + 1,
+        "the main content is laid out again, because the room it has changed, and it is \
+         not built again"
+    );
+}
+
+/// A view that follows the events of the shell.
+struct EventWatcher {
+    /// The count the watcher keeps, and the events it saw. The watcher keeps
+    /// the subscription that fills them, and the test reads them.
+    #[allow(dead_code)]
+    events: Rc<Cell<usize>>,
+    #[allow(dead_code)]
+    seen: Rc<RefCell<Vec<AppShellEvent>>>,
+    /// The subscription keeps the watcher following the shell.
+    #[allow(dead_code)]
+    subscription: Subscription,
+}
+
+impl EventWatcher {
+    fn new(
+        state: &Entity<AppShellState>,
+        events: Rc<Cell<usize>>,
+        seen: Rc<RefCell<Vec<AppShellEvent>>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let events_for_sub = events.clone();
+        let seen_for_sub = seen.clone();
+        let subscription = cx.subscribe(state, move |_, _, event, _| {
+            events_for_sub.set(events_for_sub.get() + 1);
+            seen_for_sub.borrow_mut().push(event.clone());
+        });
+        Self {
+            events,
+            seen,
+            subscription,
+        }
+    }
+}
+
+impl Render for EventWatcher {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child("watcher")
+    }
+}
+
+#[gpui_kit::test]
+fn the_shell_tells_what_it_did(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(AppShellState::new);
+    let events = Rc::new(Cell::new(0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let watcher = cx.update(|cx| {
+        let state = state.clone();
+        cx.new(|cx| EventWatcher::new(&state, events.clone(), seen.clone(), cx))
+    });
+
+    cx.update(|app| state.update(app, |state, cx| state.toggle_navbar(cx)));
+    cx.update(|app| state.update(app, |state, cx| state.toggle_aside(cx)));
+    cx.update(|app| state.update(app, |state, cx| state.set_navbar_width(px(300.), cx)));
+
+    assert_eq!(events.get(), 3, "the shell tells what it did");
+    assert_eq!(
+        *seen.borrow(),
+        vec![
+            AppShellEvent::NavbarCollapsed { collapsed: true },
+            AppShellEvent::AsideCollapsed { collapsed: true },
+            AppShellEvent::NavbarResized { width: 300. },
+        ]
+    );
+    drop(watcher);
+}
+
+/// A shell with a navbar the user can drag.
+struct ResizableShellHarness {
+    state: Entity<AppShellState>,
+    main: Entity<MainContent>,
+}
+
+impl Render for ResizableShellHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(600.)).h(px(300.)).child(
+            AppShell::new(&self.state)
+                .navbar(div().h_full().debug_selector(|| "navbar".into()))
+                .resizable_navbar()
+                .main(self.main.clone()),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn the_user_can_drag_the_navbar_to_another_width(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(|cx| {
+        let state = AppShellState::new(cx);
+        state.update(cx, |state, cx| state.set_navbar_width(px(100.), cx));
+        state
+    });
+    let main = cx.update(|cx| cx.new(|_| MainContent));
+    let cx = harness!(
+        cx,
+        ResizableShellHarness {
+            state: state.clone(),
+            main,
+        }
+    );
+
+    state.read_with(cx, |state, _| {
+        assert_eq!(
+            state.navbar_width(),
+            px(100.),
+            "the navbar starts at its width"
+        );
+    });
+
+    // The handle sits at the right edge of the navbar.
+    let handle = px(100.) - px(2.);
+    cx.simulate_mouse_move(point(handle, px(150.)), None, Modifiers::default());
+    cx.simulate_mouse_down(
+        point(handle, px(150.)),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    // The first move starts the drag, the second one resizes the bar.
+    cx.simulate_mouse_move(
+        point(handle + px(30.), px(150.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    cx.simulate_mouse_move(
+        point(handle + px(60.), px(150.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    cx.simulate_mouse_up(
+        point(handle + px(60.), px(150.)),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+
+    state.read_with(cx, |state, _| {
+        assert_eq!(
+            state.navbar_width(),
+            px(160.),
+            "the navbar followed the pointer"
+        );
+    });
+}
+
+/// A shell whose aside collapses on a narrow window.
+struct AsideShellHarness {
+    state: Entity<AppShellState>,
+    main: Entity<MainContent>,
+}
+
+impl Render for AsideShellHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(400.)).h(px(300.)).child(
+            AppShell::new(&self.state)
+                .aside(div().h_full().debug_selector(|| "aside".into()))
+                .collapse_aside_below(Breakpoint::Sm)
+                .main(self.main.clone()),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_narrow_window_collapses_the_aside(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(AppShellState::new);
+    let main = cx.update(|cx| cx.new(|_| MainContent));
+    let cx = harness!(
+        cx,
+        AsideShellHarness {
+            state: state.clone(),
+            main,
+        }
+    );
+
+    let aside = cx.debug_bounds("aside").expect("the aside");
+    assert_eq!(
+        aside.size.width,
+        px(0.),
+        "the aside collapsed, because the window is too narrow for it"
+    );
+}
+
+/// A shell whose navbar the user opened by hand.
+struct ManualShellHarness {
+    state: Entity<AppShellState>,
+    main: Entity<MainContent>,
+    width: Rc<Cell<f32>>,
+}
+
+impl Render for ManualShellHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(self.width.get())).h(px(300.)).child(
+            AppShell::new(&self.state)
+                .navbar(div().h_full().debug_selector(|| "navbar".into()))
+                .collapse_below(Breakpoint::Xs)
+                .main(self.main.clone()),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_toggle_the_user_made_is_not_undone_by_a_resize(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(AppShellState::new);
+    let main = cx.update(|cx| cx.new(|_| MainContent));
+    let width = Rc::new(Cell::new(400.));
+    let state = state.clone();
+    let (harness, cx) = cx.add_window_view(|_, _| ManualShellHarness {
+        state: state.clone(),
+        main,
+        width: width.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // The window is too narrow for the navbar, so the shell collapsed it.
+    state.read_with(cx, |state, _| {
+        assert!(state.navbar_collapsed(), "the shell collapsed the navbar");
+    });
+
+    // The user opens it again.
+    cx.update(|_window, app| state.update(app, |state, cx| state.expand_navbar(cx)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // A resize that stays in the same band leaves the navbar alone.
+    width.set(390.);
+    cx.update(|_window, app| harness.update(app, |_, cx| cx.notify()));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    state.read_with(cx, |state, _| {
+        assert!(
+            !state.navbar_collapsed(),
+            "the toggle the user made is not undone by a resize"
+        );
+    });
 }
