@@ -852,3 +852,41 @@ fn review_4_stacked_confirm_resolves_its_own_id(cx: &mut TestAppContext) {
         "a sibling confirm must never be accepted"
     );
 }
+
+#[gpui_kit::test]
+fn review_10_spotlight_prepares_text_once_and_does_not_search_on_submit(cx: &mut TestAppContext) {
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let palette = cx.new(|cx| {
+            Spotlight::new(
+                vec![
+                    search::Command::new("open", "Open"),
+                    search::Command::new("close", "Close"),
+                ],
+                window,
+                cx,
+                |_, _, _| {},
+            )
+        });
+        Spotlight::open(&palette, window, cx).expect("open");
+        window.render_frame(cx);
+    })
+    .expect("window");
+    let normalized = search::normalizations();
+    cx.update_window(handle.into(), |_, window, cx| window.input("cl", cx))
+        .expect("query");
+    assert_eq!(
+        search::normalizations(),
+        normalized,
+        "labels must be prepared before typing"
+    );
+    let searches = search::evaluations();
+    cx.update_window(handle.into(), |_, window, cx| window.press("enter", cx))
+        .expect("submit");
+    assert_eq!(
+        search::evaluations(),
+        searches,
+        "submit must use the cached query result"
+    );
+}
