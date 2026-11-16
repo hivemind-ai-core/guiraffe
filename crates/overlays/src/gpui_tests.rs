@@ -143,8 +143,13 @@ fn stacked_modal_escape_policy_and_focus_restore(cx: &mut TestAppContext) {
                 2
             );
             assert_eq!(
-                OverlayHost::close(window, cx, first),
-                Err(OverlayError::NotTopmost)
+                OverlayHost::entity(window, cx)
+                    .expect("host")
+                    .read(cx)
+                    .stack()
+                    .top()
+                    .map(|entry| entry.id),
+                Some(second)
             );
             (first, second)
         })
@@ -852,7 +857,6 @@ fn review_4_stacked_confirm_resolves_its_own_id(cx: &mut TestAppContext) {
         "a sibling confirm must never be accepted"
     );
 }
-
 #[gpui_kit::test]
 fn review_10_spotlight_prepares_text_once_and_does_not_search_on_submit(cx: &mut TestAppContext) {
     cx.update(init);
@@ -890,7 +894,6 @@ fn review_10_spotlight_prepares_text_once_and_does_not_search_on_submit(cx: &mut
         "submit must use the cached query result"
     );
 }
-
 struct PositionedTooltip;
 impl Render for PositionedTooltip {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -934,7 +937,79 @@ fn review_8_tooltip_ui_uses_cross_axis_solver(cx: &mut TestAppContext) {
     })
     .expect("position");
 }
-
+#[gpui_kit::test]
+fn review_5_remove_managed_id_below_unmanaged_without_closing_it(cx: &mut TestAppContext) {
+    use gpui_kit::component::WindowExt;
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let id = OverlayHost::open(window, cx, Policy::default(), |d, _, _| d.title("managed"))
+            .expect("managed");
+        window.open_dialog(cx, |d, _, _| {
+            d.title("native")
+                .child(div().id("unmanaged-marker").test_support().child("keep"))
+        });
+        OverlayHost::close(window, cx, id).expect("close owned");
+        window.render_frame(cx);
+        assert!(
+            window.try_find("unmanaged-marker").is_some(),
+            "closing by managed id must preserve the native top dialog"
+        );
+        assert!(
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .read(cx)
+                .stack()
+                .entries()
+                .is_empty()
+        );
+    })
+    .expect("window");
+}
+#[gpui_kit::test]
+fn review_5_remove_middle_of_three_mixed_policy_modals(cx: &mut TestAppContext) {
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let a =
+            OverlayHost::open(window, cx, Policy::default(), |d, _, _| d.title("a")).expect("a");
+        let b = OverlayHost::open(
+            window,
+            cx,
+            Policy {
+                escape: false,
+                outside: false,
+            },
+            |d, _, _| d.title("b"),
+        )
+        .expect("b");
+        let c = OverlayHost::open(
+            window,
+            cx,
+            Policy {
+                escape: true,
+                outside: false,
+            },
+            |d, _, _| d.title("c"),
+        )
+        .expect("c");
+        assert_eq!(OverlayHost::close(window, cx, b), Ok(()));
+        let host = OverlayHost::entity(window, cx).expect("host");
+        assert_eq!(
+            host.read(cx)
+                .stack()
+                .entries()
+                .iter()
+                .map(|e| e.id)
+                .collect::<Vec<_>>(),
+            [a, c]
+        );
+        window.render_frame(cx);
+        window.press("escape", cx);
+        assert_eq!(host.read(cx).stack().top().map(|e| e.id), Some(a));
+    })
+    .expect("window");
+}
 struct KeyboardLoading {
     input: gpui_kit::Entity<gpui_kit::component::input::InputState>,
     loading: bool,
@@ -986,4 +1061,54 @@ fn review_13_loading_blocks_keyboard_then_restores_input(cx: &mut TestAppContext
         assert_eq!(view.read(cx).input.read(cx).value(), "y");
     })
     .expect("input");
+}
+#[gpui_kit::test]
+fn review_5_native_close_restores_focus_after_managed_removal(cx: &mut TestAppContext) {
+    use gpui_kit::component::WindowExt;
+    cx.update(init);
+    let handle = open(cx);
+    let original = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let original = window.focused(cx);
+            let id = OverlayHost::open(window, cx, Policy::default(), |d, _, _| d.title("owned"))
+                .expect("owned");
+            window.open_dialog(cx, |d, _, _| d.title("external"));
+            window.render_frame(cx);
+            OverlayHost::close(window, cx, id).expect("remove owned");
+            window.close_dialog(cx);
+            window.render_frame(cx);
+            original
+        })
+        .expect("close");
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert_eq!(window.focused(cx), original)
+    })
+    .expect("restored");
+}
+#[gpui_kit::test]
+fn review_5_managed_dialog_can_open_above_existing_native(cx: &mut TestAppContext) {
+    use gpui_kit::component::WindowExt;
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.open_dialog(cx, |dialog, _, _| dialog.title("external"));
+        let id = OverlayHost::open(window, cx, Policy::default(), |dialog, _, _| {
+            dialog.child(
+                div()
+                    .id("managed-over-native")
+                    .test_support()
+                    .child("visible"),
+            )
+        })
+        .expect("managed");
+        window.render_frame(cx);
+        assert!(
+            window.try_find("managed-over-native").is_some(),
+            "opening a managed modal must not queue it invisibly behind a native dialog"
+        );
+        OverlayHost::close(window, cx, id).expect("close managed");
+        assert!(window.has_active_dialog(cx));
+    })
+    .expect("window");
 }

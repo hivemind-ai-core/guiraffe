@@ -1,4 +1,5 @@
 //! Window-local Controls bridge. Register before creating a Root.
+use crate::modal::{ManagedModal, Modal as Dialog};
 use crate::{
     ConfirmResult,
     confirm::{self, ConfirmSender},
@@ -7,9 +8,7 @@ use crate::{
 };
 use gpui_kit::StatefulInteractiveElement;
 use gpui_kit::base::{Root, RootPlugin, TestSupportExt};
-use gpui_kit::component::{
-    WindowExt, dialog::Dialog, notification::Notification, progress::Progress,
-};
+use gpui_kit::component::{WindowExt, notification::Notification, progress::Progress};
 use gpui_kit::{
     Anchor, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Render, Styled, Task, Window, div, px,
@@ -50,6 +49,11 @@ impl std::error::Error for OverlayError {}
 pub struct OverlayHost {
     stack: OverlayStack,
     confirms: HashMap<OverlayId, ConfirmSender>,
+    dialogs: HashMap<OverlayId, Entity<ManagedModal>>,
+    dialog_order: Vec<OverlayId>,
+    native_restore_pending: bool,
+    native_restore_previous: Option<gpui_kit::WeakFocusHandle>,
+    focus_chain: HashMap<OverlayId, (gpui_kit::FocusHandle, Option<gpui_kit::WeakFocusHandle>)>,
     contexts: HashMap<String, ContextBuilder>,
     toasts: ToastQueue,
     cards: HashMap<ToastId, ToastCard>,
@@ -90,6 +94,9 @@ impl OverlayHost {
             if id == closed {
                 let _ = host.update(cx, |host, _| {
                     host.contexts.clear();
+                    host.dialogs.clear();
+                    host.dialog_order.clear();
+                    host.focus_chain.clear();
                     host.confirms.clear();
                     host.cards.clear();
                     host.timer = None;
@@ -116,31 +123,109 @@ impl OverlayHost {
     }
     fn settled(window: &mut Window, cx: &mut App, id: OverlayId, result: bool) {
         if let Ok(host) = Self::entity(window, cx) {
-            host.update(cx, |host, cx| {
-                if host.stack.dismiss(id, Dismiss::Programmatic) {
-                    if let Some(sender) = host.confirms.remove(&id) {
-                        sender.resolve(result);
-                    }
-                    cx.notify();
-                }
-            });
+            Self::settle_entity(&host, window, cx, id, result);
         }
     }
-    /// Close only the top managed layer, preserving Controls' focus restoration order.
+    fn native_blocks_managed(&self, window: &mut Window, cx: &mut App) -> bool {
+        window.has_active_dialog(cx)
+            && !self
+                .stack
+                .entries()
+                .iter()
+                .filter(|entry| entry.kind != OverlayKind::Drawer)
+                .any(|entry| {
+                    self.focus_chain.get(&entry.id).is_some_and(|(focus, _)| {
+                        window.focused(cx).as_ref() == Some(focus)
+                            || focus.contains_focused(window, cx)
+                    })
+                })
+    }
+    pub(crate) fn settle_entity(
+        entity: &Entity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+        id: OverlayId,
+        result: bool,
+    ) {
+        entity.update(cx, |host, cx| {
+            let native_hidden = host.native_blocks_managed(window, cx);
+            if !host.stack.dismiss(id, Dismiss::Programmatic) {
+                return;
+            }
+            if let Some(sender) = host.confirms.remove(&id) {
+                sender.resolve(result);
+            }
+            if let Some((focus, previous)) = host.focus_chain.remove(&id) {
+                let owns_focus = focus.contains_focused(window, cx)
+                    || window.focused(cx).as_ref() == Some(&focus);
+                for (_, prior) in host.focus_chain.values_mut() {
+                    if prior.as_ref().and_then(|p| p.upgrade()).as_ref() == Some(&focus) {
+                        *prior = previous.clone();
+                    }
+                }
+                if host
+                    .native_restore_previous
+                    .as_ref()
+                    .and_then(|previous| previous.upgrade())
+                    .as_ref()
+                    == Some(&focus)
+                {
+                    host.native_restore_previous = previous.clone();
+                }
+                if native_hidden {
+                    host.native_restore_pending = true;
+                    if host.native_restore_previous.is_none() {
+                        host.native_restore_previous = previous.clone();
+                    }
+                }
+                if owns_focus {
+                    let restore = host
+                        .stack
+                        .top()
+                        .and_then(|entry| host.focus_chain.get(&entry.id))
+                        .map(|(focus, _)| focus.clone())
+                        .or_else(|| previous.and_then(|p| p.upgrade()));
+                    if let Some(restore) = restore {
+                        window.focus(&restore, cx);
+                    }
+                }
+            }
+            if native_hidden {
+                host.release_modal(id, cx);
+            } else if let Some(dialog) = host.dialogs.get(&id) {
+                dialog.update(cx, |dialog, cx| dialog.close(cx));
+            }
+            cx.notify();
+        });
+    }
+    pub(crate) fn release_modal(&mut self, id: OverlayId, cx: &mut Context<Self>) {
+        if self.dialogs.remove(&id).is_some() {
+            self.dialog_order.retain(|entry| *entry != id);
+            cx.notify();
+        }
+    }
+    /// Remove a managed layer by ID, without touching unrelated native dialogs.
     pub fn close(window: &mut Window, cx: &mut App, id: OverlayId) -> Result<(), OverlayError> {
         let host = Self::entity(window, cx)?;
         let kind = host
             .read(cx)
             .stack
-            .top()
-            .filter(|e| e.id == id)
-            .map(|e| e.kind)
+            .entries()
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.kind)
             .ok_or(OverlayError::NotTopmost)?;
-        match kind {
-            OverlayKind::Drawer => window.close_sheet(cx),
-            _ => window.close_dialog(cx),
+        let focus = window.focused(cx);
+        if kind == OverlayKind::Drawer {
+            window.close_sheet(cx);
         }
-        Self::settled(window, cx, id, false);
+        Self::settle_entity(&host, window, cx, id, false);
+        if kind == OverlayKind::Drawer
+            && !host.read(cx).stack.entries().is_empty()
+            && let Some(focus) = focus
+        {
+            window.focus(&focus, cx);
+        }
         Ok(())
     }
     pub fn close_all(window: &mut Window, cx: &mut App) -> Result<(), OverlayError> {
@@ -176,18 +261,20 @@ impl OverlayHost {
             cx.notify();
             id
         });
-        window.open_dialog(cx, move |dialog, window, cx| {
-            let theme = GuiraffeTheme::global(cx);
-            let surface = theme.surfaces();
-            let dialog = dialog
-                .rounded(px(theme.default_radius.radius()))
-                .bg(surface.surface.to_hsla())
-                .text_color(surface.text.to_hsla())
-                .p(px(Size::Md.spacing()));
+        let previous = window.focused(cx).map(|focus| focus.downgrade());
+        let builder = Rc::new(move |dialog: Dialog, window: &mut Window, cx: &mut App| {
             build(dialog, window, cx)
                 .keyboard(policy.escape)
                 .overlay_closable(policy.outside)
-                .on_close(move |_, window, cx| Self::settled(window, cx, id, false))
+        });
+        let weak = host.downgrade();
+        let dialog = cx.new(|cx| ManagedModal::new(id, weak, builder, window, cx));
+        let focus = dialog.read(cx).focus.clone();
+        host.update(cx, |host, cx| {
+            host.focus_chain.insert(id, (focus, previous));
+            host.dialogs.insert(id, dialog);
+            host.dialog_order.push(id);
+            cx.notify();
         });
         Ok(id)
     }
@@ -537,7 +624,35 @@ impl Render for OverlayHost {
                 host.sync_cards(window, cx);
             });
         }
+        let native = self.native_blocks_managed(window, cx);
+        if self.native_restore_pending
+            && (!window.has_active_dialog(cx) || window.focused(cx).is_none())
+        {
+            self.native_restore_pending = false;
+            let restore = self
+                .stack
+                .top()
+                .and_then(|entry| self.focus_chain.get(&entry.id))
+                .map(|(focus, _)| focus.clone())
+                .or_else(|| {
+                    self.native_restore_previous
+                        .take()
+                        .and_then(|focus| focus.upgrade())
+                });
+            if let Some(focus) = restore {
+                window.defer(cx, move |window, cx| window.focus(&focus, cx));
+            }
+        }
         div()
+            .absolute()
+            .inset_0()
+            .children(self.dialog_order.iter().filter_map(|id| {
+                if native && self.stack.z_index(*id).is_some() {
+                    None
+                } else {
+                    self.dialogs.get(id).cloned()
+                }
+            }))
     }
 }
 /// Initialize Kit, theme and the window-local overlay plugin before opening windows.
@@ -560,6 +675,7 @@ pub fn init(cx: &mut App) {
         IgnoreEscape,
         Some("GrModalEscapeDisabled > Sheet"),
     )]);
+    guiraffe_motion::init(cx);
     crate::spotlight::init(cx);
     cx.set_global(Initialized);
 }
@@ -646,6 +762,7 @@ impl Drawer {
             crate::position::Side::Left => gpui_kit::component::Placement::Left,
             crate::position::Side::Right => gpui_kit::component::Placement::Right,
         };
+        let previous = window.focused(cx).map(|focus| focus.downgrade());
         window.open_sheet_at(placement, cx, move |sheet, window, cx| {
             let theme = GuiraffeTheme::global(cx);
             let surface = theme.surfaces();
@@ -661,6 +778,11 @@ impl Drawer {
             .overlay_closable(self.policy.outside)
             .on_close(move |_, window, cx| OverlayHost::settled(window, cx, id, false))
         });
+        if let Some(focus) = window.focused(cx) {
+            host.update(cx, |host, _| {
+                host.focus_chain.insert(id, (focus, previous));
+            });
+        }
         Ok(id)
     }
 }

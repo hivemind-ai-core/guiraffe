@@ -53,8 +53,14 @@ impl OverlayStack {
     pub fn scroll_locked(&self) -> bool {
         !self.entries.is_empty()
     }
-    /// Only the top overlay can consume dismissal. A rejecting top never dismisses the layer below.
+    /// Escape/outside dismissal is top-only; programmatic removal accepts any owned ID.
+    /// A rejecting top never dismisses the layer below.
     pub fn dismiss(&mut self, id: OverlayId, reason: Dismiss) -> bool {
+        if reason == Dismiss::Programmatic {
+            let before = self.entries.len();
+            self.entries.retain(|e| e.id != id);
+            return self.entries.len() != before;
+        }
         if !self.top().is_some_and(|e| {
             e.id == id
                 && match reason {
@@ -87,7 +93,7 @@ mod tests {
             },
         );
         assert_eq!(s.z_index(b), Some(1));
-        assert!(!s.dismiss(a, Dismiss::Programmatic));
+        assert!(!s.dismiss(a, Dismiss::Escape));
         assert!(!s.dismiss(b, Dismiss::Escape));
         assert!(!s.dismiss(b, Dismiss::Outside));
         assert!(s.dismiss(b, Dismiss::Programmatic));

@@ -30,3 +30,5 @@ pub use host::OverlayError as Error;
 mod floating;
 pub use floating::FloatingTooltip;
 
+mod modal;
+pub use modal::Modal;
