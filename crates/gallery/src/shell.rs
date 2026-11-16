@@ -145,9 +145,11 @@ impl Render for Gallery {
                     .child(
                         div()
                             .id("page")
+                            .min_h_0()
+                            .when(current == Page::Chat, |el| el.h_full().overflow_hidden())
                             .flex_1()
                             .min_w_0()
-                            .overflow_y_scroll()
+                            .when(current != Page::Chat, |el| el.overflow_y_scroll())
                             .child(content),
                     ),
             )

@@ -32,7 +32,7 @@ fn every_page_in_both_schemes() {
                 .unwrap_or_else(|e| panic!("{page:?}: {e:#}"));
             let name = format!(
                 "{}-{}",
-                page.title().to_lowercase(),
+                page.title().to_lowercase().replace(' ', "-"),
                 if scheme == Scheme::Dark {
                     "dark"
                 } else {

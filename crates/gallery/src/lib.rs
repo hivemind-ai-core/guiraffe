@@ -1,5 +1,6 @@
 //! The GUIraffe gallery: a reference app that exercises the whole toolkit together.
 
+mod chat;
 pub mod pages;
 pub mod shell;
 pub mod todos;
@@ -16,11 +17,12 @@ routes! {
         Flow = "/flow",
         Overlays = "/overlays",
         Windows = "/windows",
+        Chat = "/chat",
     }
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [
+    pub const ALL: [Page; 8] = [
         Page::Overview,
         Page::Components,
         Page::State,
@@ -28,6 +30,7 @@ impl Page {
         Page::Flow,
         Page::Overlays,
         Page::Windows,
+        Page::Chat,
     ];
 
     pub fn title(self) -> &'static str {
@@ -39,6 +42,7 @@ impl Page {
             Page::Flow => "Flow",
             Page::Overlays => "Overlays",
             Page::Windows => "Windows",
+            Page::Chat => "Agent chat",
         }
     }
 
@@ -52,6 +56,7 @@ impl Page {
             Page::Flow => I::Map,
             Page::Overlays => I::Bell,
             Page::Windows => I::Frame,
+            Page::Chat => I::MessagesSquare,
         }
     }
 }
@@ -59,6 +64,7 @@ impl Page {
 /// Initialize every crate the gallery uses (idempotent).
 pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_components::init(cx);
+    guiraffe_chat::init(cx);
     guiraffe_overlays::init(cx);
     guiraffe_router::init(cx);
     guiraffe_state::init(cx);

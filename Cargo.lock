@@ -3284,6 +3284,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-chat"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-queue",
+ "gpui-kit",
+ "guiraffe-components",
+ "guiraffe-core",
+ "guiraffe-motion",
+ "guiraffe-overlays",
+ "guiraffe-test",
+ "proptest",
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "guiraffe-cli"
 version = "0.1.0"
 dependencies = [
@@ -3340,6 +3356,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "guiraffe-chat",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-flow",

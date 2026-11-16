@@ -27,6 +27,7 @@ pub fn build(page: Page, window: &mut Window, cx: &mut App) -> AnyView {
         Page::Flow => FlowPage::build(window, cx),
         Page::Overlays => cx.new(|_| OverlaysPage { toasts: 0 }).into(),
         Page::Windows => cx.new(|_| WindowsPage).into(),
+        Page::Chat => cx.new(|cx| crate::chat::ChatPage::new(window, cx)).into(),
     }
 }
 
