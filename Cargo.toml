@@ -18,6 +18,7 @@ guiraffe-markdown = { path = "crates/markdown" }
 guiraffe-mermaid = { path = "crates/mermaid" }
 guiraffe-flow-core = { path = "crates/flow-core" }
 guiraffe-flow = { path = "crates/flow" }
+guiraffe-router = { path = "crates/router" }
 guiraffe-motion = { path = "crates/motion" }
 guiraffe-state = { path = "crates/state" }
 gpui-kit = { version = "=0.9.1", features = ["component", "assets"] }
