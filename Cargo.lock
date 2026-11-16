@@ -3397,6 +3397,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-icons"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+]
+
+[[package]]
 name = "guiraffe-inputs"
 version = "0.1.0"
 dependencies = [

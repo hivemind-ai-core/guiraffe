@@ -1,0 +1,13 @@
+[package]
+name = "guiraffe-icons"
+description = "The full Lucide icon set as a GPUI asset source (gpui-kit bundles only ~100 of the icons its IconName enum names)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
