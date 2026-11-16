@@ -3506,6 +3506,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-timeline"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-test",
+ "image",
+]
+
+[[package]]
 name = "guiraffe-ui"
 version = "0.1.0"
 dependencies = [
