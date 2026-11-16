@@ -74,7 +74,8 @@ impl Curve {
             .unwrap_or(f64::INFINITY);
         let k = &mut self.keys[i];
         let before = (k.t, k.v);
-        k.t = t.clamp(lo, hi);
+        // Keys closer than 2*EPS leave no room: stay put in time rather than panic.
+        k.t = if lo <= hi { t.clamp(lo, hi) } else { k.t };
         k.v = v;
         (k.t, k.v) != before
     }
@@ -84,13 +85,13 @@ impl Curve {
         let (Some(first), Some(last)) = (self.keys.first(), self.keys.last()) else {
             return 0.0;
         };
-        if t <= first.t {
+        if t.is_nan() || t <= first.t {
             return first.v;
         }
         if t >= last.t {
             return last.v;
         }
-        let i = self.keys.partition_point(|k| k.t <= t) - 1;
+        let i = self.keys.partition_point(|k| k.t <= t).saturating_sub(1);
         let (a, b) = (self.keys[i], self.keys[i + 1]);
         match a.interp {
             Interp::Constant => a.v,
@@ -182,5 +183,28 @@ mod tests {
             "same time replaces"
         );
         assert_eq!(c.keys().len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+
+    #[test]
+    fn crowded_keys_do_not_panic_on_move() {
+        let mut c = Curve::default();
+        for t in [0.0, 1e-7, 2e-7] {
+            c.set(Key::new(t, 0.0, Interp::Linear));
+        }
+        assert!(c.move_key(1, 5.0, 1.0), "value still changes");
+        assert_eq!(c.keys()[1].t, 1e-7);
+    }
+
+    #[test]
+    fn eval_nan_is_finite() {
+        let mut c = Curve::default();
+        c.set(Key::new(0.0, 2.0, Interp::Linear));
+        c.set(Key::new(1.0, 3.0, Interp::Linear));
+        assert_eq!(c.eval(f64::NAN), 2.0);
     }
 }

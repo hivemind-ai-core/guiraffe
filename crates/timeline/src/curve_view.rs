@@ -21,6 +21,13 @@ pub struct ValueRange {
 }
 
 impl ValueRange {
+    /// A range with `lo`/`hi` swapped if needed and a non-degenerate span.
+    pub fn new(lo: f64, hi: f64, height: f64) -> Self {
+        let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+        let hi = if hi - lo < 1e-9 { lo + 1.0 } else { hi };
+        Self { lo, hi, height }
+    }
+
     pub fn y(&self, v: f64) -> f64 {
         let span = (self.hi - self.lo).max(f64::EPSILON);
         (self.hi - v) / span * self.height
@@ -53,7 +60,8 @@ pub enum CurveEvent {
 }
 
 pub struct CurveView {
-    curve: Curve,
+    /// Shared so render can capture it without copying keys; edits copy-on-write.
+    curve: Rc<Curve>,
     axis: Axis,
     range: ValueRange,
     drag: Option<usize>,
@@ -67,13 +75,9 @@ impl EventEmitter<CurveEvent> for CurveView {}
 impl CurveView {
     pub fn new(curve: Curve, t0: f64, t1: f64, lo: f64, hi: f64, cx: &mut App) -> Entity<Self> {
         cx.new(|_| Self {
-            curve,
+            curve: Rc::new(curve),
             axis: Axis::new(t0, t1, 600.0),
-            range: ValueRange {
-                lo,
-                hi,
-                height: 300.0,
-            },
+            range: ValueRange::new(lo, hi, 300.0),
             drag: None,
             body: Rc::default(),
             pending_fit: Some((t0, t1)),
@@ -100,7 +104,7 @@ impl CurveView {
     pub fn drag_to(&mut self, x: f64, y: f64, cx: &mut Context<Self>) {
         let Some(i) = self.drag else { return };
         let (t, v) = (self.axis.t(x), self.range.v(y));
-        if self.curve.move_key(i, t, v) {
+        if Rc::make_mut(&mut self.curve).move_key(i, t, v) {
             if let Some(k) = self.curve.keys().get(i) {
                 cx.emit(CurveEvent::KeyMoved {
                     index: i,
@@ -197,7 +201,12 @@ impl Render for CurveView {
                         if let Ok(p) = pb.build() {
                             window.paint_path(p, stroke);
                         }
-                        for k in curve.keys() {
+                        for k in crate::visible(
+                            curve.keys(),
+                            &axis,
+                            |k| k.t - 5.0 * axis.scale,
+                            |k| k.t + 5.0 * axis.scale,
+                        ) {
                             let c = at(axis.x(k.t), range.y(k.v));
                             let r = px(4.);
                             let mut d = PathBuilder::fill();
@@ -279,5 +288,13 @@ mod tests {
             "{k:?}"
         );
         assert_eq!(events.borrow().len(), 1);
+    }
+
+    #[test]
+    fn value_range_new_swaps_and_widens() {
+        let r = ValueRange::new(1.0, -1.0, 100.0);
+        assert_eq!((r.lo, r.hi), (-1.0, 1.0));
+        let d = ValueRange::new(2.0, 2.0, 100.0);
+        assert!(d.y(2.0).is_finite() && d.hi > d.lo);
     }
 }

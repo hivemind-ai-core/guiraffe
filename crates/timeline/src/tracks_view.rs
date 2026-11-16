@@ -59,9 +59,11 @@ pub fn hit(track: &Track, axis: &Axis, x: f64) -> Option<(u32, Grab)> {
     let t = axis.t(x);
     track.clips().iter().find_map(|c| {
         let (x0, x1) = (axis.x(c.start), axis.x(c.end()));
-        if (x - x0).abs() <= EDGE_GRAB {
+        // Edge zones never take more than a third of the clip, so short clips stay movable.
+        let grab = EDGE_GRAB.min((x1 - x0) / 3.0);
+        if (x - x0).abs() <= grab {
             Some((c.id, Grab::Trim(Edge::Start)))
-        } else if (x - x1).abs() <= EDGE_GRAB {
+        } else if (x - x1).abs() <= grab {
             Some((c.id, Grab::Trim(Edge::End)))
         } else if x > x0 && x < x1 {
             Some((
@@ -110,7 +112,7 @@ impl TracksView {
 
     /// Snap edits to a grid (seconds); `None` disables.
     pub fn set_snap(&mut self, grid: Option<f64>) {
-        self.snap = grid.filter(|g| *g > 0.0);
+        self.snap = grid.filter(|g| g.is_finite() && *g > 0.0);
     }
 
     fn snapped(&self, t: f64) -> f64 {
@@ -121,7 +123,7 @@ impl TracksView {
     }
 
     pub fn seek(&mut self, t: f64, cx: &mut Context<Self>) {
-        if !t.is_finite() || t == self.playhead {
+        if !t.is_finite() || t.max(0.0) == self.playhead {
             return;
         }
         self.playhead = t.max(0.0);
@@ -314,7 +316,7 @@ impl Render for TracksView {
                                 .size_full(),
                             )
                             .children(self.tracks.iter().enumerate().flat_map(|(i, (_, tr))| {
-                                tr.clips()
+                                crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
                                     .iter()
                                     .map(|c| {
                                         let (x0, x1) =
@@ -416,5 +418,31 @@ mod tests {
         });
         let c = view.read_with(&cx, |v, _| v.tracks()[0].1.clips()[0].clone());
         assert!(c.end() <= 5.0 + 1e-9 && c.end() >= 4.5 - 1e-9, "{c:?}");
+    }
+
+    #[test]
+    fn short_clips_stay_movable_and_negative_seek_is_idempotent() {
+        let mut t = Track::default();
+        let id = t.insert(1.0, 0.05).unwrap_or_default();
+        let a = axis(); // 100 px/s: clip is 5 px wide
+        assert!(matches!(hit(&t, &a, 102.5), Some((i, Grab::Move { .. })) if i == id));
+        let cx = gpui_kit::TestAppContext::single();
+        let view = cx.update(|cx| {
+            TracksView::new(vec![("A".into(), track())], TimeFormat::Seconds, 10.0, cx)
+        });
+        let n = Rc::new(std::cell::RefCell::new(0));
+        let ev = n.clone();
+        let _s =
+            cx.update(|cx| cx.subscribe(&view, move |_, _: &TracksEvent, _| *ev.borrow_mut() += 1));
+        view.update(&mut cx.clone(), |v, cx| {
+            v.set_snap(Some(f64::INFINITY));
+            v.seek(-1.0, cx);
+            v.seek(-2.0, cx);
+        });
+        assert_eq!(*n.borrow(), 0, "already at 0");
+        assert!(
+            view.read_with(&cx, |v, _| v.snap.is_none()),
+            "inf grid rejected"
+        );
     }
 }

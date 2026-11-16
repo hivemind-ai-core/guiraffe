@@ -146,11 +146,11 @@ impl Axis {
         if !(step.is_finite() && step > 0.0) {
             return Vec::new();
         }
-        let first = (self.start / step).ceil() as i64;
-        let last = (self.end() / step).floor() as i64;
-        if last - first > 10_000 {
+        let (first, last) = ((self.start / step).ceil(), (self.end() / step).floor());
+        if !(first.is_finite() && last.is_finite()) || last - first > 10_000.0 {
             return Vec::new();
         }
+        let (first, last) = (first as i64, last as i64);
         (first..=last).map(|i| i as f64 * step).collect()
     }
 }
@@ -187,7 +187,7 @@ pub fn label(t: f64, format: TimeFormat) -> String {
         }
         _ => {
             let neg = t < 0.0;
-            let t = t.abs();
+            let t = (t.abs() * 1000.0).round() / 1000.0; // ms precision: 59.9996 -> 1:00
             let m = (t / 60.0).floor();
             let s = t - m * 60.0;
             let body = if s.fract().abs() < 1e-9 {
@@ -296,5 +296,20 @@ mod tests {
         assert_eq!(label(0.0, TimeFormat::Days), "1970-01-01");
         assert_eq!(label(19_723.0 * 86_400.0, TimeFormat::Days), "2024-01-01");
         assert_eq!(civil_from_days(-1), (1969, 12, 31));
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+
+    #[test]
+    fn tiny_step_on_huge_range_returns_empty() {
+        assert!(Axis::new(-1e10, 1e10, 1000.).ticks(1e-9).is_empty());
+    }
+
+    #[test]
+    fn labels_round_to_ms() {
+        assert_eq!(label(59.9996, TimeFormat::Seconds), "1:00");
     }
 }

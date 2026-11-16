@@ -30,7 +30,41 @@ struct Drag {
     grab_dt: f64,
 }
 
+/// Per-row data derived from tasks + schedule; rebuilt only when either changes, shared
+/// with render closures by `Rc` (no per-frame copies).
+#[derive(Default)]
+struct Geometry {
+    rows: Vec<(gpui_kit::SharedString, Option<Scheduled>)>,
+    /// (predecessor row, successor row)
+    deps: Vec<(usize, usize)>,
+}
+
+fn geometry(
+    tasks: &[Task],
+    sched: &Result<HashMap<u32, Scheduled>, ScheduleError>,
+) -> Rc<Geometry> {
+    let m = sched.as_ref().ok();
+    let index: HashMap<u32, usize> = tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+    Rc::new(Geometry {
+        rows: tasks
+            .iter()
+            .map(|t| (t.name.clone().into(), m.and_then(|m| m.get(&t.id)).copied()))
+            .collect(),
+        deps: tasks
+            .iter()
+            .enumerate()
+            .flat_map(|(i, t)| {
+                t.after
+                    .iter()
+                    .filter_map(|d| index.get(d).map(|&j| (j, i)))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+    })
+}
+
 pub struct GanttView {
+    geometry: Rc<Geometry>,
     tasks: Vec<Task>,
     schedule: Result<HashMap<u32, Scheduled>, ScheduleError>,
     axis: Axis,
@@ -47,9 +81,9 @@ impl GanttView {
     pub fn new(tasks: Vec<Task>, format: TimeFormat, cx: &mut App) -> Entity<Self> {
         let schedule = schedule(&tasks);
         let (lo, hi) = span(&schedule);
-        let mut axis = Axis::new(lo, hi, 800.0);
-        axis.fit(lo, hi, 0.05);
+        let axis = Axis::new(lo, hi, 800.0);
         cx.new(|_| Self {
+            geometry: geometry(&tasks, &schedule),
             tasks,
             schedule,
             axis,
@@ -71,21 +105,83 @@ impl GanttView {
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
         self.tasks = tasks;
         self.schedule = schedule(&self.tasks);
+        self.geometry = geometry(&self.tasks, &self.schedule);
+        self.pending_fit = Some(span(&self.schedule));
         cx.notify();
     }
 
     /// Move task `id`'s earliest start and reschedule (dependents follow).
     pub fn reschedule(&mut self, id: u32, not_before: f64, cx: &mut Context<Self>) {
+        if !not_before.is_finite() {
+            return;
+        }
+        // Predecessors bound the earliest start: clamp so the constraint never drifts below
+        // what is visible.
+        let bound = self.predecessor_bound(id);
         let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) else {
             return;
         };
-        if t.not_before == not_before || !not_before.is_finite() {
+        let not_before = not_before.max(bound);
+        if t.not_before == not_before {
             return;
         }
+        let start = |s: &Result<HashMap<u32, Scheduled>, ScheduleError>| {
+            s.as_ref()
+                .ok()
+                .and_then(|m| m.get(&id))
+                .map(|x| x.early_start)
+        };
+        let before = start(&self.schedule);
         t.not_before = not_before;
         self.schedule = schedule(&self.tasks);
-        cx.emit(GanttEvent::Rescheduled { id, not_before });
+        self.geometry = geometry(&self.tasks, &self.schedule);
+        if before != start(&self.schedule) {
+            cx.emit(GanttEvent::Rescheduled { id, not_before });
+        }
         cx.notify();
+    }
+
+    /// Latest early finish among `id`'s predecessors (−∞ if none or unscheduled).
+    fn predecessor_bound(&self, id: u32) -> f64 {
+        let (Ok(m), Some(t)) = (
+            self.schedule.as_ref(),
+            self.tasks.iter().find(|t| t.id == id),
+        ) else {
+            return f64::NEG_INFINITY;
+        };
+        t.after
+            .iter()
+            .filter_map(|d| m.get(d))
+            .map(|x| x.early_finish)
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// Begin a drag at body-local pixel `x` on `row`; only a press on the task's bar grabs.
+    pub fn press(&mut self, row: usize, x: f64) -> bool {
+        let axis = self.axis;
+        self.drag = self.tasks.get(row).and_then(|task| {
+            let sc = self.schedule.as_ref().ok()?.get(&task.id)?;
+            let x0 = axis.x(sc.early_start);
+            let x1 = axis.x(sc.early_finish).max(x0 + 2.0);
+            (x >= x0 && x <= x1).then(|| Drag {
+                id: task.id,
+                grab_dt: axis.t(x) - sc.early_start,
+            })
+        });
+        self.drag.is_some()
+    }
+
+    /// Continue the active drag to body-local pixel `x`.
+    pub fn drag_to(&mut self, x: f64, cx: &mut Context<Self>) {
+        let Some((id, dt)) = self.drag.as_ref().map(|d| (d.id, d.grab_dt)) else {
+            return;
+        };
+        let t = self.axis.t(x) - dt;
+        self.reschedule(id, t, cx);
+    }
+
+    pub fn release(&mut self) {
+        self.drag = None;
     }
 
     fn on_wheel(&mut self, e: &ScrollEvent, cx: &mut Context<Self>) {
@@ -103,14 +199,6 @@ impl GanttView {
         if changed {
             cx.notify();
         }
-    }
-
-    fn row_at(&self, y: Pixels) -> Option<usize> {
-        let b = self.body.get();
-        let r = f32::from(y - b.origin.y) / ROW_H;
-        (r >= 0.0)
-            .then_some(r as usize)
-            .filter(|r| *r < self.tasks.len())
     }
 }
 
@@ -170,35 +258,12 @@ impl Render for GanttView {
         let step = axis.tick_step(90.0, self.format);
         let ticks = axis.ticks(step);
         let format = self.format;
-        let sched = self.schedule.as_ref().ok().cloned().unwrap_or_default();
         let error = self.schedule.as_ref().err().map(|e| format!("{e:?}"));
-        let rows: Vec<(u32, String, Option<Scheduled>)> = self
-            .tasks
-            .iter()
-            .map(|t| (t.id, t.name.clone(), sched.get(&t.id).copied()))
-            .collect();
-        let index: HashMap<u32, usize> = self
-            .tasks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.id, i))
-            .collect();
-        let deps: Vec<(usize, usize)> = self
-            .tasks
-            .iter()
-            .enumerate()
-            .flat_map(|(i, t)| {
-                t.after
-                    .iter()
-                    .filter_map(|d| index.get(d).map(|&j| (j, i)))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+        let geo = self.geometry.clone();
+        let rows = geo.clone();
         let body = self.body.clone();
         let line = s.border.to_hsla();
         let arrow_color = s.dimmed.to_hsla();
-        let sched2 = sched.clone();
-        let ids: Vec<u32> = self.tasks.iter().map(|t| t.id).collect();
         div()
             .size_full()
             .flex()
@@ -257,7 +322,7 @@ impl Render for GanttView {
                             .flex_none()
                             .border_r_1()
                             .border_color(line)
-                            .children(rows.iter().map(|(_, name, sc)| {
+                            .children(rows.rows.iter().map(|(name, sc)| {
                                 let crit = sc.is_some_and(|x| x.critical());
                                 div()
                                     .h(px(ROW_H))
@@ -281,42 +346,26 @@ impl Render for GanttView {
                             )
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(move |this, e: &MouseDownEvent, _, _| {
-                                    let Some(row) = this.row_at(e.position.y) else {
-                                        return;
-                                    };
-                                    let id = this.tasks[row].id;
-                                    let start = this
-                                        .schedule
-                                        .as_ref()
-                                        .ok()
-                                        .and_then(|m| m.get(&id))
-                                        .map(|x| x.early_start)
-                                        .unwrap_or(0.0);
-                                    let at = this.axis.t(f64::from(f32::from(
-                                        e.position.x - this.body.get().origin.x,
-                                    )));
-                                    this.drag = Some(Drag {
-                                        id,
-                                        grab_dt: at - start,
-                                    });
+                                cx.listener(|this, e: &MouseDownEvent, _, _| {
+                                    let b = this.body.get();
+                                    let y = f32::from(e.position.y - b.origin.y);
+                                    if y >= 0.0 {
+                                        let x = f64::from(f32::from(e.position.x - b.origin.x));
+                                        this.press((y / ROW_H) as usize, x);
+                                    }
                                 }),
                             )
                             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
-                                if e.pressed_button != Some(MouseButton::Left) {
-                                    return;
+                                if e.pressed_button == Some(MouseButton::Left) {
+                                    let x = f64::from(f32::from(
+                                        e.position.x - this.body.get().origin.x,
+                                    ));
+                                    this.drag_to(x, cx);
                                 }
-                                let Some(d) = this.drag.as_ref().map(|d| (d.id, d.grab_dt)) else {
-                                    return;
-                                };
-                                let at = this.axis.t(f64::from(f32::from(
-                                    e.position.x - this.body.get().origin.x,
-                                )));
-                                this.reschedule(d.0, (at - d.1).max(0.0), cx);
                             }))
                             .on_mouse_up(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _, _| this.drag = None),
+                                cx.listener(|this, _, _, _| this.release()),
                             )
                             .child(
                                 canvas(
@@ -326,7 +375,7 @@ impl Render for GanttView {
                                 .absolute()
                                 .size_full(),
                             )
-                            .children(rows.iter().enumerate().map(|(i, (_, _, sc))| {
+                            .children(rows.rows.iter().enumerate().map(|(i, (_, sc))| {
                                 let bar = sc.map(|x| {
                                     let (x0, x1) = (
                                         axis.x(x.early_start) as f32,
@@ -350,10 +399,10 @@ impl Render for GanttView {
                                 canvas(
                                     |_, _, _| (),
                                     move |b, _, window, _| {
-                                        for (from, to) in &deps {
-                                            let (Some(a), Some(c)) = (
-                                                ids.get(*from).and_then(|id| sched2.get(id)),
-                                                ids.get(*to).and_then(|id| sched2.get(id)),
+                                        for (from, to) in &geo.deps {
+                                            let (Some(Some(a)), Some(Some(c))) = (
+                                                geo.rows.get(*from).map(|r| r.1),
+                                                geo.rows.get(*to).map(|r| r.1),
                                             ) else {
                                                 continue;
                                             };
@@ -442,5 +491,39 @@ mod tests {
         let cx = gpui_kit::TestAppContext::single();
         let view = cx.update(|cx| GanttView::new(t, TimeFormat::Seconds, cx));
         assert!(view.read_with(&cx, |v, _| v.schedule().is_err()));
+    }
+
+    #[test]
+    fn press_only_grabs_on_the_bar() {
+        let cx = gpui_kit::TestAppContext::single();
+        let view = cx.update(|cx| GanttView::new(tasks(), TimeFormat::Seconds, cx));
+        view.update(&mut cx.clone(), |v, _| {
+            let a = *v.axis();
+            assert!(!v.press(1, a.x(0.5)), "empty space left of b's bar");
+            assert!(v.press(1, a.x(2.5)), "on b's bar [2,3]");
+            assert!(!v.press(5, a.x(2.5)), "no such row");
+        });
+    }
+
+    #[test]
+    fn dragging_a_pinned_task_left_neither_drifts_nor_emits() {
+        let cx = gpui_kit::TestAppContext::single();
+        let view = cx.update(|cx| GanttView::new(tasks(), TimeFormat::Seconds, cx));
+        let events = Rc::new(std::cell::RefCell::new(0));
+        let ev = events.clone();
+        let _s =
+            cx.update(|cx| cx.subscribe(&view, move |_, _: &GanttEvent, _| *ev.borrow_mut() += 1));
+        view.update(&mut cx.clone(), |v, cx| {
+            let a = *v.axis();
+            assert!(v.press(1, a.x(2.5)));
+            v.drag_to(a.x(0.1), cx);
+            v.drag_to(a.x(-3.0), cx);
+            v.release();
+        });
+        let nb = view.read_with(&cx, |v, _| {
+            v.tasks.iter().find(|t| t.id == 2).map(|t| t.not_before)
+        });
+        assert_eq!(nb, Some(2.0), "clamped to predecessor finish");
+        assert_eq!(*events.borrow(), 0, "start never changed");
     }
 }

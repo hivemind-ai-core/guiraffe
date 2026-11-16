@@ -222,18 +222,24 @@ impl Render for DopeSheet {
                         .size_full(),
                     )
                     .children(self.channels.iter().enumerate().flat_map(|(r, c)| {
-                        c.keys()
-                            .iter()
-                            .map(|k| {
-                                div()
-                                    .absolute()
-                                    .top(px(r as f32 * ROW_H + ROW_H / 2.0 - 5.0))
-                                    .left(px(axis.x(*k) as f32 - 5.0))
-                                    .size(px(10.))
-                                    .rounded(px(2.))
-                                    .bg(key_c)
-                            })
-                            .collect::<Vec<_>>()
+                        // Pad by the key's half-width in time so diamonds at the edge still draw.
+                        crate::visible(
+                            c.keys(),
+                            &axis,
+                            |k| *k - 5.0 * axis.scale,
+                            |k| *k + 5.0 * axis.scale,
+                        )
+                        .iter()
+                        .map(|k| {
+                            div()
+                                .absolute()
+                                .top(px(r as f32 * ROW_H + ROW_H / 2.0 - 5.0))
+                                .left(px(axis.x(*k) as f32 - 5.0))
+                                .size(px(10.))
+                                .rounded(px(2.))
+                                .bg(key_c)
+                        })
+                        .collect::<Vec<_>>()
                     })),
             )
     }
