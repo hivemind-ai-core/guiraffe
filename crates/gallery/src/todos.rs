@@ -38,7 +38,11 @@ impl Event<TodoState> for Add {
             s.next_id += 1;
             s.added_total += 1;
             let id = s.next_id;
-            Arc::make_mut(&mut s.todos).push(Todo { id, title, done: false });
+            Arc::make_mut(&mut s.todos).push(Todo {
+                id,
+                title,
+                done: false,
+            });
         });
     }
 }
@@ -48,7 +52,10 @@ pub struct Toggle(pub u64);
 impl Event<TodoState> for Toggle {
     fn handle(self, fx: &mut Fx<'_, TodoState>) {
         fx.update(|s| {
-            if let Some(t) = Arc::make_mut(&mut s.todos).iter_mut().find(|t| t.id == self.0) {
+            if let Some(t) = Arc::make_mut(&mut s.todos)
+                .iter_mut()
+                .find(|t| t.id == self.0)
+            {
                 t.done = !t.done;
             }
         });
@@ -94,7 +101,14 @@ mod tests {
         assert_eq!((e.state().todos.len(), e.state().remaining()), (2, 1));
         e.dispatch(ClearDone);
         e.process(&Coeffects::default());
-        assert_eq!(e.state().todos.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), vec!["Ship"]);
+        assert_eq!(
+            e.state()
+                .todos
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Ship"]
+        );
     }
 
     #[test]

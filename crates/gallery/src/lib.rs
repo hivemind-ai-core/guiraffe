@@ -20,7 +20,15 @@ routes! {
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [Page::Overview, Page::Components, Page::State, Page::Motion, Page::Flow, Page::Overlays, Page::Windows];
+    pub const ALL: [Page; 7] = [
+        Page::Overview,
+        Page::Components,
+        Page::State,
+        Page::Motion,
+        Page::Flow,
+        Page::Overlays,
+        Page::Windows,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {

@@ -18,6 +18,7 @@ guiraffe-router.workspace = true
 guiraffe-windows.workspace = true
 guiraffe-overlays.workspace = true
 guiraffe-flow.workspace = true
+anyhow.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
