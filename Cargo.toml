@@ -9,6 +9,8 @@ license = "MIT"
 rust-version = "1.90"
 
 [workspace.dependencies]
+guiraffe-test = { path = "crates/test" }
+guiraffe-code = { path = "crates/code" }
 guiraffe-chat = { path = "crates/chat" }
 guiraffe-core = { path = "crates/core" }
 guiraffe-layout = { path = "crates/layout" }

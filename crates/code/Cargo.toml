@@ -1,0 +1,20 @@
+[package]
+name = "guiraffe-code"
+description = "Virtualized read-only code surfaces with independent analysis overlays."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[lints]
+workspace = true
+[dependencies]
+gpui-kit = { workspace = true, features = ["tree-sitter-rust", "tree-sitter-javascript"] }
+guiraffe-core.workspace = true
+guiraffe-markdown.workspace = true
+ropey = "2.0.0-beta.1"
+markdown = "=1.0.0"
+[dev-dependencies]
+proptest = "1"
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { workspace = true, features = ["snapshot"] }
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
