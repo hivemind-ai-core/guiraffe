@@ -20,7 +20,7 @@ schemars = "1"
 
 [dev-dependencies]
 proptest = "1"
-gpui-kit = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support", "syntect"] }
 guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
 
 [features]
