@@ -83,7 +83,8 @@ pub struct Indicator {
     label: Option<SharedString>,
     color: Option<ColorName>,
     position: IndicatorPosition,
-    size: Size,
+    /// `None`: inherit the context's control size.
+    size: Option<Size>,
     disabled: bool,
     style: StyleRefinement,
 }
@@ -95,7 +96,7 @@ impl Indicator {
             label: None,
             color: None,
             position: IndicatorPosition::TopEnd,
-            size: Size::Sm,
+            size: None,
             disabled: false,
             style: StyleRefinement::default(),
         }
@@ -116,13 +117,16 @@ impl RenderOnce for Indicator {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let v = variant(cx, self.color, Variant::Filled);
         let ring = hsla(surfaces(cx).body);
-        let (dot, badge) = (metrics::dot(self.size), metrics::badge_height(self.size));
+        let size = self
+            .size
+            .unwrap_or(guiraffe_core::StyleContext::current().control_size);
+        let (dot, badge) = (metrics::dot(size), metrics::badge_height(size));
         let offset = px(-(if self.label.is_some() { badge } else { dot }) / 3.0);
         let mark = match &self.label {
             Some(_) => div()
                 .min_w(px(badge))
                 .h(px(badge))
-                .px(px(metrics::gap(self.size)))
+                .px(px(metrics::gap(size)))
                 .text_size(px(Size::Xs.font_size() * 0.85)),
             None => div().size(px(dot)),
         }
@@ -155,7 +159,8 @@ type OnRemove = Box<dyn Fn(&ElementId, &mut Window, &mut App) + 'static>;
 pub struct Pill {
     id: ElementId,
     label: SharedString,
-    size: Size,
+    /// `None`: inherit the context's control size.
+    size: Option<Size>,
     on_remove: Option<OnRemove>,
     style: StyleRefinement,
 }
@@ -165,7 +170,7 @@ impl Pill {
         Self {
             id: id.into(),
             label: label.into(),
-            size: Size::Sm,
+            size: None,
             on_remove: None,
             style: StyleRefinement::default(),
         }
@@ -182,17 +187,20 @@ crate::props!(Pill { size: Size => size });
 impl RenderOnce for Pill {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let s = surfaces(cx);
+        let size = self
+            .size
+            .unwrap_or(guiraffe_core::StyleContext::current().control_size);
         let id = self.id.clone();
         let el = div()
             .flex()
             .items_center()
-            .gap(px(metrics::gap(self.size)))
-            .h(px(metrics::pill_height(self.size)))
-            .px(px(self.size.spacing() * 0.75))
+            .gap(px(metrics::gap(size)))
+            .h(px(metrics::pill_height(size)))
+            .px(px(size.spacing() * 0.75))
             .rounded_full()
             .bg(hsla(s.track))
             .text_color(hsla(s.text))
-            .text_size(px(self.size.font_size()));
+            .text_size(px(size.font_size()));
         refine(el, &self.style)
             .id(self.id)
             .child(self.label)

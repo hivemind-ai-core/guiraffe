@@ -25,6 +25,40 @@ pub struct GuiraffeTheme {
     pub default_radius: Size,
     /// Global font scale multiplier applied to `Size::font_size`.
     pub scale: f32,
+    /// Layout recipes: what each kind of container provides to the widgets inside it.
+    pub recipes: Recipes,
+}
+
+/// Style recipes per layout kind (spec/14). Containers apply these as [`crate::StylePatch`]es;
+/// restyle an app globally by editing recipes rather than call sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Recipes {
+    pub page: crate::StylePatch,
+    pub toolbar: crate::StylePatch,
+    pub form: crate::StylePatch,
+    pub card: crate::StylePatch,
+    pub sidebar: crate::StylePatch,
+    pub table: crate::StylePatch,
+}
+
+impl Recipes {
+    pub const DEFAULT: Recipes = {
+        use crate::{Density, Emphasis, StylePatch, SurfaceKind};
+        Recipes {
+            page: StylePatch::new().density(Density::Comfortable),
+            toolbar: StylePatch::new().control_size(Size::Xs).emphasis(Emphasis::Quiet),
+            form: StylePatch::new().control_size(Size::Sm).emphasis(Emphasis::Default),
+            card: StylePatch::new().surface(SurfaceKind::Raised),
+            sidebar: StylePatch::new().surface(SurfaceKind::Sunken).control_size(Size::Sm).emphasis(Emphasis::Quiet),
+            table: StylePatch::new().density(Density::Compact).emphasis(Emphasis::Quiet),
+        }
+    };
+}
+
+impl Default for Recipes {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 impl Default for GuiraffeTheme {
@@ -36,6 +70,7 @@ impl Default for GuiraffeTheme {
             primary_shade_dark: 8,
             default_radius: Size::Sm,
             scale: 1.0,
+            recipes: Recipes::DEFAULT,
         }
     }
 }
@@ -137,6 +172,7 @@ static DEFAULT: GuiraffeTheme = GuiraffeTheme {
     primary_shade_dark: 8,
     default_radius: Size::Sm,
     scale: 1.0,
+    recipes: Recipes::DEFAULT,
 };
 
 /// Install `theme` and push its primary color, radius and scheme into Controls' theme so

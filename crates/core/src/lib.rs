@@ -11,7 +11,7 @@ pub mod variant;
 pub use color::Rgb;
 pub use context::{Density, Emphasis, Provide, StyleContext, StylePatch, SurfaceKind, provide};
 pub use palette::{ColorName, Shade};
-pub use theme::{GuiraffeTheme, Scheme, Surfaces, apply, set_scheme};
+pub use theme::{GuiraffeTheme, Recipes, Scheme, Surfaces, apply, set_scheme};
 pub use tokens::{ShadowLayer, Size, shadow};
 pub use variant::{Variant, VariantColors};
 

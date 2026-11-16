@@ -13,7 +13,9 @@ pub struct Paper {
     style: StyleRefinement,
     shadow: Option<Size>,
     radius: Option<Size>,
+    /// `None`: `Md` spacing scaled by the context's density.
     padding: Option<Size>,
+    no_padding: bool,
     with_border: bool,
     children: Vec<AnyElement>,
 }
@@ -30,11 +32,27 @@ impl Paper {
             style: StyleRefinement::default(),
             shadow: None,
             radius: None,
-            padding: Some(Size::Md),
+            padding: None,
+            no_padding: false,
             with_border: false,
             children: Vec::new(),
         }
     }
+}
+
+impl Paper {
+    /// No padding (content that bleeds to the edge, e.g. a table).
+    pub fn p_0(mut self) -> Self {
+        self.no_padding = true;
+        self
+    }
+}
+
+/// Padding in px: explicit size, or `Md` scaled by the inherited density.
+pub fn pad_for(size: Option<Size>) -> f32 {
+    guiraffe_core::StyleContext::current()
+        .density
+        .space(size.unwrap_or(Size::Md))
 }
 
 crate::props!(Paper { shadow: Size => shadow, radius: Size => radius, p: Size => padding, with_border: bool => with_border });
@@ -53,7 +71,7 @@ impl RenderOnce for Paper {
             .bg(hsla(s.body))
             .rounded(radius(self.radius, cx))
             .text_color(hsla(s.text))
-            .when_some(self.padding, |el, p| el.p(px(p.spacing())))
+            .when(!self.no_padding, |el| el.p(px(pad_for(self.padding))))
             .when(self.with_border, |el| {
                 el.border_1().border_color(hsla(s.border))
             })
@@ -75,7 +93,7 @@ pub struct Card {
     style: StyleRefinement,
     shadow: Option<Size>,
     radius: Option<Size>,
-    padding: Size,
+    padding: Option<Size>,
     with_border: bool,
     parts: Vec<CardPart>,
 }
@@ -92,7 +110,7 @@ impl Card {
             style: StyleRefinement::default(),
             shadow: Some(Size::Sm),
             radius: None,
-            padding: Size::Md,
+            padding: None,
             with_border: true,
             parts: Vec::new(),
         }
@@ -114,10 +132,12 @@ impl ParentElement for Card {
 }
 
 impl RenderOnce for Card {
-    fn render(self, _: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let pad = px(self.padding.spacing());
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let pad_px = pad_for(self.padding);
+        let pad = px(pad_px);
         let last = self.parts.len().saturating_sub(1);
-        let mut paper = Paper::new().with_border(self.with_border).p(self.padding);
+        let mut paper = Paper::new().with_border(self.with_border);
+        paper.padding = self.padding;
         if let Some(s) = self.shadow {
             paper = paper.shadow(s);
         }
@@ -125,13 +145,12 @@ impl RenderOnce for Card {
             paper = paper.radius(r);
         }
         paper.style = self.style;
-        paper
-            .flex()
-            .flex_col()
-            .gap(px(self.padding.spacing() * 0.75))
-            .overflow_hidden()
-            .children(self.parts.into_iter().enumerate().map(|(i, part)| {
-                match part {
+        let recipe = crate::style::theme(cx).recipes.card;
+        let body = div().flex().flex_col().gap(px(pad_px * 0.75)).children(
+            self.parts
+                .into_iter()
+                .enumerate()
+                .map(|(i, part)| match part {
                     CardPart::Content(el) => el,
                     CardPart::Section(sec) => div()
                         .mx(-pad)
@@ -139,8 +158,12 @@ impl RenderOnce for Card {
                         .when(i == last, |el| el.mb(-pad))
                         .child(*sec)
                         .into_any_element(),
-                }
-            }))
+                }),
+        );
+        // Everything inside a card inherits the card recipe (raised surface).
+        paper
+            .overflow_hidden()
+            .child(guiraffe_core::provide(recipe, body))
     }
 }
 

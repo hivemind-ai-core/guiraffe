@@ -1,10 +1,10 @@
 //! ThemeIcon, ActionIcon and CloseButton.
 
+use gpui_kit::assets::IconName;
 use gpui_kit::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, StyleRefinement, Styled,
     Window, div, prelude::*, px,
 };
-use gpui_kit::assets::IconName;
 use guiraffe_core::{ColorName, Size, Variant};
 
 use crate::style::{hsla, radius, variant};
@@ -13,7 +13,8 @@ use crate::style::{hsla, radius, variant};
 #[derive(IntoElement)]
 pub struct ThemeIcon {
     icon: IconName,
-    size: Size,
+    /// `None`: inherit the context's control size.
+    size: Option<Size>,
     color: Option<ColorName>,
     variant: Variant,
     radius: Option<Size>,
@@ -24,7 +25,7 @@ impl ThemeIcon {
     pub fn new(icon: IconName) -> Self {
         Self {
             icon,
-            size: Size::Md,
+            size: None,
             color: None,
             variant: Variant::Filled,
             radius: None,
@@ -54,8 +55,11 @@ pub fn icon_box(size: Size) -> f32 {
 
 impl RenderOnce for ThemeIcon {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let size = self
+            .size
+            .unwrap_or(guiraffe_core::StyleContext::current().control_size);
         let v = variant(cx, self.color, self.variant);
-        let side = px(icon_box(self.size));
+        let side = px(icon_box(size));
         let el = div()
             .size(side)
             .flex()
@@ -66,7 +70,7 @@ impl RenderOnce for ThemeIcon {
             .border_1()
             .border_color(hsla(v.border))
             .text_color(hsla(v.foreground))
-            .text_size(px(self.size.icon_size()))
+            .text_size(px(size.icon_size()))
             .child(self.icon);
         crate::style::refine(el, &self.style)
     }
@@ -79,9 +83,11 @@ type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 pub struct ActionIcon {
     id: ElementId,
     icon: IconName,
-    size: Size,
+    /// `None`: inherit the context's control size.
+    size: Option<Size>,
     color: Option<ColorName>,
-    variant: Variant,
+    /// `None`: quiet regions (toolbars, tables) get Subtle, others Light.
+    variant: Option<Variant>,
     disabled: bool,
     on_click: Option<OnClick>,
     style: StyleRefinement,
@@ -92,9 +98,9 @@ impl ActionIcon {
         Self {
             id: id.into(),
             icon,
-            size: Size::Md,
+            size: None,
             color: None,
-            variant: Variant::Subtle,
+            variant: None,
             disabled: false,
             on_click: None,
             style: StyleRefinement::default(),
@@ -114,8 +120,14 @@ crate::props!(ActionIcon { size: Size => size, variant: Variant => variant, disa
 
 impl RenderOnce for ActionIcon {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let v = variant(cx, self.color, self.variant);
-        let side = px(icon_box(self.size));
+        let ctx = guiraffe_core::StyleContext::current();
+        let size = self.size.unwrap_or(ctx.control_size);
+        let v_kind = self.variant.unwrap_or(match ctx.emphasis {
+            guiraffe_core::Emphasis::Quiet => Variant::Subtle,
+            guiraffe_core::Emphasis::Default => Variant::Light,
+        });
+        let v = variant(cx, self.color, v_kind);
+        let side = px(icon_box(size));
         let hover = hsla(v.hover);
         let mut el = crate::style::refine(div(), &self.style)
             .id(self.id)
@@ -128,7 +140,7 @@ impl RenderOnce for ActionIcon {
             .border_1()
             .border_color(hsla(v.border))
             .text_color(hsla(v.foreground))
-            .text_size(px(self.size.icon_size()))
+            .text_size(px(size.icon_size()))
             .child(self.icon);
         if self.disabled {
             el = el.opacity(0.5);

@@ -46,7 +46,8 @@ struct Layout {
 pub struct SegmentedControl {
     items: Vec<SharedString>,
     selected: usize,
-    size: Size,
+    /// `None`: inherit the context's control size.
+    size: Option<Size>,
     full_width: bool,
     focus: FocusHandle,
     /// Indicator (left, width) relative to the control's border box.
@@ -80,7 +81,7 @@ impl SegmentedControl {
         cx.new(|cx| Self {
             items,
             selected: 0,
-            size: Size::Sm,
+            size: None,
             full_width: false,
             focus: cx.focus_handle(),
             indicator: Animated::new((0.0, 0.0), Timing::Spring(Spring::SNAPPY)),
@@ -109,7 +110,7 @@ impl SegmentedControl {
         cx.notify();
     }
 
-    pub fn set_size(&mut self, size: Size, cx: &mut Context<Self>) {
+    pub fn set_size(&mut self, size: Option<Size>, cx: &mut Context<Self>) {
         if self.size != size {
             self.size = size;
             cx.notify();
@@ -171,8 +172,11 @@ impl SegmentedControl {
 impl Render for SegmentedControl {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = surfaces(cx);
-        let pad = metrics::track_pad(self.size);
-        let seg_h = self.size.control_height() - 2.0 * pad;
+        let size = self
+            .size
+            .unwrap_or(guiraffe_core::StyleContext::current().control_size);
+        let pad = metrics::track_pad(size);
+        let seg_h = size.control_height() - 2.0 * pad;
         let r = radius(None, cx);
         let (left, width) = self.indicator.sample(window, cx);
         {
@@ -220,13 +224,13 @@ impl Render for SegmentedControl {
                     .id(("segment", i))
                     .relative()
                     .flex_1()
-                    .px(px(self.size.spacing()))
+                    .px(px(size.spacing()))
                     .h(px(seg_h))
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .text_size(px(self.size.font_size()))
+                    .text_size(px(size.font_size()))
                     .text_color(hsla(if i == selected { s.text } else { s.dimmed }))
                     .child(label.clone())
                     .child(
