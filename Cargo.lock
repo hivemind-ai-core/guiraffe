@@ -3491,12 +3491,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "guiraffe-chat",
  "guiraffe-components",
  "guiraffe-core",
+ "guiraffe-flow",
  "guiraffe-icons",
+ "guiraffe-inputs",
  "guiraffe-layout",
+ "guiraffe-markdown",
+ "guiraffe-mermaid",
+ "guiraffe-overlays",
  "guiraffe-test",
  "guiraffe-timeline",
+ "guiraffe-ui",
+ "serde_json",
 ]
 
 [[package]]

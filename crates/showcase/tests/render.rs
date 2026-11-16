@@ -1,8 +1,8 @@
 //! Renders every showcase entry headlessly in light and dark (catches panics and blank demos)
 //! and keeps a golden per entry so visual regressions in any component show up here.
-use gpui_kit::{AppContext, px, size};
+use gpui_kit::{px, size};
 use guiraffe_core::{GuiraffeTheme, Scheme, apply};
-use guiraffe_showcase::{catalog::entries, shell::Showcase};
+use guiraffe_showcase::catalog::entries;
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 
 fn slug(s: &str) -> String {
@@ -44,7 +44,7 @@ fn every_entry_renders_in_both_themes() {
                         },
                         cx,
                     );
-                    cx.new(|cx| Showcase::new(Some(name), window, cx))
+                    guiraffe_showcase::window_root(Some(name), window, cx)
                 })
                 .unwrap_or_else(|err| panic!("{name}: {err:#}"));
             let tag = format!(

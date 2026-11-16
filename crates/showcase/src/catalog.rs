@@ -28,6 +28,11 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
         "CardSection",
         "child of Card; shown in the Card entry",
     ),
+    (
+        "mermaid",
+        "Host",
+        "private test host in a non-public module (`mermaid::host`)",
+    ),
 ];
 
 /// Every entry, in display order.
@@ -35,7 +40,14 @@ pub fn entries() -> Vec<Entry> {
     let mut v = Vec::new();
     v.extend(crate::demos::layout::entries());
     v.extend(crate::demos::components::entries());
+    v.extend(crate::demos::inputs::entries());
+    v.extend(crate::demos::overlays::entries());
+    v.extend(crate::demos::markdown::entries());
+    v.extend(crate::demos::mermaid::entries());
+    v.extend(crate::demos::chat::entries());
+    v.extend(crate::demos::flow::entries());
     v.extend(crate::demos::timeline::entries());
+    v.extend(crate::demos::ui::entries());
     v
 }
 

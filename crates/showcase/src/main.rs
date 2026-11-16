@@ -1,5 +1,5 @@
 //! `cargo run -p guiraffe-showcase [-- <entry name>]`
-use gpui_kit::{AppContext, WindowOptions};
+use gpui_kit::WindowOptions;
 
 fn main() {
     let start = std::env::args().nth(1);
@@ -16,7 +16,7 @@ fn main() {
             };
             let start = start.clone();
             if let Err(e) = cx.open_window(opts, move |window, cx| {
-                cx.new(|cx| guiraffe_showcase::shell::Showcase::new(start.as_deref(), window, cx))
+                guiraffe_showcase::window_root(start.as_deref(), window, cx)
             }) {
                 eprintln!("failed to open showcase: {e}");
                 cx.quit();

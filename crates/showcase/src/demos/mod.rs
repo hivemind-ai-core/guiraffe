@@ -4,9 +4,16 @@ use gpui_kit::{AnyElement, IntoElement, ParentElement, SharedString, Styled, div
 use guiraffe_components::{Paper, Text};
 use guiraffe_core::Size;
 
+pub mod chat;
 pub mod components;
+pub mod flow;
+pub mod inputs;
 pub mod layout;
+pub mod markdown;
+pub mod mermaid;
+pub mod overlays;
 pub mod timeline;
+pub mod ui;
 
 /// A labelled example block inside a demo.
 pub(crate) fn example(label: impl Into<SharedString>, body: impl IntoElement) -> AnyElement {
