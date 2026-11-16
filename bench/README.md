@@ -122,3 +122,11 @@ forthcoming layout, guiraffe-test and e2e APIs. No GUI interactions are introduc
 by this headless crate. CI config supplies fmt/clippy/tests, cargo-deny, both
 GPUI backend builds/tests, instruction gates, and nightly wall time; coverage,
 audit, fuzzing, mutation and flake jobs remain roadmap work.
+
+## Data UI workloads
+
+`data-ui-instantiate`, `data-ui-patch`, and `data-ui-splice` are registered in the shared CLI/criterion/Callgrind table. They use real `DataUi` entities and a headless native fixture with bundled assets and a 10,000-item keyed list. Setup/initial rendering occurs during warmup; criterion and Callgrind explicitly prepare the fixture outside their measured callbacks.
+
+Instantiation creates/drops a host from an already compiled four-node template with no-op logic; lazy first rendering and list seeding are excluded. Patch changes a mounted text node's color. Splice replaces one keyed item in the middle of the seeded list, alternating prebuilt shared records. Patch/splice include slot processing, reconciliation, and targeted notifications, excluding the subsequent draw. These are operation costs, not frame times. The fixture initializes native GPUI once per thread, so `gpui-kit/test-support` is enabled for this benchmark harness.
+
+`tests/allocator.rs` warms these workloads then counts requested allocation traffic, with separate bounds for each operation. The original zero-allocation assertions remain unchanged for core variants and window placement. Run one workload with `cargo run --release -p guiraffe-bench -- run --suite data-ui-splice --samples 20 --iterations 1000`; use a quiet machine and a recorded profile for performance comparisons.

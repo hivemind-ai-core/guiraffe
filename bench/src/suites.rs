@@ -55,6 +55,22 @@ pub fn windows_placement() {
     ));
 }
 
+/// Warm the native fixture outside criterion/Callgrind measurement.
+pub fn prepare_data_ui() {
+    crate::data_ui::instantiate();
+    crate::data_ui::patch();
+    crate::data_ui::splice();
+}
+pub fn data_ui_instantiate() {
+    crate::data_ui::instantiate();
+}
+pub fn data_ui_patch() {
+    crate::data_ui::patch();
+}
+pub fn data_ui_splice() {
+    crate::data_ui::splice();
+}
+
 /// Shared registration table consumed by the CLI, criterion and iai-callgrind.
 /// Add workloads here once; each tool expands its own registration from this list.
 #[macro_export]
@@ -63,6 +79,9 @@ macro_rules! with_suites {
         $callback! {
             (core_variants, "core-variants"),
             (windows_placement, "windows-placement"),
+            (data_ui_instantiate, "data-ui-instantiate"),
+            (data_ui_patch, "data-ui-patch"),
+            (data_ui_splice, "data-ui-splice"),
         }
     };
 }
