@@ -16,9 +16,9 @@ pub mod template;
 pub mod value;
 pub mod widget;
 
-pub use host::{DataUi, Logic, NoLogic};
+pub use host::{BoundNode, DataUi, DataUiHandle, Logic, NoLogic};
 pub use ir::{Document, Node};
 pub use slots::{Patch, PatchBuf, SlotId, SlotTable};
-pub use template::{CompileError, Diagnostic, EventId, Names, Template};
+pub use template::{CompileError, Diagnostic, EventId, MAX_DEPTH, Names, Prop, Severity, Template};
 pub use value::Value;
-pub use widget::{NodeView, Registry, Widget};
+pub use widget::{FnWidget, NodeView, Registry, Schema, Widget, widget};

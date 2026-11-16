@@ -1,7 +1,8 @@
-//! Compiling a [`Document`] into a [`Template`]: a flat node arena with widgets resolved
-//! from the registry and bindings resolved from names to indices, done once at load.
+//! Compiling a [`Document`] into a [`Template`]: a flat node arena with widgets resolved from
+//! the registry, props/events stored in schema order, and names resolved to indices — once,
+//! at load (possibly on a background thread).
 
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use gpui_kit::SharedString;
 
@@ -17,6 +18,7 @@ pub struct EventId(pub u32);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prop {
+    Unset,
     Lit(Value),
     Slot(SlotId),
 }
@@ -25,15 +27,25 @@ pub struct NodeSpec {
     pub kind: SharedString,
     pub id: Option<SharedString>,
     pub widget: Arc<dyn Widget>,
-    pub props: Vec<(SharedString, Prop)>,
-    pub events: Vec<(SharedString, EventId)>,
-    /// Indices into [`Template::child_index`].
-    pub children: Range<u32>,
+    /// In the widget's schema order.
+    pub props: Box<[Prop]>,
+    /// In the widget's schema event order.
+    pub events: Box<[Option<EventId>]>,
+    /// Slots this node's own props read (non-empty ⇒ rendered as its own entity).
+    pub deps: Box<[SlotId]>,
+    children: (u32, u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Warning,
+    Error,
 }
 
 /// A problem found while compiling, with the node path (e.g. `/root/children/2`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
+    pub severity: Severity,
     pub path: String,
     pub message: String,
 }
@@ -42,21 +54,17 @@ pub struct Diagnostic {
 #[derive(Debug, Clone, Default)]
 pub struct Names {
     slots: Vec<String>,
+    slot_index: HashMap<String, SlotId>,
     events: Vec<String>,
+    event_index: HashMap<String, EventId>,
 }
 
 impl Names {
     pub fn slot(&self, name: &str) -> Option<SlotId> {
-        self.slots
-            .iter()
-            .position(|s| s == name)
-            .map(|i| SlotId(i as u32))
+        self.slot_index.get(name).copied()
     }
     pub fn event(&self, name: &str) -> Option<EventId> {
-        self.events
-            .iter()
-            .position(|s| s == name)
-            .map(|i| EventId(i as u32))
+        self.event_index.get(name).copied()
     }
     pub fn event_name(&self, id: EventId) -> Option<&str> {
         self.events.get(id.0 as usize).map(String::as_str)
@@ -67,11 +75,15 @@ impl Names {
 }
 
 pub struct Template {
-    pub nodes: Vec<NodeSpec>,
-    pub child_index: Vec<u32>,
-    pub root: u32,
-    pub names: Names,
-    pub diagnostics: Vec<Diagnostic>,
+    nodes: Vec<NodeSpec>,
+    child_index: Vec<u32>,
+    root: u32,
+    names: Names,
+    diagnostics: Vec<Diagnostic>,
+    slot_defaults: Vec<Value>,
+    /// Node indices that read each slot (for targeted invalidation).
+    slot_nodes: Vec<Vec<u32>>,
+    ids: HashMap<SharedString, u32>,
 }
 
 /// Fatal compile error (the document can't be used at all).
@@ -94,8 +106,9 @@ impl std::fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
-/// Guards against pathological documents (stack depth during compile and render).
-pub const MAX_DEPTH: usize = 256;
+/// Maximum nesting depth. Matches what JSON parsing accepts (serde_json's recursion limit is
+/// reached at roughly 64 nested nodes), so builder- and JSON-made documents behave the same.
+pub const MAX_DEPTH: usize = 60;
 
 impl Template {
     pub fn compile(doc: &Document, registry: &Registry) -> Result<Template, CompileError> {
@@ -104,69 +117,98 @@ impl Template {
         }
         let mut c = Compiler {
             registry,
-            nodes: Vec::new(),
-            child_index: Vec::new(),
-            slots: HashMap::new(),
-            names: Names::default(),
-            diags: Vec::new(),
+            t: Template::empty(),
         };
         let root = c.node(&doc.root, "/root".into(), 0)?;
-        Ok(Template {
-            nodes: c.nodes,
-            child_index: c.child_index,
-            root,
-            names: c.names,
-            diagnostics: c.diags,
-        })
+        c.t.root = root;
+        Ok(c.t)
     }
 
+    fn empty() -> Template {
+        Template {
+            nodes: Vec::new(),
+            child_index: Vec::new(),
+            root: 0,
+            names: Names::default(),
+            diagnostics: Vec::new(),
+            slot_defaults: Vec::new(),
+            slot_nodes: Vec::new(),
+            ids: HashMap::new(),
+        }
+    }
+
+    pub fn root(&self) -> u32 {
+        self.root
+    }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
     pub fn node(&self, i: u32) -> Option<&NodeSpec> {
         self.nodes.get(i as usize)
     }
-
-    pub fn children(&self, n: &NodeSpec) -> impl Iterator<Item = u32> + '_ {
-        self.child_index[n.children.start as usize..n.children.end as usize]
-            .iter()
-            .copied()
+    pub fn children(&self, n: &NodeSpec) -> &[u32] {
+        self.child_index
+            .get(n.children.0 as usize..n.children.1 as usize)
+            .unwrap_or(&[])
     }
-
-    /// Node index by its document `id`.
+    pub fn names(&self) -> &Names {
+        &self.names
+    }
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+    pub fn slot_defaults(&self) -> &[Value] {
+        &self.slot_defaults
+    }
+    pub fn slot_nodes(&self, slot: SlotId) -> &[u32] {
+        self.slot_nodes
+            .get(slot.0 as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+    /// Node index by its document `id` (O(1)).
     pub fn find(&self, id: &str) -> Option<u32> {
-        self.nodes
-            .iter()
-            .position(|n| n.id.as_deref() == Some(id))
-            .map(|i| i as u32)
+        self.ids.get(id).copied()
     }
 }
 
 struct Compiler<'a> {
     registry: &'a Registry,
-    nodes: Vec<NodeSpec>,
-    child_index: Vec<u32>,
-    slots: HashMap<String, SlotId>,
-    names: Names,
-    diags: Vec<Diagnostic>,
+    t: Template,
 }
 
 impl Compiler<'_> {
+    fn diag(&mut self, severity: Severity, path: &str, message: String) {
+        self.t.diagnostics.push(Diagnostic {
+            severity,
+            path: path.to_owned(),
+            message,
+        });
+    }
+
     fn slot(&mut self, name: &str) -> SlotId {
-        if let Some(id) = self.slots.get(name) {
+        if let Some(id) = self.t.names.slot_index.get(name) {
             return *id;
         }
-        let id = SlotId(self.names.slots.len() as u32);
-        self.names.slots.push(name.to_owned());
-        self.slots.insert(name.to_owned(), id);
+        let id = SlotId(self.t.names.slots.len() as u32);
+        self.t.names.slots.push(name.to_owned());
+        self.t.names.slot_index.insert(name.to_owned(), id);
+        self.t.slot_defaults.push(Value::Null);
+        self.t.slot_nodes.push(Vec::new());
         id
     }
 
     fn event(&mut self, name: &str) -> EventId {
-        match self.names.events.iter().position(|e| e == name) {
-            Some(i) => EventId(i as u32),
-            None => {
-                self.names.events.push(name.to_owned());
-                EventId(self.names.events.len() as u32 - 1)
-            }
+        if let Some(id) = self.t.names.event_index.get(name) {
+            return *id;
         }
+        let id = EventId(self.t.names.events.len() as u32);
+        self.t.names.events.push(name.to_owned());
+        self.t.names.event_index.insert(name.to_owned(), id);
+        id
     }
 
     fn node(&mut self, n: &Node, path: String, depth: usize) -> Result<u32, CompileError> {
@@ -176,53 +218,98 @@ impl Compiler<'_> {
                 max: MAX_DEPTH,
             });
         }
-        let widget: Arc<dyn Widget> = match self.registry.get(&n.kind) {
-            Some(w) => w,
+        let index = self.t.nodes.len() as u32;
+        let (widget, known): (Arc<dyn Widget>, bool) = match self.registry.get(&n.kind) {
+            Some(w) => (w, true),
             None => {
-                self.diags.push(Diagnostic {
-                    path: path.clone(),
-                    message: format!("unknown widget kind `{}`", n.kind),
-                });
-                Arc::new(Placeholder)
+                self.diag(
+                    Severity::Warning,
+                    &path,
+                    format!("unknown widget kind `{}`", n.kind),
+                );
+                (Arc::new(Placeholder), false)
             }
         };
-        let mut props: Vec<(SharedString, Prop)> = n
-            .props
-            .iter()
-            .map(|(k, v)| {
-                (
-                    SharedString::from(k.clone()),
-                    Prop::Lit(Value::from_json(v)),
-                )
-            })
-            .collect();
-        for (prop, slot) in &n.bind {
-            let id = self.slot(slot);
-            props.retain(|(k, _)| k.as_ref() != prop.as_str());
-            props.push((prop.clone().into(), Prop::Slot(id)));
+        let schema = widget.schema();
+        let mut props = vec![Prop::Unset; schema.props.len()];
+        for (name, v) in &n.props {
+            match (
+                schema.props.iter().position(|p| p == name),
+                Value::try_from_json(v),
+            ) {
+                (Some(i), Ok(v)) => props[i] = Prop::Lit(v),
+                (Some(_), Err(e)) => {
+                    self.diag(Severity::Warning, &path, format!("prop `{name}`: {e}"))
+                }
+                (None, _) if known => self.diag(
+                    Severity::Warning,
+                    &path,
+                    format!("`{}` has no prop `{name}`", n.kind),
+                ),
+                (None, _) => {}
+            }
         }
-        let events =
-            n.on.iter()
-                .map(|(ev, name)| (SharedString::from(ev.clone()), self.event(name)))
-                .collect();
-        let index = self.nodes.len() as u32;
-        self.nodes.push(NodeSpec {
+        let mut deps = Vec::new();
+        for (name, slot) in &n.bind {
+            let Some(i) = schema.props.iter().position(|p| p == name) else {
+                if known {
+                    self.diag(
+                        Severity::Warning,
+                        &path,
+                        format!("`{}` has no prop `{name}` to bind", n.kind),
+                    );
+                }
+                continue;
+            };
+            let id = self.slot(slot);
+            if let Prop::Lit(lit) = &props[i]
+                && self.t.slot_defaults[id.0 as usize] == Value::Null
+            {
+                self.t.slot_defaults[id.0 as usize] = lit.clone();
+            }
+            props[i] = Prop::Slot(id);
+            if !deps.contains(&id) {
+                deps.push(id);
+                self.t.slot_nodes[id.0 as usize].push(index);
+            }
+        }
+        let mut events = vec![None; schema.events.len()];
+        for (ev, name) in &n.on {
+            match schema.events.iter().position(|e| e == ev) {
+                Some(i) => events[i] = Some(self.event(name)),
+                None if known => self.diag(
+                    Severity::Warning,
+                    &path,
+                    format!("`{}` has no event `{ev}`", n.kind),
+                ),
+                None => {}
+            }
+        }
+        if let Some(id) = &n.id {
+            if self.t.ids.contains_key(id.as_str()) {
+                self.diag(Severity::Error, &path, format!("duplicate id `{id}` (ids must be unique; they key interaction state and selectors)"));
+            } else {
+                self.t.ids.insert(id.clone().into(), index);
+            }
+        }
+        self.t.nodes.push(NodeSpec {
             kind: n.kind.clone().into(),
             id: n.id.clone().map(Into::into),
             widget,
-            props,
-            events,
-            children: 0..0,
+            props: props.into(),
+            events: events.into(),
+            deps: deps.into(),
+            children: (0, 0),
         });
         let mut kids = Vec::with_capacity(n.children.len());
         for (i, child) in n.children.iter().enumerate() {
             kids.push(self.node(child, format!("{path}/children/{i}"), depth + 1)?);
         }
-        let start = self.child_index.len() as u32;
-        self.child_index.extend(kids);
-        let end = self.child_index.len() as u32;
-        if let Some(node) = self.nodes.get_mut(index as usize) {
-            node.children = start..end;
+        let start = self.t.child_index.len() as u32;
+        self.t.child_index.extend(kids);
+        let end = self.t.child_index.len() as u32;
+        if let Some(node) = self.t.nodes.get_mut(index as usize) {
+            node.children = (start, end);
         }
         Ok(index)
     }

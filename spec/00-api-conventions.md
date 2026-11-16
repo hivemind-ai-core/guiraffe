@@ -78,7 +78,11 @@ These rules make the most of both backends:
 1. **Granular views.** State that changes often (hover, an animating value, a streaming message,
    the toast list, the flow viewport) lives in a *small* entity whose view renders only what depends on it.
    Parents hold `Entity<Child>` handles, not the child's data.
-2. **Notify narrowly.** Call `cx.notify()` only on the entity whose output changed, and only when it
+2. **Notify narrowly, and notify *purely*.** To re-render another view, use `cx.notify(entity.entity_id())`,
+   **not** `entity.update(cx, |_, cx| cx.notify())`. On gpui-fast an `update` counts as a *write*, which invalidates every
+   view that rendered that entity, including its ancestors. This was measured in `guiraffe-ui`: the root re-rendered on every patch until the fix.
+   Use `update` only when you really mutate the entity.
+    Call `cx.notify()` only on the entity whose output changed, and only when it
    actually changed: compare before notifying, and skip it when an update is a no-op. Never notify inside `render`.
 3. **No fast-changing state in widely read globals.** Reading a global in `render` makes the view depend on it.
    Configuration (theme, keymaps) may be global. Live state (open overlays, window bounds, notifications)

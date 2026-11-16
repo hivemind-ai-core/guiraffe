@@ -1,4 +1,8 @@
 //! The dynamic widget interface and registry (the `dyn` side of static + dynamic UI).
+//!
+//! Widgets declare a [`Schema`]; the compiler stores each node's props and events in schema
+//! order, so rendering reads them **by position** (no string lookups at runtime), and unknown
+//! props/events in a document are reported as diagnostics.
 
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
@@ -13,38 +17,54 @@ use crate::{
     value::Value,
 };
 
-pub type Emit = Rc<dyn Fn(EventId, Value, &mut Window, &mut App)>;
+/// Delivers an event to the host, stamped with the template generation it was wired for.
+pub type Emit = Rc<dyn Fn(EventId, Value, u32, &mut Window, &mut App)>;
 
-/// Everything a widget needs to render one node: resolved props, rendered children, events.
+/// The props and events a widget kind understands, in positional order.
+#[derive(Debug)]
+pub struct Schema {
+    pub props: &'static [&'static str],
+    pub events: &'static [&'static str],
+}
+
+impl Schema {
+    pub const EMPTY: Schema = Schema {
+        props: &[],
+        events: &[],
+    };
+}
+
+/// Everything a widget needs to render one node.
 pub struct NodeView<'a> {
     pub spec: &'a NodeSpec,
     pub slots: &'a SlotTable,
     pub emit: &'a Emit,
+    pub generation: u32,
     pub index: u32,
 }
 
+static NULL: Value = Value::Null;
+
 impl NodeView<'_> {
-    pub fn prop(&self, name: &str) -> Option<&Value> {
-        self.spec
-            .props
-            .iter()
-            .find(|(k, _)| k.as_ref() == name)
-            .map(|(_, p)| match p {
-                Prop::Lit(v) => v,
-                Prop::Slot(id) => self.slots.get(*id),
-            })
+    /// Prop at schema position `i` (literal, or the current value of its bound slot).
+    pub fn prop(&self, i: usize) -> &Value {
+        match self.spec.props.get(i) {
+            Some(Prop::Lit(v)) => v,
+            Some(Prop::Slot(id)) => self.slots.get(*id),
+            Some(Prop::Unset) | None => &NULL,
+        }
     }
-    pub fn text(&self, name: &str) -> SharedString {
-        self.prop(name).map(Value::display).unwrap_or_default()
+    pub fn text(&self, i: usize) -> SharedString {
+        self.prop(i).display()
     }
-    pub fn bool(&self, name: &str) -> bool {
-        self.prop(name).and_then(Value::as_bool).unwrap_or(false)
+    pub fn bool(&self, i: usize) -> bool {
+        self.prop(i).as_bool().unwrap_or(false)
     }
-    pub fn num(&self, name: &str) -> Option<f64> {
-        self.prop(name).and_then(Value::as_f64)
+    pub fn num(&self, i: usize) -> Option<f64> {
+        self.prop(i).as_f64()
     }
-    pub fn size(&self, name: &str) -> Option<Size> {
-        match self.prop(name)?.as_str()? {
+    pub fn size(&self, i: usize) -> Option<Size> {
+        match self.prop(i).as_str()? {
             "xs" => Some(Size::Xs),
             "sm" => Some(Size::Sm),
             "md" => Some(Size::Md),
@@ -53,19 +73,16 @@ impl NodeView<'_> {
             _ => None,
         }
     }
-    pub fn color(&self, name: &str) -> Option<ColorName> {
-        ColorName::from_name(self.prop(name)?.as_str()?)
+    pub fn color(&self, i: usize) -> Option<ColorName> {
+        ColorName::from_name(self.prop(i).as_str()?)
     }
-    /// A click-style handler for widget event `event`, if the document wires it.
-    pub fn handler(&self, event: &str) -> Option<impl Fn(&mut Window, &mut App) + 'static> {
-        let id = self
-            .spec
-            .events
-            .iter()
-            .find(|(e, _)| e.as_ref() == event)?
-            .1;
-        let emit = self.emit.clone();
-        Some(move |w: &mut Window, cx: &mut App| emit(id, Value::Null, w, cx))
+    /// Handler for the widget's event at schema position `i`, if the document wires it.
+    pub fn handler(&self, i: usize) -> Option<impl Fn(Value, &mut Window, &mut App) + 'static> {
+        let id = (*self.spec.events.get(i)?)?;
+        let (emit, generation) = (self.emit.clone(), self.generation);
+        Some(move |payload: Value, w: &mut Window, cx: &mut App| {
+            emit(id, payload, generation, w, cx)
+        })
     }
     pub fn element_id(&self) -> gpui_kit::ElementId {
         match &self.spec.id {
@@ -75,9 +92,10 @@ impl NodeView<'_> {
     }
 }
 
-/// A widget kind usable from documents. Implementations are created once per kind and shared;
-/// `Send + Sync` so templates can be compiled off the UI thread (spec/15).
+/// A widget kind usable from documents. Created once per kind and shared; `Send + Sync` so
+/// templates can be compiled off the UI thread (spec/15).
 pub trait Widget: Send + Sync + 'static {
+    fn schema(&self) -> &'static Schema;
     fn render(
         &self,
         node: &NodeView<'_>,
@@ -87,10 +105,32 @@ pub trait Widget: Send + Sync + 'static {
     ) -> AnyElement;
 }
 
-impl<F> Widget for F
-where
-    F: Fn(&NodeView<'_>, Vec<AnyElement>, &mut Window, &mut App) -> AnyElement + Send + Sync + 'static,
-{
+type RenderFn =
+    dyn Fn(&NodeView<'_>, Vec<AnyElement>, &mut Window, &mut App) -> AnyElement + Send + Sync;
+
+/// A widget from a schema and a render function.
+pub struct FnWidget {
+    schema: &'static Schema,
+    render: Box<RenderFn>,
+}
+
+pub fn widget(
+    schema: &'static Schema,
+    render: impl Fn(&NodeView<'_>, Vec<AnyElement>, &mut Window, &mut App) -> AnyElement
+    + Send
+    + Sync
+    + 'static,
+) -> FnWidget {
+    FnWidget {
+        schema,
+        render: Box::new(render),
+    }
+}
+
+impl Widget for FnWidget {
+    fn schema(&self) -> &'static Schema {
+        self.schema
+    }
     fn render(
         &self,
         node: &NodeView<'_>,
@@ -98,7 +138,7 @@ where
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        self(node, children, window, cx)
+        (self.render)(node, children, window, cx)
     }
 }
 
@@ -106,6 +146,9 @@ where
 pub struct Placeholder;
 
 impl Widget for Placeholder {
+    fn schema(&self) -> &'static Schema {
+        &Schema::EMPTY
+    }
     fn render(
         &self,
         node: &NodeView<'_>,
