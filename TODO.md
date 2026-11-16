@@ -16,3 +16,7 @@
 - [ ] windows: tear-off panels between windows (dock-host port), parent/child + modal windows
 - [ ] windows: example app (examples/multi.rs)
 - [ ] core: style helper traits (.p_size, .radius_size, .shadow_size) once layout lands
+
+## Next (user request 2026-11-16)
+- [ ] **Showcase app** (`apps/showcase`): every component from every crate, one page each, real data, both themes; doubles as e2e/snapshot target. Gate: a test enumerates exported components and fails if any lacks a showcase page.
+- [ ] **Tooling DX**: `guiraffe new --template {blank,dashboard,editor,chat}`, `guiraffe dev` (watch+rebuild+relaunch), `guiraffe add <crate>`, `guiraffe doctor` (toolchain, gpui-fast pin, system deps), `guiraffe snapshot`/`bench` wrappers, docs site generated from showcase.
