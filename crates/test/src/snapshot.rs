@@ -24,11 +24,22 @@ type Setup = Box<dyn Fn(&mut App)>;
 
 pub struct Snapshotter {
     setup: Option<Setup>,
+    assets: Arc<dyn gpui_kit::AssetSource>,
 }
 
 impl Snapshotter {
+    /// A snapshotter with GPUI Kit's bundled assets (icons), so icon components render.
     pub fn new() -> Result<Self> {
-        Ok(Self { setup: None })
+        Ok(Self {
+            setup: None,
+            assets: Arc::new(gpui_kit::assets::Assets),
+        })
+    }
+
+    /// Use a custom asset source (e.g. the app's own icons and images).
+    pub fn with_assets(mut self, assets: impl gpui_kit::AssetSource) -> Self {
+        self.assets = Arc::new(assets);
+        self
     }
 
     /// Run `f` in every fresh app before building the view (init themes, fonts, globals).
@@ -56,10 +67,13 @@ impl Snapshotter {
         let window = cx
             .open_window(size, build)
             .context("open headless window")?;
-        cx.update_window(window.into(), |_, window, cx| {
-            let _ = window.draw(cx);
-        })?;
-        cx.run_until_parked();
+        // Two frames: assets (SVG icons, images) load during the first and paint in the second.
+        for _ in 0..2 {
+            cx.update_window(window.into(), |_, window, cx| {
+                let _ = window.draw(cx);
+            })?;
+            cx.run_until_parked();
+        }
         cx.capture_screenshot(window.into())
             .context("capture (is a wgpu adapter available?)")
     }

@@ -14,7 +14,7 @@ e2e = ["dep:serde", "dep:serde_json", "dep:anyhow", "dep:gpui-kit"]
 
 offscreen = ["e2e", "gpui-kit/test-support"]
 # Visual snapshots on GPUI's headless wgpu renderer (no display server needed).
-snapshot = ["dep:gpui-kit", "dep:anyhow", "dep:image", "gpui-kit/test-support"]
+snapshot = ["dep:gpui-kit", "dep:anyhow", "dep:image", "gpui-kit/test-support", "gpui-kit/assets"]
 # Render-count helpers for interaction tests.
 render = []
 

@@ -43,7 +43,7 @@ impl Default for GuiraffeTheme {
 impl Global for GuiraffeTheme {}
 
 /// Semantic surface colors, derived from scheme (Mantine `--mantine-color-body` etc.).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Surfaces {
     pub body: Rgb,
     pub surface: Rgb,
@@ -51,6 +51,14 @@ pub struct Surfaces {
     pub dimmed: Rgb,
     pub border: Rgb,
     pub hover: Rgb,
+    /// Recessed track behind segmented controls, progress rings, pills.
+    pub track: Rgb,
+    /// Raised element on a track (active segment).
+    pub raised: Rgb,
+    /// Background for highlighted/marked text.
+    pub mark: Rgb,
+    /// Multiplier for shadow opacity (dark surfaces need stronger shadows to read).
+    pub shadow_strength: f32,
 }
 
 impl GuiraffeTheme {
@@ -88,6 +96,10 @@ impl GuiraffeTheme {
                 dimmed: g.shade(6),
                 border: g.shade(3),
                 hover: g.shade(1),
+                track: g.shade(1),
+                raised: Rgb::WHITE,
+                mark: ColorName::Yellow.shade(2),
+                shadow_strength: 1.0,
             },
             Scheme::Dark => Surfaces {
                 body: d.shade(7),
@@ -96,8 +108,21 @@ impl GuiraffeTheme {
                 dimmed: d.shade(2),
                 border: d.shade(4),
                 hover: d.shade(5),
+                track: d.shade(6),
+                raised: d.shade(5),
+                mark: ColorName::Yellow.shade(8).alpha(0.35).over(d.shade(7)),
+                shadow_strength: 4.0,
             },
         }
+    }
+
+    /// Theme-resolved box shadow layers for a shadow token.
+    pub fn shadow(&self, size: Size) -> [crate::tokens::ShadowLayer; 2] {
+        let k = self.surfaces().shadow_strength;
+        crate::tokens::shadow(size).map(|l| crate::tokens::ShadowLayer {
+            alpha: (l.alpha * k).min(1.0),
+            ..l
+        })
     }
 
     pub fn hsla(c: Rgb) -> Hsla {
@@ -147,4 +172,36 @@ pub fn set_scheme(scheme: Scheme, cx: &mut App) {
     let mut t = GuiraffeTheme::global(cx).clone();
     t.scheme = scheme;
     apply(t, cx);
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    #[test]
+    fn surfaces_are_legible_and_distinct_in_both_schemes() {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let t = GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            };
+            let s = t.surfaces();
+            assert!(s.text.contrast(s.body) >= 7.0, "{scheme:?} body text AAA");
+            assert!(s.text.contrast(s.mark) >= 4.5, "{scheme:?} marked text AA");
+            assert!(s.dimmed.contrast(s.body) >= 3.0, "{scheme:?} dimmed text");
+            assert_ne!(s.track, s.body, "{scheme:?} track visible");
+            assert_ne!(s.raised, s.track, "{scheme:?} raised visible on track");
+        }
+    }
+
+    #[test]
+    fn dark_shadows_are_stronger() {
+        let l = GuiraffeTheme::default().shadow(Size::Md);
+        let d = GuiraffeTheme {
+            scheme: Scheme::Dark,
+            ..Default::default()
+        }
+        .shadow(Size::Md);
+        assert!(d[1].alpha > l[1].alpha);
+    }
 }
