@@ -1,0 +1,20 @@
+[package]
+name = "guiraffe-motion"
+description = "Light, fluid motion for GPUI: easing curves, springs, transitions, presence and animated values."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+# Run the suite on the gpui-fast backend (retained rendering).
+gpui-fast = ["gpui-kit/gpui-fast"]
