@@ -148,7 +148,7 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
     let stamp = Stamp::of(&path);
     let doc = load(&path, screen.as_deref())?;
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(guiraffe_icons::GuiraffeAssets)
         .run(move |cx: &mut App| {
             guiraffe_components::init(cx);
             let title = format!("GUIraffe preview — {}", path.display());

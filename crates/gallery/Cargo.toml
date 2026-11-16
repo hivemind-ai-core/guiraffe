@@ -19,6 +19,7 @@ guiraffe-router.workspace = true
 guiraffe-windows.workspace = true
 guiraffe-overlays.workspace = true
 guiraffe-flow.workspace = true
+guiraffe-icons.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]

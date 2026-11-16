@@ -28,11 +28,11 @@ pub struct Snapshotter {
 }
 
 impl Snapshotter {
-    /// A snapshotter with GPUI Kit's bundled assets (icons), so icon components render.
+    /// A snapshotter with the full icon set (guiraffe-icons), so icon components render.
     pub fn new() -> Result<Self> {
         Ok(Self {
             setup: None,
-            assets: Arc::new(gpui_kit::assets::Assets),
+            assets: Arc::new(guiraffe_icons::GuiraffeAssets),
         })
     }
 

@@ -93,7 +93,7 @@ impl Render for Shell {
 }
 
 fn main() {
-    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(|cx: &mut App| {
+    gpui_kit::application().with_assets(guiraffe_icons::GuiraffeAssets).run(|cx: &mut App| {
         guiraffe_components::init(cx);
         guiraffe_overlays::init(cx);
         guiraffe_windows::WindowManager::init(Default::default(), cx);

@@ -1,7 +1,7 @@
 //! `cargo run -p guiraffe-gallery`
 fn main() {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(guiraffe_icons::GuiraffeAssets)
         .run(|cx| {
             guiraffe_gallery::init(cx);
             guiraffe_windows::WindowManager::init(guiraffe_windows::WindowConfig::default(), cx);

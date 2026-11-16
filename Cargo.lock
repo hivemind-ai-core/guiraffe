@@ -3335,6 +3335,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-components",
  "guiraffe-core",
+ "guiraffe-icons",
  "guiraffe-mocket",
  "guiraffe-ui",
  "serde_json",
@@ -3388,6 +3389,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-flow",
+ "guiraffe-icons",
  "guiraffe-motion",
  "guiraffe-overlays",
  "guiraffe-router",
@@ -3496,6 +3498,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "guiraffe-icons",
  "image",
  "serde",
  "serde_json",
