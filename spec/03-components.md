@@ -11,3 +11,10 @@ Agent chat (inspired by mocket): message list (virtualized, streaming markdown),
 - Theme-aware highlighting for light and dark schemes, with a plain-text fallback for unknown languages.
 - Cache highlighting outside the render path and keep large source files responsive.
 - Acceptance: tokenization/fallback tests, GPUI selection/copy interaction tests, and light/dark gallery examples.
+
+## Advanced (spec/16)
+- Code viewer with annotations, trace lines, bubbles, symbols, lens and minimap
+- Code canvas / code bubbles (CodeCanvas-style, built on flow)
+- Git history graph (GitKraken-style)
+- Hex view and assembler view
+- Timeline family: Gantt, DAW/animation timeline, dope sheet, curve editor
