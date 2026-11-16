@@ -446,6 +446,26 @@ impl OverlayHost {
             }
         }));
     }
+    fn finish_admission_failures(
+        &mut self,
+        failed: Vec<ToastId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if failed.is_empty() {
+            return;
+        }
+        for id in failed {
+            self.toasts.remove(id);
+        }
+        if !self.reconcile_pending {
+            self.reconcile_pending = true;
+            cx.defer_in(window, |host, window, cx| {
+                host.reconcile_pending = false;
+                host.sync_cards(window, cx);
+            });
+        }
+    }
     fn sync_cards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let notes = window.notifications(cx);
         self.owned_notes
@@ -524,9 +544,7 @@ impl OverlayHost {
                 failed.push(toast.id);
             }
         }
-        for id in failed {
-            self.toasts.remove(id);
-        }
+        self.finish_admission_failures(failed, window, cx);
         self.native_snapshot = window
             .notifications(cx)
             .iter()
@@ -860,5 +878,39 @@ mod review_tests {
             weak.upgrade().is_none(),
             "window close must release a strongly captured Root"
         );
+    }
+}
+
+#[cfg(test)]
+mod admission_failure_tests {
+    use super::*;
+    #[gpui_kit::test]
+    fn review_1_failed_admission_promotes_persistent_successor(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(init);
+        let handle = crate::gpui_tests::open(cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .update(cx, |host, cx| {
+                    host.toasts = ToastQueue::new(1);
+                    host.requested_toast_limit = Some(1);
+                    for id in [1, 2] {
+                        let mut note = Toast::new(ToastId(id), "persistent");
+                        note.auto_close = None;
+                        host.toasts.push(note);
+                    }
+                    host.finish_admission_failures(vec![ToastId(1)], window, cx);
+                });
+        })
+        .expect("failed admission");
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            let host = OverlayHost::entity(window, cx).expect("host");
+            assert!(
+                host.read(cx).cards.contains_key(&ToastId(2)),
+                "persistent successors require reconciliation without an active timer"
+            );
+        })
+        .expect("successor");
     }
 }
