@@ -207,8 +207,15 @@ Pyramid, all run in CI:
   with Mesa **lavapipe** software Vulkan so pixels are deterministic; capture through the probe;
   compare with a perceptual diff (tolerant to sub-pixel AA), golden PNGs in `tests/snapshots/`,
   `guiraffe snapshot --review` shows an HTML diff report to accept/reject.
-  ⚠ **Spike first**: GPUI's built-in visual-test platform is macOS-only; prove the Linux path
-  (render, capture, determinism) before building the suite on it.
+  ✅ **Spike done** (`spikes/visual-snapshots.md`): two proven Linux paths.
+  (1) **In-process offscreen**: `HeadlessAppContext` with GPUI's wgpu headless renderer, then
+  `render_to_image`. No display server is needed, and it was pixel-identical across 5 runs per adapter.
+  This is the default for widget snapshots.
+  (2) **Real app under Xvfb**: probe-driven XTest input with `import` capture. 5 fresh launches were
+  pixel-identical. This is for end-to-end tests.
+  Images differ slightly across GPU adapters (max channel delta 1), so goldens are tied to a CI adapter
+  profile and compared with a small tolerance. Next steps: a `TestId` element that publishes bounds,
+  using gpui-kit's `TestSupportExt`, and checking the same results on the gpui-fast backend.
 - *Gallery as test bed*: every gallery story is automatically a visual snapshot and a smoke e2e.
 
 ## 9. Data-driven UI (Glade-like)
