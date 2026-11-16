@@ -1,0 +1,29 @@
+[package]
+name = "guiraffe-devtools"
+description = "Opt-in GUIraffe render inspector, frame profiler and state time travel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+devtools = ["dep:gpui-kit", "gpui-kit/profiler", "dep:guiraffe-core", "dep:guiraffe-state", "dep:guiraffe-motion", "dep:serde_json"]
+gpui-fast = ["gpui-kit?/gpui-fast"]
+
+[dependencies]
+gpui-kit = { workspace = true, optional = true }
+guiraffe-core = { workspace = true, optional = true }
+guiraffe-state = { workspace = true, optional = true }
+guiraffe-motion = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
+
+[[test]]
+name = "panels"
+required-features = ["devtools"]
