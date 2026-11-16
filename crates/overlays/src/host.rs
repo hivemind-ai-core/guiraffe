@@ -30,6 +30,7 @@ struct ToastCard {
     generation: u64,
 }
 gpui_kit::actions!(guiraffe_overlays, [IgnoreEscape]);
+/// Prefer WeakEntity captures. Window-close cleanup releases even accidentally strong Root captures.
 pub type ContextBuilder = Rc<dyn Fn(Dialog, &mut Window, &mut App) -> Dialog>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayError {
@@ -59,6 +60,7 @@ pub struct OverlayHost {
     native_snapshot: Vec<gpui_kit::EntityId>,
     native_cap: usize,
     reconcile_pending: bool,
+    _window_closed: Option<gpui_kit::Subscription>,
 }
 impl RootPlugin for OverlayHost {
     fn decorate(
@@ -81,8 +83,23 @@ impl RootPlugin for OverlayHost {
     }
 }
 impl OverlayHost {
-    fn new(_: &mut Window, _: &mut Context<Self>) -> Self {
-        Self::default()
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let id = window.window_handle().window_id();
+        let host = cx.weak_entity();
+        let subscription = cx.on_window_closed(move |cx, closed| {
+            if id == closed {
+                let _ = host.update(cx, |host, _| {
+                    host.contexts.clear();
+                    host.confirms.clear();
+                    host.cards.clear();
+                    host.timer = None;
+                });
+            }
+        });
+        Self {
+            _window_closed: Some(subscription),
+            ..Self::default()
+        }
     }
     pub fn entity(window: &Window, cx: &App) -> Result<Entity<Self>, OverlayError> {
         window
@@ -181,6 +198,8 @@ impl OverlayHost {
         message: impl Into<gpui_kit::SharedString>,
     ) -> Result<(OverlayId, ConfirmResult), OverlayError> {
         let (sender, result) = confirm::channel();
+        let identity = Rc::new(std::cell::Cell::new(None));
+        let callback_id = identity.clone();
         let title = title.into();
         let message = message.into();
         let id =
@@ -210,20 +229,24 @@ impl OverlayHost {
                                     gpui_kit::component::button::Button::new("ok").label("OK"),
                                 )),
                         )
-                        .on_ok(|_, window, cx| {
-                            if let Ok(host) = Self::entity(window, cx) {
-                                host.update(cx, |host, _| {
-                                    if let Some(entry) = host.stack.top()
-                                        && let Some(sender) = host.confirms.get(&entry.id)
-                                    {
-                                        sender.resolve(true);
-                                    }
-                                });
+                        .on_ok({
+                            let callback_id = callback_id.clone();
+                            move |_, window, cx| {
+                                if let Ok(host) = Self::entity(window, cx) {
+                                    host.update(cx, |host, _| {
+                                        if let Some(id) = callback_id.get()
+                                            && let Some(sender) = host.confirms.get(&id)
+                                        {
+                                            sender.resolve(true);
+                                        }
+                                    });
+                                }
+                                true
                             }
-                            true
                         })
                 },
             )?;
+        identity.set(Some(id));
         Ok((id, result))
     }
     pub fn register_context(
@@ -293,11 +316,21 @@ impl OverlayHost {
             host.toasts.clear();
             host.cards.clear();
             host.timer = None;
+            cx.notify();
         });
         Ok(())
     }
     fn ensure_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.timer.is_some() || !self.toasts.visible().iter().any(|t| t.auto_close.is_some()) {
+        if !self
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.auto_close.is_some() && !t.paused)
+        {
+            self.timer = None;
+            return;
+        }
+        if self.timer.is_some() {
             return;
         }
         self.timer = Some(cx.spawn_in(window, async move |weak, cx| {
@@ -312,7 +345,10 @@ impl OverlayHost {
                 let Ok(active) = weak.update_in(cx, |host, window, cx| {
                     host.toasts.advance(delta);
                     host.sync_cards(window, cx);
-                    host.toasts.visible().iter().any(|t| t.auto_close.is_some())
+                    host.toasts
+                        .visible()
+                        .iter()
+                        .any(|t| t.auto_close.is_some() && !t.paused)
                 }) else {
                     break;
                 };
@@ -457,8 +493,11 @@ fn notification(
                 .id(("guiraffe-toast", id.0))
                 .test_support()
                 .w_full()
-                .on_hover(move |paused, _, cx| {
-                    let _ = hover.update(cx, |host, _| host.toasts.pause(id, *paused));
+                .on_hover(move |paused, window, cx| {
+                    let _ = hover.update(cx, |host, cx| {
+                        host.toasts.pause(id, *paused);
+                        host.ensure_timer(window, cx);
+                    });
                 })
                 .child(message.clone())
                 .children(progress.map(|value| {
@@ -623,5 +662,81 @@ impl Drawer {
             .on_close(move |_, window, cx| OverlayHost::settled(window, cx, id, false))
         });
         Ok(id)
+    }
+}
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use gpui_kit::TestAppContext;
+    use std::cell::Cell;
+    #[gpui_kit::test]
+    fn review_6_paused_toasts_stop_timer(cx: &mut TestAppContext) {
+        cx.update(init);
+        let handle = crate::gpui_tests::open(cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            OverlayHost::notify(window, cx, Toast::new(ToastId(1), "timer")).expect("toast");
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .update(cx, |host, cx| {
+                    host.toasts.pause(ToastId(1), true);
+                    host.ensure_timer(window, cx);
+                    assert!(
+                        host.timer.is_none(),
+                        "all-paused work must have no wakeup task"
+                    );
+                });
+        })
+        .expect("window");
+    }
+    #[gpui_kit::test]
+    fn review_7_clean_notifies_observers(cx: &mut TestAppContext) {
+        cx.update(init);
+        let handle = crate::gpui_tests::open(cx);
+        let changes = Rc::new(Cell::new(0));
+        let observed = changes.clone();
+        let subscription = cx
+            .update_window(handle.into(), |_, window, cx| {
+                OverlayHost::notify(window, cx, Toast::new(ToastId(1), "one")).expect("toast");
+                let host = OverlayHost::entity(window, cx).expect("host");
+                cx.observe(&host, move |_, _| observed.set(observed.get() + 1))
+            })
+            .expect("observe");
+        cx.update_window(handle.into(), |_, window, cx| {
+            OverlayHost::clear_toasts(window, cx).expect("clear")
+        })
+        .expect("window");
+        assert!(
+            changes.get() > 0,
+            "clean must notify interested overlay observers"
+        );
+        drop(subscription);
+    }
+    #[gpui_kit::test]
+    fn review_12_window_close_breaks_context_root_cycle(cx: &mut TestAppContext) {
+        cx.update(init);
+        let handle = crate::gpui_tests::open(cx);
+        let weak = cx
+            .update_window(handle.into(), |_, window, cx| {
+                let root = window.root::<Root>().flatten().expect("root");
+                OverlayHost::register_context(
+                    window,
+                    cx,
+                    "cycle",
+                    Rc::new(move |dialog, _, _| {
+                        let _ = &root;
+                        dialog
+                    }),
+                )
+                .expect("register");
+                OverlayHost::entity(window, cx).expect("host").downgrade()
+            })
+            .expect("window");
+        cx.update_window(handle.into(), |_, window, _| window.remove_window())
+            .expect("close");
+        cx.run_until_parked();
+        assert!(
+            weak.upgrade().is_none(),
+            "window close must release a strongly captured Root"
+        );
     }
 }

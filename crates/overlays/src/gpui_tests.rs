@@ -773,3 +773,82 @@ fn review_2_update_retains_native_entity_and_order(cx: &mut TestAppContext) {
     })
     .expect("window");
 }
+#[gpui_kit::test]
+fn review_1_later_unmanaged_arrival_requeues_and_releases_capacity(cx: &mut TestAppContext) {
+    use gpui_kit::component::{WindowExt, notification::Notification, theme::Theme};
+    struct Other;
+    cx.update(init);
+    let handle = open(cx);
+    cx.update(|cx| Theme::global_mut(cx).notification.max_items = 1);
+    cx.update_window(handle.into(), |_, window, cx| {
+        OverlayHost::notify(window, cx, Toast::new(ToastId(1), "managed")).expect("toast");
+        window.push_notification(
+            Notification::new()
+                .id::<Other>()
+                .message("unmanaged")
+                .autohide(false),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .expect("show");
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        let host = OverlayHost::entity(window, cx).expect("host");
+        assert!(host.read(cx).toasts().visible().is_empty());
+        assert_eq!(host.read(cx).toasts().queued().len(), 1);
+        window.remove_notification::<Other>(cx);
+    })
+    .expect("requeue");
+    cx.run_until_parked();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+    })
+    .expect("frame");
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert_eq!(
+            OverlayHost::entity(window, cx)
+                .expect("host")
+                .read(cx)
+                .toasts()
+                .visible()
+                .len(),
+            1
+        )
+    })
+    .expect("promoted");
+}
+#[gpui_kit::test]
+fn review_4_stacked_confirm_resolves_its_own_id(cx: &mut TestAppContext) {
+    cx.update(init);
+    let handle = open(cx);
+    let (mut first, mut second) = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let (_, first) = OverlayHost::confirm(window, cx, "First", "One").expect("first");
+            let first_focus = window.focused(cx).expect("first focus");
+            let (_, second) = OverlayHost::confirm(window, cx, "Second", "Two").expect("second");
+            window.render_frame(cx);
+            window.focus(&first_focus, cx);
+            window.dispatch_action(
+                Box::new(gpui_kit::base::actions::Confirm { secondary: false }),
+                cx,
+            );
+            (first, second)
+        })
+        .expect("window");
+    cx.run_until_parked();
+    assert_eq!(
+        poll(&mut first),
+        Poll::Ready(true),
+        "the invoked confirm must resolve itself"
+    );
+    assert_ne!(
+        poll(&mut second),
+        Poll::Ready(true),
+        "a sibling confirm must never be accepted"
+    );
+}
