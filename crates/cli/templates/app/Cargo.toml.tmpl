@@ -1,0 +1,20 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpui-kit = { version = "=0.9.1", features = ["component", "assets", "gpui-fast"] }
+# gpui-kit 0.9.1 requires the pre-0.1.16 IntoElement API.
+gpui-fast = "=0.1.15"
+guiraffe-core = { path = {{core}} }
+guiraffe-components = { path = {{components}} }
+guiraffe-motion = { path = {{motion}} }
+guiraffe-state = { path = {{state}} }
+guiraffe-router = { path = {{router}} }
+guiraffe-windows = { path = {{windows}} }
+guiraffe-overlays = { path = {{overlays}} }
+
+# Interactive graphics need optimized dependencies even in dev builds.
+[profile.dev.package."*"]
+opt-level = 2

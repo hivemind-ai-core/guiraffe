@@ -3283,6 +3283,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "guiraffe-components",
+ "guiraffe-core",
+ "guiraffe-mocket",
+ "guiraffe-ui",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "guiraffe-components"
 version = "0.1.0"
 dependencies = [

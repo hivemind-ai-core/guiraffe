@@ -1,0 +1,115 @@
+//! {{name}} — a GUIraffe app. Run with `cargo run`.
+//!
+//! What's here: a typed router, an event-driven store with undo, a themed shell with a
+//! sidebar, and windows via the window manager. Styling comes from the theme and the
+//! layout (style context): widgets don't carry their own spacing.
+
+use gpui_kit::{App, AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div, prelude::*, px};
+use guiraffe_components::{Card, Text, Title};
+use guiraffe_core::{GuiraffeTheme, Size};
+use guiraffe_router::{Route, Router, routes};
+use guiraffe_state::{Event, Fx, Selected, Store};
+
+routes! {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum Page {
+        Home = "/",
+        Settings = "/settings",
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AppState {
+    pub clicks: u32,
+}
+
+#[derive(Debug)]
+pub struct Click;
+
+impl Event<AppState> for Click {
+    fn handle(self, fx: &mut Fx<'_, AppState>) {
+        fx.update(|s| s.clicks += 1);
+    }
+}
+
+pub struct Shell {
+    router: Router<Page>,
+    page: Selected<Page>,
+    store: Store<AppState>,
+    clicks: Selected<u32>,
+}
+
+impl Shell {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let router = Router::new(Page::Home, cx);
+        let page = router.select(cx, |p| *p);
+        let store = Store::new(AppState::default(), cx);
+        store.enable_undo(50, cx);
+        let clicks = store.select(cx, |s| s.clicks);
+        Self { router, page, store, clicks }
+    }
+}
+
+impl Render for Shell {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = GuiraffeTheme::global(cx).surfaces();
+        let page = *self.page.get(cx);
+        let nav = |p: Page, label: &'static str, router: Router<Page>| {
+            div().id(label).px(px(12.)).py(px(6.)).rounded(px(6.)).cursor_pointer().when(p == page, |el| el.bg(s.hover.to_hsla())).child(label).on_click(move |_, _, cx| {
+                router.navigate(p, cx);
+            })
+        };
+        let store = self.store.clone();
+        div()
+            .size_full()
+            .flex()
+            .bg(s.body.to_hsla())
+            .text_color(s.text.to_hsla())
+            .child(
+                div()
+                    .w(px(200.))
+                    .p(px(8.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .bg(s.surface.to_hsla())
+                    .child(nav(Page::Home, "Home", self.router.clone()))
+                    .child(nav(Page::Settings, "Settings", self.router.clone())),
+            )
+            .child(
+                div().flex_1().p(px(Size::Xl.spacing())).flex().flex_col().gap(px(Size::Md.spacing())).child(match page {
+                    Page::Home => div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .child(Title::new("{{name}}").order(2))
+                        .child(Card::new().child(Text::new(format!("Clicked {} times", self.clicks.get(cx)))).child(
+                            div().id("click").cursor_pointer().child(Text::new("Click me").color(guiraffe_core::ColorName::Blue)).on_click(move |_, _, cx| store.dispatch(Click, cx)),
+                        )),
+                    Page::Settings => div().child(Title::new("Settings").order(2)).child(Text::new(Page::Settings.to_path()).dimmed(true)),
+                }),
+            )
+    }
+}
+
+fn main() {
+    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(|cx: &mut App| {
+        guiraffe_components::init(cx);
+        guiraffe_overlays::init(cx);
+        guiraffe_windows::WindowManager::init(Default::default(), cx);
+        let opened = guiraffe_windows::WindowManager::open(
+            guiraffe_windows::WindowKey::kind("main"),
+            guiraffe_windows::OpenMode::Reuse,
+            Default::default(),
+            |window, cx| {
+                let shell = cx.new(Shell::new);
+                guiraffe_overlays::root(shell, window, cx)
+            },
+            cx,
+        );
+        if let Err(e) = opened {
+            eprintln!("could not open the main window: {e}");
+            cx.quit();
+        }
+    });
+}

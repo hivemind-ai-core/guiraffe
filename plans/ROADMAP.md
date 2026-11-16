@@ -54,6 +54,9 @@ Status:
 → `guiraffe-mocket` plugin → `spec/11-mocket-target.md` handed to Mocket for a native target.
 
 ## Phase 6: tooling and polish
+
+🔍 Initial `guiraffe` CLI (`new`, `preview`, `import`) is ready for foreman review on `feat-cli`;
+both-backend gates and an independent standalone scaffold build pass (crates/cli/VALIDATION.md).
 `guiraffe` CLI (new/preview/gen/snapshot/bench/bundle), `guiraffe-devtools` (inspector, render highlighting,
 state time-travel, machine viewer, theme editor), gallery, docs cookbook, Electron comparison app, 0.1 release.
 
