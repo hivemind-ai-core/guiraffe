@@ -15,3 +15,7 @@ guiraffe-flow-core.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+default = []
+gpui-fast = ["gpui-kit/gpui-fast"]

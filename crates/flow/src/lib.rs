@@ -1,7 +1,13 @@
 //! Retained GPUI flow canvas. Model and geometry live in `guiraffe-flow-core`.
+mod gesture;
 mod interaction;
 mod node;
 mod paint;
+mod state;
+pub use gesture::FlowGesture;
+pub use state::{FlowCanvas, FlowState};
+/// Compatibility name for the state/view host. New compositions can use FlowCanvas.
+pub type Flow = FlowState;
 #[cfg(test)]
 mod tests;
 use core::{ConnectionValidator, FlowError, Graph, Node, Point as WorldPoint, Viewport, Visible};
@@ -52,6 +58,8 @@ pub struct FlowOptions {
     pub controls: bool,
     pub toolbar: bool,
     pub snap_grid: Option<f32>,
+    /// Fit once after the first nonempty layout, unless a camera is explicitly set.
+    pub fit_on_init: bool,
 }
 impl Default for FlowOptions {
     fn default() -> Self {
@@ -61,6 +69,7 @@ impl Default for FlowOptions {
             controls: true,
             toolbar: true,
             snap_grid: Some(20.),
+            fit_on_init: true,
         }
     }
 }
@@ -72,7 +81,7 @@ pub enum FlowEvent {
     Error(FlowError),
 }
 /// UI entity. Use `edit` to mutate the document so caches and history stay coherent.
-pub struct Flow {
+pub struct FlowViewport {
     interaction: Interaction,
     options: FlowOptions,
     renderer: Rc<dyn NodeRenderer>,
@@ -86,12 +95,48 @@ pub struct Flow {
     nodes: BTreeMap<core::NodeId, Entity<node::NodeCard>>,
     /// Start of the animated-edge clock (app/executor time, so tests are deterministic).
     anim_epoch: Option<std::time::Instant>,
+    model: Option<WeakEntity<FlowState>>,
+    gesture_view: Entity<FlowGesture>,
+    camera: Rc<Cell<Viewport>>,
+    counts: Rc<Cell<(usize, usize)>>,
+    first_fit: Rc<Cell<bool>>,
+    camera_explicit: Cell<bool>,
+    config: Rc<RefCell<Option<state::Config>>>,
+    theme_cache: Option<Rc<GuiraffeTheme>>,
+    ordered_ids: Vec<core::NodeId>,
+    order_scene: Option<std::sync::Arc<core::Scene>>,
+    order_selection: Option<std::sync::Arc<std::collections::BTreeSet<core::NodeId>>>,
+    last_query_ids: Vec<core::NodeId>,
+    #[cfg(test)]
+    renders: usize,
 }
-impl EventEmitter<FlowEvent> for Flow {}
-impl Flow {
+struct Stamp {
+    scene: std::sync::Arc<core::Scene>,
+    nodes: std::sync::Arc<std::collections::BTreeSet<core::NodeId>>,
+    edges: std::sync::Arc<std::collections::BTreeSet<core::EdgeId>>,
+    viewport: Viewport,
+    gesture: Option<Gesture>,
+    error: Option<FlowError>,
+}
+impl EventEmitter<FlowEvent> for FlowViewport {}
+impl FlowViewport {
     pub fn new(graph: Graph, cx: &mut Context<Self>) -> Result<Self, FlowError> {
-        Ok(Self {
-            interaction: Interaction::new(graph)?,
+        Ok(Self::from_editor(core::Editor::new(graph)?, None, cx))
+    }
+    fn from_editor(
+        editor: core::Editor,
+        model: Option<WeakEntity<FlowState>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let scene = editor.scene_shared();
+        let gesture_view = cx.new(|_| FlowGesture {
+            scene,
+            gesture: None,
+            viewport: Viewport::default(),
+        });
+        Self {
+            interaction: Interaction::from_editor(editor),
+            gesture_view,
             options: FlowOptions::default(),
             renderer: Rc::new(DefaultNodeRenderer),
             validator: None,
@@ -103,9 +148,23 @@ impl Flow {
             last_error: None,
             nodes: BTreeMap::new(),
             anim_epoch: None,
-        })
+            model,
+            camera: Rc::new(Cell::new(Viewport::default())),
+            counts: Rc::new(Cell::new((0, 0))),
+            first_fit: Rc::new(Cell::new(true)),
+            camera_explicit: Cell::new(false),
+            config: Rc::new(RefCell::new(None)),
+            theme_cache: None,
+            ordered_ids: Vec::new(),
+            order_scene: None,
+            order_selection: None,
+            last_query_ids: Vec::new(),
+            #[cfg(test)]
+            renders: 0,
+        }
     }
     pub fn options(mut self, options: FlowOptions) -> Self {
+        self.first_fit.set(options.fit_on_init);
         self.interaction.grid = options.snap_grid;
         self.options = options;
         self
@@ -148,20 +207,130 @@ impl Flow {
     pub fn last_error(&self) -> Option<&FlowError> {
         self.last_error.as_ref()
     }
+    fn stamp(&self) -> Stamp {
+        Stamp {
+            scene: self.interaction.editor.scene_shared(),
+            nodes: self.interaction.editor.selected_nodes_shared(),
+            edges: self.interaction.editor.selected_edges_shared(),
+            viewport: self.viewport(),
+            gesture: self.visible_gesture(),
+            error: self.last_error.clone(),
+        }
+    }
+    fn visible_gesture(&self) -> Option<Gesture> {
+        self.interaction
+            .gesture
+            .as_ref()
+            .filter(|g| match g {
+                Gesture::Pan { .. } => false,
+                Gesture::Move { delta, .. } => *delta != WorldPoint::default(),
+                Gesture::Box { start, end, .. } => start.distance(*end) > 3. / self.viewport().zoom,
+                Gesture::Connect { .. } => true,
+            })
+            .cloned()
+    }
+    fn publish(&mut self, before: Stamp, cx: &mut Context<Self>) {
+        use std::sync::Arc;
+        let document = !Arc::ptr_eq(&before.scene, &self.interaction.editor.scene_shared());
+        let selection = !Arc::ptr_eq(
+            &before.nodes,
+            &self.interaction.editor.selected_nodes_shared(),
+        ) || !Arc::ptr_eq(
+            &before.edges,
+            &self.interaction.editor.selected_edges_shared(),
+        );
+        let viewport = before.viewport != self.viewport();
+        let gesture = match (&before.gesture, &self.visible_gesture()) {
+            (None, None) => false,
+            (Some(a), Some(b)) => !a.same(b),
+            _ => true,
+        };
+        let error = before.error != self.last_error;
+        self.camera.set(self.viewport());
+        if document {
+            self.meshes
+                .borrow_mut()
+                .sync(self.interaction.editor.scene());
+            cx.emit(FlowEvent::Changed);
+        }
+        if selection {
+            cx.emit(FlowEvent::SelectionChanged);
+        }
+        if viewport {
+            cx.emit(FlowEvent::ViewportChanged(self.viewport()));
+        }
+        if error && let Some(error) = &self.last_error {
+            cx.emit(FlowEvent::Error(error.clone()));
+        }
+        if let Some(model) = &self.model
+            && (document || selection || error)
+        {
+            let editor = self.interaction.editor.clone();
+            let _ = model.update(cx, |model, cx| {
+                model.editor = editor;
+                model.last_error = self.last_error.clone();
+                if error && let Some(error) = &self.last_error {
+                    cx.emit(FlowEvent::Error(error.clone()));
+                }
+                if document {
+                    cx.emit(FlowEvent::Changed);
+                }
+                if selection {
+                    cx.emit(FlowEvent::SelectionChanged);
+                }
+                cx.notify();
+            });
+        }
+        if document || selection || viewport {
+            self.refresh_cards(cx);
+        }
+        if gesture || (viewport && self.visible_gesture().is_some()) {
+            let scene = self.interaction.editor.scene_shared();
+            let gesture = self.visible_gesture();
+            let viewport = self.viewport();
+            self.gesture_view.update(cx, |leaf, cx| {
+                leaf.scene = scene;
+                leaf.gesture = gesture;
+                leaf.viewport = viewport;
+                cx.notify();
+            });
+        }
+        if document || selection || viewport || gesture || error {
+            cx.notify();
+        }
+    }
+    fn refresh_cards(&mut self, cx: &mut Context<Self>) {
+        for (id, card) in &self.nodes {
+            let Some(node) = self.interaction.editor.graph().nodes.get(id) else {
+                continue;
+            };
+            let revision = self.interaction.editor.scene().node_revision(*id);
+            let selected = self.interaction.editor.is_selected(*id);
+            let zoom = self.viewport().zoom;
+            let old = card.read(cx);
+            if old.revision != revision || old.node.selected != selected || old.zoom != zoom {
+                card.update(cx, |card, cx| {
+                    if card.revision != revision {
+                        card.node = node.clone();
+                        card.revision = revision;
+                    }
+                    card.node.selected = selected;
+                    card.zoom = zoom;
+                    cx.notify();
+                });
+            }
+        }
+    }
     pub fn set_viewport(
         &mut self,
         viewport: Viewport,
         cx: &mut Context<Self>,
     ) -> Result<(), FlowError> {
-        let before = self.viewport();
-        let had_gesture = self.interaction.gesture.is_some();
+        let before = self.stamp();
         self.interaction.set_viewport(viewport)?;
-        let viewport = self.viewport();
-        if before == viewport && !had_gesture {
-            return Ok(());
-        }
-        cx.emit(FlowEvent::ViewportChanged(viewport));
-        cx.notify();
+        self.camera_explicit.set(true);
+        self.first_fit.set(false);
+        self.publish(before, cx);
         Ok(())
     }
     pub fn edit(
@@ -169,26 +338,31 @@ impl Flow {
         operation: impl FnOnce(&mut Graph) -> Result<(), FlowError>,
         cx: &mut Context<Self>,
     ) -> Result<bool, FlowError> {
+        let before = self.stamp();
         self.interaction.cancel();
         let changed = self.interaction.editor.edit(operation)?;
-        self.changed(changed, cx);
+        self.publish(before, cx);
         Ok(changed)
     }
     pub fn undo(&mut self, cx: &mut Context<Self>) {
+        let before = self.stamp();
         self.interaction.cancel();
         let result = self.interaction.editor.undo();
-        self.finish(result, cx);
+        self.finish(result);
+        self.publish(before, cx);
     }
     pub fn redo(&mut self, cx: &mut Context<Self>) {
+        let before = self.stamp();
         self.interaction.cancel();
         let result = self.interaction.editor.redo();
-        self.finish(result, cx);
+        self.finish(result);
+        self.publish(before, cx);
     }
     pub fn fit(&mut self, cx: &mut Context<Self>) {
-        self.interaction.cancel();
+        let before = self.stamp();
+        self.first_fit.set(false);
         self.interaction.fit(self.size());
-        cx.emit(FlowEvent::ViewportChanged(self.viewport()));
-        cx.notify();
+        self.publish(before, cx);
     }
     fn size(&self) -> WorldPoint {
         let b = self.bounds.get();
@@ -198,35 +372,17 @@ impl Flow {
         let origin = self.bounds.get().origin;
         WorldPoint::new((p.x - origin.x).as_f32(), (p.y - origin.y).as_f32())
     }
-    fn changed(&mut self, changed: bool, cx: &mut Context<Self>) {
-        if changed {
-            self.meshes
-                .borrow_mut()
-                .sync(self.interaction.editor.scene());
-            cx.emit(FlowEvent::Changed);
-        }
-        cx.notify();
-    }
-    fn finish(&mut self, result: Result<bool, FlowError>, cx: &mut Context<Self>) {
-        match result {
-            Ok(changed) => {
-                self.last_error = None;
-                self.changed(changed, cx);
-            }
-            Err(error) => {
-                self.last_error = Some(error.clone());
-                cx.emit(FlowEvent::Error(error));
-                cx.notify();
-            }
-        }
+    fn finish(&mut self, result: Result<bool, FlowError>) {
+        self.last_error = result.err();
     }
     fn zoom(&mut self, at: WorldPoint, factor: f32, cx: &mut Context<Self>) {
-        self.interaction.cancel();
+        let before = self.stamp();
+        self.first_fit.set(false);
         self.interaction.zoom_at(at, factor);
-        cx.emit(FlowEvent::ViewportChanged(self.viewport()));
-        cx.notify();
+        self.publish(before, cx);
     }
     fn key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let before = self.stamp();
         let mods = event.keystroke.modifiers;
         let key = event.keystroke.key.as_str();
         if mods.control || mods.platform {
@@ -237,8 +393,7 @@ impl Flow {
                 "a" => {
                     let ids = self.graph().nodes.keys().copied().collect();
                     self.interaction.editor.select(&ids, false);
-                    cx.emit(FlowEvent::SelectionChanged);
-                    cx.notify();
+                    self.publish(before, cx);
                 }
                 _ => {}
             }
@@ -247,12 +402,13 @@ impl Flow {
         match key {
             "escape" => {
                 self.interaction.cancel();
-                cx.notify();
+                self.publish(before, cx);
             }
             "delete" | "backspace" => {
                 self.interaction.cancel();
                 let result = self.interaction.delete_selected();
-                self.finish(result, cx);
+                self.finish(result);
+                self.publish(before, cx);
             }
             "+" | "=" => self.zoom(self.size() * 0.5, 1.2, cx),
             "-" => self.zoom(self.size() * 0.5, 1. / 1.2, cx),
@@ -266,21 +422,45 @@ impl Flow {
                     _ => WorldPoint::new(0., -40.),
                 };
                 self.interaction.pan_to(self.viewport().pan + delta);
-                cx.emit(FlowEvent::ViewportChanged(self.viewport()));
-                cx.notify();
+                self.first_fit.set(false);
+                self.publish(before, cx);
             }
             _ => {}
         }
     }
 }
-impl Focusable for Flow {
+impl Focusable for FlowViewport {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
 }
-impl Render for Flow {
+impl Render for FlowViewport {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = GuiraffeTheme::global(cx).clone();
+        #[cfg(test)]
+        {
+            self.renders += 1;
+        }
+        if let Some(config) = self.config.borrow_mut().take() {
+            self.first_fit
+                .set(config.options.fit_on_init && !self.camera_explicit.get());
+            self.interaction.grid = config.options.snap_grid;
+            self.options = config.options;
+            self.renderer = config.renderer;
+            self.validator = config.validator;
+            self.interaction.editor.policy = config.policy;
+        }
+        let current = GuiraffeTheme::global(cx);
+        if self
+            .theme_cache
+            .as_ref()
+            .is_none_or(|cached| cached.as_ref() != current)
+        {
+            self.theme_cache = Some(Rc::new(current.clone()));
+        }
+        let theme = self
+            .theme_cache
+            .clone()
+            .unwrap_or_else(|| Rc::new(current.clone()));
         let surfaces = theme.surfaces();
         let viewport = self.viewport();
         let size = if self.size() == WorldPoint::default() {
@@ -314,13 +494,30 @@ impl Render for Flow {
             .nodes
             .retain(|id| self.interaction.editor.graph().nodes.contains_key(id));
         self.visible_counts = (self.visible.nodes.len(), self.visible.edges.len());
+        self.counts.set(self.visible_counts);
         self.nodes
             .retain(|id, _| self.visible.nodes.binary_search(id).is_ok());
-        self.visible
-            .nodes
-            .sort_by_key(|id| self.interaction.editor.z_key(*id));
+        let scene = self.interaction.editor.scene_shared();
+        let selection = self.interaction.editor.selected_nodes_shared();
+        if self.last_query_ids != self.visible.nodes
+            || self
+                .order_scene
+                .as_ref()
+                .is_none_or(|old| !std::sync::Arc::ptr_eq(old, &scene))
+            || self
+                .order_selection
+                .as_ref()
+                .is_none_or(|old| !std::sync::Arc::ptr_eq(old, &selection))
+        {
+            self.last_query_ids.clone_from(&self.visible.nodes);
+            self.ordered_ids.clone_from(&self.visible.nodes);
+            self.ordered_ids
+                .sort_unstable_by_key(|id| self.interaction.editor.z_key(*id));
+            self.order_scene = Some(scene);
+            self.order_selection = Some(selection);
+        }
         let mut nodes = Vec::with_capacity(self.visible.nodes.len());
-        for id in &self.visible.nodes {
+        for id in &self.ordered_ids {
             let Some(node) = self.interaction.editor.graph().nodes.get(id) else {
                 continue;
             };
@@ -336,26 +533,9 @@ impl Render for Flow {
                     },
                     revision,
                     zoom: viewport.zoom,
-                    theme: theme.clone(),
                     renderer: self.renderer.clone(),
                 })
             });
-            if card.read(cx).revision != revision
-                || card.read(cx).node.selected != selected
-                || card.read(cx).zoom != viewport.zoom
-                || card.read(cx).theme != theme
-            {
-                card.update(cx, |card, cx| {
-                    if card.revision != revision {
-                        card.node = node.clone();
-                        card.revision = revision;
-                    }
-                    card.node.selected = selected;
-                    card.zoom = viewport.zoom;
-                    card.theme = theme.clone();
-                    cx.notify();
-                });
-            }
             let style = StyleRefinement::default()
                 .absolute()
                 .left(px(position.x))
@@ -376,11 +556,11 @@ impl Render for Flow {
             .edges
             .iter()
             .filter_map(|id| {
-                let edge = &self.graph().edges[id];
+                let edge = self.graph().edges.get(id)?;
                 if edge.label.is_empty() || viewport.zoom < 0.4 {
                     return None;
                 }
-                let path = &self.interaction.editor.scene().paths()[id];
+                let path = self.interaction.editor.scene().paths().get(id)?;
                 let source = self.interaction.preview(edge.source.node);
                 let target = self.interaction.preview(edge.target.node);
                 let label = if source.is_some() || target.is_some() {
@@ -408,6 +588,8 @@ impl Render for Flow {
             .collect();
         let bounds = self.bounds.clone();
         let weak = cx.entity().downgrade();
+        let first_fit = self.first_fit.clone();
+        let graph_nonempty = self.interaction.editor.scene().bounds().is_some();
         let meshes = self.meshes.clone();
         // Animated edges: phase from the app clock; none at all under reduced motion.
         let now = cx.background_executor().now();
@@ -433,11 +615,19 @@ impl Render for Flow {
             .child(
                 canvas(
                     move |b, _, cx| {
-                        if bounds.get() != b {
-                            bounds.set(b);
+                        let changed = bounds.get() != b;
+                        bounds.set(b);
+                        if first_fit.get()
+                            && graph_nonempty
+                            && b.size.width > px(80.)
+                            && b.size.height > px(80.)
+                        {
+                            first_fit.set(false);
                             cx.defer(move |cx| {
-                                cx.notify(weak.entity_id());
+                                let _ = weak.update(cx, |this, cx| this.fit(cx));
                             });
+                        } else if changed {
+                            cx.defer(move |cx| cx.notify(weak.entity_id()));
                         }
                     },
                     move |b, _, window, _| frame.paint(b, &mut meshes.borrow_mut(), window),
@@ -445,11 +635,13 @@ impl Render for Flow {
                 .absolute()
                 .size_full(),
             )
+            .child(self.gesture_view.clone())
             .children(labels)
             .children(nodes)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    let before = this.stamp();
                     this.focus.focus(window, cx);
                     let p = this.local(event.position);
                     let m = event.modifiers;
@@ -460,38 +652,39 @@ impl Render for Flow {
                             let world = paint::minimap_world(p, this.size(), bounds);
                             this.interaction
                                 .pan_to(this.size() * 0.5 - world * this.viewport().zoom);
-                            cx.emit(FlowEvent::ViewportChanged(this.viewport()));
+                            this.first_fit.set(false);
                         }
                     } else {
-                        this.interaction
-                            .press(p, m.shift || m.control || m.platform, m.shift);
-                        cx.emit(FlowEvent::SelectionChanged);
+                        this.interaction.press(p, m.control || m.platform, m.shift);
                     }
-                    cx.notify();
+                    this.publish(before, cx);
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 if this.interaction.gesture.is_some() {
+                    let before = this.stamp();
                     this.interaction.motion(this.local(event.position));
-                    cx.notify();
+                    this.publish(before, cx);
                 }
             }))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    let before = this.stamp();
                     this.interaction.motion(this.local(event.position));
                     let result = this.interaction.release(this.validator.as_deref());
-                    this.finish(result, cx);
-                    cx.emit(FlowEvent::SelectionChanged);
-                    cx.emit(FlowEvent::ViewportChanged(this.viewport()));
+                    this.finish(result);
+                    this.publish(before, cx);
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    let before = this.stamp();
                     this.interaction.motion(this.local(event.position));
                     let result = this.interaction.release(this.validator.as_deref());
-                    this.finish(result, cx);
+                    this.finish(result);
+                    this.publish(before, cx);
                 }),
             )
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
@@ -503,12 +696,13 @@ impl Render for Flow {
                         cx,
                     );
                 } else {
+                    let before = this.stamp();
                     this.interaction.cancel();
                     this.interaction.pan_to(
                         this.viewport().pan + WorldPoint::new(delta.x.as_f32(), delta.y.as_f32()),
                     );
-                    cx.emit(FlowEvent::ViewportChanged(this.viewport()));
-                    cx.notify();
+                    this.first_fit.set(false);
+                    this.publish(before, cx);
                 }
             }))
             .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
@@ -538,8 +732,10 @@ impl Render for Flow {
                         gpui_kit::component::button::Button::new("flow-delete")
                             .label("Delete selected")
                             .on_click(cx.listener(|this, _, _, cx| {
+                                let before = this.stamp();
                                 let result = this.interaction.delete_selected();
-                                this.finish(result, cx);
+                                this.finish(result);
+                                this.publish(before, cx);
                             })),
                     ),
             );
@@ -557,10 +753,11 @@ impl Render for Flow {
         root
     }
 }
-impl Flow {
+impl FlowViewport {
     fn controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui_kit::component::button::Button;
         div()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .absolute()
             .top_2()
             .left_2()

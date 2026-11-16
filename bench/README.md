@@ -26,7 +26,10 @@ actual invocation count, avoiding integer nanosecond truncation for tiny workloa
 `compare OLD_REF NEW_REF` resolves commits before creating detached temporary
 worktrees, builds both with `--release --locked`, and copies both executables out
 of the dedicated `target/bench-compare` build cache. Cargo JSON messages identify the
-executable, including nondefault target triples and artifact paths. Both refs must
+executable, including nondefault target triples and artifact paths. After copying
+the old binary and recording its metadata, the harness removes its source checkout
+before creating/building the new revision, invalidating old local-source paths in
+shared Cargo fingerprints. Both refs must
 already contain this harness protocol
 and the selected suites. Each A/B pair is sampled in separate subprocesses with
 warmup, alternating AB then BA to reduce order bias. `taskset` uses the first CPU
@@ -93,10 +96,13 @@ named Callgrind baseline commands above for that metric.
 Add the crate dependency to `bench/Cargo.toml`, implement workloads and register
 stable names in `src/suites.rs`. The CLI, criterion and iai-callgrind all consume
 that single registration table (the instruction wrappers are macro-generated).
-Flow-core and layout are stubs
-on the dispatch base and can be added when their APIs land. Core has variant
-resolution; window placement lives in guiraffe-windows, with no placement API
-in guiraffe-core on this revision.
+Flow-core now registers four 5k-node/10k-edge workloads: scene build/drop,
+twenty spatial queries with cached-route lookup, child move/undo, and child
+select/delete/undo. The query suite reuses scratch buffers and has a warmed
+zero-allocation assertion; scene construction and edits intentionally allocate.
+Fixture initialization is paid by warmup. Use `--iterations 1` for an inexpensive
+comparison of these larger workloads; each sample still runs for at least 1 ms.
+Core has variant resolution; window placement lives in guiraffe-windows.
 
 `CountingAllocator` is an opt-in `#[global_allocator]` wrapper around `System`;
 `count_allocations` counts successful alloc/realloc/alloc_zeroed operations and

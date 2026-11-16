@@ -136,6 +136,16 @@ impl Revision {
         )?;
         Ok(revision)
     }
+    /// Invalidate local-source inputs in the shared cache while retaining our binary.
+    pub fn remove_checkout(&self) -> Result<()> {
+        checked(
+            Command::new("git")
+                .current_dir(&self.root)
+                .args(["worktree", "remove", "--force"])
+                .arg(&self.path),
+        )?;
+        Ok(())
+    }
     pub fn build(&self) -> Result<PathBuf> {
         let target = self.root.join("target/bench-compare");
         let output = checked(

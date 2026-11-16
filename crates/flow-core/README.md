@@ -58,3 +58,13 @@ The immutable BVH/query design and pointer-anchored camera were informed by
 import their asynchronous pipeline, domain records or dependencies. The source
 repository's KNOWN_ISSUES.md was reviewed, including crossing-edge culling,
 selection/keyboard and group behavior limits.
+
+Review #2: `LayeredLayout::positions` validates its public input first and returns
+an empty map for invalid documents (including missing parents and parent cycles).
+`Scene::hit_node` is structural picking; it cannot see selection. Use
+`Editor::hit_node` for the live selected-subtree z-order used by the canvas.
+Depth-cache updates preserve unrelated entries on child deletion; reparenting
+updates affected descendants. BVH refits track a normalized perimeter cost and
+rebalance when it exceeds 1.8 times the build quality (plus the insertion-depth
+safeguard). Run `cargo run --release -p guiraffe-flow-core --example delete_child_stress`
+for child deletion/undo timings on 5,000 nodes and 10,000 edges.

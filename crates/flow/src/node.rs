@@ -8,19 +8,19 @@ pub(crate) struct NodeCard {
     pub node: Node,
     pub revision: u64,
     pub zoom: f32,
-    pub theme: GuiraffeTheme,
     pub renderer: Rc<dyn NodeRenderer>,
 }
 impl Render for NodeCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let surfaces = self.theme.surfaces();
-        let accent = self.theme.primary_color();
+        let theme = GuiraffeTheme::global(cx);
+        let surfaces = theme.surfaces();
+        let accent = theme.primary_color();
         let mut frame = div()
             .id(("flow-node", self.node.id))
             .test_support()
             .relative()
             .size_full()
-            .rounded(px(self.theme.default_radius.radius() * self.zoom))
+            .rounded(px(theme.default_radius.radius() * self.zoom))
             .bg(surfaces.surface.to_hsla())
             .border_1()
             .border_color(if self.node.selected {

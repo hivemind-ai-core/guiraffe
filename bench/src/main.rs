@@ -227,12 +227,15 @@ fn compare(args: CompareOptions) -> Result<()> {
     let new_commit = revision::resolve(&root, &new_ref, &source.commit, source.dirty)?;
     revision::recover(&root)?;
     let old = Revision::create(&root, &old_commit)?;
-    let new = Revision::create(&root, &new_commit)?;
     eprintln!("building old revision {old_ref}");
     let old_binary = old.build()?;
+    let mut old_meta = metadata(&old.path, &options.profile, &options.notes)?;
+    // Cargo can retain paths to the first checkout in shared-cache fingerprints.
+    // Remove those inputs before the second build, retaining the copied binary.
+    old.remove_checkout()?;
+    let new = Revision::create(&root, &new_commit)?;
     eprintln!("building new revision {new_ref}");
     let new_binary = new.build()?;
-    let mut old_meta = metadata(&old.path, &options.profile, &options.notes)?;
     let mut new_meta = metadata(&new.path, new_profile, &options.notes)?;
     // Dirty describes the invoking source root, not the clean detached snapshots.
     old_meta.dirty = source.dirty;

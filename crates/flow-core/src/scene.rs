@@ -11,6 +11,7 @@ struct Branch {
     bounds: Option<Rect>,
     entries: Vec<(u64, Rect)>,
     children: Option<(Arc<Branch>, Arc<Branch>)>,
+    cost: f64,
 }
 /// Spatially bulk-built BVH with persistent branches. Updates refit only affected paths.
 #[derive(Clone, Debug, Default)]
@@ -18,6 +19,7 @@ pub struct SpatialIndex {
     root: Option<Arc<Branch>>,
     locations: im::OrdMap<u64, u64>,
     max_depth: u32,
+    baseline_quality: f64,
 }
 impl SpatialIndex {
     pub fn new(entries: impl IntoIterator<Item = (u64, Rect)>) -> Self {
@@ -33,6 +35,7 @@ impl SpatialIndex {
             .max()
             .unwrap_or(0);
         index.locations = locations.into_iter().collect();
+        index.baseline_quality = index.quality();
         index
     }
     fn build(
@@ -47,6 +50,7 @@ impl SpatialIndex {
             }
             return Arc::new(Branch {
                 bounds,
+                cost: Self::measure(bounds),
                 entries: entries.to_vec(),
                 children: None,
             });
@@ -62,9 +66,25 @@ impl SpatialIndex {
         let right = Self::build(right, (path << 1) | 1, locations);
         Arc::new(Branch {
             bounds,
+            cost: Self::measure(bounds) + left.cost + right.cost,
             entries: Vec::new(),
             children: Some((left, right)),
         })
+    }
+    fn measure(bounds: Option<Rect>) -> f64 {
+        bounds.map_or(0., |b| f64::from(b.size.x) + f64::from(b.size.y))
+    }
+    fn quality(&self) -> f64 {
+        self.root
+            .as_ref()
+            .map_or(0., |b| b.cost / Self::measure(b.bounds).max(1.))
+    }
+    fn rebalance(&mut self) {
+        let mut entries = BTreeMap::new();
+        if let Some(root) = &self.root {
+            Self::collect(root, &mut entries);
+        }
+        *self = Self::new(entries);
     }
     pub fn bounds(&self) -> Option<Rect> {
         self.root.as_ref().and_then(|r| r.bounds)
@@ -102,6 +122,9 @@ impl SpatialIndex {
                     *self = Self::new([(*id, rect)]);
                 }
             }
+        }
+        if self.locations.len() > 16 && self.quality() > self.baseline_quality.max(1.) * 1.8 {
+            self.rebalance();
         }
     }
     fn collect(branch: &Branch, entries: &mut BTreeMap<u64, Rect>) {
@@ -154,6 +177,12 @@ impl SpatialIndex {
                 branch.bounds = branch.entries.iter().map(|(_, r)| *r).reduce(Rect::union);
             }
         }
+        let branch = Arc::make_mut(root);
+        branch.cost = Self::measure(branch.bounds)
+            + branch
+                .children
+                .as_ref()
+                .map_or(0., |(l, r)| l.cost + r.cost);
     }
     fn refit(root: &mut Arc<Branch>, path: u64, depth: u32, id: u64, rect: Option<Rect>) {
         let branch = Arc::make_mut(root);
@@ -178,6 +207,11 @@ impl SpatialIndex {
             }
             branch.bounds = branch.entries.iter().map(|(_, r)| *r).reduce(Rect::union);
         }
+        branch.cost = Self::measure(branch.bounds)
+            + branch
+                .children
+                .as_ref()
+                .map_or(0., |(l, r)| l.cost + r.cost);
     }
     pub fn query(&self, area: Rect, output: &mut Vec<u64>) -> usize {
         output.clear();
@@ -310,17 +344,21 @@ impl EdgePath {
     }
     pub fn distance(&self, point: Point) -> f32 {
         self.points
-            .windows(2)
-            .map(|s| segment_distance(point, s[0], s[1]))
+            .iter()
+            .zip(self.points.iter().skip(1))
+            .map(|(a, b)| segment_distance(point, *a, *b))
             .fold(f32::INFINITY, f32::min)
     }
 }
 fn rounded(corners: &[Point], radius: f32) -> Vec<Point> {
-    let mut points = vec![corners[0]];
-    for i in 1..corners.len() - 1 {
-        let center = corners[i];
-        let before = corners[i - 1] - center;
-        let after = corners[i + 1] - center;
+    let mut points = corners.first().copied().into_iter().collect::<Vec<_>>();
+    for (left, (center, right)) in corners
+        .iter()
+        .zip(corners.iter().skip(1).zip(corners.iter().skip(2)))
+    {
+        let center = *center;
+        let before = *left - center;
+        let after = *right - center;
         let da = before.distance(Point::default());
         let db = after.distance(Point::default());
         if da < 0.001 || db < 0.001 {
@@ -342,12 +380,16 @@ fn rounded(corners: &[Point], radius: f32) -> Vec<Point> {
     points
 }
 fn midpoint(points: &[Point]) -> Point {
-    let length: f32 = points.windows(2).map(|p| p[0].distance(p[1])).sum();
+    let length: f32 = points
+        .iter()
+        .zip(points.iter().skip(1))
+        .map(|(a, b)| a.distance(*b))
+        .sum();
     let mut remaining = length * 0.5;
-    for p in points.windows(2) {
-        let d = p[0].distance(p[1]);
+    for (a, b) in points.iter().zip(points.iter().skip(1)) {
+        let d = a.distance(*b);
         if d > 0. && remaining <= d {
-            return p[0] + (p[1] - p[0]) * (remaining / d);
+            return *a + (*b - *a) * (remaining / d);
         }
         remaining -= d;
     }
@@ -460,7 +502,7 @@ impl Scene {
                     break;
                 }
                 chain.push(id);
-                next = graph.nodes[&id].parent;
+                next = graph.nodes.get(&id).and_then(|n| n.parent);
             }
             let depth = next
                 .and_then(|id| result.get(&id).copied())
@@ -539,11 +581,6 @@ impl Scene {
                 }
             }
         }
-        if changed_nodes.iter().any(|id| {
-            self.graph.nodes.get(id).map(|n| n.parent) != graph.nodes.get(id).map(|n| n.parent)
-        }) {
-            next.depths = Self::depths(&graph);
-        }
         for id in changed_nodes {
             if self.graph.nodes.get(id).and_then(|n| n.parent)
                 == graph.nodes.get(id).and_then(|n| n.parent)
@@ -559,6 +596,31 @@ impl Scene {
                 next.children.entry(parent).or_default().push(*id);
             }
         }
+        let mut affected = std::collections::BTreeSet::new();
+        for id in changed_nodes {
+            if !graph.nodes.contains_key(id) {
+                next.depths.remove(id);
+                continue;
+            }
+            if self.graph.nodes.get(id).map(|n| n.parent) == graph.nodes.get(id).map(|n| n.parent) {
+                continue;
+            }
+            let mut stack = vec![*id];
+            while let Some(id) = stack.pop() {
+                if affected.insert(id) {
+                    stack.extend(next.children(id));
+                }
+            }
+        }
+        for id in affected {
+            let mut depth = 0;
+            let mut parent = graph.nodes.get(&id).and_then(|n| n.parent);
+            while let Some(id) = parent {
+                depth += 1;
+                parent = graph.nodes.get(&id).and_then(|n| n.parent);
+            }
+            next.depths.insert(id, depth);
+        }
         next.graph = graph;
         Ok(next)
     }
@@ -569,6 +631,8 @@ impl Scene {
     pub fn query_nodes(&self, area: Rect, output: &mut Vec<NodeId>) {
         self.nodes.query(area, output);
     }
+    /// Structural picking only: parents before descendants, ID ties. This immutable
+    /// scene has no selection; interactive clients must use `Editor::hit_node`.
     pub fn hit_node(&self, at: Point, scratch: &mut Vec<NodeId>) -> Option<NodeId> {
         self.nodes.query(
             Rect {
@@ -596,5 +660,27 @@ impl Scene {
                 .get(id)
                 .is_some_and(|p| p.distance(at) <= tolerance)
         })
+    }
+}
+
+#[cfg(test)]
+mod review_2_tests {
+    use super::*;
+    #[test]
+    fn review2_5_delete_child_keeps_unrelated_depth_storage() {
+        let mut graph = Graph::from_parts(
+            (0..256).map(|id| crate::Node::new(id, "", Point::new(id as f32 * 200., 0.))),
+            [],
+        )
+        .expect("graph");
+        graph.nodes.get_mut(&1).expect("child").parent = Some(0);
+        let mut editor = crate::Editor::new(graph).expect("editor");
+        let before = editor.scene_shared();
+        editor.select(&std::collections::BTreeSet::from([1]), false);
+        editor.delete_selected().expect("delete");
+        assert_eq!(
+            before.depths.get(&200).map(|d| d as *const usize),
+            editor.scene().depths.get(&200).map(|d| d as *const usize)
+        );
     }
 }

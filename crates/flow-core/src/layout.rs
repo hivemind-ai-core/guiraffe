@@ -16,10 +16,14 @@ impl Default for LayeredLayout {
     }
 }
 impl Layout for LayeredLayout {
+    /// Invalid documents, including malformed parent chains, produce no positions.
     fn positions(&self, graph: &Graph) -> BTreeMap<NodeId, Point> {
+        if graph.validate().is_err() {
+            return BTreeMap::new();
+        }
         if graph.nodes.values().any(|n| n.parent.is_some()) {
             let root = |mut id: NodeId| {
-                while let Some(parent) = graph.nodes[&id].parent {
+                while let Some(parent) = graph.nodes.get(&id).and_then(|n| n.parent) {
                     id = parent;
                 }
                 id
@@ -33,7 +37,7 @@ impl Layout for LayeredLayout {
             }
             let mut flat = Graph::default();
             for (id, bounds) in &groups {
-                let mut n = graph.nodes[id].clone();
+                let mut n = crate::Node::new(*id, "", bounds.origin);
                 n.pos = bounds.origin;
                 n.size = bounds.size;
                 flat.nodes.insert(*id, n);
@@ -49,9 +53,9 @@ impl Layout for LayeredLayout {
             return graph
                 .nodes
                 .values()
-                .map(|n| {
+                .filter_map(|n| {
                     let r = root(n.id);
-                    (n.id, n.pos + positions[&r] - groups[&r].origin)
+                    Some((n.id, n.pos + *positions.get(&r)? - groups.get(&r)?.origin))
                 })
                 .collect();
         }
@@ -93,7 +97,7 @@ impl Layout for LayeredLayout {
         for id in graph.nodes.keys() {
             layers
                 .entry(if visited.contains(id) {
-                    ranks[id]
+                    ranks.get(id).copied().unwrap_or(0)
                 } else {
                     fallback
                 })
@@ -111,7 +115,9 @@ impl Layout for LayeredLayout {
             let mut y = 0.;
             let mut width: f32 = 0.;
             for id in ids {
-                let n = &graph.nodes[id];
+                let Some(n) = graph.nodes.get(id) else {
+                    continue;
+                };
                 positions.insert(*id, Point::new(x, y));
                 y += n.size.y + gap.y;
                 width = width.max(n.size.x);

@@ -52,9 +52,20 @@ fn scopes_are_thread_local() -> anyhow::Result<()> {
 }
 #[test]
 fn initial_hot_paths_allocate_nothing() -> anyhow::Result<()> {
-    for suite in guiraffe_bench::suites::registered() {
+    for suite in guiraffe_bench::suites::registered()
+        .into_iter()
+        .filter(|s| !s.name.starts_with("flow-"))
+    {
         let (_, counts) = count_allocations(suite.run)?;
         assert_eq!(counts.allocations, 0, "{} allocates", suite.name);
     }
+    Ok(())
+}
+
+#[test]
+fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
+    guiraffe_bench::suites::flow_query();
+    let (_, counts) = count_allocations(guiraffe_bench::suites::flow_query)?;
+    assert_eq!(counts.allocations, 0);
     Ok(())
 }

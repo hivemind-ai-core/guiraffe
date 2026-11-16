@@ -3274,6 +3274,7 @@ dependencies = [
  "fs2",
  "gpui-kit",
  "guiraffe-core",
+ "guiraffe-flow-core",
  "guiraffe-windows",
  "iai-callgrind",
  "nix",

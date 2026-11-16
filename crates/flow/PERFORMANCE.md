@@ -1,3 +1,36 @@
+# Flow review #2 follow-ups
+
+Implementation source: `a0dae350e54c565dcae9b532442ff1cc77631098`; baseline
+`aa82bb4c0c9ee98310fcc9dee8696fb59d19a6f7`, both on gpui-kit 0.9.1.
+Both backend suites pass 90 tests, including gpui-fast host/sibling render isolation.
+See [REVIEW-2.md](REVIEW-2.md) for per-item status, exact verification limits and
+[raw alternating measurements](review-2-benchmark.json).
+
+Ten alternating AB/BA runs per variant, pinned to CPU 15, give median results:
+
+| Workload | Before | After |
+|---|---:|---:|
+| Scene build | 13.349 ms | 13.427 ms |
+| Query p50 | 8 us | 8 us |
+| Move p50 | 58 us | 57.5 us |
+| Child delete + undo p50 | 1.085 ms | 0.105 ms |
+| Headless frame p50 | 4.788 ms | 4.610 ms |
+| Headless frame p99 | 7.783 ms | 7.713 ms |
+
+Child deletion is about 10.3x faster; the other run distributions substantially overlap.
+These remain CPU/headless observations, not a GPU or formal frame-budget acceptance.
+The approved benchmark registration is now applied. The accepted
+[`guiraffe-bench compare` output](review-2-harness-comparison.json) pins identical
+harness source on baseline `4343b6f` and implementation `ceab4c8`, ten alternating
+pairs on CPU 15. Child select/delete + undo improves from 3.086 ms to 0.267 ms
+(about 11.6x; relative 95% CI -95.73% to -84.72%). Scene build, twenty-query and
+move+undo intervals are wide and inconclusive on the noisy shared host. These
+workloads differ from the custom protocol above; see REVIEW-2.md for exact scope.
+Both backend combined suites pass 122 tests (90 flow, 32 benchmark).
+The earlier [harness smoke output](review-2-harness-smoke.json) is historical only.
+
+---
+
 # Flow review #1 validation and alternating benchmarks
 
 Validated source: `77530eabec54379ef1cbc34a50716cd59803245e`, rebased onto

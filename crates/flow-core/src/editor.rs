@@ -6,6 +6,7 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Editor {
     scene: Arc<Scene>,
     undo: VecDeque<Graph>,
@@ -13,6 +14,7 @@ pub struct Editor {
     limit: usize,
     selected: Arc<BTreeSet<NodeId>>,
     selected_edges: Arc<BTreeSet<EdgeId>>,
+    elevated: Arc<BTreeSet<NodeId>>,
     pub policy: ConnectionPolicy,
 }
 fn changed_keys<V: Clone + PartialEq>(
@@ -43,15 +45,18 @@ impl Editor {
         graph.edge_id_high_water = graph
             .edge_id_high_water
             .max(graph.edges.keys().next_back().copied().unwrap_or(0));
-        Ok(Self {
+        let mut editor = Self {
             scene: Arc::new(Scene::new(graph)?),
             undo: VecDeque::new(),
             redo: Vec::new(),
             limit: 100,
             selected: Arc::new(selected),
             selected_edges: Arc::new(BTreeSet::new()),
+            elevated: Arc::new(BTreeSet::new()),
             policy: ConnectionPolicy::default(),
-        })
+        };
+        editor.refresh_order();
+        Ok(editor)
     }
     pub fn scene(&self) -> &Scene {
         &self.scene
@@ -98,12 +103,13 @@ impl Editor {
             .edge_id_high_water
             .max(self.graph().edge_id_high_water)
             .max(graph.edges.keys().next_back().copied().unwrap_or(0));
-        let nodes = changed_keys(&self.graph().nodes, &graph.nodes);
+        let mut nodes = changed_keys(&self.graph().nodes, &graph.nodes);
         for id in &nodes {
             if let Some(n) = graph.nodes.get_mut(id) {
                 n.selected = false;
             }
         }
+        nodes = changed_keys(&self.graph().nodes, &graph.nodes);
         let edges = changed_keys(&self.graph().edges, &graph.edges);
         if nodes.is_empty() && edges.is_empty() {
             return Ok(None);
@@ -128,6 +134,7 @@ impl Editor {
         self.scene = Arc::new(scene);
         self.redo.clear();
         self.prune_selection();
+        self.refresh_order();
         Ok(true)
     }
     fn prune_selection(&mut self) {
@@ -163,6 +170,7 @@ impl Editor {
         self.redo.push(self.graph().clone());
         self.scene = Arc::new(scene);
         self.prune_selection();
+        self.refresh_order();
         Ok(true)
     }
     pub fn redo(&mut self) -> Result<bool, FlowError> {
@@ -181,6 +189,7 @@ impl Editor {
         }
         self.scene = Arc::new(scene);
         self.prune_selection();
+        self.refresh_order();
         Ok(true)
     }
     pub fn add_node(&mut self, node: Node) -> Result<bool, FlowError> {
@@ -239,6 +248,7 @@ impl Editor {
         );
         if *self.selected != next {
             self.selected = Arc::new(next);
+            self.refresh_order();
         }
         if !additive && !self.selected_edges.is_empty() {
             self.selected_edges = Arc::new(BTreeSet::new());
@@ -250,6 +260,7 @@ impl Editor {
             if !selection.remove(&id) {
                 selection.insert(id);
             }
+            self.refresh_order();
         }
     }
     pub fn select_edge(&mut self, id: EdgeId, additive: bool) {
@@ -266,6 +277,7 @@ impl Editor {
         }
         if !additive && !self.selected.is_empty() {
             self.selected = Arc::new(BTreeSet::new());
+            self.refresh_order();
         }
     }
     pub fn select_box(&mut self, area: Rect, additive: bool) {
@@ -273,14 +285,23 @@ impl Editor {
         self.scene.query_nodes(area, &mut ids);
         self.select(&ids.into_iter().collect(), additive);
     }
+    fn refresh_order(&mut self) {
+        let mut elevated = self.selected.as_ref().clone();
+        let mut stack: Vec<_> = elevated.iter().copied().collect();
+        while let Some(id) = stack.pop() {
+            for child in self.scene.children(id) {
+                if elevated.insert(*child) {
+                    stack.push(*child);
+                }
+            }
+        }
+        if *self.elevated != elevated {
+            self.elevated = Arc::new(elevated);
+        }
+    }
     /// Shared paint/hit-test ordering: selected subtrees above unselected, parents before children.
     pub fn z_key(&self, id: NodeId) -> (bool, usize, NodeId) {
-        let mut next = Some(id);
-        let mut selected = false;
-        while let Some(id) = next {
-            selected |= self.selected.contains(&id);
-            next = self.graph().nodes.get(&id).and_then(|n| n.parent);
-        }
+        let selected = self.elevated.contains(&id);
         let (depth, id) = self.scene.z_key(id);
         (selected, depth, id)
     }
@@ -314,7 +335,11 @@ impl Editor {
             let mut parent = n.parent;
             let mut inherited = false;
             while let Some(id) = parent {
-                let n = &self.graph().nodes[&id];
+                let n = self
+                    .graph()
+                    .nodes
+                    .get(&id)
+                    .ok_or(FlowError::MissingNode(id))?;
                 if positions.contains_key(&id) && n.draggable {
                     inherited = true;
                     break;
@@ -329,7 +354,12 @@ impl Editor {
             result.insert(*id, destination);
             let mut stack = self.scene.children(*id).to_vec();
             while let Some(child) = stack.pop() {
-                result.insert(child, self.graph().nodes[&child].pos + delta);
+                let node = self
+                    .graph()
+                    .nodes
+                    .get(&child)
+                    .ok_or(FlowError::MissingNode(child))?;
+                result.insert(child, node.pos + delta);
                 stack.extend(self.scene.children(child));
             }
         }
