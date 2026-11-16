@@ -108,6 +108,9 @@ GPUI re-renders a view whenever its entity is notified. That is the pain point.
 records which entities and globals each view read while rendering. It redraws a view from the last frame,
 skipping layout, prepaint and paint, when none of those changed.
 
+**Decision (measured, 2026-11-16).** On upstream GPUI, one animating leaf re-rendered its parent and sibling on every frame (12 times each). On gpui-fast it re-rendered them 0 times. The whole workspace passes on gpui-fast.
+So **GUIraffe apps default to gpui-fast**, libraries stay backend-neutral through a `gpui-fast` feature, and CI covers both backends.
+
 GUIraffe is designed to win on both backends:
 - **Granular views.** Hot state lives in small leaf entities.
 - **Narrow, change-checked notifies.**

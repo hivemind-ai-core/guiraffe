@@ -58,8 +58,17 @@ A Component never hides an `Entity` inside itself. When something needs state, i
 
 ## 6. Rendering performance rules (must-follow)
 
-GPUI re-renders a view when its entity is notified. gpui-fast also reuses a view's last frame
-when nothing it read has changed. Both reward the same structure:
+**Measured** (guiraffe-motion's render-isolation test, a single animating leaf for 12 frames):
+**upstream GPUI re-rendered the parent and sibling views 12 times each; gpui-fast re-rendered them 0 times.**
+On upstream, notifying a child re-renders its ancestors and their uncached children. `AnyView::cached` only helps for
+views with a definite size. gpui-fast records what each view read and reuses everything else.
+
+**Backend policy:**
+- Library crates stay backend-neutral. Each one exposes a `gpui-fast` feature that forwards `gpui-kit/gpui-fast`.
+- **Apps, templates and the gallery enable gpui-fast by default.**
+- CI runs the whole workspace on both backends. As of 2026-11-16 all 176 tests pass on gpui-fast.
+
+These rules make the most of both backends:
 
 1. **Granular views.** State that changes often (hover, an animating value, a streaming message,
    the toast list, the flow viewport) lives in a *small* entity whose view renders only what depends on it.
