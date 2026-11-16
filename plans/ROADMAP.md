@@ -40,6 +40,11 @@ Agent Chat UI (Mocket-inspired: virtualized streaming list, tool-call cards, com
 windows tear-off and parent/modal windows, overlays per-window integration.
 
 ## Phase 5: data-driven UI and Mocket
+Status:
+- ✅ `guiraffe-ui`: IR, schema-compiled templates, DataUi host with per-node invalidation, hot reload.
+- ✅ `guiraffe-mocket`: importer, CLI and plugin; Mocket's sample screens render.
+- ⏳ each/when, event payloads and two-way inputs, codegen, chart widgets.
+
 `guiraffe-ui-ir` + JSON Schema → `guiraffe-ui` runtime with hot reload → `guiraffe-codegen`
 → `guiraffe-mocket` plugin → `spec/11-mocket-target.md` handed to Mocket for a native target.
 
