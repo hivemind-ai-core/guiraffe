@@ -201,3 +201,30 @@ fn init_keeps_existing_prefs(cx: &mut TestAppContext) {
         assert_eq!(MotionPrefs::global(cx).time_scale, 3.0);
     });
 }
+
+#[gpui_kit::test]
+fn platform_reduce_motion_is_respected(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init(cx);
+        cx.set_reduce_motion(true);
+        assert!(MotionPrefs::global(cx).reduced);
+    });
+}
+
+#[test]
+fn retargeting_a_spring_keeps_velocity_continuous() {
+    let p = MotionPrefs::default();
+    let t0 = std::time::Instant::now();
+    let mut a = Animated::new(0.0f32, Timing::Spring(Spring::BOUNCY));
+    a.set_at(100.0, t0, &p);
+    let mid = t0 + Duration::from_millis(60);
+    let h = Duration::from_millis(1);
+    let before = (a.value_at(mid, &p).0 - a.value_at(mid - h, &p).0) / 0.001;
+    a.set_at(200.0, mid, &p);
+    let after = (a.value_at(mid + h, &p).0 - a.value_at(mid, &p).0) / 0.001;
+    assert!(before > 50.0, "moving fast before retarget: {before}");
+    assert!(
+        (after - before).abs() / before < 0.1,
+        "no kink: {before} -> {after}"
+    );
+}

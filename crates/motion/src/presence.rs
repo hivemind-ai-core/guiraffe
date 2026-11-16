@@ -86,7 +86,8 @@ impl Presence {
                 animating: false,
             },
             Phase::Entering { start, from } => {
-                let (p, done) = self.enter.sample(Self::elapsed(now, start), prefs);
+                let (p, done) =
+                    scaled(self.enter, 1.0 - from).sample(Self::elapsed(now, start), prefs);
                 if done {
                     self.phase = Phase::Shown;
                     PresenceFrame::Mounted {
@@ -101,18 +102,38 @@ impl Presence {
                 }
             }
             Phase::Exiting { start, from } => {
-                let (p, done) = self.exit.sample(Self::elapsed(now, start), prefs);
+                let (p, done) = scaled(self.exit, from).sample(Self::elapsed(now, start), prefs);
                 if done {
                     self.phase = Phase::Hidden;
                     PresenceFrame::Unmounted
                 } else {
                     PresenceFrame::Mounted {
-                        visibility: from * (1.0 - p),
+                        // A spring may overshoot past hidden; never render below fully hidden.
+                        visibility: (from * (1.0 - p)).max(0.0),
                         animating: true,
                     }
                 }
             }
         }
+    }
+}
+
+/// Tweens covering only part of the distance take a proportional part of the duration
+/// (reversing at 5 % visibility exits in 5 % of the time). Springs are physical already.
+fn scaled(t: Timing, remaining: f32) -> Timing {
+    match t {
+        Timing::Tween { duration, easing } => {
+            let r = if remaining.is_finite() {
+                remaining.clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            Timing::Tween {
+                duration: duration.mul_f32(r),
+                easing,
+            }
+        }
+        spring => spring,
     }
 }
 
@@ -175,8 +196,36 @@ mod tests {
             panic!()
         };
         assert!((v1 - v2).abs() < 1e-6, "{v1} vs {v2}");
-        // Exit from 0.3 over 100ms reaches 0 and unmounts.
-        assert_eq!(pr.frame(at(t0, 130), &p), PresenceFrame::Unmounted);
+        // Exit from 0.3 takes 30% of 100ms and unmounts.
+        assert!(matches!(
+            pr.frame(at(t0, 45), &p),
+            PresenceFrame::Mounted { .. }
+        ));
+        assert_eq!(pr.frame(at(t0, 60), &p), PresenceFrame::Unmounted);
+    }
+
+    #[test]
+    fn spring_presence_never_goes_below_hidden_and_toggling_in_one_frame_is_stable() {
+        let p = MotionPrefs::default();
+        let t0 = Instant::now();
+        let spring = Timing::Spring(crate::spring::Spring::BOUNCY);
+        let mut pr = Presence::new(true, spring, spring);
+        pr.set_visible(false, t0, &p);
+        for i in 0..300 {
+            if let PresenceFrame::Mounted { visibility, .. } = pr.frame(at(t0, i * 5), &p) {
+                assert!(visibility >= 0.0);
+            }
+        }
+        let mut pr = Presence::new(false, lin(100), lin(100));
+        for _ in 0..10 {
+            pr.set_visible(true, t0, &p);
+            pr.set_visible(false, t0, &p);
+        }
+        assert_eq!(
+            pr.frame(t0, &p),
+            PresenceFrame::Unmounted,
+            "net hidden, no residue"
+        );
     }
 
     #[test]

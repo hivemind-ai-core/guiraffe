@@ -19,8 +19,21 @@ impl Timing {
 
     /// Eased progress at `elapsed`, and whether the motion is finished.
     pub fn sample(&self, elapsed: Duration, prefs: &MotionPrefs) -> (f32, bool) {
+        let (p, _, done) = self.sample_with_velocity(elapsed, 0.0, prefs);
+        (p, done)
+    }
+
+    /// Like [`Timing::sample`], for a spring starting with normalised velocity `v0`
+    /// (progress units per second). Returns `(progress, velocity, done)`; tweens report 0 velocity.
+    pub fn sample_with_velocity(
+        &self,
+        elapsed: Duration,
+        v0: f32,
+        prefs: &MotionPrefs,
+    ) -> (f32, f32, bool) {
+        const EPS: f32 = 1e-4;
         if prefs.reduced {
-            return (1.0, true);
+            return (1.0, 0.0, true);
         }
         let scale = if prefs.time_scale.is_finite() && prefs.time_scale > 0.0 {
             prefs.time_scale
@@ -32,16 +45,18 @@ impl Timing {
             Timing::Tween { duration, easing } => {
                 let d = duration.as_secs_f32();
                 if d <= 0.0 || secs >= d {
-                    (1.0, true)
+                    (1.0, 0.0, true)
                 } else {
-                    (easing.sample(secs / d), false)
+                    (easing.sample(secs / d), 0.0, false)
                 }
             }
             Timing::Spring(s) => {
-                if s.is_settled(secs, 0.0, 1e-3) && secs >= s.settle_time(0.0, 1e-3) {
-                    (1.0, true)
+                // Displacement-space velocity is the negated progress velocity.
+                if secs >= s.settle_time(-v0, EPS) {
+                    (1.0, 0.0, true)
                 } else {
-                    (s.progress(secs), false)
+                    let (x, v) = s.state(secs, -v0);
+                    (1.0 - x, -v, false)
                 }
             }
         }
@@ -80,6 +95,35 @@ impl MotionTokens {
     pub fn enter(&self) -> Timing {
         Timing::tween(self.normal, self.enter_easing)
     }
+    pub fn slow(&self) -> Timing {
+        Timing::tween(self.slow, self.easing)
+    }
+}
+
+/// A transition preset paired with its timing (conventions §8: `.transition(Transition)`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transition {
+    pub kind: crate::transition::TransitionKind,
+    pub enter: Timing,
+    pub exit: Timing,
+}
+
+impl Transition {
+    pub fn new(kind: crate::transition::TransitionKind, timing: Timing) -> Self {
+        Self {
+            kind,
+            enter: timing,
+            exit: timing,
+        }
+    }
+    /// The theme default: a fade with the standard enter/exit timings.
+    pub fn themed(kind: crate::transition::TransitionKind, tokens: &MotionTokens) -> Self {
+        Self {
+            kind,
+            enter: tokens.enter(),
+            exit: tokens.fast(),
+        }
+    }
 }
 
 /// App-wide motion preferences. Configuration (rarely changes), so a Global is appropriate.
@@ -105,8 +149,11 @@ impl Default for MotionPrefs {
 impl Global for MotionPrefs {}
 
 impl MotionPrefs {
+    /// Effective preferences: ours, with the platform/app reduce-motion setting folded in.
     pub fn global(cx: &App) -> MotionPrefs {
-        cx.try_global::<MotionPrefs>().copied().unwrap_or_default()
+        let mut p = cx.try_global::<MotionPrefs>().copied().unwrap_or_default();
+        p.reduced |= cx.reduce_motion();
+        p
     }
     pub fn set(prefs: MotionPrefs, cx: &mut App) {
         cx.set_global(prefs);
@@ -159,6 +206,22 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(t.sample(ms(100), &bad), (0.5, false));
+    }
+
+    #[test]
+    fn spring_with_velocity_and_zero_damping_finishes() {
+        let p = MotionPrefs::default();
+        let undamped = Timing::Spring(Spring {
+            stiffness: 200.0,
+            damping: 0.0,
+            mass: 1.0,
+        });
+        assert!(
+            undamped.sample(Duration::from_secs(11), &p).1,
+            "capped, never animates forever"
+        );
+        let (_, v, _) = Timing::Spring(Spring::SNAPPY).sample_with_velocity(ms(0), 5.0, &p);
+        assert!((v - 5.0).abs() < 1e-3, "initial velocity is honoured: {v}");
     }
 
     #[test]

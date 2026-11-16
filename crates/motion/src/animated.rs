@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use gpui_kit::{App, Styled, Window, px};
+use gpui_kit::{App, Div, IntoElement, ParentElement, Styled, Window, div, px};
 
 use crate::{
     lerp::Lerp,
@@ -20,6 +20,8 @@ pub struct Animated<T: Lerp> {
     from: T,
     to: T,
     start: Option<Instant>,
+    /// Normalised start velocity (progress/s) carried over from an interrupted spring.
+    v0: f32,
     timing: Timing,
 }
 
@@ -29,6 +31,7 @@ impl<T: Lerp + PartialEq> Animated<T> {
             from: value.clone(),
             to: value,
             start: None,
+            v0: 0.0,
             timing,
         }
     }
@@ -43,16 +46,21 @@ impl<T: Lerp + PartialEq> Animated<T> {
 
     /// Value at `now` and whether it is still moving (pure; for tests and custom drivers).
     pub fn value_at(&self, now: Instant, prefs: &MotionPrefs) -> (T, bool) {
+        let (v, _, moving) = self.sample_full(now, prefs);
+        (v, moving)
+    }
+
+    fn sample_full(&self, now: Instant, prefs: &MotionPrefs) -> (T, f32, bool) {
         let Some(start) = self.start else {
-            return (self.to.clone(), false);
+            return (self.to.clone(), 0.0, false);
         };
-        let (p, done) = self
-            .timing
-            .sample(now.saturating_duration_since(start), prefs);
+        let (p, vel, done) =
+            self.timing
+                .sample_with_velocity(now.saturating_duration_since(start), self.v0, prefs);
         if done {
-            (self.to.clone(), false)
+            (self.to.clone(), 0.0, false)
         } else {
-            (self.from.lerp(&self.to, p), true)
+            (self.from.lerp(&self.to, p), vel, true)
         }
     }
 
@@ -62,7 +70,18 @@ impl<T: Lerp + PartialEq> Animated<T> {
         if target == self.to {
             return false;
         }
-        let (current, _) = self.value_at(now, prefs);
+        let (current, vel, moving) = self.sample_full(now, prefs);
+        // Keep velocity continuous for springs: re-express the old velocity on the new segment.
+        let ratio = if moving {
+            self.from.span_ratio(&self.to, &current, &target)
+        } else {
+            0.0
+        };
+        self.v0 = if matches!(self.timing, Timing::Spring(_)) && ratio.is_finite() {
+            vel * ratio
+        } else {
+            0.0
+        };
         self.from = current;
         self.to = target;
         self.start = Some(now);
@@ -74,6 +93,7 @@ impl<T: Lerp + PartialEq> Animated<T> {
         self.from = value.clone();
         self.to = value;
         self.start = None;
+        self.v0 = 0.0;
     }
 
     /// Retarget using the app clock and preferences.
@@ -93,6 +113,7 @@ impl<T: Lerp + PartialEq> Animated<T> {
         } else if self.start.is_some() {
             // Settle so later samples are a cheap clone.
             self.start = None;
+            self.v0 = 0.0;
             self.from = self.to.clone();
         }
         v
@@ -125,21 +146,16 @@ pub fn set_presence(presence: &mut Presence, visible: bool, cx: &App) -> bool {
     )
 }
 
-/// Apply a transition [`Frame`] to any styled element.
-pub trait FrameStyle: Styled + Sized {
-    fn frame(self, f: Frame) -> Self {
-        let el = self.opacity(f.opacity);
-        if f.offset_x == 0.0 && f.offset_y == 0.0 {
-            el
-        } else {
-            el.relative().left(px(f.offset_x)).top(px(f.offset_y))
-        }
-    }
-}
-
-impl<E: Styled> FrameStyle for E {}
-
-/// Timing presets from the current theme tokens.
-pub fn tokens(cx: &App) -> crate::timing::MotionTokens {
-    MotionPrefs::global(cx).tokens
+/// Wrap `child` so it renders at transition frame `f`.
+///
+/// The offset lives on a wrapper (`position: relative` on the *wrapper*), so the child's own
+/// positioning (absolute overlays, insets) is never altered and nothing jumps when the
+/// offset returns to zero.
+pub fn framed(child: impl IntoElement, f: Frame) -> Div {
+    div()
+        .relative()
+        .left(px(f.offset_x))
+        .top(px(f.offset_y))
+        .opacity(f.opacity.clamp(0.0, 1.0))
+        .child(child)
 }

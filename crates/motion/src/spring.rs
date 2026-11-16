@@ -79,24 +79,49 @@ impl Spring {
         1.0 - self.state(t, 0.0).0
     }
 
-    /// Whether the spring has settled (displacement and velocity under `epsilon`) at `t`.
-    pub fn is_settled(self, t: f32, v0: f32, epsilon: f32) -> bool {
-        let (x, v) = self.state(t, v0);
-        x.abs() < epsilon && v.abs() < epsilon * 10.0
-    }
+    /// Hard cap on any spring's duration, so a weakly damped spring can never animate forever.
+    pub const MAX_DURATION: f32 = 10.0;
 
-    /// Time (seconds) after which the spring stays settled; capped at 10 s.
+    /// Time (seconds) after which the displacement envelope stays below `epsilon`, starting
+    /// from displacement 1 with velocity `v0`. Computed analytically in O(1) and capped at
+    /// [`Spring::MAX_DURATION`] (zero damping never settles, so it hits the cap).
     pub fn settle_time(self, v0: f32, epsilon: f32) -> f32 {
-        const STEP: f32 = 1.0 / 240.0;
-        let mut last_unsettled = 0.0;
-        let mut t = 0.0;
-        while t < 10.0 {
-            if !self.is_settled(t, v0, epsilon) {
-                last_unsettled = t;
+        let (k, c, m) = self.sanitized();
+        let eps = if epsilon.is_finite() && epsilon > 0.0 {
+            epsilon
+        } else {
+            1e-4
+        };
+        let v0 = if v0.is_finite() { v0 } else { 0.0 };
+        let w0 = (k / m).sqrt();
+        let zeta = c / (2.0 * (k * m).sqrt());
+        let t = if zeta <= 1e-6 {
+            Self::MAX_DURATION
+        } else if (zeta - 1.0).abs() < 1e-3 {
+            // |x(t)| <= (1 + |b| t) e^{-w0 t}; solve by fixed-point iteration (monotone, converges).
+            let b = (v0 + w0).abs();
+            let mut t = (1.0f32 / eps).ln() / w0;
+            for _ in 0..16 {
+                t = ((1.0 + b * t) / eps).ln() / w0;
             }
-            t += STEP;
+            t
+        } else if zeta < 1.0 {
+            let wd = w0 * (1.0 - zeta * zeta).sqrt();
+            let amp = (1.0 + ((v0 + zeta * w0) / wd).powi(2)).sqrt();
+            (amp / eps).ln() / (zeta * w0)
+        } else {
+            let r = (zeta * zeta - 1.0).sqrt();
+            let r1 = -w0 * (zeta - r); // slow root (closest to 0)
+            let r2 = -w0 * (zeta + r);
+            let c2 = (v0 - r1) / (r2 - r1);
+            let c1 = 1.0 - c2;
+            ((c1.abs() + c2.abs()) / eps).ln() / -r1
+        };
+        if t.is_finite() {
+            t.clamp(0.0, Self::MAX_DURATION)
+        } else {
+            Self::MAX_DURATION
         }
-        (last_unsettled + STEP).min(10.0)
     }
 }
 
@@ -147,15 +172,42 @@ mod tests {
     }
 
     #[test]
-    fn frame_rate_independent() {
-        // Analytic: sampling at 60 Hz or 144 Hz gives identical values at shared instants.
-        let s = Spring::SNAPPY;
-        assert_eq!(s.progress(0.25), s.progress(0.25));
-        assert!((s.state(0.5, 0.0).0 - s.state(0.5, 0.0).0).abs() < f32::EPSILON);
+    fn settle_time_bounds_the_motion() {
+        // After the analytic settle time, displacement stays within epsilon (checked densely).
+        for s in [
+            Spring::GENTLE,
+            Spring::SNAPPY,
+            Spring::BOUNCY,
+            Spring {
+                stiffness: 100.0,
+                damping: 60.0,
+                mass: 1.0,
+            },
+        ] {
+            for v0 in [0.0, -8.0, 8.0] {
+                let eps = 1e-3;
+                let t = s.settle_time(v0, eps);
+                for i in 0..2000 {
+                    let x = s.state(t + i as f32 / 200.0, v0).0;
+                    assert!(x.abs() <= eps * 1.01, "{s:?} v0={v0} t={t}+{i}: {x}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn undamped_spring_is_capped() {
+        let s = Spring {
+            stiffness: 200.0,
+            damping: 0.0,
+            mass: 1.0,
+        };
+        assert_eq!(s.settle_time(0.0, 1e-3), Spring::MAX_DURATION);
     }
 
     #[test]
     fn settle_time_is_reasonable_and_bounded() {
+        // (analytic, so it is cheap enough to call every frame)
         let g = Spring::GENTLE.settle_time(0.0, 1e-3);
         assert!(g > 0.2 && g < 1.5, "{g}");
         assert!(Spring::BOUNCY.settle_time(0.0, 1e-3) > g);

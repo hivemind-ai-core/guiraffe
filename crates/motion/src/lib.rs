@@ -19,12 +19,12 @@ pub mod spring;
 pub mod timing;
 pub mod transition;
 
-pub use animated::{Animated, FrameStyle, sample_presence, set_presence, tokens};
+pub use animated::{Animated, framed, sample_presence, set_presence};
 pub use easing::Easing;
 pub use lerp::Lerp;
 pub use presence::{Presence, PresenceFrame};
 pub use spring::Spring;
-pub use timing::{MotionPrefs, MotionTokens, Timing};
+pub use timing::{MotionPrefs, MotionTokens, Timing, Transition};
 pub use transition::{Frame, TransitionKind};
 
 /// Install default motion preferences (idempotent; keeps existing preferences).
