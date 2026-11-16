@@ -300,3 +300,24 @@ fn a_mermaid_fence_paints_a_diagram_in_place_of_its_code_block(cx: &mut TestAppC
         .expect("window");
     assert!(painted, "diagram block {id} painted into the document");
 }
+
+/// Syntax highlighting comes from the Kit's code-block highlighter. It is a
+/// compile-time choice (`guiraffe-markdown/syntect` forwards to
+/// `gpui-kit/syntect`), so this runs only where that is on.
+#[cfg(feature = "syntect")]
+#[gpui_kit::test]
+fn the_kit_installs_a_code_block_highlighter(cx: &mut TestAppContext) {
+    use gpui_kit::base::text::TextViewDefaults;
+
+    cx.update(gpui_kit::init);
+    assert!(
+        cx.update(|cx| TextViewDefaults::global(cx).has_code_block_highlighter()),
+        "gpui-kit/syntect must install the highlighter every text view inherits"
+    );
+    // A fence in a highlighted language is not a diagram, so it renders as a
+    // highlighted code block.
+    let markdown =
+        cx.update(|cx| cx.new(|cx| MarkdownState::new("```rust\nfn main() {}\n```", cx)));
+    cx.executor().run_until_parked();
+    cx.update(|cx| assert!(markdown.read(cx).document().fences.is_empty()));
+}
