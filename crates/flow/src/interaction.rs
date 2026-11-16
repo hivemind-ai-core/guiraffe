@@ -1,6 +1,9 @@
 //! Pointer state machine, independent of GPUI and directly testable.
 use guiraffe_flow_core::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 #[derive(Clone, Debug)]
 pub enum Gesture {
     Pan {
@@ -9,12 +12,14 @@ pub enum Gesture {
     },
     Move {
         start: Point,
-        origins: BTreeMap<NodeId, Point>,
+        origins: Arc<BTreeMap<NodeId, Point>>,
+        roots: Arc<BTreeMap<NodeId, Point>>,
         delta: Point,
     },
     Box {
         start: Point,
         end: Point,
+        additive: bool,
     },
     Connect {
         source: Endpoint,
@@ -22,21 +27,63 @@ pub enum Gesture {
     },
 }
 impl Gesture {
-    pub(crate) fn preview(&self, id: NodeId, graph: &Graph, grid: Option<f32>) -> Option<Point> {
-        if let Self::Move { origins, delta, .. } = self {
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Pan {
+                    start: a,
+                    origin: b,
+                },
+                Self::Pan {
+                    start: c,
+                    origin: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::Move {
+                    start: a,
+                    origins: b,
+                    delta: c,
+                    ..
+                },
+                Self::Move {
+                    start: d,
+                    origins: e,
+                    delta: f,
+                    ..
+                },
+            ) => a == d && Arc::ptr_eq(b, e) && c == f,
+            (
+                Self::Box {
+                    start: a,
+                    end: b,
+                    additive: c,
+                },
+                Self::Box {
+                    start: d,
+                    end: e,
+                    additive: f,
+                },
+            ) => a == d && b == e && c == f,
+            (Self::Connect { source: a, at: b }, Self::Connect { source: c, at: d }) => {
+                a == c && b == d
+            }
+            _ => false,
+        }
+    }
+    pub(crate) fn preview(&self, id: NodeId, _graph: &Graph, grid: Option<f32>) -> Option<Point> {
+        if let Self::Move {
+            origins,
+            roots,
+            delta,
+            ..
+        } = self
+        {
             let origin = *origins.get(&id)?;
             if *delta == Point::default() {
                 return Some(origin);
             }
-            let mut root = id;
-            let mut parent = graph.nodes.get(&id)?.parent;
-            while let Some(id) = parent {
-                if origins.contains_key(&id) {
-                    root = id;
-                }
-                parent = graph.nodes.get(&id)?.parent;
-            }
-            let root_origin = *origins.get(&root)?;
+            let root_origin = *roots.get(&id)?;
             let target = grid.map_or(root_origin + *delta, |g| (root_origin + *delta).snap(g));
             Some(origin + (target - root_origin))
         } else {
@@ -53,13 +100,16 @@ pub struct Interaction {
 }
 impl Interaction {
     pub fn new(graph: Graph) -> Result<Self, FlowError> {
-        Ok(Self {
-            editor: Editor::new(graph)?,
+        Ok(Self::from_editor(Editor::new(graph)?))
+    }
+    pub(crate) fn from_editor(editor: Editor) -> Self {
+        Self {
+            editor,
             viewport: Viewport::default(),
             gesture: None,
             grid: Some(20.),
             scratch: Vec::new(),
-        })
+        }
     }
     pub fn cancel(&mut self) {
         self.gesture = None;
@@ -112,7 +162,9 @@ impl Interaction {
         );
         self.scratch.sort_by_key(|id| self.editor.z_key(*id));
         for id in self.scratch.iter().rev() {
-            let node = &self.editor.graph().nodes[id];
+            let Some(node) = self.editor.graph().nodes.get(id) else {
+                continue;
+            };
             let rect = Rect {
                 origin: self.preview(*id).unwrap_or(node.pos),
                 size: node.size,
@@ -136,7 +188,7 @@ impl Interaction {
         }
         let hit = self.editor.hit_node(world, &mut self.scratch);
         if let Some(id) = hit {
-            if additive {
+            if additive || boxing {
                 self.editor.toggle(id);
             } else if !self.editor.is_selected(id) {
                 self.editor.select(&BTreeSet::from([id]), false);
@@ -158,9 +210,24 @@ impl Interaction {
                 .editor
                 .move_positions(&positions, None)
                 .unwrap_or_default();
+            let roots = origins
+                .iter()
+                .map(|(id, pos)| {
+                    let mut root = *pos;
+                    let mut parent = self.editor.graph().nodes.get(id).and_then(|n| n.parent);
+                    while let Some(id) = parent {
+                        if let Some(pos) = origins.get(&id) {
+                            root = *pos;
+                        }
+                        parent = self.editor.graph().nodes.get(&id).and_then(|n| n.parent);
+                    }
+                    (*id, root)
+                })
+                .collect();
             self.gesture = Some(Gesture::Move {
                 start: screen,
-                origins,
+                origins: Arc::new(origins),
+                roots: Arc::new(roots),
                 delta: Point::default(),
             });
         } else if let Some(id) =
@@ -173,6 +240,7 @@ impl Interaction {
             self.gesture = Some(Gesture::Box {
                 start: world,
                 end: world,
+                additive,
             });
         } else {
             if !additive {
@@ -197,7 +265,7 @@ impl Interaction {
                 }
             }
             Some(Gesture::Move { start, delta, .. }) => {
-                if screen.distance(*start) >= 3. {
+                if *delta != Point::default() || screen.distance(*start) >= 3. {
                     *delta = (screen - *start) * (1. / self.viewport.zoom);
                 }
             }
@@ -212,12 +280,16 @@ impl Interaction {
     ) -> Result<bool, FlowError> {
         match self.gesture.take() {
             Some(Gesture::Move { origins, delta, .. }) if delta != Point::default() => {
-                let positions = origins.into_iter().map(|(id, p)| (id, p + delta)).collect();
+                let positions = origins.iter().map(|(id, p)| (*id, *p + delta)).collect();
                 self.editor.move_nodes(&positions, self.grid)
             }
-            Some(Gesture::Box { start, end }) => {
+            Some(Gesture::Box {
+                start,
+                end,
+                additive,
+            }) => {
                 if start.distance(end) > 3. / self.viewport.zoom {
-                    self.editor.select_box(Rect::between(start, end), true);
+                    self.editor.select_box(Rect::between(start, end), additive);
                 }
                 Ok(false)
             }
@@ -366,5 +438,18 @@ mod tests {
         i.motion(Point::new(0., 36.));
         assert!(i.release(None).expect("self connect"));
         assert_eq!(i.editor.graph().edges[&1].target.node, 1);
+    }
+    #[test]
+    fn review2_11_box_replace_and_additive_modes() {
+        let mut i = interaction();
+        i.editor.select(&BTreeSet::from([2]), false);
+        i.press(Point::new(-20., -20.), false, true);
+        i.motion(Point::new(180., 100.));
+        i.release(None).expect("box");
+        assert_eq!(i.editor.selected_nodes(), &BTreeSet::from([1]));
+        i.press(Point::new(380., -20.), true, true);
+        i.motion(Point::new(580., 100.));
+        i.release(None).expect("add box");
+        assert_eq!(i.editor.selected_nodes(), &BTreeSet::from([1, 2]));
     }
 }

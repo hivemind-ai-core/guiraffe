@@ -191,7 +191,9 @@ impl Frame {
                     self.markers(&route, edge.marker_start, edge.marker_end, bounds, window);
                 }
             } else {
-                let route = &self.scene.paths()[id];
+                let Some(route) = self.scene.paths().get(id) else {
+                    continue;
+                };
                 if let Some(path) = cache.get(*id, route) {
                     paint_mesh(path, self.viewport, bounds.origin, window, color);
                 }
@@ -212,27 +214,6 @@ impl Frame {
                     window.request_animation_frame();
                 }
             }
-        }
-        if let Some(Gesture::Connect { source, at }) = &self.gesture
-            && let Ok((node, handle)) = graph.handle(source)
-        {
-            let from = handle.position(node.rect());
-            let mut builder = PathBuilder::stroke(px(2.));
-            builder.move_to(bounds.origin + pixel(self.viewport.screen(from)));
-            builder.line_to(bounds.origin + pixel(self.viewport.screen(*at)));
-            if let Ok(path) = builder.build() {
-                window.paint_path(path, self.accent.to_hsla());
-            }
-        }
-        if let Some(Gesture::Box { start, end }) = &self.gesture {
-            let r = Rect::between(self.viewport.screen(*start), self.viewport.screen(*end));
-            window.paint_quad(fill(
-                Bounds::new(
-                    bounds.origin + pixel(r.origin),
-                    gpui_kit::size(px(r.size.x), px(r.size.y)),
-                ),
-                self.accent.alpha(0.2).to_hsla(),
-            ));
         }
         let edge_us = edge_started.elapsed().as_micros();
         let minimap_started = std::time::Instant::now();
@@ -312,14 +293,17 @@ impl Frame {
         if route.points.len() < 2 {
             return;
         }
-        for (marker, tip, neighbor) in [
-            (start, route.points[0], route.points[1]),
-            (
-                end,
-                route.points[route.points.len() - 1],
-                route.points[route.points.len() - 2],
-            ),
-        ] {
+        let start_points = route
+            .points
+            .first()
+            .zip(route.points.get(1))
+            .map(|(tip, neighbor)| (start, *tip, *neighbor));
+        let end_points = route
+            .points
+            .last()
+            .zip(route.points.get(route.points.len().saturating_sub(2)))
+            .map(|(tip, neighbor)| (end, *tip, *neighbor));
+        for (marker, tip, neighbor) in start_points.into_iter().chain(end_points) {
             if marker == Marker::None {
                 continue;
             }
@@ -451,6 +435,36 @@ impl Frame {
         }
     }
 }
+pub(crate) fn paint_gesture(
+    scene: &Scene,
+    gesture: Option<&Gesture>,
+    viewport: Viewport,
+    bounds: Bounds<Pixels>,
+    accent: Rgb,
+    window: &mut Window,
+) {
+    if let Some(Gesture::Connect { source, at }) = gesture
+        && let Ok((node, handle)) = scene.graph().handle(source)
+    {
+        let from = handle.position(node.rect());
+        let mut builder = PathBuilder::stroke(px(2.));
+        builder.move_to(bounds.origin + pixel(viewport.screen(from)));
+        builder.line_to(bounds.origin + pixel(viewport.screen(*at)));
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, accent.to_hsla());
+        }
+    }
+    if let Some(Gesture::Box { start, end, .. }) = gesture {
+        let r = Rect::between(viewport.screen(*start), viewport.screen(*end));
+        window.paint_quad(fill(
+            Bounds::new(
+                bounds.origin + pixel(r.origin),
+                gpui_kit::size(px(r.size.x), px(r.size.y)),
+            ),
+            accent.alpha(0.2).to_hsla(),
+        ));
+    }
+}
 pub(crate) fn minimap_rect(size: WorldPoint) -> Rect {
     Rect::new((size.x - 196.).max(0.), (size.y - 136.).max(0.), 180., 120.)
 }
@@ -580,7 +594,7 @@ mod tests {
         let (w, v) = cx.update(|cx| {
             guiraffe_core::init(cx);
             gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-                cx.new(|cx| crate::Flow::new(graph, cx).expect("flow"))
+                cx.new(|cx| crate::FlowViewport::new(graph, cx).expect("flow"))
             })
             .expect("window")
         });
@@ -686,5 +700,85 @@ mod tests {
             a.selected.iter().next().map(|id| id as *const u64),
             b.selected.iter().next().map(|id| id as *const u64)
         );
+    }
+    #[gpui_kit::test]
+    fn review2_real_second_frame_over_2048_visible_edges_is_cached(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::{AppContext, WindowOptions, test::TestWindowExt};
+        let graph = Graph::from_parts(
+            [
+                Node::new(1, "", WorldPoint::new(100., 100.)),
+                Node::new(2, "", WorldPoint::new(500., 100.)),
+            ],
+            (0..3000).map(|id| {
+                let mut e = Edge::new(id, 1, 2);
+                e.marker_end = Marker::None;
+                e
+            }),
+        )
+        .expect("graph");
+        let (w, v) = cx.update(|cx| {
+            guiraffe_core::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| {
+                    crate::FlowViewport::new(graph, cx)
+                        .expect("flow")
+                        .options(crate::FlowOptions {
+                            background: Background::None,
+                            minimap: false,
+                            controls: false,
+                            fit_on_init: false,
+                            ..Default::default()
+                        })
+                })
+            })
+            .expect("window")
+        });
+        w.update(cx, |_, w, cx| {
+            w.render_frame(cx);
+            w.render_frame(cx);
+        })
+        .expect("settle");
+        v.update(cx, |v, _| v.meshes.borrow_mut().clear());
+        w.update(cx, |_, w, cx| w.render_frame(cx))
+            .expect("cold frame");
+        assert_eq!(v.read_with(cx, |v, _| v.visible_counts().1), 3000);
+        assert_eq!(v.read_with(cx, |v, _| v.meshes.borrow().misses), 3000);
+        w.update(cx, |_, w, cx| w.render_frame(cx))
+            .expect("warm frame");
+        assert_eq!(v.read_with(cx, |v, _| v.meshes.borrow().misses), 0);
+    }
+    #[test]
+    fn review2_drag_frames_share_origin_storage() {
+        let mut i = Interaction::new(
+            Graph::from_parts([Node::new(1, "", WorldPoint::default())], []).expect("graph"),
+        )
+        .expect("interaction");
+        i.press(WorldPoint::new(30., 30.), false, false);
+        i.motion(WorldPoint::new(70., 50.));
+        let mut visible = Visible::default();
+        let a = Frame::new(
+            &i,
+            &mut visible,
+            Background::None,
+            false,
+            &GuiraffeTheme::default(),
+            None,
+        );
+        let b = Frame::new(
+            &i,
+            &mut visible,
+            Background::None,
+            false,
+            &GuiraffeTheme::default(),
+            None,
+        );
+        let storage = |f: &Frame| match &f.gesture {
+            Some(Gesture::Move { origins, .. }) => origins.get(&1).map(|p| p as *const WorldPoint),
+            _ => None,
+        };
+        assert!(storage(&a).is_some());
+        assert_eq!(storage(&a), storage(&b));
     }
 }

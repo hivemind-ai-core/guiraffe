@@ -1,4 +1,4 @@
-use crate::{Flow, FlowError, Graph, Node, NodeRenderer, Viewport, WorldPoint};
+use crate::{FlowError, FlowViewport as Flow, Graph, Node, NodeRenderer, Viewport, WorldPoint};
 use gpui_kit::{
     AnyElement, AnyWindowHandle, App, AppContext, Entity, IntoElement, ParentElement, ScrollDelta,
     Window, WindowOptions, div, point, px,
@@ -20,7 +20,14 @@ fn canvas_mounts_and_controls_change_viewport(cx: &mut TestAppContext) {
     let (window, view) = cx.update(|cx| {
         guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(|cx| Flow::new(fixture(), cx).expect("flow"))
+            cx.new(|cx| {
+                Flow::new(fixture(), cx)
+                    .expect("flow")
+                    .options(crate::FlowOptions {
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
+            })
         })
         .expect("window")
     });
@@ -41,7 +48,14 @@ fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Flow>) {
     let result = cx.update(|cx| {
         guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(|cx| Flow::new(fixture(), cx).expect("flow"))
+            cx.new(|cx| {
+                Flow::new(fixture(), cx)
+                    .expect("flow")
+                    .options(crate::FlowOptions {
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
+            })
         })
         .expect("window")
     });
@@ -143,6 +157,10 @@ fn culling_unmounts_distant_nodes_and_custom_renderer_is_called(cx: &mut TestApp
             cx.new(|cx| {
                 Flow::new(fixture(), cx)
                     .expect("flow")
+                    .options(crate::FlowOptions {
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
                     .node_renderer(Renderer(observed))
             })
         })
@@ -214,6 +232,10 @@ fn pan_updates_observed_node_bounds(cx: &mut TestAppContext) {
             cx.new(|cx| {
                 Flow::new(fixture(), cx)
                     .expect("flow")
+                    .options(crate::FlowOptions {
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
                     .node_renderer(Renderer(observed))
             })
         })
@@ -361,7 +383,7 @@ fn review_3_child_paints_and_picks_above_higher_id_parent(cx: &mut TestAppContex
     .expect("pick");
     assert!(v.read_with(cx, |v, _| v.interaction.editor.is_selected(1)));
     assert!(!v.read_with(cx, |v, _| v.interaction.editor.is_selected(2)));
-    assert_eq!(v.read_with(cx, |v, _| v.visible.nodes.clone()), vec![2, 1]);
+    assert_eq!(v.read_with(cx, |v, _| v.ordered_ids.clone()), vec![2, 1]);
 }
 #[gpui_kit::test]
 fn review_12_retained_node_and_edge_buffer_survive_camera_frame(cx: &mut TestAppContext) {
@@ -438,6 +460,10 @@ fn review_12_unrelated_node_edit_does_not_render_retained_node(cx: &mut TestAppC
             cx.new(|cx| {
                 Flow::new(fixture(), cx)
                     .expect("flow")
+                    .options(crate::FlowOptions {
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
                     .node_renderer(Renderer(observed))
             })
         })
@@ -472,12 +498,16 @@ fn review_16_real_self_loop_with_allow_self(cx: &mut TestAppContext) {
         guiraffe_core::init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| {
-                Flow::new(fixture(), cx).expect("flow").connection_policy(
-                    crate::core::ConnectionPolicy {
+                Flow::new(fixture(), cx)
+                    .expect("flow")
+                    .options(crate::FlowOptions {
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
+                    .connection_policy(crate::core::ConnectionPolicy {
                         allow_self: true,
                         ..Default::default()
-                    },
-                )
+                    })
             })
         })
         .expect("window")
@@ -526,4 +556,128 @@ fn review_2_real_parent_drag_moves_child_once(cx: &mut TestAppContext) {
         v.read_with(cx, |v, _| v.graph().nodes[&2].pos),
         WorldPoint::new(100., 120.)
     );
+}
+
+#[gpui_kit::test]
+fn review2_1_noop_edit_and_idle_release_emit_no_events_or_notify(cx: &mut TestAppContext) {
+    let (w, v) = open(cx);
+    let events = Rc::new(Cell::new(0));
+    let n = events.clone();
+    let _events =
+        cx.update(|cx| cx.subscribe(&v, move |_, _: &crate::FlowEvent, _| n.set(n.get() + 1)));
+    let notifies = Rc::new(Cell::new(0));
+    let n = notifies.clone();
+    let _notifies = cx.update(|cx| cx.observe(&v, move |_, _| n.set(n.get() + 1)));
+    v.update(cx, |v, cx| {
+        assert!(!v.edit(|_| Ok(()), cx).expect("noop"));
+    });
+    w.update(cx, |_, w, cx| w.draw(cx).clear(cx)).expect("draw");
+    assert_eq!(events.get(), 0);
+    assert_eq!(notifies.get(), 0);
+}
+#[gpui_kit::test]
+fn review2_first_layout_fits_all_nodes(cx: &mut TestAppContext) {
+    let graph = Graph::from_parts(
+        [
+            Node::new(1, "left", WorldPoint::new(-500., 0.)),
+            Node::new(2, "right", WorldPoint::new(3000., 0.)),
+        ],
+        [],
+    )
+    .expect("graph");
+    let (w, v) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| Flow::new(graph, cx).expect("flow"))
+        })
+        .expect("window")
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        w.render_frame(cx);
+        w.render_frame(cx);
+    })
+    .expect("layout");
+    assert!(v.read_with(cx, |v, _| {
+        v.graph().nodes.values().all(|n| {
+            v.viewport().visible(v.size()).contains(n.pos)
+                && v.viewport().visible(v.size()).contains(n.rect().max())
+        })
+    }));
+}
+
+#[gpui_kit::test]
+fn review2_portable_host_isolation(cx: &mut TestAppContext) {
+    use gpui_kit::{Context, InputEvent, Render, ScrollEvent, Styled};
+    struct Sibling(Rc<Cell<usize>>);
+    impl Render for Sibling {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.set(self.0.get() + 1);
+            div()
+        }
+    }
+    struct Host {
+        flow: Entity<crate::Flow>,
+        sibling: Entity<Sibling>,
+        renders: Rc<Cell<usize>>,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let _ = self.flow.read(cx).graph().nodes.len();
+            div()
+                .size_full()
+                .child(self.flow.clone())
+                .child(self.sibling.clone())
+        }
+    }
+    let a = Rc::new(Cell::new(0));
+    let b = Rc::new(Cell::new(0));
+    let (w, flow) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        let flow = cx.new(|cx| crate::Flow::new(fixture(), cx).expect("flow"));
+        let (w, _) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            let sibling = cx.new(|_| Sibling(b.clone()));
+            cx.new(|_| Host {
+                flow: flow.clone(),
+                sibling,
+                renders: a.clone(),
+            })
+        })
+        .expect("window");
+        (w, flow)
+    });
+    w.update(cx, |_, w, cx| {
+        w.render_frame(cx);
+        w.render_frame(cx);
+    })
+    .expect("initial");
+    let before = (a.get(), b.get());
+    let camera = flow.read_with(cx, |flow, _| flow.viewport());
+    for _ in 0..5 {
+        w.update(cx, |_, w, cx| {
+            w.dispatch_event(
+                ScrollEvent {
+                    position: point(px(300.), px(300.)),
+                    delta: ScrollDelta::Pixels(point(px(10.), px(0.))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.draw(cx).clear(cx);
+        })
+        .expect("pan");
+    }
+    assert_eq!(
+        flow.read_with(cx, |flow, _| flow.viewport().pan),
+        camera.pan + WorldPoint::new(50., 0.)
+    );
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            (a.get(), b.get()),
+            before,
+            "pan changed unrelated host/sibling"
+        );
+    }
 }
