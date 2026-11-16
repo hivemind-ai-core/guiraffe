@@ -103,7 +103,7 @@ fn indicator_animation_does_not_rerender_the_host(cx: &mut TestAppContext) {
     let before = renders.get();
     vcx.update(|_, cx| control.update(cx, |c, cx| c.select(2, cx)));
     frames(vcx, 30);
-    if cfg!(feature = "gpui-fast") {
+    if gpui_kit::GPUI_FAST {
         assert_eq!(
             renders.get(),
             before,

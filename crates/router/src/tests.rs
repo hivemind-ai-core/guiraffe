@@ -226,7 +226,7 @@ fn navigation_history_and_selection(cx: &mut TestAppContext) {
         )
     });
     vcx.run_until_parked();
-    if cfg!(feature = "gpui-fast") {
+    if gpui_kit::GPUI_FAST {
         assert_eq!(renders.get(), notified);
     }
     assert_eq!(

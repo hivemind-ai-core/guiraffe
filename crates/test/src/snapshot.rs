@@ -88,12 +88,12 @@ pub struct SnapshotConfig {
 }
 
 impl SnapshotConfig {
+    /// Goldens live in `<dir>/<backend>/`, where backend is `upstream` or `gpui-fast`: the two
+    /// GPUI backends anti-alias curves slightly differently, so each keeps its own goldens
+    /// rather than hiding real differences behind a loose tolerance.
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self {
-            dir: dir.into(),
-            tolerance: Tolerance::DEFAULT,
-            update: false,
-        }
+        let backend = if gpui_kit::GPUI_FAST { "gpui-fast" } else { "upstream" };
+        Self { dir: dir.into().join(backend), tolerance: Tolerance::DEFAULT, update: false }
     }
 
     /// Opt-in convenience for test binaries: `update` when `GUIRAFFE_UPDATE_SNAPSHOTS=1`.

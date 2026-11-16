@@ -99,14 +99,14 @@ fn only_views_whose_selection_changed_rerender(cx: &mut TestAppContext) {
     vcx.run_until_parked();
     assert_eq!(f.store.state(&vcx.app.borrow()).a, 1);
     assert!(f.ra.get() > a0, "view A re-rendered");
-    if cfg!(feature = "gpui-fast") {
+    if gpui_kit::GPUI_FAST {
         assert_eq!(f.rb.get(), b0, "view B untouched");
     }
     // An unrelated change never notifies A's selection.
     let a1 = f.ra.get();
     vcx.update(|_, cx| f.store.dispatch(Push(1), cx));
     vcx.run_until_parked();
-    if cfg!(feature = "gpui-fast") {
+    if gpui_kit::GPUI_FAST {
         assert_eq!(f.ra.get(), a1, "unrelated change: no re-render of A");
     }
     let observed = vcx.update(|_, cx| f.a.read(cx).value.get(cx).to_owned());

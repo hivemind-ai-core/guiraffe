@@ -130,7 +130,7 @@ fn animation_reaches_target_and_only_the_leaf_rerenders(cx: &mut TestAppContext)
         f.leaf_renders.get() > leaf_after_start + 3,
         "animated over several frames"
     );
-    if cfg!(feature = "gpui-fast") {
+    if gpui_kit::GPUI_FAST {
         // Retained rendering: only the animating leaf is rebuilt.
         assert_eq!(
             f.page_renders.get(),

@@ -2,3 +2,5 @@ target
 worktrees
 bench/reports/
 bench/history/
+*.actual.png
+*.diff.png

@@ -52,8 +52,9 @@ fn golden_lifecycle_on_the_headless_renderer() {
         .map(|e| e.to_string())
         .unwrap_or_default();
     assert!(err.contains("differs"), "{err}");
-    assert!(dir.path().join("button/blue.actual.png").exists());
-    assert!(dir.path().join("button/blue.diff.png").exists());
+    let backend = if gpui_kit::GPUI_FAST { "gpui-fast" } else { "upstream" };
+    assert!(dir.path().join(backend).join("button/blue.actual.png").exists());
+    assert!(dir.path().join(backend).join("button/blue.diff.png").exists());
     // Accepting updates the golden.
     let accept = SnapshotConfig {
         update: true,
