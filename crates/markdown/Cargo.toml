@@ -12,6 +12,9 @@ workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-mermaid = { workspace = true, optional = true }
+# The parser the Kit's TextView renders with, at the same version, so TOC
+# entries, task markers and fence ranges address the tree that is drawn.
+markdown = "=1.0.0"
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
@@ -19,3 +22,7 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 [features]
 default = []
 mermaid = ["dep:guiraffe-mermaid"]
+# Syntax highlighting for fenced code, from the Kit's syntect backend (about
+# two hundred languages, a few megabytes). Off by default so a consumer that
+# does not show code pays nothing.
+syntect = ["gpui-kit/syntect"]
