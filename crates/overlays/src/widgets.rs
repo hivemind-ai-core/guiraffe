@@ -54,7 +54,7 @@ impl RenderOnce for LoadingOverlay {
         }
         let theme = GuiraffeTheme::global(cx);
         let colors = theme.variant(self.color, self.variant);
-        div()
+        let surface = div()
             .id("guiraffe-loading-overlay")
             .test_support()
             .absolute()
@@ -74,7 +74,8 @@ impl RenderOnce for LoadingOverlay {
                     .child(Spinner::new()),
             )
             .refine_style(&self.style)
-            .into_any_element()
+            .into_any_element();
+        KeyboardShield { child: surface }.into_any_element()
     }
 }
 /// Corner anchoring relative to the containing block (use inside a window-sized root for a fixed Affix).
@@ -140,5 +141,83 @@ impl Default for Affix {
 impl ParentElement for Affix {
     fn extend(&mut self, children: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(children);
+    }
+}
+
+// The subscription is element state: retained by cached frames and dropped on unmount.
+// It intercepts before GPUI resolves text input or application action key bindings.
+struct KeyboardShield {
+    child: AnyElement,
+}
+impl IntoElement for KeyboardShield {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+impl gpui_kit::Element for KeyboardShield {
+    type RequestLayoutState = gpui_kit::LayoutId;
+    type PrepaintState = ();
+    fn id(&self) -> Option<gpui_kit::ElementId> {
+        Some("guiraffe-loading-keyboard-shield".into())
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui_kit::LayoutId, Self::RequestLayoutState) {
+        let child = self.child.request_layout(window, cx);
+        let layout = window.request_layout(
+            gpui_kit::Style {
+                position: gpui_kit::Position::Absolute,
+                inset: gpui_kit::Edges::all(px(0.).into()),
+                ..Default::default()
+            },
+            [child],
+            cx,
+        );
+        (layout, child)
+    }
+    fn prepaint(
+        &mut self,
+        id: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(id) = id else {
+            return;
+        };
+        window.with_element_state(id, |state: Option<gpui_kit::Subscription>, window| {
+            let window_id = window.window_handle().window_id();
+            let subscription = state.unwrap_or_else(|| {
+                cx.intercept_keystrokes(move |_, window, cx| {
+                    if window.window_handle().window_id() == window_id {
+                        cx.stop_propagation();
+                    }
+                })
+            });
+            self.child.prepaint(window, cx);
+            ((), subscription)
+        });
+    }
+    fn paint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
     }
 }

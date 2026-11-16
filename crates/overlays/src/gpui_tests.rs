@@ -934,3 +934,56 @@ fn review_8_tooltip_ui_uses_cross_axis_solver(cx: &mut TestAppContext) {
     })
     .expect("position");
 }
+
+struct KeyboardLoading {
+    input: gpui_kit::Entity<gpui_kit::component::input::InputState>,
+    loading: bool,
+}
+impl Render for KeyboardLoading {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .relative()
+            .child(gpui_kit::component::input::Input::new(&self.input))
+            .child(LoadingOverlay::new().visible(self.loading))
+    }
+}
+#[gpui_kit::test]
+fn review_13_loading_blocks_keyboard_then_restores_input(cx: &mut TestAppContext) {
+    use gpui_kit::component::input::InputState;
+    cx.update(init);
+    let (handle, view) = cx
+        .update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let input = cx.new(|cx| {
+                        let input = InputState::new(window, cx);
+                        input.focus(window, cx);
+                        input
+                    });
+                    KeyboardLoading {
+                        input,
+                        loading: true,
+                    }
+                })
+            })
+        })
+        .expect("window");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.input("x", cx);
+        assert_eq!(
+            view.read(cx).input.read(cx).value(),
+            "",
+            "loading must block background typing"
+        );
+        view.update(cx, |view, cx| {
+            view.loading = false;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.input("y", cx);
+        assert_eq!(view.read(cx).input.read(cx).value(), "y");
+    })
+    .expect("input");
+}
