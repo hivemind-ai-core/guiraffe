@@ -1,0 +1,66 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux GPUI dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config clang cmake libasound2-dev libssl-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgit2-dev
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+  deny:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+  gpui-fast:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux GPUI dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config clang cmake libasound2-dev libssl-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgit2-dev
+      - run: cargo build --workspace --locked --features guiraffe-bench/gpui-fast
+      - run: cargo test --workspace --locked --features guiraffe-bench/gpui-fast
+  instructions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux dependencies and Callgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind build-essential pkg-config clang cmake libasound2-dev libssl-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgit2-dev
+      - run: cargo install iai-callgrind-runner --version 0.16.1 --locked
+      - name: Establish PR base instruction counts
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          git worktree add --detach /tmp/guiraffe-base "$BASE_SHA"
+          if test -f /tmp/guiraffe-base/bench/benches/instructions.rs; then
+            cd /tmp/guiraffe-base
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-baseline=pr-base
+          else
+            echo 'Instruction baseline unavailable: base predates benchmark infrastructure; first run establishes it.'
+          fi
+      - name: Instruction gate (2 percent)
+        run: cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --baseline=pr-base --save-summary=json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: instruction-counts
+          path: target/iai

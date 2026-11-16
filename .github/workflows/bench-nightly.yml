@@ -1,0 +1,42 @@
+name: Nightly wall-clock benchmarks
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wall-clock-benches
+  cancel-in-progress: false
+jobs:
+  wall-clock:
+    # Assign a dedicated, quiet runner with this label; hosted runners are too noisy.
+    runs-on: [self-hosted, linux, guiraffe-bench]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache/restore@v4
+        with:
+          path: bench/history
+          key: bench-history-${{ github.run_id }}
+          restore-keys: bench-history-
+      - name: Wall-clock samples
+        shell: bash
+        run: |
+          mkdir -p bench/history
+          cargo run --release --locked -p guiraffe-bench -- run --profile nightly-quiet --samples 40 --notes 'Dedicated nightly runner' --output "bench/history/${GITHUB_RUN_ID}.json"
+          cargo bench --locked -p guiraffe-bench --bench micro
+          cargo run --release --locked -p guiraffe-bench -- report --input bench/history --output bench/reports/trends.html
+      - uses: actions/cache/save@v4
+        with:
+          path: bench/history
+          key: bench-history-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-history
+          path: |
+            bench/history
+            bench/reports
+            target/criterion
