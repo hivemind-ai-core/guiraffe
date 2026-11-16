@@ -2,12 +2,14 @@
 //! and the bridge that keeps GPUI Controls' theme in sync.
 
 pub mod color;
+pub mod context;
 pub mod palette;
 pub mod theme;
 pub mod tokens;
 pub mod variant;
 
 pub use color::Rgb;
+pub use context::{Density, Emphasis, Provide, StyleContext, StylePatch, SurfaceKind, provide};
 pub use palette::{ColorName, Shade};
 pub use theme::{GuiraffeTheme, Scheme, Surfaces, apply, set_scheme};
 pub use tokens::{ShadowLayer, Size, shadow};
