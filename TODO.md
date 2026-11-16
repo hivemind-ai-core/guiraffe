@@ -23,3 +23,10 @@
 - [ ] **Tooling DX**: `guiraffe new --template {blank,dashboard,editor,chat}`, `guiraffe dev` (watch+rebuild+relaunch), `guiraffe add <crate>`, `guiraffe doctor` (toolchain, gpui-fast pin, system deps), `guiraffe snapshot`/`bench` wrappers, docs site generated from showcase.
 - [ ] **After current work:** study the Refactoring UI book (in repo root, user-provided; do not commit it) — its component list and principles → design-quality styling + layout presets (theme recipes, spacing/type scales, hierarchy, color, depth) in core/layout, applied across showcase.
 - [ ] Bugs found while building the showcase: flow `FlowState::new` is fallible inside `cx.new` (add infallible ctor from validated editor; flow/state.rs:39); chat tool-call header centred instead of left (chat/message.rs); overlays FloatingTooltip lacks border/shadow contrast (overlays/floating.rs:39); LoadingOverlay default fully opaque (overlays/widgets.rs:58); guiraffe-test Snapshotter needs a "settle" option so background-rendered content (mermaid) appears in goldens; regression test for mermaid width re-render.
+
+## User feedback on showcase (2026-11-16)
+- [ ] 1 ScrollArea doesn't scroll · 2 SegmentedControl needs two clicks (focus then select) · 3 RangeSlider track glitch · 4 FloatingTooltip never hides (focus/hover loss in general?)
+- [ ] 5 Mermaid diagrams blank (live too; ../gui renders them — compare)
+- [ ] 6 Flow glitches: edge end overshoots handle; handle/edge stub drawn past node edge; step-edge corners overshoot after zoom/pan · 7 minimap drag-to-pan
+- [ ] 8/9 Gantt + tracks: lock x positions (per item / global) · 10 resize cursor on edges · 11 resize from left edge too (configurable: none/start/end/both)
+- [ ] Integrate GPUI Controls (buttons, form inputs, selects, etc.) + GPUI Kit charts into showcase; every entry needs a live options panel exposing its configuration
