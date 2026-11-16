@@ -12,6 +12,9 @@ workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-mermaid = { workspace = true, optional = true }
+# The parser the Kit's TextView renders with, at the same version, so TOC
+# entries, task markers and fence ranges address the tree that is drawn.
+markdown = "=1.0.0"
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
