@@ -1,11 +1,10 @@
 //! Visual snapshots of every component, in light and dark, on the headless renderer.
 //! Accept intentional changes with `GUIRAFFE_UPDATE_SNAPSHOTS=1 cargo test -p guiraffe-components --test visual`.
 
-use gpui_kit::{
-    AppContext, Context, IntoElement, ParentElement, Render, Styled, Window,
-    div, px, size,
-};
 use gpui_kit::assets::IconName;
+use gpui_kit::{
+    AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div, px, size,
+};
 use guiraffe_components::*;
 use guiraffe_core::{ColorName, GuiraffeTheme, Scheme, Size, Variant, apply};
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
