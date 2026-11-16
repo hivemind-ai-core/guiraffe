@@ -1,6 +1,5 @@
-//! Known issue (KNOWN_ISSUES.md #1): GPUI 0.3.12's headless wgpu renderer draws no monochrome
-//! sprites (SVG icons) on software adapters, so icons are blank in offscreen snapshots.
-//! Text renders (subpixel sprites). Run with `--ignored` to check whether it is fixed.
+//! Regression guard: icons must render in headless snapshots. (They once appeared blank because
+//! the snapshot helper passed an empty asset source — a GUIraffe bug, not a renderer limit.)
 
 use gpui_kit::{
     AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb, size,
@@ -21,7 +20,6 @@ impl Render for Raw {
 }
 
 #[test]
-#[ignore = "KNOWN_ISSUES #1: headless renderer draws no SVG icons"]
 fn headless_renderer_draws_svg_icons() {
     let img = Snapshotter::new()
         .unwrap_or_else(|e| panic!("{e}"))

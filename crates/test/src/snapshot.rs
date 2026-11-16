@@ -58,7 +58,7 @@ impl Snapshotter {
         let text = gpui_kit::platform::current_platform(true).text_system();
         let mut cx = HeadlessAppContext::with_platform(
             text,
-            Arc::new(()),
+            self.assets.clone(),
             gpui_kit::platform::current_headless_renderer,
         );
         if let Some(setup) = &self.setup {
