@@ -1,0 +1,149 @@
+Diff in /home/dan/orca/workspaces/anteater/feat-devtools/crates/cli/src/scaffold.rs:74:
+     let Source::Path(checkout) = source;
+     let lock = checkout.join("Cargo.lock");
+     if lock.exists() {
+[31m-        std::fs::copy(&lock, dir.join("Cargo.lock")).with_context(|| format!("copying {}", lock.display()))?;
+[m[32m+        std::fs::copy(&lock, dir.join("Cargo.lock"))
+[m[32m+            .with_context(|| format!("copying {}", lock.display()))?;
+[m     }
+     Ok(dir)
+ }
+Diff in /home/dan/orca/workspaces/anteater/feat-devtools/crates/components/tests/context.rs:1:
+ //! Context-driven styling (spec/14): the same widget adapts to the layout it is in.
+ 
+ use gpui_kit::{
+[31m-    Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window, assets::IconName, div, prelude::*,
+[m[32m+    Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window, assets::IconName,
+[m[32m+    div, prelude::*,
+[m };
+ use guiraffe_components::{ActionIcon, icons::icon_box};
+ use guiraffe_core::{GuiraffeTheme, Size, StyleContext, provide};
+Diff in /home/dan/orca/workspaces/anteater/feat-devtools/crates/components/tests/context.rs:15:
+             .flex()
+             .flex_col()
+             .items_start()
+[31m-            .child(div().debug_selector(|| "plain".into()).child(ActionIcon::new("a", IconName::Star)))
+[m[31m-            .child(provide(toolbar, div().debug_selector(|| "toolbar".into()).child(ActionIcon::new("b", IconName::Star))))
+[m[31m-            .child(provide(toolbar, div().debug_selector(|| "explicit".into()).child(ActionIcon::new("c", IconName::Star).size(Size::Lg))))
+[m[32m+            .child(
+[m[32m+                div()
+[m[32m+                    .debug_selector(|| "plain".into())
+[m[32m+                    .child(ActionIcon::new("a", IconName::Star)),
+[m[32m+            )
+[m[32m+            .child(provide(
+[m[32m+                toolbar,
+[m[32m+                div()
+[m[32m+                    .debug_selector(|| "toolbar".into())
+[m[32m+                    .child(ActionIcon::new("b", IconName::Star)),
+[m[32m+            ))
+[m[32m+            .child(provide(
+[m[32m+                toolbar,
+[m[32m+                div()
+[m[32m+                    .debug_selector(|| "explicit".into())
+[m[32m+                    .child(ActionIcon::new("c", IconName::Star).size(Size::Lg)),
+[m[32m+            ))
+[m     }
+ }
+ 
+Diff in /home/dan/orca/workspaces/anteater/feat-devtools/crates/components/tests/context.rs:26:
+     cx.update(guiraffe_components::init);
+     let (_v, vcx) = cx.add_window_view(|_, _| Scene);
+     vcx.run_until_parked();
+[31m-    let mut w = |sel: &'static str| vcx.debug_bounds(sel).map(|b| f32::from(b.size.width)).unwrap_or(-1.0);
+[m[32m+    let mut w = |sel: &'static str| {
+[m[32m+        vcx.debug_bounds(sel)
+[m[32m+            .map(|b| f32::from(b.size.width))
+[m[32m+            .unwrap_or(-1.0)
+[m[32m+    };
+[m     let default = StyleContext::default().control_size;
+[31m-    assert_eq!(w("plain"), icon_box(default), "outside any layout: default control size");
+[m[31m-    assert_eq!(w("toolbar"), icon_box(Size::Xs), "toolbar recipe makes it compact");
+[m[31m-    assert_eq!(w("explicit"), icon_box(Size::Lg), "explicit prop is an escape hatch");
+[m[32m+    assert_eq!(
+[m[32m+        w("plain"),
+[m[32m+        icon_box(default),
+[m[32m+        "outside any layout: default control size"
+[m[32m+    );
+[m[32m+    assert_eq!(
+[m[32m+        w("toolbar"),
+[m[32m+        icon_box(Size::Xs),
+[m[32m+        "toolbar recipe makes it compact"
+[m[32m+    );
+[m[32m+    assert_eq!(
+[m[32m+        w("explicit"),
+[m[32m+        icon_box(Size::Lg),
+[m[32m+        "explicit prop is an escape hatch"
+[m[32m+    );
+[m }
+ 
+Diff in /home/dan/orca/workspaces/anteater/feat-devtools/crates/core/src/theme.rs:46:
+         use crate::{Density, Emphasis, StylePatch, SurfaceKind};
+         Recipes {
+             page: StylePatch::new().density(Density::Comfortable),
+[31m-            toolbar: StylePatch::new().control_size(Size::Xs).emphasis(Emphasis::Quiet),
+[m[31m-            form: StylePatch::new().control_size(Size::Sm).emphasis(Emphasis::Default),
+[m[32m+            toolbar: StylePatch::new()
+[m[32m+                .control_size(Size::Xs)
+[m[32m+                .emphasis(Emphasis::Quiet),
+[m[32m+            form: StylePatch::new()
+[m[32m+                .control_size(Size::Sm)
+[m[32m+                .emphasis(Emphasis::Default),
+[m             card: StylePatch::new().surface(SurfaceKind::Raised),
+[31m-            sidebar: StylePatch::new().surface(SurfaceKind::Sunken).control_size(Size::Sm).emphasis(Emphasis::Quiet),
+[m[31m-            table: StylePatch::new().density(Density::Compact).emphasis(Emphasis::Quiet),
+[m[32m+            sidebar: StylePatch::new()
+[m[32m+                .surface(SurfaceKind::Sunken)
+[m[32m+                .control_size(Size::Sm)
+[m[32m+                .emphasis(Emphasis::Quiet),
+[m[32m+            table: StylePatch::new()
+[m[32m+                .density(Density::Compact)
+[m[32m+                .emphasis(Emphasis::Quiet),
+[m         }
+     };
+ }
+Diff in /home/dan/orca/workspaces/anteater/feat-devtools/crates/test/src/snapshot.rs:92:
+     /// GPUI backends anti-alias curves slightly differently, so each keeps its own goldens
+     /// rather than hiding real differences behind a loose tolerance.
+     pub fn new(dir: impl Into<PathBuf>) -> Self {
+[31m-        let backend = if gpui_kit::GPUI_FAST { "gpui-fast" } else { "upstream" };
+[m[31m-        Self { dir: dir.into().join(backend), tolerance: Tolerance::DEFAULT, update: false }
+[m[32m+        let backend = if gpui_kit::GPUI_FAST {
+[m[32m+            "gpui-fast"
+[m[32m+        } else {
+[m[32m+            "upstream"
+[m[32m+        };
+[m[32m+        Self {
+[m[32m+            dir: dir.into().join(backend),
+[m[32m+            tolerance: Tolerance::DEFAULT,
+[m[32m+            update: false,
+[m[32m+        }
+[m     }
+ 
+     /// Opt-in convenience for test binaries: `update` when `GUIRAFFE_UPDATE_SNAPSHOTS=1`.
+Diff in /home/dan/orca/workspaces/anteater/feat-devtools/crates/test/tests/snapshot.rs:52:
+         .map(|e| e.to_string())
+         .unwrap_or_default();
+     assert!(err.contains("differs"), "{err}");
+[31m-    let backend = if gpui_kit::GPUI_FAST { "gpui-fast" } else { "upstream" };
+[m[31m-    assert!(dir.path().join(backend).join("button/blue.actual.png").exists());
+[m[31m-    assert!(dir.path().join(backend).join("button/blue.diff.png").exists());
+[m[32m+    let backend = if gpui_kit::GPUI_FAST {
+[m[32m+        "gpui-fast"
+[m[32m+    } else {
+[m[32m+        "upstream"
+[m[32m+    };
+[m[32m+    assert!(
+[m[32m+        dir.path()
+[m[32m+            .join(backend)
+[m[32m+            .join("button/blue.actual.png")
+[m[32m+            .exists()
+[m[32m+    );
+[m[32m+    assert!(
+[m[32m+        dir.path()
+[m[32m+            .join(backend)
+[m[32m+            .join("button/blue.diff.png")
+[m[32m+            .exists()
+[m[32m+    );
+[m     // Accepting updates the golden.
+     let accept = SnapshotConfig {
+         update: true,

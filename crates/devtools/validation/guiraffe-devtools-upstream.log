@@ -1,0 +1,30 @@
+   Compiling guiraffe-devtools v0.1.0 (/home/dan/orca/workspaces/anteater/feat-devtools/crates/devtools)
+    Finished `test` profile [unoptimized] target(s) in 4.79s
+     Running unittests src/lib.rs (target/debug/deps/guiraffe_devtools-7b198a97239a17ac)
+
+running 4 tests
+test state::tests::snapshots_survive_eviction_and_restore_branches_history ... ok
+test model::tests::diff_preserves_null_and_escapes_json_pointers ... ok
+test model::tests::rolling_histogram_percentiles_and_empty_log ... ok
+test view::tests::populated_profiler_snapshots ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+
+     Running tests/panels.rs (target/debug/deps/panels-a5b26cd7cb95d661)
+
+running 4 tests
+test store_interceptor_jump_and_eviction ... ok
+test root_focus_supports_shortcut_without_a_focused_app_control ... ok
+test keyboard_toggle_polling_and_controls_preserve_app_renders ... ok
+test panels_in_both_schemes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+
+   Doc-tests guiraffe_devtools
+
+running 1 test
+test crates/devtools/src/view.rs - view::Devtools (line 69) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 1.30s; merged doctests compilation took 1.29s
