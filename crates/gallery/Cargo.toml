@@ -25,6 +25,7 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
 
 [features]
-default = ["gpui-fast"]
-# Apps default to the gpui-fast backend (DESIGN §2c): retained rendering.
+# Run with `cargo run -p guiraffe-gallery --features gpui-fast` (recommended backend for apps,
+# DESIGN §2c). Not a default: inside the library workspace a default backend feature would be
+# unified into every crate's build and silently disable upstream-backend testing.
 gpui-fast = ["gpui-kit/gpui-fast"]
