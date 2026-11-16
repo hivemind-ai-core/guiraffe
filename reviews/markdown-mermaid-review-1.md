@@ -1,4 +1,7 @@
-# Markdown + Mermaid review #1: BLOCKED (not merged)
+# Markdown + Mermaid review #1: merged after foreman fixes (1-3, 9, part of 11)
+Fixed by foreman: streaming is tail-only and coalesced, proven equal to a full analysis for chunk sizes 1-64; the text view gets suffix-only pushes; unfinished mermaid fences are held back (the detector returned the source length; fixed); `settled_prefix` treated unterminated lines as settled (fixed); links are inert without a host handler (Controls would otherwise open_url).
+Open: 4, 5, 6, 7, 8, 10, the rest of 11.
+
 Must fix:
 1. Streaming re-parses everything: the Append path does set_text plus a full Document::analyze per chunk, and old tasks aren't cancelled. Use push_str with the tail, analyze from settled_prefix, coalesce, and keep a single in-flight task. Wire up the unused settled_prefix, coalesce_delay and unfinished_mermaid_fence.
 2. A streaming mermaid fence creates a new viewer and engine per token (the id is a content hash). Key by fence position, and hold back unfinished fences.
