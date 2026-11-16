@@ -143,6 +143,35 @@ pub fn regressed(ci: Interval, threshold: f64) -> bool {
     ci.low > threshold
 }
 
+/// Statistical classification, using symmetric slowdown and speedup thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Change {
+    Regression,
+    Improvement,
+    Uncertain,
+}
+impl Change {
+    /// Human-readable comparison table status.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Regression => "REGRESSION",
+            Self::Improvement => "improvement",
+            Self::Uncertain => "pass",
+        }
+    }
+}
+/// Classify only changes whose entire confidence interval exceeds a threshold.
+pub fn classify(ci: Interval, threshold: f64) -> Change {
+    if regressed(ci, threshold) {
+        Change::Regression
+    } else if ci.high < -threshold {
+        Change::Improvement
+    } else {
+        Change::Uncertain
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +318,49 @@ mod tests {
     #[test]
     fn nonrepresentable_deviations_fail_instead_of_emitting_infinity() {
         assert!(summarize(&[-f64::MAX, f64::MAX, f64::MAX], 100, 1).is_err());
+    }
+    #[test]
+    fn improvements_require_entire_interval_below_negative_threshold() {
+        assert_eq!(
+            classify(
+                Interval {
+                    low: -0.5,
+                    high: -0.2
+                },
+                0.1
+            ),
+            Change::Improvement
+        );
+        assert_eq!(
+            classify(
+                Interval {
+                    low: -0.5,
+                    high: -0.1
+                },
+                0.1
+            ),
+            Change::Uncertain
+        );
+        assert_eq!(
+            classify(
+                Interval {
+                    low: -0.5,
+                    high: 0.1
+                },
+                0.1
+            ),
+            Change::Uncertain
+        );
+        assert_eq!(
+            classify(
+                Interval {
+                    low: 0.2,
+                    high: 0.5
+                },
+                0.1
+            ),
+            Change::Regression
+        );
+        assert_eq!(Change::Improvement.label(), "improvement");
     }
 }

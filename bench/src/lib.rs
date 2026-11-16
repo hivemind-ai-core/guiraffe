@@ -10,7 +10,7 @@ use std::{
     fs,
     path::Path,
     process::Command,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 /// Reproducible bootstrap configuration used by baseline and compare.
@@ -129,20 +129,43 @@ pub fn run(suite: Suite, meta: Metadata, samples: usize, iterations: usize) -> R
 
 /// Low-level sampler used by interleaved comparison (one sample per subprocess).
 pub fn measure(suite: Suite, samples: usize, iterations: usize) -> Result<Vec<f64>> {
+    measure_cancellable(suite, samples, iterations, || false)
+}
+
+/// Sample with cancellation checks outside measured batches. Each sample runs at
+/// least 1 ms, repeating `iterations`-sized batches to avoid clock quantization.
+/// `iterations` is a minimum batch size, not a fixed final invocation count.
+pub fn measure_cancellable(
+    suite: Suite,
+    samples: usize,
+    iterations: usize,
+    cancelled: impl Fn() -> bool,
+) -> Result<Vec<f64>> {
     ensure!(
         iterations > 0 && samples > 0,
         "iterations and samples must be positive"
     );
+    ensure!(!cancelled(), "benchmark interrupted");
     for _ in 0..iterations {
         (suite.run)();
     }
     let mut values = Vec::with_capacity(samples);
     for _ in 0..samples {
-        let start = Instant::now();
-        for _ in 0..iterations {
-            (suite.run)();
+        ensure!(!cancelled(), "benchmark interrupted");
+        let mut elapsed = Duration::ZERO;
+        let mut completed = 0_usize;
+        while elapsed < Duration::from_millis(1) {
+            ensure!(!cancelled(), "benchmark interrupted");
+            let start = Instant::now();
+            for _ in 0..iterations {
+                (suite.run)();
+            }
+            elapsed += start.elapsed();
+            completed = completed
+                .checked_add(iterations)
+                .context("iteration count overflow")?;
         }
-        values.push(start.elapsed().as_nanos() as f64 / iterations as f64);
+        values.push(elapsed.as_secs_f64() * 1e9 / completed as f64);
     }
     Ok(values)
 }
@@ -220,5 +243,38 @@ mod tests {
         assert!(measure(suite, 0, 1).is_err());
         assert!(measure(suite, 1, 0).is_err());
         assert_eq!(measure(suite, 10, 1).map(|v| v.len()).ok(), Some(10));
+    }
+    #[test]
+    fn tiny_workloads_extend_samples_and_remain_positive() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        fn tiny() {
+            CALLS.fetch_add(1, Ordering::Relaxed);
+        }
+        let start = Instant::now();
+        let values = measure(
+            Suite {
+                name: "tiny",
+                run: tiny,
+            },
+            10,
+            1,
+        )?;
+        assert!(start.elapsed() >= Duration::from_millis(10));
+        assert!(CALLS.load(Ordering::Relaxed) > 11);
+        assert!(values.iter().all(|v| v.is_finite() && *v > 0.));
+        assert!(
+            measure_cancellable(
+                Suite {
+                    name: "noop",
+                    run: || {}
+                },
+                10,
+                1,
+                || true
+            )
+            .is_err()
+        );
+        Ok(())
     }
 }
