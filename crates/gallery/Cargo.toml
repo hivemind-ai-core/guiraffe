@@ -1,6 +1,6 @@
 [package]
 name = "guiraffe-gallery"
-description = "Storybook / gallery app showcasing every guiraffe widget."
+description = "Gallery / reference app showcasing GUIraffe: components, state, router, motion, flow, overlays, windows."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,13 +11,20 @@ workspace = true
 [dependencies]
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
-guiraffe-layout.workspace = true
 guiraffe-components.workspace = true
-guiraffe-overlays.workspace = true
+guiraffe-motion.workspace = true
+guiraffe-state.workspace = true
+guiraffe-router.workspace = true
 guiraffe-windows.workspace = true
-guiraffe-markdown = { workspace = true, features = ["mermaid"] }
-guiraffe-mermaid.workspace = true
+guiraffe-overlays.workspace = true
 guiraffe-flow.workspace = true
+anyhow.workspace = true
 
 [dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
 
+[features]
+default = ["gpui-fast"]
+# Apps default to the gpui-fast backend (DESIGN §2c): retained rendering.
+gpui-fast = ["gpui-kit/gpui-fast"]

@@ -2,8 +2,9 @@
 
 use gpui_kit::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, StyleRefinement, Styled,
-    Window, component::IconName, div, prelude::*, px,
+    Window, div, prelude::*, px,
 };
+use gpui_kit::assets::IconName;
 use guiraffe_core::{ColorName, Size, Variant};
 
 use crate::style::{hsla, radius, variant};
@@ -143,7 +144,7 @@ impl RenderOnce for ActionIcon {
 
 /// The standard × button (dialogs, pills, notifications).
 pub fn close_button(id: impl Into<ElementId>) -> ActionIcon {
-    ActionIcon::new(id, IconName::Close)
+    ActionIcon::new(id, IconName::X)
         .variant(Variant::Subtle)
         .color(ColorName::Gray)
         .size(Size::Sm)

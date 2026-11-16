@@ -3322,14 +3322,16 @@ dependencies = [
 name = "guiraffe-gallery"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui-kit",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-flow",
- "guiraffe-layout",
- "guiraffe-markdown",
- "guiraffe-mermaid",
+ "guiraffe-motion",
  "guiraffe-overlays",
+ "guiraffe-router",
+ "guiraffe-state",
+ "guiraffe-test",
  "guiraffe-windows",
 ]
 
