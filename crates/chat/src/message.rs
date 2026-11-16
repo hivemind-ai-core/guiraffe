@@ -373,12 +373,21 @@ impl Render for ToolCard {
             .child(
                 crate::style::button("toggle-tool", Variant::Subtle, Some(color), cx)
                     .accessibility_label(format!("{} · {}", self.tool.name, status))
-                    .child(div().w_full().min_w_0().text_ellipsis().child(format!(
-                        "{} {} · {}",
-                        if self.open { "▾" } else { "▸" },
-                        self.tool.name,
-                        status
-                    )))
+                    .child(
+                        div()
+                            .id("tool-header-label")
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
+                            .text_left()
+                            .text_ellipsis()
+                            .child(format!(
+                                "{} {} · {}",
+                                if self.open { "▾" } else { "▸" },
+                                self.tool.name,
+                                status
+                            )),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open = !this.open;
                         cx.notify();
