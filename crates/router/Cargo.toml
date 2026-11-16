@@ -1,0 +1,19 @@
+[package]
+name = "guiraffe-router"
+description = "Typed, TanStack-style routing for GPUI apps: typed routes, per-window history, guards, deep links."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-state.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-state/gpui-fast"]
