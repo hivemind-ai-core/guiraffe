@@ -1,0 +1,29 @@
+[package]
+name = "guiraffe-chat"
+description = "Retained, virtualized agent chat with bounded streaming and native Markdown."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-components.workspace = true
+guiraffe-motion.workspace = true
+guiraffe-overlays.workspace = true
+crossbeam-queue = "0.3.12"
+serde.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
+
+[[bench]]
+name = "handoff"
+harness = false

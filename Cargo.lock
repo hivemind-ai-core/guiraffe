@@ -3283,6 +3283,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-chat"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-queue",
+ "gpui-kit",
+ "guiraffe-components",
+ "guiraffe-core",
+ "guiraffe-motion",
+ "guiraffe-overlays",
+ "guiraffe-test",
+ "serde",
+]
+
+[[package]]
 name = "guiraffe-components"
 version = "0.1.0"
 dependencies = [
