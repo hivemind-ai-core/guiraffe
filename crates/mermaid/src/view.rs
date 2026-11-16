@@ -385,6 +385,7 @@ impl Render for MermaidViewState {
         };
         div()
             .id(self.id.clone())
+            .test_support()
             .flex()
             .flex_col()
             .size_full()
@@ -402,7 +403,6 @@ impl Render for MermaidViewState {
                 cx.listener(|this, event: &MouseMoveEvent, _, cx| this.on_mouse_move(event, cx)),
             )
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| this.on_scroll(event, cx)))
-            .test_support()
             .child(
                 div()
                     .relative()

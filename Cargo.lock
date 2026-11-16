@@ -3218,6 +3218,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-mermaid",
+ "markdown",
 ]
 
 [[package]]
