@@ -27,3 +27,6 @@ pub type Modals = OverlayHost;
 pub mod modals;
 pub mod notifications;
 pub use host::OverlayError as Error;
+mod floating;
+pub use floating::FloatingTooltip;
+

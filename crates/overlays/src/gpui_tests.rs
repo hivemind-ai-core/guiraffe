@@ -890,3 +890,47 @@ fn review_10_spotlight_prepares_text_once_and_does_not_search_on_submit(cx: &mut
         "submit must use the cached query result"
     );
 }
+
+struct PositionedTooltip;
+impl Render for PositionedTooltip {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let viewport = window.viewport_size();
+        div().size_full().child(
+            FloatingTooltip::new(
+                "review-tooltip",
+                "Floating content",
+                position::Rect {
+                    x: 100.,
+                    y: f32::from(viewport.height) - 10.,
+                    width: 20.,
+                    height: 10.,
+                },
+            )
+            .options(position::FloatingOptions {
+                flip: false,
+                ..Default::default()
+            }),
+        )
+    }
+}
+#[gpui_kit::test]
+fn review_8_tooltip_ui_uses_cross_axis_solver(cx: &mut TestAppContext) {
+    cx.update(init);
+    let (handle, _) = cx
+        .update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|_| PositionedTooltip)
+            })
+        })
+        .expect("window");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find("review-tooltip").bounds();
+        assert_eq!(
+            bounds.origin.y,
+            window.viewport_size().height + px(position::FloatingOptions::default().gap),
+            "main axis must stay beyond its anchor when flipping is disabled"
+        );
+    })
+    .expect("position");
+}
