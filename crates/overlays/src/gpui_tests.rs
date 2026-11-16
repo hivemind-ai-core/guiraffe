@@ -1160,3 +1160,33 @@ fn review_5_drawer_and_modals_rechain_focus_on_middle_removal(cx: &mut TestAppCo
     })
     .expect("window");
 }
+#[gpui_kit::test]
+fn review_5_removing_modal_rechains_focused_child_handles(cx: &mut TestAppContext) {
+    use gpui_kit::component::input::{Input, InputState};
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let original = window.focused(cx);
+        let input = cx.new(|cx| InputState::new(window, cx));
+        let child = input.clone();
+        let first = OverlayHost::open(window, cx, Policy::default(), move |dialog, _, _| {
+            dialog.child(Input::new(&child))
+        })
+        .expect("first");
+        window.render_frame(cx);
+        input.update(cx, |input, cx| input.focus(window, cx));
+        let second = OverlayHost::open(window, cx, Policy::default(), |dialog, _, _| {
+            dialog.title("second")
+        })
+        .expect("second");
+        window.render_frame(cx);
+        OverlayHost::close(window, cx, first).expect("remove first");
+        OverlayHost::close(window, cx, second).expect("remove second");
+        assert_eq!(
+            window.focused(cx),
+            original,
+            "restoration must skip child focus handles inside removed layers"
+        );
+    })
+    .expect("window");
+}

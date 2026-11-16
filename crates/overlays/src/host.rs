@@ -159,7 +159,11 @@ impl OverlayHost {
                 let owns_focus = focus.contains_focused(window, cx)
                     || window.focused(cx).as_ref() == Some(&focus);
                 for (_, prior) in host.focus_chain.values_mut() {
-                    if prior.as_ref().and_then(|p| p.upgrade()).as_ref() == Some(&focus) {
+                    if prior
+                        .as_ref()
+                        .and_then(|p| p.upgrade())
+                        .is_some_and(|prior| prior == focus || focus.contains(&prior, window))
+                    {
                         *prior = previous.clone();
                     }
                 }
@@ -167,8 +171,7 @@ impl OverlayHost {
                     .native_restore_previous
                     .as_ref()
                     .and_then(|previous| previous.upgrade())
-                    .as_ref()
-                    == Some(&focus)
+                    .is_some_and(|prior| prior == focus || focus.contains(&prior, window))
                 {
                     host.native_restore_previous = previous.clone();
                 }
