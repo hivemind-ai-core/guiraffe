@@ -267,7 +267,7 @@ mod tests {
             v.release();
             v.drag_to(a.x(0.5), r.y(0.0), cx); // released: ignored
         });
-        let k = view.read_with(&cx, |v, _| v.curve().keys()[1].clone());
+        let k = view.read_with(&cx, |v, _| v.curve().keys()[1]);
         assert!(
             (k.t - 1.2).abs() < 1e-9 && (k.v - 0.5).abs() < 1e-9,
             "{k:?}"
