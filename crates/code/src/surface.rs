@@ -668,6 +668,7 @@ impl RenderOnce for CodeViewer {
         let down = h.clone();
         let motion = h.clone();
         let up = h.clone();
+        let up_out = h.clone();
         let key = h.clone();
         let leave = h.clone();
         let mut root = div()
@@ -728,6 +729,9 @@ impl RenderOnce for CodeViewer {
                 },
             )
             .on_mouse_move(move |event: &MouseMoveEvent, _, cx| {
+                if event.pressed_button != Some(MouseButton::Left) {
+                    motion.shared.dragging.set(None);
+                }
                 let position = motion.hit(event.position);
                 if let Some(start) = motion.shared.dragging.get()
                     && let Some(end) = position
@@ -739,6 +743,9 @@ impl RenderOnce for CodeViewer {
             })
             .on_mouse_up(MouseButton::Left, move |_, _, _| {
                 up.shared.dragging.set(None);
+            })
+            .on_mouse_up_out(MouseButton::Left, move |_, _, _| {
+                up_out.shared.dragging.set(None);
             })
             .on_hover(move |hovered, _, cx| {
                 if !hovered {

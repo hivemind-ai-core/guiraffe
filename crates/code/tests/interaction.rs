@@ -489,3 +489,34 @@ fn trace_anchors_outside_the_horizontal_viewport_are_hidden(cx: &mut TestAppCont
     vcx.run_until_parked();
     assert!(code.anchor_in_window(Position::new(0, 4)).is_none());
 }
+
+#[gpui_kit::test]
+fn releasing_outside_stops_mouse_selection(cx: &mut TestAppContext) {
+    let (code, _, vcx) = mount(cx, Arc::from("let value = 42;\n"));
+    let start = code
+        .anchor_in_window(Position::new(0, 4))
+        .unwrap_or_else(|| panic!("visible start"));
+    let end = code
+        .anchor_in_window(Position::new(0, 9))
+        .unwrap_or_else(|| panic!("visible end"));
+    let modifiers = gpui_kit::Modifiers::default();
+    vcx.simulate_mouse_down(start, gpui_kit::MouseButton::Left, modifiers);
+    vcx.simulate_mouse_move(end, gpui_kit::MouseButton::Left, modifiers);
+    let bounds = code.bounds();
+    vcx.simulate_mouse_up(
+        gpui_kit::point(
+            bounds.right() + gpui_kit::px(20.),
+            bounds.bottom() + gpui_kit::px(20.),
+        ),
+        gpui_kit::MouseButton::Left,
+        modifiers,
+    );
+    let selected = code.selection();
+    vcx.simulate_mouse_move(start, None, modifiers);
+    vcx.run_until_parked();
+    assert_eq!(
+        code.selection(),
+        selected,
+        "hover after an outside release must not extend the selection"
+    );
+}
