@@ -125,6 +125,18 @@ CI runs the test suite and benchmarks on both backends.
 We also borrow from gpui-fast: its `spring.rs` informs `guiraffe-motion`, its dynamic textures suit
 the flow minimap and mermaid previews, and its hot-reload and bench modules inform our tooling.
 
+## 2d. Static and dynamic UI, context-driven styling, performance architecture
+
+- **Styling is context-driven** (spec/14). The app has a suite of layouts and theme recipes, and widgets inherit
+  density, control size and surface from their container. Per-instance props are escape hatches.
+- **Static UI** (Rust: generics, monomorphised) and **dynamic UI** (a data document, typically designed in
+  Mocket) share one widget vocabulary (spec/10).
+  - A `DataUi` host component embeds a dynamic screen anywhere in a static tree.
+  - Documents are pre-compiled into templates with slot-indexed bindings.
+  - Logic binds by event and data id, and only events and patches cross the boundary, so that logic can later move into wasm.
+- **Performance from day one** (spec/15): few and cheap re-renders, data motion proportional to change, and
+  background work handed to the UI thread through lock-free buffers (double/triple buffering, SPSC rings, Arc swaps).
+
 ## 3. Styling
 
 - **Tokens** (`guiraffe-core`, done): 14 × 10-shade palettes, `Size` scale (spacing, radius,

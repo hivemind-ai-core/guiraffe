@@ -48,7 +48,12 @@ A Component never hides an `Entity` inside itself. When something needs state, i
 - Optional dependencies sit behind cargo features (`markdown/mermaid`, `overlays/desktop`, `e2e`, `devtools`).
 - No crate reads environment variables or files implicitly. Paths come in through config structs.
 
-## 5. Styling
+## 5. Styling (see spec/14-style-context.md)
+
+- **Widgets have no outer spacing.** Layouts own the gaps and padding between things.
+- **Defaults come from the inherited `StyleContext`** (density, control size, surface, emphasis), which layouts
+  and containers set from theme *recipes*. Per-instance props such as `.size()` and `.variant()` are **escape hatches**.
+
 
 - No color or pixel constants in widget code. Everything comes from `GuiraffeTheme`: palettes,
   `Size` scales, the `Variant` resolver, `Surfaces`, shadow and motion tokens.
