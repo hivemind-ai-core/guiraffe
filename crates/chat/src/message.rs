@@ -19,7 +19,8 @@ use std::rc::Rc;
 /// selection state survive scrolling out of view; siblings never read this entity.
 pub struct MessageView {
     pub(crate) data: Message,
-    markdown: Entity<TextViewState>,
+    pub(crate) markdown: Entity<TextViewState>,
+    pub(crate) menu: guiraffe_core::TextMenu,
     tools: Vec<Entity<ToolCard>>,
     reasoning: Option<Entity<Reasoning>>,
     reasoning_subscription: Option<Subscription>,
@@ -75,6 +76,7 @@ impl MessageView {
         Self {
             data,
             markdown,
+            menu: guiraffe_core::TextMenu::new(),
             tools,
             reasoning,
             reasoning_subscription,
@@ -269,7 +271,30 @@ impl Render for MessageView {
                                     .gap(gap)
                                     .children(self.tools.iter().cloned())
                                     .children(self.reasoning.iter().cloned())
-                                    .child(markdown(&self.markdown))
+                                    .child({
+                                        let raw = self.data.text.clone();
+                                        guiraffe_core::text_menu::text_view_menu(
+                                            div().child(markdown(&self.markdown)),
+                                            format!("chat-message/{}", cx.entity_id()),
+                                            &self.menu,
+                                            &self.markdown,
+                                            std::rc::Rc::new(move |_, _| {
+                                                let raw = raw.clone();
+                                                vec![guiraffe_core::TextMenuItem::new(
+                                                    "Copy message",
+                                                    move |_, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                raw.to_string(),
+                                                            ),
+                                                        )
+                                                    },
+                                                )]
+                                            }),
+                                            window,
+                                            cx,
+                                        )
+                                    })
                                     .children(self.data.attachments.iter().map(|a| {
                                         Text::new(format!("↗ {}", a.name))
                                             .dimmed(true)
