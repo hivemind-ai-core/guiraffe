@@ -31,3 +31,4 @@
 - [ ] 6 Flow glitches: edge end overshoots handle; handle/edge stub drawn past node edge; step-edge corners overshoot after zoom/pan · 7 minimap drag-to-pan
 - [ ] 8/9 Gantt + tracks: lock x positions (per item / global) · 10 resize cursor on edges · 11 resize from left edge too (configurable: none/start/end/both)
 - [ ] Integrate GPUI Controls (buttons, form inputs, selects, etc.) + GPUI Kit charts into showcase; every entry needs a live options panel exposing its configuration
+- [ ] chat: Reasoning toggle header centred (same bug as tool header, chat/message.rs); 302/188 contrast-floor failures pinned in core state-token test → fix palette (with Refactoring UI study); §12 widget audit gaps in spec/18 (SegmentedControl/RangeSlider focus grab, bare-div ActionIcon/ChipGroup/Dropzone/sidebar, no a11y roles, timeline pointer-only)
