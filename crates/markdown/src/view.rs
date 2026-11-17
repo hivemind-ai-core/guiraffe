@@ -62,6 +62,7 @@ pub struct MarkdownState {
     /// incremental runs (its settled point belongs to different text).
     replaced: u64,
     stats: MarkdownStats,
+    menu: guiraffe_core::TextMenu,
     /// Markdown extensions, built once so a re-parse never happens because a
     /// host rebuilt the element.
     #[cfg(feature = "mermaid")]
@@ -106,6 +107,7 @@ impl MarkdownState {
             dirty: false,
             replaced: 0,
             stats: MarkdownStats::default(),
+            menu: guiraffe_core::TextMenu::new(),
             #[cfg(feature = "mermaid")]
             extensions: Self::extensions(),
         };
@@ -117,6 +119,11 @@ impl MarkdownState {
     /// reveals.
     pub fn text(&self) -> &Entity<TextViewState> {
         &self.text
+    }
+
+    /// The selection context menu (Copy, Select all) shown on right-click / Shift+F10.
+    pub fn context_menu(&self) -> &guiraffe_core::TextMenu {
+        &self.menu
     }
 
     /// The source currently shown.
@@ -445,7 +452,20 @@ impl RenderOnce for MarkdownView {
         if code_copy {
             view = view.code_block_actions(|code, _, _| copy_button(code));
         }
-        div().w_full().child(view)
+        let root = div().w_full().child(view);
+        if !selectable {
+            return root;
+        }
+        let menu = state.read(cx).menu.clone();
+        guiraffe_core::text_menu::text_view_menu(
+            root,
+            format!("markdown/{id}"),
+            &menu,
+            &text,
+            std::rc::Rc::new(|_, _| Vec::new()),
+            window,
+            cx,
+        )
     }
 }
 

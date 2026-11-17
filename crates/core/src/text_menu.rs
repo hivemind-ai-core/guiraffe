@@ -287,3 +287,85 @@ mod tests {
         assert!(spec.items()[0].as_ref().is_some_and(|i| i.enabled));
     }
 }
+
+/// Renders a [`TextMenu`]'s popup layer; the owner entity notified on open/close.
+pub struct TextMenuLayer {
+    pub menu: TextMenu,
+}
+
+impl gpui_kit::Render for TextMenuLayer {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        gpui_kit::div().children(self.menu.element())
+    }
+}
+
+/// The standard spec for a Controls `TextView`: Copy the rendered selection, Select all.
+pub fn text_view_spec(
+    state: &Entity<gpui_kit::component::text::TextViewState>,
+    cx: &App,
+) -> TextMenuSpec {
+    let selected = !state.read(cx).selected_text().is_empty();
+    let (copy, all) = (state.clone(), state.clone());
+    TextMenuSpec::new(
+        selected,
+        move |_, cx| {
+            let text = copy.read(cx).selected_text();
+            if !text.is_empty() {
+                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
+            }
+        },
+        move |_, cx| all.update(cx, |s, cx| s.select_all(cx)),
+    )
+}
+
+/// Give a selectable Controls `TextView` (wrapped in `element`) the shared context menu:
+/// right-click opens it at the pointer, Shift+F10 / Menu at the view's top-left while the
+/// text is focused. `key` must be unique and stable per view; `menu` is the view's handle
+/// (keep it in the view's state so hosts and tests can inspect it); `extra` adds entries.
+pub fn text_view_menu(
+    element: gpui_kit::Div,
+    key: impl Into<SharedString>,
+    menu: &TextMenu,
+    state: &Entity<gpui_kit::component::text::TextViewState>,
+    extra: Rc<dyn Fn(&mut Window, &mut App) -> Vec<TextMenuItem>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui_kit::Div {
+    use gpui_kit::{InteractiveElement, MouseButton, MouseDownEvent, Styled};
+    let key: SharedString = key.into();
+    let layer = window.use_keyed_state(
+        gpui_kit::ElementId::Name(format!("guiraffe-text-menu/{key}").into()),
+        cx,
+        {
+            let menu = menu.clone();
+            |_, _| TextMenuLayer { menu }
+        },
+    );
+    let menu = layer.read(cx).menu.clone();
+    let owner = layer.entity_id();
+    let open = {
+        let (menu, state) = (menu.clone(), state.clone());
+        move |position: Point<Pixels>, window: &mut Window, cx: &mut App| {
+            let mut spec = text_view_spec(&state, cx);
+            spec.extra.extend(extra(window, cx));
+            let focus = state.read(cx).focus_handle().clone();
+            menu.open(position, &spec, owner, focus, window, cx);
+        }
+    };
+    let open = Rc::new(open);
+    let (mouse, keys, bounds_of) = (open.clone(), open, state.clone());
+    element
+        .relative()
+        .on_mouse_down(MouseButton::Right, move |e: &MouseDownEvent, window, cx| {
+            mouse(e.position, window, cx);
+            cx.stop_propagation();
+        })
+        .on_key_down(move |e: &KeyDownEvent, window, cx| {
+            if is_menu_key(e) {
+                let origin = bounds_of.read(cx).bounds().origin;
+                keys(origin + gpui_kit::point(px(8.), px(8.)), window, cx);
+                cx.stop_propagation();
+            }
+        })
+        .child(layer)
+}
