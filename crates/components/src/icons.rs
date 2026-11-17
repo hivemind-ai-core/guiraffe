@@ -152,7 +152,9 @@ impl RenderOnce for ActionIcon {
         let label = self
             .label
             .unwrap_or_else(|| SharedString::from(format!("{:?}", self.icon)));
+        let r = radius(None, cx);
         let press = Press::new(colors)
+            .radius(r)
             .disabled(self.disabled)
             .focusable(self.focusable)
             .label(label);
@@ -166,11 +168,11 @@ impl RenderOnce for ActionIcon {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(radius(None, cx))
+            .rounded(r)
             .border_1()
             .text_size(px(size.icon_size()))
             .child(self.icon)
-            .press(&press, &focus)
+            .press(&press, &focus, window)
             .when_some(on_click, |el, f| el.on_press(disabled, f));
         crate::style::refine(el, &self.style)
     }

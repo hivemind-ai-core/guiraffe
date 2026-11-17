@@ -12,10 +12,10 @@
 //! - an AccessKit role, label and selected / toggled / disabled state.
 
 use gpui_kit::{
-    A11ySubtreeBuilder, AnyElement, App, Bounds, BoxShadow, ClickEvent, Element, ElementId,
-    FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, MouseButton, ParentElement, Pixels, Role, SharedString,
-    StatefulInteractiveElement, StyleRefinement, Styled, Toggled, Window, accesskit, point, px,
+    A11ySubtreeBuilder, AnyElement, App, Bounds, ClickEvent, Element, ElementId, FocusHandle,
+    GlobalElementId, InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    MouseButton, ParentElement, Pixels, Role, SharedString, StatefulInteractiveElement,
+    StyleRefinement, Styled, Toggled, Window, accesskit, px,
 };
 
 use crate::{
@@ -64,15 +64,39 @@ impl GuiraffeTheme {
     }
 }
 
-/// Focus-visible ring drawn inside the border box (no layout shift), 2px like Kit.
-pub fn focus_ring(s: StyleRefinement, ring: Rgb) -> StyleRefinement {
-    s.shadow(vec![BoxShadow {
-        color: ring.to_hsla(),
-        offset: point(px(0.), px(0.)),
-        blur_radius: px(0.),
-        spread_radius: px(2.),
-        inset: true,
-    }])
+/// Focus ring stroke width (spec/00 §12.2).
+pub const RING_WIDTH: f32 = 2.0;
+/// Distance the ring's box extends past the control's box (§12.2 `inset: -offset`).
+pub const RING_OFFSET: f32 = 2.0;
+
+/// Whether a focus ring should show now: focused, and focus came from the keyboard.
+pub fn ring_visible(focus: &FocusHandle, window: &Window) -> bool {
+    focus.is_focused(window) && window.last_input_was_keyboard()
+}
+
+/// The one shared focus ring (spec/00 §12.2): an absolutely positioned, non-interactive
+/// overlay outside the control's box (`inset: -RING_OFFSET`, radius = `radius + RING_OFFSET`,
+/// 2px stroke in `state(FocusRing)` color). It is separate from the control's own border and
+/// never takes part in layout, so focusing never moves or resizes anything. The element gets
+/// `relative()` so the overlay anchors to it; it must not clip overflow.
+pub fn focus_ring<E: ParentElement + Styled>(el: E, visible: bool, radius: Pixels, ring: Rgb) -> E {
+    let el = el.relative();
+    if !visible {
+        return el;
+    }
+    let o = px(RING_OFFSET);
+    el.child(
+        gpui_kit::div()
+            .debug_selector(|| "focus-ring".into())
+            .absolute()
+            .top(-o)
+            .left(-o)
+            .right(-o)
+            .bottom(-o)
+            .rounded(radius + o)
+            .border(px(RING_WIDTH))
+            .border_color(ring.to_hsla()),
+    )
 }
 
 /// How a pressable control behaves and what it tells assistive technology.
@@ -89,6 +113,8 @@ pub struct Press {
     /// Paint colors (rest/hover/pressed or selected/disabled). Off for controls that paint
     /// their own surface and only want behavior + semantics.
     pub paint: bool,
+    /// Control corner radius (the focus ring adds [`RING_OFFSET`]).
+    pub radius: Pixels,
 }
 
 impl Press {
@@ -102,6 +128,7 @@ impl Press {
             selected: None,
             toggled: None,
             paint: true,
+            radius: Pixels::ZERO,
         }
     }
     pub fn disabled(mut self, v: bool) -> Self {
@@ -128,6 +155,10 @@ impl Press {
         self.toggled = Some(v);
         self
     }
+    pub fn radius(mut self, r: Pixels) -> Self {
+        self.radius = r;
+        self
+    }
     pub fn paint(mut self, v: bool) -> Self {
         self.paint = v;
         self
@@ -146,9 +177,9 @@ pub fn keyed_focus(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) 
         .clone()
 }
 
-pub trait PressableExt: StatefulInteractiveElement + Styled {
+pub trait PressableExt: StatefulInteractiveElement + Styled + ParentElement {
     /// Apply Kit-equivalent state feedback, opt-in focus and semantics.
-    fn press(mut self, p: &Press, focus: &FocusHandle) -> Self {
+    fn press(mut self, p: &Press, focus: &FocusHandle, window: &Window) -> Self {
         let c = p.colors;
         let h = Rgb::to_hsla;
         let tab = p.is_tab_stop();
@@ -191,9 +222,8 @@ pub trait PressableExt: StatefulInteractiveElement + Styled {
                     .active(move |s| s.bg(h(pressed.background)));
             }
         }
-        let ring = c.ring;
-        self.track_focus(&focus.clone().tab_stop(tab))
-            .focus_visible(move |s| focus_ring(s, ring))
+        let el = self.track_focus(&focus.clone().tab_stop(tab));
+        focus_ring(el, ring_visible(focus, window), p.radius, c.ring)
             .cursor_pointer()
             // Like Kit's Button: a pointer press never takes keyboard focus.
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
@@ -209,7 +239,7 @@ pub trait PressableExt: StatefulInteractiveElement + Styled {
     }
 }
 
-impl<E: StatefulInteractiveElement + Styled> PressableExt for E {}
+impl<E: StatefulInteractiveElement + Styled + ParentElement> PressableExt for E {}
 
 /// Marks the wrapped element's accessibility node disabled. GPUI 0.3 has no
 /// `aria_disabled` setter (Kit's own wrapper is crate-private), so GUIraffe carries this one.

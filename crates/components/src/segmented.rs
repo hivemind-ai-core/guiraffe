@@ -1,15 +1,19 @@
 //! SegmentedControl: a Control (state entity + element) whose active indicator slides with
-//! a spring. Only the control's own entity re-renders while it animates (conventions §6.5),
-//! and it is keyboard-operable (←/→/Home/End when focused).
+//! a spring. Only the control's own entity re-renders while it animates (conventions §6.5).
+//!
+//! Interaction (spec/00 §12): a pointer press selects without taking keyboard focus; the
+//! control is a tab stop only inside [`guiraffe_core::focus_scope`] or when opted in with
+//! [`SegmentedControl::set_focusable`], and then ←/→/Home/End move the selection and a
+//! focus-visible ring is drawn. AccessKit: `RadioGroup` of `RadioButton`s with selected state.
 
 use std::{cell::RefCell, rc::Rc};
 
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    KeyBinding, ParentElement, Pixels, Render, SharedString, Window, actions, canvas, div,
-    prelude::*, px,
+    KeyBinding, MouseButton, ParentElement, Pixels, Render, Role, SharedString, TestSupportExt,
+    Window, actions, canvas, div, prelude::*, px,
 };
-use guiraffe_core::Size;
+use guiraffe_core::{A11yDisabledExt, ColorName, GuiraffeTheme, Size, StateKind, Variant};
 use guiraffe_motion::{Animated, Spring, Timing};
 
 use crate::style::{hsla, metrics, radius, shadows, surfaces};
@@ -49,6 +53,9 @@ pub struct SegmentedControl {
     /// `None`: inherit the context's control size.
     size: Option<Size>,
     full_width: bool,
+    disabled: bool,
+    /// `None`: a tab stop only inside a focus scope.
+    focusable: Option<bool>,
     focus: FocusHandle,
     /// Indicator (left, width) relative to the control's border box.
     indicator: Animated<(f32, f32)>,
@@ -83,6 +90,8 @@ impl SegmentedControl {
             selected: 0,
             size: None,
             full_width: false,
+            disabled: false,
+            focusable: None,
             focus: cx.focus_handle(),
             indicator: Animated::new((0.0, 0.0), Timing::Spring(Spring::SNAPPY)),
             laid_out: false,
@@ -124,6 +133,26 @@ impl SegmentedControl {
         }
     }
 
+    /// Disabled: no pointer or keyboard selection, disabled tokens, `not-allowed` cursor.
+    pub fn set_disabled(&mut self, v: bool, cx: &mut Context<Self>) {
+        if self.disabled != v {
+            self.disabled = v;
+            cx.notify();
+        }
+    }
+
+    pub fn disabled(&self) -> bool {
+        self.disabled
+    }
+
+    /// Opt into (or out of) Tab navigation regardless of the enclosing focus scope.
+    pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
+        if self.focusable != v {
+            self.focusable = v;
+            cx.notify();
+        }
+    }
+
     /// Select segment `index` (clamped). Emits [`SegmentedEvent::Changed`] only on change.
     pub fn select(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.items.is_empty() {
@@ -139,15 +168,27 @@ impl SegmentedControl {
     }
 
     fn on_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         self.select(self.selected.saturating_sub(1), cx);
     }
     fn on_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         self.select(self.selected + 1, cx);
     }
     fn on_first(&mut self, _: &SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         self.select(0, cx);
     }
     fn on_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         self.select(self.items.len().saturating_sub(1), cx);
     }
 
@@ -184,11 +225,23 @@ impl Render for SegmentedControl {
             l.segments.resize(self.items.len(), (0.0, 0.0));
         }
         let selected = self.selected;
-        let focused = self.focus.is_focused(window);
+        let disabled = self.disabled;
+        let theme = GuiraffeTheme::global(cx);
+        let ring = theme
+            .state(StateKind::FocusRing, Variant::Default, None)
+            .border;
+        let off = theme.state(StateKind::Disabled, Variant::Default, None);
+        let quiet = theme.press_colors(Variant::Subtle, Some(ColorName::Gray));
+        let tab = !disabled && guiraffe_core::tab_stop(self.focusable);
+        let ring_on = guiraffe_core::ring_visible(&self.focus, window);
+        let count = self.items.len();
         let entity = cx.entity();
         div()
             .id("segmented")
-            .track_focus(&self.focus)
+            .a11y_disabled(disabled)
+            .test_support()
+            .role(Role::RadioGroup)
+            .track_focus(&self.focus.clone().tab_stop(tab))
             .key_context(CONTEXT)
             .on_action(cx.listener(Self::on_prev))
             .on_action(cx.listener(Self::on_next))
@@ -198,12 +251,7 @@ impl Render for SegmentedControl {
             .flex()
             .p(px(pad))
             .rounded(r)
-            .bg(hsla(s.track))
-            .when(focused, |el| {
-                el.border_1().border_color(hsla(
-                    guiraffe_core::GuiraffeTheme::global(cx).primary_color(),
-                ))
-            })
+            .bg(hsla(if disabled { off.background } else { s.track }))
             .when(self.full_width, |el| el.w_full())
             .when(self.laid_out && !self.items.is_empty(), |el| {
                 el.child(
@@ -221,8 +269,21 @@ impl Render for SegmentedControl {
             })
             .children(self.items.iter().enumerate().map(|(i, label)| {
                 let layout = self.layout.clone();
+                let on = i == selected;
                 div()
                     .id(("segment", i))
+                    .a11y_disabled(disabled)
+                    .test_support()
+                    .role(Role::RadioButton)
+                    .aria_label(label.clone())
+                    .aria_selected(on)
+                    .aria_toggled(if on {
+                        gpui_kit::Toggled::True
+                    } else {
+                        gpui_kit::Toggled::False
+                    })
+                    .aria_position_in_set(i + 1)
+                    .aria_size_of_set(count)
                     .relative()
                     .flex_1()
                     .px(px(size.spacing()))
@@ -230,9 +291,22 @@ impl Render for SegmentedControl {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .cursor_pointer()
+                    .rounded(r)
                     .text_size(px(size.font_size()))
-                    .text_color(hsla(if i == selected { s.text } else { s.dimmed }))
+                    .map(|el| {
+                        if disabled {
+                            el.cursor_not_allowed().text_color(hsla(off.foreground))
+                        } else {
+                            let (hover, pressed) = (quiet.hover.background, quiet.pressed);
+                            el.cursor_pointer()
+                                .text_color(hsla(if on { s.text } else { s.dimmed }))
+                                // The selected segment sits on the raised indicator: no tint.
+                                .when(!on, |el| {
+                                    el.hover(move |st| st.text_color(hsla(s.text)).bg(hsla(hover)))
+                                        .active(move |st| st.bg(hsla(pressed.background)))
+                                })
+                        }
+                    })
                     .child(label.clone())
                     .child(
                         canvas(
@@ -247,10 +321,11 @@ impl Render for SegmentedControl {
                         .absolute()
                         .size_full(),
                     )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        window.focus(&this.focus, cx);
-                        this.select(i, cx);
-                    }))
+                    // A pointer press selects but never takes keyboard focus (§12.3).
+                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .when(!disabled, |el| {
+                        el.on_click(cx.listener(move |this, _, _, cx| this.select(i, cx)))
+                    })
             }))
             // Last child: prepaints after every segment, so the target is computed once per frame.
             .child(
@@ -271,6 +346,8 @@ impl Render for SegmentedControl {
                 .left_0()
                 .size_full(),
             )
+            // Last: the ring paints over the segments, outside the box (§12.2).
+            .map(|el| guiraffe_core::focus_ring(el, ring_on, r, ring))
     }
 }
 

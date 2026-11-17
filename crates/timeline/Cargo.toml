@@ -14,7 +14,7 @@ guiraffe-core.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
+guiraffe-test = { path = "../test", features = ["snapshot", "render", "layout"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]

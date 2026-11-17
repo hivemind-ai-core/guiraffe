@@ -2,8 +2,8 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{
-    AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render, Role,
-    Styled, TestAppContext, VisualTestContext, Window,
+    AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ParentElement, Render, Role, Styled, TestAppContext, VisualTestContext, Window,
     assets::IconName,
     component::input::{Input, InputState},
     div, px,
@@ -11,6 +11,7 @@ use gpui_kit::{
 };
 use guiraffe_components::{ActionIcon, Pill, close_button};
 use guiraffe_core::focus_scope;
+use guiraffe_test::layout::{assert_same_bounds, capture};
 
 struct Host {
     input: Entity<InputState>,
@@ -36,9 +37,11 @@ impl Render for Host {
                     .flex()
                     .gap(px(8.))
                     .child(
-                        ActionIcon::new("fav", IconName::Heart)
-                            .label("Favorite")
-                            .on_click(move |_, _, _| h.set(h.get() + 1)),
+                        div().debug_selector(|| "fav-box".into()).child(
+                            ActionIcon::new("fav", IconName::Heart)
+                                .label("Favorite")
+                                .on_click(move |_, _, _| h.set(h.get() + 1)),
+                        ),
                     )
                     .child(
                         ActionIcon::new("off", IconName::Star)
@@ -46,7 +49,11 @@ impl Render for Host {
                             .disabled(true)
                             .on_click(move |_, _, _| d.set(d.get() + 1)),
                     )
-                    .child(close_button("close"))
+                    .child(
+                        div()
+                            .debug_selector(|| "close-box".into())
+                            .child(close_button("close")),
+                    )
                     .child(Pill::new("pill", "Rust").on_remove(move |_, _, _| r.set(r.get() + 1))),
             ))
     }
@@ -132,4 +139,25 @@ fn roles_and_names(cx: &mut TestAppContext) {
         );
     });
     assert_eq!(host.read_with(vcx, |h, _| h.removed.get()), 1);
+}
+
+#[gpui_kit::test]
+fn focus_hover_and_press_never_move_layout(cx: &mut TestAppContext) {
+    let (vcx, _, _) = setup(cx);
+    let sels = ["fav-box", "close-box"];
+    let base = capture(vcx, &sels);
+    vcx.update(|window, cx| window.hover("fav", cx));
+    assert_same_bounds(vcx, &sels, &base, "hovered");
+    vcx.update(|window, cx| {
+        window.focus_next(cx);
+        // Any keystroke marks the modality as keyboard (as a real Tab would).
+        window.press("f13", cx);
+    });
+    assert!(
+        vcx.debug_bounds("focus-ring").is_some(),
+        "focus-visible ring drawn"
+    );
+    assert_same_bounds(vcx, &sels, &base, "focused via Tab");
+    vcx.update(|window, cx| window.click("fav", cx));
+    assert_same_bounds(vcx, &sels, &base, "clicked");
 }

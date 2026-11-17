@@ -92,8 +92,16 @@ impl SnapshotConfig {
     /// GPUI backends anti-alias curves slightly differently, so each keeps its own goldens
     /// rather than hiding real differences behind a loose tolerance.
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        let backend = if gpui_kit::GPUI_FAST { "gpui-fast" } else { "upstream" };
-        Self { dir: dir.into().join(backend), tolerance: Tolerance::DEFAULT, update: false }
+        let backend = if gpui_kit::GPUI_FAST {
+            "gpui-fast"
+        } else {
+            "upstream"
+        };
+        Self {
+            dir: dir.into().join(backend),
+            tolerance: Tolerance::DEFAULT,
+            update: false,
+        }
     }
 
     /// Opt-in convenience for test binaries: `update` when `GUIRAFFE_UPDATE_SNAPSHOTS=1`.
