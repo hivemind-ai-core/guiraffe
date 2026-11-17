@@ -3,11 +3,7 @@
 //! `cargo run --release [-- --bench <scenario>] [-- --print-row0]`; the contract shared with
 //! the Electron app is `examples/compare/README.md`.
 
-mod bench;
-mod data;
-mod pages;
-mod shell;
-mod validate;
+use guiraffe_compare::{bench, data, shell};
 
 use gpui_kit::{AppContext, Bounds, WindowBounds, WindowOptions, px, size};
 
@@ -43,14 +39,18 @@ fn main() {
         std::process::exit(2);
     }
 
+    // `--route /grid`: open on another page (screenshots, manual checks).
+    let initial = arg_value("--route")
+        .and_then(|r| {
+            shell::PAGES
+                .iter()
+                .find(|(p, _)| guiraffe_router::Route::to_path(p) == r)
+        })
+        .map_or(shell::Page::Dashboard, |(p, _)| *p);
     gpui_kit::application()
         .with_assets(guiraffe_icons::GuiraffeAssets)
         .run(move |cx| {
-            guiraffe_components::init(cx);
-            guiraffe_overlays::init(cx);
-            guiraffe_chat::init(cx);
-            guiraffe_datagrid::init(cx);
-            shell::init(cx);
+            guiraffe_compare::init(cx);
             let opts = WindowOptions {
                 titlebar: Some(gpui_kit::TitlebarOptions {
                     title: Some("Compare: GUIraffe".into()),
@@ -65,7 +65,7 @@ fn main() {
             };
             let scenario = scenario.clone();
             let opened = cx.open_window(opts, move |window, cx| {
-                let shell = cx.new(|cx| shell::Shell::new(window, cx));
+                let shell = cx.new(|cx| shell::Shell::new(initial, window, cx));
                 if let Some(name) = scenario {
                     let s = shell.clone();
                     window.on_next_frame(move |window, cx| {

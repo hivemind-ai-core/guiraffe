@@ -26,6 +26,12 @@ guiraffe-markdown = { path = "../../../crates/markdown", features = ["syntect"] 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[dev-dependencies]
+gpui-kit = { version = "=0.9.1", features = ["test-support"] }
+guiraffe-test = { path = "../../../crates/test", features = ["snapshot"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+anyhow = "1"
+
 [lints.rust]
 unsafe_code = "deny"
 

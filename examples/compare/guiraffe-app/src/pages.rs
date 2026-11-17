@@ -126,7 +126,14 @@ impl Render for Dashboard {
                         "Throughput (req/s), last 60 s",
                         LineChart::new(line)
                             .appear(false)
-                            .x(|d| SharedString::from(d.0.to_string()))
+                            .x(|d| {
+                                // Label every 10th second only, like Recharts' auto ticks.
+                                SharedString::from(if d.0 % 10 == 0 {
+                                    d.0.to_string()
+                                } else {
+                                    String::new()
+                                })
+                            })
                             .y(|d| d.1)
                             .stroke(stroke)
                             .linear()
@@ -317,13 +324,18 @@ impl DocsPage {
 
 impl Render for DocsPage {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().min_h_0().child(
-            MarkdownView::new("document")
-                .state(&self.doc)
-                .selectable(true)
-                .code_copy(true)
-                .scrollable(true),
-        )
+        // The page scrolls; the view lays out the whole document (as react-markdown does).
+        div()
+            .id("document-scroll")
+            .size_full()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(
+                MarkdownView::new("document")
+                    .state(&self.doc)
+                    .selectable(true)
+                    .code_copy(true),
+            )
     }
 }
 

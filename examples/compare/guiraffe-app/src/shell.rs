@@ -33,7 +33,15 @@ pub const PAGES: [(Page, &str); 5] = [
 actions!(compare, [OpenPalette]);
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("secondary-k", OpenPalette, None)]);
+    cx.bind_keys([KeyBinding::new(
+        if cfg!(target_os = "macos") {
+            "cmd-k"
+        } else {
+            "ctrl-k"
+        },
+        OpenPalette,
+        None,
+    )]);
 }
 
 pub fn toggle_theme(cx: &mut App) {
@@ -65,8 +73,8 @@ fn commands() -> Vec<Command> {
 }
 
 impl Shell {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let router = Router::new(Page::Dashboard, cx);
+    pub fn new(initial: Page, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let router = Router::new(initial, cx);
         let page = router.select(cx, |p| *p);
         let r = router.clone();
         let palette = cx.new(|cx| {
