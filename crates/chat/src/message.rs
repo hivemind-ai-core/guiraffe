@@ -426,12 +426,23 @@ impl Render for Reasoning {
             .flex_col()
             .child(
                 crate::style::button("toggle-reasoning", Variant::Subtle, None, cx)
-                    .justify_start()
-                    .label(if self.open {
-                        "▾ Reasoning"
-                    } else {
-                        "▸ Reasoning"
-                    })
+                    .accessibility_label("Reasoning")
+                    // Kit centres a button's content; a flex_1 left-aligned child keeps the
+                    // header flush left like the tool header.
+                    .child(
+                        div()
+                            .id("reasoning-header-label")
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
+                            .text_left()
+                            .text_ellipsis()
+                            .child(if self.open {
+                                "▾ Reasoning"
+                            } else {
+                                "▸ Reasoning"
+                            }),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open = !this.open;
                         cx.notify();

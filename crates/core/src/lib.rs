@@ -3,6 +3,7 @@
 
 pub mod color;
 pub mod context;
+pub mod control;
 pub mod palette;
 pub mod theme;
 pub mod tokens;
@@ -14,6 +15,10 @@ pub use color::Rgb;
 pub use context::{
     Density, Emphasis, Provide, StyleContext, StylePatch, SurfaceKind, focus_scope, provide,
     tab_stop,
+};
+pub use control::{
+    A11yDisabled, A11yDisabledExt, Press, PressColors, PressableExt, RING_OFFSET, RING_WIDTH,
+    focus_ring, keyed_focus, release_focus_within, ring_visible,
 };
 pub use kit_bridge::{KitColors, kit_size};
 pub use palette::{ColorName, Shade};

@@ -198,36 +198,38 @@ impl Render for ManagedModal {
         let closed = modal.on_close.clone();
         let id = self.id;
         let host = self.host.clone();
-        let body = div()
-            .id(("managed-dialog-surface", id.0))
-            .test_support()
-            .relative()
-            .occlude()
-            .flex()
-            .flex_col()
-            .gap(gap)
-            .w(modal.width.min((viewport.width - gap * 2.).max(px(0.))))
-            .max_h((viewport.height - gap * 2.).max(px(0.)))
-            .border_1()
-            .border_color(surface.border.to_hsla())
-            .refine_style(&modal.style)
-            .children(modal.title.map(|title| DialogTitle::new().child(title)))
-            .children(
-                modal
-                    .content
-                    .map(|content| content(DialogContent::new(), window, cx)),
-            )
-            .children(modal.children)
-            .children(modal.footer)
-            .when(modal.close_button, |body| {
-                body.child(
-                    div()
-                        .absolute()
-                        .top(gap)
-                        .right(gap)
-                        .child(DialogClose::new().trigger(|button| button.label("×"))),
+        let body =
+            div()
+                .id(("managed-dialog-surface", id.0))
+                .test_support()
+                .relative()
+                .occlude()
+                .flex()
+                .flex_col()
+                .gap(gap)
+                .w(modal.width.min((viewport.width - gap * 2.).max(px(0.))))
+                .max_h((viewport.height - gap * 2.).max(px(0.)))
+                .border_1()
+                .border_color(surface.border.to_hsla())
+                .refine_style(&modal.style)
+                .children(modal.title.map(|title| DialogTitle::new().child(title)))
+                .children(
+                    modal
+                        .content
+                        .map(|content| content(DialogContent::new(), window, cx)),
                 )
-            });
+                .children(modal.children)
+                .children(modal.footer)
+                .when(modal.close_button, |body| {
+                    body.child(div().absolute().top(gap).right(gap).child(
+                        DialogClose::new().trigger(|button| {
+                            button
+                                .label("×")
+                                .accessibility_label("Close")
+                                .tab_stop(guiraffe_core::tab_stop(None))
+                        }),
+                    ))
+                });
         let popup = framed(
             body,
             self.transition.kind.frame(visibility, Size::Md.spacing()),
@@ -243,7 +245,7 @@ impl Render for ManagedModal {
                     div()
                         .absolute()
                         .inset_0()
-                        .bg(surface.text.alpha(0.2).to_hsla()),
+                        .bg(GuiraffeTheme::global(cx).scrim().to_hsla()),
                 )
             })
             .on_ok(move |event, window, cx| ok(event, window, cx))

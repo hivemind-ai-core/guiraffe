@@ -156,11 +156,18 @@ impl GuiraffeTheme {
         }
     }
 
+    /// Loading veil: fades content toward the body (keeps the page recognisable, signals
+    /// "busy") rather than darkening it like a modal scrim.
+    pub fn veil(&self) -> Rgb {
+        self.surfaces().body.alpha(0.55)
+    }
+
     /// Overlay scrim: scheme-aware, composited over the body.
     pub fn scrim(&self) -> Rgb {
         match self.scheme {
-            Scheme::Light => Rgb::BLACK.alpha(0.45),
-            Scheme::Dark => Rgb::BLACK.alpha(0.65),
+            // Cool near-black rather than pure black (Refactoring UI: greys carry a tint).
+            Scheme::Light => crate::ColorName::Gray.shade(9).alpha(0.35),
+            Scheme::Dark => Rgb::BLACK.alpha(0.6),
         }
     }
 }

@@ -4,15 +4,19 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{
-    App, Bounds, Context, Entity, EventEmitter, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Pixels, Render, ScrollEvent, Styled, Window, canvas, div,
-    prelude::*, px,
+    App, Bounds, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, ScrollEvent,
+    SharedString, Styled, TestSupportExt, Window, canvas, div, prelude::*, px,
 };
-use guiraffe_core::{GuiraffeTheme, Variant};
+use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 
 use crate::{
     axis::{Axis, TimeFormat, label},
-    clips::Track,
+    clips::{Edge, Track},
+    edit::{
+        EndEarlier, EndLater, KEY_CONTEXT, MoveEarlier, MoveLater, Nudge, SelectNextItem,
+        SelectPrevItem, StartEarlier, StartLater, key_step,
+    },
 };
 
 pub const TRACK_H: f32 = 40.0;
@@ -52,9 +56,25 @@ pub struct TracksView {
     editable: bool,
     /// What the pointer is over, for the cursor.
     hover: Option<Grab>,
+    /// Selected clip `(track, clip id)`; keyboard edits act on it.
+    selected: Option<(usize, u32)>,
+    focus: FocusHandle,
+    /// `None`: a tab stop only inside a focus scope.
+    focusable: Option<bool>,
 }
 
 impl EventEmitter<TracksEvent> for TracksView {}
+
+impl Focusable for TracksView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+/// Element id of the clip `clip` on track `track` (for tests and accessibility).
+pub fn clip_element_id(track: usize, clip: u32) -> ElementId {
+    ElementId::NamedInteger(SharedString::from(format!("clip-{track}")), u64::from(clip))
+}
 
 /// Decide what a press at time `t` (pixel `x`) on `track` grabs. Pure; tested.
 pub fn hit(track: &Track, axis: &Axis, x: f64, edges: ResizeEdges) -> Option<(u32, Grab)> {
@@ -76,7 +96,7 @@ impl TracksView {
         cx: &mut App,
     ) -> Entity<Self> {
         let axis = Axis::new(0.0, length.max(1.0), 800.0);
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             tracks,
             axis,
             format,
@@ -89,7 +109,82 @@ impl TracksView {
             locked: Default::default(),
             editable: true,
             hover: None,
+            selected: None,
+            focus: cx.focus_handle(),
+            focusable: None,
         })
+    }
+
+    /// The selected clip `(track, clip id)`.
+    pub fn selected(&self) -> Option<(usize, u32)> {
+        self.selected
+    }
+
+    pub fn select(&mut self, sel: Option<(usize, u32)>, cx: &mut Context<Self>) {
+        let sel = sel.filter(|(t, c)| {
+            self.tracks
+                .get(*t)
+                .is_some_and(|(_, tr)| tr.clips().iter().any(|x| x.id == *c))
+        });
+        if self.selected != sel {
+            self.selected = sel;
+            cx.notify();
+        }
+    }
+
+    /// Opt into (or out of) Tab focus regardless of the enclosing focus scope.
+    pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
+        self.focusable = v;
+        cx.notify();
+    }
+
+    /// Keyboard edit of the selected clip by `dir` steps (snap grid, else a quarter tick).
+    pub fn nudge(&mut self, what: Nudge, dir: f64, cx: &mut Context<Self>) {
+        let Some((ti, id)) = self.selected else {
+            return;
+        };
+        if !self.editable || self.locked.contains(&(ti, id)) {
+            return;
+        }
+        let d = dir * key_step(self.snap, self.axis.tick_step(80.0, self.format));
+        let snap = self.snap;
+        let snapped = |t: f64| match snap {
+            Some(g) => (t / g).round() * g,
+            None => t,
+        };
+        let Some((_, tr)) = self.tracks.get_mut(ti) else {
+            return;
+        };
+        let Some(c) = tr.clips().iter().find(|c| c.id == id).cloned() else {
+            return;
+        };
+        let changed = match what {
+            Nudge::Move => tr.move_clip(id, snapped(c.start + d)),
+            Nudge::End => tr.trim(id, Edge::End, snapped(c.end() + d)),
+            Nudge::Start => tr.trim(id, Edge::Start, snapped(c.start + d)),
+        };
+        if changed {
+            cx.emit(TracksEvent::ClipChanged {
+                track: ti,
+                clip: id,
+            });
+            cx.notify();
+        }
+    }
+
+    fn all_clips(&self) -> Vec<(usize, u32)> {
+        self.tracks
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (_, tr))| tr.clips().iter().map(move |c| (i, c.id)))
+            .collect()
+    }
+
+    fn select_step(&mut self, dir: i32, cx: &mut Context<Self>) {
+        let all = self.all_clips();
+        let cur = self.selected.and_then(|s| all.iter().position(|x| *x == s));
+        let next = crate::edit::cycle(cur, all.len(), dir);
+        self.select(next.and_then(|i| all.get(i).copied()), cx);
     }
 
     pub fn tracks(&self) -> &[(String, Track)] {
@@ -127,6 +222,12 @@ impl TracksView {
 
     /// Begin a drag at body-local pixel `x` on `track`. Returns whether a clip was grabbed.
     pub fn press(&mut self, track: usize, x: f64) -> bool {
+        // Any press on a clip selects it (locked clips too); only editable clips drag.
+        if let Some((_, tr)) = self.tracks.get(track)
+            && let Some((clip, _)) = hit(tr, &self.axis, x, ResizeEdges::None)
+        {
+            self.selected = Some((track, clip));
+        }
         self.drag = self
             .grab(track, x)
             .map(|(clip, grab)| Drag { track, clip, grab });
@@ -242,10 +343,16 @@ impl TracksView {
 }
 
 impl Render for TracksView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
         let clip_v = t.variant(None, Variant::Light);
+        let off = t.state(StateKind::Disabled, Variant::Light, None);
+        let ring = t.state(StateKind::FocusRing, Variant::Light, None).border;
+        let playhead_color = t.variant(Some(ColorName::Red), Variant::Filled).background;
+        let ring_on = ring_visible(&self.focus, window);
+        let tab = guiraffe_core::tab_stop(self.focusable);
+        let selected = self.selected;
         if let Some(w) = crate::measure::width(&self.body) {
             self.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
@@ -260,7 +367,25 @@ impl Render for TracksView {
         let line = s.border.to_hsla();
         let body = self.body.clone();
         let playhead_x = axis.x(self.playhead) as f32;
-        div()
+        let root = div()
+            .id("tracks")
+            .test_support()
+            .role(Role::ListBox)
+            .aria_label("Tracks")
+            .track_focus(&self.focus.clone().tab_stop(tab))
+            .key_context(KEY_CONTEXT)
+            .on_action(
+                cx.listener(|this, _: &MoveEarlier, _, cx| this.nudge(Nudge::Move, -1.0, cx)),
+            )
+            .on_action(cx.listener(|this, _: &MoveLater, _, cx| this.nudge(Nudge::Move, 1.0, cx)))
+            .on_action(cx.listener(|this, _: &EndEarlier, _, cx| this.nudge(Nudge::End, -1.0, cx)))
+            .on_action(cx.listener(|this, _: &EndLater, _, cx| this.nudge(Nudge::End, 1.0, cx)))
+            .on_action(
+                cx.listener(|this, _: &StartEarlier, _, cx| this.nudge(Nudge::Start, -1.0, cx)),
+            )
+            .on_action(cx.listener(|this, _: &StartLater, _, cx| this.nudge(Nudge::Start, 1.0, cx)))
+            .on_action(cx.listener(|this, _: &SelectPrevItem, _, cx| this.select_step(-1, cx)))
+            .on_action(cx.listener(|this, _: &SelectNextItem, _, cx| this.select_step(1, cx)))
             .size_full()
             .flex()
             .flex_col()
@@ -343,7 +468,10 @@ impl Render for TracksView {
                             )
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, e: &MouseDownEvent, _, _| {
+                                cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                                    // Pointer edits never take keyboard focus (§12.3).
+                                    window.prevent_default();
+                                    cx.notify();
                                     let (x, y) = this.local(e.position);
                                     if y >= 0.0 {
                                         this.press((y / TRACK_H) as usize, x);
@@ -370,24 +498,53 @@ impl Render for TracksView {
                                 .absolute()
                                 .size_full(),
                             )
-                            .children(self.tracks.iter().enumerate().flat_map(|(i, (_, tr))| {
+                            .children(self.tracks.iter().enumerate().flat_map(|(i, (name, tr))| {
                                 crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
                                     .iter()
                                     .map(|c| {
                                         let (x0, x1) =
                                             (axis.x(c.start) as f32, axis.x(c.end()) as f32);
+                                        let on = selected == Some((i, c.id));
+                                        let is_locked = !editable || locked.contains(&(i, c.id));
                                         div()
+                                            .id(clip_element_id(i, c.id))
+                                            .test_support()
+                                            .role(Role::ListBoxOption)
+                                            .aria_label(format!(
+                                                "{name} clip {}: {} – {}",
+                                                c.id,
+                                                label(c.start, format),
+                                                label(c.end(), format)
+                                            ))
+                                            .aria_selected(on)
                                             .absolute()
                                             .top(px(i as f32 * TRACK_H + 4.0))
                                             .left(px(x0))
                                             .w(px((x1 - x0).max(2.0)))
                                             .h(px(TRACK_H - 8.0))
                                             .rounded(px(4.))
-                                            .bg(clip_v.background.to_hsla())
                                             .border_1()
-                                            .border_color(clip_v.foreground.to_hsla())
-                                            .when(!editable || locked.contains(&(i, c.id)), |el| {
-                                                el.opacity(0.55).border_dashed()
+                                            .map(|el| {
+                                                // Locked: disabled tokens + dashed, not opacity.
+                                                if is_locked {
+                                                    el.bg(off.background.to_hsla())
+                                                        .border_color(off.border.to_hsla())
+                                                        .border_dashed()
+                                                } else {
+                                                    el.bg(clip_v.background.to_hsla())
+                                                        .border_color(clip_v.foreground.to_hsla())
+                                                }
+                                            })
+                                            // Selection: 2px overlay outline, no layout change.
+                                            .when(on, |el| {
+                                                el.child(
+                                                    div()
+                                                        .absolute()
+                                                        .inset_0()
+                                                        .rounded(px(4.))
+                                                        .border_2()
+                                                        .border_color(s.text.to_hsla()),
+                                                )
                                             })
                                     })
                                     .collect::<Vec<_>>()
@@ -399,10 +556,11 @@ impl Render for TracksView {
                                     .bottom_0()
                                     .left(px(playhead_x))
                                     .w(px(1.5))
-                                    .bg(guiraffe_core::ColorName::Red.shade(6).to_hsla()),
+                                    .bg(playhead_color.to_hsla()),
                             ),
                     ),
-            )
+            );
+        focus_ring(root, ring_on, px(0.), ring)
     }
 }
 

@@ -3,6 +3,8 @@
 pub mod e2e;
 
 pub mod diff;
+#[cfg(feature = "layout")]
+pub mod layout;
 #[cfg(feature = "render")]
 pub mod render;
 #[cfg(feature = "snapshot")]

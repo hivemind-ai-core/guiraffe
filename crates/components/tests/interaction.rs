@@ -137,7 +137,7 @@ fn items_can_change_and_empty_is_safe(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_first_click_selects_and_focuses_a_segment(cx: &mut TestAppContext) {
+fn the_first_click_selects_without_taking_focus(cx: &mut TestAppContext) {
     let (control, _, vcx, events) = setup(cx, &["A", "B", "C"]);
     frames(vcx, 4);
     let position = gpui_kit::point(px(333.), px(10.));
@@ -147,9 +147,10 @@ fn the_first_click_selects_and_focuses_a_segment(cx: &mut TestAppContext) {
     frames(vcx, 2);
     assert_eq!(control.read_with(vcx, |c, _| c.selected()), 2);
     assert_eq!(*events.borrow(), vec![SegmentedEvent::Changed(2)]);
-    assert!(vcx.update(|w, cx| control.read(cx).focus_handle(cx).is_focused(w)));
-    vcx.simulate_keystrokes("left");
-    assert_eq!(control.read_with(vcx, |c, _| c.selected()), 1);
+    assert!(
+        !vcx.update(|w, cx| control.read(cx).focus_handle(cx).is_focused(w)),
+        "spec/00 §12.3: a pointer press never takes keyboard focus"
+    );
 }
 
 #[gpui_kit::test]

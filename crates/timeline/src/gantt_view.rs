@@ -4,16 +4,19 @@
 use std::{collections::HashMap, rc::Rc};
 
 use gpui_kit::{
-    App, Bounds, Context, Entity, EventEmitter, Hsla, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, PathBuilder, Pixels, Render, ScrollEvent, Styled, Window,
-    canvas, div, point, prelude::*, px,
+    App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, PathBuilder, Pixels, Render, Role,
+    ScrollEvent, Styled, TestSupportExt, Window, canvas, div, point, prelude::*, px,
 };
-use guiraffe_core::{ColorName, GuiraffeTheme, Variant};
+use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 
 use crate::{
     axis::{Axis, TimeFormat, label},
     clips::Edge,
-    edit::{Grab, ResizeEdges, cursor_for, grab_at},
+    edit::{
+        EndEarlier, EndLater, Grab, KEY_CONTEXT, MoveEarlier, MoveLater, Nudge, ResizeEdges,
+        SelectNextItem, SelectPrevItem, StartEarlier, StartLater, cursor_for, grab_at, key_step,
+    },
     gantt::{ScheduleError, Scheduled, Task, schedule},
 };
 
@@ -92,16 +95,29 @@ pub struct GanttView {
     editable: bool,
     /// What the pointer is over, for the cursor.
     hover: Option<Grab>,
+    /// The selected task (click a bar, or ↑/↓ when focused); keyboard edits act on it.
+    selected: Option<u32>,
+    focus: FocusHandle,
+    /// `None`: a tab stop only inside a focus scope.
+    focusable: Option<bool>,
+    /// Keyboard step in seconds (`None`: a quarter of the ruler tick).
+    key_step: Option<f64>,
 }
 
 impl EventEmitter<GanttEvent> for GanttView {}
+
+impl Focusable for GanttView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
 
 impl GanttView {
     pub fn new(tasks: Vec<Task>, format: TimeFormat, cx: &mut App) -> Entity<Self> {
         let schedule = schedule(&tasks);
         let (lo, hi) = span(&schedule);
         let axis = Axis::new(lo, hi, 800.0);
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             geometry: geometry(&tasks, &schedule),
             tasks,
             schedule,
@@ -114,7 +130,66 @@ impl GanttView {
             locked: Default::default(),
             editable: true,
             hover: None,
+            selected: None,
+            focus: cx.focus_handle(),
+            focusable: None,
+            key_step: None,
         })
+    }
+
+    /// The selected task id.
+    pub fn selected(&self) -> Option<u32> {
+        self.selected
+    }
+
+    pub fn select(&mut self, id: Option<u32>, cx: &mut Context<Self>) {
+        let id = id.filter(|id| self.tasks.iter().any(|t| t.id == *id));
+        if self.selected != id {
+            self.selected = id;
+            cx.notify();
+        }
+    }
+
+    /// Opt into (or out of) Tab focus regardless of the enclosing focus scope.
+    pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
+        self.focusable = v;
+        cx.notify();
+    }
+
+    /// Keyboard step in seconds (`None`: a quarter of the ruler tick).
+    pub fn set_key_step(&mut self, step: Option<f64>) {
+        self.key_step = step.filter(|s| s.is_finite() && *s > 0.0);
+    }
+
+    /// Keyboard edit of the selected task by `dir` steps (no-op when locked / not editable).
+    pub fn nudge(&mut self, what: Nudge, dir: f64, cx: &mut Context<Self>) {
+        let Some(id) = self.selected else { return };
+        if !self.editable || self.locked.contains(&id) {
+            return;
+        }
+        let Some(sc) = self
+            .schedule
+            .as_ref()
+            .ok()
+            .and_then(|m| m.get(&id))
+            .copied()
+        else {
+            return;
+        };
+        let d = dir * key_step(self.key_step, self.axis.tick_step(90.0, self.format));
+        match what {
+            Nudge::Move => self.reschedule(id, sc.early_start + d, cx),
+            Nudge::End => self.resize_edge(id, Edge::End, sc.early_finish + d, cx),
+            Nudge::Start => self.resize_edge(id, Edge::Start, sc.early_start + d, cx),
+        }
+    }
+
+    fn select_step(&mut self, dir: i32, cx: &mut Context<Self>) {
+        let cur = self
+            .selected
+            .and_then(|id| self.tasks.iter().position(|t| t.id == id));
+        let next = crate::edit::cycle(cur, self.tasks.len(), dir);
+        self.select(next.and_then(|i| self.tasks.get(i)).map(|t| t.id), cx);
     }
 
     pub fn schedule(&self) -> &Result<HashMap<u32, Scheduled>, ScheduleError> {
@@ -196,6 +271,15 @@ impl GanttView {
 
     /// Begin a drag at body-local pixel `x` on `row`; only a press on an editable bar grabs.
     pub fn press(&mut self, row: usize, x: f64) -> bool {
+        // Any press on a bar selects it (locked bars too); only editable bars drag.
+        if let Some(task) = self.tasks.get(row)
+            && let Some(sc) = self.schedule.as_ref().ok().and_then(|m| m.get(&task.id))
+        {
+            let (x0, x1) = (self.axis.x(sc.early_start), self.axis.x(sc.early_finish));
+            if x >= x0 && x <= x1.max(x0 + 2.0) {
+                self.selected = Some(task.id);
+            }
+        }
         self.drag = self.grab(row, x).map(|(id, grab)| Drag { id, grab });
         self.drag.is_some()
     }
@@ -363,11 +447,20 @@ fn arrow(
 }
 
 impl Render for GanttView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
         let normal = t.variant(None, Variant::Light);
         let critical = t.variant(Some(ColorName::Red), Variant::Filled);
+        let error_fg = t.variant(Some(ColorName::Red), Variant::Light).foreground;
+        let off = t.state(StateKind::Disabled, Variant::Light, None);
+        let ring = t.state(StateKind::FocusRing, Variant::Light, None).border;
+        let ring_on = ring_visible(&self.focus, window);
+        let tab = guiraffe_core::tab_stop(self.focusable);
+        let selected_row = self
+            .selected
+            .and_then(|id| self.tasks.iter().position(|t| t.id == id));
+        let names: Vec<_> = self.tasks.iter().map(|t| t.name.clone()).collect();
         if let Some(w) = crate::measure::width(&self.body) {
             self.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
@@ -391,7 +484,25 @@ impl Render for GanttView {
         let body = self.body.clone();
         let line = s.border.to_hsla();
         let arrow_color = s.dimmed.to_hsla();
-        div()
+        let root = div()
+            .id("gantt")
+            .test_support()
+            .role(Role::ListBox)
+            .aria_label("Gantt chart")
+            .track_focus(&self.focus.clone().tab_stop(tab))
+            .key_context(KEY_CONTEXT)
+            .on_action(
+                cx.listener(|this, _: &MoveEarlier, _, cx| this.nudge(Nudge::Move, -1.0, cx)),
+            )
+            .on_action(cx.listener(|this, _: &MoveLater, _, cx| this.nudge(Nudge::Move, 1.0, cx)))
+            .on_action(cx.listener(|this, _: &EndEarlier, _, cx| this.nudge(Nudge::End, -1.0, cx)))
+            .on_action(cx.listener(|this, _: &EndLater, _, cx| this.nudge(Nudge::End, 1.0, cx)))
+            .on_action(
+                cx.listener(|this, _: &StartEarlier, _, cx| this.nudge(Nudge::Start, -1.0, cx)),
+            )
+            .on_action(cx.listener(|this, _: &StartLater, _, cx| this.nudge(Nudge::Start, 1.0, cx)))
+            .on_action(cx.listener(|this, _: &SelectPrevItem, _, cx| this.select_step(-1, cx)))
+            .on_action(cx.listener(|this, _: &SelectNextItem, _, cx| this.select_step(1, cx)))
             .size_full()
             .flex()
             .flex_col()
@@ -433,12 +544,7 @@ impl Render for GanttView {
                     ),
             )
             .when_some(error, |el, e| {
-                el.child(
-                    div()
-                        .p(px(8.))
-                        .text_color(ColorName::Red.shade(7).to_hsla())
-                        .child(e),
-                )
+                el.child(div().p(px(8.)).text_color(error_fg.to_hsla()).child(e))
             })
             .child(
                 div()
@@ -475,7 +581,10 @@ impl Render for GanttView {
                             )
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, e: &MouseDownEvent, _, _| {
+                                cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                                    // Pointer edits never take keyboard focus (§12.3).
+                                    window.prevent_default();
+                                    cx.notify();
                                     let b = this.body.get();
                                     let y = f32::from(e.position.y - b.origin.y);
                                     if y >= 0.0 {
@@ -515,17 +624,47 @@ impl Render for GanttView {
                                         axis.x(x.early_finish) as f32,
                                     );
                                     let v = if x.critical() { critical } else { normal };
+                                    let on = selected_row == Some(i);
+                                    let name = names.get(i).cloned().unwrap_or_default();
                                     div()
+                                        .id(("gantt-bar", i))
+                                        .test_support()
+                                        .role(Role::ListBoxOption)
+                                        .aria_label(format!(
+                                            "{name}: {} – {}",
+                                            label(x.early_start, format),
+                                            label(x.early_finish, format)
+                                        ))
+                                        .aria_selected(on)
                                         .absolute()
                                         .top(px(i as f32 * ROW_H + 6.0))
                                         .left(px(x0))
                                         .w(px((x1 - x0).max(2.0)))
                                         .h(px(ROW_H - 12.0))
                                         .rounded(px(4.))
-                                        .bg(v.background.to_hsla())
                                         .border_1()
-                                        .border_color(v.foreground.to_hsla())
-                                        .when(locked, |el| el.opacity(0.55).border_dashed())
+                                        .map(|el| {
+                                            // Locked: disabled tokens + dashed outline, not opacity.
+                                            if locked {
+                                                el.bg(off.background.to_hsla())
+                                                    .border_color(off.border.to_hsla())
+                                                    .border_dashed()
+                                            } else {
+                                                el.bg(v.background.to_hsla())
+                                                    .border_color(v.foreground.to_hsla())
+                                            }
+                                        })
+                                        // Selection: a 2px overlay outline, no layout change.
+                                        .when(on, |el| {
+                                            el.child(
+                                                div()
+                                                    .absolute()
+                                                    .inset_0()
+                                                    .rounded(px(4.))
+                                                    .border_2()
+                                                    .border_color(s.text.to_hsla()),
+                                            )
+                                        })
                                 });
                                 div().children(bar)
                             }))
@@ -559,7 +698,8 @@ impl Render for GanttView {
                                 .size_full(),
                             ),
                     ),
-            )
+            );
+        focus_ring(root, ring_on, px(0.), ring)
     }
 }
 

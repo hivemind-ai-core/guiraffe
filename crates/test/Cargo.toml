@@ -17,6 +17,8 @@ offscreen = ["e2e", "gpui-kit/test-support"]
 snapshot = ["dep:gpui-kit", "dep:anyhow", "dep:image", "dep:guiraffe-icons", "gpui-kit/test-support", "gpui-kit/assets"]
 # Render-count helpers for interaction tests.
 render = []
+# Layout-stability assertions (focus / hover / selected never move anything).
+layout = ["dep:gpui-kit", "gpui-kit/test-support"]
 
 [dependencies]
 serde = { workspace = true, optional = true }

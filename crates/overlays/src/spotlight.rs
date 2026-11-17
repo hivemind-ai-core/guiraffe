@@ -10,6 +10,7 @@ use gpui_kit::component::{
     button::Button,
     input::{Input, InputEvent, InputState},
 };
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
     Styled, Subscription, Window, div, px,
@@ -186,6 +187,8 @@ impl Render for Spotlight {
             .child(
                 div()
                     .id("spotlight-results")
+                    .role(gpui_kit::Role::ListBox)
+                    .aria_label("Results")
                     .max_h(px(Size::Xs.container_width() / 2.))
                     .overflow_y_scroll()
                     .children(
@@ -194,20 +197,25 @@ impl Render for Spotlight {
                             .filter_map(|index| self.labels.get(*index))
                             .enumerate()
                             .map(|(index, label)| {
+                                // The input owns the keyboard (↑/↓/Enter); rows are not
+                                // tab stops and a click never moves focus off the input.
                                 let button = Button::new(("command", index))
                                     .label(label.clone())
+                                    .tab_stop(false)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.selected = index;
                                         this.activate(window, cx);
                                     }));
-                                if index == self.selected {
-                                    div()
-                                        .bg(surface.hover.to_hsla())
-                                        .rounded(px(Size::Sm.radius()))
-                                        .child(button)
-                                } else {
-                                    div().child(button)
-                                }
+                                let active = index == self.selected;
+                                div()
+                                    .id(("spotlight-row", index))
+                                    .test_support()
+                                    .role(gpui_kit::Role::ListBoxOption)
+                                    .aria_label(label.clone())
+                                    .aria_selected(active)
+                                    .rounded(px(Size::Sm.radius()))
+                                    .when(active, |row| row.bg(surface.hover.to_hsla()))
+                                    .child(button)
                             }),
                     ),
             )

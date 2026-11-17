@@ -55,9 +55,15 @@ impl KitColors {
         let charts = [next(), primary, next(), next(), next()];
         Self {
             primary,
-            primary_hover: t.state(crate::StateKind::Hover, Variant::Filled, None).background,
-            primary_active: t.state(crate::StateKind::Pressed, Variant::Filled, None).background,
-            primary_foreground: t.state(crate::StateKind::Rest, Variant::Filled, None).foreground,
+            primary_hover: t
+                .state(crate::StateKind::Hover, Variant::Filled, None)
+                .background,
+            primary_active: t
+                .state(crate::StateKind::Pressed, Variant::Filled, None)
+                .background,
+            primary_foreground: t
+                .state(crate::StateKind::Rest, Variant::Filled, None)
+                .foreground,
             selection: primary.alpha(0.3).over(s.body),
             background: s.body,
             foreground: s.text,

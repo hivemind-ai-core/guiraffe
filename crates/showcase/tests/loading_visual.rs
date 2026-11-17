@@ -18,7 +18,7 @@ impl Render for Backdrop {
     }
 }
 #[test]
-fn loading_dims_without_hiding_the_underlying_surface() {
+fn loading_veils_without_hiding_the_underlying_surface() {
     for scheme in [Scheme::Light, Scheme::Dark] {
         let mut snap = Snapshotter::new()
             .expect("snapshotter")
@@ -42,6 +42,13 @@ fn loading_dims_without_hiding_the_underlying_surface() {
                 && i16::from(right[2]) > i16::from(left[2]) + 50,
             "backdrop must preserve distinct underlying colors, got {left:?} and {right:?}"
         );
-        assert!(left[2] > 0, "overlay must also tint the surface");
+        // The veil token (spec/00 §12.1) visibly fades the surface toward the body colour
+        // (lighter in light mode, darker in dark mode) without hiding it.
+        let body = if scheme == Scheme::Light { 255i16 } else { 36 };
+        let towards_body = |c: u8| (i16::from(c) - body).abs();
+        assert!(
+            towards_body(right[0]) < 230,
+            "overlay must veil the surface, got {right:?}"
+        );
     }
 }

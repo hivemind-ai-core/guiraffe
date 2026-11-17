@@ -70,6 +70,94 @@ pub fn cursor_for(grab: Option<Grab>) -> CursorStyle {
     }
 }
 
+// ------------------------------------------------------------------ keyboard (spec/00 §12)
+
+gpui_kit::actions!(
+    guiraffe_timeline,
+    [
+        MoveEarlier,
+        MoveLater,
+        EndEarlier,
+        EndLater,
+        StartEarlier,
+        StartLater,
+        SelectPrevItem,
+        SelectNextItem
+    ]
+);
+
+/// Key context of a focused Gantt / tracks view.
+pub const KEY_CONTEXT: &str = "GrTimelineEdit";
+
+/// Keyboard editing of the selected item, active only while the view has keyboard focus
+/// (opt-in: inside a focus scope or `set_focusable(Some(true))`):
+/// ←/→ move by one step, Shift+←/→ resize the end, Alt+←/→ resize the start,
+/// ↑/↓ select the previous / next item.
+pub fn init(cx: &mut gpui_kit::App) {
+    use gpui_kit::KeyBinding;
+    let c = Some(KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("left", MoveEarlier, c),
+        KeyBinding::new("right", MoveLater, c),
+        KeyBinding::new("shift-left", EndEarlier, c),
+        KeyBinding::new("shift-right", EndLater, c),
+        KeyBinding::new("alt-left", StartEarlier, c),
+        KeyBinding::new("alt-right", StartLater, c),
+        KeyBinding::new("up", SelectPrevItem, c),
+        KeyBinding::new("down", SelectNextItem, c),
+    ]);
+}
+
+/// What a keyboard nudge changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Nudge {
+    Move,
+    Start,
+    End,
+}
+
+/// Keyboard step (seconds): the snap grid when set, else a quarter of the ruler's tick step.
+pub fn key_step(snap: Option<f64>, tick: f64) -> f64 {
+    snap.filter(|g| g.is_finite() && *g > 0.0)
+        .unwrap_or(tick / 4.0)
+        .max(f64::EPSILON)
+}
+
+/// Next index when cycling a selection of `len` items by `dir` (−1 / +1), starting from
+/// `current` (none selected: first for +1, last for −1).
+pub fn cycle(current: Option<usize>, len: usize, dir: i32) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some(match current {
+        None if dir < 0 => len - 1,
+        None => 0,
+        Some(i) if dir < 0 => i.saturating_sub(1),
+        Some(i) => (i + 1).min(len - 1),
+    })
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::*;
+
+    #[test]
+    fn key_step_prefers_snap() {
+        assert_eq!(key_step(Some(0.5), 10.0), 0.5);
+        assert_eq!(key_step(None, 10.0), 2.5);
+        assert_eq!(key_step(Some(f64::NAN), 4.0), 1.0);
+    }
+
+    #[test]
+    fn cycle_clamps() {
+        assert_eq!(cycle(None, 3, 1), Some(0));
+        assert_eq!(cycle(None, 3, -1), Some(2));
+        assert_eq!(cycle(Some(2), 3, 1), Some(2));
+        assert_eq!(cycle(Some(0), 3, -1), Some(0));
+        assert_eq!(cycle(Some(1), 0, 1), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

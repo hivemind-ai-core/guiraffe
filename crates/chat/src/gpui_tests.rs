@@ -700,3 +700,28 @@ fn tool_header_fills_its_button_from_the_left(cx: &mut TestAppContext) {
     })
     .expect("frame");
 }
+
+#[gpui_kit::test]
+fn reasoning_header_fills_its_button_from_the_left(cx: &mut TestAppContext) {
+    let (handle, chat) = open(cx);
+    chat.update(cx, |chat, cx| {
+        let mut message = Message::new(MessageId(1), Role::Assistant, "Done.");
+        message.reasoning = "Thinking it through.".into();
+        chat.push_message(message, cx);
+    });
+    draw(cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let button = window.find("toggle-reasoning").bounds();
+        let label = window.find("reasoning-header-label").bounds();
+        assert!(
+            label.left() < button.left() + gpui_kit::px(24.),
+            "reasoning header must start at button padding: {button:?} {label:?}"
+        );
+        assert!(
+            label.size.width > button.size.width * 0.8,
+            "reasoning header must fill the button, not shrink around a centered label"
+        );
+    })
+    .expect("frame");
+}

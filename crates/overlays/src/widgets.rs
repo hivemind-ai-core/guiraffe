@@ -55,9 +55,8 @@ impl RenderOnce for LoadingOverlay {
             return div().into_any_element();
         }
         let theme = GuiraffeTheme::global(cx);
-        let colors = theme.variant(self.color, self.variant);
-        let mut backdrop = colors.background.to_hsla();
-        backdrop.a *= 0.55;
+        // Scheme-aware scrim token (spec/00 §12.1), not a raw alpha on the variant color.
+        let backdrop = theme.veil().to_hsla();
         let surface = div()
             .id("guiraffe-loading-overlay")
             .test_support()

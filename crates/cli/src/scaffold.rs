@@ -74,7 +74,8 @@ pub fn new_app(parent: &Path, name: &str, source: &Source) -> Result<PathBuf> {
     let Source::Path(checkout) = source;
     let lock = checkout.join("Cargo.lock");
     if lock.exists() {
-        std::fs::copy(&lock, dir.join("Cargo.lock")).with_context(|| format!("copying {}", lock.display()))?;
+        std::fs::copy(&lock, dir.join("Cargo.lock"))
+            .with_context(|| format!("copying {}", lock.display()))?;
     }
     Ok(dir)
 }
