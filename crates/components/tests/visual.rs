@@ -53,6 +53,14 @@ impl Render for KitchenSink {
                     ),
             )
             .child(
+                Timeline::new([
+                    TimelineItem::new("Created").description("2 hours ago"),
+                    TimelineItem::new("Deployed").color(ColorName::Teal),
+                    TimelineItem::new("Verified"),
+                ])
+                .active(1),
+            )
+            .child(
                 Card::new()
                     .section(
                         CardSection::new().child(
@@ -91,7 +99,7 @@ fn render(scheme: Scheme) -> image::RgbaImage {
                 cx,
             );
         });
-    snap.render(size(px(560.), px(500.)), |_, cx| {
+    snap.render(size(px(560.), px(820.)), |_, cx| {
         let segmented = SegmentedControl::new(["Preview", "Code", "Export"], cx);
         segmented.update(cx, |s, cx| s.select(1, cx));
         cx.new(|_| KitchenSink { segmented })

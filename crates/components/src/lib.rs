@@ -11,6 +11,7 @@ pub mod paper;
 pub mod ring;
 pub mod segmented;
 mod style;
+pub mod timeline;
 pub mod typography;
 
 pub use highlight::{Highlight, Mark, highlight_ranges};
@@ -19,6 +20,7 @@ pub use misc::{Blockquote, Indicator, IndicatorPosition, Pill};
 pub use paper::{Card, CardSection, Paper};
 pub use ring::{RingProgress, arc_spans};
 pub use segmented::{SegmentedControl, SegmentedEvent};
+pub use timeline::{ItemState, Timeline, TimelineItem};
 pub use typography::{Text, Title};
 
 /// Initialize dependencies (theme, motion). Idempotent.

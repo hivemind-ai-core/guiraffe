@@ -63,6 +63,14 @@ pub mod metrics {
     pub fn track_pad(size: Size) -> f32 {
         (size.spacing() / 3.0).round()
     }
+    /// Timeline bullet diameter (Mantine: 12 px at the default size).
+    pub fn bullet(size: Size) -> f32 {
+        (size.font_size() * 0.75).round().max(8.0)
+    }
+    /// Timeline connector width.
+    pub fn line_width(size: Size) -> f32 {
+        (size.radius() / 2.0).max(1.0)
+    }
 }
 
 /// Builder methods shared by components, generated so every component spells props alike.
