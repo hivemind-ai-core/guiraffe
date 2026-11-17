@@ -5,7 +5,7 @@ use crate::{
 };
 use gpui_kit::SharedString;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     ops::Range,
     sync::Arc,
 };
@@ -39,7 +39,7 @@ pub(crate) struct KeyedList<T: Clone> {
     keys: HashSet<Key>,
     path: Box<[SharedString]>,
     positions: Positions,
-    duplicates: bool,
+    candidates: HashMap<Key, BTreeMap<u64, Position>>,
 }
 impl<T: Clone> KeyedList<T> {
     pub fn new(path: Box<[SharedString]>) -> Self {
@@ -48,7 +48,7 @@ impl<T: Clone> KeyedList<T> {
             keys: HashSet::new(),
             path,
             positions: Positions::default(),
-            duplicates: false,
+            candidates: HashMap::new(),
         }
     }
     pub fn splice(
@@ -80,11 +80,23 @@ impl<T: Clone> KeyedList<T> {
         let mut new_positions = Vec::with_capacity(values.len());
         let mut reuse = HashMap::new();
         let mut unkeyed = HashMap::new();
+        let mut released = HashSet::new();
         for (offset, entry) in removed.into_iter().enumerate() {
             if let Some(key) = entry.key {
                 self.keys.remove(&key);
+                if self.candidates.contains_key(&key) {
+                    released.insert(key.clone());
+                }
                 reuse.insert(key, (entry.value, entry.state, entry.position));
             } else {
+                if let Some(key) = Key::from_value(entry.value.field(&self.path))
+                    && let Some(candidates) = self.candidates.get_mut(&key)
+                {
+                    candidates.remove(&entry.position.id());
+                    if candidates.is_empty() {
+                        self.candidates.remove(&key);
+                    }
+                }
                 unkeyed.insert(offset, (entry.value, entry.state, entry.position));
             }
         }
@@ -117,8 +129,13 @@ impl<T: Clone> KeyedList<T> {
             if let Some(key) = &key {
                 self.keys.insert(key.clone());
             }
-            if key.is_none() && Key::from_value(value.field(&self.path)).is_some() {
-                self.duplicates = true;
+            if key.is_none()
+                && let Some(raw) = Key::from_value(value.field(&self.path))
+            {
+                self.candidates
+                    .entry(raw)
+                    .or_default()
+                    .insert(position.id(), position.clone());
             }
             new_positions.push(position.clone());
             let entry = Entry {
@@ -149,22 +166,31 @@ impl<T: Clone> KeyedList<T> {
         for (_, (_, state, _)) in unkeyed {
             remove(state);
         }
-        if self.duplicates {
-            self.duplicates = false;
-            for i in 0..self.rows.len() {
-                let Some(mut entry) = self.rows.get(i).cloned() else {
+        // Only keys whose owner was removed can need promotion. Stable position
+        // handles locate surviving candidates without scanning unaffected rows.
+        for key in released {
+            if self.keys.contains(&key) {
+                continue;
+            }
+            let Some(candidates) = self.candidates.get_mut(&key) else {
+                continue;
+            };
+            while let Some((_, position)) = candidates.pop_first() {
+                let Some(index) = position.index() else {
                     continue;
                 };
-                if entry.key.is_none()
-                    && let Some(key) = Key::from_value(entry.value.field(&self.path))
-                {
-                    if self.keys.insert(key.clone()) {
-                        entry.key = Some(key);
-                        self.rows.set(i, entry);
-                    } else {
-                        self.duplicates = true;
-                    }
+                let Some(mut entry) = self.rows.get(index).cloned() else {
+                    continue;
+                };
+                if entry.position.id() == position.id() && entry.key.is_none() {
+                    entry.key = Some(key.clone());
+                    self.keys.insert(key.clone());
+                    self.rows.set(index, entry);
+                    break;
                 }
+            }
+            if candidates.is_empty() {
+                self.candidates.remove(&key);
             }
         }
         structural
@@ -299,13 +325,20 @@ mod tests {
         list.splice(0..1, &Arc::from([]), create, |_, _| {}, |_| {});
         list.splice(
             0..1,
-            &Arc::from([value("a", "updated")]),
+            &Arc::from([value("b", "new"), value("a", "updated")]),
             create,
-            |id, _| assert_eq!(*id, 1),
+            |id, value| {
+                assert_eq!(*id, 1);
+                assert_eq!(value.field(&["title".into()]), &Value::from("updated"));
+            },
             |_| panic!("recovered key must reuse"),
         );
-        assert_eq!(list.rows.front().map(|row| row.state), Some(1));
-        assert_eq!(next.get(), 2);
+        assert_eq!(list.rows.back().map(|row| row.state), Some(1));
+        assert_eq!(
+            list.rows.back().and_then(|row| row.position.index()),
+            Some(1)
+        );
+        assert_eq!(next.get(), 3);
     }
     #[test]
     fn positional_field_edits_keep_unkeyed_and_duplicate_input_state() {
@@ -342,5 +375,63 @@ mod tests {
             |_| panic!("retain scalar"),
         );
         assert_eq!(next.get(), 3);
+    }
+    #[test]
+    fn duplicate_candidates_stay_live_across_mixed_splices() {
+        let mut list = KeyedList::new(vec!["id".into()].into());
+        let mut seed = 7_u64;
+        let mut random = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 32) as usize
+        };
+        for _ in 0..1000 {
+            let start = random() % (list.rows.len() + 1);
+            let end = start + random() % (list.rows.len() - start + 1);
+            let values: Arc<[Value]> = (0..random() % 6)
+                .map(|_| {
+                    let id = random() % 5;
+                    if id == 4 {
+                        Value::Null
+                    } else {
+                        value(&id.to_string(), "row")
+                    }
+                })
+                .collect();
+            list.splice(
+                start..end,
+                &values,
+                |_, position| position.id(),
+                |_, _| {},
+                |_| {},
+            );
+            let mut owners = HashSet::new();
+            let mut duplicates = 0;
+            for (index, entry) in list.rows.iter().enumerate() {
+                assert_eq!(entry.position.index(), Some(index));
+                assert_eq!(entry.state, entry.position.id());
+                let Some(raw) = Key::from_value(entry.value.field(&list.path)) else {
+                    continue;
+                };
+                if let Some(key) = &entry.key {
+                    assert!(key == &raw);
+                    assert!(owners.insert(key.clone()));
+                } else {
+                    duplicates += 1;
+                    let candidate = list
+                        .candidates
+                        .get(&raw)
+                        .and_then(|bucket| bucket.get(&entry.position.id()))
+                        .expect("indexed duplicate");
+                    assert_eq!(candidate.index(), Some(index));
+                    assert!(list.keys.contains(&raw), "survivor should have an owner");
+                }
+            }
+            assert!(owners == list.keys);
+            assert_eq!(
+                list.candidates.values().map(BTreeMap::len).sum::<usize>(),
+                duplicates
+            );
+            assert!(list.candidates.values().all(|bucket| !bucket.is_empty()));
+        }
     }
 }

@@ -1,6 +1,6 @@
 use gpui_kit::{
-    Context, Entity, IntoElement, ParentElement, Render, Styled, TestAppContext, VisualTestContext,
-    Window, div, point, px,
+    Context, Entity, InteractiveElement, IntoElement, ParentElement, Render, Styled,
+    TestAppContext, VisualTestContext, Window, div, point, px,
 };
 use guiraffe_ui::*;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -554,4 +554,122 @@ fn custom_value_change_handlers_get_scoped_implied_writeback(cx: &mut TestAppCon
         &Value::Bool(true)
     );
     assert_eq!(vcx.update(|_, cx| ui.read(cx).events_handled()), 1);
+}
+
+#[gpui_kit::test]
+fn live_identity_with_a_mismatched_key_cannot_write_a_row(cx: &mut TestAppContext) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, handle, vcx) = mount(
+        cx,
+        document(),
+        Todos {
+            events: events.clone(),
+            normalise: false,
+            delete: Event::default(),
+        },
+    );
+    click(vcx, "done[b]", true);
+    let mut forged = events
+        .borrow()
+        .last()
+        .and_then(Payload::item_change)
+        .expect("change");
+    forged.item.key = Value::from("a");
+    forged.value = Value::Bool(false);
+    let before = rows(&handle);
+    vcx.update(|_, cx| handle.patch(|_, out| out.item(forged), cx));
+    vcx.run_until_parked();
+    assert_eq!(rows(&handle), before);
+}
+
+#[gpui_kit::test]
+fn uniform_repeat_height_uses_window_or_configured_limit(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let mut registry = Registry::with_builtins();
+    registry.register(
+        "repeat-probe",
+        widget(&Schema::EMPTY, |_, children, _, _| {
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .debug_selector(|| "repeat-probe".to_owned())
+                .children(children)
+                .into_any_element()
+        }),
+    );
+    let doc = Document::from_json(r#"{"version":1,"root":{"kind":"repeat-probe","each":"rows","key":"uuid","children":[{"kind":"text","props":{"single-line":true},"bind":{"text":"@item.title"}}]}}"#).expect("document");
+    struct Rows;
+    impl Logic for Rows {
+        fn bind(&mut self, names: &Names, out: &mut PatchBuf) {
+            out.set(
+                names.slot("rows").expect("rows"),
+                Value::List(
+                    (0..40)
+                        .map(|i| record(&i.to_string(), "row"))
+                        .collect::<Vec<_>>()
+                        .into(),
+                ),
+            );
+        }
+    }
+    let mut host = None;
+    let (_, vcx) = cx.add_window_view(|_, cx| {
+        let ui = DataUi::new(&doc, Arc::new(registry), Rows, cx).expect("host");
+        host = Some(ui.clone());
+        Scene { ui }
+    });
+    vcx.simulate_resize(gpui_kit::size(px(800.), px(600.)));
+    vcx.run_until_parked();
+    let ui = host.expect("host");
+    let handle = vcx.update(|_, cx| ui.read(cx).handle());
+    let height =
+        |vcx: &mut VisualTestContext| vcx.debug_bounds("repeat-probe").expect("probe").size.height;
+    assert_eq!(height(vcx), px(600.));
+    for limit in [0., 160., 240.] {
+        assert!(
+            vcx.update(|_, cx| handle.set_repeat_max_height(Some(limit), cx))
+                .expect("valid")
+        );
+        vcx.run_until_parked();
+        assert_eq!(height(vcx), px(limit));
+        assert_eq!(handle.repeat_max_height(), Some(limit));
+    }
+    let renders = vcx.update(|_, cx| ui.read(cx).host_renders());
+    assert!(
+        !vcx.update(|_, cx| handle.set_repeat_max_height(Some(240.), cx))
+            .expect("same")
+    );
+    for invalid in [f32::NAN, f32::INFINITY, -1.] {
+        assert!(
+            vcx.update(|_, cx| handle.set_repeat_max_height(Some(invalid), cx))
+                .is_err()
+        );
+    }
+    vcx.run_until_parked();
+    assert_eq!(height(vcx), px(240.));
+    assert_eq!(vcx.update(|_, cx| ui.read(cx).host_renders()), renders);
+    assert!(
+        vcx.update(|_, cx| handle.set_repeat_max_height(None, cx))
+            .expect("default")
+    );
+    vcx.run_until_parked();
+    assert_eq!(height(vcx), px(600.));
+    for window_height in [300., 600.] {
+        vcx.simulate_resize(gpui_kit::size(px(800.), px(window_height)));
+        vcx.run_until_parked();
+        assert_eq!(height(vcx), px(window_height));
+    }
+    // Ten rows fit within the window: no nested scroller or eight-row cap.
+    vcx.update(|_, cx| {
+        handle.patch(
+            |names, out| out.splice(names.slot("rows").expect("rows"), 10..40, Arc::from([])),
+            cx,
+        )
+    });
+    vcx.run_until_parked();
+    assert_eq!(
+        height(vcx),
+        px(guiraffe_core::Size::Xl.control_height() * 10.)
+    );
 }

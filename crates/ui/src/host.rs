@@ -82,6 +82,7 @@ struct Shared {
     events_handled: Cell<u64>,
     stale_events: Cell<u64>,
     host_renders: Cell<u64>,
+    repeat_viewport: Cell<crate::RepeatViewport>,
     owner: std::rc::Weak<Shared>,
 }
 
@@ -457,8 +458,13 @@ impl Shared {
             });
             let rows = state.model.borrow().rows.clone();
             let count = rows.len();
-            if spec.uniform_rows && count > 8 {
-                let height = guiraffe_core::Size::Xl.control_height();
+            let height = guiraffe_core::Size::Xl.control_height();
+            let (viewport_height, scrollable) = self.repeat_viewport.get().resolve(
+                height,
+                count,
+                f32::from(window.viewport_size().height),
+            );
+            if spec.uniform_rows && scrollable {
                 vec![
                     uniform_list(
                         ("data-ui-repeat", index as usize),
@@ -480,7 +486,7 @@ impl Shared {
                                 .collect()
                         },
                     )
-                    .h(px(height * count.min(8) as f32))
+                    .h(px(viewport_height))
                     .w_full()
                     .into_any_element(),
                 ]
@@ -656,6 +662,34 @@ pub struct DataUiHandle {
 }
 
 impl DataUiHandle {
+    /// Bound uniform repeats to this height in logical pixels. `None` uses the
+    /// window height. Embedded panels can supply their available content height.
+    /// Returns whether the policy changed; invalid or unchanged policies are inert.
+    pub fn set_repeat_max_height(
+        &self,
+        height: Option<f32>,
+        cx: &mut App,
+    ) -> Result<bool, crate::RepeatViewportError> {
+        let policy = crate::RepeatViewport::new(height)?;
+        if self.shared.repeat_viewport.get() == policy {
+            return Ok(false);
+        }
+        self.shared.repeat_viewport.set(policy);
+        let template = self.shared.template.borrow();
+        let bound = self.shared.bound.borrow();
+        for key in self.shared.repeats.borrow().keys() {
+            if template.node(key.0).is_some_and(|node| node.uniform_rows)
+                && let Some(entity) = bound.get(key)
+            {
+                cx.notify(entity.entity_id());
+            }
+        }
+        Ok(true)
+    }
+    pub fn repeat_max_height(&self) -> Option<f32> {
+        self.shared.repeat_viewport.get().max_height()
+    }
+
     pub fn patch(&self, f: impl FnOnce(&Names, &mut PatchBuf), cx: &mut App) {
         self.shared.patch(f, cx);
     }
@@ -794,6 +828,7 @@ impl DataUi {
                 events_handled: Cell::new(0),
                 stale_events: Cell::new(0),
                 host_renders: Cell::new(0),
+                repeat_viewport: Cell::default(),
                 owner: owner.clone(),
             });
             *shared_slot.borrow_mut() = Rc::downgrade(&shared);
