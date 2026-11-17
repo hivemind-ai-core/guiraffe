@@ -215,7 +215,7 @@ fn flex_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
         )
         .unwrap_or_default();
     Flex::new()
-                .h(px(170.))
+                .h(px(130.))
                 .direction(direction)
                 .wrap(v.on(1))
                 .gap(v.size(2))
