@@ -46,7 +46,7 @@ impl ResolveCtx {
             },
         }
     }
-    fn filled_shade(&self) -> u8 {
+    pub fn filled_shade(&self) -> u8 {
         match self.scheme {
             Scheme::Light => self.primary_shade_light,
             Scheme::Dark => self.primary_shade_dark,
@@ -56,7 +56,7 @@ impl ResolveCtx {
 
 /// Text needs 4.5:1 (WCAG 1.4.3). Tinted text targets a little more so hover/pressed tints
 /// (which sit between rest and the text) still clear the floor.
-const TEXT_TARGET: f32 = 5.0;
+pub const TEXT_TARGET: f32 = 5.0;
 
 /// The shade of `color` nearest `start` that reaches `floor` against `bg`, walking toward the
 /// dark end in light mode and the light end in dark mode (Refactoring UI: keep the hue, move
@@ -83,7 +83,7 @@ pub fn readable_shade(color: ColorName, start: u8, bg: Rgb, floor: f32, dark: bo
 
 /// Foreground for a filled background: white when it reads, otherwise "flip the contrast" to
 /// the hue's darkest shade, then near-black.
-fn filled_foreground(color: ColorName, bg: Rgb) -> Rgb {
+pub fn filled_foreground(color: ColorName, bg: Rgb) -> Rgb {
     [
         Rgb::WHITE,
         color.shade(9),

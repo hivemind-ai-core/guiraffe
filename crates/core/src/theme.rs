@@ -241,7 +241,10 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
             t.popover_foreground = k.foreground.to_hsla();
             t.accent = k.accent.to_hsla();
             t.accent_foreground = k.foreground.to_hsla();
-            // The semantic families follow the same rules as the primary.
+            // The semantic families follow the same rules as the primary. One
+            // family paints the text of an alert on its tint, the fill of a
+            // tag, the text of an outlined tag, the fill of a button and the
+            // fill of a badge.
             let (danger, success, warning, info) = (k.danger, k.success, k.warning, k.info);
             (
                 t.danger,
@@ -282,6 +285,55 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
                 info.active.to_hsla(),
                 info.foreground.to_hsla(),
             );
+            // The buttons of the semantic variants take the same family.
+            (
+                t.button_danger,
+                t.button_danger_hover,
+                t.button_danger_active,
+                t.button_danger_foreground,
+            ) = (
+                danger.base.to_hsla(),
+                danger.hover.to_hsla(),
+                danger.active.to_hsla(),
+                danger.foreground.to_hsla(),
+            );
+            (
+                t.button_success,
+                t.button_success_hover,
+                t.button_success_active,
+                t.button_success_foreground,
+            ) = (
+                success.base.to_hsla(),
+                success.hover.to_hsla(),
+                success.active.to_hsla(),
+                success.foreground.to_hsla(),
+            );
+            (
+                t.button_warning,
+                t.button_warning_hover,
+                t.button_warning_active,
+                t.button_warning_foreground,
+            ) = (
+                warning.base.to_hsla(),
+                warning.hover.to_hsla(),
+                warning.active.to_hsla(),
+                warning.foreground.to_hsla(),
+            );
+            (
+                t.button_info,
+                t.button_info_hover,
+                t.button_info_active,
+                t.button_info_foreground,
+            ) = (
+                info.base.to_hsla(),
+                info.hover.to_hsla(),
+                info.active.to_hsla(),
+                info.foreground.to_hsla(),
+            );
+            // The badge of Kit paints itself with the danger colour and
+            // carries white text, so it takes the shade of the family that is
+            // dark in both schemes.
+            t.red = danger.fill.to_hsla();
             [t.chart_1, t.chart_2, t.chart_3, t.chart_4, t.chart_5] = k.charts.map(Rgb::to_hsla);
             t.radius = px(k.radius);
         });

@@ -240,8 +240,8 @@ pub fn contrast_checks(t: &GuiraffeTheme) -> Vec<ContrastCheck> {
     push("Dimmed text".into(), d.foreground, d.background, TEXT_MIN);
     let f = t.state(StateKind::FocusRing, Variant::Default, None);
     push("Focus ring".into(), f.border, s.body, NON_TEXT_MIN);
-    // The semantic families Kit paints its alerts with follow the same rules
-    // as the primary: the text reads on the fill, in every state.
+    // The semantic surfaces of Kit follow the same rules as the primary: the
+    // text reads on the surface it is painted on, in every state.
     let kit = crate::kit_bridge::KitColors::from_theme(t);
     for (name, family) in [
         ("danger", kit.danger),
@@ -249,20 +249,50 @@ pub fn contrast_checks(t: &GuiraffeTheme) -> Vec<ContrastCheck> {
         ("warning", kit.warning),
         ("info", kit.info),
     ] {
+        // An alert paints the colour of the family as its text, over a tint of
+        // the same colour on the surface of the app: Kit mixes four percent
+        // of the colour into the background.
+        let tint = family.base.alpha(0.04).over(s.body);
+        push(format!("{name} alert text"), family.base, tint, TEXT_MIN);
+        // A tag paints the colour of the family as its fill, with the
+        // foreground of the family on it.
         push(
-            format!("{name} text"),
+            format!("{name} tag text"),
+            family.foreground,
+            family.base,
+            TEXT_MIN,
+        );
+        // An outlined tag paints the colour of the family as its text on the
+        // surface of the app.
+        push(
+            format!("{name} outlined tag text"),
+            family.base,
+            s.body,
+            TEXT_MIN,
+        );
+        // A badge of Kit carries white text on the fill of the family.
+        push(
+            format!("{name} badge text"),
+            Rgb::WHITE,
+            family.fill,
+            TEXT_MIN,
+        );
+        // A button of a semantic variant carries the foreground of the family
+        // on the fill, in every state.
+        push(
+            format!("{name} button text"),
             family.foreground,
             family.base,
             TEXT_MIN,
         );
         push(
-            format!("{name} hover text"),
+            format!("{name} button hover text"),
             family.foreground,
             family.hover,
             TEXT_MIN,
         );
         push(
-            format!("{name} pressed text"),
+            format!("{name} button pressed text"),
             family.foreground,
             family.active,
             TEXT_MIN,
