@@ -142,7 +142,9 @@ pub fn compute_order(
         })
     });
     check()?;
-    Ok(RowOrder::Indices(keyed.into_iter().map(|(_, r)| r).collect()))
+    Ok(RowOrder::Indices(
+        keyed.into_iter().map(|(_, r)| r).collect(),
+    ))
 }
 
 /// Header-click sort cycling. Without `multi`: asc -> desc -> none on the clicked column,
@@ -237,9 +239,19 @@ mod tests {
             source_col: 1,
             pred: Arc::new(|c| matches!(c, CellRef::Int(0))),
         };
-        let o = compute_order(&s, &[f.clone()], &[spec(0, SortDir::Asc)], &AtomicBool::new(false))
-            .map(indices);
-        assert_eq!(o, Ok(vec![98, 91, 84, 77, 70, 63, 56, 49, 42, 35, 28, 21, 14, 7, 0]));
+        let o = compute_order(
+            &s,
+            std::slice::from_ref(&f),
+            &[spec(0, SortDir::Asc)],
+            &AtomicBool::new(false),
+        )
+        .map(indices);
+        assert_eq!(
+            o,
+            Ok(vec![
+                98, 91, 84, 77, 70, 63, 56, 49, 42, 35, 28, 21, 14, 7, 0
+            ])
+        );
         assert_eq!(
             compute_order(&s, &[f], &[], &AtomicBool::new(true)),
             Err(Cancelled)
@@ -250,19 +262,37 @@ mod tests {
     fn toggle_cycles() {
         let mut k = vec![];
         toggle_sort(&mut k, 2, false);
-        assert_eq!(k, [SortKey { column: 2, dir: SortDir::Asc }]);
+        assert_eq!(
+            k,
+            [SortKey {
+                column: 2,
+                dir: SortDir::Asc
+            }]
+        );
         toggle_sort(&mut k, 2, false);
         assert_eq!(k[0].dir, SortDir::Desc);
         toggle_sort(&mut k, 3, true);
         assert_eq!(k.len(), 2);
         toggle_sort(&mut k, 3, true);
         toggle_sort(&mut k, 3, true);
-        assert_eq!(k, [SortKey { column: 2, dir: SortDir::Desc }]);
+        assert_eq!(
+            k,
+            [SortKey {
+                column: 2,
+                dir: SortDir::Desc
+            }]
+        );
         toggle_sort(&mut k, 2, false);
         assert!(k.is_empty());
         toggle_sort(&mut k, 1, false);
         toggle_sort(&mut k, 4, false);
-        assert_eq!(k, [SortKey { column: 4, dir: SortDir::Asc }]);
+        assert_eq!(
+            k,
+            [SortKey {
+                column: 4,
+                dir: SortDir::Asc
+            }]
+        );
     }
 
     proptest! {

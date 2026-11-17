@@ -17,3 +17,10 @@ pub use columns::{Align, ColumnDef, ColumnLayout, Pin};
 pub use order::{Filter, RowOrder, SortDir, SortKey};
 pub use selection::{CellPos, Nav, SelectionMode};
 pub use source::{ArcSource, CellRef, EditError, FnSource, GridSource, RowKey, VecSource};
+
+mod grid;
+pub use grid::{
+    Activate, CONTEXT, CopySelection, DataGrid, EditCell, EditRequest, GridEvent, GridEvents,
+    GridHandle, GridOptions, GridStats, GridView, RowView, SelectAll, Validator, init,
+};
+pub use selection::Selection;

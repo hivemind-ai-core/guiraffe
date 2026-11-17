@@ -96,7 +96,10 @@ impl ColumnDef {
         self.align = a;
         self
     }
-    pub fn formatter(mut self, f: impl Fn(CellRef<'_>, &mut String) + Send + Sync + 'static) -> Self {
+    pub fn formatter(
+        mut self,
+        f: impl Fn(CellRef<'_>, &mut String) + Send + Sync + 'static,
+    ) -> Self {
         self.formatter = Some(Arc::new(f));
         self
     }
@@ -132,7 +135,11 @@ impl ColumnDef {
     pub fn clamp_width(&self, w: f32) -> f32 {
         let min = self.min_width.max(8.);
         let max = self.max_width.max(min);
-        if w.is_finite() { w.clamp(min, max) } else { min }
+        if w.is_finite() {
+            w.clamp(min, max)
+        } else {
+            min
+        }
     }
 
     /// Display text for `cell` into `out` (formatter, else the default).
@@ -211,10 +218,14 @@ impl ColumnLayout {
                 Pin::Right => l.right_width = x as f32,
             }
         }
-        let mut i = 0;
-        for p in l.left.iter_mut().chain(&mut l.center).chain(&mut l.right) {
+        for (i, p) in l
+            .left
+            .iter_mut()
+            .chain(&mut l.center)
+            .chain(&mut l.right)
+            .enumerate()
+        {
             p.display = i;
-            i += 1;
         }
         l
     }
@@ -292,10 +303,7 @@ impl ColumnLayout {
         if x >= right_start {
             return find(&self.right, f64::from(x - right_start));
         }
-        find(
-            &self.center,
-            f64::from(x - self.left_width) + scroll_x,
-        )
+        find(&self.center, f64::from(x - self.left_width) + scroll_x)
     }
 
     /// Display column whose right edge is within `slop` px of `x` (a resize handle).
@@ -307,9 +315,7 @@ impl ColumnLayout {
             };
             let edge = sx + p.width;
             let visible = match band {
-                Band::Center => {
-                    edge > self.left_width && edge <= grid_w - self.right_width + slop
-                }
+                Band::Center => edge > self.left_width && edge <= grid_w - self.right_width + slop,
                 _ => true,
             };
             visible && (x - edge).abs() <= slop
@@ -373,10 +379,16 @@ mod tests {
     fn bands_and_display_order() {
         let l = ColumnLayout::compute(&defs(), &[0, 1, 2, 3, 4, 5]);
         assert_eq!(l.left.len(), 1);
-        assert_eq!(l.center.iter().map(|p| p.def).collect::<Vec<_>>(), [1, 2, 5]);
+        assert_eq!(
+            l.center.iter().map(|p| p.def).collect::<Vec<_>>(),
+            [1, 2, 5]
+        );
         assert_eq!(l.right[0].def, 4);
         assert_eq!(l.display_count(), 5);
-        assert_eq!(l.display(4).map(|(b, p)| (b, p.def)), Some((Band::Right, 4)));
+        assert_eq!(
+            l.display(4).map(|(b, p)| (b, p.def)),
+            Some((Band::Right, 4))
+        );
         assert_eq!(l.center_width, 450.);
         assert_eq!(l.display_of(3), None);
     }

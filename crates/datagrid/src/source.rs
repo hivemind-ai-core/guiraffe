@@ -159,7 +159,10 @@ impl<T: Send + Sync + 'static> VecSource<T> {
     }
 
     /// Add a read-only column.
-    pub fn column(mut self, get: impl for<'a> Fn(&'a T) -> CellRef<'a> + Send + Sync + 'static) -> Self {
+    pub fn column(
+        mut self,
+        get: impl for<'a> Fn(&'a T) -> CellRef<'a> + Send + Sync + 'static,
+    ) -> Self {
         self.getters.push(Arc::new(get));
         self.setters.push(None);
         self
@@ -245,7 +248,10 @@ impl<T: Send + Sync + 'static> ArcSource<T> {
             key: None,
         }
     }
-    pub fn column(mut self, get: impl for<'a> Fn(&'a T) -> CellRef<'a> + Send + Sync + 'static) -> Self {
+    pub fn column(
+        mut self,
+        get: impl for<'a> Fn(&'a T) -> CellRef<'a> + Send + Sync + 'static,
+    ) -> Self {
         self.getters.push(Arc::new(get));
         self
     }
@@ -343,7 +349,10 @@ mod tests {
         assert_eq!(s.cell(1, 0), CellRef::Text("Linus"));
         assert_eq!(s.cell(9, 0), CellRef::Empty);
         assert_eq!(s.set_cell(0, 0, "x"), Err(EditError::ReadOnly));
-        assert!(matches!(s.set_cell(0, 1, "abc"), Err(EditError::Invalid(_))));
+        assert!(matches!(
+            s.set_cell(0, 1, "abc"),
+            Err(EditError::Invalid(_))
+        ));
         assert_eq!(s.set_cell(0, 1, " 37"), Ok(()));
         assert_eq!(s.cell(0, 1), CellRef::Int(37));
         assert_eq!(s.revision(), 1);
@@ -373,9 +382,9 @@ mod tests {
         let mut s = String::new();
         CellRef::Number(3.0).write_display(&mut s);
         s.push('|');
-        CellRef::Number(3.14159).write_display(&mut s);
+        CellRef::Number(1.23456).write_display(&mut s);
         s.push('|');
         CellRef::Int(-4).write_display(&mut s);
-        assert_eq!(s, "3|3.14|-4");
+        assert_eq!(s, "3|1.23|-4");
     }
 }

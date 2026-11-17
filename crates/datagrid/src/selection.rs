@@ -187,8 +187,7 @@ impl Selection {
                     if !ctrl {
                         self.rows.clear();
                     }
-                    self.rows
-                        .insert(a.row.min(pos.row)..a.row.max(pos.row) + 1);
+                    self.rows.insert(a.row.min(pos.row)..a.row.max(pos.row) + 1);
                     self.cursor = Some(pos);
                 } else if ctrl {
                     self.rows.toggle(pos.row);
@@ -285,8 +284,10 @@ impl Selection {
     }
 
     pub fn is_row_selected(&self, row: usize) -> bool {
-        matches!(self.mode, SelectionMode::SingleRow | SelectionMode::MultiRow)
-            && self.rows.contains(row)
+        matches!(
+            self.mode,
+            SelectionMode::SingleRow | SelectionMode::MultiRow
+        ) && self.rows.contains(row)
     }
 
     pub fn is_cell_selected(&self, row: usize, col: usize) -> bool {
@@ -329,6 +330,7 @@ impl Selection {
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
@@ -338,20 +340,23 @@ mod tests {
         let mut s = Selection::new(SelectionMode::MultiRow);
         s.click(CellPos::new(3, 0), false, false);
         s.click(CellPos::new(6, 1), true, false);
-        assert_eq!(s.rows.ranges(), [3..7]);
+        assert_eq!(s.rows.ranges(), &[3..7][..]);
         s.click(CellPos::new(5, 0), false, true);
         assert_eq!(s.rows.ranges(), [3..5, 6..7]);
         s.click(CellPos::new(9, 0), true, true);
-        assert_eq!(s.rows.ranges(), [3..10]);
+        assert_eq!(s.rows.ranges(), &[3..10][..]);
         s.click(CellPos::new(1, 0), false, false);
-        assert_eq!(s.rows.ranges(), [1..2]);
+        assert_eq!(s.rows.ranges(), &[1..2][..]);
         assert!(s.is_row_selected(1) && !s.is_row_selected(2));
     }
 
     #[test]
     fn keyboard_navigation() {
         let mut s = Selection::new(SelectionMode::Range);
-        assert_eq!(s.navigate(Nav::Down, false, 100, 5, 10), Some(CellPos::new(0, 0)));
+        assert_eq!(
+            s.navigate(Nav::Down, false, 100, 5, 10),
+            Some(CellPos::new(0, 0))
+        );
         s.navigate(Nav::PageDown, false, 100, 5, 10);
         s.navigate(Nav::End, true, 100, 5, 10);
         s.navigate(Nav::Down, true, 100, 5, 10);
@@ -373,7 +378,7 @@ mod tests {
         let mut s = Selection::new(SelectionMode::SingleRow);
         s.navigate(Nav::Down, false, 10, 2, 3);
         s.navigate(Nav::Down, true, 10, 2, 3);
-        assert_eq!(s.rows.ranges(), [1..2]);
+        assert_eq!(s.rows.ranges(), &[1..2][..]);
         assert!(!s.select_all(10, 2));
     }
 
@@ -383,7 +388,7 @@ mod tests {
         s.rows.insert(2..8);
         s.cursor = Some(CellPos::new(7, 0));
         s.clamp(5, 3);
-        assert_eq!(s.rows.ranges(), [2..5]);
+        assert_eq!(s.rows.ranges(), &[2..5][..]);
         assert_eq!(s.cursor, None);
     }
 
