@@ -29,6 +29,11 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
         "child of Card; shown in the Card entry",
     ),
     (
+        "components",
+        "ScopedButton",
+        "focus-scope prototype (spec/18 §12 audit); a Kit Button with opt-in tab stop",
+    ),
+    (
         "mermaid",
         "Host",
         "private test host in a non-public module (`mermaid::host`)",

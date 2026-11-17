@@ -59,6 +59,9 @@ pub struct StyleContext {
     pub control_size: Size,
     pub surface: SurfaceKind,
     pub emphasis: Emphasis,
+    /// Inside a focus scope (form): non-text controls join Tab navigation (spec/00 §12.3).
+    /// Outside one they never take keyboard focus.
+    pub keyboard_nav: bool,
 }
 
 impl Default for StyleContext {
@@ -68,6 +71,7 @@ impl Default for StyleContext {
             control_size: Size::Sm,
             surface: SurfaceKind::Body,
             emphasis: Emphasis::Default,
+            keyboard_nav: false,
         }
     }
 }
@@ -133,6 +137,7 @@ pub struct StylePatch {
     pub control_size: Option<Size>,
     pub surface: Option<SurfaceKind>,
     pub emphasis: Option<Emphasis>,
+    pub keyboard_nav: Option<bool>,
 }
 
 impl StylePatch {
@@ -142,6 +147,7 @@ impl StylePatch {
             control_size: None,
             surface: None,
             emphasis: None,
+            keyboard_nav: None,
         }
     }
     pub const fn density(mut self, v: Density) -> Self {
@@ -160,6 +166,10 @@ impl StylePatch {
         self.emphasis = Some(v);
         self
     }
+    pub const fn keyboard_nav(mut self, v: bool) -> Self {
+        self.keyboard_nav = Some(v);
+        self
+    }
     /// Apply on top of `base`.
     pub fn apply(self, base: StyleContext) -> StyleContext {
         StyleContext {
@@ -167,6 +177,7 @@ impl StylePatch {
             control_size: self.control_size.unwrap_or(base.control_size),
             surface: self.surface.unwrap_or(base.surface),
             emphasis: self.emphasis.unwrap_or(base.emphasis),
+            keyboard_nav: self.keyboard_nav.unwrap_or(base.keyboard_nav),
         }
     }
 }
@@ -255,6 +266,19 @@ impl Element for Provide {
         );
         child.paint(window, cx);
     }
+}
+
+/// Opt a subtree into Tab navigation (a form, dialog or settings page): non-text controls
+/// inside become tab stops and show focus rings for keyboard focus. Outside a scope,
+/// clicking a button, segment or chip never takes keyboard focus (spec/00 §12.3).
+pub fn focus_scope(child: impl gpui_kit::IntoElement) -> Provide {
+    provide(StylePatch::new().keyboard_nav(true), child)
+}
+
+/// Whether a non-text control rendered now should be a tab stop: true inside a
+/// [`focus_scope`], or when the control opts in itself (`explicit`).
+pub fn tab_stop(explicit: Option<bool>) -> bool {
+    explicit.unwrap_or(StyleContext::current().keyboard_nav)
 }
 
 #[cfg(test)]
