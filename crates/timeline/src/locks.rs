@@ -10,20 +10,35 @@ pub enum LockStyle {
     Hatched,
 }
 impl LockStyle {
-    pub(crate) fn decorate(self, element: Div, theme: &GuiraffeTheme) -> Div {
+    pub(crate) fn decorate<E: ParentElement + Styled>(
+        self,
+        element: E,
+        theme: &GuiraffeTheme,
+    ) -> E {
         match self {
             Self::None => element,
-            Self::Badge => element.child(
-                div()
-                    .absolute()
-                    .right(px(2.))
-                    .top_0()
-                    .text_size(px(10.))
-                    .child(
-                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Lock)
-                            .size(px(10.)),
-                    ),
-            ),
+            Self::Badge => element
+                .bg(theme
+                    .state(StateKind::Disabled, Variant::Light, None)
+                    .background
+                    .to_hsla())
+                .border_color(
+                    theme
+                        .state(StateKind::Disabled, Variant::Light, None)
+                        .border
+                        .to_hsla(),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .right(px(2.))
+                        .top_0()
+                        .text_size(px(10.))
+                        .child(
+                            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Lock)
+                                .size(px(10.)),
+                        ),
+                ),
             Self::Dimmed => element
                 .bg(theme
                     .state(StateKind::Dimmed, Variant::Light, None)

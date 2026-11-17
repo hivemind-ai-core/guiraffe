@@ -11,7 +11,7 @@ use gpui_kit::{
 use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 
 use crate::{
-    axis::{Axis, TimeFormat},
+    axis::{Axis, TimeFormat, label},
     clips::Edge,
     edit::{
         EndEarlier, EndLater, Grab, KEY_CONTEXT, MoveEarlier, MoveLater, Nudge, ResizeEdges,
@@ -83,6 +83,7 @@ pub struct GanttView {
     tasks: Vec<Task>,
     schedule: Result<HashMap<u32, Scheduled>, ScheduleError>,
     surface: crate::PlotSurface,
+    format: TimeFormat,
     lock_style: crate::LockStyle,
     global_lock_style: crate::LockStyle,
     drag: Option<Drag>,
@@ -123,6 +124,7 @@ impl GanttView {
             tasks,
             schedule,
             surface: crate::PlotSurface::timeline(axis, format),
+            format,
             lock_style: crate::LockStyle::Badge,
             global_lock_style: crate::LockStyle::None,
             drag: None,
@@ -178,7 +180,11 @@ impl GanttView {
         else {
             return;
         };
-        let d = dir * key_step(self.key_step, self.axis.tick_step(90.0, self.format));
+        let d = dir
+            * key_step(
+                self.key_step,
+                self.surface.axis.tick_step(90.0, self.format),
+            );
         match what {
             Nudge::Move => self.reschedule(id, sc.early_start + d, cx),
             Nudge::End => self.resize_edge(id, Edge::End, sc.early_finish + d, cx),
@@ -299,7 +305,10 @@ impl GanttView {
         if let Some(task) = self.tasks.get(row)
             && let Some(sc) = self.schedule.as_ref().ok().and_then(|m| m.get(&task.id))
         {
-            let (x0, x1) = (self.axis.x(sc.early_start), self.axis.x(sc.early_finish));
+            let (x0, x1) = (
+                self.surface.axis.x(sc.early_start),
+                self.surface.axis.x(sc.early_finish),
+            );
             if x >= x0 && x <= x1.max(x0 + 2.0) {
                 self.selected = Some(task.id);
             }
@@ -475,7 +484,6 @@ impl Render for GanttView {
         let normal = t.variant(None, Variant::Light);
         let critical = t.variant(Some(ColorName::Red), Variant::Filled);
         let error_fg = t.variant(Some(ColorName::Red), Variant::Light).foreground;
-        let off = t.state(StateKind::Disabled, Variant::Light, None);
         let ring = t.state(StateKind::FocusRing, Variant::Light, None).border;
         let ring_on = ring_visible(&self.focus, window);
         let tab = guiraffe_core::tab_stop(self.focusable);
@@ -490,7 +498,7 @@ impl Render for GanttView {
             }
         }
         let axis = self.surface.axis;
-        let format=self.format;
+        let format = self.format;
 
         let error = self.schedule.as_ref().err().map(|e| format!("{e:?}"));
         let geo = self.geometry.clone();
@@ -669,8 +677,16 @@ impl Render for GanttView {
                                         .h(px(ROW_H - 12.0))
                                         .rounded(px(4.))
                                         .border_1()
-                                        .bg(v.background.to_hsla()).border_color(v.foreground.to_hsla())
-                                        .when(locked,|el|if ids.get(i).is_some_and(|id|locked_ids.contains(id)){item_style.decorate(el,t)}else{global_style.decorate(el,t)})
+                                        .bg(v.background.to_hsla())
+                                        .border_color(v.foreground.to_hsla())
+                                        .when(locked, |el| {
+                                            if ids.get(i).is_some_and(|id| locked_ids.contains(id))
+                                            {
+                                                item_style.decorate(el, t)
+                                            } else {
+                                                global_style.decorate(el, t)
+                                            }
+                                        })
                                         // Selection: a 2px overlay outline, no layout change.
                                         .when(on, |el| {
                                             el.child(

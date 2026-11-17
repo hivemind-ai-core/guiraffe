@@ -8,7 +8,7 @@ use gpui_kit::{
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, ScrollEvent,
     SharedString, Styled, TestSupportExt, Window, canvas, div, prelude::*, px,
 };
-use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
+use guiraffe_core::{GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 
 use crate::{
     axis::{Axis, TimeFormat, label},
@@ -150,7 +150,7 @@ impl TracksView {
         if !self.editable || self.locked.contains(&(ti, id)) {
             return;
         }
-        let d = dir * key_step(self.snap, self.axis.tick_step(80.0, self.format));
+        let d = dir * key_step(self.snap, self.surface.axis.tick_step(80.0, self.format));
         let snap = self.snap;
         let snapped = |t: f64| match snap {
             Some(g) => (t / g).round() * g,
@@ -242,7 +242,7 @@ impl TracksView {
     pub fn press(&mut self, track: usize, x: f64) -> bool {
         // Any press on a clip selects it (locked clips too); only editable clips drag.
         if let Some((_, tr)) = self.tracks.get(track)
-            && let Some((clip, _)) = hit(tr, &self.axis, x, ResizeEdges::None)
+            && let Some((clip, _)) = hit(tr, &self.surface.axis, x, ResizeEdges::None)
         {
             self.selected = Some((track, clip));
         }
@@ -363,9 +363,7 @@ impl Render for TracksView {
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
         let clip_v = t.variant(None, Variant::Light);
-        let off = t.state(StateKind::Disabled, Variant::Light, None);
         let ring = t.state(StateKind::FocusRing, Variant::Light, None).border;
-        let playhead_color = t.variant(Some(ColorName::Red), Variant::Filled).background;
         let ring_on = ring_visible(&self.focus, window);
         let tab = guiraffe_core::tab_stop(self.focusable);
         let selected = self.selected;
@@ -376,7 +374,7 @@ impl Render for TracksView {
             }
         }
         let axis = self.surface.axis;
-        let format=self.format;
+        let format = self.format;
         let editable = self.editable;
         let item_style = self.lock_style;
         let global_style = self.global_lock_style;
@@ -384,7 +382,7 @@ impl Render for TracksView {
 
         let line = s.border.to_hsla();
         let body = self.body.clone();
-        let owner=cx.entity_id();
+        let owner = cx.entity_id();
         let root = div()
             .id("tracks")
             .test_support()
@@ -561,9 +559,16 @@ impl Render for TracksView {
                                             .h(px(TRACK_H - 8.0))
                                             .rounded(px(4.))
                                             .border_1()
-                                            .bg(clip_v.background.to_hsla()).border_color(clip_v.foreground.to_hsla())
-                                            .when(is_locked,|el|if locked.contains(&(i,c.id)){item_style.decorate(el,t)}else{global_style.decorate(el,t)})
-                                        // Selection: 2px overlay outline, no layout change.
+                                            .bg(clip_v.background.to_hsla())
+                                            .border_color(clip_v.foreground.to_hsla())
+                                            .when(is_locked, |el| {
+                                                if locked.contains(&(i, c.id)) {
+                                                    item_style.decorate(el, t)
+                                                } else {
+                                                    global_style.decorate(el, t)
+                                                }
+                                            })
+                                            // Selection: 2px overlay outline, no layout change.
                                             .when(on, |el| {
                                                 el.child(
                                                     div()
