@@ -16,6 +16,7 @@ use crate::{
 pub struct KitColors {
     pub primary: Rgb,
     pub primary_hover: Rgb,
+    pub primary_active: Rgb,
     pub primary_foreground: Rgb,
     pub selection: Rgb,
     pub background: Rgb,
@@ -32,7 +33,8 @@ pub struct KitColors {
 impl KitColors {
     pub fn from_theme(t: &GuiraffeTheme) -> Self {
         let s = t.surfaces();
-        let primary = t.primary_color();
+        // The contrast-corrected filled background (may be deeper than the raw primary shade).
+        let primary = t.variant(None, Variant::Filled).background;
         let chart_shade = match t.scheme {
             Scheme::Light => 6,
             Scheme::Dark => 5,
@@ -53,8 +55,9 @@ impl KitColors {
         let charts = [next(), primary, next(), next(), next()];
         Self {
             primary,
-            primary_hover: t.variant(None, Variant::Filled).hover,
-            primary_foreground: primary.readable_foreground(),
+            primary_hover: t.state(crate::StateKind::Hover, Variant::Filled, None).background,
+            primary_active: t.state(crate::StateKind::Pressed, Variant::Filled, None).background,
+            primary_foreground: t.state(crate::StateKind::Rest, Variant::Filled, None).foreground,
             selection: primary.alpha(0.3).over(s.body),
             background: s.body,
             foreground: s.text,
@@ -92,9 +95,14 @@ mod tests {
             ..Default::default()
         };
         let k = KitColors::from_theme(&t);
-        assert_eq!(k.primary, ColorName::Grape.shade(6));
+        // Kit's primary is GUIraffe's contrast-corrected filled background, not the raw shade.
+        assert_eq!(k.primary, t.variant(None, Variant::Filled).background);
         assert_eq!(k.charts[1], k.primary);
-        assert!(k.primary_foreground.contrast(k.primary) >= 3.0);
+        assert!(k.primary_foreground.contrast(k.primary) >= 4.5);
+        // Pressed is distinct from hover and rest, and keeps the text readable.
+        assert_ne!(k.primary_active, k.primary_hover);
+        assert_ne!(k.primary_active, k.primary);
+        assert!(k.primary_foreground.contrast(k.primary_active) >= 4.5);
         assert_ne!(k.selection, k.primary, "selection is a tint");
     }
 

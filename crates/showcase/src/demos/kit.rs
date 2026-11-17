@@ -245,6 +245,7 @@ fn buttons(window: &mut Window, cx: &mut App) -> AnyView {
 
 struct InputDemo {
     text: Entity<InputState>,
+    search: Entity<InputState>,
     password: Entity<InputState>,
     number: Entity<InputState>,
     area: Entity<TextareaState>,
@@ -264,6 +265,8 @@ fn inputs(window: &mut Window, cx: &mut App) -> AnyView {
                     .placeholder("Your name")
                     .default_value("Ada Lovelace")
             }),
+            // Each field owns its state: sharing one InputState shares focus and text.
+            search: cx.new(|cx| InputState::new(window, cx).placeholder("Search components")),
             password: cx.new(|cx| {
                 InputState::new(window, cx)
                     .masked(true)
@@ -310,7 +313,7 @@ fn inputs(window: &mut Window, cx: &mut App) -> AnyView {
                 ))
                 .child(field(
                     "Search with prefix",
-                    Input::new(&s.text)
+                    Input::new(&s.search)
                         .with_size(size)
                         .prefix(Icon::new(IconName::Search))
                         .disabled(off)

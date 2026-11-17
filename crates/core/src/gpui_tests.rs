@@ -8,7 +8,9 @@ fn init_bridges_primary_into_controls(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init(cx);
         let t = Theme::global(cx);
-        assert_eq!(t.primary, Rgb::hex(0x228be6).to_hsla());
+        let g = GuiraffeTheme::global(cx);
+        assert_eq!(t.primary, g.variant(None, Variant::Filled).background.to_hsla());
+        assert_ne!(t.button_primary_active, t.button_primary_hover, "pressed differs from hover");
         assert_eq!(GuiraffeTheme::global(cx).primary, ColorName::Blue);
     });
 }

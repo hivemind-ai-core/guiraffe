@@ -204,18 +204,19 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
         }
         let k = crate::kit_bridge::KitColors::from_theme(&theme);
         Theme::update(cx, |t| {
-            let (p, ph, pf) = (
+            let (p, ph, pa, pf) = (
                 k.primary.to_hsla(),
                 k.primary_hover.to_hsla(),
+                k.primary_active.to_hsla(),
                 k.primary_foreground.to_hsla(),
             );
             t.primary = p;
             t.primary_hover = ph;
-            t.primary_active = ph;
+            t.primary_active = pa;
             t.primary_foreground = pf;
             t.button_primary = p;
             t.button_primary_hover = ph;
-            t.button_primary_active = ph;
+            t.button_primary_active = pa;
             t.button_primary_foreground = pf;
             t.sidebar_primary = p;
             t.sidebar_primary_foreground = pf;
