@@ -1,84 +1,54 @@
-//! Dope sheet: one row per animated channel, keyframes as diamonds on the shared time axis.
-//! Drag a key to retime it (frame-snapped when the format is `Frames`). Keys within a channel
-//! stay sorted and never share a time.
-
-use std::{cell::Cell, rc::Rc};
-
-use gpui_kit::{
-    App, Bounds, Context, Entity, EventEmitter, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Pixels, Render, Styled, Window, canvas, div, prelude::*, px,
+//! Hierarchical, frame-snapped dope sheet with viewport-culling and explicit selection.
+use crate::{
+    Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
-use guiraffe_core::{ColorName, GuiraffeTheme};
-
-use crate::axis::{Axis, TimeFormat};
-
-pub const ROW_H: f32 = 24.0;
-pub const NAME_W: f32 = 140.0;
-pub const KEY_GRAB: f64 = 6.0;
-
-/// A channel's key times, kept sorted and distinct.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Channel {
-    pub name: String,
-    keys: Vec<f64>,
-}
-
-impl Channel {
-    pub fn new(name: impl Into<String>, mut keys: Vec<f64>) -> Self {
-        keys.retain(|k| k.is_finite());
-        keys.sort_by(f64::total_cmp);
-        keys.dedup();
-        Self {
-            name: name.into(),
-            keys,
-        }
-    }
-
-    pub fn keys(&self) -> &[f64] {
-        &self.keys
-    }
-
-    /// Retime key `i` to `t`; refuses collisions. Returns the key's new index.
-    pub fn retime(&mut self, i: usize, t: f64) -> Option<usize> {
-        if !t.is_finite()
-            || i >= self.keys.len()
-            || self.keys[i] == t
-            || self.keys.iter().enumerate().any(|(j, k)| j != i && *k == t)
-        {
-            return None;
-        }
-        self.keys.remove(i);
-        let at = self.keys.partition_point(|k| *k < t);
-        self.keys.insert(at, t);
-        Some(at)
-    }
-}
-
-/// Snap `t` to whole frames when the format is frame-based.
-pub fn snap_time(t: f64, format: TimeFormat) -> f64 {
-    match format {
-        TimeFormat::Frames(fps) if fps > 0.0 => (t * fps).round() / fps,
-        _ => t,
-    }
-}
-
+use gpui_kit::component::{Selectable, Sizable, button::Button};
+use gpui_kit::{
+    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled, Window, canvas, div,
+    prelude::*, px,
+};
+use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant};
+use std::{cell::Cell, rc::Rc};
+pub const ROW_H: f32 = 28.;
+pub const NAME_W: f32 = 230.;
+pub const KEY_GRAB: f64 = 7.;
+pub const RULER_H: f32 = 28.;
+pub use crate::channels::{Channel, KeyShape, snap_time};
 #[derive(Debug, Clone, PartialEq)]
 pub enum DopeEvent {
     KeyRetimed { channel: usize, from: f64, to: f64 },
+    SelectionChanged,
+    Changed,
+    ChannelChanged { channel: usize },
 }
-
+#[derive(Clone)]
+enum Gesture {
+    Keys {
+        last: f64,
+    },
+    Box {
+        start: (f64, f32),
+        end: (f64, f32),
+        add: bool,
+        base: std::collections::BTreeSet<(usize, u64)>,
+    },
+}
 pub struct DopeSheet {
-    channels: Vec<Channel>,
-    axis: Axis,
+    model: DopeModel,
+    surface: PlotSurface,
     format: TimeFormat,
-    drag: Option<(usize, usize)>,
+    drag: Option<Gesture>,
     body: Rc<Cell<Bounds<Pixels>>>,
-    /// Range to fit once the real width is known.
     pending_fit: Option<(f64, f64)>,
+    offset: f64,
+    editable: bool,
+    focusable: bool,
+    focus: FocusHandle,
+    playhead: f64,
+    lock_style: LockStyle,
 }
-
 impl EventEmitter<DopeEvent> for DopeSheet {}
-
 impl DopeSheet {
     pub fn new(
         channels: Vec<Channel>,
@@ -86,62 +56,151 @@ impl DopeSheet {
         length: f64,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|_| Self {
-            channels,
-            axis: Axis::new(0.0, length.max(1e-3), 800.0),
+        cx.new(|cx| Self {
+            model: DopeModel::new(channels),
+            surface: PlotSurface::timeline(Axis::new(0., length.max(1e-3), 800.), format),
             format,
             drag: None,
             body: Rc::default(),
-            pending_fit: Some((0.0, length.max(1e-3))),
+            pending_fit: Some((0., length.max(1e-3))),
+            offset: 0.,
+            editable: true,
+            focusable: false,
+            focus: cx.focus_handle(),
+            playhead: 0.,
+            lock_style: LockStyle::Badge,
         })
     }
-
     pub fn channels(&self) -> &[Channel] {
-        &self.channels
+        &self.model.channels
     }
-
     pub fn axis(&self) -> &Axis {
-        &self.axis
+        &self.surface.axis
     }
-
-    pub fn press(&mut self, row: usize, x: f64) -> bool {
-        let axis = self.axis;
-        self.drag = self.channels.get(row).and_then(|c| {
-            c.keys()
-                .iter()
-                .enumerate()
-                .map(|(i, k)| (i, (axis.x(*k) - x).abs()))
-                .filter(|(_, d)| *d <= KEY_GRAB)
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(i, _)| (row, i))
-        });
-        self.drag.is_some()
+    pub fn model(&self) -> &DopeModel {
+        &self.model
     }
-
-    pub fn drag_to(&mut self, x: f64, cx: &mut Context<Self>) {
-        let Some((row, i)) = self.drag else { return };
-        let to = snap_time(self.axis.t(x), self.format).max(0.0);
-        let Some(ch) = self.channels.get_mut(row) else {
-            return;
-        };
-        let Some(&from) = ch.keys().get(i) else {
-            return;
-        };
-        if let Some(ni) = ch.retime(i, to) {
-            self.drag = Some((row, ni));
-            cx.emit(DopeEvent::KeyRetimed {
-                channel: row,
-                from,
-                to,
-            });
+    pub fn add_layer(&mut self, layer: impl crate::Layer, cx: &mut Context<Self>) {
+        self.surface.add_layer(layer);
+        cx.notify();
+    }
+    pub fn set_focusable(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.focusable = on;
+        cx.notify();
+    }
+    pub fn set_editable(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.editable = on;
+        self.drag = None;
+        cx.notify();
+    }
+    pub fn set_locked(&mut self, channel: usize, locked: bool, cx: &mut Context<Self>) {
+        if let Some(c) = self.model.channels.get_mut(channel) {
+            c.locked = locked;
+            self.drag = None;
             cx.notify();
         }
     }
-
+    pub fn set_lock_style(&mut self, style: LockStyle, cx: &mut Context<Self>) {
+        self.lock_style = style;
+        cx.notify();
+    }
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.model.select_all();
+        cx.emit(DopeEvent::SelectionChanged);
+        cx.notify();
+    }
+    pub fn delete_selected(&mut self, cx: &mut Context<Self>) {
+        if self.editable && self.model.delete_selected() {
+            cx.emit(DopeEvent::Changed);
+            cx.notify();
+        }
+    }
+    pub fn nudge(&mut self, frames: f64, cx: &mut Context<Self>) {
+        if self.editable
+            && self
+                .model
+                .translate(frames * self.frame_step(), self.format)
+        {
+            cx.emit(DopeEvent::Changed);
+            cx.notify();
+        }
+    }
+    pub fn duplicate_selected(&mut self, cx: &mut Context<Self>) {
+        if self.editable && self.model.duplicate(self.frame_step(), self.format) {
+            cx.emit(DopeEvent::Changed);
+            cx.notify();
+        }
+    }
+    fn frame_step(&self) -> f64 {
+        match self.format {
+            TimeFormat::Frames(fps) if fps > 0. => 1. / fps,
+            _ => 1.,
+        }
+    }
+    pub fn press(&mut self, row: usize, x: f64) -> bool {
+        self.press_with(row, x, false)
+    }
+    pub fn press_with(&mut self, row: usize, x: f64, add: bool) -> bool {
+        let channel = self.model.rows().get(row).map(|r| r.channel).unwrap_or(row);
+        let nearest = self
+            .model
+            .channels
+            .get(channel)
+            .filter(|c| c.visible)
+            .and_then(|c| {
+                if c.group {
+                    self.model.summary_keys(channel)
+                } else {
+                    c.keys()
+                }
+                .iter()
+                .copied()
+                .map(|t| (t, (self.surface.axis.x(t) - x).abs()))
+                .filter(|(_, d)| *d <= KEY_GRAB)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+            });
+        if let Some((t, _)) = nearest {
+            if add || !self.model.selected.contains(&(channel, t.to_bits())) {
+                if self.model.channels[channel].group {
+                    self.model.select_summary(channel, t, add);
+                } else {
+                    self.model.select(channel, t, add);
+                }
+            }
+            self.drag = (self.editable && self.model.editable(channel))
+                .then_some(Gesture::Keys { last: t });
+            true
+        } else {
+            false
+        }
+    }
+    pub fn drag_to(&mut self, x: f64, cx: &mut Context<Self>) {
+        let Some(Gesture::Keys { last }) = self.drag.clone() else {
+            return;
+        };
+        if !self.editable {
+            return;
+        }
+        let to = snap_time(self.surface.axis.t(x), self.format).max(0.);
+        let before = self.model.selected.clone();
+        if self.model.translate(to - last, self.format) {
+            self.drag = Some(Gesture::Keys { last: to });
+            for (channel, t) in before {
+                if self.model.editable(channel) {
+                    let from = f64::from_bits(t);
+                    cx.emit(DopeEvent::KeyRetimed {
+                        channel,
+                        from,
+                        to: snap_time(from + to - last, self.format),
+                    });
+                }
+            }
+            cx.notify();
+        }
+    }
     pub fn release(&mut self) {
         self.drag = None;
     }
-
     fn local(&self, p: gpui_kit::Point<Pixels>) -> (f64, f32) {
         let b = self.body.get();
         (
@@ -149,102 +208,492 @@ impl DopeSheet {
             f32::from(p.y - b.origin.y),
         )
     }
+    fn toggle(&mut self, channel: usize, kind: u8, cx: &mut Context<Self>) {
+        if let Some(c) = self.model.channels.get_mut(channel) {
+            match kind {
+                0 => c.collapsed = !c.collapsed,
+                1 => c.muted = !c.muted,
+                2 => c.locked = !c.locked,
+                _ => c.visible = !c.visible,
+            }
+            self.model.rebuild_rows();
+            self.drag = None;
+            cx.emit(DopeEvent::ChannelChanged { channel });
+            cx.notify();
+        }
+    }
 }
-
 impl Render for DopeSheet {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = GuiraffeTheme::global(cx);
-        let s = t.surfaces();
-        if let Some(w) = crate::measure::width(&self.body) {
-            self.axis.set_width(w);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = GuiraffeTheme::global(cx).clone();
+        let s = theme.surfaces();
+        let b = self.body.get();
+        let w = f64::from(f32::from(b.size.width));
+        let h = f64::from(f32::from(b.size.height)).max(1.);
+        if w > 0. {
+            self.surface.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
-                self.axis.fit(a, b, 0.03);
+                self.surface.fit(a, b, 0.03);
             }
         }
-        let axis = self.axis;
-        let line = s.border.to_hsla();
-        let key_c = ColorName::Yellow.shade(6).to_hsla();
+        self.offset = self.offset.clamp(
+            0.,
+            (self.model.rows().len() as f64 * f64::from(ROW_H) - h).max(0.),
+        );
+        let start = (self.offset / f64::from(ROW_H)).floor() as usize;
+        let end = ((self.offset + h) / f64::from(ROW_H)).ceil() as usize;
+        let rows: Vec<_> = self
+            .model
+            .rows()
+            .get(start..end.min(self.model.rows().len()))
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, r)| (start + i, r))
+            .collect();
+        let mut background = self.surface.clone();
+        background.insert_layer(
+            0,
+            Zebra {
+                rows: self.model.rows().len(),
+            },
+        );
+        let mut foreground = PlotSurface::new(self.surface.axis);
+        foreground.add_layer(Playhead {
+            time: self.playhead,
+            format: self.format,
+        });
+        if let Some(Gesture::Box { start, end, .. }) = self.drag {
+            foreground.add_layer(SelectionBox {
+                start: (start.0, f64::from(start.1)),
+                end: (end.0, f64::from(end.1)),
+            });
+        }
+        let axis = self.surface.axis;
+        let offset = self.offset;
+        let keys: Vec<_> = rows
+            .iter()
+            .flat_map(|(r, row)| {
+                let c = &self.model.channels[row.channel];
+                let keys = if row.summary {
+                    self.model.summary_keys(row.channel)
+                } else {
+                    c.keys()
+                };
+                let lo = keys.partition_point(|t| *t < axis.start - KEY_GRAB * axis.scale);
+                let hi = keys.partition_point(|t| *t <= axis.end() + KEY_GRAB * axis.scale);
+                keys.get(lo..hi)
+                    .unwrap_or(&[])
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(_, t)| {
+                        c.visible && axis.x(*t) >= -KEY_GRAB && axis.x(*t) <= axis.width + KEY_GRAB
+                    })
+                    .map(|(i, t)| {
+                        let i = i + lo;
+                        let selected = self.model.selected.contains(&(row.channel, t.to_bits()));
+                        let decor = c.decor.get(i).copied().unwrap_or((None, KeyShape::Diamond));
+                        let hold = c
+                            .decor
+                            .get(i + 1)
+                            .is_some_and(|next| decor.0.is_some() && decor.0 == next.0)
+                            .then(|| c.keys.get(i + 1).copied())
+                            .flatten();
+                        (
+                            axis.x(t),
+                            *r as f64 * f64::from(ROW_H) - offset,
+                            selected,
+                            decor.1,
+                            hold.map(|t| axis.x(t)),
+                            c.muted,
+                            row.summary,
+                            !self.model.editable(row.channel),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         let body = self.body.clone();
+        let owner = cx.entity_id();
+        let key_theme = theme.clone();
+        let lock_style = self.lock_style;
+        let focus = self.focus.clone();
+        let focus_visible =
+            self.focusable && self.focus.is_focused(window) && window.last_input_was_keyboard();
+        let ring = theme
+            .state(StateKind::FocusRing, Variant::Default, None)
+            .border
+            .to_hsla();
         div()
+            .id("dope-sheet")
+            .relative()
             .size_full()
             .flex()
+            .flex_col()
             .bg(s.body.to_hsla())
             .text_color(s.text.to_hsla())
             .text_size(px(12.))
-            .child(
-                div()
-                    .w(px(NAME_W))
-                    .flex_none()
-                    .border_r_1()
-                    .border_color(line)
-                    .children(self.channels.iter().map(|c| {
-                        div()
-                            .h(px(ROW_H))
-                            .px(px(8.))
-                            .flex()
-                            .items_center()
-                            .border_b_1()
-                            .border_color(line)
-                            .child(c.name.clone())
-                    })),
-            )
-            .child(
-                div()
-                    .id("dope-body")
-                    .relative()
-                    .flex_1()
-                    .overflow_hidden()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, e: &MouseDownEvent, _, _| {
-                            let (x, y) = this.local(e.position);
-                            if y >= 0.0 {
-                                this.press((y / ROW_H) as usize, x);
+            .when(self.focusable, |el| {
+                el.track_focus(&focus)
+                    .tab_stop(true)
+                    .key_context("TimelineDope")
+                    .on_key_down(cx.listener(|this, e: &gpui_kit::KeyDownEvent, _, cx| {
+                        let key = e.keystroke.key.as_str();
+                        match key {
+                            "delete" | "backspace" => this.delete_selected(cx),
+                            "left" => this.nudge(-1., cx),
+                            "right" => this.nudge(1., cx),
+                            "a" if e.keystroke.modifiers.control
+                                || e.keystroke.modifiers.platform =>
+                            {
+                                this.select_all(cx)
                             }
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
-                        if e.pressed_button == Some(MouseButton::Left) {
-                            let (x, _) = this.local(e.position);
-                            this.drag_to(x, cx);
+                            "d" if e.keystroke.modifiers.control
+                                || e.keystroke.modifiers.platform =>
+                            {
+                                this.duplicate_selected(cx)
+                            }
+                            _ => {}
                         }
                     }))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.release()),
+            })
+            .child(
+                div()
+                    .h(px(RULER_H))
+                    .flex_none()
+                    .flex()
+                    .child(div().w(px(NAME_W)).flex_none().px(px(8.)).child("Channels"))
+                    .child(
+                        div()
+                            .id("dope-ruler")
+                            .relative()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(self.surface.element(
+                                theme.clone(),
+                                true,
+                                f64::from(ROW_H),
+                                self.offset,
+                            ))
+                            .child(foreground.element(
+                                theme.clone(),
+                                true,
+                                f64::from(ROW_H),
+                                self.offset,
+                            ))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                                    let (x, _) = this.local(e.position);
+                                    this.playhead =
+                                        snap_time(this.surface.axis.t(x), this.format).max(0.);
+                                    cx.notify();
+                                }),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .relative()
+                            .w(px(NAME_W))
+                            .flex_none()
+                            .overflow_hidden()
+                            .children(rows.iter().map(|(r, row)| {
+                                let i = row.channel;
+                                let c = &self.model.channels[i];
+                                div()
+                                    .absolute()
+                                    .top(px((*r as f64 * f64::from(ROW_H) - self.offset) as f32))
+                                    .h(px(ROW_H))
+                                    .w_full()
+                                    .flex()
+                                    .items_center()
+                                    .pl(px(row.depth as f32 * 12.))
+                                    .child(crate::locks::probe(
+                                        "channel-expand",
+                                        i,
+                                        Button::new(("channel-expand", i))
+                                            .with_size(gpui_kit::component::Size::XSmall)
+                                            .tab_stop(false)
+                                            .label(if c.group {
+                                                if c.collapsed { "▶" } else { "▼" }
+                                            } else {
+                                                "·"
+                                            })
+                                            .tooltip("Expand or collapse channel")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle(i, 0, cx)
+                                            })),
+                                    ))
+                                    .child(div().flex_1().overflow_hidden().child(c.name.clone()))
+                                    .child(crate::locks::probe(
+                                        "channel-mute",
+                                        i,
+                                        Button::new(("channel-mute", i))
+                                            .with_size(gpui_kit::component::Size::XSmall)
+                                            .tab_stop(false)
+                                            .icon(gpui_kit::component::Icon::new(if c.muted {
+                                                gpui_kit::assets::IconName::VolumeX
+                                            } else {
+                                                gpui_kit::assets::IconName::Volume2
+                                            }))
+                                            .tab_stop(false)
+                                            .tooltip("Mute channel")
+                                            .selected(c.muted)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle(i, 1, cx)
+                                            })),
+                                    ))
+                                    .child(crate::locks::probe(
+                                        "channel-lock",
+                                        i,
+                                        Button::new(("channel-lock", i))
+                                            .with_size(gpui_kit::component::Size::XSmall)
+                                            .tab_stop(false)
+                                            .icon(gpui_kit::component::Icon::new(if c.locked {
+                                                gpui_kit::assets::IconName::Lock
+                                            } else {
+                                                gpui_kit::assets::IconName::LockOpen
+                                            }))
+                                            .tab_stop(false)
+                                            .tooltip("Lock channel")
+                                            .selected(c.locked)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle(i, 2, cx)
+                                            })),
+                                    ))
+                                    .child(crate::locks::probe(
+                                        "channel-visible",
+                                        i,
+                                        Button::new(("channel-visible", i))
+                                            .with_size(gpui_kit::component::Size::XSmall)
+                                            .tab_stop(false)
+                                            .icon(gpui_kit::component::Icon::new(if c.visible {
+                                                gpui_kit::assets::IconName::Eye
+                                            } else {
+                                                gpui_kit::assets::IconName::EyeOff
+                                            }))
+                                            .tab_stop(false)
+                                            .tooltip("Channel visibility")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle(i, 3, cx)
+                                            })),
+                                    ))
+                            })),
                     )
                     .child(
-                        canvas(
-                            move |b, window, _| crate::measure::record(&body, b, window),
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full(),
-                    )
-                    .children(self.channels.iter().enumerate().flat_map(|(r, c)| {
-                        // Pad by the key's half-width in time so diamonds at the edge still draw.
-                        crate::visible(
-                            c.keys(),
-                            &axis,
-                            |k| *k - 5.0 * axis.scale,
-                            |k| *k + 5.0 * axis.scale,
-                        )
-                        .iter()
-                        .map(|k| {
-                            div()
+                        div()
+                            .id("dope-body")
+                            .debug_selector(|| "dope-body".into())
+                            .relative()
+                            .flex_1()
+                            .overflow_hidden()
+                            .cursor(gpui_kit::CursorStyle::Crosshair)
+                            .on_scroll(cx.listener(|this, e: &gpui_kit::ScrollEvent, _, cx| {
+                                let d = e.delta.pixel_delta(px(16.));
+                                let (x, _) = this.local(e.position);
+                                if e.modifiers.control || e.modifiers.platform || e.modifiers.shift
+                                {
+                                    this.surface.navigate(
+                                        x,
+                                        f64::from(f32::from(d.x)),
+                                        f64::from(f32::from(d.y)),
+                                        e.modifiers.control || e.modifiers.platform,
+                                    );
+                                } else {
+                                    this.offset = (this.offset - f64::from(f32::from(d.y))).max(0.);
+                                }
+                                cx.notify();
+                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                                    if this.focusable {
+                                        window.focus(&this.focus, cx);
+                                    }
+                                    let (x, y) = this.local(e.position);
+                                    let row = ((f64::from(y) + this.offset) / f64::from(ROW_H))
+                                        .max(0.)
+                                        as usize;
+                                    if !this.press_with(row, x, e.modifiers.shift) {
+                                        if !e.modifiers.shift {
+                                            this.model.selected.clear();
+                                        }
+                                        this.drag = Some(Gesture::Box {
+                                            start: (x, y),
+                                            end: (x, y),
+                                            add: e.modifiers.shift,
+                                            base: this.model.selected.clone(),
+                                        });
+                                    }
+                                    cx.emit(DopeEvent::SelectionChanged);
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                                if e.pressed_button == Some(MouseButton::Left) {
+                                    let (x, y) = this.local(e.position);
+                                    if let Some(Gesture::Box {
+                                        start,
+                                        end,
+                                        add,
+                                        base,
+                                    }) = &mut this.drag
+                                    {
+                                        *end = (x, y);
+                                        let (a, b) = (
+                                            ((f64::from(start.1) + this.offset) / f64::from(ROW_H))
+                                                .max(0.)
+                                                as usize,
+                                            ((f64::from(y) + this.offset) / f64::from(ROW_H))
+                                                .max(0.)
+                                                as usize,
+                                        );
+                                        if *add {
+                                            this.model.selected = base.clone();
+                                        }
+                                        this.model.box_select(
+                                            a.min(b)..=a.max(b),
+                                            this.surface.axis.t(start.0),
+                                            this.surface.axis.t(x),
+                                            *add,
+                                        );
+                                        cx.notify();
+                                    } else {
+                                        this.drag_to(x, cx);
+                                    }
+                                }
+                            }))
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, _| this.release()),
+                            )
+                            .child(
+                                canvas(
+                                    move |b, _, cx| crate::measure::record(&body, b, cx, owner),
+                                    |_, _, _, _| {},
+                                )
                                 .absolute()
-                                .top(px(r as f32 * ROW_H + ROW_H / 2.0 - 5.0))
-                                .left(px(axis.x(*k) as f32 - 5.0))
-                                .size(px(10.))
-                                .rounded(px(2.))
-                                .bg(key_c)
-                        })
-                        .collect::<Vec<_>>()
-                    })),
+                                .size_full(),
+                            )
+                            .child(background.element(
+                                theme.clone(),
+                                false,
+                                f64::from(ROW_H),
+                                self.offset,
+                            ))
+                            .child(
+                                canvas(
+                                    |_, _, _| (),
+                                    move |b, _, window, _| {
+                                        let at = |x: f64, y: f64| {
+                                            gpui_kit::point(
+                                                b.origin.x + px(x as f32),
+                                                b.origin.y + px(y as f32),
+                                            )
+                                        };
+                                        for (x, y, selected, shape, hold, muted, summary, locked) in
+                                            &keys
+                                        {
+                                            let ink = if *selected {
+                                                key_theme
+                                                    .state(
+                                                        StateKind::Selected,
+                                                        Variant::Filled,
+                                                        None,
+                                                    )
+                                                    .background
+                                            } else if *muted
+                                                || (*locked && lock_style == LockStyle::Dimmed)
+                                            {
+                                                key_theme.surfaces().dimmed
+                                            } else {
+                                                key_theme
+                                                    .variant(
+                                                        Some(ColorName::Yellow),
+                                                        Variant::Filled,
+                                                    )
+                                                    .background
+                                            }
+                                            .to_hsla();
+                                            let cy = *y + f64::from(ROW_H) / 2.;
+                                            if let Some(end) = hold {
+                                                let mut path =
+                                                    gpui_kit::PathBuilder::stroke(px(3.));
+                                                path.move_to(at(*x, cy));
+                                                path.line_to(at(*end, cy));
+                                                if let Ok(path) = path.build() {
+                                                    window.paint_path(path, ink);
+                                                }
+                                            }
+                                            let radius =
+                                                if *selected || *summary { 6. } else { 4. };
+                                            let mut path = gpui_kit::PathBuilder::fill();
+                                            if *shape == KeyShape::Diamond {
+                                                for (i, (dx, dy)) in [
+                                                    (0., -radius),
+                                                    (radius, 0.),
+                                                    (0., radius),
+                                                    (-radius, 0.),
+                                                ]
+                                                .iter()
+                                                .enumerate()
+                                                {
+                                                    if i == 0 {
+                                                        path.move_to(at(x + dx, cy + dy));
+                                                    } else {
+                                                        path.line_to(at(x + dx, cy + dy));
+                                                    }
+                                                }
+                                            } else {
+                                                let sides =
+                                                    if *shape == KeyShape::Circle { 16 } else { 4 };
+                                                for i in 0..sides {
+                                                    let angle = (i as f64 + 0.5)
+                                                        * std::f64::consts::TAU
+                                                        / sides as f64;
+                                                    let p = at(
+                                                        x + radius * angle.cos(),
+                                                        cy + radius * angle.sin(),
+                                                    );
+                                                    if i == 0 {
+                                                        path.move_to(p)
+                                                    } else {
+                                                        path.line_to(p)
+                                                    }
+                                                }
+                                            }
+                                            path.close();
+                                            if *locked && lock_style == LockStyle::Hatched {
+                                                path.move_to(at(x - radius, cy + radius));
+                                                path.line_to(at(x + radius, cy - radius));
+                                            }
+
+                                            if let Ok(path) = path.build() {
+                                                window.paint_path(path, ink);
+                                            }
+                                        }
+                                    },
+                                )
+                                .absolute()
+                                .size_full(),
+                            )
+                            .child(foreground.element(theme, false, f64::from(ROW_H), self.offset)),
+                    ),
             )
+            .when(focus_visible, |el| {
+                el.child(div().absolute().inset_0().border_2().border_color(ring))
+            })
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,5 +744,40 @@ mod tests {
             vec![1.0, 1.6]
         );
         assert_eq!(events.borrow().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod hierarchy_regressions {
+    use super::*;
+    #[test]
+    fn summary_drag_selects_real_children_and_duplicate_keeps_metadata() {
+        let mut model = DopeModel::new(vec![Channel::group(
+            "Object",
+            vec![
+                Channel::with_keyframes(
+                    "x",
+                    vec![crate::Key::new(0.5, 1., crate::Interp::Constant)],
+                ),
+                Channel::new("locked", vec![0.5]),
+            ],
+        )]);
+        model.channels[2].locked = true;
+        model.select_summary(0, 0.5, false);
+        assert_eq!(model.selected.len(), 2);
+        assert!(model.duplicate(0.1, TimeFormat::Frames(10.)));
+        assert_eq!(model.channels[1].keys(), &[0.5, 0.6]);
+        assert_eq!(model.channels[2].keys(), &[0.5]);
+        assert_eq!(
+            model.channels[1].decor,
+            vec![(Some(1.), KeyShape::Square); 2]
+        );
+    }
+    #[test]
+    fn adjacent_selected_keys_move_atomically() {
+        let mut model = DopeModel::new(vec![Channel::new("x", vec![0., 1., 2.])]);
+        model.select_all();
+        assert!(model.translate(1., TimeFormat::Seconds));
+        assert_eq!(model.channels[0].keys(), &[1., 2., 3.]);
     }
 }

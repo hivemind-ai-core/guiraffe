@@ -1,5 +1,5 @@
 //! Lock admission and appearance are independent.
-use gpui_kit::{Div, ParentElement, Styled, div, px};
+use gpui_kit::{Div, InteractiveElement, ParentElement, Styled, div, px};
 use guiraffe_core::{GuiraffeTheme, StateKind, Variant};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LockStyle {
@@ -35,9 +35,49 @@ impl LockStyle {
                         .foreground
                         .to_hsla(),
                 ),
-            Self::Hatched => element
-                .border_dashed()
-                .child(div().absolute().right(px(2.)).child("╱╱")),
+            Self::Hatched => {
+                let ink = theme
+                    .state(StateKind::Dimmed, Variant::Light, None)
+                    .foreground
+                    .to_hsla();
+                element.overflow_hidden().child(
+                    gpui_kit::canvas(
+                        |_, _, _| (),
+                        move |b, _, window, _| {
+                            let width = f32::from(b.size.width);
+                            let height = f32::from(b.size.height);
+                            let mut path = gpui_kit::PathBuilder::stroke(px(1.));
+                            let mut x = -height;
+                            while x < width {
+                                path.move_to(gpui_kit::point(
+                                    b.origin.x + px(x.max(0.)),
+                                    b.origin.y + px((height + x.min(0.)).max(0.)),
+                                ));
+                                path.line_to(gpui_kit::point(
+                                    b.origin.x + px((x + height).min(width)),
+                                    b.origin.y + px((x + height - width).max(0.)),
+                                ));
+                                x += 8.;
+                            }
+                            if let Ok(path) = path.build() {
+                                window.paint_path(path, ink);
+                            }
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            }
         }
     }
+}
+
+pub(crate) fn probe(
+    kind: &'static str,
+    index: usize,
+    button: gpui_kit::component::button::Button,
+) -> Div {
+    div()
+        .debug_selector(move || format!("{kind}-{index}"))
+        .child(button)
 }

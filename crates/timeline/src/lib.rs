@@ -63,10 +63,25 @@ mod visible_tests {
 }
 
 pub mod plot;
-pub use plot::{PlotSurface, Layer, Gridlines, Ruler, GridMarks, Playhead, SelectionBox, Markers, Zebra, BackgroundBands};
+pub use plot::{
+    BackgroundBands, GridMarks, Gridlines, Layer, Markers, Playhead, PlotSurface, Ruler,
+    SelectionBox, Zebra,
+};
+
 mod locks;
 pub use locks::LockStyle;
 
+pub mod dope_model;
+pub use dope_model::{ChannelRow, DopeModel};
+pub use dope_sheet::KeyShape;
+
+pub mod bar_view;
 pub mod bars;
+pub use bar_view::{BarCurveView, BarEvent};
 pub use bars::BarCurve;
+
 pub use curves::TangentMode;
+
+pub use curve_view::CurveSeries;
+
+pub mod channels;

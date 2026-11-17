@@ -384,6 +384,7 @@ impl Render for TracksView {
 
         let line = s.border.to_hsla();
         let body = self.body.clone();
+        let owner=cx.entity_id();
         let root = div()
             .id("tracks")
             .test_support()
@@ -462,7 +463,9 @@ impl Render for TracksView {
                                     .items_center()
                                     .border_b_1()
                                     .border_color(line)
-                                    .child(
+                                    .child(crate::locks::probe(
+                                        "track-lock",
+                                        i,
                                         gpui_kit::component::button::Button::new(("track-lock", i))
                                             .icon(gpui_kit::component::Icon::new(if locked {
                                                 gpui_kit::assets::IconName::Lock
@@ -483,7 +486,7 @@ impl Render for TracksView {
                                                     this.set_locked(i, id, !locked, cx);
                                                 }
                                             })),
-                                    )
+                                    ))
                                     .child(name.clone())
                             })),
                     )
@@ -525,7 +528,7 @@ impl Render for TracksView {
                             )
                             .child(
                                 canvas(
-                                    move |b, window, _| crate::measure::record(&body, b, window),
+                                    move |b, _, cx| crate::measure::record(&body, b, cx, owner),
                                     |_, _, _, _| {},
                                 )
                                 .absolute()

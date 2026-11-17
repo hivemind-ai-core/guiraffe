@@ -501,6 +501,7 @@ impl Render for GanttView {
         let ids: Vec<u32> = self.tasks.iter().map(|t| t.id).collect();
         let rows = geo.clone();
         let body = self.body.clone();
+        let owner = cx.entity_id();
         let line = s.border.to_hsla();
         let arrow_color = s.dimmed.to_hsla();
         let root = div()
@@ -575,7 +576,9 @@ impl Render for GanttView {
                                     .border_b_1()
                                     .border_color(line)
                                     .when(crit, |el| el.text_color(critical.background.to_hsla()))
-                                    .child(
+                                    .child(crate::locks::probe(
+                                        "task-lock",
+                                        i,
                                         gpui_kit::component::button::Button::new(("task-lock", i))
                                             .icon(gpui_kit::component::Icon::new(if locked {
                                                 gpui_kit::assets::IconName::Lock
@@ -587,7 +590,7 @@ impl Render for GanttView {
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.set_locked(id, !this.is_locked(id), cx)
                                             })),
-                                    )
+                                    ))
                                     .child(name.clone())
                             })),
                     )
@@ -631,7 +634,7 @@ impl Render for GanttView {
                             )
                             .child(
                                 canvas(
-                                    move |b, window, _| crate::measure::record(&body, b, window),
+                                    move |b, _, cx| crate::measure::record(&body, b, cx, owner),
                                     |_, _, _, _| {},
                                 )
                                 .absolute()

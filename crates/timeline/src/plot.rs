@@ -14,6 +14,7 @@ pub enum Ink {
     Dimmed,
     Accent,
     Selection,
+    SelectionText,
     Stripe,
     Color(ColorName),
 }
@@ -26,9 +27,14 @@ impl Ink {
             Self::Text => s.text,
             Self::Dimmed => s.dimmed,
             Self::Accent => theme.variant(None, Variant::Filled).background,
+            Self::SelectionText => {
+                theme
+                    .state(StateKind::Selected, Variant::Filled, None)
+                    .foreground
+            }
             Self::Selection => {
                 theme
-                    .state(StateKind::Selected, Variant::Light, None)
+                    .state(StateKind::Selected, Variant::Filled, None)
                     .background
             }
             Self::Color(c) => theme.variant(Some(c), Variant::Filled).background,
@@ -197,7 +203,7 @@ impl Layer for Playhead {
                 x: x + 4.,
                 y: 4.,
                 text,
-                ink: Ink::Text,
+                ink: Ink::SelectionText,
             });
         }
     }
@@ -209,17 +215,22 @@ pub struct SelectionBox {
 }
 impl Layer for SelectionBox {
     fn prepaint(&self, p: &PlotContext, o: &mut Vec<Primitive>) {
-        if !p.header {
-            o.push(Primitive::Rect {
-                x: self.start.0.min(self.end.0),
-                y: self.start.1.min(self.end.1),
-                w: (self.end.0 - self.start.0).abs(),
-                h: (self.end.1 - self.start.1).abs(),
-                ink: Ink::Selection,
-            });
+        if p.header {
+            return;
+        }
+        let (x0, x1) = (self.start.0.min(self.end.0), self.start.0.max(self.end.0));
+        let (y0, y1) = (self.start.1.min(self.end.1), self.start.1.max(self.end.1));
+        for (a, b) in [
+            ((x0, y0), (x1, y0)),
+            ((x1, y0), (x1, y1)),
+            ((x1, y1), (x0, y1)),
+            ((x0, y1), (x0, y0)),
+        ] {
+            line(o, a, b, Ink::Accent);
         }
     }
 }
+
 #[derive(Clone)]
 pub struct Markers(pub Rc<[(f64, String)]>);
 impl Layer for Markers {
@@ -312,6 +323,10 @@ impl PlotSurface {
     }
     pub fn add_layer(&mut self, layer: impl Layer) {
         Rc::make_mut(&mut self.layers).push(Rc::new(layer));
+    }
+    pub fn insert_layer(&mut self, index: usize, layer: impl Layer) {
+        let layers = Rc::make_mut(&mut self.layers);
+        layers.insert(index.min(layers.len()), Rc::new(layer));
     }
     pub fn clear_layers(&mut self) {
         self.layers = Rc::default();
