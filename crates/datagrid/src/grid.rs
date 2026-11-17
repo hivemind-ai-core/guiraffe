@@ -1493,7 +1493,7 @@ fn palette(cx: &App) -> Palette {
 }
 
 /// The grid's root view: header, row wrappers, scrollbar, pointer and keyboard handling.
-pub struct GridView {
+pub(crate) struct GridView {
     core: Rc<Core>,
 }
 
@@ -1852,7 +1852,7 @@ impl Render for GridView {
 }
 
 /// One recycled row view; shows whichever visible view row maps to its slot.
-pub struct RowView {
+pub(crate) struct RowView {
     core: Weak<Core>,
     slot: usize,
     renders: u64,

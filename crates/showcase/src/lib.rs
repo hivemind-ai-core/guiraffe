@@ -28,5 +28,6 @@ pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_chat::init(cx);
     guiraffe_inputs::init(cx);
     guiraffe_timeline::init(cx);
+    guiraffe_datagrid::init(cx);
     shell::init(cx);
 }
