@@ -74,7 +74,7 @@ pub fn code_scroll_million() {
     for step in 0..32 {
         let viewport = Viewport {
             x: 0.,
-            y: (step * 29_000 * 20) as f32,
+            y: (step * 29_000 * 20) as f64,
         };
         for row in viewport.visible(rows.len(), 20., 800.) {
             if let Some(Row::Source(line)) = rows.row(row) {
@@ -84,8 +84,8 @@ pub fn code_scroll_million() {
         }
     }
 }
-/// Publish a shared immutable document handle; no source bytes move across the hand-off.
-pub fn code_snapshot_handoff() {
+/// 1,024 Arc clone/drop pairs. This does not measure worker publication or UI admission.
+pub fn code_snapshot_arc_clone() {
     static DOCUMENT: std::sync::OnceLock<std::sync::Arc<guiraffe_code::CodeDocument>> =
         std::sync::OnceLock::new();
     let document = DOCUMENT.get_or_init(|| {
@@ -232,7 +232,7 @@ macro_rules! with_suites {
         $callback! {
             (core_variants, "core-variants"),
             (code_scroll_million,"code-scroll-1m"),
-            (code_snapshot_handoff,"code-snapshot-handoff"),
+            (code_snapshot_arc_clone,"code-snapshot-arc-clone"),
             (flow_build,"flow-build-5k"),
             (flow_query,"flow-query-5k"),
             (flow_move,"flow-move-5k"),

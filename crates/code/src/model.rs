@@ -158,18 +158,16 @@ impl RowMap {
 /// Scroll offsets in logical pixels. All external floating-point input is sanitized.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Viewport {
-    pub x: f32,
-    pub y: f32,
+    pub x: f64,
+    pub y: f64,
 }
 impl Viewport {
     pub fn clamped(self, rows: usize, line_height: f32, height: f32) -> Self {
-        let clean = |x: f32| if x.is_finite() { x.max(0.) } else { 0. };
+        let clean = |x: f64| if x.is_finite() { x.max(0.) } else { 0. };
         Self {
             x: clean(self.x),
             y: clean(self.y).min(
-                (rows as f64 * clean(line_height) as f64 - clean(height) as f64)
-                    .max(0.)
-                    .min(f32::MAX as f64) as f32,
+                (rows as f64 * clean(f64::from(line_height)) - clean(f64::from(height))).max(0.),
             ),
         }
     }
@@ -177,7 +175,7 @@ impl Viewport {
         if !line_height.is_finite() || line_height <= 0. || !height.is_finite() || height <= 0. {
             return 0..0;
         }
-        let first = (self.y.max(0.) / line_height).floor() as usize;
+        let first = (self.y.max(0.) / f64::from(line_height)).floor() as usize;
         let count = (height / line_height).ceil() as usize + 1;
         first.min(rows)..first.saturating_add(count).min(rows)
     }
@@ -325,8 +323,8 @@ mod tests {
         );
         assert_eq!(
             Viewport {
-                x: f32::NAN,
-                y: f32::INFINITY
+                x: f64::NAN,
+                y: f64::INFINITY
             }
             .clamped(10, 20., 400.),
             Viewport::default()
@@ -595,5 +593,18 @@ impl PreparedAnalysis {
             ids,
             text,
         }
+    }
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::Viewport;
+    #[test]
+    fn subpixel_scroll_survives_near_a_million_lines() {
+        let y = 900_000. * 19.25 + 0.125;
+        let v = Viewport { x: 0., y }.clamped(1_000_000, 19.25, 800.);
+        assert_eq!(v.y, y);
+        assert_eq!(v.visible(1_000_000, 19.25, 800.).start, 900_000);
+        assert_eq!((v.y + 0.25) - v.y, 0.25);
     }
 }

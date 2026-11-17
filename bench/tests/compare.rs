@@ -54,7 +54,10 @@ base = pathlib.Path(args[args.index('--target-dir') + 1])
 assert base.name == 'bench-compare'
 if os.environ.get('BENCH_FIXTURE_MARKER'):
     subprocess.Popen(['sleep', '30'])
-    pathlib.Path(os.environ['BENCH_FIXTURE_MARKER']).write_text(str(os.getpid()))
+    marker = pathlib.Path(os.environ['BENCH_FIXTURE_MARKER'])
+    staged = marker.with_suffix('.tmp')
+    staged.write_text(str(os.getpid()))
+    staged.replace(marker)
     if os.environ.get('BENCH_FIXTURE_EXIT_EARLY'):
         sys.exit(0)
     time.sleep(30)

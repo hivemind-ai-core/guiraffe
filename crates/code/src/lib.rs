@@ -22,3 +22,6 @@ pub fn init(cx: &mut gpui_kit::App) {
         guiraffe_core::apply(Default::default(), cx);
     }
 }
+
+/// Long logical lines are previewed up to this many UTF-8 bytes; source copy stays complete.
+pub use paint::MAX_SHAPED_LINE_BYTES;

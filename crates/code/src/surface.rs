@@ -28,6 +28,17 @@ impl AnalysisRequest {
     }
 }
 
+// Presentation supplied after set_source belongs to that source, even while the
+// previously published document is still visible. Each replacement source resets it.
+struct PendingPresentation {
+    revision: u64,
+    source: Arc<str>,
+    annotations: Arc<[Annotation]>,
+    folds: Vec<Fold>,
+    traces: Arc<[Trace]>,
+    prepared: Option<PreparedAnalysis>,
+}
+
 pub type SymbolProvider = Rc<dyn Fn(Position) -> Option<SymbolInfo>>;
 pub type DefinitionHandler = Rc<dyn Fn(SourceRange, &mut Window, &mut App)>;
 
@@ -57,6 +68,8 @@ pub struct CodeStats {
     pub shaped_lines: u64,
     pub cache_hits: u64,
     pub last_visible_rows: usize,
+    pub last_truncated_rows: usize,
+    pub max_shaped_bytes: usize,
     pub visible_bubbles: usize,
     pub analyses_started: u64,
     pub stale_analyses: u64,
@@ -71,6 +84,8 @@ pub(crate) struct Geometry {
     pub mini: f32,
     pub shaped: std::collections::HashMap<usize, Rc<ShapedLine>>,
     pub font: Font,
+    pub content_width: f64,
+    pub layout_epoch: u64,
 }
 pub(crate) struct Shared {
     pub id: u64,
@@ -100,7 +115,9 @@ pub(crate) struct Shared {
     pub revision: Cell<u64>,
     pending: RefCell<Option<AnalysisRequest>>,
     analyzing: Cell<bool>,
+    presentation: RefCell<Option<PendingPresentation>>,
     pub text_epoch: Cell<u64>,
+    pub(crate) layout_epoch: Cell<u64>,
     pub overlay_view: RefCell<Option<WeakEntity<OverlayLayer>>>,
     pub focus: FocusHandle,
 }
@@ -144,7 +161,9 @@ impl CodeHandle {
             revision: Cell::default(),
             pending: RefCell::default(),
             analyzing: Cell::default(),
+            presentation: RefCell::default(),
             text_epoch: Cell::default(),
+            layout_epoch: Cell::default(),
             overlay_view: RefCell::new(None),
             focus: cx.focus_handle(),
         });
@@ -195,6 +214,9 @@ impl CodeHandle {
         });
     }
     pub(crate) fn notify_all(&self, cx: &mut App) {
+        self.shared
+            .layout_epoch
+            .set(self.shared.layout_epoch.get().wrapping_add(1));
         cx.notify(self.text.entity_id());
         self.notify_overlay(cx);
     }
@@ -216,6 +238,13 @@ impl CodeHandle {
     /// Convenience for small analysis batches. Large producers should build PreparedAnalysis
     /// on their background worker and publish it with set_analysis instead.
     pub fn set_annotations(&self, annotations: Arc<[Annotation]>, cx: &mut App) {
+        if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
+            if let Some(prepared) = pending.prepared.take() {
+                pending.folds = prepared.folds;
+            }
+            pending.annotations = annotations;
+            return;
+        }
         if *self.shared.annotations.borrow() == annotations {
             return;
         }
@@ -229,6 +258,13 @@ impl CodeHandle {
     /// Move precomputed buffers onto the UI thread. False means source was replaced while
     /// the analysis was running; no state is changed in that case.
     pub fn set_analysis(&self, prepared: PreparedAnalysis, cx: &mut App) -> bool {
+        if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
+            if !Arc::ptr_eq(prepared.document.source(), &pending.source) {
+                return false;
+            }
+            pending.prepared = Some(prepared);
+            return true;
+        }
         if !Arc::ptr_eq(&self.document(), &prepared.document) {
             return false;
         }
@@ -244,6 +280,9 @@ impl CodeHandle {
         self.shared.bubbles.borrow_mut().clear();
         if text_changed {
             self.shared
+                .layout_epoch
+                .set(self.shared.layout_epoch.get().wrapping_add(1));
+            self.shared
                 .text_epoch
                 .set(self.shared.text_epoch.get().wrapping_add(1));
             cx.notify(self.text.entity_id());
@@ -253,6 +292,13 @@ impl CodeHandle {
     }
     pub fn set_folds(&self, mut folds: Vec<Fold>, cx: &mut App) {
         folds.sort_by_key(|f| f.start);
+        if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
+            if let Some(prepared) = pending.prepared.take() {
+                pending.annotations = prepared.annotations;
+            }
+            pending.folds = folds;
+            return;
+        }
         if *self.shared.folds.borrow() == folds {
             return;
         }
@@ -274,11 +320,13 @@ impl CodeHandle {
     }
     pub fn scroll_to(&self, viewport: Viewport, cx: &mut App) {
         let g = self.shared.geometry.borrow();
-        let next = viewport.clamped(
+        let mut next = viewport.clamped(
             self.shared.rows.borrow().len(),
             g.line_height,
             g.bounds.size.height.as_f32(),
         );
+        let width = (g.bounds.size.width.as_f32() - g.gutter - g.margin - g.mini).max(0.);
+        next.x = next.x.min((g.content_width - f64::from(width)).max(0.));
         drop(g);
         if self.viewport() != next {
             self.shared.viewport.set(next);
@@ -287,7 +335,7 @@ impl CodeHandle {
     }
     pub fn scroll_to_line(&self, line: usize, cx: &mut App) {
         if let Some(row) = self.shared.rows.borrow().source_row_or_before(line) {
-            let y = row as f32 * self.shared.geometry.borrow().line_height;
+            let y = row as f64 * f64::from(self.shared.geometry.borrow().line_height);
             self.scroll_to(
                 Viewport {
                     x: self.viewport().x,
@@ -305,15 +353,20 @@ impl CodeHandle {
     }
     pub fn copy(&self, cx: &mut App) {
         let doc = self.document();
-        let selected = self
+        if let Some(text) = self
             .selection()
             .and_then(|r| doc.range(r))
-            .and_then(|r| doc.source().get(r));
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            selected.unwrap_or(doc.source()).to_owned(),
-        ));
+            .filter(|r| !r.is_empty())
+            .and_then(|r| doc.source().get(r))
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+        }
     }
     pub fn set_traces(&self, traces: Arc<[Trace]>, cx: &mut App) {
+        if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
+            pending.traces = traces;
+            return;
+        }
         if *self.shared.traces.borrow() != traces {
             *self.shared.traces.borrow_mut() = traces;
             self.notify_overlay(cx);
@@ -321,7 +374,8 @@ impl CodeHandle {
     }
     pub fn set_symbol_provider(&self, provider: Option<SymbolProvider>, cx: &mut App) {
         *self.shared.provider.borrow_mut() = provider;
-        self.set_hover(None, cx);
+        let hover = self.shared.hover.replace(None);
+        self.set_hover(hover, cx);
     }
     pub fn on_definition(&self, handler: Option<DefinitionHandler>) {
         *self.shared.definition.borrow_mut() = handler;
@@ -363,29 +417,41 @@ impl CodeHandle {
     /// Parse and index source off-thread; stale completions cannot replace newer source.
     /// Discrete immutable result hand-off uses the GPUI background task channel.
     pub fn set_source(&self, source: Arc<str>, language: Arc<str>, cx: &mut App) {
-        self.queue(
-            AnalysisRequest::Source(
-                source,
-                language,
-                GuiraffeTheme::global(cx).scheme == Scheme::Dark,
-            ),
-            cx,
-        );
+        let dark = GuiraffeTheme::global(cx).scheme == Scheme::Dark;
+        self.queue(AnalysisRequest::Source(source, language, dark), false, cx);
     }
     pub fn highlight(&self, language: Arc<str>, cx: &mut App) {
-        self.queue(
-            AnalysisRequest::Document(
-                self.document(),
-                language,
-                GuiraffeTheme::global(cx).scheme == Scheme::Dark,
-            ),
-            cx,
-        );
+        let source = self
+            .shared
+            .presentation
+            .borrow()
+            .as_ref()
+            .map(|p| p.source.clone());
+        let dark = GuiraffeTheme::global(cx).scheme == Scheme::Dark;
+        let request = match source {
+            Some(source) => AnalysisRequest::Source(source, language, dark),
+            None => AnalysisRequest::Document(self.document(), language, dark),
+        };
+        self.queue(request, true, cx);
     }
-    fn queue(&self, request: AnalysisRequest, cx: &mut App) {
-        self.shared
-            .revision
-            .set(self.shared.revision.get().wrapping_add(1));
+    fn queue(&self, request: AnalysisRequest, preserve: bool, cx: &mut App) {
+        let revision = self.shared.revision.get().wrapping_add(1);
+        self.shared.revision.set(revision);
+        if let AnalysisRequest::Source(source, _, _) = &request {
+            let mut presentation = self.shared.presentation.borrow_mut();
+            if preserve && let Some(pending) = presentation.as_mut() {
+                pending.revision = revision;
+            } else {
+                *presentation = Some(PendingPresentation {
+                    revision,
+                    source: source.clone(),
+                    annotations: Arc::from([]),
+                    folds: Vec::new(),
+                    traces: Arc::from([]),
+                    prepared: None,
+                });
+            }
+        }
         *self.shared.pending.borrow_mut() = Some(request);
         if self.shared.analyzing.replace(true) {
             return;
@@ -434,6 +500,7 @@ impl CodeHandle {
     }
     /// Install a snapshot prepared by a host's own worker. Invalidate older pending jobs.
     pub fn set_highlighted(&self, snapshot: Highlighted, cx: &mut App) {
+        self.shared.presentation.borrow_mut().take();
         self.shared.pending.borrow_mut().take();
         self.shared
             .revision
@@ -447,14 +514,24 @@ impl CodeHandle {
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.shared.geometry.borrow().bounds
     }
-    fn publish(&self, result: Highlighted, cx: &mut App) {
+    fn publish(&self, mut result: Highlighted, cx: &mut App) {
+        let pending = self.shared.presentation.borrow_mut().take().filter(|p| {
+            p.revision == self.shared.revision.get()
+                && Arc::ptr_eq(&p.source, result.document.source())
+        });
+        if let Some(prepared) = pending.as_ref().and_then(|p| p.prepared.as_ref()) {
+            result.document = prepared.document.clone();
+        }
         self.shared
             .text_epoch
             .set(self.shared.text_epoch.get().wrapping_add(1));
         let source_changed = !Arc::ptr_eq(&self.document(), &result.document);
         *self.shared.highlighted.borrow_mut() = result;
         if source_changed {
+            self.shared.geometry.borrow_mut().content_width = 0.;
             self.shared.selection.set(None);
+            self.shared.dragging.set(None);
+            self.shared.hover.set(None);
             self.shared.symbol.borrow_mut().take();
             self.shared.hover_markdown.borrow_mut().take();
             self.shared
@@ -462,12 +539,20 @@ impl CodeHandle {
                 .borrow_mut()
                 .clone_from(&Arc::from([]));
             self.shared.bubbles.borrow_mut().clear();
+            self.shared.annotation_ids.borrow_mut().clear();
             self.shared.folds.borrow_mut().clear();
             self.shared.hints.borrow_mut().clear();
             *self.shared.text_annotations.borrow_mut() = Arc::from([]);
             self.shared.traces.borrow_mut().clone_from(&Arc::from([]));
             *self.shared.index.borrow_mut() = IntervalIndex::default();
             *self.shared.rows.borrow_mut() = RowMap::new(self.document().line_count(), &[], &[]);
+        }
+        if let Some(pending) = pending {
+            let prepared = pending.prepared.unwrap_or_else(|| {
+                PreparedAnalysis::new(self.document(), pending.annotations, pending.folds)
+            });
+            self.set_analysis(prepared, cx);
+            self.set_traces(pending.traces, cx);
         }
         self.notify_all(cx);
     }
@@ -492,7 +577,17 @@ impl Render for TextLayer {
 
         canvas(
             move |bounds, window, cx| {
-                let old = shared.geometry.borrow().bounds;
+                let old = {
+                    let g = shared.geometry.borrow();
+                    (
+                        g.bounds,
+                        g.line_height,
+                        g.gutter,
+                        g.margin,
+                        g.mini,
+                        g.layout_epoch,
+                    )
+                };
                 let frame = crate::paint::prepare(
                     &shared,
                     &mut cache.borrow_mut(),
@@ -502,7 +597,18 @@ impl Render for TextLayer {
                     window,
                     cx,
                 );
-                if old != bounds {
+                let changed = {
+                    let g = shared.geometry.borrow();
+                    old != (
+                        g.bounds,
+                        g.line_height,
+                        g.gutter,
+                        g.margin,
+                        g.mini,
+                        g.layout_epoch,
+                    )
+                };
+                if changed {
                     let dependents = shared.dependents.borrow().clone();
                     let overlay = shared.overlay_view.borrow().clone();
                     cx.defer(move |cx| {
@@ -560,7 +666,11 @@ impl Render for OverlayLayer {
                         if let Some(a) = annotations.get(id)
                             && a.kind == AnnotationKind::Bubble
                         {
-                            requests.push((a.id, row as f32 * lh - viewport.y, lh * 3.));
+                            requests.push((
+                                a.id,
+                                (row as f64 * f64::from(lh) - viewport.y) as f32,
+                                lh * 3.,
+                            ));
                         }
                     }
                 }
@@ -586,6 +696,18 @@ impl Render for OverlayLayer {
                 .absolute()
                 .size_full(),
             );
+        if self.shared.stats.get().last_truncated_rows > 0 {
+            root = root.child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left(px(self.shared.geometry.borrow().gutter))
+                    .bg(s.body.to_hsla())
+                    .text_color(s.dimmed.to_hsla())
+                    .text_size(px(Size::Xs.font_size()))
+                    .child("Long line preview limited to 16 KiB; source copy is complete"),
+            );
+        }
         if margin > 0. {
             for p in placements {
                 if !self.shared.bubbles.borrow().contains_key(&p.id)
@@ -687,8 +809,8 @@ impl RenderOnce for CodeViewer {
                 let v = wheel.viewport();
                 wheel.scroll_to(
                     Viewport {
-                        x: v.x - d.x.as_f32(),
-                        y: v.y - d.y.as_f32(),
+                        x: v.x - f64::from(d.x.as_f32()),
+                        y: v.y - f64::from(d.y.as_f32()),
                     },
                     cx,
                 );
@@ -776,7 +898,7 @@ impl RenderOnce for CodeViewer {
                         key.scroll_to(
                             Viewport {
                                 x: v.x,
-                                y: v.y + step,
+                                y: v.y + f64::from(step),
                             },
                             cx,
                         );
@@ -850,5 +972,137 @@ impl Render for TraceView {
         )
         .absolute()
         .size_full()
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use crate::{
+        Anchor, Annotation, AnnotationKind, CodeDocument, CodeHandle, Fold, Position,
+        PreparedAnalysis, SourceRange, Trace,
+    };
+    use gpui_kit::TestAppContext;
+    use std::sync::Arc;
+    fn annotation() -> Annotation {
+        Annotation {
+            id: 42,
+            range: SourceRange::new(Position::new(0, 0), Position::new(0, 1)),
+            kind: AnnotationKind::Highlight,
+            payload: "note".into(),
+            color: guiraffe_core::ColorName::Blue,
+        }
+    }
+    #[gpui_kit::test]
+    fn changing_provider_refreshes_an_existing_hover(cx: &mut TestAppContext) {
+        let code = cx.update(|cx| {
+            CodeHandle::new(
+                1,
+                Arc::new(CodeDocument::new(Arc::<str>::from("value"))),
+                cx,
+            )
+        });
+        let range = SourceRange::new(Position::new(0, 0), Position::new(0, 5));
+        cx.update(|cx| {
+            code.set_symbol_provider(
+                Some(std::rc::Rc::new(move |_| {
+                    Some(crate::SymbolInfo {
+                        range,
+                        occurrences: Arc::from([range]),
+                        markdown: "first".into(),
+                    })
+                })),
+                cx,
+            );
+            code.set_hover(Some(Position::new(0, 1)), cx);
+            code.set_symbol_provider(
+                Some(std::rc::Rc::new(move |_| {
+                    Some(crate::SymbolInfo {
+                        range,
+                        occurrences: Arc::from([range]),
+                        markdown: "second".into(),
+                    })
+                })),
+                cx,
+            );
+        });
+        assert_eq!(
+            code.shared
+                .symbol
+                .borrow()
+                .as_ref()
+                .expect("symbol")
+                .markdown
+                .as_ref(),
+            "second"
+        );
+    }
+    #[gpui_kit::test]
+    fn pending_source_keeps_latest_annotations_folds_and_traces(cx: &mut TestAppContext) {
+        let code = cx.update(|cx| {
+            CodeHandle::new(1, Arc::new(CodeDocument::new(Arc::<str>::from("old"))), cx)
+        });
+        cx.update(|cx| code.set_source("stale".into(), "text".into(), cx));
+        for _ in 0..100 {
+            if code.stats().analyses_started == 1 {
+                break;
+            }
+            cx.background_executor.tick();
+        }
+        cx.update(|cx| {
+            code.set_source("a\nb\nc\n".into(), "text".into(), cx);
+            code.set_annotations(Arc::from([annotation()]), cx);
+            code.set_folds(
+                vec![Fold {
+                    start: 0,
+                    end: 3,
+                    collapsed: true,
+                }],
+                cx,
+            );
+            code.set_traces(
+                Arc::from([Trace {
+                    from: Anchor {
+                        viewer: 1,
+                        position: Position::new(0, 0),
+                    },
+                    to: Anchor {
+                        viewer: 1,
+                        position: Position::new(1, 0),
+                    },
+                    color: guiraffe_core::ColorName::Blue,
+                }]),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(code.document().source().as_ref(), "a\nb\nc\n");
+        assert_eq!(code.shared.annotations.borrow().as_ref(), &[annotation()]);
+        assert_eq!(code.shared.folds.borrow().len(), 1);
+        assert_eq!(code.shared.traces.borrow().len(), 1);
+        assert_eq!(code.shared.rows.borrow().len(), 2);
+    }
+    #[gpui_kit::test]
+    fn pending_prepared_analysis_is_tied_to_its_source(cx: &mut TestAppContext) {
+        let code = cx.update(|cx| {
+            CodeHandle::new(1, Arc::new(CodeDocument::new(Arc::<str>::from("old"))), cx)
+        });
+        let source: Arc<str> = "replacement".into();
+        let doc = Arc::new(CodeDocument::new(source.clone()));
+        let prepared = PreparedAnalysis::new(doc.clone(), Arc::from([annotation()]), vec![]);
+        cx.update(|cx| {
+            code.set_source(source, "text".into(), cx);
+            assert!(code.set_analysis(prepared, cx));
+        });
+        cx.run_until_parked();
+        assert!(Arc::ptr_eq(&code.document(), &doc));
+        assert_eq!(code.shared.annotations.borrow().as_ref(), &[annotation()]);
+        cx.update(|cx| {
+            code.set_source("superseded".into(), "text".into(), cx);
+            code.set_annotations(Arc::from([annotation()]), cx);
+            code.set_source("latest".into(), "text".into(), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(code.document().source().as_ref(), "latest");
+        assert!(code.shared.annotations.borrow().is_empty());
     }
 }

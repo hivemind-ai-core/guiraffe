@@ -36,6 +36,10 @@ Examples:
 - `cargo run -p guiraffe-code --example markdown --features gpui-fast`: the shared viewer inside Markdown.
 - `cargo run -p guiraffe-code --example scroll_bench --features gpui-fast`: 100 measured headless draw iterations over a million distinct lines, after warmup; prints JSON.
 
-The bench harness registers `code-scroll-1m` (indexed viewport traversal) and `code-snapshot-handoff` (Arc publication cost). These model suites do not measure desktop frame rate. The native headless example measures draw work, not input latency, display presentation, or a release-mode 120 fps guarantee.
+The bench harness registers `code-scroll-1m` (indexed viewport traversal) and `code-snapshot-arc-clone` (1,024 Arc clone/drop pairs; no worker or publication path). These model suites do not measure desktop frame rate. The native headless example measures draw work, not input latency, display presentation, or a release-mode 120 fps guarantee.
 
 Current bounds: vertical virtualization is implemented; each visible logical line is shaped whole, so an exceptionally long single line is not horizontally window-shaped. The minimap is a 256-bin density overview, not a miniature syntax rendering. Fold ranges come from analysis data; this is not a folding-language server. The margin uses fixed-height cards, and long annotation payloads may require a larger host-provided presentation. Snapshot goldens are per backend; validation is in `VALIDATION.md`.
+
+Viewport offsets use f64 to retain subpixel precision in million-line documents. Horizontal scrolling is bounded by the widest shaped line seen in the current document. Logical lines are previewed up to 16 KiB at a UTF-8 boundary, with a visible notice for truncation; selection and copy still refer to the full original source.
+
+Annotations, folds and traces set after `set_source` belong to that pending source revision. A newer `set_source` discards that revision’s queued presentation. Prepared analysis may be queued when its document shares the requested source handle; `highlight` refreshes the pending source without replacing it with the older visible document.

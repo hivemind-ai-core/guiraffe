@@ -7,6 +7,26 @@ use std::{
     rc::Rc,
 };
 
+/// Maximum UTF-8 bytes shaped for one logical line. Full source remains copyable.
+pub const MAX_SHAPED_LINE_BYTES: usize = 16_384;
+fn prefix(text: &str) -> &str {
+    let mut end = text.len().min(MAX_SHAPED_LINE_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+fn bounded_runs(runs: Vec<TextRun>, len: usize) -> Vec<TextRun> {
+    let mut remaining = len;
+    runs.into_iter()
+        .filter_map(|mut run| {
+            run.len = run.len.min(remaining);
+            remaining -= run.len;
+            (run.len > 0).then_some(run)
+        })
+        .collect()
+}
+
 #[derive(Default)]
 pub(crate) struct ShapeCache {
     items: HashMap<(u64, u64, usize, u32, u32), Rc<ShapedLine>>,
@@ -23,7 +43,9 @@ impl ShapeCache {
         window: &mut Window,
         shared: &Shared,
     ) -> Rc<ShapedLine> {
+        let text = prefix(text);
         let mut stats = shared.stats.get();
+        stats.max_shaped_bytes = stats.max_shaped_bytes.max(text.len());
         if let Some(shape) = self.items.get(&key)
             && shape.text.as_ref() == text
         {
@@ -34,12 +56,13 @@ impl ShapeCache {
         let shape = Rc::new(window.text_system().shape_line(
             text.to_owned().into(),
             px(font_size),
-            &runs(),
+            &bounded_runs(runs(), text.len()),
             None,
         ));
         stats.shaped_lines += 1;
         shared.stats.set(stats);
-        if self.items.len() >= 2048
+        if !self.items.contains_key(&key)
+            && self.items.len() >= 2048
             && let Some(old) = self.order.pop_front()
         {
             self.items.remove(&old);
@@ -83,10 +106,11 @@ fn runs(
     font: &Font,
 ) -> Vec<TextRun> {
     let highlighted = shared.highlighted.borrow();
-    let Some(range) = highlighted.document.line_range(line) else {
+    let Some(mut range) = highlighted.document.line_range(line) else {
         return vec![];
     };
-    let source = highlighted.document.line(line).unwrap_or_default();
+    let source = prefix(highlighted.document.line(line).unwrap_or_default());
+    range.end = range.start + source.len();
     let hints = shared.hints.borrow();
     let display = hints.get(&line);
     let mut points = std::collections::BTreeSet::from([0, source.len()]);
@@ -161,7 +185,7 @@ fn runs(
         }
         if let Some(display) = display {
             for (_, range) in display.insertions().filter(|(column, _)| *column == start) {
-                if let Some(hint) = text.get(range.clone()) {
+                if let Some(hint) = text.get(range.start..range.end.min(text.len())) {
                     result.push(base_run(hint, theme.surfaces().dimmed.to_hsla(), font));
                 }
             }
@@ -173,7 +197,7 @@ fn runs(
             .insertions()
             .filter(|(column, _)| *column == source.len())
         {
-            if let Some(hint) = text.get(range.clone()) {
+            if let Some(hint) = text.get(range.start..range.end.min(text.len())) {
                 result.push(base_run(hint, theme.surfaces().dimmed.to_hsla(), font));
             }
         }
@@ -236,6 +260,7 @@ pub(crate) fn prepare(
         (options.margin_chars as f32 * cell).min((bounds.size.width.as_f32() * 0.4).max(0.));
     let mut geometry = shared.geometry.borrow_mut();
     geometry.bounds = bounds;
+    geometry.layout_epoch = shared.layout_epoch.get();
     geometry.font_size = font_size;
     geometry.line_height = lh;
     geometry.gutter = gutter;
@@ -244,14 +269,19 @@ pub(crate) fn prepare(
     geometry.font = font.clone();
     geometry.shaped.clear();
     let map = shared.rows.borrow();
-    let viewport = shared
+    let mut viewport = shared
         .viewport
         .get()
         .clamped(map.len(), lh, bounds.size.height.as_f32());
+    let width = (bounds.size.width.as_f32() - gutter - margin - mini).max(0.);
+    viewport.x = viewport
+        .x
+        .min((geometry.content_width - f64::from(width)).max(0.));
     shared.viewport.set(viewport);
     let visible = viewport.visible(map.len(), lh, bounds.size.height.as_f32());
     let mut stats = shared.stats.get();
     stats.last_visible_rows = visible.len();
+    stats.last_truncated_rows = 0;
     shared.stats.set(stats);
     let highlighted = shared.highlighted.borrow();
     let doc = &highlighted.document;
@@ -270,7 +300,7 @@ pub(crate) fn prepare(
     let appearance = if theme.scheme == Scheme::Dark { 1 } else { 0 };
     let s = theme.surfaces();
     for row in visible {
-        let y = bounds.origin.y + px(row as f32 * lh - viewport.y);
+        let y = bounds.origin.y + px((row as f64 * f64::from(lh) - viewport.y) as f32);
         match map.row(row) {
             Some(Row::Source(line)) => {
                 let hints = shared.hints.borrow();
@@ -278,6 +308,12 @@ pub(crate) fn prepare(
                     .get(&line)
                     .map(|d| d.text.as_ref())
                     .unwrap_or_else(|| doc.line(line).unwrap_or_default());
+                if text.len() > MAX_SHAPED_LINE_BYTES {
+                    let mut stats = shared.stats.get();
+                    stats.last_truncated_rows += 1;
+                    shared.stats.set(stats);
+                }
+                let text = prefix(text);
                 let hash = doc.line_hash(line).unwrap_or_default();
                 let context_line =
                     if highlighted.spans.is_empty() && shared.annotations.borrow().is_empty() {
@@ -293,10 +329,12 @@ pub(crate) fn prepare(
                     window,
                     shared,
                 );
+                geometry.content_width =
+                    geometry.content_width.max(f64::from(shape.width.as_f32()));
                 geometry.shaped.insert(line, shape.clone());
                 rows.push(PaintedRow {
                     shape,
-                    origin: point(bounds.origin.x + px(gutter - viewport.x), y),
+                    origin: point(bounds.origin.x + px(gutter - viewport.x as f32), y),
                     gutter: false,
                 });
                 let marker = shared
@@ -346,7 +384,7 @@ pub(crate) fn prepare(
             }
             Some(Row::Lens(id)) => {
                 if let Some(a) = shared.annotations.borrow().get(id) {
-                    let text = a.payload.replace(['\n', '\r'], " ");
+                    let text = prefix(&a.payload).replace(['\n', '\r'], " ");
                     let shape = cache.line(
                         &text,
                         (
@@ -426,13 +464,13 @@ pub(crate) fn hit(shared: &Shared, point: Point<Pixels>) -> Option<Position> {
         return None;
     }
     let viewport = shared.viewport.get();
-    let y = point.y.as_f32() - g.bounds.origin.y.as_f32() + viewport.y;
-    let row = (y / g.line_height).floor().max(0.) as usize;
+    let y = f64::from(point.y.as_f32() - g.bounds.origin.y.as_f32()) + viewport.y;
+    let row = (y / f64::from(g.line_height)).floor().max(0.) as usize;
     let Row::Source(line) = shared.rows.borrow().row(row)? else {
         return None;
     };
     let shape = g.shaped.get(&line)?;
-    let x = point.x - g.bounds.origin.x - px(g.gutter - viewport.x);
+    let x = point.x - g.bounds.origin.x - px(g.gutter - viewport.x as f32);
     let column = shape.closest_index_for_x(x);
     let column = shared
         .hints
@@ -453,15 +491,24 @@ pub(crate) fn anchor(shared: &Shared, position: Position) -> Option<Point<Pixels
     let row = shared.rows.borrow().source_row(position.line)?;
     let shape = g.shaped.get(&position.line)?;
     let viewport = shared.viewport.get();
-    let y = row as f32 * g.line_height - viewport.y + g.line_height * 0.5;
+    let y = (row as f64 * f64::from(g.line_height) - viewport.y) as f32 + g.line_height * 0.5;
     if y < 0. || y > g.bounds.size.height.as_f32() {
         return None;
     }
     let doc = shared.highlighted.borrow();
     doc.document.offset(position)?;
+    let column = shared
+        .hints
+        .borrow()
+        .get(&position.line)
+        .map(|d| d.source_to_display(position.column, true))
+        .unwrap_or(position.column);
+    if column > shape.text.len() {
+        return None;
+    }
     let anchor = point(
         g.bounds.origin.x
-            + px(g.gutter - viewport.x)
+            + px(g.gutter - viewport.x as f32)
             + shape.x_for_index(
                 shared
                     .hints
@@ -513,7 +560,7 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
             .get(line)
             .map(|d| d.source_to_display(end, false))
             .unwrap_or(end);
-        let x = g.bounds.origin.x + px(g.gutter - viewport.x) + shape.x_for_index(start);
+        let x = g.bounds.origin.x + px(g.gutter - viewport.x as f32) + shape.x_for_index(start);
         let end_x = shape.x_for_index(end);
         let right = (x + (end_x - shape.x_for_index(start)).max(px(1.)))
             .min(g.bounds.right() - px(g.margin + g.mini));
@@ -522,7 +569,8 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
             result.push(Bounds::new(
                 point(
                     left,
-                    g.bounds.origin.y + px(row as f32 * g.line_height - viewport.y),
+                    g.bounds.origin.y
+                        + px((row as f64 * f64::from(g.line_height) - viewport.y) as f32),
                 ),
                 size(right - left, px(g.line_height)),
             ));

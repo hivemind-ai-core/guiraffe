@@ -142,6 +142,25 @@ fn million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut TestAp
     vcx.update(|_, cx| code.scroll_to_line(900_000, cx));
     vcx.run_until_parked();
     let after = code.stats();
+    let anchor_before = code
+        .anchor_in_window(Position::new(900_000, 0))
+        .expect("anchor");
+    let y = code.viewport().y;
+    vcx.update(|_, cx| {
+        code.scroll_to(
+            guiraffe_code::Viewport {
+                y: y + 0.25,
+                ..code.viewport()
+            },
+            cx,
+        )
+    });
+    vcx.run_until_parked();
+    assert_eq!(code.viewport().y, y + 0.25);
+    let anchor_after = code
+        .anchor_in_window(Position::new(900_000, 0))
+        .expect("anchor after subpixel scroll");
+    assert!((f32::from(anchor_before.y - anchor_after.y) - 0.25).abs() < 0.01);
     assert!(code.viewport().y > 1_000_000.);
     assert!(after.last_visible_rows < 100);
     assert!(
@@ -483,7 +502,7 @@ fn real_symbol_hover_and_definition_callback_allow_reentry(cx: &mut TestAppConte
 
 #[gpui_kit::test]
 fn trace_anchors_outside_the_horizontal_viewport_are_hidden(cx: &mut TestAppContext) {
-    let (code, _, vcx) = mount(cx, Arc::from("let value = 42;\n"));
+    let (code, _, vcx) = mount(cx, Arc::from("let value = 42;".repeat(200)));
     assert!(code.anchor_in_window(Position::new(0, 4)).is_some());
     vcx.update(|_, cx| code.scroll_to(guiraffe_code::Viewport { x: 1000., y: 0. }, cx));
     vcx.run_until_parked();
@@ -519,4 +538,56 @@ fn releasing_outside_stops_mouse_selection(cx: &mut TestAppContext) {
         selected,
         "hover after an outside release must not extend the selection"
     );
+}
+
+#[gpui_kit::test]
+fn copy_without_a_nonempty_selection_keeps_clipboard(cx: &mut TestAppContext) {
+    let (code, _, vcx) = mount(cx, Arc::from("source text"));
+    vcx.update(|_, cx| code.scroll_to(guiraffe_code::Viewport { x: 1e12, y: 0. }, cx));
+    assert_eq!(
+        code.viewport().x,
+        0.,
+        "a short line cannot scroll past its content"
+    );
+    vcx.update(|window, cx| {
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("keep me".into()));
+        code.focus(window, cx);
+    });
+    vcx.simulate_keystrokes("ctrl-c");
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+            Some("keep me")
+        );
+        code.select(
+            Some(SourceRange::new(Position::default(), Position::default())),
+            cx,
+        );
+    });
+    vcx.simulate_keystrokes("ctrl-c");
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+            Some("keep me")
+        )
+    });
+}
+#[gpui_kit::test]
+fn horizontal_scroll_is_bounded_and_long_line_shaping_is_capped(cx: &mut TestAppContext) {
+    let source: Arc<str> = "α界value ".repeat(100_000).into();
+    let (code, _, vcx) = mount(cx, source.clone());
+    assert!(code.stats().max_shaped_bytes <= guiraffe_code::MAX_SHAPED_LINE_BYTES);
+    assert_eq!(code.stats().last_truncated_rows, 1);
+    assert!(code.anchor_in_window(Position::new(0, 100_000)).is_none());
+    vcx.update(|_, cx| code.scroll_to(guiraffe_code::Viewport { x: 1e15, y: 0. }, cx));
+    vcx.run_until_parked();
+    assert!(code.viewport().x > 0. && code.viewport().x < 1e6);
+    vcx.update(|window, cx| code.focus(window, cx));
+    vcx.simulate_keystrokes("ctrl-a ctrl-c");
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+            Some(source.as_ref())
+        )
+    });
 }
