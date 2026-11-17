@@ -244,40 +244,67 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn dope(_: &mut Window, cx: &mut App) -> AnyView {
-    let keys = |times: &[(f64, f64)]| {
-        times
-            .iter()
-            .map(|(t, v)| Key::new(*t, *v, Interp::Constant))
-            .collect()
-    };
     let view = DopeSheet::new(
-        vec![Channel::group(
-            "Scene summary",
-            vec![
-                Channel::group(
-                    "Camera",
-                    vec![
-                        Channel::with_keyframes(
-                            "position.x",
-                            keys(&[(0., 0.), (0.5, 0.), (1., 1.), (2., 1.)]),
-                        ),
-                        Channel::new("position.y", vec![0., 0.75, 1.5]),
-                    ],
-                ),
-                Channel::group(
-                    "Object",
-                    vec![
-                        Channel::new("rotation", vec![0.25, 1.25, 2.25]),
-                        Channel::new("opacity", vec![0., 0.2, 2.8, 3.]),
-                    ],
-                ),
-            ],
-        )],
+        vec![
+            Channel::group(
+                "Scene summary",
+                vec![
+                    Channel::group(
+                        "Camera",
+                        vec![
+                            Channel::with_keyframes(
+                                "position.x",
+                                vec![
+                                    Key::new(0., 0., Interp::Constant),
+                                    Key::new(0.5, 0., Interp::Bezier),
+                                    Key::new(1., 1., Interp::Linear),
+                                    Key::new(2., 1., Interp::Constant),
+                                ],
+                            )
+                            .with_color(ColorName::Blue),
+                            Channel::with_keyframes(
+                                "position.y",
+                                vec![
+                                    Key::new(0., 0., Interp::Bezier),
+                                    Key::new(0.75, 1., Interp::Bezier),
+                                    Key::new(1.5, 0., Interp::Bezier),
+                                ],
+                            )
+                            .with_color(ColorName::Teal),
+                        ],
+                    )
+                    .with_color(ColorName::Violet),
+                    Channel::group(
+                        "Object",
+                        vec![
+                            Channel::new("rotation", vec![0.25, 1.25, 2.25])
+                                .with_color(ColorName::Orange),
+                            Channel::with_keyframes(
+                                "opacity",
+                                vec![
+                                    Key::new(0., 0., Interp::Constant),
+                                    Key::new(0.2, 1., Interp::Constant),
+                                    Key::new(2.8, 1., Interp::Constant),
+                                    Key::new(3., 0., Interp::Constant),
+                                ],
+                            )
+                            .with_color(ColorName::Pink),
+                        ],
+                    )
+                    .with_color(ColorName::Orange),
+                ],
+            )
+            .with_color(ColorName::Violet),
+        ],
         TimeFormat::Frames(24.),
         3.,
         cx,
     );
-    view.update(cx, |view, cx| view.set_focusable(true, cx));
+    view.update(cx, |view, cx| {
+        view.set_focusable(true, cx);
+        view.press(2, view.axis().x(0.5));
+        view.release();
+    });
     let lock = SegmentedControl::new(["Editable", "Locked"], cx);
     cx.new(|cx| {
         let target = view.clone();
@@ -303,7 +330,7 @@ impl Render for DopeDemo {
         column([
             example("Editing", div().w(px(240.)).child(self.lock.clone())),
             example(
-                "24 fps · Shift-click / box select · Ctrl+A / Ctrl+D · Delete · Arrow keys",
+                "24 fps · Shift-click / box select · Tab to focus · Ctrl+A / Ctrl+D · Delete · Arrows",
                 div().h(px(300.)).child(self.view.clone()),
             ),
         ])
