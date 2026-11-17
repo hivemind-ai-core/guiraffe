@@ -72,3 +72,75 @@ wrappers or upstream support.
 - Charts have no built-in legend or axis titles, and colors are global (`chart_1..5`) unless you set
   them per series with `.fill`/`.stroke`.
 - Kit's `Size` has only four steps, so GUIraffe `Xl` and `Lg` look the same.
+
+## §12 audit: interaction, focus and accessibility (spec/00 §12)
+
+### What Kit and GPUI provide (gpui-kit 0.9.1)
+- **Focus on click.** Kit `Button` calls `window.prevent_default()` on mouse down, so clicking it
+  never takes focus. It does default to `tab_stop(true)`, so it is always in Tab order. That is
+  opt-out, and GUIraffe's policy is opt-in. `Checkbox`, `Radio` and `Switch` have `tab_stop`/`tab_index`
+  too. Text inputs take focus on click, which is correct.
+- **Focus-visible.** GPUI tracks input modality (`Window::last_input_was_keyboard`). Kit draws its
+  focus ring via `focus_style` whenever the element is focused, and focus is only reachable by
+  keyboard when click focus is prevented. So in practice the ring shows only after a keyboard move.
+- **Accessibility.** GPUI 0.3.12 embeds **AccessKit** (`gpui::Role`, `Toggled`, `AccessibleAction`).
+  Divs expose `.role()`, `.aria_label()`, `aria_selected/expanded/toggled`, `aria_numeric_value*`
+  and `aria_value`. Kit controls set role, label and state: Button→`Role::Button`/`Link` with
+  `accessibility_label`, Checkbox/Switch toggled state, Slider numeric value, Input value/placeholder.
+  **No GUIraffe widget sets a role or aria state yet.**
+- **OS preferences.** `App::reduce_motion()` exists (Kit spinner/plot motion honors it). There is
+  **no high-contrast or forced-colors signal** in GPUI or Kit 0.9.1. GUIraffe's `Contrast::High`
+  is the theme-level substitute until the platform exposes one (tracked in KNOWN_ISSUES).
+
+### Opt-in focus mechanism (prototype)
+`StyleContext.keyboard_nav` (default false) is set by `guiraffe_core::focus_scope(child)`.
+`guiraffe_core::tab_stop(explicit)` resolves per control at render time.
+`guiraffe_components::ScopedButton` wraps a Kit Button with that tab stop.
+Tests (`crates/components/tests/focus_scope.rs`): (1) clicking a button inside or outside a
+scope keeps focus in a focused text input; (2) Tab from the input reaches only the scoped button.
+Next step: every GUIraffe control reads `tab_stop(None)` and drops `window.focus` on click.
+
+### Widget gaps
+| Widget | Built on | Gaps vs §12 |
+|---|---|---|
+| SegmentedControl | div + `on_click` | **Click calls `window.focus`**, so it steals focus. It always tracks focus (no opt-in). No pressed or disabled state. No role (`RadioGroup`/`Tab`) or `aria_selected`. It has arrow keys. |
+| ActionIcon | div + `on_click` | Not a Kit Button. It has hover only. Pressed is missing, and there is no focus or keyboard activation. Disabled is raw `opacity(0.5)`, and nothing sets a `not-allowed` cursor. No role or label (icon-only, so it needs `aria_label`). |
+| Pill remove (`close_button`) | ActionIcon | Same gaps as ActionIcon, and there is no accessible "Remove X" name. |
+| ChipGroup | div + `on_click` | No pressed, focus, keyboard or disabled state. No role (`CheckBox`/toggled) or selected state. |
+| TagsInput | Kit Input + divs | The input is fine. Tag remove buttons have the same gaps as Pill. |
+| RangeSlider | div + `on_mouse_down` | **Mouse down calls `window.focus`**. Focus is not opt-in. There is no visible focus ring, no `aria_numeric_value` and no Slider role. Disabled is not supported. It has arrow keys. |
+| Dropzone | div, hover styling | Not keyboard-operable (needs Enter/Space to open a picker), no role or label, and no disabled state. |
+| Showcase sidebar items | div + `on_click` | Hover only. No pressed or focus state, no arrow-key navigation, and no `ListItem`/selected role. |
+| Flow toolbar | Kit `Button` | Good. Buttons should still get `tab_stop(tab_stop(None))` and the canvas needs a role. |
+| Overlays (modal, drawer, spotlight, toasts) | Kit dialog/popover/Button | Mostly Kit and already fine. GUIraffe's own close and list rows in Spotlight are divs: no role or `aria_selected` on the active row. Escape works. |
+| Timeline (Gantt, tracks, dope sheet, curve) | canvas + `on_mouse_down` | Pointer-only. No keyboard move/trim, no focus, no roles. Locked items use raw `opacity(0.55)`. The edit-option controls are SegmentedControls (gaps above). |
+
+### Raw opacity / fixed shades for states (to replace with `theme.state(...)`)
+- `components/src/icons.rs:146` ActionIcon disabled `opacity(0.5)`.
+- `timeline/src/gantt_view.rs:528`, `tracks_view.rs:390` locked items `opacity(0.55)`.
+- `overlays/src/widgets.rs:60` LoadingOverlay backdrop `a *= 0.55`, and `overlays/src/modal.rs:246`
+  scrim `text.alpha(0.2)`. These are not scheme-specific; use `theme.scrim()`.
+- `Text.dimmed` → `Surfaces.dimmed` (gray.6 / dark.2). Fixed shades below 4.5:1 (see report).
+- Fixed error reds: `flow/src/lib.rs:832`, `gantt_view.rs:439`, `ui/src/widget.rs:248`. Fixed series
+  colors: `curve_view.rs:149` (Blue.6), `dope_sheet.rs:166` (Yellow.6). These ignore scheme and primary.
+- `chat/src/message.rs:209` streaming `opacity(alpha)` (animation, acceptable if reduce-motion is honored).
+- Kit itself: ghost/tinted variants use `opacity(0.1/0.2/0.4)` over semantic colors, and loading uses
+  `opacity(0.8)`. These are internal to Kit.
+
+### Token API (implemented: `crates/core/src/state.rs`)
+`theme.state(StateKind, Variant, Option<ColorName>) -> StateColors { foreground, background, border }`
+for `Rest, Hover, Pressed, Selected, Disabled, Dimmed, FocusRing`. Backgrounds are composited over
+the body, so ratios can be measured. `GuiraffeTheme.contrast: Contrast::{Standard, High}`.
+`theme.scrim()` is scheme-aware. `contrast_checks(&theme)` lists every §12.1 floor.
+
+### Contrast report (test `state::tests::contrast_report_every_state_scheme_and_primary`)
+The test covers 12 primaries × 2 schemes × 2 contrast settings. It fails today: **302 (standard) and 188
+(high)**. The counts are pinned in the test, so a fix or a regression both have to be acknowledged.
+I did not tune any colors. Lowest ratio per group:
+- **Dimmed text**: light 3.32 (gray.6 on white) and dark 4.04, against a floor of 4.5. High contrast passes.
+- **Disabled text** (light): 2.99 against a floor of 3.0, so just under.
+- **Control boundaries** (Default/Outline border vs body): light 1.49–1.86, dark 1.54, against a floor of 3.0. Mantine's gray.3/4 borders are decorative-strength.
+- **Filled text** (white on shade 6): as low as 3.28 in light and 3.45 in dark for light hues (yellow, lime, cyan, orange…). `readable_foreground` only switches to black for some of them.
+- **Light/Outline/Subtle text** (shade-6 text on a tint) in light: as low as 1.6–1.9 for yellow, lime and cyan primaries. Blue and violet pass.
+- Pressed and hover drop up to 0.5 below rest.
+- The focus ring passes everywhere (it falls back to text color when the primary is too light).
