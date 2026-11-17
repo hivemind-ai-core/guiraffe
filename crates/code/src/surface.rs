@@ -104,6 +104,8 @@ pub(crate) struct Shared {
     pub stats: Cell<CodeStats>,
     pub selection: Cell<Option<SourceRange>>,
     pub dragging: Cell<Option<Position>>,
+    /// A minimap drag is in progress (pointer pressed on the minimap).
+    pub minimap_drag: Cell<bool>,
     pub symbol: RefCell<Option<SymbolInfo>>,
     pub provider: RefCell<Option<SymbolProvider>>,
     pub definition: RefCell<Option<DefinitionHandler>>,
@@ -151,6 +153,7 @@ impl CodeHandle {
             stats: Cell::default(),
             selection: Cell::default(),
             dragging: Cell::default(),
+            minimap_drag: Cell::default(),
             symbol: RefCell::default(),
             provider: RefCell::default(),
             definition: RefCell::default(),
@@ -335,6 +338,32 @@ impl CodeHandle {
             self.notify_all(cx);
         }
     }
+    /// If `position` (window coordinates) is over the minimap, the source line it maps to.
+    /// With `clamp`, positions outside the minimap's vertical extent clamp to its ends
+    /// (used while dragging, so the pointer may leave the minimap).
+    pub fn minimap_line_at(
+        &self,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        clamp: bool,
+    ) -> Option<usize> {
+        let g = self.shared.geometry.borrow();
+        if g.mini <= 0. {
+            return None;
+        }
+        let local = position - g.bounds.origin;
+        let height = g.bounds.size.height.as_f32();
+        if !clamp && local.x.as_f32() < g.bounds.size.width.as_f32() - g.mini {
+            return None;
+        }
+        let y = local.y.as_f32().clamp(0., height.max(0.));
+        let lines = self.document().line_count();
+        let line = match crate::paint::minimap_line_height(lines, height) {
+            Some(step) => (y / step) as usize,
+            None => ((y / height.max(1.)) * lines as f32) as usize,
+        };
+        Some(line.min(lines.saturating_sub(1)))
+    }
+
     pub fn scroll_to_line(&self, line: usize, cx: &mut App) {
         if let Some(row) = self.shared.rows.borrow().source_row_or_before(line) {
             let y = row as f64 * f64::from(self.shared.geometry.borrow().line_height);
@@ -912,21 +941,13 @@ impl RenderOnce for CodeViewer {
                 MouseButton::Left,
                 move |event: &MouseDownEvent, window, cx| {
                     down.focus(window, cx);
-                    let g = down.shared.geometry.borrow();
-                    let local = event.position - g.bounds.origin;
-                    if local.x.as_f32() >= g.bounds.size.width.as_f32() - g.mini && g.mini > 0. {
-                        let fraction =
-                            (local.y.as_f32() / g.bounds.size.height.as_f32()).clamp(0., 1.);
-                        let lines = down.document().line_count();
-                        let height = g.bounds.size.height.as_f32();
-                        let line = match crate::paint::minimap_line_height(lines, height) {
-                            Some(step) => (local.y.as_f32() / step) as usize,
-                            None => (fraction * lines as f32) as usize,
-                        };
-                        drop(g);
+                    if let Some(line) = down.minimap_line_at(event.position, false) {
+                        down.shared.minimap_drag.set(true);
                         down.scroll_to_line(line, cx);
                         return;
                     }
+                    let g = down.shared.geometry.borrow();
+                    let local = event.position - g.bounds.origin;
                     let gutter = local.x.as_f32() < g.gutter;
                     drop(g);
                     if let Some(p) = down.hit(event.position) {
@@ -966,6 +987,14 @@ impl RenderOnce for CodeViewer {
             .on_mouse_move(move |event: &MouseMoveEvent, _, cx| {
                 if event.pressed_button != Some(MouseButton::Left) {
                     motion.shared.dragging.set(None);
+                    motion.shared.minimap_drag.set(false);
+                }
+                // Dragging on the minimap scrolls continuously, even if the pointer leaves it.
+                if motion.shared.minimap_drag.get() {
+                    if let Some(line) = motion.minimap_line_at(event.position, true) {
+                        motion.scroll_to_line(line, cx);
+                    }
+                    return;
                 }
                 let position = motion.hit(event.position);
                 if let Some(start) = motion.shared.dragging.get()
@@ -978,9 +1007,11 @@ impl RenderOnce for CodeViewer {
             })
             .on_mouse_up(MouseButton::Left, move |_, _, _| {
                 up.shared.dragging.set(None);
+                up.shared.minimap_drag.set(false);
             })
             .on_mouse_up_out(MouseButton::Left, move |_, _, _| {
                 up_out.shared.dragging.set(None);
+                up_out.shared.minimap_drag.set(false);
             })
             .on_hover(move |hovered, _, cx| {
                 if !hovered {

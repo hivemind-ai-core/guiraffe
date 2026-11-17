@@ -591,3 +591,45 @@ fn horizontal_scroll_is_bounded_and_long_line_shaping_is_capped(cx: &mut TestApp
         )
     });
 }
+
+#[gpui_kit::test]
+fn dragging_on_the_minimap_scrolls_continuously_and_does_not_select(cx: &mut TestAppContext) {
+    use gpui_kit::{Modifiers, MouseButton, point, px};
+    let (code, _, vcx) = mount(cx, Arc::from("let value = 42;\n".repeat(1000)));
+    let b = code.bounds();
+    let x = b.right() - px(5.);
+    let at = |frac: f32| point(x, b.top() + (b.bottom() - b.top()) * frac);
+    vcx.simulate_mouse_down(at(0.1), MouseButton::Left, Modifiers::default());
+    vcx.run_until_parked();
+    let first = code.viewport().y;
+    vcx.simulate_mouse_move(at(0.5), MouseButton::Left, Modifiers::default());
+    vcx.run_until_parked();
+    let middle = code.viewport().y;
+    assert!(
+        middle > first,
+        "drag down scrolls down: {first} -> {middle}"
+    );
+    // Leaving the minimap horizontally keeps dragging (clamped to its vertical extent).
+    vcx.simulate_mouse_move(
+        point(b.left() + px(20.), b.top() + (b.bottom() - b.top()) * 0.9),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    vcx.run_until_parked();
+    let far = code.viewport().y;
+    assert!(
+        far > middle,
+        "drag continues off the minimap: {middle} -> {far}"
+    );
+    assert!(
+        code.selection().is_none_or(|s| s.start == s.end),
+        "a minimap drag never selects text: {:?}",
+        code.selection()
+    );
+    vcx.simulate_mouse_up(at(0.9), MouseButton::Left, Modifiers::default());
+    vcx.run_until_parked();
+    // After release, moving the pointer no longer scrolls.
+    vcx.simulate_mouse_move(at(0.2), None, Modifiers::default());
+    vcx.run_until_parked();
+    assert_eq!(code.viewport().y, far, "released: no more scrolling");
+}
