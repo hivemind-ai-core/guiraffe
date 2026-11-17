@@ -214,7 +214,7 @@ impl Curve {
     }
     pub fn split_segment(&mut self, index: usize, t: f64) -> Option<usize> {
         let a = self.keys.get(index)?;
-        let b = self.keys.get(index + 1)?;
+        let b = self.keys.get(index.checked_add(1)?)?;
         if t <= a.t || t >= b.t {
             return None;
         }
@@ -384,5 +384,6 @@ mod editing_tests {
         assert!(c.set_interpolation(1, Interp::Constant));
         assert!(c.remove_segment(0));
         assert!(!c.remove(99));
+        assert_eq!(c.split_segment(usize::MAX, 0.5), None);
     }
 }

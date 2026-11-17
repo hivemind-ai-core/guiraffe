@@ -11,11 +11,12 @@ pub struct BarCurve {
 }
 impl BarCurve {
     pub fn new(count: usize, min: f64, max: f64) -> Self {
-        let (min, max) = if min.is_finite() && max.is_finite() && min < max {
-            (min, max)
-        } else {
-            (0., 1.)
-        };
+        let (min, max) =
+            if min.is_finite() && max.is_finite() && min < max && (max - min).is_finite() {
+                (min, max)
+            } else {
+                (0., 1.)
+            };
         Self {
             values: Rc::new(vec![0_f64.clamp(min, max); count]),
             min,
@@ -44,7 +45,11 @@ impl BarCurve {
         let v = v.clamp(self.min, self.max);
         if let Some(n) = self.steps {
             let step = (self.max - self.min) / n as f64;
-            (self.min + ((v - self.min) / step).round() * step).clamp(self.min, self.max)
+            if step > 0. && step.is_finite() {
+                (self.min + ((v - self.min) / step).round() * step).clamp(self.min, self.max)
+            } else {
+                v
+            }
         } else {
             v
         }
@@ -76,7 +81,7 @@ impl BarCurve {
             } else {
                 (i as f64 - a as f64) / (b as f64 - a as f64)
             };
-            let v = from.1 + (to.1 - from.1) * f;
+            let v = from.1 * (1. - f) + to.1 * f;
             if self.set(i, v) {
                 let span = changed.get_or_insert(i..i + 1);
                 span.start = span.start.min(i);
@@ -130,6 +135,12 @@ mod tests {
         assert!(b.set(0, 0.3));
         assert_eq!(b.values(), &[0.5]);
         assert!(!b.set(0, f64::NAN));
+        let mut tiny = BarCurve::new(1, 0., f64::MIN_POSITIVE);
+        tiny.set_steps(Some(usize::MAX));
+        assert!(tiny.values()[0].is_finite());
+        let mut extreme = BarCurve::new(3, -1., 1.);
+        extreme.draw((0., -f64::MAX), (2., f64::MAX));
+        assert_eq!(extreme.values(), &[-1., 0., 1.]);
         let c = b.to_curve(0., 1.);
         assert_eq!(c.eval(0.), 0.5);
         assert_eq!(
