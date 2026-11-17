@@ -96,8 +96,8 @@ impl Render for Overview {
                 div()
                     .flex()
                     .gap(px(Size::Md.spacing()))
-                    .child(div().flex_1().child(stat(IconName::Boxes, ColorName::Blue, "Crates", "14", 70.0)))
-                    .child(div().flex_1().child(stat(IconName::FlaskConical, ColorName::Teal, "Tests", "300+", 85.0)))
+                    .child(div().flex_1().child(stat(IconName::Boxes, ColorName::Blue, "Crates", "22", 70.0)))
+                    .child(div().flex_1().child(stat(IconName::FlaskConical, ColorName::Teal, "Tests", "750+", 85.0)))
                     .child(div().flex_1().child(stat(IconName::Gauge, ColorName::Grape, "Re-renders saved", "12 → 0", 100.0))),
             )
             .child(
