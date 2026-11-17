@@ -957,3 +957,70 @@ fn rows_expose_their_aria_row_index(cx: &mut TestAppContext) {
         assert!(rows.len() > 10);
     });
 }
+
+/// The horizontal scrollbar is driven by real pointer input at the thumb's
+/// painted position, so a thumb outside the grid's hit area or under another
+/// element fails here.
+#[gpui_kit::test]
+fn dragging_the_horizontal_thumb_scrolls_the_center_band(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| {
+        let mut cols = columns(30);
+        cols[0].pin = Pin::Left;
+        GridHandle::new(million(), cols, cx)
+    });
+    vcx.run_until_parked();
+    let thumb = vcx
+        .debug_bounds("datagrid-hscroll-thumb")
+        .unwrap_or_else(|| panic!("the horizontal thumb is painted"));
+    let lw = grid.layout().left_width;
+    let left = grid.bounds().origin.x + px(lw);
+    assert!(thumb.left() >= left, "the thumb lives in the center band");
+    assert_eq!(grid.scroll_offset().0, 0.);
+
+    let width = f32::from(grid.bounds().size.width);
+    let vp = f64::from(grid.layout().center_viewport(width));
+    let content = grid.layout().center_width;
+    let track = vp - f64::from(f32::from(thumb.size.width));
+    let per_px = (content - vp) / track;
+
+    let start = thumb.center();
+    let to = start + point(px(50.), px(0.));
+    vcx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+    vcx.simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
+    vcx.simulate_mouse_up(to, MouseButton::Left, Modifiers::default());
+    vcx.run_until_parked();
+    let (sx, sy) = grid.scroll_offset();
+    assert!(
+        (sx - 50. * per_px).abs() < 1.,
+        "a 50px thumb drag scrolls {} px, got {sx}",
+        50. * per_px
+    );
+    assert_eq!(sy, 0., "a horizontal drag never scrolls rows");
+    assert!(
+        grid.selection().cursor.is_none(),
+        "a thumb drag selects nothing"
+    );
+
+    // A press on the track right of the thumb pages one viewport.
+    let thumb = vcx
+        .debug_bounds("datagrid-hscroll-thumb")
+        .unwrap_or_else(|| panic!("the horizontal thumb is painted"));
+    let track_at = point(thumb.right() + px(20.), thumb.center().y);
+    click(vcx, track_at, Modifiers::default());
+    assert!(
+        (grid.scroll_offset().0 - (sx + vp)).abs() < 0.5,
+        "a track press pages one viewport: {} -> {}",
+        sx,
+        grid.scroll_offset().0
+    );
+    // And left of it pages back.
+    let thumb = vcx
+        .debug_bounds("datagrid-hscroll-thumb")
+        .unwrap_or_else(|| panic!("the horizontal thumb is painted"));
+    click(
+        vcx,
+        point(left + px(2.), thumb.center().y),
+        Modifiers::default(),
+    );
+    assert!((grid.scroll_offset().0 - sx).abs() < 0.5);
+}
