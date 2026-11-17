@@ -26,8 +26,44 @@ pub struct KitColors {
     pub muted_foreground: Rgb,
     pub popover: Rgb,
     pub accent: Rgb,
+    /// The semantic families Kit paints its alerts and badges with. They follow
+    /// the same rules as the primary: a contrast-corrected filled background
+    /// and a foreground that reads on it.
+    pub danger: SemanticColors,
+    pub success: SemanticColors,
+    pub warning: SemanticColors,
+    pub info: SemanticColors,
     pub charts: [Rgb; 5],
     pub radius: f32,
+}
+
+/// One semantic colour family of Kit: the fill, its hover and pressed
+/// shades, and the text that reads on it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SemanticColors {
+    pub base: Rgb,
+    pub hover: Rgb,
+    pub active: Rgb,
+    pub foreground: Rgb,
+}
+
+impl SemanticColors {
+    /// The family of a colour, with the same contrast rules as the primary:
+    /// the filled variant of the colour (darkened until white text reads on
+    /// it) and the foreground that goes with it.
+    fn of(t: &GuiraffeTheme, color: ColorName) -> Self {
+        let filled = t.variant(Some(color), Variant::Filled);
+        Self {
+            base: filled.background,
+            hover: t
+                .state(crate::StateKind::Hover, Variant::Filled, Some(color))
+                .background,
+            active: t
+                .state(crate::StateKind::Pressed, Variant::Filled, Some(color))
+                .background,
+            foreground: filled.foreground,
+        }
+    }
 }
 
 impl KitColors {
@@ -72,6 +108,10 @@ impl KitColors {
             muted_foreground: s.dimmed,
             popover: s.raised,
             accent: s.hover,
+            danger: SemanticColors::of(t, ColorName::Red),
+            success: SemanticColors::of(t, ColorName::Green),
+            warning: SemanticColors::of(t, ColorName::Yellow),
+            info: SemanticColors::of(t, ColorName::Blue),
             charts,
             radius: t.default_radius.radius(),
         }
@@ -110,6 +150,40 @@ mod tests {
         assert_ne!(k.primary_active, k.primary);
         assert!(k.primary_foreground.contrast(k.primary_active) >= 4.5);
         assert_ne!(k.selection, k.primary, "selection is a tint");
+    }
+
+    #[test]
+    fn semantic_families_follow_the_contrast_rules_of_the_primary() {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let t = GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            };
+            let k = KitColors::from_theme(&t);
+            for (name, family) in [
+                ("danger", k.danger),
+                ("success", k.success),
+                ("warning", k.warning),
+                ("info", k.info),
+            ] {
+                // The fill is the contrast-corrected one, so the text reads on
+                // it in every state of the family, as the primary does.
+                assert!(
+                    family.foreground.contrast(family.base) >= 4.5,
+                    "{scheme:?} {name} text"
+                );
+                assert!(
+                    family.foreground.contrast(family.hover) >= 4.5,
+                    "{scheme:?} {name} hover text"
+                );
+                assert!(
+                    family.foreground.contrast(family.active) >= 4.5,
+                    "{scheme:?} {name} pressed text"
+                );
+                assert_ne!(family.hover, family.base, "{scheme:?} {name} hover");
+                assert_ne!(family.active, family.hover, "{scheme:?} {name} pressed");
+            }
+        }
     }
 
     #[test]
