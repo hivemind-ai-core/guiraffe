@@ -1,0 +1,139 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.main {
+  height: 100dvh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+}
+
+/* ---- Data grid ---- */
+.grid-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.grid-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  background: var(--mantine-color-default);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  font-weight: 600;
+}
+
+.grid-row {
+  position: absolute;
+  left: 0;
+  display: flex;
+  height: 32px;
+  align-items: center;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  cursor: default;
+  user-select: none;
+}
+
+.grid-row[data-selected='true'] {
+  background: var(--mantine-primary-color-light);
+}
+
+.grid-cell,
+.grid-hcell {
+  flex: none;
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+
+.grid-hcell {
+  height: 34px;
+  line-height: 34px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.grid-cell.num,
+.grid-hcell.num {
+  text-align: right;
+}
+
+/* ---- Markdown ---- */
+.markdown {
+  line-height: 1.55;
+}
+
+.markdown pre.shiki {
+  padding: 12px;
+  border-radius: var(--mantine-radius-sm);
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+.markdown code {
+  font-family: var(--mantine-font-family-monospace);
+}
+
+.markdown table {
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--mantine-color-default-border);
+  padding: 4px 8px;
+}
+
+/* Shiki dual themes: light colours inline, dark via CSS variables. */
+[data-mantine-color-scheme='dark'] .shiki,
+[data-mantine-color-scheme='dark'] .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+}
+
+/* ---- Chat ---- */
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.chat-msg {
+  padding: 4px 12px;
+}
+
+.chat-bubble {
+  padding: 4px 12px;
+  border-radius: var(--mantine-radius-md);
+  max-width: 80%;
+}
+
+.chat-bubble.user {
+  margin-left: auto;
+  background: var(--mantine-primary-color-light);
+}
+
+.chat-bubble.assistant {
+  background: var(--mantine-color-default-hover);
+}
