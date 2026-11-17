@@ -37,6 +37,16 @@ A shared **time axis**: zoom/pan, rulers (time, frames, timecode, dates), snappi
 - **Curve editor**: per-property curves with bezier keys and tangent handles (aligned/broken), interpolation modes (constant/linear/bezier) and normalise/frame-all. The curve maths is shared with `guiraffe-motion` easing (exact cubic bezier).
 - The pure models (key times, interpolation, snapping, the critical path) are exhaustively unit-tested.
 
+## Required: efficient spreadsheet / data sheet
+
+A reusable spreadsheet-style data sheet for large, typed datasets, usable standalone or embedded in an application.
+- Virtualize both rows and columns: instantiate, shape and paint visible cells plus bounded overscan. Keep scrolling work and resident UI state proportional to the viewport.
+- Accept host-owned data through a provider with stable row/column identities, lazy ranges and incremental cell/row updates. Preserve selection across updates and avoid cloning the whole dataset on scroll or a single-cell change.
+- Spreadsheet interaction: active cell, keyboard navigation, range selection, row/column selection, and clipboard copy/paste with explicit host callbacks. Support read-only mode and optional host-controlled cell editing and validation.
+- Configurable column types and formatting, column resizing/reordering, frozen headers/columns, and sorting/filtering through the data provider.
+- Reuse GPUI Controls table/grid primitives where they meet these requirements; share the data, selection and rendering foundations across standalone and embedded forms.
+- Acceptance: pure tests for viewport/range mapping and selection; GPUI interaction tests for keyboard, pointer and clipboard behavior; light/dark showcase examples; a large-data stress benchmark reporting frame time, allocations, resident cells and update costs as total rows/columns grow with a fixed viewport.
+
 ## Performance rules (all families)
 Virtualize every axis. Cache shaping and tessellation by content. Overlays are separate leaf entities, so a hover or trace-line change never re-renders the code text.
 Data comes in through `Arc`/`Bytes` handles (zero-copy). Heavy analysis (lanes, layout, highlighting) runs off-thread with hand-off as in spec/15.

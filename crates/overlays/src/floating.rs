@@ -39,6 +39,9 @@ impl RenderOnce for FloatingTooltip {
         let content = div().id(self.id).test_support().child(
             gpui_kit::base::Tooltip::new("tooltip-surface")
                 .bg(surface.surface.to_hsla())
+                .border_1()
+                .border_color(surface.border.to_hsla())
+                .shadow_sm()
                 .text_color(surface.text.to_hsla())
                 .p(px(Size::Xs.spacing()))
                 .rounded(px(theme.default_radius.radius()))

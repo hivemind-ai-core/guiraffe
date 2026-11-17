@@ -669,3 +669,34 @@ fn provider_reasoning_updates_and_removal_remeasure_the_row(cx: &mut TestAppCont
     })
     .expect("reasoning removed");
 }
+
+#[gpui_kit::test]
+fn tool_header_fills_its_button_from_the_left(cx: &mut TestAppContext) {
+    let (handle, chat) = open(cx);
+    chat.update(cx, |chat, cx| {
+        let mut message = Message::new(MessageId(1), Role::Assistant, "Done.");
+        message.tools.push(ToolCall {
+            id: "t".into(),
+            name: "read_file".into(),
+            status: ToolStatus::Running,
+            arguments: String::new(),
+            result: String::new(),
+        });
+        chat.push_message(message, cx);
+    });
+    draw(cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let button = window.find("toggle-tool").bounds();
+        let label = window.find("tool-header-label").bounds();
+        assert!(
+            label.left() < button.left() + gpui_kit::px(24.),
+            "header content must start at button padding: {button:?} {label:?}"
+        );
+        assert!(
+            label.size.width > button.size.width * 0.8,
+            "header must fill the button, not shrink around a centered label"
+        );
+    })
+    .expect("frame");
+}

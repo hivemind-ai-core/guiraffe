@@ -101,6 +101,7 @@ pub struct FlowViewport {
     counts: Rc<Cell<(usize, usize)>>,
     first_fit: Rc<Cell<bool>>,
     camera_explicit: Cell<bool>,
+    minimap_drag: bool,
     config: Rc<RefCell<Option<state::Config>>>,
     theme_cache: Option<Rc<GuiraffeTheme>>,
     ordered_ids: Vec<core::NodeId>,
@@ -153,6 +154,7 @@ impl FlowViewport {
             counts: Rc::new(Cell::new((0, 0))),
             first_fit: Rc::new(Cell::new(true)),
             camera_explicit: Cell::new(false),
+            minimap_drag: false,
             config: Rc::new(RefCell::new(None)),
             theme_cache: None,
             ordered_ids: Vec::new(),
@@ -367,6 +369,17 @@ impl FlowViewport {
     fn size(&self) -> WorldPoint {
         let b = self.bounds.get();
         WorldPoint::new(b.size.width.as_f32(), b.size.height.as_f32())
+    }
+    fn pan_minimap(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let before = self.stamp();
+        self.interaction.cancel();
+        if let Some(bounds) = self.interaction.editor.scene().bounds() {
+            let world = paint::minimap_world(self.local(position), self.size(), bounds);
+            self.interaction
+                .pan_to(self.size() * 0.5 - world * self.viewport().zoom);
+            self.first_fit.set(false);
+        }
+        self.publish(before, cx);
     }
     fn local(&self, p: Point<Pixels>) -> WorldPoint {
         let origin = self.bounds.get().origin;
@@ -604,6 +617,9 @@ impl Render for FlowViewport {
             &theme,
             phase,
         );
+        let frame = Rc::new(RefCell::new(frame));
+        let base_frame = frame.clone();
+        let map_meshes = self.meshes.clone();
         let mut root = div()
             .id("flow")
             .test_support()
@@ -630,7 +646,11 @@ impl Render for FlowViewport {
                             cx.defer(move |cx| cx.notify(weak.entity_id()));
                         }
                     },
-                    move |b, _, window, _| frame.paint(b, &mut meshes.borrow_mut(), window),
+                    move |b, _, window, _| {
+                        base_frame
+                            .borrow_mut()
+                            .paint(b, &mut meshes.borrow_mut(), window)
+                    },
                 )
                 .absolute()
                 .size_full(),
@@ -638,6 +658,65 @@ impl Render for FlowViewport {
             .child(self.gesture_view.clone())
             .children(labels)
             .children(nodes)
+            .when(self.options.minimap, |root| {
+                let map = paint::minimap_rect(self.size());
+                root.child(
+                    div()
+                        .id("flow-minimap")
+                        .test_support()
+                        .absolute()
+                        .left(px(map.origin.x))
+                        .top(px(map.origin.y))
+                        .w(px(map.size.x))
+                        .h(px(map.size.y))
+                        .bg(surfaces.surface.to_hsla())
+                        .border_1()
+                        .border_color(surfaces.border.to_hsla())
+                        .rounded_md()
+                        .shadow_md()
+                        .occlude()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                                this.focus.focus(window, cx);
+                                this.interaction.cancel();
+                                this.minimap_drag = true;
+                                this.pan_minimap(e.position, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                            if this.minimap_drag && e.pressed_button == Some(MouseButton::Left) {
+                                this.pan_minimap(e.position, cx);
+                            } else {
+                                this.minimap_drag = false;
+                            }
+                            cx.stop_propagation();
+                        }))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|this, e: &MouseUpEvent, _, cx| {
+                                if this.minimap_drag {
+                                    this.pan_minimap(e.position, cx);
+                                }
+                                this.minimap_drag = false;
+                                cx.stop_propagation();
+                            }),
+                        ),
+                )
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |b, _, window, _| {
+                            frame
+                                .borrow()
+                                .paint_minimap(b, &mut map_meshes.borrow_mut(), window);
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
@@ -645,23 +724,19 @@ impl Render for FlowViewport {
                     this.focus.focus(window, cx);
                     let p = this.local(event.position);
                     let m = event.modifiers;
-                    // Minimap is painted in the lower right; clicks recenter the camera.
-                    if this.options.minimap && paint::minimap_rect(this.size()).contains(p) {
-                        this.interaction.cancel();
-                        if let Some(bounds) = this.interaction.editor.scene().bounds() {
-                            let world = paint::minimap_world(p, this.size(), bounds);
-                            this.interaction
-                                .pan_to(this.size() * 0.5 - world * this.viewport().zoom);
-                            this.first_fit.set(false);
-                        }
-                    } else {
-                        this.interaction.press(p, m.control || m.platform, m.shift);
-                    }
+                    this.minimap_drag = false;
+                    this.interaction.press(p, m.control || m.platform, m.shift);
                     this.publish(before, cx);
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                if this.interaction.gesture.is_some() {
+                if this.minimap_drag {
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        this.minimap_drag = false;
+                        return;
+                    }
+                    this.pan_minimap(event.position, cx);
+                } else if this.interaction.gesture.is_some() {
                     let before = this.stamp();
                     this.interaction.motion(this.local(event.position));
                     this.publish(before, cx);
@@ -670,6 +745,7 @@ impl Render for FlowViewport {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.minimap_drag = false;
                     let before = this.stamp();
                     this.interaction.motion(this.local(event.position));
                     let result = this.interaction.release(this.validator.as_deref());
@@ -680,6 +756,7 @@ impl Render for FlowViewport {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.minimap_drag = false;
                     let before = this.stamp();
                     this.interaction.motion(this.local(event.position));
                     let result = this.interaction.release(this.validator.as_deref());
@@ -688,6 +765,7 @@ impl Render for FlowViewport {
                 }),
             )
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                this.minimap_drag = false;
                 let delta = event.delta.pixel_delta(px(20.));
                 if event.modifiers.control || event.modifiers.platform {
                     this.zoom(
@@ -708,7 +786,12 @@ impl Render for FlowViewport {
             .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
                 this.zoom(this.local(event.position), 1. + event.delta, cx)
             }))
-            .on_key_down(cx.listener(|this, event, _, cx| this.key(event, cx)));
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    this.minimap_drag = false;
+                }
+                this.key(event, cx);
+            }));
         if self.options.controls {
             root = root.child(self.controls(cx));
         }

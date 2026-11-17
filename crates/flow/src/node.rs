@@ -36,9 +36,11 @@ impl Render for NodeCard {
             }) * self.zoom;
             frame = frame.child(
                 div()
+                    .id(SharedString::from(format!("handle-{}", handle.id)))
+                    .test_support()
                     .absolute()
-                    .left(px(p.x - 5.))
-                    .top(px(p.y - 5.))
+                    .left(px(p.x - 6.))
+                    .top(px(p.y - 6.))
                     .size(px(10.))
                     .rounded_full()
                     .bg(accent.to_hsla()),

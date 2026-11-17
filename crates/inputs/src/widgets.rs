@@ -352,9 +352,16 @@ impl Render for RangeSlider {
                 .ml(px(-thumb / 2.0))
                 .size(px(thumb))
                 .rounded_full()
-                .bg(s.body.to_hsla())
+                .bg(fill)
                 .border_2()
-                .border_color(fill)
+                .border_color(s.body.to_hsla())
+                .when(focused, |el| {
+                    let mut halo = fill;
+                    halo.a = 0.35;
+                    el.shadow(vec![
+                        gpui_kit::BoxShadow::new(px(0.), px(0.), halo).spread_radius(px(3.)),
+                    ])
+                })
         };
         div()
             .id("range")
@@ -393,7 +400,6 @@ impl Render for RangeSlider {
                     .h(px(4.))
                     .rounded_full()
                     .bg(s.track.to_hsla())
-                    .when(focused, |el| el.border_1().border_color(fill))
                     .child(
                         canvas(move |b, _, _| track.set(b), |_, _, _, _| {})
                             .absolute()

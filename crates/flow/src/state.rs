@@ -37,7 +37,10 @@ pub struct FlowState {
 impl EventEmitter<FlowEvent> for FlowState {}
 impl FlowState {
     pub fn new(graph: Graph, cx: &mut Context<Self>) -> Result<Self, FlowError> {
-        let editor = core::Editor::new(graph)?;
+        Ok(Self::from_editor(core::Editor::new(graph)?, cx))
+    }
+    /// Build an entity from an editor whose graph has already been validated.
+    pub fn from_editor(editor: core::Editor, cx: &mut Context<Self>) -> Self {
         let model = cx.entity().downgrade();
         let canvas = cx.new(|cx| {
             // The validated graph guarantees construction succeeds; use the
@@ -45,7 +48,7 @@ impl FlowState {
             FlowViewport::from_editor(editor.clone(), Some(model), cx)
         });
         let leaf = canvas.read(cx);
-        Ok(Self {
+        Self {
             editor,
             camera: leaf.camera.clone(),
             bounds: leaf.bounds.clone(),
@@ -56,7 +59,7 @@ impl FlowState {
             canvas,
             #[cfg(test)]
             renders: 0,
-        })
+        }
     }
     fn config_mut(&mut self) -> std::cell::RefMut<'_, Option<Config>> {
         let mut config = self.config.borrow_mut();

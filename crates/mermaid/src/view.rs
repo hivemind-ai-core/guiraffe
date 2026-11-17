@@ -415,6 +415,8 @@ impl Render for MermaidViewState {
             .child(
                 div()
                     .relative()
+                    .flex()
+                    .flex_col()
                     .flex_1()
                     .min_h_0()
                     .on_children_prepainted(move |children, _, cx| {
@@ -422,9 +424,11 @@ impl Render for MermaidViewState {
                             return;
                         };
                         let (width, height) = (bounds.size.width.into(), bounds.size.height.into());
-                        bounds_entity
-                            .update(cx, |this, cx| this.set_bounds(width, height, cx))
-                            .ok();
+                        if let Some(state) = bounds_entity.upgrade()
+                            && state.read(cx).viewport.bounds() != (width, height)
+                        {
+                            state.update(cx, |this, cx| this.set_bounds(width, height, cx));
+                        }
                     })
                     .child(self.diagram(scheme, surfaces)),
             )

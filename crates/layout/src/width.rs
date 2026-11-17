@@ -138,6 +138,13 @@ impl ContainerWidthState {
     /// The exact width is always kept, and the band only changes when the
     /// width crosses into another one. The answer is whether the band
     /// changed.
+    ///
+    /// The first measurement always says something: before it, the widget
+    /// answered to the width of the window, which is a guess and not a
+    /// measurement. A guess that happens to fall in the same band as the
+    /// real width would otherwise never be replaced, and the widget would
+    /// keep the columns of the window for as long as the container stays in
+    /// that band.
     fn take(&mut self, width: f32, owner: u64) -> bool {
         if let Some(current) = self.owner
             && current != owner
@@ -146,10 +153,11 @@ impl ContainerWidthState {
             // refused, so the band does not flip back and forth.
             return false;
         }
+        let first = self.owner.is_none();
         self.owner = Some(owner);
         self.width = width;
         let band = Breakpoint::from_width(width);
-        if band == self.band {
+        if !first && band == self.band {
             return false;
         }
         self.band = band;
@@ -246,18 +254,35 @@ mod tests {
     #[test]
     fn a_measurement_keeps_the_exact_width_it_was_given() {
         let mut state = ContainerWidthState::default();
-        assert!(!state.take(400., 1), "the band does not change");
+        assert!(
+            state.take(400., 1),
+            "the first measurement replaces the guess of the window"
+        );
         assert_eq!(state.width(), 400., "the exact width is kept");
         assert_eq!(state.band(), Breakpoint::Base);
         assert!(state.is_measured());
     }
 
     #[test]
+    fn the_first_measurement_always_says_something() {
+        let mut state = ContainerWidthState::default();
+        assert_eq!(state.band(), Breakpoint::Base);
+        assert!(
+            state.take(400., 1),
+            "the guess of the window is replaced, even in the same band"
+        );
+        assert!(
+            !state.take(450., 1),
+            "another width in the same band says nothing"
+        );
+    }
+
+    #[test]
     fn a_measurement_only_says_something_when_the_band_changes() {
         let mut state = ContainerWidthState::default();
         assert!(
-            !state.take(400., 1),
-            "the first measurement stays in the band it starts in"
+            state.take(400., 1),
+            "the first measurement replaces the guess of the window"
         );
         assert!(
             !state.take(500., 1),

@@ -347,6 +347,10 @@ fn a_drag_that_changes_nothing_reports_no_resize_and_leaves_the_siblings_alone(
     });
     let cx = harness!(cx, CounterHarness { splitter, counter });
 
+    // Compare only work performed during the drag, excluding backend-specific mount frames.
+    let sibling_before = renders.get();
+    let splitter_before = splitter_renders.get();
+
     // The divider is pressed on its handle, moved past the point where a drag
     // begins and released where it was, so the panes keep the sizes they had.
     // Nothing but the comparison of the sizes keeps the drag from being a
@@ -386,8 +390,8 @@ fn a_drag_that_changes_nothing_reports_no_resize_and_leaves_the_siblings_alone(
     );
     assert_eq!(reports.get(), 0, "the splitter reports nothing");
     assert_eq!(
-        renders.get(),
-        splitter_renders.get(),
+        renders.get() - sibling_before,
+        splitter_renders.get() - splitter_before,
         "the sibling is not rendered again by the splitter"
     );
     state.read_with(cx, |state, cx| {

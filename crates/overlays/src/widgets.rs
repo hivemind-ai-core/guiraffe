@@ -56,6 +56,8 @@ impl RenderOnce for LoadingOverlay {
         }
         let theme = GuiraffeTheme::global(cx);
         let colors = theme.variant(self.color, self.variant);
+        let mut backdrop = colors.background.to_hsla();
+        backdrop.a *= 0.55;
         let surface = div()
             .id("guiraffe-loading-overlay")
             .test_support()
@@ -65,7 +67,7 @@ impl RenderOnce for LoadingOverlay {
             .flex()
             .items_center()
             .justify_center()
-            .bg(colors.background.to_hsla())
+            .bg(backdrop)
             .rounded(px(theme.default_radius.radius()))
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
             .on_scroll(|_, _, cx| cx.stop_propagation())

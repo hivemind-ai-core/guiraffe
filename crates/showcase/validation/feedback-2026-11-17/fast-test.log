@@ -1,0 +1,746 @@
+warning: output filename collision at /home/dan/projects/anteater/target/debug/examples/stress
+  |
+  = note: the example target `stress` in package `guiraffe-flow-core v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/flow-core)` has the same output filename as the example target `stress` in package `guiraffe-flow v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/flow)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+warning: output filename collision at /home/dan/projects/anteater/target/debug/examples/stress.dwp
+  |
+  = note: the example target `stress` in package `guiraffe-flow-core v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/flow-core)` has the same output filename as the example target `stress` in package `guiraffe-flow v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/flow)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+warning: output filename collision at /home/dan/projects/anteater/target/debug/examples/viewer
+  |
+  = note: the example target `viewer` in package `guiraffe-mermaid v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/mermaid)` has the same output filename as the example target `viewer` in package `guiraffe-markdown v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/markdown)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+warning: output filename collision at /home/dan/projects/anteater/target/debug/examples/viewer.dwp
+  |
+  = note: the example target `viewer` in package `guiraffe-mermaid v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/mermaid)` has the same output filename as the example target `viewer` in package `guiraffe-markdown v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/markdown)`
+  = note: this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = help: consider changing their names to be unique or compiling them separately
+   Compiling guiraffe-core v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/core)
+   Compiling guiraffe-icons v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/icons)
+   Compiling guiraffe-test v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/test)
+   Compiling guiraffe-motion v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/motion)
+   Compiling guiraffe-mermaid v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/mermaid)
+   Compiling guiraffe-layout v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/layout)
+   Compiling guiraffe-flow v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/flow)
+   Compiling guiraffe-timeline v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/timeline)
+   Compiling guiraffe-windows v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/windows)
+   Compiling guiraffe-components v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/components)
+   Compiling guiraffe-overlays v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/overlays)
+   Compiling guiraffe-markdown v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/markdown)
+   Compiling guiraffe-inputs v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/inputs)
+   Compiling guiraffe-ui v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/ui)
+   Compiling guiraffe-chat v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/chat)
+   Compiling guiraffe-showcase v0.1.0 (/home/dan/projects/anteater/worktrees/verify-feedback-batch/crates/showcase)
+    Finished `test` profile [unoptimized] target(s) in 9.66s
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_chat-25614ea31192556c)
+
+running 31 tests
+test commands::tests::boundaries_and_empty_queries ... ok
+test commands::tests::slash_only_at_start ... ok
+test commands::tests::replacements_preserve_suffix ... ok
+test commands::tests::unicode_and_cursor ... ok
+test gpui_tests::header_history_and_composer_have_disjoint_bounds ... ok
+test gpui_tests::tool_header_fills_its_button_from_the_left ... ok
+test gpui_tests::conversations_are_isolated_and_ids_are_unique ... ok
+test scroll::tests::detached_stream_does_not_reattach ... ok
+test scroll::tests::follows_until_user_leaves ... ok
+test scroll::tests::jump_resets_unread ... ok
+test stream::tests::cancellation_discards_queued_content ... ok
+test gpui_tests::replacement_stream_cancels_old_producer_without_late_writes ... ok
+test stream::tests::capacity_backpressure_fifo_and_completion ... ok
+test stream::tests::dropping_consumer_stops_producer ... ok
+test stream::tests::empty_finish_and_bounded_batches ... ok
+test gpui_tests::cancelling_edit_preserves_history_and_releases_draft ... ok
+test gpui_tests::completion_keyboard_and_attachment_removal ... ok
+test gpui_tests::streaming_retains_parent_and_previous_messages_without_composited_layers ... ok
+test gpui_tests::streamed_markdown_remeasures_growing_message ... ok
+test gpui_tests::provider_reasoning_updates_and_removal_remeasure_the_row ... ok
+test gpui_tests::default_composited_layers_bound_redraws_to_visible_messages ... ok
+test gpui_tests::enter_sends_shift_enter_newline_and_empty_is_ignored ... ok
+test gpui_tests::stream_finishes_stops_and_rejects_stale_tokens ... ok
+test gpui_tests::tool_and_reasoning_toggle_with_keyboard_and_status_updates ... ok
+test gpui_tests::edit_last_user_replaces_branch_and_copy_retry_emit ... ok
+test stream::tests::cancellation_dominates_pending_tokens ... ok
+test gpui_tests::wheel_detaches_streaming_tail_and_jump_reattaches ... ok
+test stream::tests::concurrent_delivery_exactly_once_across_capacities ... ok
+test gpui_tests::native_code_copy_copies_only_the_fence_contents ... ok
+test gpui_tests::long_variable_history_virtualizes_and_jump_restores_tail ... ok
+test stream::tests::model_preserves_order_with_arbitrary_backpressure ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/snapshots.rs (/home/dan/projects/anteater/target/debug/deps/snapshots-ad3c65d01240f6f6)
+
+running 1 test
+test chat_light_and_dark ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_components-661f9f7779d4bf7d)
+
+running 7 tests
+test highlight::tests::case_insensitive_multiple_and_merged ... ok
+test highlight::tests::edge_cases_and_unicode_boundaries ... ok
+test ring::tests::spans_accumulate_and_clamp ... ok
+test icons::tests::icon_box_grows_with_size ... ok
+test style::tests::metrics_scale_monotonically ... ok
+test segmented::tests::indicator_box_is_relative_to_the_container ... ok
+test typography::tests::heading_scale_is_monotonic_and_clamped ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/context.rs (/home/dan/projects/anteater/target/debug/deps/context-422a2aaf3ba4e1da)
+
+running 1 test
+test widgets_inherit_size_from_their_layout_and_explicit_props_win ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/icon_probe.rs (/home/dan/projects/anteater/target/debug/deps/icon_probe-24f5e84435ff41ee)
+
+running 1 test
+test headless_renderer_draws_svg_icons ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/interaction.rs (/home/dan/projects/anteater/target/debug/deps/interaction-d550c3552b4e4987)
+
+running 6 tests
+test select_emits_once_and_clamps ... ok
+test items_can_change_and_empty_is_safe ... ok
+test keyboard_navigation ... ok
+test the_first_click_selects_and_focuses_a_segment ... ok
+test indicator_animation_does_not_rerender_the_host ... ok
+test the_first_click_moves_the_painted_indicator_without_another_input ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/visual.rs (/home/dan/projects/anteater/target/debug/deps/visual-cc8b2662f9ed7399)
+
+running 2 tests
+test light_and_dark_differ ... ok
+test kitchen_sink_light_and_dark ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_flow-9664536ae486d5e0)
+
+running 50 tests
+test interaction::tests::box_selection_and_additive_toggle ... ok
+test interaction::tests::click_does_not_snap_or_create_history ... ok
+test interaction::tests::handle_drag_validates_and_connects ... ok
+test interaction::tests::review2_11_box_replace_and_additive_modes ... ok
+test interaction::tests::drag_preview_cancel_and_one_history_entry ... ok
+test paint::tests::minimap_mapping_centers_on_graph_and_roundtrips ... ok
+test interaction::tests::review_5_off_grid_preview_matches_commit_and_click ... ok
+test interaction::tests::review_2_parent_preview_moves_descendants ... ok
+test paint::tests::arrow_tip_stays_outside_handle_boundary_at_all_zooms ... ok
+test interaction::tests::zoomed_pan_and_group_drag ... ok
+test paint::tests::review2_drag_frames_share_origin_storage ... ok
+test paint::tests::review_12_frame_transfers_visible_edge_buffer ... ok
+test interaction::tests::review_16_allow_self_connects_via_handles ... ok
+test interaction::tests::review_8_edge_click_selects_and_deletes ... ok
+test interaction::tests::review_7_invalid_camera_cannot_be_installed ... ok
+test paint::tests::review_12_view_frames_share_selection_storage ... ok
+test paint::tests::transformed_mesh_metadata_contains_all_transformed_vertices ... ok
+test paint::tests::review2_batched_transform_preserves_geometry_and_reserved_storage ... ok
+test state::tests::review2_initial_fit_preserves_explicit_camera_before_layout ... ok
+test paint::tests::review_13_selection_does_not_rebuild_minimap ... ok
+test tests::native_pinch_preserves_world_point_under_pointer ... ok
+test tests::culling_unmounts_distant_nodes_and_custom_renderer_is_called ... ok
+test tests::pan_updates_observed_node_bounds ... ok
+test paint::tests::cache_reuses_mesh_and_bounds_triangle_storage ... ok
+test state::tests::review2_2_camera_frames_isolate_document_host_and_sibling ... ok
+test tests::canvas_mounts_and_controls_change_viewport ... ok
+test tests::review2_1_noop_edit_and_idle_release_emit_no_events_or_notify ... ok
+test tests::review2_portable_host_isolation ... ok
+test state::tests::review2_1_camera_controls_preserve_selection ... ok
+test state::tests::review2_public_flow_toolbar_real_clicks_delete_selection ... ok
+test paint::tests::review_10_second_frame_over_2048_edges_has_no_misses ... ok
+test tests::handle_centers_match_world_endpoints_at_every_zoom ... ok
+test tests::review_12_retained_node_and_edge_buffer_survive_camera_frame ... ok
+test tests::review2_first_layout_fits_all_nodes ... ok
+test tests::review_12_unrelated_node_edit_does_not_render_retained_node ... ok
+test state::tests::review2_public_model_tracks_native_drag_and_history ... ok
+test tests::minimap_drag_continuously_updates_camera_without_moving_nodes ... ok
+test tests::review_16_control_wheel_clamps_extreme_deltas ... ok
+test tests::keyboard_selection_delete_and_controls_restore_document ... ok
+test tests::review_1_render_tolerates_deleted_drag_nodes ... ok
+test tests::review_16_empty_minimap_and_extreme_pinch_remain_valid ... ok
+test tests::review_3_child_paints_and_picks_above_higher_id_parent ... ok
+test tests::review_1_toolbar_delete_cancels_drag ... ok
+test tests::review_16_real_self_loop_with_allow_self ... ok
+test tests::real_pointer_drag_snaps_and_keyboard_undo_redo ... ok
+test tests::review_8_real_edge_click_and_keyboard_delete ... ok
+test tests::review_2_real_parent_drag_moves_child_once ... ok
+test tests::wheel_pans_and_keyboard_zoom_preserves_center ... ok
+test tests::real_handle_drag_creates_edge_and_duplicate_emits_error ... ok
+test paint::tests::review2_real_second_frame_over_2048_visible_edges_is_cached ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_flow_core-a0940c67253a8084)
+
+running 2 tests
+test scene::feedback_tests::forward_step_edges_do_not_backtrack_at_corners ... ok
+test scene::review_2_tests::review2_5_delete_child_keeps_unrelated_depth_storage ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/behavior.rs (/home/dan/projects/anteater/target/debug/deps/behavior-70f1e2a46e6cd174)
+
+running 24 tests
+test fit_empty_degenerate_and_invalid_camera_input ... ok
+test additive_selection_preserves_others ... ok
+test backwards_and_self_routes_have_finite_nonempty_geometry ... ok
+test connection_policy_rejects_self_parallel_and_cycle ... ok
+test custom_validator_is_atomic ... ok
+test failed_edit_preserves_redo ... ok
+test parent_cycles_and_missing_parent_rejected ... ok
+test endpoint_validation_checks_direction_and_identity ... ok
+test history_roundtrip_and_redo_invalidation ... ok
+test serialization_roundtrip ... ok
+test duplicate_ids_and_handles_rejected ... ok
+test nondraggable_nodes_stay_put ... ok
+test layered_layout_is_deterministic_cyclic_and_disconnected_safe ... ok
+test spatial_invalid_and_empty_queries_are_empty ... ok
+test viewport_roundtrip_and_anchor_invariance ... ok
+test hit_testing_uses_topmost_id_and_actual_stroke ... ok
+test history_is_bounded_and_noops_are_free ... ok
+test every_path_bounds_contains_every_sample_and_label ... ok
+test invalid_geometry_rejected_without_mutation ... ok
+test overflowing_aggregate_bounds_are_rejected ... ok
+test offscreen_endpoints_keep_crossing_edge ... ok
+test selection_box_toggle_and_delete_descendants ... ok
+test shrinking_history_limit_bounds_redo_as_well_as_undo ... ok
+test spatial_index_matches_bruteforce_and_reuses_buffer ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/review.rs (/home/dan/projects/anteater/target/debug/deps/review-3004cdf1ea84b091)
+
+running 11 tests
+test review_9_selection_keeps_shared_scene_and_routes ... ok
+test review_11_unaffected_route_storage_survives_move ... ok
+test review_3_child_with_lower_id_is_above_parent ... ok
+test review_2_parent_drag_preserves_descendant_offset ... ok
+test review_6_arrange_moves_pinned_nodes_and_preserves_subtrees ... ok
+test review_4_undo_does_not_restore_selection ... ok
+test review_16_delete_undo_restores_routes_and_index_and_empty_delete_is_free ... ok
+test review_15_edge_ids_not_reused_after_delete_undo_or_serde ... ok
+test review_11_spatial_insert_remove_refit_preserves_old_snapshot ... ok
+test review_11_large_insert_batch_rebalances_and_remains_queryable ... ok
+test review_11_incremental_index_matches_fresh_after_mixed_edits_and_history ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/review_2.rs (/home/dan/projects/anteater/target/debug/deps/review_2-2f941b3783531c10)
+
+running 7 tests
+test review2_layout_root_groups_do_not_overlap ... ok
+test review2_4_missing_parent_layout_is_rejected ... ok
+test review2_4_parent_cycle_layout_is_rejected ... ok
+test review2_10_rejected_arbitrary_edit_preserves_history_and_routes ... ok
+test review2_8_selection_only_edit_has_no_history_or_scene_change ... ok
+test review2_9_selection_stays_outside_serialized_document ... ok
+test review2_6_movement_rebuild_limits_query_degradation ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_inputs-7d3b042b0d29d4f9)
+
+running 5 tests
+test logic::tests::accept_filters ... ok
+test logic::tests::chip_selection_single_and_multiple ... ok
+test logic::tests::password_strength_grows_with_length_and_variety ... ok
+test logic::tests::range_clamps_snaps_and_never_crosses ... ok
+test logic::tests::tags_validate_and_split ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/inputs.rs (/home/dan/projects/anteater/target/debug/deps/inputs-3ed3960c8aacb991)
+
+running 3 tests
+test chips_and_dropzone ... ok
+test range_slider_keyboard_and_pointer ... ok
+test tags_from_typing_enter_backspace_and_rejections ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/visual.rs (/home/dan/projects/anteater/target/debug/deps/visual-4f049874a69c6122)
+
+running 2 tests
+test a_focused_range_keeps_a_solid_neutral_track_in_both_themes ... ok
+test inputs_light_and_dark ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_layout-3c7db7fe0429e22b)
+
+running 106 tests
+test align::tests::defaults_put_children_at_the_start ... ok
+test align::tests::the_variants_are_distinct ... ok
+test app_shell::tests::a_band_names_the_width_the_bars_collapse_below ... ok
+test aspect_ratio::tests::a_ratio_never_collapses_to_zero ... ok
+test aspect_ratio::tests::a_ratio_stays_inside_the_range_a_box_can_hold ... ok
+test aspect_ratio::tests::a_ratio_that_is_not_a_number_falls_back_to_a_square ... ok
+test aspect_ratio::tests::a_ratio_outside_the_range_a_box_can_hold_is_noticed - should panic ... ok
+test aspect_ratio::tests::a_ratio_that_is_not_a_number_is_noticed - should panic ... ok
+test app_shell::tests::the_bars_start_at_their_default_width ... ok
+test app_shell::tests::a_shell_has_no_band_to_collapse_below_until_it_is_given_one ... ok
+test aspect_ratio::tests::the_default_ratio_is_a_square ... ok
+test aspect_ratio::tests::the_ratio_is_kept ... ok
+test center::tests::a_new_center_has_no_minimum_height ... ok
+test center::tests::the_minimum_height_is_remembered ... ok
+test container::tests::a_new_container_is_centered_without_padding ... ok
+test container::tests::padding_can_be_set_by_token_or_by_pixels ... ok
+test container::tests::the_container_widths_grow_with_the_scale ... ok
+test container::tests::the_size_can_be_changed ... ok
+test divider::tests::a_divider_can_run_vertically ... ok
+test divider::tests::a_new_divider_is_a_horizontal_rule_without_a_label ... ok
+test divider::tests::the_label_and_its_position_are_remembered ... ok
+test flex::tests::a_new_flex_is_a_row_that_does_not_wrap ... ok
+test flex::tests::the_direction_can_be_any_of_the_four ... ok
+test flex::tests::wrapping_and_growth_are_recorded ... ok
+test grid::tests::a_column_can_be_built_from_a_plain_span ... ok
+test grid::tests::a_column_can_change_offset_per_breakpoint ... ok
+test grid::tests::a_column_never_reaches_past_the_last_column_of_the_grid ... ok
+test grid::tests::a_column_can_change_span_per_breakpoint ... ok
+test grid::tests::a_column_that_does_not_fit_moves_to_the_next_row ... ok
+test grid::tests::a_column_without_a_span_fills_a_wider_grid_too ... ok
+test grid::tests::a_column_without_a_span_fills_the_grid ... ok
+test grid::tests::a_full_span_can_be_set_explicitly ... ok
+test grid::tests::a_grid_always_has_at_least_one_column ... ok
+test grid::tests::a_new_grid_has_twelve_columns_and_the_default_gutter ... ok
+test grid::tests::a_span_never_collapses_to_nothing ... ok
+test grid::tests::an_offset_after_a_column_that_fills_the_row_moves_the_column_down ... ok
+test grid::tests::an_offset_counts_from_where_the_column_before_it_ends ... ok
+test grid::tests::an_offset_pushes_the_column_to_the_right ... ok
+test grid::tests::an_offset_that_does_not_fit_moves_the_column_to_the_next_row ... ok
+test grid::tests::an_offset_that_does_not_fit_the_row_is_trimmed ... ok
+test grid::tests::huge_numbers_do_not_overflow ... ok
+test grid::tests::the_columns_fill_the_grid_one_after_the_other ... ok
+test group::tests::a_new_group_wraps_and_centers_its_children ... ok
+test group::tests::the_gap_can_be_set_by_token_or_by_pixels ... ok
+test group::tests::wrapping_can_be_turned_off ... ok
+test responsive::tests::a_constant_value_resolves_to_itself_at_every_width ... ok
+test responsive::tests::a_gap_between_overrides_falls_back_to_the_wider_one ... ok
+test responsive::tests::a_value_can_be_built_from_a_plain_value ... ok
+test responsive::tests::a_width_below_the_smallest_band_is_in_the_base_band ... ok
+test responsive::tests::an_xs_override_only_starts_at_the_xs_band ... ok
+test responsive::tests::an_override_applies_from_its_breakpoint_upwards ... ok
+test responsive::tests::breakpoints_are_ordered_and_indexed ... ok
+test responsive::tests::every_breakpoint_reports_its_own_floor ... ok
+test responsive::tests::the_bands_are_the_ones_the_core_scale_names ... ok
+test responsive::tests::the_base_band_can_be_set_on_its_own ... ok
+test responsive::tests::the_base_value_is_reachable_without_a_width ... ok
+test responsive::tests::the_widest_matching_override_wins ... ok
+test responsive::tests::widths_map_to_the_widest_band_they_reach ... ok
+test scroll_area::tests::a_new_scroll_area_scrolls_down_only ... ok
+test scroll_area::tests::both_directions_can_be_asked_for ... ok
+test scroll_area::tests::each_direction_can_be_turned_off ... ok
+test simple_grid::tests::a_grid_always_has_at_least_one_column ... ok
+test simple_grid::tests::a_minimum_width_decides_the_column_count ... ok
+test simple_grid::tests::a_minimum_width_never_produces_no_columns ... ok
+test simple_grid::tests::a_minimum_width_that_fits_once_still_gets_one_column ... ok
+test simple_grid::tests::a_new_grid_has_two_columns_and_the_default_spacing ... ok
+test simple_grid::tests::the_columns_can_change_with_the_width ... ok
+test simple_grid::tests::the_spacing_can_change_with_the_width ... ok
+test simple_grid::tests::the_vertical_spacing_can_change_with_the_width ... ok
+test space::tests::a_new_space_has_no_size_at_all ... ok
+test space::tests::a_space_can_be_both_tall_and_wide ... ok
+test space::tests::horizontal_space_is_wide_only ... ok
+test space::tests::vertical_space_is_tall_only ... ok
+test splitter::tests::a_pane_may_be_as_wide_as_it_wants ... ok
+test splitter::tests::a_pane_that_is_narrower_than_it_is_wide_is_noticed - should panic ... ok
+test splitter::tests::a_new_splitter_is_a_horizontal_split_with_two_empty_panes ... ok
+test splitter::tests::empty_sizes_are_empty ... ok
+test splitter::tests::a_store_of_your_own_can_be_used ... ok
+test splitter::tests::the_sizes_are_scaled_to_the_total_the_panes_share ... ok
+test splitter::tests::the_sizes_can_be_stored_as_json ... ok
+test splitter::tests::sizes_survive_a_round_trip_through_plain_numbers ... ok
+test stack::tests::a_new_stack_uses_the_default_scale ... ok
+test splitter::tests::an_application_without_a_store_has_none ... ok
+test style::tests::a_gap_that_is_not_a_number_is_noticed_in_a_debug_build - should panic ... ok
+test splitter::tests::a_store_can_be_installed_by_the_application ... ok
+test splitter::tests::a_splitter_can_hold_any_number_of_panes ... ok
+test splitter::tests::the_sizes_that_are_stored_are_checked_before_they_are_used ... ok
+test width::tests::a_measurement_from_another_widget_is_noticed - should panic ... ok
+test stack::tests::alignment_and_growth_are_recorded ... ok
+test style::tests::a_gap_keeps_its_value ... ok
+test stack::tests::the_gap_can_be_set_by_token_or_by_pixels ... ok
+test width::tests::a_fixed_width_is_the_width_it_is ... ok
+test width::tests::a_measurement_belongs_to_one_widget ... ok
+test splitter::tests::sizes_for_another_number_of_panes_are_fitted_to_the_panes ... ok
+test theme::tests::a_hairline_is_one_pixel_wide ... ok
+test style::tests::a_negative_gap_is_noticed_in_a_debug_build - should panic ... ok
+test splitter::tests::the_axis_can_be_changed ... ok
+test splitter::tests::the_store_keeps_the_values_of_a_key ... ok
+test width::tests::a_measurement_keeps_the_exact_width_it_was_given ... ok
+test theme::tests::the_font_size_follows_the_scale_of_the_theme ... ok
+test width::tests::a_measurement_only_says_something_when_the_band_changes ... ok
+test width::tests::a_measurement_starts_out_empty ... ok
+test width::tests::the_first_measurement_always_says_something ... ok
+test width::tests::the_viewport_is_not_a_measurement ... ok
+test width::tests::a_measurement_that_has_not_happened_yet_is_the_width_of_the_window ... ok
+test width::tests::two_widgets_of_different_widths_cannot_flip_the_band_forever ... ok
+
+test result: ok. 106 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/interaction.rs (/home/dan/projects/anteater/target/debug/deps/interaction-8c1f9a20bb844872)
+
+running 18 tests
+test a_stack_keeps_its_gap ... ok
+test the_shell_tells_what_it_did ... ok
+test a_narrow_window_collapses_the_navbar ... ok
+test a_narrow_window_collapses_the_aside ... ok
+test the_main_content_is_not_rendered_again_when_the_navbar_collapses ... ok
+test a_splitter_takes_the_sizes_it_kept_the_last_time_it_was_built ... ok
+test a_toggle_the_user_made_is_not_undone_by_a_resize ... ok
+test a_button_in_the_navbar_can_collapse_it ... ok
+test a_splitter_gives_every_pane_its_room ... ok
+test a_splitter_that_restores_the_sizes_of_another_number_of_panes_uses_sizes_that_fit ... ok
+test a_drag_that_changes_nothing_does_not_write_to_the_store ... ok
+test a_pane_does_not_become_narrower_than_its_minimum ... ok
+test dragging_the_divider_resizes_the_panes ... ok
+test a_drag_that_changes_nothing_reports_no_resize_and_leaves_the_siblings_alone ... ok
+test a_splitter_with_a_key_keeps_its_sizes_even_without_a_callback ... ok
+test a_drag_reports_the_new_sizes_once ... ok
+test the_user_can_drag_the_navbar_to_another_width ... ok
+test a_splitter_keeps_its_sizes_when_the_view_around_it_renders_again ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/layout.rs (/home/dan/projects/anteater/target/debug/deps/layout-46b66c93c22d081b)
+
+running 26 tests
+test a_center_puts_its_content_in_the_middle ... ok
+test a_flex_can_run_downwards ... ok
+test a_column_without_a_span_fills_the_grid ... ok
+test a_column_that_does_not_fit_moves_to_the_next_row ... ok
+test a_column_changes_its_span_with_the_width_it_is_given ... ok
+test a_container_is_centered_and_never_wider_than_its_size ... ok
+test a_growing_grid_fills_the_room_with_its_last_row ... ok
+test a_grid_follows_the_container_it_is_in_and_not_the_window ... ok
+test a_collapsed_navbar_takes_no_room_but_stays_where_it_is ... ok
+test a_container_fits_the_space_it_is_given ... ok
+test a_group_puts_its_children_side_by_side ... ok
+test a_divider_keeps_its_label ... ok
+test a_stack_puts_its_children_one_below_the_other ... ok
+test a_growing_group_spreads_its_children_over_the_width ... ok
+test a_space_pushes_what_follows_it_along ... ok
+test a_grid_splits_its_columns_between_its_children ... ok
+test a_simple_grid_splits_its_cells_evenly ... ok
+test a_scroll_area_keeps_its_content_in_one_place ... ok
+test an_aspect_ratio_keeps_the_shape_of_its_box ... ok
+test a_wide_container_halves_the_span ... ok
+test a_measurement_that_is_shared_by_two_widgets_is_noticed - should panic ... ok
+test scroll_area_scrolls_inside_a_height_constrained_host ... ok
+test an_offset_leaves_the_room_after_the_previous_column_empty ... ok
+test an_app_shell_keeps_its_parts_where_they_belong ... ok
+test a_simple_grid_counts_its_cells_against_the_container_it_is_in ... ok
+test a_grid_in_a_pane_follows_the_pane_and_not_the_window ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_markdown-b3b3ec816f29ade3)
+
+running 42 tests
+test document::tests::empty_and_plain_documents_have_nothing_to_show ... ok
+test document::tests::a_marker_like_text_elsewhere_is_not_a_task ... ok
+test document::tests::headings_with_markup_are_plain_text ... ok
+test document::tests::a_nested_fence_inside_a_list_still_yields_a_diagram ... ok
+test document::tests::slugify_matches_github_rules ... ok
+test document::tests::a_stale_or_wrong_toggle_range_leaves_the_source_alone ... ok
+test document::tests::ordered_task_items_are_found ... ok
+test document::tests::duplicate_headings_get_unique_anchors ... ok
+test document::tests::headings_keep_order_depth_and_ranges ... ok
+test streaming::tests::a_closed_fence_is_settled_down_to_its_end ... ok
+test document::tests::only_mermaid_fences_are_diagrams ... ok
+test streaming::tests::a_finished_paragraph_is_settled ... ok
+test document::tests::table_of_contents_indents_by_heading_depth ... ok
+test document::tests::task_markers_address_the_character_inside_the_brackets ... ok
+test streaming::tests::a_heading_is_complete_at_its_newline ... ok
+test streaming::tests::a_longer_closing_run_closes_a_fence ... ok
+test streaming::tests::a_mid_document_rewrite_is_a_replace_at_the_divergence ... ok
+test streaming::tests::an_unclosed_fence_settles_nothing_inside_it ... ok
+test streaming::tests::a_table_settles_once_a_blank_line_follows_it ... ok
+test document::tests::toggling_rewrites_only_the_marker ... ok
+test streaming::tests::an_unfinished_mermaid_fence_is_reported ... ok
+test streaming::tests::common_prefix_lands_on_char_boundaries ... ok
+test streaming::tests::identical_text_needs_no_render ... ok
+test streaming::tests::empty_and_whitespace_sources_settle_nothing_that_matters ... ok
+test streaming::tests::only_an_open_mermaid_fence_counts_not_an_earlier_closed_one ... ok
+test streaming::tests::appending_is_recognized_as_an_append ... ok
+test streaming::tests::settled_prefix_never_splits_a_character ... ok
+test streaming::tests::unterminated_lines_never_settle ... ok
+test streaming::tests::unfinished_mermaid_fence_reports_where_it_starts ... ok
+test streaming::tests::coalescing_bounds_the_render_rate ... ok
+test tests::streaming_cost::an_open_mermaid_fence_is_held_back_until_closed ... ok
+test tests::the_kit_installs_a_code_block_highlighter ... ok
+test tests::streaming_cost::streaming_is_incremental_and_coalesced ... ok
+test document::tests::incremental_analysis_equals_full_analysis_for_every_chunking ... ok
+test tests::a_document_renders_its_text_and_analysis ... ok
+test tests::an_empty_document_still_renders ... ok
+test tests::revealing_a_heading_scrolls_its_rendered_line_into_view ... ok
+test tests::streaming_headings_keep_the_outline_current ... ok
+test tests::appended_chunks_extend_the_document_without_replacing_the_text_view ... ok
+test tests::a_mid_document_rewrite_replaces_the_source ... ok
+test tests::a_mermaid_fence_becomes_a_diagram_block ... ok
+test tests::a_mermaid_fence_paints_a_diagram_in_place_of_its_code_block ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_mermaid-a97c30ef09d7db06)
+
+running 47 tests
+test engine::tests::every_render_error_has_a_readable_message ... ok
+test engine::tests::oversized_diagrams_are_rejected_before_parsing ... ok
+test sizing::tests::degenerate_inputs_still_produce_one_pixel ... ok
+test sizing::tests::huge_diagrams_are_capped_with_aspect_preserved ... ok
+test sizing::tests::usable_dimensions_reject_non_positive_and_non_finite ... ok
+test sizing::tests::small_diagrams_are_drawn_at_density ... ok
+test source::tests::cache_key_separates_theme_and_font_size ... ok
+test source::tests::display_messages_name_the_limit ... ok
+test source::tests::hash_is_stable_and_sensitive ... ok
+test source::tests::normalize_drops_trailing_blanks_and_outer_blank_lines ... ok
+test source::tests::normalize_keeps_interior_layout ... ok
+test source::tests::streaming_whitespace_keeps_identity ... ok
+test source::tests::admit_rejects_blank_oversized_and_tall_sources ... ok
+test engine::tests::invalid_source_is_a_parse_error_not_a_panic ... ok
+test theme::tests::accent_reaches_sequence_notes ... ok
+test theme::tests::background_for_matches_the_theme_page ... ok
+test theme::tests::every_mapped_field_is_a_css_hex_color ... ok
+test theme::tests::light_and_dark_pages_follow_the_scheme ... ok
+test theme::tests::text_contrasts_with_the_page_in_both_schemes ... ok
+test viewport::tests::degenerate_sizes_are_ignored_rather_than_panicking ... ok
+test viewport::tests::fitting_a_large_diagram_scales_it_down_and_centers_it ... ok
+test viewport::tests::fitting_a_small_diagram_does_not_enlarge_it ... ok
+test engine::tests::sequence_and_state_diagrams_draw ... ok
+test viewport::tests::fitting_never_goes_below_the_minimum_zoom ... ok
+test viewport::tests::no_fit_before_both_sizes_are_known ... ok
+test viewport::tests::panning_a_large_diagram_stops_at_the_edges ... ok
+test viewport::tests::panning_a_small_diagram_does_nothing ... ok
+test viewport::tests::reset_returns_to_actual_size_centered ... ok
+test viewport::tests::resizing_refits_while_auto_fitting_and_keeps_zoom_otherwise ... ok
+test viewport::tests::streaming_a_new_size_keeps_the_reader_zoom ... ok
+test viewport::tests::wheel_zoom_keeps_the_point_under_the_pointer ... ok
+test viewport::tests::zoom_by_equal_factor_is_a_no_op ... ok
+test viewport::tests::zoom_is_clamped_to_the_supported_range ... ok
+test engine::tests::flowcharts_draw_to_svg_with_text_and_edges ... ok
+test tests::wheel_scrolling_over_the_view_zooms ... ok
+test tests::zoom_buttons_change_scale_and_fit_restores_the_whole_diagram ... ok
+test tests::double_click_fits_a_panned_diagram ... ok
+test tests::an_invalid_diagram_shows_its_error_and_recovers_when_fixed ... ok
+test engine::tests::display_width_caps_a_wide_diagram_and_preserves_its_aspect ... ok
+test tests::a_flowchart_renders_to_a_visible_image ... ok
+test engine::tests::engine_rasterizes_and_the_second_render_reuses_layout_and_raster ... ok
+test tests::rapid_source_changes_publish_only_the_final_revision ... ok
+test tests::a_theme_change_redraws_the_diagram_in_the_new_palette ... ok
+test engine::tests::zoom_reuses_the_layout_and_redraws_only_the_raster ... ok
+test engine::tests::theme_change_is_a_different_cache_entry ... ok
+test engine::tests::cache_eviction_keeps_the_most_recent_entry ... ok
+test engine::tests::cache_evicts_beyond_its_entry_limit ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/visible.rs (/home/dan/projects/anteater/target/debug/deps/visible-aae493c4d11bbe6f)
+
+running 1 test
+test standalone_and_markdown_paint_diagram_pixels_in_both_themes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_overlays-2100dd1801325353)
+
+running 58 tests
+test confirm::tests::sender_drop_cancels ... ok
+test confirm::tests::wakes_and_first_resolution_wins ... ok
+test gpui_tests::repeated_init_preserves_theme_and_window_state ... ok
+test gpui_tests::review_1_unmanaged_notifications_do_not_hide_admitted_toasts ... ok
+test gpui_tests::affix_anchors_all_six_positions ... ok
+test gpui_tests::review_2_update_retains_native_entity_and_order ... ok
+test gpui_tests::review_1_system_delivery_still_stores_managed_toast ... ok
+test gpui_tests::loading_overlay_blocks_pointer_only_when_visible ... ok
+test gpui_tests::modal_blocks_background_wheel ... ok
+test gpui_tests::managed_windows_keep_independent_overlay_entities ... ok
+test gpui_tests::review_13_loading_blocks_keyboard_then_restores_input ... ok
+test gpui_tests::confirmation_click_and_programmatic_cancel ... ok
+test gpui_tests::disabling_escape_keeps_pointer_close_available ... ok
+test gpui_tests::context_modals_and_native_outside_dismissal ... ok
+test gpui_tests::review_8_tooltip_ui_uses_cross_axis_solver ... ok
+test gpui_tests::review_5_remove_managed_id_below_unmanaged_without_closing_it ... ok
+test gpui_tests::review_5_native_close_restores_focus_after_managed_removal ... ok
+test gpui_tests::review_5_drawer_and_modals_rechain_focus_on_middle_removal ... ok
+test gpui_tests::roots_are_idempotent_and_missing_roots_error ... ok
+test gpui_tests::review_5_managed_dialog_can_open_above_existing_native ... ok
+test gpui_tests::drawer_four_sides_and_escape_policy ... ok
+test gpui_tests::review_4_stacked_confirm_resolves_its_own_id ... ok
+test gpui_tests::review_10_spotlight_prepares_text_once_and_does_not_search_on_submit ... ok
+test position::directional_tests::all_four_flip_directions_and_explicit_disable ... ok
+test position::directional_tests::exact_coordinates_and_arrows_for_every_side_and_alignment ... ok
+test position::review_tests::review_8_default_shift_never_moves_across_anchor ... ok
+test gpui_tests::review_5_removing_modal_rechains_focused_child_handles ... ok
+test gpui_tests::review_5_remove_middle_of_three_mixed_policy_modals ... ok
+test host::review_tests::review_12_window_close_breaks_context_root_cycle ... ok
+test position::tests::all_sides_alignments_and_edges ... ok
+test position::tests::exact_alignment_without_shift_or_flip ... ok
+test gpui_tests::review_1_later_unmanaged_arrival_requeues_and_releases_capacity ... ok
+test position::tests::flips_only_when_better ... ok
+test position::tests::invalid_inputs_rejected ... ok
+test position::tests::oversized_and_tiny_viewport ... ok
+test host::admission_failure_tests::review_1_failed_admission_promotes_persistent_successor ... ok
+test position::tests::zero_arrow_and_offset_viewport ... ok
+test search::review_tests::review_9_best_alignment_can_skip_an_earlier_match ... ok
+test search::tests::contiguous_preferred ... ok
+test search::tests::ranking_keywords_disabled_and_limit ... ok
+test search::tests::unicode_and_rejection ... ok
+test stack::tests::top_policy_blocks_background_and_scroll_unlocks_last ... ok
+test stack::tests::ids_never_reused ... ok
+test toast::review_tests::review_3_updating_visible_toast_preserves_hover_pause ... ok
+test toast::tests::fifo_and_fresh_clock ... ok
+test toast::tests::hover_pause_resume_and_progress ... ok
+test toast::tests::persistent_zero_limit_resize_clear ... ok
+test toast::tests::shrink_preserves_fifo ... ok
+test toast::tests::update_visible_and_queued ... ok
+test host::review_tests::review_7_clean_notifies_observers ... ok
+test host::review_tests::review_6_paused_toasts_stop_timer ... ok
+test gpui_tests::window_destruction_cancels_pending_confirm ... ok
+test gpui_tests::stacked_modal_escape_policy_and_focus_restore ... ok
+test gpui_tests::spotlight_typing_keyboard_and_click ... ok
+test gpui_tests::spotlight_arrows_and_pointer_select_commands ... ok
+test gpui_tests::toast_hover_and_update_by_id ... ok
+test gpui_tests::toast_progress_does_not_notify_application_content ... ok
+test gpui_tests::native_toast_close_promotes_queue_and_timer_expires ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_showcase-66b2ab90c16d9faa)
+
+running 1 test
+test demos::overlays::tooltip_tests::showcase_tooltips_follow_hover_and_disappear_on_leave ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_showcase-5062630a906ac30c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/coverage.rs (/home/dan/projects/anteater/target/debug/deps/coverage-a14b67728df21e88)
+
+running 1 test
+test every_public_component_has_a_showcase_entry ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/loading_visual.rs (/home/dan/projects/anteater/target/debug/deps/loading_visual-e25a6a892639b871)
+
+running 1 test
+test loading_dims_without_hiding_the_underlying_surface ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/render.rs (/home/dan/projects/anteater/target/debug/deps/render-560959dce2437381)
+
+running 1 test
+test every_entry_renders_in_both_themes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.08s
+
+   Doc-tests guiraffe_chat
+
+running 1 test
+test crates/chat/src/stream.rs - stream::Producer (line 27) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+   Doc-tests guiraffe_components
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests guiraffe_flow
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests guiraffe_flow_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests guiraffe_inputs
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests guiraffe_layout
+
+running 24 tests
+test crates/layout/src/app_shell.rs - app_shell::AppShell (line 298) ... ok
+test crates/layout/src/divider.rs - divider::Divider (line 38) ... ok
+test crates/layout/src/app_shell.rs - app_shell::AppShellEvent (line 19) ... ok
+test crates/layout/src/app_shell.rs - app_shell::AppShellState (line 63) ... ok
+test crates/layout/src/container.rs - container::Container (line 16) ... ok
+test crates/layout/src/flex.rs - flex::Flex (line 32) ... ok
+test crates/layout/src/simple_grid.rs - simple_grid::SimpleGrid (line 48) ... ok
+test crates/layout/src/grid.rs - grid::Col (line 307) ... ok
+test crates/layout/src/grid.rs - grid::Grid (line 73) ... ok
+test crates/layout/src/aspect_ratio.rs - aspect_ratio::AspectRatio (line 17) ... ok
+test crates/layout/src/grid.rs - grid::Col::span (line 339) ... ok
+test crates/layout/src/group.rs - group::Group (line 18) ... ok
+test crates/layout/src/scroll_area.rs - scroll_area::ScrollArea (line 18) ... ok
+test crates/layout/src/space.rs - space::Space (line 11) ... ok
+test crates/layout/src/center.rs - center::Center (line 12) ... ok
+test crates/layout/src/splitter.rs - splitter::LayoutPersist (line 240) ... ok
+test crates/layout/src/splitter.rs - splitter::SplitterEvent (line 124) ... ok
+test crates/layout/src/splitter.rs - splitter::SplitterSizes (line 22) ... ok
+test crates/layout/src/splitter.rs - splitter::SplitterState (line 154) ... ok
+test crates/layout/src/lib.rs - (line 8) ... ok
+test crates/layout/src/splitter.rs - splitter::SplitterSizes::usable (line 71) ... ok
+test crates/layout/src/width.rs - width::ContainerWidth (line 24) ... ok
+test crates/layout/src/stack.rs - stack::Stack (line 15) ... ok
+test crates/layout/src/splitter.rs - splitter::Splitter (line 378) ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.60s; merged doctests compilation took 0.60s
+   Doc-tests guiraffe_markdown
+
+running 2 tests
+test crates/markdown/src/lib.rs - (line 14) - compile ... ok
+test crates/markdown/src/view.rs - view::MarkdownView (line 309) - compile ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.43s
+   Doc-tests guiraffe_mermaid
+
+running 2 tests
+test crates/mermaid/src/lib.rs - (line 13) - compile ... ok
+test crates/mermaid/src/view.rs - view::MermaidView (line 441) - compile ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.43s
+   Doc-tests guiraffe_overlays
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests guiraffe_showcase
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -15,3 +15,5 @@ mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot"] }
+guiraffe-markdown = { path = "../markdown", features = ["mermaid"] }
