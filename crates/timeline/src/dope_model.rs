@@ -224,6 +224,50 @@ impl DopeModel {
         *self = copy;
         true
     }
+    /// Summary diamonds represent an aggregate, not a value segment: they never
+    /// borrow interpolation/hold metadata from a group's own key indices.
+    pub fn key_display(
+        &self,
+        channel: usize,
+        summary: bool,
+        index: usize,
+    ) -> (crate::KeyShape, Option<f64>) {
+        let Some(c) = self.channels.get(channel).filter(|_| !summary) else {
+            return (crate::KeyShape::Diamond, None);
+        };
+        let decor = c
+            .decor
+            .get(index)
+            .copied()
+            .unwrap_or((None, crate::KeyShape::Diamond));
+        let Some(next_index) = index.checked_add(1) else {
+            return (decor.1, None);
+        };
+        let hold = c
+            .decor
+            .get(next_index)
+            .filter(|next| decor.0.is_some() && decor.0 == next.0)
+            .and_then(|_| c.keys().get(next_index))
+            .copied();
+        (decor.1, hold)
+    }
+    fn descends_from(&self, mut child: usize, parent: usize) -> bool {
+        for _ in 0..=self.channels.len() {
+            if child == parent {
+                return true;
+            }
+            let Some(next) = self.channels.get(child).and_then(|c| c.parent) else {
+                return false;
+            };
+            child = next;
+        }
+        false
+    }
+    pub fn summary_selected(&self, channel: usize, time: f64) -> bool {
+        self.selected
+            .iter()
+            .any(|(child, t)| *t == time.to_bits() && self.descends_from(*child, channel))
+    }
     pub fn summary_keys(&self, channel: usize) -> &[f64] {
         self.summaries
             .get(&channel)
@@ -297,5 +341,35 @@ mod tests {
         assert_eq!(m.selected.len(), 4);
         assert!(m.delete_selected());
         assert_eq!(m.channels[1].keys(), &[2., 3., 4.]);
+    }
+}
+
+#[cfg(test)]
+mod summary_visual_tests {
+    use super::*;
+    #[test]
+    fn summaries_do_not_index_group_metadata() {
+        let mut group = Channel::with_keyframes(
+            "group",
+            vec![
+                crate::Key::new(0.5, 1., crate::Interp::Constant),
+                crate::Key::new(1., 1., crate::Interp::Constant),
+            ],
+        );
+        group.group = true;
+        group.children.push(Channel::with_keyframes(
+            "child",
+            vec![crate::Key::new(0., 0., crate::Interp::Bezier)],
+        ));
+        let mut m = DopeModel::new(vec![group]);
+        assert_eq!(m.summary_keys(0), &[0., 0.5, 1.]);
+        assert_eq!(m.key_display(0, true, 0), (crate::KeyShape::Diamond, None));
+        assert_eq!(
+            m.key_display(0, false, 0),
+            (crate::KeyShape::Square, Some(1.))
+        );
+        assert_eq!(m.key_display(1, false, 0), (crate::KeyShape::Circle, None));
+        m.select(1, 0., false);
+        assert!(m.summary_selected(0, 0.));
     }
 }

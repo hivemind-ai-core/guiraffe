@@ -10,6 +10,7 @@ pub enum KeyShape {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub name: String,
+    pub color: guiraffe_core::ColorName,
     pub(crate) keys: Vec<f64>,
     pub(crate) decor: Vec<(Option<f64>, KeyShape)>,
     pub children: Vec<Channel>,
@@ -38,6 +39,7 @@ impl Channel {
         let decor = vec![(None, KeyShape::Diamond); keys.len()];
         Self {
             name: name.into(),
+            color: guiraffe_core::ColorName::Blue,
             keys,
             decor,
             children: Vec::new(),
@@ -48,6 +50,10 @@ impl Channel {
             locked: false,
             visible: true,
         }
+    }
+    pub fn with_color(mut self, color: guiraffe_core::ColorName) -> Self {
+        self.color = color;
+        self
     }
     pub fn group(name: impl Into<String>, children: Vec<Channel>) -> Self {
         Self {

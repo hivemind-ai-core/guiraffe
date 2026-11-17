@@ -66,7 +66,8 @@ impl BarCurve {
         true
     }
     /// Draw from fractional bar coordinate/value to another. Coordinate 0 is bar 0's
-    /// centre; coordinates outside the model clamp to its ends. Returns changed span.
+    /// centre. Covered indices clip to the model; values sample the original
+    /// fractional pointer segment at each bar centre. Returns changed span.
     pub fn draw(&mut self, from: (f64, f64), to: (f64, f64)) -> Option<std::ops::Range<usize>> {
         if self.values.is_empty() || ![from.0, from.1, to.0, to.1].iter().all(|v| v.is_finite()) {
             return None;
@@ -79,7 +80,7 @@ impl BarCurve {
             let f = if a == b {
                 1.
             } else {
-                (i as f64 - a as f64) / (b as f64 - a as f64)
+                ((i as f64 - from.0) / (to.0 - from.0)).clamp(0., 1.)
             };
             let v = from.1 * (1. - f) + to.1 * f;
             if self.set(i, v) {
@@ -170,9 +171,33 @@ mod tests {
     #[test]
     fn fast_strokes_clamp_and_cover_every_bar() {
         let mut b = BarCurve::new(100, 0., 1.);
-        assert_eq!(b.draw((-100., -1.), (200., 2.)), Some(34..100));
+        assert_eq!(b.draw((-100., -1.), (200., 2.)), Some(1..100));
         assert_eq!(b.values()[0], 0.);
-        assert_eq!(b.values()[99], 1.);
+        assert!((b.values()[99] - 0.99).abs() < 1e-12);
         assert!(b.draw((f64::NAN, 0.), (2., 1.)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod fractional_tests {
+    use super::*;
+    #[test]
+    fn interpolation_weights_use_fractional_pointer_positions() {
+        let mut bars = BarCurve::new(4, 0., 1.);
+        bars.draw((0.4, 0.), (3.4, 1.));
+        for (i, expected) in [0., 0.2, 0.5333333333333333, 0.8666666666666667]
+            .into_iter()
+            .enumerate()
+        {
+            assert!((bars.values()[i] - expected).abs() < 1e-12);
+        }
+        let mut reverse = BarCurve::new(4, 0., 1.);
+        reverse.draw((3.4, 1.), (0.4, 0.));
+        assert!(
+            bars.values()
+                .iter()
+                .zip(reverse.values())
+                .all(|(a, b)| (a - b).abs() < 1e-12)
+        );
     }
 }

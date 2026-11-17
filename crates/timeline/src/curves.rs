@@ -111,6 +111,21 @@ impl Curve {
         handle: (f64, f64),
         mode: TangentMode,
     ) -> bool {
+        self.set_tangent_scaled(index, incoming, handle, mode, (1., 1.))
+    }
+    /// Aligned mode preserves the opposite handle's length in the supplied metric
+    /// (pixels per time/value unit for a native editor).
+    pub fn set_tangent_scaled(
+        &mut self,
+        index: usize,
+        incoming: bool,
+        handle: (f64, f64),
+        mode: TangentMode,
+        metric: (f64, f64),
+    ) -> bool {
+        if !metric.0.is_finite() || !metric.1.is_finite() || metric.0 <= 0. || metric.1 <= 0. {
+            return false;
+        }
         if !handle.0.is_finite() || !handle.1.is_finite() {
             return false;
         }
@@ -137,9 +152,9 @@ impl Curve {
         let other = match mode {
             TangentMode::Mirrored => (-handle.0, -handle.1),
             TangentMode::Aligned => {
-                let length = handle.0.hypot(handle.1);
+                let length = (handle.0 * metric.0).hypot(handle.1 * metric.1);
                 if length > 0. {
-                    let scale = opposite.0.hypot(opposite.1) / length;
+                    let scale = (opposite.0 * metric.0).hypot(opposite.1 * metric.1) / length;
                     (-handle.0 * scale, -handle.1 * scale)
                 } else {
                     opposite
@@ -385,5 +400,23 @@ mod editing_tests {
         assert!(c.remove_segment(0));
         assert!(!c.remove(99));
         assert_eq!(c.split_segment(usize::MAX, 0.5), None);
+    }
+}
+
+#[cfg(test)]
+mod screen_tangent_tests {
+    use super::*;
+    #[test]
+    fn aligned_mode_preserves_screen_length_under_anisotropic_axes() {
+        let mut c = Curve::default();
+        let mut key = Key::new(0., 0., Interp::Bezier);
+        key.in_handle = (-1., -1.);
+        c.set(key);
+        let metric: (f64, f64) = (100., 10.);
+        let old = metric.0.hypot(metric.1);
+        assert!(c.set_tangent_scaled(0, false, (0.2, 2.), TangentMode::Aligned, metric));
+        let k = c.keys()[0];
+        assert!(((k.in_handle.0 * metric.0).hypot(k.in_handle.1 * metric.1) - old).abs() < 1e-10);
+        assert!((k.in_handle.0 * k.out_handle.1 - k.in_handle.1 * k.out_handle.0).abs() < 1e-10);
     }
 }
