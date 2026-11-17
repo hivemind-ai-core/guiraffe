@@ -3514,6 +3514,7 @@ dependencies = [
  "anyhow",
  "gpui-kit",
  "guiraffe-chat",
+ "guiraffe-code",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-flow",

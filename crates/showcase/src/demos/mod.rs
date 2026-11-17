@@ -5,6 +5,7 @@ use guiraffe_components::{Paper, Text};
 use guiraffe_core::Size;
 
 pub mod chat;
+pub mod code;
 pub mod components;
 pub mod flow;
 pub mod inputs;
