@@ -15,7 +15,8 @@ use gpui_kit::{
         button::{Button, ButtonGroup, ButtonVariants},
         checkbox::Checkbox,
         date_picker::{DatePicker, DatePickerState},
-        input::{Input, InputState, NumberInput, Textarea, TextareaState},
+        form::{field as form_field, v_form},
+        input::{Input, InputGroup, InputState, NumberInput, Textarea, TextareaState},
         kbd::Kbd,
         menu::{DropdownMenu, PopupMenuItem},
         pagination::Pagination,
@@ -249,6 +250,7 @@ struct InputDemo {
     password: Entity<InputState>,
     number: Entity<InputState>,
     area: Entity<TextareaState>,
+    email: Entity<InputState>,
 }
 
 fn inputs(window: &mut Window, cx: &mut App) -> AnyView {
@@ -258,6 +260,7 @@ fn inputs(window: &mut Window, cx: &mut App) -> AnyView {
             Knob::new("Size", &["xs", "sm", "md", "lg"]).default(2),
             Knob::toggle("Disabled"),
             Knob::toggle("Cleanable").default(1),
+            Knob::new("Validation", &["none", "required", "error", "read-only"]).default(2),
         ],
         |window, cx| InputDemo {
             text: cx.new(|cx| {
@@ -277,6 +280,11 @@ fn inputs(window: &mut Window, cx: &mut App) -> AnyView {
                 TextareaState::new(window, cx)
                     .rows(3)
                     .default_value("Multi-line text grows with its content.\nSecond line.")
+            }),
+            email: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("you@company.com")
+                    .default_value("ada@")
             }),
         },
         |s: &InputDemo, v: &KnobValues, _, _| {
@@ -330,6 +338,28 @@ fn inputs(window: &mut Window, cx: &mut App) -> AnyView {
                     "Textarea",
                     Textarea::new(&s.area).disabled(off).into_any_element(),
                 ))
+                .child(div().w(px(300.)).child({
+                    let mode = v.index(3);
+                    let description = match mode {
+                        1 => "We send the invoice here.",
+                        2 => "Enter a complete address, like ada@example.com.",
+                        3 => "Managed by your organization.",
+                        _ => "Optional.",
+                    };
+                    v_form().child(
+                        form_field()
+                            .label("Work email")
+                            .required(mode >= 1)
+                            .description(description)
+                            .child(
+                                InputGroup::new("email-group")
+                                    .input(Input::new(&s.email).with_size(size))
+                                    .invalid(mode == 2)
+                                    .readonly(mode == 3)
+                                    .disabled(off),
+                            ),
+                    )
+                }))
                 .into_any_element()
         },
         window,
