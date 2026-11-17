@@ -7,8 +7,9 @@
 - [ ] Coverage test (every component in showcase) + render goldens green; all goldens reviewed since last palette change
 - [ ] Benchmarks run against baselines (spec/13); no regressions > threshold
 - [ ] Hardening pass (below) done for the listed crates
-- [ ] Live smoke: showcase, gallery, flow editor, chat, markdown, mermaid launched under Xvfb/Wayland; screenshots of each reviewed; manual checklist (focus, Tab, overlays dismiss, toasts, Spotlight, streaming chat, zoom)
-- [ ] `guiraffe new` app builds + launches from a clean checkout; README getting-started verified
+- [~] Live smoke (2026-11-17, Xvfb): showcase, gallery, flow editor, agent chat, markdown viewer all launch and stay up; screenshots of gallery/chat/flow/markdown correct. Xvfb here has no DRI3 (software Vulkan): windows intermittently present black and animation/timer-driven demos run slowly (markdown streaming), so a **manual pass on a real display is still required**: showcase, gallery, flow editor, chat, markdown, mermaid launched under Xvfb/Wayland; screenshots of each reviewed; manual checklist (focus, Tab, overlays dismiss, toasts, Spotlight, streaming chat, zoom)
+- [x] `guiraffe new` app builds + launches from a clean clone (fixed: template lacked `[workspace]` and the guiraffe-icons dependency). Release binary 60 MB (42 MB stripped); 106 MB RSS under software Vulkan (not representative)
+- [ ] (was) `guiraffe new` app builds + launches from a clean checkout; README getting-started verified
 - [ ] KNOWN_ISSUES.md current; CHANGELOG for 0.1; version bump; tag v0.1.0
 
 ## Hardening: property / stateful testing
