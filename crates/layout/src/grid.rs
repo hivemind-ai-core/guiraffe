@@ -144,9 +144,9 @@ impl Grid {
         self
     }
 
-    /// Whether the grid grows to fill the space its parent offers.
-    ///
-    /// The last row takes the room that is left over.
+    /// Whether the columns in the last row grow to fill all the room the row
+    /// has, the way Mantine's `grow` does: every column of the last row
+    /// grows by the same amount until the row is full.
     pub fn grow(mut self, grow: bool) -> Self {
         self.grow = grow;
         self
@@ -265,23 +265,32 @@ impl RenderOnce for Grid {
 
         let last_row = rows.len().saturating_sub(1);
         let mut grid = div().flex().flex_col().gap(px(self.gutter));
-        if self.grow {
-            // A growing grid fills the room it is given, and the last row
-            // takes what is left of it.
-            grid = grid.h_full().flex_grow_1();
-        }
         if measurement.is_some() {
             // A grid that measures its container fills it, so the measurement
             // is the width of the container and not the width of the columns.
             grid = grid.relative().w_full();
         }
 
+        let columns = f32::from(self.columns.max(1));
         for (index, row) in rows.into_iter().enumerate() {
+            if self.grow && index == last_row {
+                // The last row of a growing grid is a flex row: every column
+                // starts at its span and grows by the same share of what is
+                // left, so the row is full.
+                let mut line = div().flex().flex_row().w_full().gap(px(self.gutter));
+                line = justify_content(line, self.justify);
+                let mut previous_end = 1u16;
+                for (placement, column) in row {
+                    let span = f32::from(placement.end.saturating_sub(placement.start));
+                    let offset = f32::from(placement.start.saturating_sub(previous_end));
+                    previous_end = placement.end;
+                    line = line.child(column.render_growing(span / columns, offset / columns));
+                }
+                grid = grid.child(line);
+                continue;
+            }
             let mut line = div().grid().grid_cols(self.columns).gap(px(self.gutter));
             line = justify_content(line, self.justify);
-            if self.grow && index == last_row {
-                line = line.flex_grow_1();
-            }
             for (placement, column) in row {
                 line = line.child(column.render_at(placement, window, cx));
             }
@@ -436,6 +445,26 @@ impl Col {
             .col_end(to_i16(placement.end))
             .row_start(1)
             .row_end(2);
+        element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
+        for child in self.children {
+            element = element.child(child);
+        }
+        element
+    }
+}
+
+impl Col {
+    /// The column as a growing cell of a flex row: it starts at `basis` of
+    /// the row and leaves `offset` of the row empty before it.
+    fn render_growing(self, basis: f32, offset: f32) -> impl gpui_kit::IntoElement {
+        let mut element = div()
+            .flex_basis(gpui_kit::relative(basis))
+            .flex_grow_1()
+            .flex_shrink_1()
+            .min_w_0();
+        if offset > 0. {
+            element = element.ml(gpui_kit::relative(offset));
+        }
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
         for child in self.children {
             element = element.child(child);

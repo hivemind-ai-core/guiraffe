@@ -15,8 +15,8 @@ use crate::events::EventLog;
 use crate::knobs::{Knob, KnobValues, SIZE_NAMES, with_knobs};
 use gpui_kit::AnyElement;
 
-const ALIGNS: [Align; 3] = [Align::Start, Align::Center, Align::End];
-const ALIGN_NAMES: &[&str] = &["start", "center", "end"];
+const ALIGNS: [Align; 4] = [Align::Start, Align::Center, Align::End, Align::Stretch];
+const ALIGN_NAMES: &[&str] = &["start", "center", "end", "stretch"];
 const JUSTIFIES: [Justify; 5] = [
     Justify::Start,
     Justify::Center,
@@ -225,12 +225,7 @@ fn flex_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
         .children(
             ["Design", "Build", "Review", "Ship it", "Measure", "Learn"]
                 .iter()
-                .enumerate()
-                .map(|(i, l)| {
-                    tile(*l, cx)
-                        .w(px(110.))
-                        .min_h(px(28. + 8. * (i % 3) as f32))
-                }),
+                .map(|l| tile(*l, cx).min_w(px(110.))),
         )
         .into_any_element()
 }

@@ -102,6 +102,9 @@ impl Flex {
     }
 
     /// Whether the flex box grows to fill the space its parent offers.
+    ///
+    /// A growing flex box also shares its main axis out between its children:
+    /// every child grows by the same amount, along the direction it runs in.
     pub fn grow(mut self, grow: bool) -> Self {
         self.grow = grow;
         self
@@ -156,8 +159,30 @@ impl RenderOnce for Flex {
             element = element.flex_grow_1();
         }
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
+        let column = matches!(
+            self.direction,
+            FlexDirection::Column | FlexDirection::ColumnReverse
+        );
         for child in self.children {
-            element = element.child(child);
+            if self.grow {
+                // A growing flex box shares its main axis between its children.
+                // The cell is a one-cell grid, so the child fills it on both axes
+                // even when it asks for a width of its own as a minimum.
+                let cell = div()
+                    .flex_grow_1()
+                    .flex_shrink_1()
+                    .grid()
+                    .grid_cols(1)
+                    .grid_rows(1);
+                let cell = if column {
+                    cell.min_h_0()
+                } else {
+                    cell.min_w_0()
+                };
+                element = element.child(cell.child(child));
+            } else {
+                element = element.child(child);
+            }
         }
         element
     }
