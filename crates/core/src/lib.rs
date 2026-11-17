@@ -5,6 +5,7 @@ pub mod color;
 pub mod context;
 pub mod control;
 pub mod palette;
+pub mod text_menu;
 pub mod theme;
 pub mod tokens;
 pub mod variant;
@@ -23,6 +24,7 @@ pub use control::{
 pub use kit_bridge::{KitColors, kit_size};
 pub use palette::{ColorName, Shade};
 pub use state::{Contrast, StateColors, StateKind, contrast_checks};
+pub use text_menu::{TextMenu, TextMenuItem, TextMenuSpec};
 pub use theme::{GuiraffeTheme, Recipes, Scheme, Surfaces, apply, set_scheme};
 pub use tokens::{ShadowLayer, Size, shadow};
 pub use variant::{Variant, VariantColors};

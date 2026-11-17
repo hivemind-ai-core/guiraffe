@@ -494,3 +494,5 @@ impl RenderOnce for Chat {
 
 #[cfg(test)]
 mod gpui_tests;
+#[cfg(test)]
+mod menu_tests;

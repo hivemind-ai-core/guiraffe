@@ -34,6 +34,11 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
         "focus-scope prototype (spec/18 §12 audit); a Kit Button with opt-in tab stop",
     ),
     (
+        "core",
+        "TextMenuLayer",
+        "popup host of the shared text context menu; shown via CodeViewer/Markdown/Chat right-click",
+    ),
+    (
         "mermaid",
         "Host",
         "private test host in a non-public module (`mermaid::host`)",

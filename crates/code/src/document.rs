@@ -115,6 +115,23 @@ impl CodeDocument {
         let end = self.offset(range.end)?;
         (start <= end).then_some(start..end)
     }
+    /// The source in `range`, each line prefixed with its right-aligned one-based number.
+    pub fn with_line_numbers(&self, range: SourceRange) -> Option<String> {
+        let bytes = self.range(range)?;
+        if bytes.is_empty() {
+            return None;
+        }
+        let text = self.source.get(bytes)?;
+        let width = (range.end.line + 1).to_string().len();
+        let mut out = String::with_capacity(text.len() + (width + 2) * 8);
+        for (i, line) in text.split('\n').enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(&format!("{:>width$}  {line}", range.start.line + i + 1));
+        }
+        Some(out)
+    }
     pub fn minimap(&self) -> &[f32; 256] {
         &self.minimap
     }
@@ -122,6 +139,14 @@ impl CodeDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn copy_with_line_numbers_aligns_numbers() {
+        let doc = CodeDocument::new(Arc::<str>::from("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n"));
+        let r = SourceRange::new(Position::new(8, 0), Position::new(9, 1));
+        assert_eq!(doc.with_line_numbers(r).as_deref(), Some(" 9  i\n10  j"));
+        let empty = SourceRange::new(Position::new(1, 0), Position::new(1, 0));
+        assert_eq!(doc.with_line_numbers(empty), None);
+    }
     #[test]
     fn shared_source_utf8_crlf_empty_and_trailing_lines() {
         let source: Arc<str> = "α\r\nlast\n".into();
