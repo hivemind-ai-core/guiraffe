@@ -245,9 +245,13 @@ impl Engine {
             }
         };
         let (nw, nh) = entry.natural;
-        let width = nw.min(request.display_width.max(100.0)) * request.zoom.clamp(0.25, 4.0);
+        // Logical size is zoom-independent (the viewport applies zoom when displaying); zoom
+        // only raises the raster density so zoomed-in diagrams stay sharp. Never rasterize
+        // below 1x, so zooming out keeps full quality.
+        let width = nw.min(request.display_width.max(100.0));
         let height = width * nh / nw;
-        let pixels = raster_size(width, height, request.density);
+        let scale = request.zoom.clamp(1.0, 4.0);
+        let pixels = raster_size(width * scale, height * scale, request.density);
         let image = match &entry.raster {
             Some((size, image)) if *size == pixels => image.clone(),
             _ => {
@@ -363,9 +367,23 @@ mod tests {
         assert!(zoomed.cached, "same layout");
         assert!(Arc::ptr_eq(&first.svg, &zoomed.svg));
         assert!(!Arc::ptr_eq(&first.image, &zoomed.image));
-        assert!((zoomed.width - first.width * 2.0).abs() < 1e-3);
+        // Logical size is zoom-independent (the viewport scales it); the raster gets denser.
+        assert!((zoomed.width - first.width).abs() < 1e-3);
+        let px = |i: &Image| i.image.size(0).width.0;
+        assert!(
+            px(&zoomed).abs_diff(px(&first) * 2) <= 1,
+            "2x zoom rasterizes 2x the pixels"
+        );
+        // Zooming out never rasterizes below 1x.
+        request.zoom = 0.5;
+        let out = engine.render(&request).expect("zoomed out");
+        assert_eq!(px(&out), px(&first));
         assert_eq!(engine.layouts(), 1);
-        assert_eq!(engine.rasterizations(), 2);
+        assert_eq!(
+            engine.rasterizations(),
+            3,
+            "1x again after 2x: one raster size is cached per entry"
+        );
     }
 
     #[test]

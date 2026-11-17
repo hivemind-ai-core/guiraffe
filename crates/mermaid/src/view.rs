@@ -41,6 +41,9 @@ struct Published {
 ///
 /// Hosts that need to drive zooming or read the SVG can keep the entity from
 /// [`MermaidView::state`] and call the methods here.
+/// How long zooming must pause before the diagram is re-rasterized at the new zoom.
+const ZOOM_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
 pub struct MermaidViewState {
     id: ElementId,
     revision: u64,
@@ -53,6 +56,8 @@ pub struct MermaidViewState {
     /// Superseded renders are dropped when they land; this is the revision
     /// the view is waiting for.
     awaiting: Option<u64>,
+    /// Pending re-render after zooming settles (dropping it cancels).
+    zoom_refresh: Option<gpui_kit::Task<()>>,
     density: f32,
     dragging: Option<Point>,
     message: Option<SharedString>,
@@ -70,6 +75,7 @@ impl MermaidViewState {
             published: None,
             status: Status::Empty,
             awaiting: None,
+            zoom_refresh: None,
             density: 1.0,
             dragging: None,
             message: None,
@@ -111,24 +117,24 @@ impl MermaidViewState {
 
     pub fn zoom_in(&mut self, cx: &mut Context<Self>) {
         self.viewport.zoom_in();
-        cx.notify();
+        self.zoom_changed(cx);
     }
 
     pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
         self.viewport.zoom_out();
-        cx.notify();
+        self.zoom_changed(cx);
     }
 
     /// Fit the whole diagram (also the double-click action).
     pub fn fit(&mut self, cx: &mut Context<Self>) {
         self.viewport.fit();
-        cx.notify();
+        self.zoom_changed(cx);
     }
 
     /// Restore actual size.
     pub fn reset_zoom(&mut self, cx: &mut Context<Self>) {
         self.viewport.reset();
-        cx.notify();
+        self.zoom_changed(cx);
     }
 
     /// Replace the source, starting a render only when it changed.
@@ -233,6 +239,24 @@ impl MermaidViewState {
         cx.notify();
     }
 
+    /// Zoom changed: redraw now (the current raster, scaled) and, once zooming pauses,
+    /// re-rasterize at the new zoom so the diagram is sharp again.
+    fn zoom_changed(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+        if self.source.is_empty() {
+            return;
+        }
+        let delay = cx.background_executor().timer(ZOOM_SETTLE);
+        self.zoom_refresh = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            delay.await;
+            this.update(cx, |this, cx| {
+                this.revision += 1;
+                this.request(cx);
+            })
+            .ok();
+        }));
+    }
+
     /// Record the laid-out size of the view, refitting or clamping as needed.
     fn set_bounds(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
         let before = self.viewport.bounds();
@@ -264,7 +288,7 @@ impl MermaidViewState {
         let zoom = self.viewport.zoom();
         self.viewport.zoom_by(factor, anchor);
         if self.viewport.zoom() != zoom {
-            cx.notify();
+            self.zoom_changed(cx);
         }
     }
 
@@ -275,7 +299,7 @@ impl MermaidViewState {
         if event.click_count >= 2 {
             self.viewport.fit();
             self.dragging = None;
-            cx.notify();
+            self.zoom_changed(cx);
             return;
         }
         self.dragging = Some(Point::new(

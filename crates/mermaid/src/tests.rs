@@ -201,3 +201,46 @@ fn a_theme_change_redraws_the_diagram_in_the_new_palette(cx: &mut TestAppContext
         assert_ne!(light, dark, "the theme changed the drawing");
     });
 }
+
+#[gpui_kit::test]
+fn zooming_in_rerasterizes_sharp_once_zooming_settles(cx: &mut TestAppContext) {
+    let (_handle, host) = open(cx);
+    settle(cx);
+    let px_width = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let state = host.read(cx).diagram.clone();
+            let s = state.read(cx);
+            (
+                s.image().map(|i| i.image.size(0).width.0).unwrap_or(0),
+                s.viewport().natural().0,
+            )
+        })
+    };
+    let (before, natural_before) = px_width(cx);
+    cx.update(|cx| {
+        let state = host.read(cx).diagram.clone();
+        state.update(cx, |s, cx| {
+            s.reset_zoom(cx);
+            for _ in 0..4 {
+                s.zoom_in(cx);
+            }
+        });
+        assert!(state.read(cx).viewport().zoom() > 1.5);
+    });
+    // Before the settle delay: still the old raster (scaled), no work per wheel tick.
+    cx.executor().advance_clock(Duration::from_millis(50));
+    cx.executor().run_until_parked();
+    assert_eq!(px_width(cx).0, before, "no re-raster while zooming");
+    settle(cx);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.executor().run_until_parked();
+    let (after, natural_after) = px_width(cx);
+    assert!(
+        after > before * 3 / 2,
+        "denser raster after zoom: {before} -> {after}"
+    );
+    assert_eq!(
+        natural_after, natural_before,
+        "logical size is zoom-independent (no feedback)"
+    );
+}
