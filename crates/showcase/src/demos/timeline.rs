@@ -11,6 +11,7 @@ use guiraffe_components::{SegmentedControl, SegmentedEvent, Text};
 use guiraffe_core::{ColorName, Size};
 
 use super::{column, example};
+use crate::events::EventLog;
 use crate::catalog::Entry;
 
 pub fn entries() -> Vec<Entry> {
@@ -53,19 +54,28 @@ pub fn entries() -> Vec<Entry> {
     ]
 }
 
-struct Holder<V: 'static>(Entity<V>, &'static str, f32);
+struct Holder<V: 'static>(Entity<V>, &'static str, f32, Entity<EventLog>);
 
 impl<V: Render> Render for Holder<V> {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        column([example(
-            self.1,
-            div().h(px(self.2)).overflow_hidden().child(self.0.clone()),
-        )])
+        column([
+            example(
+                self.1,
+                div().h(px(self.2)).overflow_hidden().child(self.0.clone()),
+            ),
+            example("Events", self.3.clone()),
+        ])
     }
 }
 
-fn hold<V: Render>(e: Entity<V>, label: &'static str, h: f32, cx: &mut App) -> AnyView {
-    cx.new(|_| Holder(e, label, h)).into()
+fn hold<V: Render>(
+    e: Entity<V>,
+    label: &'static str,
+    h: f32,
+    log: Entity<EventLog>,
+    cx: &mut App,
+) -> AnyView {
+    cx.new(|_| Holder(e, label, h, log)).into()
 }
 
 const DAY: f64 = 86_400.0;
@@ -85,16 +95,42 @@ struct EditOptions<V: 'static> {
     height: f32,
     edges: Entity<SegmentedControl>,
     lock: Entity<SegmentedControl>,
+    style: Entity<SegmentedControl>,
+    grid: Entity<SegmentedControl>,
+    log: Entity<EventLog>,
     note: &'static str,
-    _subs: [gpui_kit::Subscription; 2],
+    _subs: [gpui_kit::Subscription; 4],
 }
 
+const LOCK_STYLES: [LockStyle; 4] = [
+    LockStyle::Badge,
+    LockStyle::Dimmed,
+    LockStyle::Hatched,
+    LockStyle::None,
+];
+
 trait Editable: Render {
+    /// Labels for the snapping / keyboard-step choices.
+    const GRID: [&'static str; 3];
     fn set_edges(&mut self, edges: ResizeEdges, cx: &mut Context<Self>);
     fn set_all_editable(&mut self, editable: bool, cx: &mut Context<Self>);
+    fn set_grid(&mut self, choice: usize, cx: &mut Context<Self>);
+    fn set_style(&mut self, style: LockStyle, cx: &mut Context<Self>);
+    fn watch(log: &Entity<EventLog>, view: &Entity<Self>, cx: &mut App);
 }
 
 impl Editable for GanttView {
+    const GRID: [&'static str; 3] = ["Arrow step: 1 day", "1 week", "free"];
+    fn set_grid(&mut self, choice: usize, cx: &mut Context<Self>) {
+        self.set_key_step([Some(DAY), Some(7. * DAY), None].get(choice).copied().flatten());
+        cx.notify();
+    }
+    fn watch(log: &Entity<EventLog>, view: &Entity<Self>, cx: &mut App) {
+        EventLog::watch::<GanttEvent, _>(log, view, cx);
+    }
+    fn set_style(&mut self, style: LockStyle, cx: &mut Context<Self>) {
+        self.set_lock_style(style, style, cx)
+    }
     fn set_edges(&mut self, e: ResizeEdges, cx: &mut Context<Self>) {
         self.set_resize_edges(e, cx)
     }
@@ -104,6 +140,17 @@ impl Editable for GanttView {
 }
 
 impl Editable for TracksView {
+    const GRID: [&'static str; 3] = ["Snap: 0.25s", "1s", "off"];
+    fn set_grid(&mut self, choice: usize, cx: &mut Context<Self>) {
+        self.set_snap([Some(0.25), Some(1.0), None].get(choice).copied().flatten());
+        cx.notify();
+    }
+    fn watch(log: &Entity<EventLog>, view: &Entity<Self>, cx: &mut App) {
+        EventLog::watch::<TracksEvent, _>(log, view, cx);
+    }
+    fn set_style(&mut self, style: LockStyle, cx: &mut Context<Self>) {
+        self.set_lock_style(style, style, cx)
+    }
     fn set_edges(&mut self, e: ResizeEdges, cx: &mut Context<Self>) {
         self.set_resize_edges(e, cx)
     }
@@ -121,9 +168,27 @@ fn with_options<V: Editable>(
 ) -> AnyView {
     let edges = SegmentedControl::new(["Resize: both", "Start", "End", "None"], cx);
     let lock = SegmentedControl::new(["Editable", "Locked"], cx);
+    let style = SegmentedControl::new(["Lock: badge", "Dimmed", "Hatched", "None"], cx);
+    let grid = SegmentedControl::new(V::GRID, cx);
+    for c in [&edges, &lock, &style, &grid] {
+        c.update(cx, |c, cx| c.set_size(Some(Size::Xs), cx));
+    }
+    let log = EventLog::new(cx);
+    V::watch(&log, &view, cx);
     cx.new(|cx| {
         let v1 = view.clone();
         let v2 = view.clone();
+        let v3 = view.clone();
+        let v4 = view.clone();
+        let s3 = cx.subscribe(&style, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            let style = LOCK_STYLES.get(*i).copied().unwrap_or_default();
+            v3.update(cx, |v, cx| v.set_style(style, cx));
+        });
+        let s4 = cx.subscribe(&grid, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            v4.update(cx, |v, cx| v.set_grid(*i, cx));
+        });
         let s1 = cx.subscribe(&edges, move |_, _, e: &SegmentedEvent, cx| {
             let SegmentedEvent::Changed(i) = e;
             let edges = EDGES.get(*i).copied().unwrap_or_default();
@@ -139,8 +204,11 @@ fn with_options<V: Editable>(
             height,
             edges,
             lock,
+            style,
+            grid,
+            log,
             note,
-            _subs: [s1, s2],
+            _subs: [s1, s2, s3, s4],
         }
     })
     .into()
@@ -156,8 +224,10 @@ impl<V: Editable> Render for EditOptions<V> {
                     .flex_wrap()
                     .items_center()
                     .gap(px(16.))
-                    .child(div().w(px(340.)).child(self.edges.clone()))
-                    .child(div().w(px(200.)).child(self.lock.clone()))
+                    .child(self.edges.clone())
+                    .child(self.lock.clone())
+                    .child(self.style.clone())
+                    .child(self.grid.clone())
                     .child(Text::new(self.note).size(Size::Xs).dimmed(true)),
             ),
             example(
@@ -167,6 +237,7 @@ impl<V: Editable> Render for EditOptions<V> {
                     .overflow_hidden()
                     .child(self.view.clone()),
             ),
+            example("Events", self.log.clone()),
         ])
     }
 }
@@ -306,16 +377,30 @@ fn dope(_: &mut Window, cx: &mut App) -> AnyView {
         view.release();
     });
     let lock = SegmentedControl::new(["Editable", "Locked"], cx);
+    let style = SegmentedControl::new(["Lock: badge", "Dimmed", "Hatched", "None"], cx);
+    for c in [&lock, &style] {
+        c.update(cx, |c, cx| c.set_size(Some(Size::Xs), cx));
+    }
+    let log = EventLog::new(cx);
+    EventLog::watch::<DopeEvent, _>(&log, &view, cx);
     cx.new(|cx| {
         let target = view.clone();
         let sub = cx.subscribe(&lock, move |_, _, e: &SegmentedEvent, cx| {
             let SegmentedEvent::Changed(i) = e;
             target.update(cx, |view, cx| view.set_editable(*i == 0, cx));
         });
+        let target = view.clone();
+        let sub2 = cx.subscribe(&style, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            let style = LOCK_STYLES.get(*i).copied().unwrap_or_default();
+            target.update(cx, |view, cx| view.set_lock_style(style, cx));
+        });
         DopeDemo {
             view,
             lock,
-            _sub: sub,
+            style,
+            log,
+            _sub: [sub, sub2],
         }
     })
     .into()
@@ -323,16 +408,26 @@ fn dope(_: &mut Window, cx: &mut App) -> AnyView {
 struct DopeDemo {
     view: Entity<DopeSheet>,
     lock: Entity<SegmentedControl>,
-    _sub: gpui_kit::Subscription,
+    style: Entity<SegmentedControl>,
+    log: Entity<EventLog>,
+    _sub: [gpui_kit::Subscription; 2],
 }
 impl Render for DopeDemo {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         column([
-            example("Editing", div().w(px(240.)).child(self.lock.clone())),
+            example(
+                "Options",
+                div()
+                    .flex()
+                    .gap(px(16.))
+                    .child(self.lock.clone())
+                    .child(self.style.clone()),
+            ),
             example(
                 "24 fps · Shift-click / box select · Tab to focus · Ctrl+A / Ctrl+D · Delete · Arrows",
-                div().h(px(300.)).child(self.view.clone()),
+                div().h(px(260.)).child(self.view.clone()),
             ),
+            example("Events", self.log.clone()),
         ])
     }
 }
@@ -391,10 +486,13 @@ fn curve(_: &mut Window, cx: &mut App) -> AnyView {
                 )
             });
         });
+        let log = EventLog::new(cx);
+        EventLog::watch::<CurveEvent, _>(&log, &view, cx);
         CurveDemo {
             view,
             interp,
             tangent,
+            log,
             _subs: [s1, s2],
         }
     })
@@ -405,6 +503,7 @@ struct CurveDemo {
     view: Entity<CurveView>,
     interp: Entity<SegmentedControl>,
     tangent: Entity<SegmentedControl>,
+    log: Entity<EventLog>,
     _subs: [gpui_kit::Subscription; 2],
 }
 impl Render for CurveDemo {
@@ -458,8 +557,9 @@ impl Render for CurveDemo {
             ),
             example(
                 "Select keys to reveal tangent handles",
-                div().h(px(300.)).child(self.view.clone()),
+                div().h(px(260.)).child(self.view.clone()),
             ),
+            example("Events", self.log.clone()),
         ])
     }
 }
@@ -469,10 +569,14 @@ fn bars(_: &mut Window, cx: &mut App) -> AnyView {
     model.set_steps(Some(16));
     model.draw((0., -0.8), (15., 0.8));
     model.draw((16., 0.8), (31., -0.4));
+    let view = BarCurveView::new(model, cx);
+    let log = EventLog::new(cx);
+    EventLog::watch::<BarEvent, _>(&log, &view, cx);
     hold(
-        BarCurveView::new(model, cx),
+        view,
         "32 bars · bipolar · 16 steps · drag to draw",
-        260.,
+        220.,
+        log,
         cx,
     )
 }
