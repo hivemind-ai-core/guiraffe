@@ -15,4 +15,6 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+guiraffe-test = { workspace = true, features = ["snapshot", "render"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 gpui-kit = { workspace = true, features = ["test-support"] }

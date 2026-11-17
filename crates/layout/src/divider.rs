@@ -119,7 +119,15 @@ impl RenderOnce for Divider {
 
         let mut element = match self.orientation {
             DividerOrientation::Horizontal => div().flex().flex_row().items_center(),
-            DividerOrientation::Vertical => div().flex().flex_col().items_center(),
+            // A vertical rule spans its row (Mantine: align-self: stretch) and never collapses:
+            // without this it had no height inside a Group and drew nothing.
+            DividerOrientation::Vertical => div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .self_stretch()
+                .flex_none()
+                .min_h(px(Size::Md.spacing())),
         };
 
         let line = |color: Hsla| match self.orientation {
