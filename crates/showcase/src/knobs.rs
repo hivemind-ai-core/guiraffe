@@ -311,7 +311,8 @@ mod tests {
         assert!(v.on(1));
         assert_eq!(v.size(2), Size::Xs, "out of range picks the first choice");
         assert_eq!(v.size(7), Size::Xs, "missing knob picks the first choice");
-        assert_eq!(v.color(0), None);
+        assert_eq!(v.color(0), Some(ColorName::Orange));
+        assert_eq!(KnobValues(vec![0]).color(0), None, "primary");
         assert_eq!(v.color(1), Some(ColorName::Teal));
     }
 
