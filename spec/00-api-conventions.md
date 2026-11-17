@@ -145,3 +145,10 @@ splitter sizes, collapsed panels and recent spotlight items. Each widget opts in
 - **Respect OS/user preferences:** high-contrast mode (stronger borders, no low-contrast dimming), reduced motion (state transitions instant), and forced colors where the platform reports them; a theme `contrast` setting (standard/high) feeds the same resolver.
 - Never convey state by opacity or color alone: disabled also changes cursor, suppresses interaction and is exposed to accessibility; selected also has a shape/weight cue.
 - Overlays on top of content (LoadingOverlay, modals) dim via a scheme-aware scrim token, not raw black alpha.
+
+### 12.2 Focus rings never change layout (user directive 2026-11-17)
+- The focus indicator is **separate from the control's own border**: a control can have a border *and* a focus ring at the same time.
+- The ring is an **overlay outline**, painted outside (or inset over) the control's box, **not part of layout**: no size, padding or position change between focused/unfocused; nothing around it moves.
+- One shared helper renders it (absolute-positioned, `inset: -offset`, `pointer-events: none`, theme `state(FocusRing)` color, width 2px, offset 2px, radius = control radius + offset), so every control looks and behaves the same.
+- State borders in general (hover/selected/error) must also not change size: border width is constant across states (color changes only); a state that needs a thicker line uses an overlay.
+- Test: a control's laid-out bounds and its siblings' bounds are identical focused vs. unfocused and across hover/selected states.
