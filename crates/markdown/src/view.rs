@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, RenderOnce,
-    SharedString, Styled as _, Window, div,
+    App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Pixels, Render,
+    RenderOnce, SharedString, Styled as _, Window, div,
 };
 
 use crate::{
@@ -321,6 +321,9 @@ impl Render for MarkdownState {
 ///     div().child(MarkdownView::new("reply").state(&state))
 /// }
 /// ```
+/// The least height of a scrollable [`MarkdownView`] unless the host names one.
+pub const DEFAULT_SCROLL_MIN_HEIGHT: Pixels = gpui_kit::px(200.);
+
 #[derive(IntoElement)]
 pub struct MarkdownView {
     id: SharedString,
@@ -328,6 +331,8 @@ pub struct MarkdownView {
     source: Option<SharedString>,
     selectable: bool,
     scrollable: bool,
+    min_height: Pixels,
+    max_height: Option<Pixels>,
     on_link: Option<LinkHandler>,
     on_task_toggle: Option<TaskToggleHandler>,
     code_copy: bool,
@@ -341,6 +346,8 @@ impl MarkdownView {
             source: None,
             selectable: true,
             scrollable: false,
+            min_height: DEFAULT_SCROLL_MIN_HEIGHT,
+            max_height: None,
             on_link: None,
             on_task_toggle: None,
             code_copy: true,
@@ -366,8 +373,24 @@ impl MarkdownView {
     }
 
     /// Whether the view scrolls its own content (true) or grows with it.
+    ///
+    /// A scrollable view fills the height its parent gives it. In a parent
+    /// of no definite height it keeps at least [`Self::min_height`]
+    /// (200px by default), so the document never collapses to nothing.
     pub fn scrollable(mut self, scrollable: bool) -> Self {
         self.scrollable = scrollable;
+        self
+    }
+
+    /// The least height of a scrollable view (200px by default).
+    pub fn min_height(mut self, height: Pixels) -> Self {
+        self.min_height = height;
+        self
+    }
+
+    /// The most height of a scrollable view; it scrolls past it.
+    pub fn max_height(mut self, height: Pixels) -> Self {
+        self.max_height = Some(height);
         self
     }
 
@@ -405,6 +428,8 @@ impl RenderOnce for MarkdownView {
             source,
             selectable,
             scrollable,
+            min_height,
+            max_height,
             on_link,
             on_task_toggle,
             code_copy,
@@ -452,7 +477,22 @@ impl RenderOnce for MarkdownView {
         if code_copy {
             view = view.code_block_actions(|code, _, _| copy_button(code));
         }
-        let root = div().w_full().child(view);
+        let mut root = div().w_full();
+        if scrollable {
+            // The Controls text view fills its box when it scrolls, so the
+            // box needs a height: the parent's, but never less than the
+            // least height (a parent of no definite height gives none).
+            // The view sits in an absolutely placed layer that covers the
+            // box, so it gets the box's resolved height even when that
+            // height comes only from the least height.
+            root = root.relative().h_full().min_h(min_height);
+            if let Some(max) = max_height {
+                root = root.max_h(max);
+            }
+            root = root.child(div().absolute().inset_0().child(view));
+        } else {
+            root = root.child(view);
+        }
         if !selectable {
             return root;
         }

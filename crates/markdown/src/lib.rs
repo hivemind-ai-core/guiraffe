@@ -35,7 +35,7 @@ pub use streaming::{
     Change, MAX_COALESCE, MIN_COALESCE, classify, coalesce_delay, settled_prefix,
     unfinished_mermaid_fence,
 };
-pub use view::{MarkdownState, MarkdownView};
+pub use view::{DEFAULT_SCROLL_MIN_HEIGHT, MarkdownState, MarkdownView};
 
 #[cfg(feature = "mermaid")]
 pub use view::{EMBEDDED_DIAGRAM_HEIGHT, MERMAID_NODE};

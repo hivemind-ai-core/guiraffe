@@ -384,3 +384,65 @@ mod streaming_cost {
         assert_eq!(shown, len, "closed fence handed over in one piece");
     }
 }
+
+const AUTO_DOC: &str = "```rust\nfn main() {}\n```\n\nAfter the code.\n";
+
+/// A scrollable view in a parent of no definite height: the shape the
+/// showcase gave it when the "Scrollable" knob was on.
+struct AutoHeight {
+    markdown: Entity<MarkdownState>,
+}
+
+impl Render for AutoHeight {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        div().flex().flex_col().child(
+            gpui_kit::InteractiveElement::debug_selector(div(), || "md-host".into()).child(
+                MarkdownView::new("auto")
+                    .state(&self.markdown)
+                    .scrollable(true),
+            ),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_scrollable_view_in_an_auto_height_parent_still_shows_its_document(cx: &mut TestAppContext) {
+    cx.update(guiraffe_core::init);
+    let (handle, _view) = cx.update(|cx| {
+        gpui_kit::open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    Point::default(),
+                    size(px(800.0), px(900.0)),
+                ))),
+                ..Default::default()
+            },
+            cx,
+            |_, cx| {
+                // The code block comes first, so its copy button is in view.
+                let markdown = cx.new(|cx| MarkdownState::new(AUTO_DOC, cx));
+                cx.new(|_| AutoHeight { markdown })
+            },
+        )
+        .expect("window opens")
+    });
+    settle(cx);
+    for _ in 0..2 {
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .expect("frame renders");
+    }
+    let mut vcx = gpui_kit::VisualTestContext::from_window(handle, cx);
+    let host = vcx.debug_bounds("md-host").expect("host laid out");
+    assert!(
+        host.size.height >= crate::DEFAULT_SCROLL_MIN_HEIGHT,
+        "a scrollable view keeps its least height, got {:?}",
+        host.size.height
+    );
+    let id: &'static str = Box::leak(
+        format!("copy-{}", crate::document::stable_hash("fn main() {}")).into_boxed_str(),
+    );
+    let painted = cx
+        .update_window(handle, |_, window, _| window.try_find(id).is_some())
+        .expect("window");
+    assert!(painted, "the document's code block ({id}) is painted");
+}
