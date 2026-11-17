@@ -540,8 +540,10 @@ fn marker_triangle(
     }
     let d = direction * (1. / distance);
     let side = WorldPoint::new(-d.y, d.x);
-    // Leave half the open marker stroke outside the handle as well.
-    let tip = viewport.screen(tip) - d * 5.75;
+    // The tip of the arrow is the outer edge of the handle, so the arrow
+    // touches the handle instead of pointing into it. The dot is painted
+    // above the edge, so the edge itself is seen to end there as well.
+    let tip = viewport.screen(tip) - d * crate::HANDLE_RADIUS;
     Some([tip - d * 10. + side * 4., tip, tip - d * 10. - side * 4.])
 }
 pub(crate) fn minimap_rect(size: WorldPoint) -> Rect {
@@ -564,8 +566,8 @@ mod tests {
     use super::*;
     use guiraffe_flow_core::{Edge, Graph, Node};
     #[test]
-    fn arrow_tip_stays_outside_handle_boundary_at_all_zooms() {
-        for zoom in [0.6, 1., 2.] {
+    fn arrow_tip_touches_the_outer_edge_of_the_handle_at_all_zooms() {
+        for zoom in [0.5, 0.6, 1., 2., 3.] {
             let viewport = Viewport {
                 zoom,
                 pan: WorldPoint::new(15., -20.),
@@ -578,15 +580,46 @@ mod tests {
                 let center = WorldPoint::new(200., 300.);
                 let triangle =
                     marker_triangle(center, center - direction * 20., viewport).expect("marker");
-                assert!(triangle[1].distance(viewport.screen(center)) >= 5.74);
+                let screen = viewport.screen(center);
+                assert!(
+                    (triangle[1].distance(screen) - crate::HANDLE_RADIUS).abs() < 0.001,
+                    "the tip of the arrow is the outer edge of the handle at zoom {zoom}"
+                );
                 for point in triangle {
                     assert!(
-                        (point.x - viewport.screen(center).x) * direction.x
-                            + (point.y - viewport.screen(center).y) * direction.y
-                            <= -5.74
+                        (point.x - screen.x) * direction.x + (point.y - screen.y) * direction.y
+                            <= -crate::HANDLE_RADIUS + 0.001,
+                        "the arrow stays outside the handle at zoom {zoom}"
                     );
                 }
             }
+        }
+    }
+    #[test]
+    fn the_handle_dot_is_centred_on_the_border_of_the_node() {
+        for zoom in [0.5, 1., 2., 3.] {
+            let node = Node::new(1, "", WorldPoint::new(40., 60.));
+            let handle = node.handles.first().expect("handle");
+            // The dot is a circle of the radius of a handle, centred on the
+            // point where the handle sits: the border of the node.
+            let centre = handle.position(node.rect());
+            assert_eq!(
+                centre.x,
+                node.rect().origin.x,
+                "the handle is on the border"
+            );
+            assert!(
+                (centre.y - node.rect().origin.y - node.rect().size.y * handle.offset).abs()
+                    < 0.001
+            );
+            // The dot is drawn around that point, so its box is the point
+            // minus the radius, and its size is twice the radius.
+            let origin = WorldPoint::new(
+                centre.x * zoom - crate::HANDLE_RADIUS,
+                centre.y * zoom - crate::HANDLE_RADIUS,
+            );
+            assert_eq!(origin.x + crate::HANDLE_RADIUS, centre.x * zoom);
+            assert_eq!(origin.y + crate::HANDLE_RADIUS, centre.y * zoom);
         }
     }
     #[test]

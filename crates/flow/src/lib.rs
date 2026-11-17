@@ -21,6 +21,14 @@ use std::{
     rc::Rc,
 };
 
+/// The radius of a handle dot, in screen pixels.
+///
+/// The dots are ten pixels wide, so their edge is five pixels from their
+/// centre. An edge ends at that edge: the arrow of an edge has its tip
+/// there, and the dot is painted above the edge, so the edge is seen to
+/// stop at the dot and not to run into the node.
+pub(crate) const HANDLE_RADIUS: f32 = 5.;
+
 /// Custom content is laid out within the node's scaled frame. Renderers receive
 /// zoom explicitly so they can scale typography and internal spacing too.
 pub trait NodeRenderer: 'static {
