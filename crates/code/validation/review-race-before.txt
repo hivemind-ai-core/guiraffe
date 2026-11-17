@@ -1,0 +1,28 @@
+   Compiling guiraffe-icons v0.1.0 (/home/dan/projects/anteater/worktrees/code-race-baseline/crates/icons)
+   Compiling guiraffe-core v0.1.0 (/home/dan/projects/anteater/worktrees/code-race-baseline/crates/core)
+   Compiling guiraffe-test v0.1.0 (/home/dan/projects/anteater/worktrees/code-race-baseline/crates/test)
+   Compiling guiraffe-markdown v0.1.0 (/home/dan/projects/anteater/worktrees/code-race-baseline/crates/markdown)
+   Compiling guiraffe-code v0.1.0 (/home/dan/projects/anteater/worktrees/code-race-baseline/crates/code)
+    Finished `test` profile [unoptimized] target(s) in 6.02s
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_code-60aa2841048e6151)
+
+running 1 test
+test surface::review_tests::pending_source_keeps_latest_annotations_folds_and_traces ... FAILED
+
+failures:
+
+---- surface::review_tests::pending_source_keeps_latest_annotations_folds_and_traces stdout ----
+
+thread 'surface::review_tests::pending_source_keeps_latest_annotations_folds_and_traces' (2850499) panicked at crates/code/src/surface.rs:957:9:
+assertion `left == right` failed
+  left: []
+ right: [Annotation { id: 42, range: SourceRange { start: Position { line: 0, column: 0 }, end: Position { line: 0, column: 1 } }, kind: Highlight, payload: "note", color: Blue }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    surface::review_tests::pending_source_keeps_latest_annotations_folds_and_traces
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p guiraffe-code --lib`

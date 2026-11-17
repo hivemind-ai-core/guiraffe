@@ -1,122 +1,132 @@
+   Compiling guiraffe-icons v0.1.0 (/home/dan/projects/anteater/worktrees/feat-code/crates/icons)
    Compiling guiraffe-code v0.1.0 (/home/dan/projects/anteater/worktrees/feat-code/crates/code)
+   Compiling guiraffe-test v0.1.0 (/home/dan/projects/anteater/worktrees/feat-code/crates/test)
    Compiling guiraffe-bench v0.1.0 (/home/dan/projects/anteater/worktrees/feat-code/bench)
-    Finished `test` profile [unoptimized] target(s) in 6.72s
-     Running unittests src/lib.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/guiraffe_bench-74ca3d6bdb9a841a)
+    Finished `test` profile [unoptimized] target(s) in 3.45s
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_bench-8d5afa8725d65d45)
 
 running 15 tests
-test stats::tests::invalid_inputs_rejected ... ok
-test tests::profile_paths_cannot_escape ... ok
 test stats::tests::medians_cover_odd_even_single_unsorted_negative ... ok
-test stats::tests::even_medians_handle_extreme_and_subnormal_values ... ok
+test tests::profile_paths_cannot_escape ... ok
 test stats::tests::improvements_require_entire_interval_below_negative_threshold ... ok
+test stats::tests::invalid_inputs_rejected ... ok
+test stats::tests::even_medians_handle_extreme_and_subnormal_values ... ok
 test stats::tests::nonrepresentable_deviations_fail_instead_of_emitting_infinity ... ok
 test stats::tests::constants_and_singleton_have_exact_intervals ... ok
 test stats::tests::mad_is_unscaled_and_robust_to_outlier ... ok
-test stats::tests::translation_preserves_spread_and_moves_interval ... ok
 test stats::tests::uncertain_and_boundary_results_do_not_fail ... ok
+test stats::tests::translation_preserves_spread_and_moves_interval ... ok
 test stats::tests::bootstrap_percentiles_on_two_points_are_exact ... ok
 test stats::tests::paired_ratios_preserve_common_host_noise ... ok
 test stats::tests::bootstrap_is_reproducible_and_scale_equivariant ... ok
 test tests::tiny_workloads_extend_samples_and_remain_positive ... ok
 test tests::run_rejects_short_or_empty_workloads ... ok
 
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 
-     Running unittests src/main.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/guiraffe_bench-d9f49cac0af979f8)
+     Running unittests src/main.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_bench-1a4957958112dc1c)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/allocator.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/allocator-a06e0a4941cf5a1b)
+     Running tests/allocator.rs (/home/dan/projects/anteater/target/debug/deps/allocator-bfbd90272617a2a1)
 
-running 6 tests
+running 8 tests
 test counts_frame_allocations_and_resets ... ok
 test reallocations_and_zeroed_allocations_count ... ok
-test rejects_nesting_and_recovers_from_panic ... ok
 test scopes_are_thread_local ... ok
+test rejects_nesting_and_recovers_from_panic ... ok
+test one_item_splice_shares_an_immutable_large_list_snapshot ... ok
 test warmed_flow_queries_reuse_storage ... ok
+test data_ui_native_workloads_have_bounded_allocation_traffic ... ok
 test warmed_hot_paths_allocate_nothing ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
 
-     Running tests/allocator_process.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/allocator_process-b9bc86cd2a87d208)
+     Running tests/allocator_process.rs (/home/dan/projects/anteater/target/debug/deps/allocator_process-5b439f2249a9b7cb)
 
 running 1 test
 test process_scope_observes_worker_and_recovers_after_errors_and_panics ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/cli.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/cli-97d459c3d6a5baed)
+     Running tests/cli.rs (/home/dan/projects/anteater/target/debug/deps/cli-5d3913d7219737cf)
 
 running 2 tests
 test invalid_options_fail_before_mutation ... ok
 test json_roundtrip_report_escaping_and_profile_guard ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.42s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.65s
 
-     Running tests/compare.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/compare-f2880432053356f8)
+     Running tests/compare.rs (/home/dan/projects/anteater/target/debug/deps/compare-cd5fc5309d2f18f2)
 
 running 7 tests
 test unsupported_ref_fails_before_building_with_tool_error_code ... ok
 test ctrl_c_kills_build_group_and_removes_checkouts ... ok
-test comparison_invalidates_cached_source_paths_before_new_build ... ok
 test warns_for_dirty_head_and_records_source_root_state ... ok
+test comparison_invalidates_cached_source_paths_before_new_build ... ok
 test comparison_creates_fresh_new_sources_after_old_build ... ok
 test startup_recovers_stale_prefixed_checkout_but_preserves_locked_owner ... ok
 test real_comparison_exit_codes_and_improvement_output ... ok
 
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.45s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.49s
 
-     Running unittests src/lib.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/guiraffe_code-180a187f58f5718c)
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_code-0c5c36dd06f8ac47)
 
-running 10 tests
+running 14 tests
 test document::tests::shared_source_utf8_crlf_empty_and_trailing_lines ... ok
-test model::display_tests::hints_preserve_unicode_source_coordinates ... ok
+test model::precision_tests::subpixel_scroll_survives_near_a_million_lines ... ok
 test model::tests::bubbles_never_overlap_and_overflow_is_bounded ... ok
-test markdown::tests::code_fences_preserve_source_and_leave_mermaid_for_its_renderer ... ok
 test model::tests::folds_lenses_and_inverse_mapping ... ok
 test model::tests::million_lines_use_sparse_rows_and_bounded_viewport ... ok
+test model::display_tests::hints_preserve_unicode_source_coordinates ... ok
+test markdown::tests::code_fences_preserve_source_and_leave_mermaid_for_its_renderer ... ok
+test surface::review_tests::pending_prepared_analysis_is_tied_to_its_source ... ok
+test surface::review_tests::pending_source_keeps_latest_annotations_folds_and_traces ... ok
+test surface::review_tests::changing_provider_refreshes_an_existing_hover ... ok
 test model::properties::sparse_folding_matches_a_naive_line_filter ... ok
 test model::tests::interval_query_is_sublinear_and_finds_spanning_ranges ... ok
 test model::properties::interval_tree_matches_linear_query ... ok
 test highlight::tests::rust_highlighting_and_unknown_language_fallback_are_thread_safe ... ok
 
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 
-     Running tests/interaction.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/interaction-5b3063fb7c447729)
+     Running tests/interaction.rs (/home/dan/projects/anteater/target/debug/deps/interaction-cca9ba3d966129a3)
 
-running 13 tests
-test trace_anchors_outside_the_horizontal_viewport_are_hidden ... ok
+running 15 tests
 test annotation_updates_preserve_source_and_plain_hover_does_not_shape ... ok
+test copy_without_a_nonempty_selection_keeps_clipboard ... ok
+test trace_anchors_outside_the_horizontal_viewport_are_hidden ... ok
 test construction_preserves_theme_and_inline_hints_keep_selection_in_source ... ok
-test latest_source_wins_and_queued_analysis_is_coalesced ... ok
 test releasing_outside_stops_mouse_selection ... ok
-test stale_prepared_analysis_is_rejected_without_writes ... ok
+test latest_source_wins_and_queued_analysis_is_coalesced ... ok
 test real_keyboard_selection_copy_and_folding ... ok
+test stale_prepared_analysis_is_rejected_without_writes ... ok
 test hover_and_trace_changes_do_not_rerender_text ... ok
 test real_symbol_hover_and_definition_callback_allow_reentry ... ok
-test mouse_hover_drag_and_minimap_click_use_source_coordinates ... ok
 test cross_view_traces_follow_scroll_and_keep_both_text_layers_retained ... ok
+test mouse_hover_drag_and_minimap_click_use_source_coordinates ... ok
 test a_new_request_drops_an_inflight_completion ... ok
+test horizontal_scroll_is_bounded_and_long_line_shaping_is_capped ... ok
 test million_line_document_shapes_only_a_viewport_and_reuses_cache ... ok
 
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
 
-     Running tests/snapshots.rs (/home/dan/projects/anteater/worktrees/feat-cli/target/debug/deps/snapshots-cbcfd0cb62a32c37)
+     Running tests/snapshots.rs (/home/dan/projects/anteater/target/debug/deps/snapshots-7f42cfe7362e7f6c)
 
 running 2 tests
 test shared_code_viewer_inside_markdown ... ok
 test code_surface_in_light_and_dark ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
 
    Doc-tests guiraffe_bench
 
 running 1 test
 test bench/src/allocator.rs - allocator (line 4) ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
 
    Doc-tests guiraffe_code
 
@@ -125,4 +135,4 @@ test crates/code/src/lib.rs - (line 9) - compile ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-all doctests ran in 0.47s; merged doctests compilation took 0.47s
+all doctests ran in 0.46s; merged doctests compilation took 0.45s

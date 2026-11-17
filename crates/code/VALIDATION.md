@@ -1,48 +1,87 @@
-# Code surface hand-in
+# Code viewer review fixes — 2026-11-17
 
-Source/test revision: `3f1ee1d44224d629eedc1dd932e33c6dbc6625ae` on `feat-code`, based on `release/0.1` at `2687e9e`. No release/main merge or push was performed. The final documentation commit only adds this report and evidence files.
+Validated source: `f42f619795bfad26102d854961deb1ef6ceb1816` on `feat-code`, rebased onto release/0.1
+`7df0b5619b8b28fa2e59cd7b926a5922eb6d7e78`. The original hand-in remains at
+`backup/feat-code-review-ea47512`. No release/main merge or push was performed.
+The next documentation commit adds only this report and transcripts.
 
-## Implementation
+## Review changes
 
-- Shared `Arc<str>` source with a prebuilt UTF-8 line index, content hashes and minimap density summary. Visible-line shaping uses a bounded, content-checked cache; the fold/lens map is sparse.
-- Controls Tree-sitter highlighting runs off-thread with immutable publication, coalescing and stale-result rejection. Light/dark styles are prepared together; parser failure keeps source available.
-- Line/fold/custom gutters, highlight/diagnostic annotations, inline hints with reversible source offsets, lens rows, selection and source copy, wheel/page/minimap navigation.
-- Independent hover/occurrence, Markdown bubble and trace layers; a common trace leaf connects sibling viewers in one window and follows scrolling.
-- `PreparedAnalysis` builds the annotation index/display maps on a worker and rejects obsolete document snapshots before any UI write.
-- `code_fences(existing_extensions, max_lines)` embeds the same viewer in Controls Markdown and leaves Mermaid dispatch untouched. Standalone, embedded and stress examples are included.
+- Pending-source annotations, folds and traces are held against the requested source
+  revision and installed with that source. A newer source drops the older revision's
+  presentation. Prepared analysis can be queued for a document sharing the requested
+  source handle. A language refresh preserves a pending replacement source.
+- The original behavior is reproduced by a GPUI test on the pre-fix checkout: the
+  requested source publishes, but its annotations become `[]`. See
+  [before-fix transcript](validation/review-race-before.txt). The same annotation/fold/
+  trace test and prepared-analysis/stale-result tests pass with the fix.
+- Viewport offsets use f64. The million-distinct-line interaction test now checks a
+  quarter-pixel scroll and its actual source anchor near line 900,000. Horizontal
+  scrolling is bounded by the widest shaped line seen for the current document.
+- Ctrl+C leaves the clipboard unchanged without a nonempty valid source selection.
+- Shaping is capped at 16 KiB of UTF-8 text per logical line, at a character boundary.
+  A visible notice marks limited previews. The long-line test checks the shaping bound,
+  bounded horizontal scrolling and full-original-source selection/copy. This is a
+  bounded preview, not horizontal window-shaping of every byte in a huge logical line.
+- Shape-cache collision replacement no longer evicts an unrelated entry from a full
+  cache. Changing a symbol provider refreshes an existing hover. New source publication
+  cancels the previous drag/hover state. Geometry-dependent overlays receive a post-layout
+  notification for layout revisions, not only changes to outer bounds.
+- The handoff benchmark was renamed `code-snapshot-arc-clone`: it performs 1,024 Arc
+  clone/drop pairs and does not exercise worker delivery, channels or UI publication.
+  The cancellation fixture now atomically publishes its PID marker, fixing an observed
+  empty-file parse race while keeping its process cleanup assertions intact.
+- Added the CodeViewer showcase entry with syntax colors, a highlight, inline hint,
+  lens, Markdown analysis card, fold marker and trace. Coverage passes with 38 entries.
 
 ## Gates
 
-At the source revision above, both commands pass on each backend:
+Both backends pass the following commands, with `ARGV0` unset and a shared target cache:
 
 ```sh
-cargo test --locked -p guiraffe-code -p guiraffe-bench
-cargo clippy --locked -p guiraffe-code -p guiraffe-bench --all-targets -- -D warnings
-# Repeat both with --features guiraffe-code/gpui-fast
-cargo fmt -p guiraffe-code -p guiraffe-bench --check
+cargo test -p guiraffe-code -p guiraffe-bench
+cargo test -p guiraffe-showcase
+cargo clippy -p guiraffe-code -p guiraffe-bench -p guiraffe-showcase --all-targets -- -D warnings
+# Repeat with --features gpui-kit/gpui-fast before the clippy -- separator.
+cargo fmt -p guiraffe-code -p guiraffe-bench -p guiraffe-showcase -- --check
 git diff --check
 ```
 
-Per backend: **26 code checks** (10 pure/property, 13 GPUI interaction, 2 snapshot cases, 1 doctest) and **32 benchmark checks** pass, with zero failures or ignored tests. Clippy compiles every example/test target. The recorded test runs use normal snapshot comparison, with update mode unset. Test/clippy transcripts are in `validation/`.
+Per backend: **32 code checks** (14 unit/property, 15 GPUI interaction, 2 visual
+cases, 1 doctest), **34 benchmark checks**, and **4 showcase tests** pass, with zero
+failures or ignored tests. The showcase render test checks 38 entries in light/dark:
+76 scenes per backend, 152 across both. Final runs use normal reference comparison
+with update mode unset. All-target clippy includes every example and test target.
 
-Interaction evidence includes real mouse selection/hover/definition callbacks, outside-release handling, Ctrl+A/C, folds, minimap clicks, inline-hint coordinate preservation, cross-view scrolling, actual in-flight stale completions, prepared-analysis no-write admission, and a million **distinct** source lines. The latter asserts viewport-bounded shaping and zero new shaping on return to a cached viewport. gpui-fast assertions require hover/local-trace/cross-trace updates to leave both code text and unrelated host renders unchanged. Upstream ancestor redraws remain its documented behavior.
+Transcripts: [upstream tests](validation/upstream-test.txt),
+[fast tests](validation/fast-test.txt), [upstream clippy](validation/upstream-clippy.txt),
+[fast clippy](validation/fast-clippy.txt), [upstream showcase](validation/upstream-showcase.txt),
+[fast showcase](validation/fast-showcase.txt).
 
-Eight PNGs (standalone/embedded × light/dark × backend) were inspected through the shared Snapshotter path. The four backend pairs are byte-identical; hashes are recorded in `validation/snapshots.json`. Inspection caught and fixed missing card positioning, missing highlight backgrounds, font fallback, a theme reset and dark card foreground inheritance.
+The CodeViewer light/dark references and Markdown code-color changes were inspected.
+Adding the entry changes the shell count from 37 to 38, so all showcase references
+were refreshed. Image differences against the previous references showed 72 of 74
+existing upstream images changed only in the header; the two Markdown-viewer images
+also changed in syntax colors. [Difference audit](validation/showcase-differences.json).
+The standalone/embedded code-viewer reference hashes are in
+[validation/snapshots.json](validation/snapshots.json).
 
-## Measurements
+## Measurement and integration limits
 
-Two benchmark suites are registered. `code-scroll-1m` covers 32 indexed viewport jumps per invocation; `code-snapshot-handoff` covers 1,024 Arc publications. Both warmed model suites pass the allocator's zero-allocation gate. Their raw samples, machine/load/governor metadata and confidence intervals are retained in the JSON records. They are initial dev baselines, not a before/after speed-up or renderer measurement.
+The previous report's timing numbers and performance summaries have been removed from
+current acceptance claims. Superseded raw records are under [validation/archive](validation/archive/README.md),
+with their original source revision and sample-count caveats. No current worker handoff,
+frame-time, allocation-free renderer, release FPS or speed-up claim is made from them.
+The warmed allocator tests cover the registered model/Arc workloads, not GUI rendering.
 
-- `code-scroll-1m`: median 89.549 µs per 32-jump invocation.
-- `code-snapshot-handoff`: median 9.267 µs per 1,024-clone invocation.
+Controls' Tree-sitter feature remains unified across Kit consumers. Code ships Rust,
+JSON and JavaScript grammars; hosts needing more languages must register them. The
+full showcase was tested with that feature combination, but this does not establish
+Syntect's broader language coverage. The code-fence adapter remains host-installed;
+it leaves Mermaid dispatch available and avoids a Markdown/code dependency cycle.
 
-The headless draw example ran on both backends over 1M distinct plain-source lines, 20 warmup plus 100 measured draws, 41 visible rows. At this revision: upstream p50 1.531 ms / p95 2.501 ms; gpui-fast p50 1.249 ms / p95 1.442 ms. `validation/headless-draw.json` preserves the summaries and exact scope. These are dev-profile headless update/draw timings on a shared machine, not release-mode desktop presentation, input latency, GPU raster/readback, or a 120 fps guarantee. Native per-frame samples were not retained. The interactive desktop stress example was compiled, not manually driven in a desktop window.
-
-## Integration and remaining bounds
-
-- Never merged: foreman owns review, release batch validation and integration.
-- The generic `guiraffe-markdown` extension-hook question remains with the foreman. The adapter/example are implemented within `crates/code`; no Markdown-crate edit or dependency cycle was introduced. Mermaid already has its own component; the code adapter leaves its fences available for that renderer.
-- Cargo unifies features. Enabling code selects Controls' Tree-sitter path for other Kit widgets too; applications relying on Syntect-only language coverage must enable/register the grammars they need. This deserves integration review.
-- Vertical virtualization is implemented. An exceptionally long single logical line is still shaped whole; horizontal window-shaping is a remaining performance gap.
-- Bubbles use fixed-height margin packing and omit overflow; the minimap is a bounded density overview. Cross-window traces and editing are outside this hand-in.
-- Scope was `crates/code`, workspace dependency registration and the explicitly requested bench suite/allocation-gate integration. Other crates/workers were left untouched.
+Remaining nonblocking polish: continuous drag-selection autoscroll, gutter drag
+selection, and fully synchronous placement of geometry-dependent Markdown cards.
+Cards may settle on a following frame. The minimap remains a density overview;
+analysis cards have bounded fixed-height margin packing. Editing, cross-window traces
+and full horizontal virtualization of extreme logical lines remain outside this hand-in.

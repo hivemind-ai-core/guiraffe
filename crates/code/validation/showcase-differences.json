@@ -1,0 +1,298 @@
+[
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/affix/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/affix/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/agent-chat/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/agent-chat/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/appshell/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/appshell/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/aspectratio/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/aspectratio/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/blockquote/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/blockquote/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/chipgroup/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/chipgroup/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/container-center/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/container-center/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/curve-editor/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/curve-editor/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/dataui/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/dataui/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/divider-space/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/divider-space/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/dope-sheet/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/dope-sheet/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/dropzone/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/dropzone/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/flex/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/flex/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/floatingtooltip/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/floatingtooltip/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/gantt-chart/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/gantt-chart/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/grid/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/grid/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/highlight-mark/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/highlight-mark/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/indicator-pill/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/indicator-pill/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/loadingoverlay/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/loadingoverlay/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/markdown-viewer/dark.png",
+    "difference_below_header": 3.62237e-05
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/markdown-viewer/light.png",
+    "difference_below_header": 0.00013866
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/mermaid-diagrams/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/mermaid-diagrams/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/node-graph/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/node-graph/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/paper-card/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/paper-card/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/passwordstrength/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/passwordstrength/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/rangeslider/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/rangeslider/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/ringprogress/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/ringprogress/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/scrollarea/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/scrollarea/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/segmentedcontrol/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/segmentedcontrol/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/simplegrid/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/simplegrid/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/splitter/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/splitter/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/spotlight/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/spotlight/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/stack-group/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/stack-group/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/tagsinput/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/tagsinput/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/themeicon-actionicon/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/themeicon-actionicon/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/toasts-confirm/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/toasts-confirm/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/track-timeline/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/track-timeline/light.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/typography/dark.png",
+    "difference_below_header": 0.0
+  },
+  {
+    "path": "crates/showcase/tests/snapshots/upstream/typography/light.png",
+    "difference_below_header": 0.0
+  }
+]

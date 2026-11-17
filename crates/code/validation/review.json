@@ -1,0 +1,13 @@
+{
+  "source_revision": "f42f619795bfad26102d854961deb1ef6ceb1816",
+  "release_base": "7df0b5619b8b28fa2e59cd7b926a5922eb6d7e78",
+  "original_handin": "ea47512",
+  "code_checks_per_backend": 32,
+  "bench_checks_per_backend": 34,
+  "showcase_tests_per_backend": 4,
+  "showcase_scenes_per_backend": 76,
+  "timing_or_fps_claims": false,
+  "raw_older_measurements": "archive/",
+  "long_line_preview_byte_limit": 16384,
+  "scope": "code, bench and showcase tests and all-target clippy on upstream and gpui-fast; normal final snapshot comparison"
+}
