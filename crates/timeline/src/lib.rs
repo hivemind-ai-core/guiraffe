@@ -61,3 +61,8 @@ mod visible_tests {
         assert!(visible(&none, &a, |i| i.0, |i| i.1).is_empty());
     }
 }
+
+pub mod plot;
+pub use plot::{PlotSurface, Layer, Gridlines, Ruler, GridMarks, Playhead, SelectionBox, Markers, Zebra, BackgroundBands};
+mod locks;
+pub use locks::LockStyle;

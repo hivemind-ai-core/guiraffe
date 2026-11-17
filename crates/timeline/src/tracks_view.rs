@@ -41,7 +41,9 @@ struct Drag {
 
 pub struct TracksView {
     tracks: Vec<(String, Track)>,
-    axis: Axis,
+    surface: crate::PlotSurface,
+    lock_style: crate::LockStyle,
+    global_lock_style: crate::LockStyle,
     format: TimeFormat,
     playhead: f64,
     snap: Option<f64>,
@@ -98,7 +100,9 @@ impl TracksView {
         let axis = Axis::new(0.0, length.max(1.0), 800.0);
         cx.new(|cx| Self {
             tracks,
-            axis,
+            surface: crate::PlotSurface::timeline(axis, format),
+            lock_style: crate::LockStyle::Badge,
+            global_lock_style: crate::LockStyle::None,
             format,
             playhead: 0.0,
             snap: None,
@@ -195,8 +199,22 @@ impl TracksView {
         self.playhead
     }
 
+    pub fn add_layer(&mut self, layer: impl crate::Layer, cx: &mut Context<Self>) {
+        self.surface.add_layer(layer);
+        cx.notify();
+    }
+    pub fn set_lock_style(
+        &mut self,
+        item: crate::LockStyle,
+        global: crate::LockStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.lock_style = item;
+        self.global_lock_style = global;
+        cx.notify();
+    }
     pub fn axis(&self) -> &Axis {
-        &self.axis
+        &self.surface.axis
     }
 
     /// Snap edits to a grid (seconds); `None` disables.
@@ -240,7 +258,7 @@ impl TracksView {
             return None;
         }
         let (_, tr) = self.tracks.get(track)?;
-        hit(tr, &self.axis, x, self.resize)
+        hit(tr, &self.surface.axis, x, self.resize)
             .filter(|(clip, _)| !self.locked.contains(&(track, *clip)))
     }
 
@@ -292,7 +310,7 @@ impl TracksView {
     /// Continue the active drag to body-local pixel `x`.
     pub fn drag_to(&mut self, x: f64, cx: &mut Context<Self>) {
         let Some(d) = self.drag else { return };
-        let t = self.axis.t(x);
+        let t = self.surface.axis.t(x);
         let snapped = match d.grab {
             Grab::Move { grab_dt } => self.snapped(t - grab_dt),
             Grab::Trim(_) => self.snapped(t),
@@ -328,14 +346,12 @@ impl TracksView {
     fn on_wheel(&mut self, e: &ScrollEvent, cx: &mut Context<Self>) {
         let d = e.delta.pixel_delta(px(16.0));
         let (x, _) = self.local(e.position);
-        let changed = if e.modifiers.control || e.modifiers.platform {
-            self.axis
-                .zoom_at(x, (1.0 + f64::from(f32::from(d.y)) * 0.002).max(0.1))
-        } else {
-            let dx = if f32::from(d.x) != 0.0 { d.x } else { d.y };
-            self.axis.pan_px(-f64::from(f32::from(dx)));
-            true
-        };
+        let changed = self.surface.navigate(
+            x,
+            f64::from(f32::from(d.x)),
+            f64::from(f32::from(d.y)),
+            e.modifiers.control || e.modifiers.platform,
+        );
         if changed {
             cx.notify();
         }
@@ -354,19 +370,20 @@ impl Render for TracksView {
         let tab = guiraffe_core::tab_stop(self.focusable);
         let selected = self.selected;
         if let Some(w) = crate::measure::width(&self.body) {
-            self.axis.set_width(w);
+            self.surface.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
-                self.axis.fit(a, b, 0.0);
+                self.surface.fit(a, b, 0.0);
             }
         }
-        let axis = self.axis;
+        let axis = self.surface.axis;
+        let format=self.format;
         let editable = self.editable;
+        let item_style = self.lock_style;
+        let global_style = self.global_lock_style;
         let locked = &self.locked;
-        let format = self.format;
-        let ticks = axis.ticks(axis.tick_step(80.0, format));
+
         let line = s.border.to_hsla();
         let body = self.body.clone();
-        let playhead_x = axis.x(self.playhead) as f32;
         let root = div()
             .id("tracks")
             .test_support()
@@ -415,22 +432,14 @@ impl Render for TracksView {
                                 MouseButton::Left,
                                 cx.listener(|this, e: &MouseDownEvent, _, cx| {
                                     let (x, _) = this.local(e.position);
-                                    let t = this.axis.t(x);
+                                    let t = this.surface.axis.t(x);
                                     this.seek(t, cx);
                                 }),
                             )
-                            .children(ticks.into_iter().map(move |tt| {
-                                div()
-                                    .absolute()
-                                    .left(px(axis.x(tt) as f32))
-                                    .h_full()
-                                    .pl(px(3.))
-                                    .border_l_1()
-                                    .border_color(line)
-                                    .text_color(s.dimmed.to_hsla())
-                                    .whitespace_nowrap()
-                                    .child(label(tt, format))
-                            })),
+                            .child(
+                                self.surface
+                                    .element(t.clone(), true, f64::from(TRACK_H), 0.),
+                            ),
                     ),
             )
             .child(
@@ -443,7 +452,9 @@ impl Render for TracksView {
                             .flex_none()
                             .border_r_1()
                             .border_color(line)
-                            .children(self.tracks.iter().map(|(name, _)| {
+                            .children(self.tracks.iter().enumerate().map(|(i, (name, track))| {
+                                let clip = track.clips().first().map(|c| c.id);
+                                let locked = clip.is_some_and(|id| self.is_locked(i, id));
                                 div()
                                     .h(px(TRACK_H))
                                     .px(px(8.))
@@ -451,6 +462,28 @@ impl Render for TracksView {
                                     .items_center()
                                     .border_b_1()
                                     .border_color(line)
+                                    .child(
+                                        gpui_kit::component::button::Button::new(("track-lock", i))
+                                            .icon(gpui_kit::component::Icon::new(if locked {
+                                                gpui_kit::assets::IconName::Lock
+                                            } else {
+                                                gpui_kit::assets::IconName::LockOpen
+                                            }))
+                                            .tab_stop(false)
+                                            .tooltip("Toggle track clip locks")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let ids: Vec<_> = this
+                                                    .tracks
+                                                    .get(i)
+                                                    .map(|(_, t)| {
+                                                        t.clips().iter().map(|c| c.id).collect()
+                                                    })
+                                                    .unwrap_or_default();
+                                                for id in ids {
+                                                    this.set_locked(i, id, !locked, cx);
+                                                }
+                                            })),
+                                    )
                                     .child(name.clone())
                             })),
                     )
@@ -498,6 +531,7 @@ impl Render for TracksView {
                                 .absolute()
                                 .size_full(),
                             )
+                            .child(self.surface.element(t.clone(), false, 32., 0.))
                             .children(self.tracks.iter().enumerate().flat_map(|(i, (name, tr))| {
                                 crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
                                     .iter()
@@ -524,18 +558,9 @@ impl Render for TracksView {
                                             .h(px(TRACK_H - 8.0))
                                             .rounded(px(4.))
                                             .border_1()
-                                            .map(|el| {
-                                                // Locked: disabled tokens + dashed, not opacity.
-                                                if is_locked {
-                                                    el.bg(off.background.to_hsla())
-                                                        .border_color(off.border.to_hsla())
-                                                        .border_dashed()
-                                                } else {
-                                                    el.bg(clip_v.background.to_hsla())
-                                                        .border_color(clip_v.foreground.to_hsla())
-                                                }
-                                            })
-                                            // Selection: 2px overlay outline, no layout change.
+                                            .bg(clip_v.background.to_hsla()).border_color(clip_v.foreground.to_hsla())
+                                            .when(is_locked,|el|if locked.contains(&(i,c.id)){item_style.decorate(el,t)}else{global_style.decorate(el,t)})
+                                        // Selection: 2px overlay outline, no layout change.
                                             .when(on, |el| {
                                                 el.child(
                                                     div()
@@ -549,15 +574,14 @@ impl Render for TracksView {
                                     })
                                     .collect::<Vec<_>>()
                             }))
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .left(px(playhead_x))
-                                    .w(px(1.5))
-                                    .bg(playhead_color.to_hsla()),
-                            ),
+                            .child({
+                                let mut layer = crate::PlotSurface::new(axis);
+                                layer.add_layer(crate::Playhead {
+                                    time: self.playhead,
+                                    format: self.format,
+                                });
+                                layer.element(t.clone(), false, f64::from(TRACK_H), 0.)
+                            }),
                     ),
             );
         focus_ring(root, ring_on, px(0.), ring)

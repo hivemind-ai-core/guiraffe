@@ -11,7 +11,7 @@ use gpui_kit::{
 use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 
 use crate::{
-    axis::{Axis, TimeFormat, label},
+    axis::{Axis, TimeFormat},
     clips::Edge,
     edit::{
         EndEarlier, EndLater, Grab, KEY_CONTEXT, MoveEarlier, MoveLater, Nudge, ResizeEdges,
@@ -82,8 +82,9 @@ pub struct GanttView {
     geometry: Rc<Geometry>,
     tasks: Vec<Task>,
     schedule: Result<HashMap<u32, Scheduled>, ScheduleError>,
-    axis: Axis,
-    format: TimeFormat,
+    surface: crate::PlotSurface,
+    lock_style: crate::LockStyle,
+    global_lock_style: crate::LockStyle,
     drag: Option<Drag>,
     body: Rc<std::cell::Cell<Bounds<Pixels>>>,
     /// Range to fit once the real width is known.
@@ -121,8 +122,9 @@ impl GanttView {
             geometry: geometry(&tasks, &schedule),
             tasks,
             schedule,
-            axis,
-            format,
+            surface: crate::PlotSurface::timeline(axis, format),
+            lock_style: crate::LockStyle::Badge,
+            global_lock_style: crate::LockStyle::None,
             drag: None,
             body: Rc::default(),
             pending_fit: Some((lo, hi)),
@@ -196,8 +198,22 @@ impl GanttView {
         &self.schedule
     }
 
+    pub fn add_layer(&mut self, layer: impl crate::Layer, cx: &mut Context<Self>) {
+        self.surface.add_layer(layer);
+        cx.notify();
+    }
+    pub fn set_lock_style(
+        &mut self,
+        item: crate::LockStyle,
+        global: crate::LockStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.lock_style = item;
+        self.global_lock_style = global;
+        cx.notify();
+    }
     pub fn axis(&self) -> &Axis {
-        &self.axis
+        &self.surface.axis
     }
 
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
@@ -264,9 +280,17 @@ impl GanttView {
             return None;
         }
         let sc = self.schedule.as_ref().ok()?.get(&task.id)?;
-        let x0 = self.axis.x(sc.early_start);
-        let x1 = self.axis.x(sc.early_finish).max(x0 + 2.0);
-        grab_at(x0, x1, x, self.axis.t(x), sc.early_start, self.resize).map(|g| (task.id, g))
+        let x0 = self.surface.axis.x(sc.early_start);
+        let x1 = self.surface.axis.x(sc.early_finish).max(x0 + 2.0);
+        grab_at(
+            x0,
+            x1,
+            x,
+            self.surface.axis.t(x),
+            sc.early_start,
+            self.resize,
+        )
+        .map(|g| (task.id, g))
     }
 
     /// Begin a drag at body-local pixel `x` on `row`; only a press on an editable bar grabs.
@@ -289,7 +313,7 @@ impl GanttView {
         let Some(d) = self.drag else {
             return;
         };
-        let t = self.axis.t(x);
+        let t = self.surface.axis.t(x);
         match d.grab {
             Grab::Move { grab_dt } => self.reschedule(d.id, t - grab_dt, cx),
             Grab::Trim(edge) => self.resize_edge(d.id, edge, t, cx),
@@ -392,14 +416,12 @@ impl GanttView {
         let d = e.delta.pixel_delta(px(16.0));
         let b = self.body.get();
         let x = f64::from(f32::from(e.position.x - b.origin.x));
-        let changed = if e.modifiers.control || e.modifiers.platform {
-            self.axis
-                .zoom_at(x, (1.0 + f64::from(f32::from(d.y)) * 0.002).max(0.1))
-        } else {
-            let dx = if f32::from(d.x) != 0.0 { d.x } else { d.y };
-            self.axis.pan_px(-f64::from(f32::from(dx)));
-            true
-        };
+        let changed = self.surface.navigate(
+            x,
+            f64::from(f32::from(d.x)),
+            f64::from(f32::from(d.y)),
+            e.modifiers.control || e.modifiers.platform,
+        );
         if changed {
             cx.notify();
         }
@@ -462,24 +484,21 @@ impl Render for GanttView {
             .and_then(|id| self.tasks.iter().position(|t| t.id == id));
         let names: Vec<_> = self.tasks.iter().map(|t| t.name.clone()).collect();
         if let Some(w) = crate::measure::width(&self.body) {
-            self.axis.set_width(w);
+            self.surface.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
-                self.axis.fit(a, b, 0.05);
+                self.surface.fit(a, b, 0.05);
             }
         }
-        let axis = self.axis;
-        let step = axis.tick_step(90.0, self.format);
-        let ticks = axis.ticks(step);
-        let format = self.format;
+        let axis = self.surface.axis;
+        let format=self.format;
+
         let error = self.schedule.as_ref().err().map(|e| format!("{e:?}"));
         let geo = self.geometry.clone();
         let editable = self.editable;
+        let item_style = self.lock_style;
+        let global_style = self.global_lock_style;
         let locked_ids = &self.locked;
-        let ids: Vec<u32> = if self.locked.is_empty() {
-            Vec::new()
-        } else {
-            self.tasks.iter().map(|t| t.id).collect()
-        };
+        let ids: Vec<u32> = self.tasks.iter().map(|t| t.id).collect();
         let rows = geo.clone();
         let body = self.body.clone();
         let line = s.border.to_hsla();
@@ -528,19 +547,7 @@ impl Render for GanttView {
                             .relative()
                             .flex_1()
                             .overflow_hidden()
-                            .children(ticks.iter().map(move |tt| {
-                                div()
-                                    .absolute()
-                                    .left(px(axis.x(*tt) as f32))
-                                    .h_full()
-                                    .pl(px(4.))
-                                    .border_l_1()
-                                    .border_color(line)
-                                    .text_size(px(11.))
-                                    .text_color(s.dimmed.to_hsla())
-                                    .whitespace_nowrap()
-                                    .child(label(*tt, format))
-                            })),
+                            .child(self.surface.element(t.clone(), true, f64::from(ROW_H), 0.)),
                     ),
             )
             .when_some(error, |el, e| {
@@ -556,7 +563,9 @@ impl Render for GanttView {
                             .flex_none()
                             .border_r_1()
                             .border_color(line)
-                            .children(rows.rows.iter().map(|(name, sc)| {
+                            .children(rows.rows.iter().enumerate().map(|(i, (name, sc))| {
+                                let id = ids.get(i).copied().unwrap_or(0);
+                                let locked = self.locked.contains(&id);
                                 let crit = sc.is_some_and(|x| x.critical());
                                 div()
                                     .h(px(ROW_H))
@@ -566,6 +575,19 @@ impl Render for GanttView {
                                     .border_b_1()
                                     .border_color(line)
                                     .when(crit, |el| el.text_color(critical.background.to_hsla()))
+                                    .child(
+                                        gpui_kit::component::button::Button::new(("task-lock", i))
+                                            .icon(gpui_kit::component::Icon::new(if locked {
+                                                gpui_kit::assets::IconName::Lock
+                                            } else {
+                                                gpui_kit::assets::IconName::LockOpen
+                                            }))
+                                            .tab_stop(false)
+                                            .tooltip("Toggle task lock")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.set_locked(id, !this.is_locked(id), cx)
+                                            })),
+                                    )
                                     .child(name.clone())
                             })),
                     )
@@ -615,6 +637,7 @@ impl Render for GanttView {
                                 .absolute()
                                 .size_full(),
                             )
+                            .child(self.surface.element(t.clone(), false, 32., 0.))
                             .children(rows.rows.iter().enumerate().map(|(i, (_, sc))| {
                                 let locked = !editable
                                     || ids.get(i).is_some_and(|id| locked_ids.contains(id));
@@ -643,17 +666,8 @@ impl Render for GanttView {
                                         .h(px(ROW_H - 12.0))
                                         .rounded(px(4.))
                                         .border_1()
-                                        .map(|el| {
-                                            // Locked: disabled tokens + dashed outline, not opacity.
-                                            if locked {
-                                                el.bg(off.background.to_hsla())
-                                                    .border_color(off.border.to_hsla())
-                                                    .border_dashed()
-                                            } else {
-                                                el.bg(v.background.to_hsla())
-                                                    .border_color(v.foreground.to_hsla())
-                                            }
-                                        })
+                                        .bg(v.background.to_hsla()).border_color(v.foreground.to_hsla())
+                                        .when(locked,|el|if ids.get(i).is_some_and(|id|locked_ids.contains(id)){item_style.decorate(el,t)}else{global_style.decorate(el,t)})
                                         // Selection: a 2px overlay outline, no layout change.
                                         .when(on, |el| {
                                             el.child(
