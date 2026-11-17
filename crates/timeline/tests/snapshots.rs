@@ -5,8 +5,8 @@ use gpui_kit::{
 use guiraffe_core::{GuiraffeTheme, Scheme, apply};
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 use guiraffe_timeline::{
-    Channel, Curve, CurveView, DopeSheet, GanttView, Interp, Key, Task, TimeFormat, Track,
-    TracksView,
+    BarCurve, BarCurveView, Channel, Curve, CurveView, DopeSheet, GanttView, Interp, Key, Task,
+    TimeFormat, Track, TracksView,
 };
 
 struct Scene {
@@ -14,12 +14,14 @@ struct Scene {
     tracks: Entity<TracksView>,
     dope: Entity<DopeSheet>,
     curve: Entity<CurveView>,
+    bars: Entity<BarCurveView>,
 }
 
 impl Render for Scene {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let cell = |e: gpui_kit::AnyView| div().h(px(180.)).w_full().overflow_hidden().child(e);
         div()
+            .bg(GuiraffeTheme::global(cx).surfaces().border.to_hsla())
             .size_full()
             .flex()
             .flex_col()
@@ -28,6 +30,7 @@ impl Render for Scene {
             .child(cell(self.tracks.clone().into()))
             .child(cell(self.dope.clone().into()))
             .child(cell(self.curve.clone().into()))
+            .child(cell(self.bars.clone().into()))
     }
 }
 
@@ -46,9 +49,11 @@ fn timeline_views_light_and_dark() {
     let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
         .update_from_env();
     for scheme in [Scheme::Light, Scheme::Dark] {
-        let mut s = Snapshotter::new().unwrap_or_else(|e| panic!("{e}"));
+        let mut s = Snapshotter::new()
+            .unwrap_or_else(|e| panic!("{e}"))
+            .with_setup(gpui_kit::component::init);
         let img = s
-            .render(size(px(720.), px(740.)), move |_, cx| {
+            .render(size(px(900.), px(920.)), move |_, cx| {
                 apply(
                     GuiraffeTheme {
                         scheme,
@@ -66,6 +71,7 @@ fn timeline_views_light_and_dark() {
                     TimeFormat::Days,
                     cx,
                 );
+                gantt.update(cx, |v, cx| v.set_locked(4, true, cx));
                 let mut a = Track::default();
                 a.insert(0.5, 2.0);
                 a.insert(3.0, 1.5);
@@ -78,25 +84,62 @@ fn timeline_views_light_and_dark() {
                     cx,
                 );
                 let dope = DopeSheet::new(
-                    vec![
-                        Channel::new("position.x", vec![0.0, 0.5, 1.2]),
-                        Channel::new("opacity", vec![0.2, 1.0, 1.8]),
-                    ],
+                    vec![Channel::group(
+                        "Object summary",
+                        vec![
+                            Channel::with_keyframes(
+                                "position.x",
+                                vec![
+                                    Key::new(0., 0., Interp::Constant),
+                                    Key::new(0.5, 0., Interp::Bezier),
+                                    Key::new(1.2, 1., Interp::Linear),
+                                ],
+                            ),
+                            Channel::new("opacity", vec![0.2, 1.0, 1.8]),
+                        ],
+                    )],
                     TimeFormat::Frames(24.0),
                     2.0,
                     cx,
                 );
+                dope.update(cx, |v, _| {
+                    v.press(1, v.axis().x(0.5));
+                    v.release();
+                });
                 let mut c = Curve::default();
-                c.set(Key::new(0.0, 0.0, Interp::Bezier));
+                let mut key = Key::new(0.0, 0.0, Interp::Bezier);
+                key.out_handle = (0.4, 0.6);
+                c.set(key);
                 c.set(Key::new(1.0, 1.0, Interp::Linear));
                 c.set(Key::new(2.0, 0.3, Interp::Constant));
                 c.set(Key::new(3.0, 0.8, Interp::Linear));
                 let curve = CurveView::new(c, 0.0, 3.0, -0.2, 1.2, cx);
+                curve.update(cx, |v, cx| {
+                    v.select_key(0, 0, cx);
+                    let mut secondary = Curve::default();
+                    secondary.set(Key::new(0., 0.8, Interp::Linear));
+                    secondary.set(Key::new(3., 0.2, Interp::Linear));
+                    v.add_curve(
+                        guiraffe_timeline::CurveSeries::new(
+                            "Other",
+                            secondary,
+                            guiraffe_core::ColorName::Orange,
+                        ),
+                        cx,
+                    );
+                });
+                let mut bar_model = BarCurve::new(32, -1., 1.);
+                bar_model.bipolar = true;
+                bar_model.set_steps(Some(16));
+                bar_model.draw((0., -0.8), (16., 0.8));
+                bar_model.draw((16., 0.8), (31., -0.4));
+                let bars = BarCurveView::new(bar_model, cx);
                 cx.new(|_| Scene {
                     gantt,
                     tracks,
                     dope,
                     curve,
+                    bars,
                 })
             })
             .unwrap_or_else(|e| panic!("{e:#}"));

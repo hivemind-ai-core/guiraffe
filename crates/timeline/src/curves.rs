@@ -44,7 +44,13 @@ impl Curve {
 
     /// Insert or replace the key at `key.t`. Returns its index.
     pub fn set(&mut self, key: Key) -> Option<usize> {
-        if !(key.t.is_finite() && key.v.is_finite()) {
+        if !(key.t.is_finite()
+            && key.v.is_finite()
+            && key.in_handle.0.is_finite()
+            && key.in_handle.1.is_finite()
+            && key.out_handle.0.is_finite()
+            && key.out_handle.1.is_finite())
+        {
             return None;
         }
         let i = self.keys.partition_point(|k| k.t < key.t);
@@ -80,6 +86,159 @@ impl Curve {
         (k.t, k.v) != before
     }
 
+    pub fn remove(&mut self, index: usize) -> bool {
+        if index >= self.keys.len() {
+            false
+        } else {
+            self.keys.remove(index);
+            true
+        }
+    }
+    pub fn set_interpolation(&mut self, index: usize, interp: Interp) -> bool {
+        let Some(key) = self.keys.get_mut(index) else {
+            return false;
+        };
+        if key.interp == interp {
+            return false;
+        }
+        key.interp = interp;
+        true
+    }
+    pub fn set_tangent(
+        &mut self,
+        index: usize,
+        incoming: bool,
+        handle: (f64, f64),
+        mode: TangentMode,
+    ) -> bool {
+        self.set_tangent_scaled(index, incoming, handle, mode, (1., 1.))
+    }
+    /// Aligned mode preserves the opposite handle's length in the supplied metric
+    /// (pixels per time/value unit for a native editor).
+    pub fn set_tangent_scaled(
+        &mut self,
+        index: usize,
+        incoming: bool,
+        handle: (f64, f64),
+        mode: TangentMode,
+        metric: (f64, f64),
+    ) -> bool {
+        if !metric.0.is_finite() || !metric.1.is_finite() || metric.0 <= 0. || metric.1 <= 0. {
+            return false;
+        }
+        if !handle.0.is_finite() || !handle.1.is_finite() {
+            return false;
+        }
+        let Some(key) = self.keys.get_mut(index) else {
+            return false;
+        };
+        let old = *key;
+        let mut handle = (
+            if incoming {
+                handle.0.min(0.)
+            } else {
+                handle.0.max(0.)
+            },
+            handle.1,
+        );
+        if mode == TangentMode::Flat {
+            handle.1 = 0.;
+        }
+        let opposite = if incoming {
+            key.out_handle
+        } else {
+            key.in_handle
+        };
+        let other = match mode {
+            TangentMode::Mirrored => (-handle.0, -handle.1),
+            TangentMode::Aligned => {
+                let length = (handle.0 * metric.0).hypot(handle.1 * metric.1);
+                if length > 0. {
+                    let scale = (opposite.0 * metric.0).hypot(opposite.1 * metric.1) / length;
+                    (-handle.0 * scale, -handle.1 * scale)
+                } else {
+                    opposite
+                }
+            }
+            TangentMode::Flat => (opposite.0, 0.),
+            TangentMode::Free => opposite,
+        };
+        if incoming {
+            key.in_handle = handle;
+            key.out_handle = other;
+        } else {
+            key.out_handle = handle;
+            key.in_handle = other;
+        }
+        *key != old
+    }
+    /// Insert a key sampled from the existing curve. Cubic segments split using
+    /// de Casteljau, preserving their shape; constant/linear retain their mode.
+    pub fn insert_at(&mut self, t: f64) -> Option<usize> {
+        if !t.is_finite() {
+            return None;
+        }
+        let index = self.keys.partition_point(|k| k.t < t);
+        if self.keys.get(index).is_some_and(|k| k.t == t) {
+            return Some(index);
+        }
+        let v = self.eval(t);
+        if index == 0 || index == self.keys.len() {
+            return self.set(Key::new(t, v, Interp::Linear));
+        }
+        let (a, b) = (self.keys[index - 1], self.keys[index]);
+        let mut key = Key::new(t, v, a.interp);
+        if a.interp == Interp::Bezier {
+            let span = b.t - a.t;
+            let p = [
+                (a.t, a.v),
+                (a.t + a.out_handle.0.clamp(0., span), a.v + a.out_handle.1),
+                (b.t + b.in_handle.0.clamp(-span, 0.), b.v + b.in_handle.1),
+                (b.t, b.v),
+            ];
+            let lerp = |a: (f64, f64), b: (f64, f64), u: f64| {
+                (a.0 + (b.0 - a.0) * u, a.1 + (b.1 - a.1) * u)
+            };
+            let split = |u: f64| {
+                let q = [
+                    lerp(p[0], p[1], u),
+                    lerp(p[1], p[2], u),
+                    lerp(p[2], p[3], u),
+                ];
+                let r = [lerp(q[0], q[1], u), lerp(q[1], q[2], u)];
+                (q, r, lerp(r[0], r[1], u))
+            };
+            let (mut lo, mut hi) = (0., 1.);
+            for _ in 0..60 {
+                let mid = (lo + hi) / 2.;
+                if split(mid).2.0 < t {
+                    lo = mid
+                } else {
+                    hi = mid
+                }
+            }
+            let (q, r, centre) = split((lo + hi) / 2.);
+            key.v = centre.1;
+            key.in_handle = (r[0].0 - t, r[0].1 - key.v);
+            key.out_handle = (r[1].0 - t, r[1].1 - key.v);
+            self.keys[index - 1].out_handle = (q[0].0 - a.t, q[0].1 - a.v);
+            self.keys[index].in_handle = (q[2].0 - b.t, q[2].1 - b.v);
+        }
+        self.keys.insert(index, key);
+        Some(index)
+    }
+    pub fn split_segment(&mut self, index: usize, t: f64) -> Option<usize> {
+        let a = self.keys.get(index)?;
+        let b = self.keys.get(index.checked_add(1)?)?;
+        if t <= a.t || t >= b.t {
+            return None;
+        }
+        self.insert_at(t)
+    }
+    /// Remove a segment's end key, joining its neighbours with the preceding mode.
+    pub fn remove_segment(&mut self, index: usize) -> bool {
+        self.remove(index.saturating_add(1))
+    }
     /// Value at time `t` (held before the first and after the last key; 0 if empty).
     pub fn eval(&self, t: f64) -> f64 {
         let (Some(first), Some(last)) = (self.keys.first(), self.keys.last()) else {
@@ -206,5 +365,58 @@ mod review_regressions {
         c.set(Key::new(0.0, 2.0, Interp::Linear));
         c.set(Key::new(1.0, 3.0, Interp::Linear));
         assert_eq!(c.eval(f64::NAN), 2.0);
+    }
+}
+
+/// How moving one tangent influences its opposite handle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TangentMode {
+    #[default]
+    Free,
+    Aligned,
+    Mirrored,
+    Flat,
+}
+#[cfg(test)]
+mod editing_tests {
+    use super::*;
+    #[test]
+    fn splitting_preserves_a_cubic_and_modes_are_editable() {
+        let mut c = Curve::default();
+        let mut a = Key::new(0., 0., Interp::Bezier);
+        a.out_handle = (0.5, 1.);
+        let mut b = Key::new(1., 1., Interp::Linear);
+        b.in_handle = (-0.2, -0.8);
+        c.set(a);
+        c.set(b);
+        let before: Vec<_> = (0..100).map(|i| c.eval(i as f64 / 100.)).collect();
+        assert_eq!(c.split_segment(0, 0.37), Some(1));
+        for (i, v) in before.into_iter().enumerate() {
+            assert!((c.eval(i as f64 / 100.) - v).abs() < 1e-9);
+        }
+        assert!(c.set_tangent(1, false, (0.1, 0.2), TangentMode::Mirrored));
+        assert_eq!(c.keys()[1].in_handle, (-0.1, -0.2));
+        assert!(c.set_interpolation(1, Interp::Constant));
+        assert!(c.remove_segment(0));
+        assert!(!c.remove(99));
+        assert_eq!(c.split_segment(usize::MAX, 0.5), None);
+    }
+}
+
+#[cfg(test)]
+mod screen_tangent_tests {
+    use super::*;
+    #[test]
+    fn aligned_mode_preserves_screen_length_under_anisotropic_axes() {
+        let mut c = Curve::default();
+        let mut key = Key::new(0., 0., Interp::Bezier);
+        key.in_handle = (-1., -1.);
+        c.set(key);
+        let metric: (f64, f64) = (100., 10.);
+        let old = metric.0.hypot(metric.1);
+        assert!(c.set_tangent_scaled(0, false, (0.2, 2.), TangentMode::Aligned, metric));
+        let k = c.keys()[0];
+        assert!(((k.in_handle.0 * metric.0).hypot(k.in_handle.1 * metric.1) - old).abs() < 1e-10);
+        assert!((k.in_handle.0 * k.out_handle.1 - k.in_handle.1 * k.out_handle.0).abs() < 1e-10);
     }
 }
