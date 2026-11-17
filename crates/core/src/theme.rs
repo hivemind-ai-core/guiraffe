@@ -216,7 +216,6 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
             t.progress_bar = p;
             t.slider_bar = p;
             t.slider_thumb = p;
-            t.switch_thumb = k.background.to_hsla();
             t.ring = p;
             t.caret = p;
             t.link = p;

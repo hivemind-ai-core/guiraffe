@@ -206,11 +206,11 @@ impl Render for Showcase {
                                 el.child(Title::new(e.name).order(2))
                                     .child(Text::new(e.summary).dimmed(true))
                                     .child(
-                                        Text::new(format!(
-                                            "guiraffe-{} · {}",
-                                            e.krate,
-                                            e.covers.join(", ")
-                                        ))
+                                        Text::new(match e.krate {
+                                            "kit" => "gpui-kit · GPUI Controls, themed by GUIraffe".to_string(),
+                                            "charts" => "gpui-kit · component::chart".to_string(),
+                                            k => format!("guiraffe-{} · {}", k, e.covers.join(", ")),
+                                        })
                                         .size(Size::Xs)
                                         .dimmed(true),
                                     )

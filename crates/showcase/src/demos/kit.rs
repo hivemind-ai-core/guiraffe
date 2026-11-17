@@ -837,15 +837,17 @@ fn avatars(_: &mut Window, cx: &mut App) -> AnyView {
                 ),
                 example(
                     "Group, limited to 3",
-                    AvatarGroup::new()
-                        .limit(3)
-                        .ellipsis()
-                        .children(people.map(|p| Avatar::new().name(p))),
+                    div().flex().child(
+                        AvatarGroup::new()
+                            .limit(3)
+                            .ellipsis()
+                            .children(people.map(|p| Avatar::new().name(p))),
+                    ),
                 ),
                 example(
                     "Keyboard shortcuts",
                     row().children(
-                        ["cmd-k", "ctrl-shift-p", "escape", "cmd-enter"]
+                        ["ctrl-k", "ctrl-shift-p", "escape", "alt-enter"]
                             .into_iter()
                             .filter_map(|k| Keystroke::parse(k).ok())
                             .map(Kbd::new),
