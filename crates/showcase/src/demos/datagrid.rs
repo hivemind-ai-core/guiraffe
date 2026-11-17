@@ -48,7 +48,7 @@ fn cell(row: usize, col: usize) -> CellRef<'static> {
         1 => CellRef::Text(CITIES[h % CITIES.len()]),
         2 => CellRef::Text(STATUS[(h >> 3) % STATUS.len()]),
         3 => CellRef::Number(((h >> 5) % 100_000) as f64 / 100.),
-        4 => CellRef::Bool(h % 3 == 0),
+        4 => CellRef::Bool(h.is_multiple_of(3)),
         _ => CellRef::Int(((h >> 7) % 10_000) as i64),
     }
 }
