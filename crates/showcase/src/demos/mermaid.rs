@@ -1,10 +1,12 @@
 //! guiraffe-mermaid: native Mermaid diagrams with pan, zoom and fit.
 
+use gpui_kit::component::{Sizable, button::Button};
 use gpui_kit::{
     AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
     div, px,
 };
-use guiraffe_core::{GuiraffeTheme, Scheme};
+use guiraffe_components::Text;
+use guiraffe_core::{GuiraffeTheme, Scheme, Size};
 use guiraffe_mermaid::{MermaidView, MermaidViewState};
 
 use super::{column, example};
@@ -76,7 +78,33 @@ impl Render for MermaidDemo {
                 state.update(cx, |s, cx| s.set_source(source.into(), dark, cx));
             }
         }
+        type ZoomFn = fn(&mut MermaidViewState, &mut Context<MermaidViewState>);
+        let zoom = |id: &'static str, label: &'static str, f: ZoomFn| {
+            let state = self.flow.clone();
+            Button::new(id)
+                .label(label)
+                .small()
+                .on_click(move |_, _, cx| state.update(cx, f))
+        };
+        let flow = self.flow.read(cx);
+        let caption = format!(
+            "zoom {:.0}% · status {:?}",
+            flow.viewport().zoom() * 100.,
+            flow.status()
+        );
         column([
+            example(
+                "Zoom controls: zoom_in / zoom_out / fit / reset_zoom",
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(zoom("mm-in", "Zoom in", |s, cx| s.zoom_in(cx)))
+                    .child(zoom("mm-out", "Zoom out", |s, cx| s.zoom_out(cx)))
+                    .child(zoom("mm-fit", "Fit", |s, cx| s.fit(cx)))
+                    .child(zoom("mm-reset", "100%", |s, cx| s.reset_zoom(cx)))
+                    .child(Text::new(caption).size(Size::Sm).dimmed(true)),
+            ),
             example(
                 "Flowchart: release pipeline",
                 div()

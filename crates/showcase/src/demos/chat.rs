@@ -2,9 +2,10 @@
 
 use std::time::Duration;
 
+use gpui_kit::component::{Sizable, button::Button};
 use gpui_kit::{
-    AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, div, px,
+    AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString,
+    Styled, Subscription, Window, div, px,
 };
 use guiraffe_chat::{
     Attachment, Chat, ChatEvent, ChatProps, ChatState, Message, MessageId, Role, ToolCall,
@@ -13,6 +14,7 @@ use guiraffe_chat::{
 
 use super::{column, example};
 use crate::catalog::Entry;
+use crate::events::EventLog;
 
 pub fn entries() -> Vec<Entry> {
     vec![Entry {
@@ -28,7 +30,24 @@ const REPLY: &str = "Done. I traced the slow frame to the **row measurement** pa
 
 struct ChatDemo {
     chat: Entity<ChatState>,
+    log: Entity<EventLog>,
     _events: Subscription,
+}
+
+fn describe(e: &ChatEvent) -> SharedString {
+    match e {
+        ChatEvent::Submitted {
+            id,
+            text,
+            attachments,
+        } => format!(
+            "Submitted {id:?} “{}” +{} file(s)",
+            text.chars().take(32).collect::<String>(),
+            attachments.len()
+        )
+        .into(),
+        other => format!("{other:?}").into(),
+    }
 }
 
 fn tool(status: ToolStatus) -> ToolCall {
@@ -147,8 +166,11 @@ fn chat(window: &mut Window, cx: &mut App) -> AnyView {
             }),
             _ => {}
         });
+        let log = EventLog::new(cx);
+        EventLog::watch_with(&log, &chat, describe, cx);
         ChatDemo {
             chat,
+            log,
             _events: events,
         }
     })
@@ -157,12 +179,48 @@ fn chat(window: &mut Window, cx: &mut App) -> AnyView {
 
 impl Render for ChatDemo {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        column([example(
-            "Conversation with a tool call in flight",
+        type Action = fn(&mut ChatState, &mut Window, &mut Context<ChatState>);
+        let action = |id: &'static str, label: &'static str, f: Action| {
+            let chat = self.chat.clone();
+            Button::new(id)
+                .label(label)
+                .small()
+                .on_click(move |_, window, cx| chat.update(cx, |c, cx| f(c, window, cx)))
+        };
+        column([
+            example(
+                "Conversation with a tool call in flight",
+                div()
+                    .h(px(380.))
+                    .overflow_hidden()
+                    .child(Chat::new(&self.chat)),
+            ),
             div()
-                .h(px(400.))
-                .overflow_hidden()
-                .child(Chat::new(&self.chat)),
-        )])
+                .flex()
+                .gap(px(24.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .content_start()
+                        .gap(px(8.))
+                        .w(px(360.))
+                        .child(action("chat-draft", "Prefill draft", |c, w, cx| {
+                            c.set_draft("Why is the first frame slow?", w, cx)
+                        }))
+                        .child(action("chat-stop", "Stop streaming", |c, _, cx| c.stop(cx)))
+                        .child(action("chat-edit", "Edit last message", |c, w, cx| {
+                            c.edit_last_user(w, cx)
+                        }))
+                        .child(action("chat-cancel", "Cancel edit", |c, w, cx| {
+                            c.cancel_edit(w, cx)
+                        }))
+                        .child(action("chat-jump", "Jump to latest", |c, _, cx| {
+                            c.jump_to_latest(cx)
+                        })),
+                )
+                .child(div().flex_1().child(self.log.clone()))
+                .into_any_element(),
+        ])
     }
 }

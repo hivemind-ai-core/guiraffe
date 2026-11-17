@@ -1,8 +1,7 @@
 //! guiraffe-inputs: chips, tags, range slider, password strength, dropzone.
 
 use gpui_kit::{
-    AnyElement, AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, px,
+    AnyElement, AnyView, App, Entity, IntoElement, ParentElement, Styled, Window, div, px,
 };
 use guiraffe_components::Text;
 use guiraffe_core::{ColorName, Size};
@@ -10,6 +9,8 @@ use guiraffe_inputs::*;
 
 use super::{column, example};
 use crate::catalog::{Entry, stateless};
+use crate::events::EventLog;
+use crate::knobs::{Applied, Knob, playground_with};
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -51,99 +52,168 @@ pub fn entries() -> Vec<Entry> {
     ]
 }
 
-/// A live caption under a stateful widget, updated from its events.
-struct Live<V: 'static> {
-    widget: Entity<V>,
-    label: &'static str,
-    caption: SharedString,
-    _sub: Option<Subscription>,
+/// A stateful widget under knobs, with its event log beside it.
+fn widget_and_log(widget: impl IntoElement, log: &Entity<EventLog>, width: f32) -> AnyElement {
+    div()
+        .flex()
+        .gap(px(Size::Xl.spacing()))
+        .child(div().w(px(width)).child(widget))
+        .child(div().flex_1().child(log.clone()))
+        .into_any_element()
 }
 
-impl<V: Render> Render for Live<V> {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        column([example(
-            self.label,
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(Size::Sm.spacing()))
-                .child(self.widget.clone())
-                .child(Text::new(self.caption.clone()).size(Size::Sm).dimmed(true)),
-        )])
-    }
-}
-
-fn chips(_: &mut Window, cx: &mut App) -> AnyView {
-    let multi = ChipGroup::new(["Rust", "TypeScript", "Go", "Zig", "Swift"], true, cx);
-    multi.update(cx, |c, cx| {
-        c.toggle(0, cx);
-        c.toggle(3, cx);
-    });
-    let single = ChipGroup::new(["Daily", "Weekly", "Monthly"], false, cx);
-    single.update(cx, |c, cx| {
-        c.toggle(1, cx);
-        c.set_color(ColorName::Teal, cx);
-    });
-    cx.new(|_| Chips(multi, single)).into()
-}
-
-struct Chips(Entity<ChipGroup>, Entity<ChipGroup>);
-
-impl Render for Chips {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        column([
-            example("Multiple: languages you use", self.0.clone()),
-            example("Single (teal): digest frequency", self.1.clone()),
-        ])
-    }
+fn chips(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "Live ChipGroup",
+        &[
+            Knob::color(),
+            Knob::toggle("Disabled"),
+            Knob::toggle("Focusable"),
+        ],
+        |_, cx| {
+            let multi = ChipGroup::new(["Rust", "TypeScript", "Go", "Zig", "Swift"], true, cx);
+            multi.update(cx, |c, cx| {
+                c.toggle(0, cx);
+                c.toggle(3, cx);
+            });
+            let single = ChipGroup::new(["Daily", "Weekly", "Monthly"], false, cx);
+            single.update(cx, |c, cx| {
+                c.toggle(1, cx);
+                c.set_color(ColorName::Teal, cx);
+            });
+            let log = EventLog::new(cx);
+            EventLog::watch_with(
+                &log,
+                &multi,
+                |e: &ChipEvent| {
+                    let ChipEvent::Changed(v) = e;
+                    format!("languages Changed({v:?})").into()
+                },
+                cx,
+            );
+            EventLog::watch_with(
+                &log,
+                &single,
+                |e: &ChipEvent| {
+                    let ChipEvent::Changed(v) = e;
+                    format!("frequency Changed({v:?})").into()
+                },
+                cx,
+            );
+            (multi, single, log, Applied::default())
+        },
+        |(multi, single, log, applied), v, _, cx| {
+            if applied.changed(v) {
+                let (color, disabled, focusable) =
+                    (v.color(0).unwrap_or(ColorName::Blue), v.on(1), v.on(2));
+                multi.update(cx, |c, cx| {
+                    c.set_color(color, cx);
+                    c.set_disabled(disabled, cx);
+                    c.set_focusable(Some(focusable), cx);
+                });
+            }
+            column([
+                widget_and_log(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(Size::Sm.spacing()))
+                        .child(Text::new("Multiple: languages you use").size(Size::Sm))
+                        .child(multi.clone()),
+                    log,
+                    420.,
+                ),
+                example("Single (teal, fixed): digest frequency", single.clone()),
+            ])
+        },
+        window,
+        cx,
+    )
 }
 
 fn tags(window: &mut Window, cx: &mut App) -> AnyView {
-    let rules = TagRules {
-        max_tags: Some(6),
-        split_chars: vec![',', ' '],
-        ..TagRules::default()
-    };
-    let tags = TagsInput::new(rules, "Add a topic…", window, cx);
-    tags.update(cx, |t, cx| {
-        for tag in ["gpui", "rust", "design-systems"] {
-            t.add(tag, cx);
-        }
-    });
-    cx.new(|cx| {
-        let sub = cx.subscribe(&tags, |this: &mut Live<TagsInput>, _, e, cx| {
-            this.caption = match e {
-                TagsEvent::Changed(t) => format!("{} of 6 tags", t.len()).into(),
-                TagsEvent::Rejected(tag, why) => format!("rejected “{tag}”: {why:?}").into(),
+    playground_with(
+        "Live TagsInput (max 6, comma or space commits, no duplicates)",
+        &[],
+        |window, cx| {
+            let rules = TagRules {
+                max_tags: Some(6),
+                split_chars: vec![',', ' '],
+                ..TagRules::default()
             };
-            cx.notify();
-        });
-        Live {
-            widget: tags,
-            label: "Topics (max 6, comma or space commits)",
-            caption: "3 of 6 tags".into(),
-            _sub: Some(sub),
-        }
-    })
-    .into()
+            let tags = TagsInput::new(rules, "Add a topic…", window, cx);
+            tags.update(cx, |t, cx| {
+                for tag in ["gpui", "rust", "design-systems"] {
+                    t.add(tag, cx);
+                }
+            });
+            let empty = TagsInput::new(
+                TagRules::default(),
+                "Placeholder: type and press Enter",
+                window,
+                cx,
+            );
+            let log = EventLog::new(cx);
+            EventLog::watch_with(
+                &log,
+                &tags,
+                |e: &TagsEvent| match e {
+                    TagsEvent::Changed(t) => format!("Changed: {} of 6", t.len()).into(),
+                    TagsEvent::Rejected(tag, why) => format!("Rejected “{tag}”: {why:?}").into(),
+                },
+                cx,
+            );
+            (tags, empty, log)
+        },
+        |(tags, empty, log), _, _, _| {
+            column([
+                widget_and_log(tags.clone(), log, 420.),
+                example(
+                    "Empty, showing its placeholder",
+                    div().w(px(420.)).child(empty.clone()),
+                ),
+            ])
+        },
+        window,
+        cx,
+    )
 }
 
-fn range(_: &mut Window, cx: &mut App) -> AnyView {
-    let slider = RangeSlider::new(Range2::new(0.0, 500.0, 10.0, 120.0, 340.0), cx);
-    cx.new(|cx| {
-        let sub = cx.subscribe(&slider, |this: &mut Live<RangeSlider>, s, _, cx| {
-            let (lo, hi) = s.read(cx).values();
-            this.caption = format!("${lo:.0} – ${hi:.0}").into();
-            cx.notify();
-        });
-        Live {
-            widget: slider,
-            label: "Price range (step $10)",
-            caption: "$120 – $340".into(),
-            _sub: Some(sub),
-        }
-    })
-    .into()
+fn range(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "Live RangeSlider (step $10; drag or arrow keys)",
+        &[
+            Knob::toggle("Disabled"),
+            Knob::toggle("Focusable").default(1),
+        ],
+        |_, cx| {
+            let slider = RangeSlider::new(Range2::new(0.0, 500.0, 10.0, 120.0, 340.0), cx);
+            slider.update(cx, |s, cx| s.set_label("Price range", cx));
+            let log = EventLog::new(cx);
+            EventLog::watch_with(
+                &log,
+                &slider,
+                |e: &RangeEvent| {
+                    let RangeEvent::Changed(lo, hi) = e;
+                    format!("Changed(${lo:.0}, ${hi:.0})").into()
+                },
+                cx,
+            );
+            (slider, log, Applied::default())
+        },
+        |(slider, log, applied), v, _, cx| {
+            if applied.changed(v) {
+                let (disabled, focusable) = (v.on(0), v.on(1));
+                slider.update(cx, |s, cx| {
+                    s.set_disabled(disabled, cx);
+                    s.set_focusable(Some(focusable), cx);
+                });
+            }
+            widget_and_log(slider.clone(), log, 420.)
+        },
+        window,
+        cx,
+    )
 }
 
 fn strength(_: &mut Window, cx: &mut App) -> AnyView {
@@ -168,29 +238,49 @@ fn strength(_: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
-fn dropzone(_: &mut Window, cx: &mut App) -> AnyView {
-    let zone = Dropzone::new(vec!["image/*", ".pdf"], "Drop screenshots or PDFs here", cx);
-    cx.new(|cx| {
-        let sub = cx.subscribe(&zone, |this: &mut Live<Dropzone>, _, e, cx| {
-            let names = |p: &[std::path::PathBuf]| {
-                p.iter()
-                    .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_owned))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-            this.caption = match e {
-                DropEvent::Accepted(p) => format!("accepted: {}", names(p)).into(),
-                DropEvent::Rejected(p) => format!("rejected: {}", names(p)).into(),
-                DropEvent::BrowseRequested => "browse requested (open a file picker)".into(),
-            };
-            cx.notify();
-        });
-        Live {
-            widget: zone,
-            label: "Accepts image/* and .pdf",
-            caption: "Nothing dropped yet".into(),
-            _sub: Some(sub),
-        }
-    })
-    .into()
+fn dropzone(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "Live Dropzone (accepts image/* and .pdf)",
+        &[
+            Knob::toggle("Disabled"),
+            Knob::toggle("Focusable").default(1),
+        ],
+        |_, cx| {
+            let zone = Dropzone::new(vec!["image/*", ".pdf"], "Drop screenshots or PDFs here", cx);
+            let log = EventLog::new(cx);
+            EventLog::watch_with(
+                &log,
+                &zone,
+                |e: &DropEvent| {
+                    let names = |p: &[std::path::PathBuf]| {
+                        p.iter()
+                            .filter_map(|p| {
+                                p.file_name().and_then(|n| n.to_str()).map(str::to_owned)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    match e {
+                        DropEvent::Accepted(p) => format!("Accepted: {}", names(p)).into(),
+                        DropEvent::Rejected(p) => format!("Rejected: {}", names(p)).into(),
+                        DropEvent::BrowseRequested => "BrowseRequested (open a file picker)".into(),
+                    }
+                },
+                cx,
+            );
+            (zone, log, Applied::default())
+        },
+        |(zone, log, applied), v, _, cx| {
+            if applied.changed(v) {
+                let (disabled, focusable) = (v.on(0), v.on(1));
+                zone.update(cx, |z, cx| {
+                    z.set_disabled(disabled, cx);
+                    z.set_focusable(Some(focusable), cx);
+                });
+            }
+            widget_and_log(zone.clone(), log, 420.)
+        },
+        window,
+        cx,
+    )
 }

@@ -5,6 +5,7 @@
 
 pub mod catalog;
 pub mod demos;
+pub mod events;
 pub mod knobs;
 pub mod shell;
 

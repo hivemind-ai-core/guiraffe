@@ -1,12 +1,12 @@
 //! guiraffe-markdown: streaming GFM viewer with highlighted code and embedded diagrams.
 
-use gpui_kit::{
-    AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Window, div,
-};
+use gpui_kit::{AnyView, App, AppContext, IntoElement, ParentElement, Styled, Window, div, px};
 use guiraffe_markdown::{MarkdownState, MarkdownView, document::apply_task_toggle};
 
 use super::{column, example};
 use crate::catalog::Entry;
+use crate::events::EventLog;
+use crate::knobs::{Knob, playground_with};
 
 pub fn entries() -> Vec<Entry> {
     vec![Entry {
@@ -53,29 +53,46 @@ flowchart LR
 > Settled blocks are never laid out twice.
 ";
 
-struct MarkdownDemo(Entity<MarkdownState>);
-
-fn markdown(_: &mut Window, cx: &mut App) -> AnyView {
-    let state = cx.new(|cx| MarkdownState::new(DOC, cx));
-    cx.new(|_| MarkdownDemo(state)).into()
-}
-
-impl Render for MarkdownDemo {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let state = self.0.clone();
-        column([example(
-            "Release notes (click a task to toggle it)",
-            div().child(
-                MarkdownView::new("showcase-markdown")
-                    .state(&self.0)
-                    .scrollable(false)
-                    .on_task_toggle(move |checked, marker, _, cx| {
-                        state.update(cx, |s, cx| {
-                            let next = apply_task_toggle(s.source(), marker, checked);
-                            s.set_source(next, cx);
-                        });
-                    }),
-            ),
-        )])
-    }
+fn markdown(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "Release notes (click a task to toggle it, click a link)",
+        &[
+            Knob::toggle("Selectable").default(1),
+            Knob::toggle("Code copy").default(1),
+            Knob::toggle("Scrollable"),
+        ],
+        |_, cx| (cx.new(|cx| MarkdownState::new(DOC, cx)), EventLog::new(cx)),
+        |(state, log), v, _, _| {
+            let (toggle_state, toggle_log, link_log) = (state.clone(), log.clone(), log.clone());
+            let view = MarkdownView::new("showcase-markdown")
+                .state(state)
+                .selectable(v.on(0))
+                .code_copy(v.on(1))
+                .scrollable(v.on(2))
+                .on_link_click(move |url, _, cx| {
+                    EventLog::log(&link_log, format!("on_link_click {url}"), cx)
+                })
+                .on_task_toggle(move |checked, marker, _, cx| {
+                    EventLog::log(
+                        &toggle_log,
+                        format!("on_task_toggle checked={checked} at {marker:?}"),
+                        cx,
+                    );
+                    toggle_state.update(cx, |s, cx| {
+                        let next = apply_task_toggle(s.source(), marker, checked);
+                        s.set_source(next, cx);
+                    });
+                });
+            column([
+                example("Events", log.clone()),
+                if v.on(2) {
+                    div().h(px(360.)).child(view).into_any_element()
+                } else {
+                    div().child(view).into_any_element()
+                },
+            ])
+        },
+        window,
+        cx,
+    )
 }

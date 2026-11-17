@@ -126,6 +126,23 @@ impl KnobValues {
     }
 }
 
+/// Remembers the knob values last pushed into stateful widgets, so a preview applies
+/// setters (which notify) only when a knob actually changed, not on every render.
+#[derive(Default)]
+pub struct Applied(std::cell::RefCell<Option<KnobValues>>);
+
+impl Applied {
+    /// True (and records `v`) when `v` differs from the last applied values.
+    pub fn changed(&self, v: &KnobValues) -> bool {
+        let mut last = self.0.borrow_mut();
+        if last.as_ref() == Some(v) {
+            return false;
+        }
+        *last = Some(v.clone());
+        true
+    }
+}
+
 pub type PreviewFn = fn(&KnobValues, &mut Window, &mut App) -> AnyElement;
 
 /// Renders a stateful preview. `cx` is the preview's own context, so event handlers can
@@ -254,6 +271,9 @@ pub fn playground(
 
 impl Render for Playground {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        if self.knobs.is_empty() {
+            return column([example(self.title, self.preview.clone())]);
+        }
         column([
             example(
                 "Options",
@@ -314,6 +334,14 @@ mod tests {
         assert_eq!(v.color(0), Some(ColorName::Orange));
         assert_eq!(KnobValues(vec![0]).color(0), None, "primary");
         assert_eq!(v.color(1), Some(ColorName::Teal));
+    }
+
+    #[test]
+    fn applied_tracks_changes() {
+        let a = Applied::default();
+        assert!(a.changed(&KnobValues(vec![1])));
+        assert!(!a.changed(&KnobValues(vec![1])));
+        assert!(a.changed(&KnobValues(vec![2])));
     }
 
     #[test]
