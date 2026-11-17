@@ -3,7 +3,7 @@ import ReactMarkdown, { type Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeShikiFromHighlighter from '@shikijs/rehype/core';
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
-import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
+import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 
 // One highlighter for the whole app, created on first use (Document or Chat).
 // Fine-grained bundle: only the three languages and two themes the content uses.
@@ -16,7 +16,7 @@ export function getHighlighter(): Promise<HighlighterCore> {
       import('shiki/langs/typescript.mjs'),
       import('shiki/langs/python.mjs'),
     ],
-    engine: createJavaScriptRegexEngine(),
+    engine: createOnigurumaEngine(import('shiki/wasm')),
   });
   return highlighterPromise;
 }

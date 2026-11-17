@@ -26,7 +26,7 @@
       "target": "dir"
     }
   },
-  "dependencies": {
+  "devDependencies": {
     "@mantine/core": "^9.8.1",
     "@mantine/form": "^9.8.1",
     "@mantine/hooks": "^9.8.1",
@@ -35,14 +35,6 @@
     "@shikijs/rehype": "^4.6.0",
     "@tanstack/react-table": "^9.3.1",
     "@tanstack/react-virtual": "^3.14.26",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "react-markdown": "^10.1.0",
-    "recharts": "^3.10.1",
-    "remark-gfm": "^4.0.1",
-    "shiki": "^4.6.0"
-  },
-  "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -52,6 +44,12 @@
     "esbuild": "^0.28.2",
     "postcss": "^8.5.33",
     "postcss-preset-mantine": "^1.18.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "recharts": "^3.10.1",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.6.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.8"
   }
