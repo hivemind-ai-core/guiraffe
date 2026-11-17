@@ -331,16 +331,17 @@ impl Render for ChartView {
                 let series = entry.id;
                 let visible = !plot.hidden.contains(&series);
                 let ink = palette[entry.palette as usize % palette.len()].to_hsla();
-                let name = if visible {
-                    entry.label.clone()
+                let swatch = div().size(px(8.)).rounded_full();
+                let swatch = if visible {
+                    swatch.bg(ink)
                 } else {
-                    format!("{} (hidden)", entry.label)
+                    swatch.border_1().border_color(ink)
                 };
                 controls = controls.child(
                     Button::new(("chart-series", entry.palette as usize))
                         .accessibility_id(format!("chart-series-{}", entry.palette))
-                        .label(name)
-                        .child(div().size(px(8.)).rounded_full().bg(ink))
+                        .label(entry.label.clone())
+                        .child(swatch)
                         .toggled(visible)
                         .small()
                         .tab_stop(self.options.keyboard)
@@ -474,9 +475,11 @@ impl Render for PlotInk {
     }
 }
 
+#[derive(PartialEq)]
 struct Hover {
     pos: Position,
     rect: Rect,
+    facet: u32,
     hit: Option<Hit>,
 }
 
@@ -500,63 +503,78 @@ impl Overlay {
         Some(Hover {
             pos,
             rect: panel.rect,
+            facet: panel.facet,
             hit,
         })
     }
 
     fn motion(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        let next = self.locate(event.position);
-        if self.hover.is_some() || next.is_some() {
+        if !self.options.tooltip && !self.options.crosshair && self.anchor.is_none() {
+            return;
+        }
+        let mut next = self.locate(event.position);
+        if self.anchor.is_none()
+            && let Some(hover) = &mut next
+            && let Some(hit) = &hover.hit
+        {
+            hover.pos = hit.point;
+        }
+        if self.hover != next {
             self.hover = next;
             cx.notify();
         }
     }
 
-    fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
-        if self.options.navigation {
-            let state = self.plot.borrow();
-            let pos = state.local(event.position);
-            if let Some(panel) = state
-                .frame
-                .scene
-                .as_ref()
-                .and_then(|scene| scene.panel(pos))
-            {
-                self.anchor = Some((panel.facet, pos.0));
-                cx.notify();
-            }
-        }
+    fn press(&mut self, event: &MouseDownEvent) {
+        let state = self.plot.borrow();
+        let pos = state.local(event.position);
+        self.anchor = state
+            .frame
+            .scene
+            .as_ref()
+            .and_then(|scene| scene.panel(pos))
+            .map(|panel| (panel.facet, pos.0));
     }
 
     fn release(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
-        let anchor = self.anchor.take();
+        let Some(anchor) = self.anchor.take() else {
+            return;
+        };
         let state = self.plot.borrow();
         let pos = state.local(event.position);
         let domain = state.domain;
         let scale = &state.chart.axes[0].scale;
-        let brush = anchor.and_then(|(facet, start)| {
-            let panel = state
-                .frame
-                .scene
-                .as_ref()?
-                .panels
-                .iter()
-                .find(|p| p.facet == facet)?;
-            let end = pos.0.clamp(panel.rect.left, panel.rect.right);
-            if (start - end).abs() < 6. {
-                return None;
-            }
-            Domain::new(
-                scale.invert(domain, panel.rect.fraction(start.min(end))),
-                scale.invert(domain, panel.rect.fraction(start.max(end))),
-            )
-        });
+        let brush = self
+            .options
+            .navigation
+            .then_some(anchor)
+            .and_then(|(facet, start)| {
+                let panel = state
+                    .frame
+                    .scene
+                    .as_ref()?
+                    .panels
+                    .iter()
+                    .find(|p| p.facet == facet)?;
+                let end = pos.0.clamp(panel.rect.left, panel.rect.right);
+                if (start - end).abs() < 6. {
+                    return None;
+                }
+                Domain::new(
+                    scale.invert(domain, panel.rect.fraction(start.min(end))),
+                    scale.invert(domain, panel.rect.fraction(start.max(end))),
+                )
+            });
         drop(state);
         if let Some(domain) = brush {
             let _ = self
                 .owner
                 .update(cx, |view, cx| view.navigate(domain, true, cx));
-        } else if let Some(hit) = self.locate(event.position).and_then(|h| h.hit) {
+        } else if let Some(hit) = self
+            .locate(event.position)
+            .filter(|hover| hover.facet == anchor.0)
+            .and_then(|hover| hover.hit)
+        {
             let _ = self
                 .owner
                 .update(cx, |_, cx| cx.emit(ChartEvent::Selected(hit.id)));
@@ -623,7 +641,7 @@ impl Render for Overlay {
             }))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, event, _, cx| this.press(event, cx)),
+                cx.listener(|this, event, _, _| this.press(event)),
             )
             .on_mouse_up(
                 MouseButton::Left,
@@ -641,7 +659,10 @@ impl Render for Overlay {
         if let Some(hover) = &self.hover {
             let rect = hover.rect;
             let (x, y) = hover.hit.as_ref().map_or(hover.pos, |hit| hit.point);
-            let drag = self.anchor.map(|(_, start)| (start, hover.pos.0));
+            let drag = self
+                .anchor
+                .filter(|(facet, _)| self.options.navigation && *facet == hover.facet)
+                .map(|(_, start)| (start, hover.pos.0));
             let crosshair = self.options.crosshair;
             overlay = overlay.child(
                 canvas(

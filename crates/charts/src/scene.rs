@@ -90,6 +90,7 @@ impl Scene {
     }
 }
 
+#[derive(PartialEq)]
 pub(crate) struct Hit {
     pub id: DatumId,
     pub point: Position,
@@ -116,7 +117,9 @@ impl PreparedChart {
         let cell_height = height / rows as f32;
         let left = 75.;
         let right = if self.has_right_axis { 75. } else { 20. };
-        let top = if count > 1 { 24. } else { 12. };
+        let has_y_title = !self.axes[1].title.is_empty()
+            || (self.has_right_axis && !self.axes[2].title.is_empty());
+        let top = if count > 1 || has_y_title { 30. } else { 12. };
         let bottom = if self.axes[0].title.is_empty() {
             25.
         } else {
@@ -547,7 +550,9 @@ mod tests {
             ))
             .prepare();
         assert!(!model.runs[0].levels.is_empty());
-        let domain = Domain::new(600., 660.).unwrap();
+        let Some(domain) = Domain::new(600., 660.) else {
+            panic!("valid viewport")
+        };
         let scene = model.scene(900., 370., domain, &BTreeSet::new());
         assert_eq!(scene.primitive_count(), 1);
         assert_eq!(scene.vertex_count(), 63);

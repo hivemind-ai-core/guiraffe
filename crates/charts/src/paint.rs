@@ -205,8 +205,8 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
             if !spec.title.is_empty() {
                 let (pos, align) = match axis {
                     0 => (((r.left + r.right) / 2., r.bottom + 23.), Align::Center),
-                    1 => ((r.left - 6., r.top - 14.), Align::Right),
-                    _ => ((r.right + 6., r.top - 14.), Align::Left),
+                    1 => ((r.left - 6., r.top - 26.), Align::Right),
+                    _ => ((r.right + 6., r.top - 26.), Align::Left),
                 };
                 label(
                     window,
@@ -222,7 +222,7 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
             label(
                 window,
                 cx,
-                at(origin, (r.left, r.top - 19.)),
+                at(origin, (r.left, r.top - 26.)),
                 panel.label.as_str(),
                 surfaces.text.to_hsla(),
                 Align::Left,

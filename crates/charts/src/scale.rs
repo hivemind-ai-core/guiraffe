@@ -290,9 +290,9 @@ mod tests {
                 } else {
                     (base, base + span)
                 };
-                let domain = Domain::new(min, max).unwrap();
+                let domain = Domain::new(min, max).ok_or_else(|| TestCaseError::fail("finite test domain"))?;
                 let value = scale.invert(domain, fraction);
-                prop_assert!((scale.project(domain, value).unwrap() - fraction).abs() < 1e-9);
+                prop_assert!((scale.project(domain, value).ok_or_else(|| TestCaseError::fail("invertible test value"))? - fraction).abs() < 1e-9);
                 let ticks = scale.ticks(domain, count);
                 prop_assert!(ticks.windows(2).all(|pair| pair[0].value < pair[1].value));
                 prop_assert!(ticks.iter().all(|tick| domain.contains(tick.value)));
@@ -315,7 +315,10 @@ mod tests {
         assert_eq!(scale.project(domain, 1.), Some(0.75));
         assert_eq!(scale.ticks(domain, 5)[1].label, "B");
         assert!(!scale.accepts(1.5));
-        let domain = Domain::new(1., 1000.).unwrap();
+        let domain = Domain {
+            min: 1.,
+            max: 1000.,
+        };
         assert_eq!(
             Scale::Log
                 .ticks(domain, 8)

@@ -9,6 +9,7 @@ mod scene;
 mod view;
 
 pub use data::*;
+pub use guiraffe_timeline::TimeFormat;
 pub use model::*;
 pub use paint::categorical_palette;
 pub use sample::lttb;

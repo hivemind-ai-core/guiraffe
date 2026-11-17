@@ -129,6 +129,10 @@ fn native_hover_tooltip_selection_and_render_counts(cx: &mut TestAppContext) {
         .view
         .read_with(window, |view, _| view.scene_build_count());
     let unrelated = chart.unrelated_renders.get();
+    let host_before = chart.host_renders.get();
+    let canvas_before = chart
+        .view
+        .read_with(window, |view, _| view.canvas_paint_count());
     let mid = mouse_at(window, 0.5, 0.5);
     window.simulate_mouse_move(mid, None, Default::default());
     window.run_until_parked();
@@ -150,7 +154,23 @@ fn native_hover_tooltip_selection_and_render_counts(cx: &mut TestAppContext) {
         builds
     );
     assert_eq!(chart.unrelated_renders.get(), unrelated);
-    assert!(chart.host_renders.get() >= 1);
+    eprintln!(
+        "hover render counts: host {} → {}, canvas {} → {}, scene {builds} → {builds}",
+        host_before,
+        chart.host_renders.get(),
+        canvas_before,
+        chart
+            .view
+            .read_with(window, |view, _| view.canvas_paint_count())
+    );
+    let stable = chart.host_renders.get();
+    window.simulate_mouse_move(mid + point(px(1.), px(1.)), None, Default::default());
+    window.run_until_parked();
+    assert_eq!(
+        chart.host_renders.get(),
+        stable,
+        "a stable snapped tooltip avoids a new invalidation"
+    );
     window.simulate_click(mid, Default::default());
     window.run_until_parked();
     assert!(
@@ -165,8 +185,8 @@ fn native_hover_tooltip_selection_and_render_counts(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn legend_and_data_table_buttons_are_operable(cx: &mut TestAppContext) {
     let (chart, window) = mount(cx);
-    let legend = window.update(|window, _| window.find_by_label("Revenue").bounds().center());
-    window.simulate_click(legend, Default::default());
+    let legend = window.update(|window, _| window.find_by_label("Revenue").bounds());
+    window.simulate_click(legend.center(), Default::default());
     window.run_until_parked();
     let series = SeriesId::default();
     assert!(
@@ -182,6 +202,24 @@ fn legend_and_data_table_buttons_are_operable(cx: &mut TestAppContext) {
                 series,
                 visible: false
             })
+    );
+    window.update(|window, cx| {
+        assert!(
+            window.focused(cx).is_none(),
+            "legend click keeps keyboard focus clear"
+        );
+        assert_eq!(window.find_by_label("Revenue").bounds(), legend);
+    });
+    window.update(|window, cx| {
+        window.focus_next(cx);
+        window.render_frame(cx);
+        window.press("space", cx);
+    });
+    window.run_until_parked();
+    assert!(
+        chart
+            .view
+            .read_with(window, |view, _| view.series_visible(series))
     );
     let table = window.update(|window, _| window.find_by_label("View data").bounds().center());
     window.simulate_click(table, Default::default());

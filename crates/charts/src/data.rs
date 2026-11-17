@@ -119,10 +119,12 @@ mod tests {
         stream.append(vec![]);
         assert_eq!(stream.len(), 3);
         assert_eq!(snapshot.len(), 2);
-        assert!(std::ptr::eq(
-            stream.row(0).unwrap(),
-            snapshot.row(0).unwrap()
-        ));
+        assert!(
+            stream
+                .row(0)
+                .zip(snapshot.row(0))
+                .is_some_and(|(a, b)| std::ptr::eq(a, b))
+        );
         assert_eq!(stream.row(2).map(String::as_str), Some("third"));
         assert_eq!(snapshot.row(2), None);
     }
