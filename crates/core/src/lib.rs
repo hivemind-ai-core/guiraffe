@@ -39,3 +39,4 @@ pub fn init(cx: &mut gpui_kit::App) {
 
 #[cfg(test)]
 mod gpui_tests;
+pub mod keys;

@@ -11,4 +11,4 @@
    A fresh dependency resolution picks it. GUIraffe's `Cargo.lock` pins 0.1.15, and `guiraffe new` copies that lockfile into
    new apps so they build. Verified: a scaffolded app builds without warnings and launches. Report upstream, and drop the pin when fixed.
 
-- **gpui-fast panics on an invalid key-binding string** (e.g. `"secondary-k"`) via an `unwrap` in binding parsing. Use explicit `ctrl-k` / `cmd-k`. Upstream bug; wrap binding registration so GUIraffe validates and reports instead (TODO).
+- **gpui-fast panics on an invalid key-binding string** (e.g. `"secondary-k"`) via an `unwrap` in binding parsing. Use explicit `ctrl-k` / `cmd-k`. Upstream behaviour (`KeyBinding::new` unwraps and doesn't resolve `secondary-`). **Mitigated:** use `guiraffe_core::keys::{binding, bind_keys}`, which parse for the host OS (`secondary-` → ⌘/Ctrl) and return errors instead of panicking.
