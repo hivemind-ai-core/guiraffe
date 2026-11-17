@@ -44,6 +44,7 @@ expect_used = "warn"
 lto = "thin"
 codegen-units = 16
 debug = 0
+strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
