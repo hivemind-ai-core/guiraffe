@@ -328,33 +328,122 @@ fn a_growing_group_spreads_its_children_over_the_width(cx: &mut TestAppContext) 
     assert_eq!(second.left(), px(200.) - share);
 }
 
-struct GrowingGridHarness;
+struct GrowingGridHarness {
+    grow: bool,
+}
 
 impl Render for GrowingGridHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().w(px(200.)).h(px(200.)).child(
+        div().w(px(240.)).h(px(200.)).child(
             Grid::new()
                 .gutter_px(0.)
-                .grow(true)
-                .child(Col::span(12).child(div().h(px(20.)).debug_selector(|| "first".into())))
-                .child(Col::span(12).child(div().h_full().debug_selector(|| "second".into()))),
+                .grow(self.grow)
+                .child(Col::span(12).child(div().h(px(20.)).debug_selector(|| "full".into())))
+                .child(Col::span(4).child(div().h(px(20.)).debug_selector(|| "a".into())))
+                .child(Col::span(4).child(div().h(px(20.)).debug_selector(|| "b".into()))),
         )
     }
 }
 
 #[gpui_kit::test]
-fn a_growing_grid_fills_the_room_with_its_last_row(cx: &mut TestAppContext) {
-    let cx = harness!(cx, GrowingGridHarness);
+fn a_grid_that_does_not_grow_leaves_its_last_row_short(cx: &mut TestAppContext) {
+    let cx = harness!(cx, GrowingGridHarness { grow: false });
+    let a = cx.debug_bounds("a").expect("a");
+    let b = cx.debug_bounds("b").expect("b");
+    assert_eq!(a.size.width, px(80.));
+    assert_eq!(b.size.width, px(80.));
+}
 
-    let first = cx.debug_bounds("first").expect("the first row");
-    let second = cx.debug_bounds("second").expect("the last row");
+#[gpui_kit::test]
+fn a_growing_grid_spreads_its_last_row_over_the_width(cx: &mut TestAppContext) {
+    let cx = harness!(cx, GrowingGridHarness { grow: true });
+    let full = cx.debug_bounds("full").expect("full");
+    let a = cx.debug_bounds("a").expect("a");
+    let b = cx.debug_bounds("b").expect("b");
+    assert_eq!(full.size.width, px(240.), "a full row stays as it is");
+    assert_eq!(a.size.width, px(120.), "the last row shares the room");
+    assert_eq!(b.size.width, px(120.));
+    assert_eq!(b.left(), px(120.));
+}
 
-    assert_eq!(first.size.height, px(20.), "the first row keeps its height");
+struct GrowingFlexHarness {
+    grow: bool,
+    wrap: bool,
+    direction: FlexDirection,
+    min: f32,
+}
+
+impl Render for GrowingFlexHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(300.)).h(px(300.)).child(
+            Flex::new()
+                .h(px(300.))
+                .grow(self.grow)
+                .wrap(self.wrap)
+                .direction(self.direction)
+                .gap_px(0.)
+                .children(["a", "b", "c", "d"].map(|name| {
+                    div()
+                        .min_w(px(self.min))
+                        .min_h(px(30.))
+                        .debug_selector(move || name.into())
+                })),
+        )
+    }
+}
+
+fn flex(grow: bool, wrap: bool, direction: FlexDirection) -> GrowingFlexHarness {
+    GrowingFlexHarness {
+        grow,
+        wrap,
+        direction,
+        min: 100.,
+    }
+}
+
+#[gpui_kit::test]
+fn a_flex_that_does_not_grow_keeps_its_children_at_their_size(cx: &mut TestAppContext) {
+    let cx = harness!(cx, flex(false, true, FlexDirection::Row));
+    assert_eq!(cx.debug_bounds("a").expect("a").size.width, px(100.));
+    assert_eq!(cx.debug_bounds("d").expect("d").size.width, px(100.));
+}
+
+#[gpui_kit::test]
+fn a_growing_flex_row_shares_the_width(cx: &mut TestAppContext) {
+    let harness = GrowingFlexHarness {
+        min: 50.,
+        ..flex(true, false, FlexDirection::Row)
+    };
+    let cx = harness!(cx, harness);
+    for name in ["a", "b", "c", "d"] {
+        let bounds = cx.debug_bounds(name).expect("child");
+        assert_eq!(bounds.size.width, px(75.), "{name} shares the row");
+    }
+}
+
+#[gpui_kit::test]
+fn a_growing_wrapping_flex_shares_each_line(cx: &mut TestAppContext) {
+    let cx = harness!(cx, flex(true, true, FlexDirection::Row));
+    // Three fit on the first line, the fourth wraps and takes its whole line.
+    for name in ["a", "b", "c"] {
+        let bounds = cx.debug_bounds(name).expect("child");
+        assert_eq!(bounds.size.width, px(100.), "{name}");
+    }
+    let d = cx.debug_bounds("d").expect("d");
     assert_eq!(
-        second.size.height,
-        px(180.),
-        "the last row takes what is left"
+        d.size.width,
+        px(300.),
+        "the last line is shared by one child"
     );
+}
+
+#[gpui_kit::test]
+fn a_growing_flex_column_shares_the_height(cx: &mut TestAppContext) {
+    let cx = harness!(cx, flex(true, false, FlexDirection::Column));
+    for name in ["a", "b", "c", "d"] {
+        let bounds = cx.debug_bounds(name).expect("child");
+        assert_eq!(bounds.size.height, px(75.), "{name} shares the column");
+    }
 }
 
 /// A grid in a container that is narrower than the smallest band, inside a

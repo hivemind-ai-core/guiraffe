@@ -308,6 +308,10 @@ enum Drag {
         start_y: f32,
         start_offset: f64,
     },
+    HScroll {
+        start_x: f32,
+        start_offset: f64,
+    },
 }
 
 struct Metrics {
@@ -1505,7 +1509,6 @@ impl Core {
             // A pointer press never takes keyboard focus (spec/00 §12.3).
             window.prevent_default();
         }
-        let _ = bounds;
         let mut m = self.m.borrow_mut();
         let w = m.grid_w();
         if y < m.row_h {
@@ -1535,6 +1538,35 @@ impl Core {
         }
         let body_y = f64::from(y - m.row_h);
         let content_h = m.count as f64 * f64::from(m.row_h);
+        // Horizontal scrollbar: along the bottom edge of the center band
+        // (pinned columns never scroll), short of the vertical bar's corner.
+        let center_vp = f64::from(m.layout.center_viewport(w));
+        let lw = m.layout.left_width;
+        let vbar = content_h > m.body_h();
+        let h = f32::from(bounds.size.height);
+        let h = if h > 0. { h } else { FALLBACK_H };
+        let in_hbar_x = x >= lw && f64::from(x - lw) < center_vp && !(vbar && x >= w - SCROLLBAR);
+        if m.layout.center_width > center_vp && y >= h - SCROLLBAR && in_hbar_x {
+            let along = f64::from(x - lw);
+            let thumb = scrollbar_thumb(m.scroll_x, m.layout.center_width, center_vp);
+            if along >= thumb.0 && along < thumb.0 + thumb.1 {
+                m.drag = Some(Drag::HScroll {
+                    start_x: x,
+                    start_offset: m.scroll_x,
+                });
+                return;
+            }
+            // A press on the track pages toward it.
+            let page = if along < thumb.0 {
+                -center_vp
+            } else {
+                center_vp
+            };
+            let (sx, sy) = (m.scroll_x + page, m.scroll_y);
+            drop(m);
+            self.set_scroll(sx, sy, cx);
+            return;
+        }
         if x >= w - SCROLLBAR && content_h > m.body_h() {
             let thumb = scrollbar_thumb(m.scroll_y, content_h, m.body_h());
             let offset = if body_y >= thumb.0 && body_y < thumb.0 + thumb.1 {
@@ -1662,6 +1694,21 @@ impl Core {
                 };
                 self.set_scroll(sx, sy, cx);
             }
+            Drag::HScroll {
+                start_x,
+                start_offset,
+            } => {
+                let (sx, sy) = {
+                    let m = self.m.borrow();
+                    let content = m.layout.center_width;
+                    let vp = f64::from(m.layout.center_viewport(m.grid_w()));
+                    let thumb = scrollbar_thumb(start_offset, content, vp);
+                    let track = (vp - thumb.1).max(1.);
+                    let per_px = (content - vp).max(0.) / track;
+                    (start_offset + f64::from(x - start_x) * per_px, m.scroll_y)
+                };
+                self.set_scroll(sx, sy, cx);
+            }
         }
     }
 
@@ -1698,7 +1745,7 @@ impl Core {
                     }
                 }
             }
-            Drag::Select | Drag::VScroll { .. } => {}
+            Drag::Select | Drag::VScroll { .. } | Drag::HScroll { .. } => {}
         }
     }
 
@@ -1992,6 +2039,8 @@ impl Render for GridView {
                 .left(px(lw + left as f32))
                 .h(px(SCROLLBAR - 2.))
                 .w(px(wbar as f32))
+                .debug_selector(|| "datagrid-hscroll-thumb".into())
+                .cursor_ew_resize()
                 .rounded(px(SCROLLBAR))
                 .bg(hsla(pal.dimmed))
                 .opacity(0.5)
