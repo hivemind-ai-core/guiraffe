@@ -66,3 +66,7 @@ pub mod plot;
 pub use plot::{PlotSurface, Layer, Gridlines, Ruler, GridMarks, Playhead, SelectionBox, Markers, Zebra, BackgroundBands};
 mod locks;
 pub use locks::LockStyle;
+
+pub mod bars;
+pub use bars::BarCurve;
+pub use curves::TangentMode;
