@@ -3,6 +3,9 @@ name = "{{name}}"
 version = "0.1.0"
 edition = "2024"
 
+# A standalone app: never join an enclosing Cargo workspace (e.g. when created inside one).
+[workspace]
+
 [dependencies]
 gpui-kit = { version = "=0.9.1", features = ["component", "assets", "gpui-fast"] }
 # gpui-kit 0.9.1 requires the pre-0.1.16 IntoElement API.
@@ -14,6 +17,7 @@ guiraffe-state = { path = {{state}} }
 guiraffe-router = { path = {{router}} }
 guiraffe-windows = { path = {{windows}} }
 guiraffe-overlays = { path = {{overlays}} }
+guiraffe-icons = { path = {{icons}} }
 
 # Interactive graphics need optimized dependencies even in dev builds.
 [profile.dev.package."*"]

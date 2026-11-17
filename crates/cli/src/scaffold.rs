@@ -38,6 +38,7 @@ pub fn render(template: &str, name: &str, source: &Source) -> Result<String> {
         "router",
         "windows",
         "overlays",
+        "icons",
     ] {
         let path = path.join("crates").join(krate);
         let path = path.to_str().context("checkout path must be UTF-8")?;
@@ -105,6 +106,16 @@ mod tests {
         let dir = new_app(tmp.path(), "hello", &src).unwrap_or_else(|e| panic!("{e}"));
         let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap_or_default();
         assert!(cargo.contains("name = \"hello\""));
+        // Standalone even when created inside another workspace; every crate main.rs uses
+        // is a dependency.
+        assert!(
+            cargo.contains("\n[workspace]\n"),
+            "app must not join an enclosing workspace"
+        );
+        assert!(
+            cargo.contains("guiraffe-icons = { path"),
+            "main.rs uses guiraffe_icons"
+        );
         assert!(
             cargo.contains("\"gpui-fast\""),
             "apps default to gpui-fast (DESIGN §2c)"
