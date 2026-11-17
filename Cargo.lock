@@ -3383,6 +3383,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-datagrid"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-test",
+ "proptest",
+]
+
+[[package]]
 name = "guiraffe-flow"
 version = "0.1.0"
 dependencies = [
