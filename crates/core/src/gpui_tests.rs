@@ -57,7 +57,7 @@ fn bridge_reaches_derived_kit_fields_in_both_schemes(cx: &mut TestAppContext) {
             assert_eq!(t.slider_bar, k.primary.to_hsla());
             assert_eq!(t.progress_bar, k.primary.to_hsla());
             assert_eq!(t.background, g.surfaces().body.to_hsla());
-            assert_eq!(t.chart_1, k.primary.to_hsla());
+            assert_eq!(t.chart_2, k.primary.to_hsla());
         }
     });
 }

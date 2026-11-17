@@ -37,16 +37,20 @@ impl KitColors {
             Scheme::Light => 6,
             Scheme::Dark => 5,
         };
-        let mut charts = [primary; 5];
-        let others = [
+        // Kit draws single-series charts (line, bar, pie) in `chart_2`, so the primary goes
+        // there; the rest are distinct hues that skip the primary.
+        let mut others = [
             ColorName::Teal,
             ColorName::Orange,
             ColorName::Grape,
             ColorName::Yellow,
-        ];
-        for (slot, c) in charts.iter_mut().skip(1).zip(others) {
-            *slot = c.shade(chart_shade);
-        }
+            ColorName::Pink,
+        ]
+        .into_iter()
+        .filter(|c| *c != t.primary)
+        .map(|c| c.shade(chart_shade));
+        let mut next = || others.next().unwrap_or(primary);
+        let charts = [next(), primary, next(), next(), next()];
         Self {
             primary,
             primary_hover: t.variant(None, Variant::Filled).hover,
@@ -89,7 +93,7 @@ mod tests {
         };
         let k = KitColors::from_theme(&t);
         assert_eq!(k.primary, ColorName::Grape.shade(6));
-        assert_eq!(k.charts[0], k.primary);
+        assert_eq!(k.charts[1], k.primary);
         assert!(k.primary_foreground.contrast(k.primary) >= 3.0);
         assert_ne!(k.selection, k.primary, "selection is a tint");
     }
@@ -110,10 +114,15 @@ mod tests {
 
     #[test]
     fn chart_colors_are_distinct() {
-        let k = KitColors::from_theme(&GuiraffeTheme::default());
-        for (i, a) in k.charts.iter().enumerate() {
-            for b in &k.charts[i + 1..] {
-                assert_ne!(a, b);
+        for primary in [ColorName::Blue, ColorName::Teal, ColorName::Orange] {
+            let k = KitColors::from_theme(&GuiraffeTheme {
+                primary,
+                ..Default::default()
+            });
+            for (i, a) in k.charts.iter().enumerate() {
+                for b in &k.charts[i + 1..] {
+                    assert_ne!(a, b, "{primary:?}");
+                }
             }
         }
     }

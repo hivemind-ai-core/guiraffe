@@ -54,8 +54,9 @@ Kit controls read `cx.theme()` (`component::Theme`, which derefs to `ThemeColor`
    `popover`, `popover_foreground` and `accent` come from `GuiraffeTheme::surfaces()`, so Kit and
    GUIraffe widgets sit on the same body color in both schemes.
 4. **Radius** goes to `Theme::radius` (`default_radius`).
-5. **Charts**: `chart_1..5` take the primary and then Teal, Orange, Grape and Yellow (shade 6 in
-   light, 5 in dark).
+5. **Charts**: Kit draws single-series charts (line, bar, pie) in `chart_2`, so `chart_2` is the
+   primary. `chart_1,3,4,5` are Teal, Orange, Grape and Yellow (Pink stands in for whichever one is
+   the primary). They use shade 6 in light and 5 in dark.
 
 Use `Theme::update` (not `global_mut`) so Kit reconciles `ThemeTokens` and re-syncs the base layer.
 
