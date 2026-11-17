@@ -4,8 +4,10 @@
 //! guiraffe new <name> [--path <guiraffe checkout>]   scaffold an app (gpui-fast, router, store, shell)
 //! guiraffe preview <file.json|design.mocket.json> [--screen <id|name>]   live preview with hot reload
 //! guiraffe import <design.mocket.json> [--screen <id|name>]              Mocket → GUIraffe document JSON
+//! guiraffe doctor                                    check toolchain, system libraries and app pins
 //! ```
 
+mod doctor;
 mod preview;
 mod scaffold;
 
@@ -62,13 +64,23 @@ fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&imp.document)?);
             Ok(())
         }
+        Some("doctor") => {
+            let ok = doctor::report(&doctor::gather(&std::env::current_dir()?));
+            if ok {
+                Ok(())
+            } else {
+                bail!("doctor found problems")
+            }
+        }
         Some("--help" | "-h") | None => {
             println!(
-                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]"
+                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe doctor"
             );
             Ok(())
         }
-        _ => bail!("usage: guiraffe new <name> | preview <file> | import <design.mocket.json>"),
+        _ => bail!(
+            "usage: guiraffe new <name> | preview <file> | import <design.mocket.json> | doctor"
+        ),
     }
 }
 
