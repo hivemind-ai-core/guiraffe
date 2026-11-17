@@ -68,14 +68,14 @@ pub struct SemanticColors {
 impl SemanticColors {
     /// The family of a colour, with the same rules as the text of the theme:
     /// the shade of the hue that reads on the surface of the app (see
-    /// [`crate::variant::readable_shade`]), and the text that reads on it.
+    /// [`crate::variant::readable_hue`]), and the text that reads on it.
     fn of(t: &GuiraffeTheme, color: ColorName) -> Self {
         let surfaces = t.surfaces();
         let dark = t.scheme == Scheme::Dark;
         let start = t.resolve_ctx().filled_shade();
         // The colour of the family reads on the surface of the app, so it
         // reads on the tint an alert draws over it as well.
-        let base = crate::variant::readable_shade(
+        let base = crate::variant::readable_hue(
             color,
             start,
             surfaces.body,
@@ -86,8 +86,8 @@ impl SemanticColors {
         // on them reads at least as well as on the fill.
         let foreground = crate::variant::filled_foreground(color, base);
         let away = if dark { Rgb::WHITE } else { Rgb::BLACK };
-        let hover = shift_toward(base, away, 0.06);
-        let active = shift_toward(base, away, 0.12);
+        let hover = crate::variant::mix_toward(base, away, 0.06);
+        let active = crate::variant::mix_toward(base, away, 0.12);
         let hover = if foreground.contrast(hover) >= 4.5 {
             hover
         } else {
@@ -100,7 +100,7 @@ impl SemanticColors {
         };
         // The badge of Kit carries white text, so it takes a shade that is
         // dark in both schemes.
-        let fill = crate::variant::readable_shade(color, start, Rgb::WHITE, 4.5, false);
+        let fill = crate::variant::readable_hue(color, start, Rgb::WHITE, 4.5, false);
         Self {
             base,
             fill,
@@ -108,23 +108,6 @@ impl SemanticColors {
             active,
             foreground,
         }
-    }
-}
-
-/// Move a colour a little toward another one, so a hover state is a shade of
-/// the same hue.
-fn shift_toward(color: Rgb, toward: Rgb, amount: f32) -> Rgb {
-    let amount = amount.clamp(0., 1.);
-    let mix = |a: u8, b: u8| {
-        (a as f32 + (b as f32 - a as f32) * amount)
-            .round()
-            .clamp(0., 255.) as u8
-    };
-    Rgb {
-        r: mix(color.r, toward.r),
-        g: mix(color.g, toward.g),
-        b: mix(color.b, toward.b),
-        a: color.a,
     }
 }
 
