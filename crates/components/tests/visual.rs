@@ -11,6 +11,7 @@ use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 
 struct KitchenSink {
     segmented: gpui_kit::Entity<SegmentedControl>,
+    loaders: [gpui_kit::Entity<Loader>; 3],
 }
 
 impl Render for KitchenSink {
@@ -51,6 +52,15 @@ impl Render for KitchenSink {
                             .section(40.0, ColorName::Blue)
                             .section(25.0, ColorName::Orange),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(20.0))
+                    .items_center()
+                    .child(self.loaders[0].clone())
+                    .child(self.loaders[1].clone())
+                    .child(self.loaders[2].clone()),
             )
             .child(
                 Timeline::new([
@@ -102,7 +112,17 @@ fn render(scheme: Scheme) -> image::RgbaImage {
     snap.render(size(px(560.), px(820.)), |_, cx| {
         let segmented = SegmentedControl::new(["Preview", "Code", "Export"], cx);
         segmented.update(cx, |s, cx| s.select(1, cx));
-        cx.new(|_| KitchenSink { segmented })
+        let loaders = [Loader::new(cx), Loader::new(cx), Loader::new(cx)];
+        loaders[1].update(cx, |l, cx| {
+            l.set_kind(LoaderType::Bars, cx);
+            l.set_count(4, cx);
+            l.set_color(Some(ColorName::Teal), cx);
+        });
+        loaders[2].update(cx, |l, cx| {
+            l.set_kind(LoaderType::Dots, cx);
+            l.set_color(Some(ColorName::Grape), cx);
+        });
+        cx.new(|_| KitchenSink { segmented, loaders })
     })
     .unwrap_or_else(|e| panic!("{e:#}"))
 }

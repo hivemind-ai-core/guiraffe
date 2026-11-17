@@ -6,6 +6,7 @@
 
 pub mod highlight;
 pub mod icons;
+pub mod loader;
 pub mod misc;
 pub mod paper;
 pub mod ring;
@@ -16,6 +17,7 @@ pub mod typography;
 
 pub use highlight::{Highlight, Mark, highlight_ranges};
 pub use icons::{ActionIcon, ThemeIcon, close_button};
+pub use loader::{Loader, LoaderType};
 pub use misc::{Blockquote, Indicator, IndicatorPosition, Pill};
 pub use paper::{Card, CardSection, Paper};
 pub use ring::{RingProgress, arc_spans};
