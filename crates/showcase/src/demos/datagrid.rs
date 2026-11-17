@@ -7,12 +7,15 @@ use gpui_kit::{
 use guiraffe_components::{SegmentedControl, SegmentedEvent, Text};
 use guiraffe_core::{Density, Size};
 use guiraffe_datagrid::{
-    Align, CellRef, ColumnDef, DataGrid, EditError, FnSource, GridHandle, GridOptions, Pin,
-    SelectionMode, VecSource,
+    Align, CellRef, ColumnDef, DataGrid, EditError, Filter, FnSource, GridEvent, GridHandle,
+    GridOptions, Pin, SelectionMode, SortDir, SortKey, VecSource,
 };
+use std::sync::Arc;
 
 use super::{column, example};
 use crate::catalog::Entry;
+use crate::events::EventLog;
+use crate::knobs::{SIZE_NAMES, SIZES};
 
 pub fn entries() -> Vec<Entry> {
     vec![Entry {
@@ -142,6 +145,7 @@ struct Demo {
     big: GridHandle,
     small: GridHandle,
     knobs: Vec<(&'static str, Entity<SegmentedControl>)>,
+    log: Entity<EventLog>,
     _subs: Vec<Subscription>,
 }
 
@@ -150,6 +154,10 @@ const KNOBS: &[(&str, &[&str], usize)] = &[
     ("Zebra", &["off", "on"], 1),
     ("Pinned", &["none", "left", "left + right"], 1),
     ("Selection", &["single", "multi", "cell", "range"], 1),
+    ("Size", SIZE_NAMES, 2),
+    ("Sort", &["none", "amount ↑", "amount ↓", "city ↑ + amount ↓"], 0),
+    ("Filter flag", &["all", "yes", "no"], 0),
+    ("Hide metrics", &["off", "on"], 0),
 ];
 
 impl Demo {
@@ -164,13 +172,40 @@ impl Demo {
                 })
             }
             1 => o.zebra = index == 1,
+            4 => o.size = SIZES.get(index).copied(),
+            5 => {
+                let key = |column, dir| SortKey { column, dir };
+                let keys = match index {
+                    1 => vec![key(3, SortDir::Asc)],
+                    2 => vec![key(3, SortDir::Desc)],
+                    3 => vec![key(1, SortDir::Asc), key(3, SortDir::Desc)],
+                    _ => vec![],
+                };
+                big.set_sort(keys, cx);
+                return;
+            }
+            6 => {
+                let filter: Option<Filter> = match index {
+                    1 => Some(Arc::new(|v| matches!(v, CellRef::Bool(true)))),
+                    2 => Some(Arc::new(|v| matches!(v, CellRef::Bool(false)))),
+                    _ => None,
+                };
+                big.set_filter(4, filter, cx);
+                return;
+            }
+            7 => {
+                for def in 5..COLS {
+                    big.set_column_visible(def, index == 0, cx);
+                }
+                return;
+            }
             2 => {
                 for (def, col) in big_columns(index).into_iter().enumerate() {
                     big.set_column_pin(def, col.pin, cx);
                 }
                 return;
             }
-            _ => {
+            3 => {
                 o.selection = match index {
                     0 => SelectionMode::SingleRow,
                     2 => SelectionMode::Cell,
@@ -178,6 +213,7 @@ impl Demo {
                     _ => SelectionMode::MultiRow,
                 }
             }
+            _ => return,
         }
         big.set_options(o, cx);
     }
@@ -204,12 +240,13 @@ impl Render for Demo {
             ),
             example(
                 "1,000,000 rows × 50 columns, computed on demand · click a header to sort (Shift adds a key) · drag edges to resize, headers to reorder",
-                div().h(px(340.)).child(DataGrid::new(&self.big)),
+                div().h(px(300.)).child(DataGrid::new(&self.big)),
             ),
             example(
                 "Editable: double-click or F2 to edit, Enter commits, Esc cancels (Age must be a number)",
                 div().h(px(250.)).child(DataGrid::new(&self.small)),
             ),
+            example("Events from both grids", self.log.clone()),
         ])
     }
 }
@@ -254,6 +291,21 @@ fn demo(_: &mut Window, cx: &mut App) -> AnyView {
             (*label, c)
         })
         .collect();
+    let log = EventLog::new(cx);
+    for (name, grid) in [("orders", &big), ("people", &small)] {
+        EventLog::watch_with(
+            &log,
+            grid.events(),
+            move |e: &GridEvent| match e {
+                GridEvent::SortChanged(keys) => {
+                    let k: Vec<_> = keys.iter().map(|k| format!("{}:{:?}", k.column, k.dir)).collect();
+                    format!("{name}: SortChanged [{}]", k.join(", ")).into()
+                }
+                other => format!("{name}: {other:?}").into(),
+            },
+            cx,
+        );
+    }
     cx.new(|cx| {
         let subs = knobs
             .iter()
@@ -270,6 +322,7 @@ fn demo(_: &mut Window, cx: &mut App) -> AnyView {
             big,
             small,
             knobs,
+            log,
             _subs: subs,
         }
     })
