@@ -4,8 +4,8 @@
 use std::collections::VecDeque;
 
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement,
-    Render, SharedString, Styled, Subscription, Window, div, px,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Window, div, px,
 };
 use guiraffe_components::Text;
 use guiraffe_core::{GuiraffeTheme, Size};
@@ -64,13 +64,11 @@ impl EventLog {
     }
 
     /// Log every event `emitter` emits, formatted with `{:?}`.
-    pub fn watch<E: 'static, T: EventEmitter<E>>(
+    pub fn watch<E: std::fmt::Debug + 'static, T: EventEmitter<E>>(
         this: &Entity<Self>,
         emitter: &Entity<T>,
         cx: &mut App,
-    ) where
-        E: std::fmt::Debug,
-    {
+    ) {
         Self::watch_with(this, emitter, |e: &E| format!("{e:?}").into(), cx);
     }
 

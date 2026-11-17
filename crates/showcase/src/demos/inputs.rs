@@ -1,6 +1,8 @@
 //! guiraffe-inputs: chips, tags, range slider, password strength, dropzone.
 
-use gpui_kit::{AnyElement, AnyView, App, Entity, IntoElement, ParentElement, Styled, Window, div, px};
+use gpui_kit::{
+    AnyElement, AnyView, App, Entity, IntoElement, ParentElement, Styled, Window, div, px,
+};
 use guiraffe_components::Text;
 use guiraffe_core::{ColorName, Size};
 use guiraffe_inputs::*;
@@ -145,7 +147,12 @@ fn tags(window: &mut Window, cx: &mut App) -> AnyView {
                     t.add(tag, cx);
                 }
             });
-            let empty = TagsInput::new(TagRules::default(), "Placeholder: type and press Enter", window, cx);
+            let empty = TagsInput::new(
+                TagRules::default(),
+                "Placeholder: type and press Enter",
+                window,
+                cx,
+            );
             let log = EventLog::new(cx);
             EventLog::watch_with(
                 &log,
@@ -161,7 +168,10 @@ fn tags(window: &mut Window, cx: &mut App) -> AnyView {
         |(tags, empty, log), _, _, _| {
             column([
                 widget_and_log(tags.clone(), log, 420.),
-                example("Empty, showing its placeholder", div().w(px(420.)).child(empty.clone())),
+                example(
+                    "Empty, showing its placeholder",
+                    div().w(px(420.)).child(empty.clone()),
+                ),
             ])
         },
         window,
@@ -172,7 +182,10 @@ fn tags(window: &mut Window, cx: &mut App) -> AnyView {
 fn range(window: &mut Window, cx: &mut App) -> AnyView {
     playground_with(
         "Live RangeSlider (step $10; drag or arrow keys)",
-        &[Knob::toggle("Disabled"), Knob::toggle("Focusable").default(1)],
+        &[
+            Knob::toggle("Disabled"),
+            Knob::toggle("Focusable").default(1),
+        ],
         |_, cx| {
             let slider = RangeSlider::new(Range2::new(0.0, 500.0, 10.0, 120.0, 340.0), cx);
             slider.update(cx, |s, cx| s.set_label("Price range", cx));
@@ -228,7 +241,10 @@ fn strength(_: &mut Window, cx: &mut App) -> AnyView {
 fn dropzone(window: &mut Window, cx: &mut App) -> AnyView {
     playground_with(
         "Live Dropzone (accepts image/* and .pdf)",
-        &[Knob::toggle("Disabled"), Knob::toggle("Focusable").default(1)],
+        &[
+            Knob::toggle("Disabled"),
+            Knob::toggle("Focusable").default(1),
+        ],
         |_, cx| {
             let zone = Dropzone::new(vec!["image/*", ".pdf"], "Drop screenshots or PDFs here", cx);
             let log = EventLog::new(cx);
@@ -238,7 +254,9 @@ fn dropzone(window: &mut Window, cx: &mut App) -> AnyView {
                 |e: &DropEvent| {
                     let names = |p: &[std::path::PathBuf]| {
                         p.iter()
-                            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_owned))
+                            .filter_map(|p| {
+                                p.file_name().and_then(|n| n.to_str()).map(str::to_owned)
+                            })
                             .collect::<Vec<_>>()
                             .join(", ")
                     };

@@ -1,10 +1,10 @@
 //! guiraffe-mermaid: native Mermaid diagrams with pan, zoom and fit.
 
+use gpui_kit::component::{Sizable, button::Button};
 use gpui_kit::{
     AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
     div, px,
 };
-use gpui_kit::component::{Sizable, button::Button};
 use guiraffe_components::Text;
 use guiraffe_core::{GuiraffeTheme, Scheme, Size};
 use guiraffe_mermaid::{MermaidView, MermaidViewState};

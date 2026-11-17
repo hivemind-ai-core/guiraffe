@@ -4,9 +4,8 @@ use std::cell::RefCell;
 
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement,
-    SharedString, Styled, Window, component::button::Button, div, px,
+    SharedString, Styled, Window, div, px,
 };
-use gpui_kit::component::Sizable;
 use guiraffe_components::Text;
 use guiraffe_core::ColorName;
 use guiraffe_flow::{
@@ -138,33 +137,10 @@ fn flow_preview(
     }
     let state = d.state.borrow().clone();
     let body = div().h(px(400.)).overflow_hidden();
-    let body = match (state.clone(), &d.error) {
+    let body = match (state, &d.error) {
         (Some(s), _) => body.child(FlowCanvas::new(&s)),
         (None, Some(e)) => body.child(Text::new(e.clone()).color(ColorName::Red)),
         (None, None) => body.child(Text::new("Graph failed to build").color(ColorName::Red)),
     };
-    let button = |id: &'static str, label: &'static str, f: fn(&mut FlowState, &mut Context<FlowState>)| {
-        let state = state.clone();
-        Button::new(id).label(label).small().on_click(move |_, _, cx| {
-            if let Some(s) = &state {
-                s.update(cx, f);
-            }
-        })
-    };
-    column([
-        body.into_any_element(),
-        div()
-            .flex()
-            .gap(px(24.))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .child(button("flow-undo", "Undo", |s, cx| s.undo(cx)))
-                    .child(button("flow-redo", "Redo", |s, cx| s.redo(cx)))
-                    .child(button("flow-fit", "Fit view", |s, cx| s.fit(cx))),
-            )
-            .child(div().flex_1().child(d.log.clone()))
-            .into_any_element(),
-    ])
+    column([body.into_any_element(), d.log.clone().into_any_element()])
 }

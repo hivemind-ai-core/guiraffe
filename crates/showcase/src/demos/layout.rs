@@ -215,19 +215,23 @@ fn flex_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
         )
         .unwrap_or_default();
     Flex::new()
-                .h(px(130.))
-                .direction(direction)
-                .wrap(v.on(1))
-                .gap(v.size(2))
-                .align(v.pick(3, &ALIGNS).unwrap_or_default())
-                .justify(v.pick(4, &JUSTIFIES).unwrap_or_default())
-                .grow(v.on(5))
-                .children(
-                    ["Design", "Build", "Review", "Ship it", "Measure", "Learn"]
-                        .iter()
-                        .enumerate()
-                        .map(|(i, l)| tile(*l, cx).w(px(110.)).min_h(px(28. + 8. * (i % 3) as f32))),
-                )
+        .h(px(130.))
+        .direction(direction)
+        .wrap(v.on(1))
+        .gap(v.size(2))
+        .align(v.pick(3, &ALIGNS).unwrap_or_default())
+        .justify(v.pick(4, &JUSTIFIES).unwrap_or_default())
+        .grow(v.on(5))
+        .children(
+            ["Design", "Build", "Review", "Ship it", "Measure", "Learn"]
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    tile(*l, cx)
+                        .w(px(110.))
+                        .min_h(px(28. + 8. * (i % 3) as f32))
+                }),
+        )
         .into_any_element()
 }
 
@@ -293,10 +297,11 @@ fn simple_grid(window: &mut Window, cx: &mut App) -> AnyView {
                                 .at(Breakpoint::Xs, 2)
                                 .at(Breakpoint::Sm, 4),
                         )
-                        .spacing(Responsive::base(Size::Xs.spacing()).at(Breakpoint::Sm, Size::Lg.spacing()))
-                        .children(
-                            ["Revenue", "Users", "Churn", "NPS"].map(|l| tile(l, cx)),
-                        ),
+                        .spacing(
+                            Responsive::base(Size::Xs.spacing())
+                                .at(Breakpoint::Sm, Size::Lg.spacing()),
+                        )
+                        .children(["Revenue", "Users", "Churn", "NPS"].map(|l| tile(l, cx))),
                 ),
                 example(
                     "min child width 140px",
@@ -371,7 +376,11 @@ fn aspect(window: &mut Window, cx: &mut App) -> AnyView {
                 .unwrap_or(("16:9", 16. / 9.));
             div()
                 .w(px(300.))
-                .child(AspectRatio::new(1.).ratio(ratio).child(tile(label, cx).size_full()))
+                .child(
+                    AspectRatio::new(1.)
+                        .ratio(ratio)
+                        .child(tile(label, cx).size_full()),
+                )
                 .into_any_element()
         },
         |_, _| column([]),
@@ -396,7 +405,11 @@ fn divider(window: &mut Window, cx: &mut App) -> AnyView {
                     .child(tile("A", cx))
                     .child(Divider::vertical())
                     .child(tile("B", cx))
-                    .child(Divider::new().orientation(DividerOrientation::Vertical).thickness(2.))
+                    .child(
+                        Divider::new()
+                            .orientation(DividerOrientation::Vertical)
+                            .thickness(2.),
+                    )
                     .child(tile("C", cx))
                     .child(Space::w(Size::Xl))
                     .child(tile("after Space::w(Xl)", cx))
@@ -460,24 +473,22 @@ fn scroll(_: &mut Window, cx: &mut App) -> AnyView {
                         ScrollArea::new("scroll-x")
                             .scroll_x(true)
                             .scroll_y(false)
-                            .child(
-                                Group::new().children(
-                                    (1..=24).map(|i| tile(format!("Frame {i}"), cx).w(px(96.))),
-                                ),
-                            ),
+                            .child(Group::new().children(
+                                (1..=24).map(|i| tile(format!("Frame {i}"), cx).w(px(96.))),
+                            )),
                     ),
                 ),
                 example(
                     "Both axes: ScrollArea::both",
-                    div().h(px(140.)).child(
-                        ScrollArea::both("scroll-both").child(
+                    div()
+                        .h(px(140.))
+                        .child(ScrollArea::both("scroll-both").child(
                             Stack::new().gap(Size::Xs).children((1..=12).map(|r| {
                                 Group::new().children(
                                     (1..=14).map(move |c| tile(format!("R{r}C{c}"), cx).w(px(72.))),
                                 )
                             })),
-                        ),
-                    ),
+                        )),
                 ),
             ])
         },
@@ -504,7 +515,10 @@ impl Render for SplitterDemo {
                         .max_size(px(360.))
                         .persist_key("showcase-splitter")
                         .on_resize(move |sizes, _, cx| {
-                            let s: Vec<_> = sizes.iter().map(|p| format!("{:.0}", f32::from(*p))).collect();
+                            let s: Vec<_> = sizes
+                                .iter()
+                                .map(|p| format!("{:.0}", f32::from(*p)))
+                                .collect();
                             EventLog::log(&log, format!("on_resize [{}]", s.join(", ")), cx);
                         })
                         .first(tile("Files", cx).size_full())
@@ -591,7 +605,11 @@ impl Render for AppShellDemo {
                         )
                         .main(self.main.clone())
                         .aside(tile("Details", cx).size_full())
-                        .footer(Text::new("3 unread · synced just now").size(Size::Xs).dimmed(true)),
+                        .footer(
+                            Text::new("3 unread · synced just now")
+                                .size(Size::Xs)
+                                .dimmed(true),
+                        ),
                 ),
             ),
             example("Events", self.log.clone()),

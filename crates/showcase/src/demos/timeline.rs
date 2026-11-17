@@ -11,8 +11,8 @@ use guiraffe_components::{SegmentedControl, SegmentedEvent, Text};
 use guiraffe_core::{ColorName, Size};
 
 use super::{column, example};
-use crate::events::EventLog;
 use crate::catalog::Entry;
+use crate::events::EventLog;
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -122,7 +122,12 @@ trait Editable: Render {
 impl Editable for GanttView {
     const GRID: [&'static str; 3] = ["Arrow step: 1 day", "1 week", "free"];
     fn set_grid(&mut self, choice: usize, cx: &mut Context<Self>) {
-        self.set_key_step([Some(DAY), Some(7. * DAY), None].get(choice).copied().flatten());
+        self.set_key_step(
+            [Some(DAY), Some(7. * DAY), None]
+                .get(choice)
+                .copied()
+                .flatten(),
+        );
         cx.notify();
     }
     fn watch(log: &Entity<EventLog>, view: &Entity<Self>, cx: &mut App) {

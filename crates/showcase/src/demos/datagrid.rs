@@ -155,7 +155,11 @@ const KNOBS: &[(&str, &[&str], usize)] = &[
     ("Pinned", &["none", "left", "left + right"], 1),
     ("Selection", &["single", "multi", "cell", "range"], 1),
     ("Size", SIZE_NAMES, 2),
-    ("Sort", &["none", "amount ↑", "amount ↓", "city ↑ + amount ↓"], 0),
+    (
+        "Sort",
+        &["none", "amount ↑", "amount ↓", "city ↑ + amount ↓"],
+        0,
+    ),
     ("Filter flag", &["all", "yes", "no"], 0),
     ("Hide metrics", &["off", "on"], 0),
 ];
@@ -298,7 +302,10 @@ fn demo(_: &mut Window, cx: &mut App) -> AnyView {
             grid.events(),
             move |e: &GridEvent| match e {
                 GridEvent::SortChanged(keys) => {
-                    let k: Vec<_> = keys.iter().map(|k| format!("{}:{:?}", k.column, k.dir)).collect();
+                    let k: Vec<_> = keys
+                        .iter()
+                        .map(|k| format!("{}:{:?}", k.column, k.dir))
+                        .collect();
                     format!("{name}: SortChanged [{}]", k.join(", ")).into()
                 }
                 other => format!("{name}: {other:?}").into(),

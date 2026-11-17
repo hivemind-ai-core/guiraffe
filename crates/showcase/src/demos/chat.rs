@@ -36,7 +36,11 @@ struct ChatDemo {
 
 fn describe(e: &ChatEvent) -> SharedString {
     match e {
-        ChatEvent::Submitted { id, text, attachments } => format!(
+        ChatEvent::Submitted {
+            id,
+            text,
+            attachments,
+        } => format!(
             "Submitted {id:?} “{}” +{} file(s)",
             text.chars().take(32).collect::<String>(),
             attachments.len()

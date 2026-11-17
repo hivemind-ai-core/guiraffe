@@ -5,17 +5,17 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::{
-    AnyElement, AnyView, App, AppContext, Bounds, Context, Entity, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled, Window,
-    canvas, component::button::Button, div, px,
+    AnyElement, AnyView, App, AppContext, Bounds, Context, Entity, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Render, StatefulInteractiveElement, Styled, Window, canvas,
+    component::button::Button, div, px,
 };
 use guiraffe_components::{Text, Title};
 use guiraffe_core::{ColorName, GuiraffeTheme, Size, Variant};
 use guiraffe_overlays::{
     Affix, Drawer, FloatingTooltip, LoadingOverlay, OverlayHost, Spotlight,
     position::{Align as FloatAlign, FloatingOptions, Rect, Side},
-    stack::Policy,
     search::Command,
+    stack::Policy,
     toast::{Toast, ToastId, ToastPosition},
 };
 
@@ -138,7 +138,11 @@ fn host_preview(
             toast.position = position;
             toast.auto_close = auto_close;
             let _ = OverlayHost::notify(window, cx, toast);
-            EventLog::log(&p.state.log, format!("notify ToastId({n}) at {position:?}"), cx);
+            EventLog::log(
+                &p.state.log,
+                format!("notify ToastId({n}) at {position:?}"),
+                cx,
+            );
         }));
     let clear = Button::new("clear-toasts")
         .label("Clear toasts")
@@ -182,7 +186,14 @@ fn host_preview(
                     .on_close(move |_, _, cx| EventLog::log(&on_close, "modal on_close", cx))
             });
             if let Ok(id) = opened {
-                EventLog::log(&log, format!("open {id:?} escape={} outside={}", policy.escape, policy.outside), cx);
+                EventLog::log(
+                    &log,
+                    format!(
+                        "open {id:?} escape={} outside={}",
+                        policy.escape, policy.outside
+                    ),
+                    cx,
+                );
             }
         });
     let log = s.log.clone();
@@ -196,8 +207,7 @@ fn host_preview(
                 .close_on_click_outside(policy.outside)
                 .open(window, cx, |sheet, _, _| {
                     sheet.title("Filters").child(
-                        Text::new("Status, owner and date range filters live here.")
-                            .size(Size::Sm),
+                        Text::new("Status, owner and date range filters live here.").size(Size::Sm),
                     )
                 });
             let line = match opened {
@@ -222,9 +232,20 @@ fn host_preview(
                 .flex()
                 .flex_col()
                 .gap(px(Size::Md.spacing()))
-                .child(Text::new("Toasts: position, auto-close and limit from the knobs").size(Size::Sm).dimmed(true))
-                .child(row(vec![toast.into_any_element(), clear.into_any_element()]))
-                .child(Text::new("Modal, confirmation and drawer use the close policy").size(Size::Sm).dimmed(true))
+                .child(
+                    Text::new("Toasts: position, auto-close and limit from the knobs")
+                        .size(Size::Sm)
+                        .dimmed(true),
+                )
+                .child(row(vec![
+                    toast.into_any_element(),
+                    clear.into_any_element(),
+                ]))
+                .child(
+                    Text::new("Modal, confirmation and drawer use the close policy")
+                        .size(Size::Sm)
+                        .dimmed(true),
+                )
                 .child(row(vec![
                     modal.into_any_element(),
                     confirm.into_any_element(),
@@ -325,7 +346,7 @@ fn floating(window: &mut Window, cx: &mut App) -> AnyView {
             Knob::new("Gap", &["0", "4", "12"]).default(1),
             Knob::toggle("Flip").default(1),
             Knob::toggle("Shift").default(1),
-            Knob::toggle("Always open"),
+            Knob::toggle("Always open").default(1),
         ],
         |_, cx| (cx.new(|_| FloatingDemo::new()), Applied::default()),
         |(demo, applied), v, _, cx| {
@@ -372,11 +393,11 @@ impl Render for FloatingDemo {
             (Side::Bottom, "Bottom", "Last synced 2 minutes ago"),
             (Side::Left, "Left", "Opens on the left"),
         ];
-        let mut row = div().flex().gap(px(150.)).py(px(56.)).px(px(140.));
+        let mut triggers = Vec::new();
         let mut tips = Vec::new();
         for (i, ((side, label, tip), cell)) in specs.into_iter().zip(&self.anchors).enumerate() {
             let record = cell.clone();
-            row = row.child(
+            triggers.push(
                 div()
                     .id(("tooltip-trigger", i))
                     .test_support()
@@ -423,7 +444,25 @@ impl Render for FloatingDemo {
                 );
             }
         }
-        div().relative().child(row).children(tips)
+        let mut t = triggers.into_iter().map(Some).collect::<Vec<_>>();
+        let mut take = |i: usize| t.get_mut(i).and_then(Option::take);
+        let (top, right, bottom, left) = (take(0), take(1), take(2), take(3));
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(64.))
+            .py(px(56.))
+            .child(div().flex().justify_around().children(top).children(bottom))
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .px(px(8.))
+                    .children(right)
+                    .children(left),
+            )
+            .children(tips)
     }
 }
 
@@ -453,8 +492,11 @@ fn loading(window: &mut Window, cx: &mut App) -> AnyView {
         },
         |(demo, applied), v, _, cx| {
             if applied.changed(v) {
-                let (size, color, variant) =
-                    (v.size(0), v.color(1).unwrap_or(ColorName::Blue), v.variant(2));
+                let (size, color, variant) = (
+                    v.size(0),
+                    v.color(1).unwrap_or(ColorName::Blue),
+                    v.variant(2),
+                );
                 demo.update(cx, |d, cx| {
                     (d.size, d.color, d.variant) = (size, color, variant);
                     cx.notify();
@@ -532,12 +574,11 @@ fn affix(window: &mut Window, cx: &mut App) -> AnyView {
                 .bg(s.body.to_hsla())
                 .border_1()
                 .border_color(s.border.to_hsla())
-                .child(
-                    Affix::new()
-                        .position(pos)
-                        .offset(v.size(1))
-                        .child(chip("Back to top ↑", ColorName::Blue, cx)),
-                )
+                .child(Affix::new().position(pos).offset(v.size(1)).child(chip(
+                    "Back to top ↑",
+                    ColorName::Blue,
+                    cx,
+                )))
                 .into_any_element()
         },
         |_, cx| {

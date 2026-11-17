@@ -1,8 +1,8 @@
 //! guiraffe-components: typography, surfaces, icons, feedback.
 
 use gpui_kit::{
-    AnyView, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window,
-    assets::IconName, div, px,
+    AnyView, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, assets::IconName,
+    div, px,
 };
 use guiraffe_components::*;
 use guiraffe_core::{ColorName, Size, Variant};
@@ -105,15 +105,10 @@ fn typography(window: &mut Window, cx: &mut App) -> AnyView {
                 ),
                 example(
                     "Text sizes, color, dimmed",
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.))
-                        .children(
-                            [Size::Xs, Size::Sm, Size::Md, Size::Lg, Size::Xl].map(|s| {
-                                Text::new(format!("{s:?}: the quick brown giraffe")).size(s)
-                            }),
-                        ),
+                    div().flex().flex_col().gap(px(4.)).children(
+                        [Size::Xs, Size::Sm, Size::Md, Size::Lg, Size::Xl]
+                            .map(|s| Text::new(format!("{s:?}: the quick brown giraffe")).size(s)),
+                    ),
                 ),
             ])
         },
@@ -124,7 +119,10 @@ fn typography(window: &mut Window, cx: &mut App) -> AnyView {
 
 fn typography_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
     let weight = v
-        .pick(2, &[FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::BOLD])
+        .pick(
+            2,
+            &[FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::BOLD],
+        )
         .unwrap_or_default();
     let mut text = Text::new("Release 0.1 ships native charts, flow graphs and a data grid.")
         .size(v.size(0))
@@ -188,9 +186,10 @@ fn surfaces(window: &mut Window, cx: &mut App) -> AnyView {
                 example(
                     "Paper p_0: flush content",
                     div().w(px(320.)).child(
-                        Paper::new().with_border(true).p_0().child(
-                            div().h(px(56.)).bg(ColorName::Teal.shade(1).to_hsla()),
-                        ),
+                        Paper::new()
+                            .with_border(true)
+                            .p_0()
+                            .child(div().h(px(56.)).bg(ColorName::Teal.shade(1).to_hsla())),
                     ),
                 ),
                 example(
