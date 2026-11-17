@@ -623,6 +623,10 @@ impl Render for FlowViewport {
         let mut root = div()
             .id("flow")
             .test_support()
+            // The canvas is an editor surface (keys act on the selection), so it does take
+            // focus on click, like a text input (spec/00 §12.3).
+            .role(gpui_kit::Role::Canvas)
+            .aria_label("Flow diagram")
             .track_focus(&self.focus)
             .relative()
             .size_full()
@@ -814,6 +818,7 @@ impl Render for FlowViewport {
                     .child(
                         gpui_kit::component::button::Button::new("flow-delete")
                             .label("Delete selected")
+                            .tab_stop(guiraffe_core::tab_stop(None))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let before = this.stamp();
                                 let result = this.interaction.delete_selected();
@@ -829,7 +834,13 @@ impl Render for FlowViewport {
                     .absolute()
                     .left_2()
                     .bottom_2()
-                    .text_color(ColorName::Red.shade(6).to_hsla())
+                    // Scheme-aware error color, not a fixed shade.
+                    .text_color(
+                        guiraffe_core::GuiraffeTheme::global(cx)
+                            .variant(Some(ColorName::Red), guiraffe_core::Variant::Light)
+                            .foreground
+                            .to_hsla(),
+                    )
                     .child(error.to_string()),
             );
         }
@@ -848,26 +859,36 @@ impl FlowViewport {
             .gap_1()
             .child(
                 Button::new("flow-zoom-in")
+                    .tab_stop(guiraffe_core::tab_stop(None))
+                    .accessibility_label("Zoom in")
                     .label("+")
                     .on_click(cx.listener(|this, _, _, cx| this.zoom(this.size() * 0.5, 1.2, cx))),
             )
             .child(
-                Button::new("flow-zoom-out").label("−").on_click(
-                    cx.listener(|this, _, _, cx| this.zoom(this.size() * 0.5, 1. / 1.2, cx)),
-                ),
+                Button::new("flow-zoom-out")
+                    .tab_stop(guiraffe_core::tab_stop(None))
+                    .accessibility_label("Zoom out")
+                    .label("−")
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.zoom(this.size() * 0.5, 1. / 1.2, cx)),
+                    ),
             )
             .child(
                 Button::new("flow-fit")
+                    .tab_stop(guiraffe_core::tab_stop(None))
+                    .accessibility_label("Fit to view")
                     .label("Fit")
                     .on_click(cx.listener(|this, _, _, cx| this.fit(cx))),
             )
             .child(
                 Button::new("flow-undo")
+                    .tab_stop(guiraffe_core::tab_stop(None))
                     .label("Undo")
                     .on_click(cx.listener(|this, _, _, cx| this.undo(cx))),
             )
             .child(
                 Button::new("flow-redo")
+                    .tab_stop(guiraffe_core::tab_stop(None))
                     .label("Redo")
                     .on_click(cx.listener(|this, _, _, cx| this.redo(cx))),
             )

@@ -754,3 +754,36 @@ fn minimap_drag_continuously_updates_camera_without_moving_nodes(cx: &mut TestAp
     );
     assert_eq!(view.read_with(cx, |v, _| v.graph().clone()), old_graph);
 }
+/// spec/00 §12: toolbar buttons are named, not tab stops outside a focus scope, and the
+/// canvas is exposed as a named Canvas.
+#[gpui_kit::test]
+fn toolbar_and_canvas_accessibility(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestQueryExt;
+    let (window, _) = open(cx);
+    window
+        .update(cx, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("flow").role(), Some(gpui_kit::Role::Canvas));
+            assert_eq!(window.find("flow").label(), Some("Flow diagram"));
+            for label in ["Zoom in", "Zoom out", "Fit to view", "Undo", "Redo"] {
+                assert_eq!(
+                    window.find_by_label(label).role(),
+                    Some(gpui_kit::Role::Button),
+                    "{label}"
+                );
+            }
+            // No tab stops outside a focus scope: Tab never lands on a toolbar button.
+            window.focus_next(cx);
+            window.render_frame(cx);
+            for id in [
+                "flow-zoom-in",
+                "flow-zoom-out",
+                "flow-fit",
+                "flow-undo",
+                "flow-redo",
+            ] {
+                assert_ne!(window.find(id).focused(), Some(true), "{id} is a tab stop");
+            }
+        })
+        .expect("update");
+}
