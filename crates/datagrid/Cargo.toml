@@ -15,7 +15,7 @@ guiraffe-core.workspace = true
 [dev-dependencies]
 proptest = "1"
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { workspace = true, features = ["render", "layout"] }
+guiraffe-test = { workspace = true, features = ["render", "layout", "snapshot"] }
 
 [features]
 gpui-fast = ["gpui-kit/gpui-fast"]

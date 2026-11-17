@@ -2199,6 +2199,20 @@ impl Render for RowView {
             let in_rect = rect_cols.as_ref().is_some_and(|c| c.contains(&p.display));
             let is_cursor = cursor == Some(p.display);
             let label = SharedString::from(text.clone());
+            // The cell cursor (selected or editing): a 2px outline over the gridlines. It
+            // extends 1px sideways over the column separators; vertically it stays inside the
+            // row (rows clip) and covers the row's own bottom gridline, so all four edges are
+            // equally thick and nothing doubles.
+            let cursor_box = |color: Hsla| {
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .bottom(px(0.))
+                    .left(px(-1.))
+                    .right(px(-1.))
+                    .border_2()
+                    .border_color(color)
+            };
             let el = div()
                 .id(("cell", p.display))
                 .test_support()
@@ -2214,7 +2228,6 @@ impl Render for RowView {
                 .px(px(m.pad))
                 .flex()
                 .items_center()
-                .overflow_hidden()
                 .when(end, |el| el.justify_end())
                 .when(center, |el| el.justify_center())
                 .when(in_rect && cell_mode, |el| el.bg(hsla(pal.selected)));
@@ -2222,7 +2235,6 @@ impl Render for RowView {
                 let _ = col;
                 let core = weak_core.clone();
                 return el
-                    .px(px(2.))
                     .child(
                         div()
                             .id("editor")
@@ -2234,8 +2246,6 @@ impl Render for RowView {
                             .size_full()
                             .flex()
                             .items_center()
-                            .border_1()
-                            .border_color(hsla(if error.is_some() { pal.error } else { pal.ring }))
                             // Kit's Input propagates Enter/Escape after handling them.
                             .on_action({
                                 let core = core.clone();
@@ -2250,8 +2260,13 @@ impl Render for RowView {
                                     core.cancel_edit(window, cx);
                                 }
                             })
-                            .child(Input::new(input).appearance(false).h_full()),
+                            .child(Input::new(input).appearance(false).h_full().w_full().p_0()),
                     )
+                    .child(cursor_box(hsla(if error.is_some() {
+                        pal.error
+                    } else {
+                        pal.accent
+                    })))
                     .when_some(error.clone(), |el, e| el.aria_description(e))
                     .into_any_element();
             }
@@ -2263,13 +2278,7 @@ impl Render for RowView {
                     .child(label),
             )
             .when(is_cursor && cell_mode, |el| {
-                el.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .border_2()
-                        .border_color(hsla(pal.accent)),
-                )
+                el.child(cursor_box(hsla(pal.accent)))
             })
             .into_any_element()
         };
