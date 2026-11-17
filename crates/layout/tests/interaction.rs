@@ -247,9 +247,12 @@ fn a_pane_does_not_become_narrower_than_its_minimum(cx: &mut TestAppContext) {
 
 struct Counter {
     renders: Rc<Cell<usize>>,
+    /// The state of the splitter. The counter reads it while it renders, so
+    /// the counter observes the state itself: a write to the state shows up
+    /// in the render count of the counter and not only in the reports.
+    state: Entity<SplitterState>,
     /// The reports the counter has seen. The counter keeps the subscription
     /// that counts them, and the count is read by the test.
-    #[allow(dead_code)]
     reports: Rc<Cell<usize>>,
     /// The subscription keeps the counter following the splitter.
     #[allow(dead_code)]
@@ -271,6 +274,7 @@ impl Counter {
         });
         Self {
             renders,
+            state,
             reports,
             subscription: Some(subscription),
         }
@@ -278,9 +282,18 @@ impl Counter {
 }
 
 impl Render for Counter {
-    fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.renders.set(self.renders.get() + 1);
-        div().debug_selector(|| "counter".into()).child("counter")
+        // The counter observes the state of the splitter itself, so a write to
+        // the state renders the counter again. The sizes of the panes are not
+        // read here: the group of the splitter writes to its own state while
+        // it lays out, and a view that reads that state is rendered again for
+        // as long as it watches.
+        let _observed = self.state.read(cx);
+        let reports = self.reports.get();
+        div()
+            .debug_selector(|| "counter".into())
+            .child(format!("counter {reports}"))
     }
 }
 
@@ -311,10 +324,15 @@ impl Render for SplitterView {
 struct CounterHarness {
     splitter: Entity<SplitterView>,
     counter: Entity<Counter>,
+    /// The renders of the harness. The harness is the tree that holds the
+    /// splitter and the counter, so its count is the work the window asked
+    /// for; the counter may not be rendered more often than that.
+    renders: Rc<Cell<usize>>,
 }
 
 impl Render for CounterHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
         div()
             .w(px(600.))
             .h(px(200.))
@@ -345,11 +363,20 @@ fn a_drag_that_changes_nothing_reports_no_resize_and_leaves_the_siblings_alone(
             renders: splitter_renders.clone(),
         })
     });
-    let cx = harness!(cx, CounterHarness { splitter, counter });
+    let harness_renders = Rc::new(Cell::new(0));
+    let cx = harness!(
+        cx,
+        CounterHarness {
+            splitter,
+            counter,
+            renders: harness_renders.clone(),
+        }
+    );
 
     // Compare only work performed during the drag, excluding backend-specific mount frames.
     let sibling_before = renders.get();
     let splitter_before = splitter_renders.get();
+    let harness_before = harness_renders.get();
 
     // The divider is pressed on its handle, moved past the point where a drag
     // begins and released where it was, so the panes keep the sizes they had.
@@ -393,6 +420,11 @@ fn a_drag_that_changes_nothing_reports_no_resize_and_leaves_the_siblings_alone(
         renders.get() - sibling_before,
         splitter_renders.get() - splitter_before,
         "the sibling is not rendered again by the splitter"
+    );
+    assert_eq!(
+        renders.get() - sibling_before,
+        harness_renders.get() - harness_before,
+        "the splitter adds no renders for the sibling"
     );
     state.read_with(cx, |state, cx| {
         assert_eq!(
