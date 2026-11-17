@@ -852,7 +852,7 @@ impl MillionDemo {
             .spawn(async move { million_source() });
         cx.spawn(async move |_, cx| {
             let source = task.await;
-            let _ = cx.update(|cx| code.set_source(source, "rust".into(), cx));
+            cx.update(|cx| code.set_source(source, "rust".into(), cx));
         })
         .detach();
         cx.notify();

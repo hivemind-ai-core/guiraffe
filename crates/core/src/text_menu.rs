@@ -12,6 +12,9 @@ use gpui_kit::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+/// Builds surface-specific entries each time the menu opens.
+pub type ExtraItems = Rc<dyn Fn(&mut Window, &mut App) -> Vec<TextMenuItem>>;
+
 /// A menu action. Receives the window and app when the item is chosen.
 pub type TextMenuHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -253,41 +256,6 @@ impl TextMenu {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn copy_disabled_without_selection_and_extras_follow_separator() {
-        let spec = TextMenuSpec::new(false, |_, _| {}, |_, _| {});
-        let items = spec.items();
-        assert_eq!(items.len(), 2);
-        assert!(
-            items
-                .iter()
-                .flatten()
-                .any(|i| i.label == COPY && !i.enabled)
-        );
-        let spec = TextMenuSpec::new(true, |_, _| {}, |_, _| {})
-            .item(TextMenuItem::new("Copy with line numbers", |_, _| {}).enabled(true));
-        let labels: Vec<_> = spec
-            .items()
-            .iter()
-            .map(|i| i.as_ref().map(|i| i.label.to_string()))
-            .collect();
-        assert_eq!(
-            labels,
-            vec![
-                Some(COPY.into()),
-                Some(SELECT_ALL.into()),
-                None,
-                Some("Copy with line numbers".into())
-            ]
-        );
-        assert!(spec.items()[0].as_ref().is_some_and(|i| i.enabled));
-    }
-}
-
 /// Renders a [`TextMenu`]'s popup layer; the owner entity notified on open/close.
 pub struct TextMenuLayer {
     pub menu: TextMenu,
@@ -327,7 +295,7 @@ pub fn text_view_menu(
     key: impl Into<SharedString>,
     menu: &TextMenu,
     state: &Entity<gpui_kit::component::text::TextViewState>,
-    extra: Rc<dyn Fn(&mut Window, &mut App) -> Vec<TextMenuItem>>,
+    extra: ExtraItems,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui_kit::Div {
@@ -368,4 +336,39 @@ pub fn text_view_menu(
             }
         })
         .child(layer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_disabled_without_selection_and_extras_follow_separator() {
+        let spec = TextMenuSpec::new(false, |_, _| {}, |_, _| {});
+        let items = spec.items();
+        assert_eq!(items.len(), 2);
+        assert!(
+            items
+                .iter()
+                .flatten()
+                .any(|i| i.label == COPY && !i.enabled)
+        );
+        let spec = TextMenuSpec::new(true, |_, _| {}, |_, _| {})
+            .item(TextMenuItem::new("Copy with line numbers", |_, _| {}).enabled(true));
+        let labels: Vec<_> = spec
+            .items()
+            .iter()
+            .map(|i| i.as_ref().map(|i| i.label.to_string()))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                Some(COPY.into()),
+                Some(SELECT_ALL.into()),
+                None,
+                Some("Copy with line numbers".into())
+            ]
+        );
+        assert!(spec.items()[0].as_ref().is_some_and(|i| i.enabled));
+    }
 }
