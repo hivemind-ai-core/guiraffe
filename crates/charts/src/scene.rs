@@ -1,0 +1,574 @@
+use crate::{
+    Arrangement, Color, DatumId, Domain, Mark, Orientation, PreparedChart, SeriesId, Tick,
+    model::{Run, Sample},
+    sample::lttb,
+};
+use std::{collections::BTreeSet, ops::Range, sync::Arc};
+
+pub(crate) type Position = (f32, f32);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Rect {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+impl Rect {
+    pub fn width(self) -> f32 {
+        self.right - self.left
+    }
+
+    pub fn height(self) -> f32 {
+        self.bottom - self.top
+    }
+
+    pub fn contains(self, (x, y): Position) -> bool {
+        (self.left..=self.right).contains(&x) && (self.top..=self.bottom).contains(&y)
+    }
+
+    fn project(self, x: f64, y: f64) -> Position {
+        (
+            self.left + self.width() * x.clamp(-1e4, 1e4) as f32,
+            self.bottom - self.height() * y.clamp(-1e4, 1e4) as f32,
+        )
+    }
+
+    pub fn fraction(self, x: f32) -> f64 {
+        f64::from(((x - self.left) / self.width()).clamp(0., 1.))
+    }
+}
+
+pub(crate) enum Geometry {
+    Path { points: Vec<Position>, closed: bool },
+    Segment(Position, Position),
+    Box(Position, Position),
+    Dot(Position, f32),
+    Text(Position, Arc<str>),
+}
+
+pub(crate) struct Draw {
+    pub geometry: Geometry,
+    pub color: Color,
+}
+
+pub(crate) struct Panel {
+    pub rect: Rect,
+    pub facet: u32,
+    pub label: String,
+    pub draws: Vec<Draw>,
+    pub ticks: [Vec<Tick>; 3],
+}
+
+/// Renderer-neutral viewport output. Build off the UI thread for expensive uncached views.
+pub struct Scene {
+    pub(crate) panels: Vec<Panel>,
+}
+
+impl Scene {
+    pub fn primitive_count(&self) -> usize {
+        self.panels.iter().map(|panel| panel.draws.len()).sum()
+    }
+
+    pub fn vertex_count(&self) -> usize {
+        self.panels
+            .iter()
+            .flat_map(|panel| &panel.draws)
+            .map(|draw| match &draw.geometry {
+                Geometry::Path { points, .. } => points.len(),
+                _ => 1,
+            })
+            .sum()
+    }
+
+    pub(crate) fn panel(&self, position: Position) -> Option<&Panel> {
+        self.panels
+            .iter()
+            .find(|panel| panel.rect.contains(position))
+    }
+}
+
+pub(crate) struct Hit {
+    pub id: DatumId,
+    pub point: Position,
+    pub x: f64,
+    pub y: f64,
+    pub secondary: bool,
+}
+
+impl PreparedChart {
+    pub fn scene(
+        &self,
+        width: f32,
+        height: f32,
+        domain: Domain,
+        hidden: &BTreeSet<SeriesId>,
+    ) -> Scene {
+        if !width.is_finite() || !height.is_finite() {
+            return Scene { panels: Vec::new() };
+        }
+        let count = self.facets.len();
+        let columns = if width >= 520. && count > 1 { 2 } else { 1 };
+        let rows = count.div_ceil(columns).max(1);
+        let cell_width = width / columns as f32;
+        let cell_height = height / rows as f32;
+        let left = 75.;
+        let right = if self.has_right_axis { 75. } else { 20. };
+        let top = if count > 1 { 24. } else { 12. };
+        let bottom = if self.axes[0].title.is_empty() {
+            25.
+        } else {
+            44.
+        };
+        if cell_width <= left + right || cell_height <= top + bottom {
+            return Scene { panels: Vec::new() };
+        }
+
+        let domains = [domain, self.domains[1], self.domains[2]];
+        let mut scratch = Vec::new();
+        let mut panels = Vec::with_capacity(count);
+        for (index, (facet, label)) in self.facets.iter().enumerate() {
+            let x = (index % columns) as f32 * cell_width;
+            let y = (index / columns) as f32 * cell_height;
+            let rect = Rect {
+                left: x + left,
+                top: y + top,
+                right: x + cell_width - right,
+                bottom: y + cell_height - bottom,
+            };
+            let ticks = std::array::from_fn(|axis| {
+                if axis == 2 && !self.has_right_axis {
+                    return Vec::new();
+                }
+                let budget = if axis == 0 {
+                    rect.width() / 85.
+                } else {
+                    rect.height() / 46.
+                };
+                self.axes[axis].scale.ticks(domains[axis], budget as usize)
+            });
+            let mut panel = Panel {
+                rect,
+                facet: *facet,
+                label: label.clone(),
+                draws: Vec::new(),
+                ticks,
+            };
+            for run in self
+                .runs
+                .iter()
+                .filter(|r| r.facet == *facet && !hidden.contains(&r.id))
+            {
+                let projection = Projection {
+                    chart: self,
+                    domains,
+                    rect,
+                    run,
+                };
+                projection.generate(&mut panel.draws, &mut scratch);
+            }
+            panels.push(panel);
+        }
+        Scene { panels }
+    }
+
+    pub(crate) fn nearest(
+        &self,
+        panel: &Panel,
+        domain: Domain,
+        hidden: &BTreeSet<SeriesId>,
+        cursor: Position,
+        radius: f32,
+    ) -> Option<Hit> {
+        let domains = [domain, self.domains[1], self.domains[2]];
+        let x_scale = &self.axes[0].scale;
+        let min = x_scale.invert(domain, panel.rect.fraction(cursor.0 - radius));
+        let max = x_scale.invert(domain, panel.rect.fraction(cursor.0 + radius));
+        let mut best = None;
+        let mut distance = radius * radius;
+        for run in self
+            .runs
+            .iter()
+            .filter(|r| r.facet == panel.facet && !hidden.contains(&r.id))
+        {
+            let projection = Projection {
+                chart: self,
+                domains,
+                rect: panel.rect,
+                run,
+            };
+            for row in &run.rows[run.visible(min, max, false)] {
+                if let Some(point) = projection.anchor(row).filter(|&p| panel.rect.contains(p)) {
+                    let d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
+                    if d <= distance {
+                        distance = d;
+                        best = Some(Hit {
+                            id: row.id,
+                            point,
+                            x: row.x,
+                            y: row.y,
+                            secondary: run.secondary,
+                        });
+                    }
+                }
+            }
+        }
+        best
+    }
+}
+
+impl Run {
+    fn visible(&self, min: f64, max: f64, neighbors: bool) -> Range<usize> {
+        let start = self.rows.partition_point(|r| r.x < min - self.max_x_extent);
+        let end = self
+            .rows
+            .partition_point(|r| r.x <= max + self.max_x_extent);
+        let adjacent = usize::from(neighbors);
+        start.saturating_sub(adjacent)..end.saturating_add(adjacent).min(self.rows.len())
+    }
+
+    pub(crate) fn build_levels(&mut self) {
+        if !self.mark.connected() {
+            return;
+        }
+        let mut len = self.rows.len();
+        let mut scratch = Vec::new();
+        while len > 16_384 {
+            let previous = self.levels.last();
+            lttb(
+                len,
+                len.div_ceil(8),
+                |i| {
+                    let row = &self.rows[previous.map_or(i, |level| level[i])];
+                    (row.x, row.top)
+                },
+                &mut scratch,
+            );
+            let level = scratch
+                .iter()
+                .map(|&i| previous.map_or(i, |level| level[i]))
+                .collect();
+            self.levels.push(level);
+            len = scratch.len();
+        }
+    }
+}
+
+struct Projection<'a> {
+    chart: &'a PreparedChart,
+    domains: [Domain; 3],
+    rect: Rect,
+    run: &'a Run,
+}
+
+impl Projection<'_> {
+    fn y_axis(&self) -> usize {
+        if self.run.secondary { 2 } else { 1 }
+    }
+
+    fn xy(&self, x: f64, y: f64) -> Option<Position> {
+        let axis = self.y_axis();
+        let x = self.chart.axes[0].scale.project(self.domains[0], x)?;
+        let y = self.chart.axes[axis].scale.project(self.domains[axis], y)?;
+        Some(self.rect.project(x, y))
+    }
+
+    fn anchor(&self, row: &Sample) -> Option<Position> {
+        match self.run.mark {
+            Mark::Area(_) | Mark::Bar(_, Orientation::Vertical) => self.xy(row.x, row.top),
+            Mark::Bar(_, Orientation::Horizontal) => self.xy(row.top, row.y),
+            Mark::Candlestick => self.xy(row.x, row.ohlc?.close),
+            _ => self.xy(row.x, row.y),
+        }
+    }
+
+    fn color(&self, row: &Sample) -> Color {
+        row.color.unwrap_or(Color::Category(self.run.palette))
+    }
+
+    fn generate(&self, out: &mut Vec<Draw>, scratch: &mut Vec<usize>) {
+        let domain = self.domains[0];
+        let visible = self
+            .run
+            .visible(domain.min(), domain.max(), self.run.mark.connected());
+        if visible.is_empty() {
+            return;
+        }
+        if self.run.mark.connected() {
+            self.connected(visible, out, scratch);
+            return;
+        }
+        if matches!(self.run.mark, Mark::Point | Mark::Bubble) && visible.len() > 8_192 {
+            self.scatter(visible, out);
+            return;
+        }
+        for row in &self.run.rows[visible] {
+            self.individual(row, out);
+        }
+    }
+
+    fn connected(&self, visible: Range<usize>, out: &mut Vec<Draw>, scratch: &mut Vec<usize>) {
+        let budget = (self.rect.width().ceil() as usize).clamp(3, 4096);
+        let mut source = None;
+        let mut range = visible.clone();
+        for level in &self.run.levels {
+            if range.len() <= budget * 8 {
+                break;
+            }
+            let start = level
+                .partition_point(|&i| i < visible.start)
+                .saturating_sub(1);
+            let end = level
+                .partition_point(|&i| i < visible.end)
+                .saturating_add(1)
+                .min(level.len());
+            if end.saturating_sub(start) < budget {
+                break;
+            }
+            source = Some(level);
+            range = start..end;
+        }
+        let row =
+            |i| &self.run.rows[source.map_or(range.start + i, |level| level[range.start + i])];
+        lttb(
+            range.len(),
+            budget,
+            |i| {
+                let (x, y) = self.anchor(row(i)).unwrap_or_default();
+                (f64::from(x), f64::from(y))
+            },
+            scratch,
+        );
+        let Some(&first) = scratch.first() else {
+            return;
+        };
+        let area = matches!(self.run.mark, Mark::Area(_));
+        let mut points: Vec<_> = scratch
+            .iter()
+            .filter_map(|&i| self.anchor(row(i)))
+            .collect();
+        if area {
+            points.extend(scratch.iter().rev().filter_map(|&i| {
+                let row = row(i);
+                self.xy(row.x, row.base)
+            }));
+        }
+        if points.len() > 1 {
+            out.push(Draw {
+                geometry: Geometry::Path {
+                    points,
+                    closed: area,
+                },
+                color: self.color(row(first)),
+            });
+        } else if let Some(point) = points.first() {
+            out.push(Draw {
+                geometry: Geometry::Dot(*point, 2.),
+                color: self.color(row(first)),
+            });
+        }
+    }
+
+    fn scatter(&self, visible: Range<usize>, out: &mut Vec<Draw>) {
+        // One representative per screen cell. The source-backed hit index retains all points.
+        let columns = (self.rect.width() / 6.).clamp(1., 128.) as usize;
+        let rows = (self.rect.height() / 6.).clamp(1., 64.) as usize;
+        let mut occupied = vec![false; columns * rows];
+        for row in &self.run.rows[visible] {
+            let Some(point) = self.anchor(row).filter(|&p| self.rect.contains(p)) else {
+                continue;
+            };
+            let x = (self.rect.fraction(point.0) * columns as f64) as usize;
+            let y = ((point.1 - self.rect.top) / self.rect.height() * rows as f32) as usize;
+            let cell = y.min(rows - 1) * columns + x.min(columns - 1);
+            if !occupied[cell] {
+                occupied[cell] = true;
+                self.individual(row, out);
+            }
+        }
+    }
+
+    fn thickness(&self, axis: usize) -> f32 {
+        let length = if axis == 0 {
+            self.rect.width()
+        } else {
+            self.rect.height()
+        };
+        let band = self.chart.axes[axis]
+            .scale
+            .band_fraction(self.domains[axis]) as f32
+            * length;
+        if band > 0. { band } else { 12. }
+    }
+
+    fn individual(&self, row: &Sample, out: &mut Vec<Draw>) {
+        let Some(p) = self.anchor(row) else { return };
+        let color = self.color(row);
+        let mut push = |geometry| out.push(Draw { geometry, color });
+        match self.run.mark {
+            Mark::Line | Mark::Area(_) => {}
+            Mark::Point | Mark::Bubble if self.rect.contains(p) => {
+                let radius = if self.run.mark == Mark::Point {
+                    3.
+                } else {
+                    row.size.clamp(1., 48.)
+                };
+                if radius.is_finite() {
+                    push(Geometry::Dot(p, radius));
+                }
+            }
+            Mark::Text if self.rect.contains(p) => {
+                if let Some(text) = &row.text {
+                    push(Geometry::Text(p, text.clone()));
+                }
+            }
+            Mark::Bar(arrangement, orientation) => {
+                let horizontal = orientation == Orientation::Horizontal;
+                let axis = if horizontal { self.y_axis() } else { 0 };
+                let mut width = self.thickness(axis);
+                let mut offset = 0.;
+                if arrangement == Arrangement::Group {
+                    width /= self.run.slots as f32;
+                    offset = (self.run.slot as f32 - (self.run.slots - 1) as f32 / 2.) * width;
+                }
+                let base = if horizontal {
+                    self.xy(row.base, row.y).map_or(self.rect.left, |p| p.0)
+                } else {
+                    self.xy(row.x, row.base).map_or(self.rect.bottom, |p| p.1)
+                };
+                let half = width / 2.;
+                if horizontal {
+                    push(Geometry::Box(
+                        (base, p.1 + offset - half),
+                        (p.0, p.1 + offset + half),
+                    ));
+                } else {
+                    push(Geometry::Box(
+                        (p.0 + offset - half, base),
+                        (p.0 + offset + half, p.1),
+                    ));
+                }
+            }
+            Mark::Rect => {
+                let other = row.x2.zip(row.y2).and_then(|(x, y)| self.xy(x, y));
+                if let Some(other) = other {
+                    push(Geometry::Box(p, other));
+                } else if self.rect.contains(p) {
+                    let x = self.thickness(0) / 2.;
+                    let y = self.thickness(self.y_axis()) / 2.;
+                    push(Geometry::Box((p.0 - x, p.1 - y), (p.0 + x, p.1 + y)));
+                }
+            }
+            Mark::Rule(Orientation::Vertical) => {
+                push(Geometry::Segment(
+                    (p.0, self.rect.top),
+                    (p.0, self.rect.bottom),
+                ));
+            }
+            Mark::Rule(Orientation::Horizontal) => {
+                push(Geometry::Segment(
+                    (self.rect.left, p.1),
+                    (self.rect.right, p.1),
+                ));
+            }
+            Mark::ErrorBar => {
+                if let Some((low, high)) = row
+                    .low
+                    .zip(row.y2)
+                    .and_then(|(lo, hi)| self.xy(row.x, lo).zip(self.xy(row.x, hi)))
+                {
+                    push(Geometry::Segment(low, high));
+                    for (x, y) in [low, high] {
+                        push(Geometry::Segment((x - 4., y), (x + 4., y)));
+                    }
+                }
+            }
+            Mark::Candlestick => {
+                if let Some(o) = row.ohlc
+                    && let Some((low, high)) = self.xy(row.x, o.low).zip(self.xy(row.x, o.high))
+                    && let Some((open, close)) = self.xy(row.x, o.open).zip(self.xy(row.x, o.close))
+                {
+                    push(Geometry::Segment(low, high));
+                    let thickness = self.thickness(0) * 0.35;
+                    let bottom = if (open.1 - close.1).abs() < 1. {
+                        open.1 + 1.
+                    } else {
+                        close.1
+                    };
+                    if o.close >= o.open {
+                        let a = (p.0 - thickness, open.1);
+                        let b = (p.0 + thickness, bottom);
+                        push(Geometry::Path {
+                            points: vec![a, (b.0, a.1), b, (a.0, b.1), a],
+                            closed: false,
+                        });
+                    } else {
+                        push(Geometry::Box(
+                            (p.0 - thickness, open.1),
+                            (p.0 + thickness, bottom),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn viewport_culls_and_downsamples_connected_runs() {
+        let rows = (0..160_000)
+            .map(|i| (f64::from(i), f64::from(i).sin()))
+            .collect::<Vec<_>>();
+        let model = ChartSpec::default()
+            .layer(Layer::new(
+                Mark::Line,
+                rows,
+                Channels::new(|r: &(f64, f64)| r.0, |r| r.1),
+            ))
+            .prepare();
+        assert!(!model.runs[0].levels.is_empty());
+        let domain = Domain::new(600., 660.).unwrap();
+        let scene = model.scene(900., 370., domain, &BTreeSet::new());
+        assert_eq!(scene.primitive_count(), 1);
+        assert_eq!(scene.vertex_count(), 63);
+        assert!(
+            model
+                .scene(900., 370., model.x_domain(), &BTreeSet::new())
+                .vertex_count()
+                <= 900
+        );
+    }
+
+    #[test]
+    fn categorical_facets_keep_secondary_domain_and_visibility() {
+        let rows = vec![(0., 10., 0), (1., 200., 1)];
+        let mut spec = ChartSpec::new("facets").layer(
+            Layer::new(
+                Mark::Point,
+                rows,
+                Channels::new(|r: &(f64, f64, u32)| r.0, |r| r.1).facet(|r| r.2),
+            )
+            .secondary_axis(true),
+        );
+        spec.x.scale = crate::Scale::Ordinal(Arc::from(["A".into(), "B".into()]));
+        let model = spec.prepare();
+        let scene = model.scene(800., 300., model.x_domain(), &BTreeSet::new());
+        assert_eq!(scene.panels.len(), 2);
+        assert!(!scene.panels[0].ticks[2].is_empty());
+        assert_eq!(scene.primitive_count(), 2);
+        let hidden = BTreeSet::from([SeriesId::default()]);
+        assert_eq!(
+            model
+                .scene(800., 300., model.x_domain(), &hidden)
+                .primitive_count(),
+            0
+        );
+    }
+}
