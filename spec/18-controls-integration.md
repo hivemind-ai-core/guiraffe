@@ -144,3 +144,11 @@ I did not tune any colors. Lowest ratio per group:
 - **Light/Outline/Subtle text** (shade-6 text on a tint) in light: as low as 1.6–1.9 for yellow, lime and cyan primaries. Blue and violet pass.
 - Pressed and hover drop up to 0.5 below rest.
 - The focus ring passes everywhere (it falls back to text color when the primary is too light).
+
+## Contrast report — resolved (2026-11-17)
+All §12.1 floors now pass for both schemes, all 12 primaries, Standard and High contrast (was 302/188 failures), enforced by `state::tests::contrast_report_every_state_scheme_and_primary`. Changes, following Refactoring UI ("keep the hue, move along its scale"; "flip the contrast"):
+- Tinted text (Light/Outline/Subtle) walks the hue's shade scale (darker in light mode, lighter in dark) until ≥5:1 on the strongest tint it sits on (`variant::readable_shade`).
+- Filled: prefer white text, deepening the fill up to two shades until white reaches 4.5:1 (default blue 6 → 8); hues too bright even then (yellow, lime) flip to dark text. Hover moves away from the text color.
+- Pressed continues the rest→hover direction instead of blending toward the text.
+- Dimmed text: light = halfway gray 6→7 (≥4.5:1), dark = dark 1.
+- **Exemption (decision for the user):** Standard-contrast Default control borders stay subtle (≈1.5:1, Mantine/Refactoring UI style); High contrast meets 3:1. Making Standard compliant means a gray-6-ish border on every default button/input.

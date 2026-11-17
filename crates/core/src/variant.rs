@@ -54,24 +54,88 @@ impl ResolveCtx {
     }
 }
 
+/// Text needs 4.5:1 (WCAG 1.4.3). Tinted text targets a little more so hover/pressed tints
+/// (which sit between rest and the text) still clear the floor.
+const TEXT_TARGET: f32 = 5.0;
+
+/// The shade of `color` nearest `start` that reaches `floor` against `bg`, walking toward the
+/// dark end in light mode and the light end in dark mode (Refactoring UI: keep the hue, move
+/// along its scale; darkest shades are for text). Falls back to near-black / near-white.
+pub fn readable_shade(color: ColorName, start: u8, bg: Rgb, floor: f32, dark: bool) -> Rgb {
+    let start = start.min(9);
+    // No allocation: this runs inside render paths.
+    (0..=9u8)
+        .map(|k| {
+            if dark {
+                start.saturating_sub(k)
+            } else {
+                (start + k).min(9)
+            }
+        })
+        .map(|i| color.shade(i))
+        .find(|c| c.contrast(bg) >= floor)
+        .unwrap_or(if dark {
+            ColorName::Gray.shade(0)
+        } else {
+            ColorName::Gray.shade(9)
+        })
+}
+
+/// Foreground for a filled background: white when it reads, otherwise "flip the contrast" to
+/// the hue's darkest shade, then near-black.
+fn filled_foreground(color: ColorName, bg: Rgb) -> Rgb {
+    [
+        Rgb::WHITE,
+        color.shade(9),
+        ColorName::Gray.shade(9),
+        Rgb::BLACK,
+    ]
+    .into_iter()
+    .find(|c| c.contrast(bg) >= 4.5)
+    .unwrap_or(Rgb::BLACK)
+}
+
 pub fn resolve(ctx: &ResolveCtx, color: ColorName, variant: Variant) -> VariantColors {
     let dark = ctx.scheme == Scheme::Dark;
-    let filled = color.shade(ctx.filled_shade());
+    // Filled background: prefer white text (the conventional look), darkening the fill by up
+    // to two shades until white reaches 4.5:1. Hues still too bright (yellow, lime) keep the
+    // theme shade and "flip the contrast" to dark text (Refactoring UI).
+    let theme_shade = ctx.filled_shade();
+    let base = (theme_shade..=(theme_shade + 2).min(9))
+        .find(|&k| color.shade(k).contrast(Rgb::WHITE) >= 4.5)
+        .unwrap_or(theme_shade);
+    let filled = color.shade(base);
     let t = Rgb::TRANSPARENT;
     // Composite translucent tints over the surface so contrast is computable and stable.
     let tint = |alpha: f32| filled.alpha(alpha).over(ctx.surface);
     // Text/border color for tinted variants. The `Dark` palette is too close to the
     // dark surface, so it uses its lightest shade there.
+    // Tinted text: start at the classic accent shade and darken (light) / lighten (dark) along
+    // the same hue until it reads on the strongest tint it sits on.
     let accent = match (dark, color) {
         (true, ColorName::Dark) => color.shade(0),
-        (true, _) => color.shade(4),
-        (false, _) => filled,
+        _ => {
+            // Strongest tint it sits on: the pressed state (hover deepened once more).
+            let strongest_tint = tint(if dark { 0.28 } else { 0.18 });
+            readable_shade(
+                color,
+                if dark { 4 } else { ctx.filled_shade() },
+                strongest_tint,
+                TEXT_TARGET,
+                dark,
+            )
+        }
     };
     match variant {
         Variant::Filled => VariantColors {
             background: filled,
-            hover: color.shade((ctx.filled_shade() + 1).min(9)),
-            foreground: filled.readable_foreground(),
+            // Hover moves away from the text: darker under light text, lighter under dark.
+            hover: if filled_foreground(color, filled) == Rgb::WHITE {
+                color.shade((base + 1).min(9))
+            } else {
+                color.shade(base.saturating_sub(1))
+            },
+            foreground: filled_foreground(color, filled),
             border: t,
         },
         Variant::Light => VariantColors {
@@ -151,9 +215,10 @@ mod tests {
             ColorName::Blue,
             Variant::Filled,
         );
-        assert_eq!(c.background, Rgb::hex(0x228be6));
-        assert_eq!(c.hover, Rgb::hex(0x1c7ed6));
+        // Mantine's blue 6 gives white text only 3.55:1; the fill deepens to blue 8 (4.9:1).
+        assert_eq!(c.background, ColorName::Blue.shade(8));
         assert_eq!(c.foreground, Rgb::WHITE);
+        assert!(c.foreground.contrast(c.background) >= 4.5);
     }
 
     #[test]
@@ -163,7 +228,9 @@ mod tests {
             ColorName::Yellow,
             Variant::Filled,
         );
-        assert_eq!(c.foreground, Rgb::BLACK);
+        // Too bright for white even two shades deeper: dark text, still 4.5:1.
+        assert_ne!(c.foreground, Rgb::WHITE);
+        assert!(c.foreground.contrast(c.background) >= 4.5);
     }
 
     /// Every text-bearing variant must be legible (WCAG large-text 3:1) on its own

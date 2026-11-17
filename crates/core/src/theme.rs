@@ -140,7 +140,8 @@ impl GuiraffeTheme {
                 body: Rgb::WHITE,
                 surface: g.shade(0),
                 text: Rgb::BLACK,
-                dimmed: g.shade(6),
+                // Gray 6 is only 3.3:1 on white; halfway to gray 7 clears 4.5:1.
+                dimmed: g.shade(7).alpha(0.5).over(g.shade(6)),
                 border: g.shade(3),
                 hover: g.shade(1),
                 track: g.shade(1),
@@ -152,7 +153,8 @@ impl GuiraffeTheme {
                 body: d.shade(7),
                 surface: d.shade(6),
                 text: d.shade(0),
-                dimmed: d.shade(2),
+                // Dark 2 is 4.0:1 on the dark body; dark 1 clears 4.5:1.
+                dimmed: d.shade(1),
                 border: d.shade(4),
                 hover: d.shade(5),
                 track: d.shade(6),
