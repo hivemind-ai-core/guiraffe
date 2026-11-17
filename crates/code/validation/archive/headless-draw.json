@@ -1,0 +1,32 @@
+{
+  "revision": "3f1ee1d44224d629eedc1dd932e33c6dbc6625ae",
+  "captured_at_utc": "2026-11-16T22:45:53.951533+00:00",
+  "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+  "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+  "scope": "Dev-profile GPUI headless update/draw work; 20 warmup + 100 measured frames, 1M distinct plain-source lines, no annotations, 1200x800 logical viewport. No desktop presentation/input-latency or release FPS claim. Shared machine, no quiet-run guarantee.",
+  "raw_per_frame_samples_retained": false,
+  "results": {
+    "upstream": {
+      "backend": "upstream",
+      "profile": "dev",
+      "lines": 1000000,
+      "frames": 100,
+      "p50_ms": 1.531292,
+      "p95_ms": 2.501344,
+      "visible_rows": 41,
+      "shaped_lines": 9845,
+      "cache_hits": 281
+    },
+    "fast": {
+      "backend": "gpui-fast",
+      "profile": "dev",
+      "lines": 1000000,
+      "frames": 100,
+      "p50_ms": 1.248828,
+      "p95_ms": 1.442357,
+      "visible_rows": 41,
+      "shaped_lines": 9845,
+      "cache_hits": 198
+    }
+  }
+}

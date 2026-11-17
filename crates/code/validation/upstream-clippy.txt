@@ -1,0 +1,4 @@
+    Checking guiraffe-code v0.1.0 (/home/dan/projects/anteater/worktrees/feat-code/crates/code)
+    Checking guiraffe-bench v0.1.0 (/home/dan/projects/anteater/worktrees/feat-code/bench)
+    Checking guiraffe-showcase v0.1.0 (/home/dan/projects/anteater/worktrees/feat-code/crates/showcase)
+    Finished `dev` profile [unoptimized] target(s) in 1.88s

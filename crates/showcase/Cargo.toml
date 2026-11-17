@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
+guiraffe-code.workspace = true
 guiraffe-components.workspace = true
 guiraffe-layout.workspace = true
 guiraffe-icons.workspace = true

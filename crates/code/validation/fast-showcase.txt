@@ -1,0 +1,41 @@
+    Finished `test` profile [unoptimized] target(s) in 0.33s
+     Running unittests src/lib.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_showcase-ee12683758d04953)
+
+running 1 test
+test demos::overlays::tooltip_tests::showcase_tooltips_follow_hover_and_disappear_on_leave ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/dan/projects/anteater/target/debug/deps/guiraffe_showcase-4bdefd5bbd48685a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/coverage.rs (/home/dan/projects/anteater/target/debug/deps/coverage-47800bd1473dc940)
+
+running 1 test
+test every_public_component_has_a_showcase_entry ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/loading_visual.rs (/home/dan/projects/anteater/target/debug/deps/loading_visual-00919a215ee315e8)
+
+running 1 test
+test loading_dims_without_hiding_the_underlying_surface ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/render.rs (/home/dan/projects/anteater/target/debug/deps/render-a8bc82e751a51153)
+
+running 1 test
+test every_entry_renders_in_both_themes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 55.28s
+
+   Doc-tests guiraffe_showcase
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

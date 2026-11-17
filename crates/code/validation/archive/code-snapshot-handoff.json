@@ -1,0 +1,43 @@
+[
+  {
+    "schema_version": 1,
+    "suite": "code-snapshot-handoff",
+    "metric": "wall_ns",
+    "metadata": {
+      "commit": "3f1ee1d44224d629eedc1dd932e33c6dbc6625ae",
+      "dirty": false,
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+      "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+      "governor": "powersave",
+      "load_average": "13.44 16.26 15.34 1/4943 1040209",
+      "profile": "code-dev-smoke",
+      "build_profile": "debug",
+      "unix_seconds": 1794869041,
+      "notes": "Initial code-model baseline; dev build, warmed fixtures, not desktop frame rate."
+    },
+    "iterations": 100,
+    "warmup_iterations": 100,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 7640891576956012809,
+    "samples": [
+      9506.15,
+      9268.855,
+      9210.75,
+      9285.24,
+      9251.625,
+      9362.68,
+      9266.055,
+      9234.14,
+      9276.175,
+      9198.975
+    ],
+    "summary": {
+      "median": 9267.455,
+      "mad": 25.550000000000182,
+      "ci95": {
+        "low": 9231.1875,
+        "high": 9319.4275
+      }
+    }
+  }
+]
