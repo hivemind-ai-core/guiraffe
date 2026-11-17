@@ -240,6 +240,34 @@ pub fn contrast_checks(t: &GuiraffeTheme) -> Vec<ContrastCheck> {
     push("Dimmed text".into(), d.foreground, d.background, TEXT_MIN);
     let f = t.state(StateKind::FocusRing, Variant::Default, None);
     push("Focus ring".into(), f.border, s.body, NON_TEXT_MIN);
+    // The semantic families Kit paints its alerts with follow the same rules
+    // as the primary: the text reads on the fill, in every state.
+    let kit = crate::kit_bridge::KitColors::from_theme(t);
+    for (name, family) in [
+        ("danger", kit.danger),
+        ("success", kit.success),
+        ("warning", kit.warning),
+        ("info", kit.info),
+    ] {
+        push(
+            format!("{name} text"),
+            family.foreground,
+            family.base,
+            TEXT_MIN,
+        );
+        push(
+            format!("{name} hover text"),
+            family.foreground,
+            family.hover,
+            TEXT_MIN,
+        );
+        push(
+            format!("{name} pressed text"),
+            family.foreground,
+            family.active,
+            TEXT_MIN,
+        );
+    }
     out
 }
 

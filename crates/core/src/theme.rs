@@ -241,6 +241,47 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
             t.popover_foreground = k.foreground.to_hsla();
             t.accent = k.accent.to_hsla();
             t.accent_foreground = k.foreground.to_hsla();
+            // The semantic families follow the same rules as the primary.
+            let (danger, success, warning, info) = (k.danger, k.success, k.warning, k.info);
+            (
+                t.danger,
+                t.danger_hover,
+                t.danger_active,
+                t.danger_foreground,
+            ) = (
+                danger.base.to_hsla(),
+                danger.hover.to_hsla(),
+                danger.active.to_hsla(),
+                danger.foreground.to_hsla(),
+            );
+            (
+                t.success,
+                t.success_hover,
+                t.success_active,
+                t.success_foreground,
+            ) = (
+                success.base.to_hsla(),
+                success.hover.to_hsla(),
+                success.active.to_hsla(),
+                success.foreground.to_hsla(),
+            );
+            (
+                t.warning,
+                t.warning_hover,
+                t.warning_active,
+                t.warning_foreground,
+            ) = (
+                warning.base.to_hsla(),
+                warning.hover.to_hsla(),
+                warning.active.to_hsla(),
+                warning.foreground.to_hsla(),
+            );
+            (t.info, t.info_hover, t.info_active, t.info_foreground) = (
+                info.base.to_hsla(),
+                info.hover.to_hsla(),
+                info.active.to_hsla(),
+                info.foreground.to_hsla(),
+            );
             [t.chart_1, t.chart_2, t.chart_3, t.chart_4, t.chart_5] = k.charts.map(Rgb::to_hsla);
             t.radius = px(k.radius);
         });
