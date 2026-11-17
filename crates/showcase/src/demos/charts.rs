@@ -38,7 +38,7 @@ pub fn entries() -> Vec<Entry> {
             line,
         ),
         entry("Bar chart", "Revenue by quarter with value labels.", bar),
-        entry("Area chart", "Stacked traffic sources over a week.", area),
+        entry("Area chart", "Overlaid traffic sources over a week.", area),
         entry("Pie & donut", "Browser share as a pie and as a donut.", pie),
     ]
 }
