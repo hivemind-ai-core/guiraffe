@@ -156,6 +156,13 @@ fn affinity(requested: Option<usize>) -> Result<Option<usize>> {
     eprintln!("comparison pinned to CPU {cpu}");
     Ok(Some(cpu))
 }
+/// Whether `binary` knows `suite` (a one-iteration probe).
+fn has_suite(binary: &Path, suite: &str) -> bool {
+    Command::new(binary)
+        .args(["sample", "--suite", suite, "--iterations", "1"])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
 fn sample(binary: &Path, suite: &str, iterations: usize, cpu: Option<usize>) -> Result<f64> {
     let mut command = if let Some(cpu) = cpu {
         let mut command = Command::new("taskset");
@@ -249,6 +256,24 @@ fn compare(args: CompareOptions) -> Result<()> {
     );
     for suite in selected(options.suite.as_deref())? {
         check_interrupt()?;
+        // Suites added (or removed) between the revisions cannot be compared; report and skip
+        // them instead of aborting the whole comparison.
+        let (in_old, in_new) = (
+            has_suite(&old_binary, suite.name),
+            has_suite(&new_binary, suite.name),
+        );
+        if !(in_old && in_new) {
+            println!(
+                "{:<24} {}",
+                suite.name,
+                if in_new {
+                    "new suite (skipped)"
+                } else {
+                    "removed (skipped)"
+                }
+            );
+            continue;
+        }
         let mut a = Vec::new();
         let mut b = Vec::new();
         // Alternate AB/BA across rounds, not just all of A followed by all of B.

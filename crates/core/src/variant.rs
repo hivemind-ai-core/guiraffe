@@ -95,7 +95,67 @@ fn filled_foreground(color: ColorName, bg: Rgb) -> Rgb {
     .unwrap_or(Rgb::BLACK)
 }
 
+/// Resolve `variant` for `color`. Memoized per thread: the result depends only on a handful
+/// of small inputs, while computing it walks shade scales doing WCAG contrast math (powf).
+/// Components call this on every render, so after the first call it is one hash lookup and
+/// never allocates.
 pub fn resolve(ctx: &ResolveCtx, color: ColorName, variant: Variant) -> VariantColors {
+    use std::cell::RefCell;
+    // One table for the current theme context: apps run one context at a time, so this is a
+    // direct index (no hashing). A different context swaps the table.
+    type Key = (Scheme, u8, u8, u32);
+    struct Table {
+        key: Key,
+        cells: [[Option<VariantColors>; VARIANTS]; COLORS],
+    }
+    // A few contexts at once (e.g. a dark panel inside a light app); round-robin replacement.
+    const SLOTS: usize = 4;
+    struct Cache {
+        tables: [Option<Table>; SLOTS],
+        next: usize,
+    }
+    thread_local! {
+        static CACHE: RefCell<Cache> = const { RefCell::new(Cache { tables: [None, None, None, None], next: 0 }) };
+    }
+    let key = (
+        ctx.scheme,
+        ctx.primary_shade_light,
+        ctx.primary_shade_dark,
+        ctx.surface.to_u32(),
+    );
+    let (ci, vi) = (color as usize, variant as usize);
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        let slot = match c
+            .tables
+            .iter()
+            .position(|t| t.as_ref().is_some_and(|t| t.key == key))
+        {
+            Some(i) => i,
+            None => {
+                let i = c.next;
+                c.next = (i + 1) % SLOTS;
+                c.tables[i] = Some(Table {
+                    key,
+                    cells: [[None; VARIANTS]; COLORS],
+                });
+                i
+            }
+        };
+        match &mut c.tables[slot] {
+            Some(t) => {
+                *t.cells[ci][vi].get_or_insert_with(|| resolve_uncached(ctx, color, variant))
+            }
+            None => resolve_uncached(ctx, color, variant),
+        }
+    })
+}
+
+const VARIANTS: usize = 7;
+const COLORS: usize = ColorName::ALL.len();
+
+/// The uncached resolution (see [`resolve`]).
+pub fn resolve_uncached(ctx: &ResolveCtx, color: ColorName, variant: Variant) -> VariantColors {
     let dark = ctx.scheme == Scheme::Dark;
     // Filled background: prefer white text (the conventional look), darkening the fill by up
     // to two shades until white reaches 4.5:1. Hues still too bright (yellow, lime) keep the
@@ -276,6 +336,34 @@ mod tests {
         ] {
             let c = resolve(&ctx, ColorName::Violet, v);
             assert_ne!(c.hover, c.background, "{v:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn cached_resolution_equals_uncached_for_every_input() {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let ctx = ResolveCtx::new(scheme);
+            for color in ColorName::ALL {
+                for variant in [
+                    Variant::Filled,
+                    Variant::Light,
+                    Variant::Outline,
+                    Variant::Subtle,
+                    Variant::Transparent,
+                    Variant::White,
+                    Variant::Default,
+                ] {
+                    let a = resolve(&ctx, color, variant);
+                    let b = resolve(&ctx, color, variant); // cache hit
+                    assert_eq!(a, resolve_uncached(&ctx, color, variant));
+                    assert_eq!(a, b);
+                }
+            }
         }
     }
 }
