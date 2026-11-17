@@ -3301,8 +3301,10 @@ dependencies = [
  "ctrlc",
  "fs2",
  "gpui-kit",
+ "guiraffe-components",
  "guiraffe-core",
  "guiraffe-flow-core",
+ "guiraffe-ui",
  "guiraffe-windows",
  "iai-callgrind",
  "nix",
@@ -3547,6 +3549,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-ui",
+ "im",
  "serde",
  "serde_json",
 ]

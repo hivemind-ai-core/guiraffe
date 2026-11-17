@@ -158,6 +158,29 @@ pub fn flow_delete_child() {
     });
 }
 
+/// Warm the native fixture outside criterion/Callgrind measurement.
+pub fn prepare_data_ui() {
+    crate::data_ui::instantiate();
+    crate::data_ui::patch();
+    crate::data_ui::splice();
+    crate::data_ui::structural_splice();
+    crate::data_ui::structural_splice();
+    crate::data_ui::settle();
+}
+pub fn data_ui_instantiate() {
+    crate::data_ui::instantiate();
+}
+pub fn data_ui_patch() {
+    crate::data_ui::patch();
+}
+pub fn data_ui_splice() {
+    crate::data_ui::splice();
+}
+
+pub fn data_ui_structural_splice() {
+    crate::data_ui::structural_splice();
+}
+
 /// Shared registration table consumed by the CLI, criterion and iai-callgrind.
 /// Add workloads here once; each tool expands its own registration from this list.
 #[macro_export]
@@ -170,6 +193,10 @@ macro_rules! with_suites {
             (flow_move,"flow-move-5k"),
             (flow_delete_child,"flow-delete-child-5k"),
             (windows_placement, "windows-placement"),
+            (data_ui_instantiate, "data-ui-instantiate"),
+            (data_ui_patch, "data-ui-patch"),
+            (data_ui_splice, "data-ui-splice"),
+            (data_ui_structural_splice, "data-ui-structural-splice"),
         }
     };
 }

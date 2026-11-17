@@ -1,0 +1,207 @@
+[
+  {
+    "schema_version": 1,
+    "suite": "core-variants",
+    "metric": "wall_ns",
+    "metadata": {
+      "commit": "9e2e4d488013afbdc82c2b3b2184860b830ace89",
+      "dirty": false,
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+      "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+      "governor": "powersave",
+      "load_average": "6.25 16.08 16.49 1/5206 395223",
+      "profile": "shared-dev",
+      "build_profile": "debug",
+      "unix_seconds": 1794865443,
+      "notes": "Debug smoke only; uncontrolled shared host; gpui-fast"
+    },
+    "iterations": 20,
+    "warmup_iterations": 20,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 7640891576956012809,
+    "samples": [
+      1698.77,
+      1661.7322580645164,
+      1638.2951612903223,
+      1648.6548387096773,
+      1661.4112903225807,
+      1666.3677419354838,
+      1671.9566666666665,
+      1669.3966666666668,
+      1736.6534482758618,
+      1693.6933333333332
+    ],
+    "summary": {
+      "median": 1667.8822043010753,
+      "mad": 12.84913978494626,
+      "ci95": {
+        "low": 1655.1935483870968,
+        "high": 1693.6933333333332
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "suite": "windows-placement",
+    "metric": "wall_ns",
+    "metadata": {
+      "commit": "9e2e4d488013afbdc82c2b3b2184860b830ace89",
+      "dirty": false,
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+      "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+      "governor": "powersave",
+      "load_average": "6.25 16.08 16.49 1/5206 395223",
+      "profile": "shared-dev",
+      "build_profile": "debug",
+      "unix_seconds": 1794865443,
+      "notes": "Debug smoke only; uncontrolled shared host; gpui-fast"
+    },
+    "iterations": 20,
+    "warmup_iterations": 20,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 7640891576956012809,
+    "samples": [
+      292.9067251461988,
+      293.04678362573105,
+      291.75,
+      290.9468023255814,
+      290.7406976744186,
+      286.45428571428573,
+      308.5325153374234,
+      305.5701219512195,
+      294.5226470588235,
+      291.51802325581394
+    ],
+    "summary": {
+      "median": 292.3283625730994,
+      "mad": 1.4846125730994117,
+      "ci95": {
+        "low": 290.9468023255814,
+        "high": 299.3084527884753
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "suite": "data-ui-instantiate",
+    "metric": "wall_ns",
+    "metadata": {
+      "commit": "9e2e4d488013afbdc82c2b3b2184860b830ace89",
+      "dirty": false,
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+      "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+      "governor": "powersave",
+      "load_average": "6.25 16.08 16.49 1/5206 395223",
+      "profile": "shared-dev",
+      "build_profile": "debug",
+      "unix_seconds": 1794865443,
+      "notes": "Debug smoke only; uncontrolled shared host; gpui-fast"
+    },
+    "iterations": 20,
+    "warmup_iterations": 20,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 7640891576956012809,
+    "samples": [
+      1582.6,
+      1643.6306451612904,
+      1862.4759259259258,
+      2208.9847826086957,
+      1661.4435483870968,
+      1683.9800000000002,
+      1600.0921875,
+      1613.8306451612905,
+      1544.3969696969696,
+      1607.3718750000003
+    ],
+    "summary": {
+      "median": 1628.7306451612903,
+      "mad": 39.42177419354846,
+      "ci95": {
+        "low": 1598.215322580645,
+        "high": 1761.9597371565114
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "suite": "data-ui-patch",
+    "metric": "wall_ns",
+    "metadata": {
+      "commit": "9e2e4d488013afbdc82c2b3b2184860b830ace89",
+      "dirty": false,
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+      "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+      "governor": "powersave",
+      "load_average": "6.25 16.08 16.49 1/5206 395223",
+      "profile": "shared-dev",
+      "build_profile": "debug",
+      "unix_seconds": 1794865443,
+      "notes": "Debug smoke only; uncontrolled shared host; gpui-fast"
+    },
+    "iterations": 20,
+    "warmup_iterations": 20,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 7640891576956012809,
+    "samples": [
+      1796.6571428571428,
+      1788.3053571428572,
+      1818.8749999999998,
+      2093.228,
+      2123.4833333333336,
+      1812.2214285714285,
+      1833.623214285714,
+      2128.241666666667,
+      2054.428,
+      1738.4534482758622
+    ],
+    "summary": {
+      "median": 1826.249107142857,
+      "mad": 62.86970443349719,
+      "ci95": {
+        "low": 1796.6571428571428,
+        "high": 2093.228
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "suite": "data-ui-splice",
+    "metric": "wall_ns",
+    "metadata": {
+      "commit": "9e2e4d488013afbdc82c2b3b2184860b830ace89",
+      "dirty": false,
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+      "cpu_model": "AMD Ryzen 7 8745HS w/ Radeon 780M Graphics",
+      "governor": "powersave",
+      "load_average": "6.25 16.08 16.49 1/5206 395223",
+      "profile": "shared-dev",
+      "build_profile": "debug",
+      "unix_seconds": 1794865443,
+      "notes": "Debug smoke only; uncontrolled shared host; gpui-fast"
+    },
+    "iterations": 20,
+    "warmup_iterations": 20,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 7640891576956012809,
+    "samples": [
+      5854.311111111111,
+      5737.366666666668,
+      5521.48,
+      5628.166666666667,
+      5722.233333333333,
+      6037.488888888889,
+      5958.105555555556,
+      6528.5375,
+      5643.688888888889,
+      5205.66
+    ],
+    "summary": {
+      "median": 5729.8,
+      "mad": 166.41555555555578,
+      "ci95": {
+        "low": 5582.584444444445,
+        "high": 5958.105555555556
+      }
+    }
+  }
+]

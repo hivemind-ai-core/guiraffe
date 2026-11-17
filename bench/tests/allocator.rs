@@ -54,7 +54,7 @@ fn scopes_are_thread_local() -> anyhow::Result<()> {
 fn initial_hot_paths_allocate_nothing() -> anyhow::Result<()> {
     for suite in guiraffe_bench::suites::registered()
         .into_iter()
-        .filter(|s| !s.name.starts_with("flow-"))
+        .filter(|s| !s.name.starts_with("flow-") && !s.name.starts_with("data-ui-"))
     {
         let (_, counts) = count_allocations(suite.run)?;
         assert_eq!(counts.allocations, 0, "{} allocates", suite.name);
@@ -67,5 +67,76 @@ fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     guiraffe_bench::suites::flow_query();
     let (_, counts) = count_allocations(guiraffe_bench::suites::flow_query)?;
     assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn data_ui_native_workloads_have_bounded_allocation_traffic() -> anyhow::Result<()> {
+    guiraffe_bench::suites::prepare_data_ui();
+    for suite in guiraffe_bench::suites::registered()
+        .into_iter()
+        .filter(|suite| suite.name.starts_with("data-ui-"))
+    {
+        (suite.run)(); // Initialize native platform, template, list and caches outside counting.
+        (suite.run)();
+        let (_, counts) = count_allocations(suite.run)?;
+        eprintln!(
+            "{}: {} allocations, {} requested bytes",
+            suite.name, counts.allocations, counts.bytes
+        );
+        let (allocation_budget, byte_budget) = match suite.name {
+            "data-ui-instantiate" => (24, 4096),
+            "data-ui-patch" => (12, 2048),
+            _ => (64, 131_072),
+        };
+        assert!(
+            counts.allocations <= allocation_budget,
+            "{} allocation regression: {counts:?}",
+            suite.name
+        );
+        assert!(
+            counts.bytes <= byte_budget,
+            "{} copies the 10k list: {counts:?}",
+            suite.name
+        );
+    }
+    guiraffe_bench::suites::prepare_data_ui();
+    Ok(())
+}
+
+#[test]
+fn one_item_splice_shares_an_immutable_large_list_snapshot() -> anyhow::Result<()> {
+    use guiraffe_ui::{PatchBuf, SlotId, SlotTable, Value};
+    use std::sync::Arc;
+    for len in [1_000, 100_000] {
+        let mut table = SlotTable::with_defaults(&[Value::List(
+            (0..len).map(|i| Value::from(i as i64)).collect(),
+        )]);
+        let snapshot = table.clone();
+        let mut out = PatchBuf::default();
+        out.splice(
+            SlotId(0),
+            len / 2..len / 2 + 1,
+            Arc::from([Value::from(-1i64)]),
+        );
+        let (changed, counts) = count_allocations(|| table.apply(&mut out))?;
+        assert_eq!(changed, 1);
+        assert_eq!(
+            snapshot.get(SlotId(0)).list_get(len / 2),
+            Some(&Value::from((len / 2) as i64))
+        );
+        assert_eq!(
+            table.get(SlotId(0)).list_get(len / 2),
+            Some(&Value::from(-1i64))
+        );
+        assert!(
+            counts.bytes < 131_072,
+            "splice copied the {len}-item snapshot: {counts:?}"
+        );
+        eprintln!(
+            "snapshot splice {len}: {} allocations / {} bytes",
+            counts.allocations, counts.bytes
+        );
+    }
     Ok(())
 }

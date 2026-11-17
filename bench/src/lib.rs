@@ -1,5 +1,6 @@
 //! Headless suite harness, explicit host metadata collection, and comparison statistics.
 pub mod allocator;
+mod data_ui;
 pub mod stats;
 pub mod suites;
 

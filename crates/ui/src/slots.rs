@@ -4,6 +4,7 @@
 //! patch that doesn't change the value is a no-op, so nothing re-renders for it.
 
 use crate::value::Value;
+use std::{ops::Range, sync::Arc};
 
 /// A compact slot address (resolved from a name when the document is compiled).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -12,17 +13,39 @@ pub struct SlotId(pub u32);
 #[derive(Debug, Clone, PartialEq)]
 pub enum Patch {
     Set(SlotId, Value),
+    Splice(SlotId, Range<usize>, Arc<[Value]>),
+    SetItem(Arc<crate::ItemChange>),
 }
 
 /// Reusable patch buffer handed to logic (no allocation per event once warm).
 #[derive(Debug, Default)]
 pub struct PatchBuf {
     patches: Vec<Patch>,
+    veto: bool,
 }
 
 impl PatchBuf {
-    pub fn set(&mut self, slot: SlotId, value: impl Into<Value>) {
-        self.patches.push(Patch::Set(slot, value.into()));
+    pub fn item(&mut self, change: crate::ItemChange) {
+        self.patches.push(Patch::SetItem(Arc::new(change)));
+    }
+    pub(crate) fn clear(&mut self) {
+        self.patches.clear();
+        self.veto = false;
+    }
+    pub(crate) fn push(&mut self, patch: Patch) {
+        self.patches.push(patch);
+    }
+    pub fn veto(&mut self) {
+        self.veto = true;
+    }
+    pub(crate) fn take_veto(&mut self) -> bool {
+        std::mem::take(&mut self.veto)
+    }
+    pub fn set(&mut self, slot: impl Into<SlotId>, value: impl Into<Value>) {
+        self.patches.push(Patch::Set(slot.into(), value.into()));
+    }
+    pub fn splice(&mut self, slot: impl Into<SlotId>, range: Range<usize>, values: Arc<[Value]>) {
+        self.patches.push(Patch::Splice(slot.into(), range, values));
     }
     pub fn is_empty(&self) -> bool {
         self.patches.is_empty()
@@ -41,12 +64,17 @@ pub struct SlotTable {
     /// Bumped per changed slot; nodes bound to a slot re-render only when it moves.
     versions: Vec<u64>,
     generation: u64,
+    styles: Vec<(
+        Option<guiraffe_core::Size>,
+        Option<guiraffe_core::ColorName>,
+    )>,
 }
 
 impl SlotTable {
     pub fn with_defaults(defaults: &[Value]) -> Self {
         Self {
-            values: defaults.to_vec(),
+            styles: defaults.iter().map(style).collect(),
+            values: defaults.iter().cloned().map(Value::persistent).collect(),
             versions: vec![0; defaults.len()],
             generation: 0,
         }
@@ -54,6 +82,7 @@ impl SlotTable {
 
     pub fn with_len(n: usize) -> Self {
         Self {
+            styles: vec![(None, None); n],
             values: vec![Value::Null; n],
             versions: vec![0; n],
             generation: 0,
@@ -73,6 +102,12 @@ impl SlotTable {
         self.values.get(id.0 as usize).unwrap_or(&NULL)
     }
 
+    pub fn size(&self, id: SlotId) -> Option<guiraffe_core::Size> {
+        self.styles.get(id.0 as usize).and_then(|s| s.0)
+    }
+    pub fn color(&self, id: SlotId) -> Option<guiraffe_core::ColorName> {
+        self.styles.get(id.0 as usize).and_then(|s| s.1)
+    }
     pub fn version(&self, id: SlotId) -> u64 {
         self.versions.get(id.0 as usize).copied().unwrap_or(0)
     }
@@ -88,22 +123,96 @@ impl SlotTable {
 
     /// Like [`SlotTable::apply`], also recording which slots changed (for targeted invalidation).
     pub fn apply_tracked(&mut self, buf: &mut PatchBuf, changed_slots: &mut Vec<SlotId>) -> usize {
+        self.apply_detailed(buf, changed_slots, &mut Vec::new())
+    }
+
+    pub(crate) fn apply_detailed(
+        &mut self,
+        buf: &mut PatchBuf,
+        changed_slots: &mut Vec<SlotId>,
+        edits: &mut Vec<Patch>,
+    ) -> usize {
         let mut changed = 0;
         for p in buf.drain() {
+            let p = if let Patch::SetItem(change) = p {
+                let Some(row) = self.get(change.item.slot).list_get(change.item.index) else {
+                    continue;
+                };
+                if row.field(&change.item.key_path) != &change.item.key {
+                    continue;
+                }
+                let Some(row) = row.with_field(&change.path, change.value.clone()) else {
+                    continue;
+                };
+                Patch::Splice(
+                    change.item.slot,
+                    change.item.index..change.item.index + 1,
+                    Arc::from([row]),
+                )
+            } else {
+                p
+            };
             match p {
                 Patch::Set(id, v) => {
                     let i = id.0 as usize;
                     if let Some(slot) = self.values.get_mut(i)
                         && *slot != v
                     {
-                        *slot = v;
-                        self.versions[i] += 1;
+                        if let Some(cache) = self.styles.get_mut(i) {
+                            *cache = style(&v);
+                        }
+                        *slot = v.persistent();
+                        edits.push(Patch::Set(id, slot.clone()));
+                        if let Some(version) = self.versions.get_mut(i) {
+                            *version = version.wrapping_add(1);
+                        }
                         changed += 1;
                         if !changed_slots.contains(&id) {
                             changed_slots.push(id);
                         }
                     }
                 }
+                Patch::Splice(id, range, values) => {
+                    let Some(slot) = self.values.get_mut(id.0 as usize) else {
+                        continue;
+                    };
+                    let Some(len) = slot.list_len() else { continue };
+                    if range.start > range.end || range.end > len {
+                        continue;
+                    }
+                    if range.len() == values.len()
+                        && values
+                            .iter()
+                            .enumerate()
+                            .all(|(i, v)| slot.list_get(range.start + i) == Some(v))
+                    {
+                        continue;
+                    }
+                    if !matches!(slot, Value::Sequence(_)) {
+                        *slot = slot.clone().persistent();
+                    }
+                    if let Value::Sequence(items) = slot {
+                        if range.len() == values.len() {
+                            for (offset, value) in values.iter().enumerate() {
+                                items.set(range.start + offset, value.clone());
+                            }
+                        } else {
+                            let suffix = items.split_off(range.end);
+                            items.truncate(range.start);
+                            items.extend(values.iter().cloned());
+                            items.append(suffix);
+                        }
+                    }
+                    if let Some(version) = self.versions.get_mut(id.0 as usize) {
+                        *version = version.wrapping_add(1);
+                    }
+                    changed += 1;
+                    if !changed_slots.contains(&id) {
+                        changed_slots.push(id);
+                    }
+                    edits.push(Patch::Splice(id, range, values));
+                }
+                Patch::SetItem(_) => {} // Lowered before mutation.
             }
         }
         if changed > 0 {
@@ -125,6 +234,7 @@ impl SlotTable {
             .map(|(i, n)| (n.as_str(), i))
             .collect();
         let mut t = SlotTable {
+            styles: Vec::with_capacity(new_names.len()),
             values: Vec::with_capacity(new_names.len()),
             versions: Vec::with_capacity(new_names.len()),
             generation: self.generation + 1,
@@ -132,17 +242,42 @@ impl SlotTable {
         for (ni, name) in new_names.iter().enumerate() {
             match old.get(name.as_str()) {
                 Some(&oi) => {
-                    t.values.push(self.values[oi].clone());
-                    t.versions.push(self.versions[oi]);
+                    t.values
+                        .push(self.values.get(oi).cloned().unwrap_or_default());
+                    t.styles
+                        .push(self.styles.get(oi).copied().unwrap_or_default());
+                    t.versions.push(self.versions.get(oi).copied().unwrap_or(0));
                 }
                 None => {
-                    t.values
-                        .push(new_defaults.get(ni).cloned().unwrap_or_default());
+                    t.values.push(
+                        new_defaults
+                            .get(ni)
+                            .cloned()
+                            .unwrap_or_default()
+                            .persistent(),
+                    );
+                    t.styles
+                        .push(style(t.values.last().unwrap_or(&Value::Null)));
                     t.versions.push(1);
                 }
             }
         }
         t
+    }
+}
+
+fn style(
+    value: &Value,
+) -> (
+    Option<guiraffe_core::Size>,
+    Option<guiraffe_core::ColorName>,
+) {
+    match value.as_str() {
+        Some(s) => (
+            crate::template::parse_size(s),
+            guiraffe_core::ColorName::from_name(s),
+        ),
+        None => (None, None),
     }
 }
 
@@ -190,5 +325,35 @@ mod tests {
             Some("fresh"),
             "new slot gets its default"
         );
+    }
+    #[test]
+    fn all_small_splices_match_a_vec_oracle_without_touching_invalid_ranges() {
+        for len in 0..8 {
+            for start in 0..=len + 1 {
+                for end in 0..=len + 1 {
+                    for insert in 0..4 {
+                        let initial: Vec<Value> = (0..len).map(|i| Value::from(i as i64)).collect();
+                        let values: Arc<[Value]> =
+                            (0..insert).map(|i| Value::from(100 + i as i64)).collect();
+                        let mut expected = initial.clone();
+                        if start <= end && end <= len {
+                            expected.splice(start..end, values.iter().cloned());
+                        }
+                        let mut table =
+                            SlotTable::with_defaults(&[Value::List(initial.clone().into())]);
+                        let mut out = PatchBuf::default();
+                        out.splice(SlotId(0), start..end, values);
+                        let changed = usize::from(initial != expected);
+                        assert_eq!(
+                            table.apply(&mut out),
+                            changed,
+                            "len={len}, range={start}..{end}, insert={insert}"
+                        );
+                        assert_eq!(table.get(SlotId(0)), &Value::List(expected.into()));
+                        assert_eq!(table.version(SlotId(0)), changed as u64);
+                    }
+                }
+            }
+        }
     }
 }

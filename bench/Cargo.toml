@@ -18,8 +18,10 @@ serde.workspace = true
 serde_json.workspace = true
 guiraffe-flow-core.workspace = true
 guiraffe-core.workspace = true
+guiraffe-ui.workspace = true
+guiraffe-components.workspace = true
 guiraffe-windows.workspace = true
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
 ctrlc = { version = "3", features = ["termination"] }
