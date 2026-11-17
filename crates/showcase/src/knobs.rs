@@ -276,6 +276,30 @@ impl Render for Playground {
     }
 }
 
+type StaticFn = fn(&mut Window, &mut App) -> AnyElement;
+
+/// A playground above an existing static demo: `live` draws a knob-driven example, `rest`
+/// the fixed examples below it.
+pub fn with_knobs(
+    title: &'static str,
+    knobs: &[Knob],
+    live: PreviewFn,
+    rest: StaticFn,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyView {
+    playground_with(
+        title,
+        knobs,
+        move |_, _| (live, rest),
+        |s: &(PreviewFn, StaticFn), v, window, cx| {
+            column([(s.0)(v, window, cx), (s.1)(window, cx)])
+        },
+        window,
+        cx,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
