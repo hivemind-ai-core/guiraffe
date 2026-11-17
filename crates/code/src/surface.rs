@@ -120,6 +120,7 @@ pub(crate) struct Shared {
     pub(crate) layout_epoch: Cell<u64>,
     pub overlay_view: RefCell<Option<WeakEntity<OverlayLayer>>>,
     pub focus: FocusHandle,
+    pub menu: guiraffe_core::TextMenu,
 }
 /// Composite control handle. All updates publish immutable data or pure leaf notifications;
 /// hosts must keep this handle outside their render state to retain unrelated ancestors.
@@ -166,6 +167,7 @@ impl CodeHandle {
             layout_epoch: Cell::default(),
             overlay_view: RefCell::new(None),
             focus: cx.focus_handle(),
+            menu: guiraffe_core::TextMenu::new(),
         });
         let text = cx.new(|_| TextLayer {
             shared: shared.clone(),
@@ -361,6 +363,95 @@ impl CodeHandle {
         {
             cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
         }
+    }
+    /// Copy the selection prefixed with one-based line numbers.
+    pub fn copy_with_line_numbers(&self, cx: &mut App) {
+        if let Some(text) = self
+            .selection()
+            .and_then(|r| self.document().with_line_numbers(r))
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+    /// Select the whole source.
+    pub fn select_all(&self, cx: &mut App) {
+        let doc = self.document();
+        if let Some(end) = doc.position(doc.source().len()) {
+            self.select(Some(SourceRange::new(Position::default(), end)), cx);
+        }
+    }
+    /// The selection context menu (open state, entries), for hosts and tests.
+    pub fn context_menu(&self) -> &guiraffe_core::TextMenu {
+        &self.shared.menu
+    }
+    /// Open the selection context menu at `position` (window coordinates). Copy is disabled
+    /// without a selection; "Go to definition" appears when a definition handler is set and a
+    /// symbol is under `at`.
+    pub fn open_context_menu(
+        &self,
+        position: Point<Pixels>,
+        at: Option<Position>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let selected = self
+            .selection()
+            .is_some_and(|r| self.document().range(r).is_some_and(|r| !r.is_empty()));
+        let (copy, all, numbered) = (self.clone(), self.clone(), self.clone());
+        let mut spec = guiraffe_core::TextMenuSpec::new(
+            selected,
+            move |_, cx| copy.copy(cx),
+            move |_, cx| all.select_all(cx),
+        )
+        .item(
+            guiraffe_core::TextMenuItem::new("Copy with line numbers", move |_, cx| {
+                numbered.copy_with_line_numbers(cx)
+            })
+            .enabled(selected),
+        );
+        let handler = self.shared.definition.borrow().clone();
+        let symbol = at.and_then(|p| self.symbol_at(p));
+        if let (Some(handler), Some(range)) = (handler, symbol) {
+            spec = spec.item(guiraffe_core::TextMenuItem::new(
+                "Go to definition",
+                move |window, cx| handler(range, window, cx),
+            ));
+        }
+        self.shared.menu.open(
+            position,
+            &spec,
+            self.overlay.entity_id(),
+            self.shared.focus.clone(),
+            window,
+            cx,
+        );
+    }
+    fn symbol_at(&self, position: Position) -> Option<SourceRange> {
+        if let Some(provider) = self.shared.provider.borrow().as_ref() {
+            return provider(position).map(|s| s.range);
+        }
+        let doc = self.document();
+        let offset = doc.offset(position)?;
+        let mut hits = Vec::new();
+        self.shared
+            .index
+            .borrow()
+            .query(offset..offset.saturating_add(1), &mut hits);
+        let annotations = self.shared.annotations.borrow();
+        hits.iter()
+            .filter_map(|i| annotations.get(*i))
+            .find(|a| a.kind == AnnotationKind::Symbol)
+            .map(|a| a.range)
+    }
+    /// Where a keyboard-opened menu appears: the selection start, else the text origin.
+    fn menu_anchor(&self) -> Point<Pixels> {
+        let at = self
+            .selection()
+            .and_then(|r| crate::paint::anchor(&self.shared, r.start));
+        at.unwrap_or_else(|| {
+            let g = self.shared.geometry.borrow();
+            g.bounds.origin + point(px(g.gutter), px(g.line_height))
+        })
     }
     pub fn set_traces(&self, traces: Arc<[Trace]>, cx: &mut App) {
         if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
@@ -760,7 +851,7 @@ impl Render for OverlayLayer {
                     .child(MarkdownView::new(format!("code-detail-{}", self.shared.id)).state(md)),
             );
         }
-        root
+        root.children(self.shared.menu.element())
     }
 }
 /// Read-only viewer embeddable anywhere, including a host's Markdown custom-fence factory.
@@ -793,6 +884,7 @@ impl RenderOnce for CodeViewer {
         let up_out = h.clone();
         let key = h.clone();
         let leave = h.clone();
+        let right = h.clone();
         let mut root = div()
             .id(ElementId::Name(format!("code-{}", h.id()).into()))
             .key_context("GrCode")
@@ -825,7 +917,12 @@ impl RenderOnce for CodeViewer {
                     if local.x.as_f32() >= g.bounds.size.width.as_f32() - g.mini && g.mini > 0. {
                         let fraction =
                             (local.y.as_f32() / g.bounds.size.height.as_f32()).clamp(0., 1.);
-                        let line = (fraction * down.document().line_count() as f32) as usize;
+                        let lines = down.document().line_count();
+                        let height = g.bounds.size.height.as_f32();
+                        let line = match crate::paint::minimap_line_height(lines, height) {
+                            Some(step) => (local.y.as_f32() / step) as usize,
+                            None => (fraction * lines as f32) as usize,
+                        };
                         drop(g);
                         down.scroll_to_line(line, cx);
                         return;
@@ -848,6 +945,22 @@ impl RenderOnce for CodeViewer {
                             down.select(Some(SourceRange::new(p, p)), cx);
                         }
                     }
+                },
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                move |event: &MouseDownEvent, window, cx| {
+                    let at = right.hit(event.position);
+                    // Right-click outside the selection moves the caret there, as editors do.
+                    let inside = right
+                        .selection()
+                        .zip(at)
+                        .is_some_and(|(r, p)| r.start <= p && p <= r.end && r.start != r.end);
+                    if !inside && let Some(p) = at {
+                        right.select(Some(SourceRange::new(p, p)), cx);
+                    }
+                    right.open_context_menu(event.position, at, window, cx);
+                    cx.stop_propagation();
                 },
             )
             .on_mouse_move(move |event: &MouseMoveEvent, _, cx| {
@@ -874,17 +987,18 @@ impl RenderOnce for CodeViewer {
                     leave.set_hover(None, cx);
                 }
             })
-            .on_key_down(move |event: &KeyDownEvent, _, cx| {
+            .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                if guiraffe_core::text_menu::is_menu_key(event) {
+                    let at = key.selection().map(|r| r.start);
+                    key.open_context_menu(key.menu_anchor(), at, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 let command =
                     event.keystroke.modifiers.platform || event.keystroke.modifiers.control;
                 match event.keystroke.key.as_str() {
                     "c" if command => key.copy(cx),
-                    "a" if command => {
-                        let doc = key.document();
-                        if let Some(end) = doc.position(doc.source().len()) {
-                            key.select(Some(SourceRange::new(Position::default(), end)), cx);
-                        }
-                    }
+                    "a" if command => key.select_all(cx),
                     "pagedown" | "pageup" => {
                         let g = key.shared.geometry.borrow();
                         let step = g.bounds.size.height.as_f32()

@@ -594,12 +594,7 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
             }
         }
     }
-    paint_traces(
-        std::slice::from_ref(shared),
-        &shared.traces.borrow(),
-        theme,
-        window,
-    );
+    paint_local_traces(shared, &shared.traces.borrow(), theme, window);
     let g = shared.geometry.borrow();
     let options = shared.options.borrow();
     if options.minimap && g.mini > 0. {
@@ -610,28 +605,141 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
             Bounds::new(origin, size(px(g.mini), px(height))),
             surfaces.surface.to_hsla(),
         ));
-        for (i, density) in doc.document.minimap().iter().enumerate() {
-            if *density > 0. {
-                let y = origin.y + px(i as f32 * height / 256.);
-                window.paint_quad(fill(
-                    Bounds::new(
-                        point(origin.x, y),
-                        size(px(density * g.mini), px((height / 256.).max(1.))),
-                    ),
-                    surfaces.dimmed.to_hsla().opacity(0.35),
-                ));
+        let total = doc.document.line_count().max(1);
+        let ink = surfaces.dimmed.to_hsla().opacity(0.45);
+        let (first, last) = (
+            g.shaped.keys().min().copied().unwrap_or_default(),
+            g.shaped.keys().max().copied().unwrap_or_default(),
+        );
+        // A file that fits at >= 2px a line is drawn as line strokes, like a miniature;
+        // larger files use the bounded density summary.
+        let (y, h) = match minimap_line_height(total, height) {
+            Some(step) => {
+                for line in 0..total {
+                    let text = doc.document.line(line).unwrap_or_default();
+                    if let Some((x, w)) = minimap_stroke(text, g.mini) {
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(origin.x + px(x), origin.y + px(line as f32 * step)),
+                                size(px(w), px((step * 0.6).max(1.))),
+                            ),
+                            ink,
+                        ));
+                    }
+                }
+                (
+                    first as f32 * step,
+                    ((last.saturating_sub(first) + 1) as f32 * step).max(2.),
+                )
             }
-        }
-        let total = doc.document.line_count().max(1) as f32;
-        let first = g.shaped.keys().min().copied().unwrap_or_default();
-        let last = g.shaped.keys().max().copied().unwrap_or(first);
-        let y = first as f32 / total * height;
-        let h = (((last - first + 1) as f32 / total * height).max(2.)).min(height - y);
-        window.paint_quad(fill(
-            Bounds::new(point(origin.x, origin.y + px(y)), size(px(g.mini), px(h))),
-            color(ColorName::Blue, theme).opacity(0.25),
-        ));
+            None => {
+                for (i, density) in doc.document.minimap().iter().enumerate() {
+                    if *density > 0. {
+                        let y = origin.y + px(i as f32 * height / 256.);
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(origin.x, y),
+                                size(px(density * g.mini), px((height / 256.).max(1.))),
+                            ),
+                            ink.opacity(0.35),
+                        ));
+                    }
+                }
+                let t = total as f32;
+                let y = first as f32 / t * height;
+                (y, ((last - first + 1) as f32 / t * height).max(2.))
+            }
+        };
+        let h = h.min((height - y).max(0.));
+        let blue = color(ColorName::Blue, theme);
+        window.paint_quad(
+            fill(
+                Bounds::new(point(origin.x, origin.y + px(y)), size(px(g.mini), px(h))),
+                blue.opacity(0.08),
+            )
+            .border_widths(px(1.))
+            .border_color(blue.opacity(0.45)),
+        );
     }
+}
+/// Per-line minimap step when every line fits at 2px or more; capped at 4px.
+pub(crate) fn minimap_line_height(lines: usize, height: f32) -> Option<f32> {
+    let step = height / lines.max(1) as f32;
+    (step >= 2.).then_some(step.min(4.))
+}
+/// Horizontal extent of a line's stroke: indentation offset and trimmed length, both
+/// scaled so 120 columns span the minimap.
+pub(crate) fn minimap_stroke(text: &str, width: f32) -> Option<(f32, f32)> {
+    let trimmed = text.trim_start();
+    let len = trimmed.trim_end().chars().count();
+    if len == 0 {
+        return None;
+    }
+    let indent = text.len() - trimmed.len();
+    let scale = width / 120.;
+    let x = (indent.min(120) as f32 * scale).min(width - 1.);
+    Some((x, (len as f32 * scale).clamp(1., width - x)))
+}
+/// Traces within one viewer: a dot on each endpoint token, joined by an arc routed through
+/// the gutter so the line never crosses source text. Each trace bulges a little further
+/// so several (even crossing) traces stay distinguishable.
+fn paint_local_traces(
+    shared: &Rc<Shared>,
+    traces: &[Trace],
+    theme: &GuiraffeTheme,
+    window: &mut Window,
+) {
+    let (edge, gutter, top, bottom) = {
+        let g = shared.geometry.borrow();
+        (
+            g.bounds.origin.x + px(g.gutter),
+            g.gutter,
+            g.bounds.origin.y,
+            g.bounds.bottom(),
+        )
+    };
+    let mut lane = 0usize;
+    for trace in traces {
+        if trace.from.viewer != shared.id || trace.to.viewer != shared.id {
+            continue;
+        }
+        let (Some(a), Some(b)) = (
+            anchor(shared, trace.from.position),
+            anchor(shared, trace.to.position),
+        ) else {
+            continue;
+        };
+        let c = color(trace.color, theme).opacity(0.8);
+        for p in [a, b] {
+            window.paint_quad(
+                fill(
+                    Bounds::new(point(p.x - px(2.5), p.y - px(2.5)), size(px(5.), px(5.))),
+                    c,
+                )
+                .corner_radii(px(2.5)),
+            );
+        }
+        let bulge = px(trace_bulge(lane, gutter));
+        lane += 1;
+        let x = edge - px(2.);
+        let (y0, y1) = (a.y.clamp(top, bottom), b.y.clamp(top, bottom));
+        let mut path = PathBuilder::stroke(px(1.5));
+        path.move_to(point(x, y0));
+        path.cubic_bezier_to(point(x, y1), point(x - bulge, y0), point(x - bulge, y1));
+        if let Ok(path) = path.build() {
+            window.paint_path(path, c);
+        }
+        for y in [y0, y1] {
+            window.paint_quad(fill(
+                Bounds::new(point(x, y - px(0.75)), size(px(2.), px(1.5))),
+                c,
+            ));
+        }
+    }
+}
+/// How far trace `lane` bulges into a gutter of `gutter` px.
+pub(crate) fn trace_bulge(lane: usize, gutter: f32) -> f32 {
+    (8. + 5. * (lane % 4) as f32).min((gutter * 0.9).max(4.))
 }
 pub(crate) fn paint_traces(
     viewers: &[Rc<Shared>],

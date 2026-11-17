@@ -454,9 +454,25 @@ impl DisplayLine {
             }
             cursor = *column;
             let start = text.len();
-            text.push(' ');
-            text.push_str(&hint.replace(['\n', '\r'], " "));
-            text.push(' ');
+            let hint = hint.replace(['\n', '\r'], " ");
+            let hint = hint.trim();
+            let word = |c: char| c.is_alphanumeric() || c == '_';
+            // Pad only where the hint would otherwise touch a word: `x: u32 = 1`, not
+            // `x : u32  = 1`.
+            let before = source[..*column].chars().next_back();
+            if before.is_some_and(word) && hint.chars().next().is_some_and(word) {
+                text.push(' ');
+            }
+            text.push_str(hint);
+            let after = source[*column..].chars().next();
+            if after.is_some_and(|c| !c.is_whitespace() && !matches!(c, ',' | ')' | ';' | ']'))
+                && hint
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c != '(' && c != '[')
+            {
+                text.push(' ');
+            }
             insertions.push((*column, start..text.len()));
         }
         text.push_str(source.get(cursor..).unwrap_or_default());
@@ -497,7 +513,7 @@ mod display_tests {
     fn hints_preserve_unicode_source_coordinates() {
         let source = "let α = 1;";
         let display = DisplayLine::new(source, &[(6, Arc::from(": i32"))]);
-        assert_eq!(display.text.as_ref(), "let α : i32  = 1;");
+        assert_eq!(display.text.as_ref(), "let α : i32 = 1;");
         for byte in 0..=source.len() {
             if source.is_char_boundary(byte) {
                 assert_eq!(
@@ -507,6 +523,17 @@ mod display_tests {
             }
         }
         assert_eq!(display.display_to_source(8), 6);
+    }
+    #[test]
+    fn hints_pad_without_doubling_spaces() {
+        let display = |s: &str, c: usize, h: &str| DisplayLine::new(s, &[(c, Arc::from(h))]).text;
+        assert_eq!(
+            display("let sum = 1;", 7, ": u32").as_ref(),
+            "let sum: u32 = 1;"
+        );
+        assert_eq!(display("f(items)", 2, "xs:").as_ref(), "f(xs: items)");
+        assert_eq!(display("f(a, b)", 5, "y:").as_ref(), "f(a, y: b)");
+        assert_eq!(display("x", 1, "i32").as_ref(), "x i32");
     }
 }
 
