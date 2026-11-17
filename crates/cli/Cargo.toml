@@ -13,6 +13,7 @@ name = "guiraffe"
 path = "src/main.rs"
 
 [dependencies]
+toml_edit = "0.22"
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-components.workspace = true

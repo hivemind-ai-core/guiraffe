@@ -4,9 +4,11 @@
 //! guiraffe new <name> [--path <guiraffe checkout>]   scaffold an app (gpui-fast, router, store, shell)
 //! guiraffe preview <file.json|design.mocket.json> [--screen <id|name>]   live preview with hot reload
 //! guiraffe import <design.mocket.json> [--screen <id|name>]              Mocket → GUIraffe document JSON
+//! guiraffe add [<crate>…] [--path <checkout>]       add GUIraffe crates to this app (no args: list)
 //! guiraffe doctor                                    check toolchain, system libraries and app pins
 //! ```
 
+mod add;
 mod doctor;
 mod preview;
 mod scaffold;
@@ -64,6 +66,18 @@ fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&imp.document)?);
             Ok(())
         }
+        Some("add") => {
+            let (names, path): (Vec<String>, Option<String>) =
+                match args.iter().position(|a| a == "--path") {
+                    Some(i) => (args[1..i].to_vec(), args.get(i + 1).cloned()),
+                    None => (args[1..].to_vec(), None),
+                };
+            let checkout = path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")));
+            let checkout = checkout.canonicalize().unwrap_or(checkout);
+            add::run(&std::env::current_dir()?, &checkout, &names)
+        }
         Some("doctor") => {
             let ok = doctor::report(&doctor::gather(&std::env::current_dir()?));
             if ok {
@@ -74,7 +88,7 @@ fn run() -> Result<()> {
         }
         Some("--help" | "-h") | None => {
             println!(
-                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe doctor"
+                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe add [<crate>…]\nguiraffe doctor"
             );
             Ok(())
         }
