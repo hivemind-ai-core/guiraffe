@@ -1,3 +1,4 @@
+#![allow(clippy::single_range_in_vec_init, clippy::let_and_return)]
 //! GPUI interaction tests: scrolling, selection, keyboard, resize, sort, edit, focus policy,
 //! accessibility and render isolation. Run on both backends (`--features gpui-fast`).
 
