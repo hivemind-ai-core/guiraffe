@@ -43,10 +43,26 @@ fast desktop apps on GPUI (gpui-kit 0.9.1), aiming to be as convenient as React 
 - **timeline:** Gantt (critical path, resize either edge, locks), DAW track timeline (move,
   trim, snap, locks, keyboard editing), dope sheet, curve editor.
 - **code:** virtualized code viewer: highlighting, analysis highlights, inlay hints, lenses,
-  bubbles, folds, trace lines; million-line documents.
+  bubbles, folds, trace lines (gutter-routed, cross-viewer), minimap (click/drag), symbol
+  cards with go-to-definition; million-line documents.
+- **datagrid:** virtualized data grid over a zero-copy source (1M × 50): pinned, resizable,
+  reorderable columns; multi-column sort and filters off the UI thread; row/cell/range
+  selection that follows rows through sorting; keyboard navigation; inline editing with
+  validation; TSV copy; AccessKit grid roles.
+- **timeline (overhaul):** composable plot surface layers (ruler, gridlines, marks, playhead,
+  selection, markers, stripes, bands); lock state separate from lock styling; Blender-style
+  dope sheet (hierarchy, summaries, toggles, key types, hold bars, box selection, keyboard);
+  curve editor with a full external editing API (keys, segments, tangents, multi-curve);
+  quantized bar curve editor.
+
+- **text menu:** shared right-click menu for selectable text (Copy, Select all, extras;
+  Shift+F10) in code, markdown and chat.
 
 ### Tooling
-- **cli:** `guiraffe new` (standalone app), `preview` (hot-reloaded UI-as-data), `import`.
+- **cli:** `guiraffe new` (standalone app), `dev` (watch, rebuild, relaunch; failed builds keep
+  the previous app), `add <crate>` (idempotent, reuses the app's checkout), `doctor`
+  (toolchain, system libraries with install hints, Vulkan, pins), `preview` (hot-reloaded
+  UI-as-data), `import`.
 - **showcase:** every component live, searchable, both themes, live option panels; a
   coverage test fails when a public component has no entry.
 - **gallery:** reference app.
