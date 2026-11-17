@@ -6,6 +6,9 @@ use gpui_kit::{
 };
 use guiraffe_timeline::*;
 
+use guiraffe_components::{SegmentedControl, SegmentedEvent, Text};
+use guiraffe_core::Size;
+
 use super::{column, example};
 use crate::catalog::Entry;
 
@@ -59,6 +62,107 @@ fn hold<V: Render>(e: Entity<V>, label: &'static str, h: f32, cx: &mut App) -> A
 
 const DAY: f64 = 86_400.0;
 
+const EDGES: [ResizeEdges; 4] = [
+    ResizeEdges::Both,
+    ResizeEdges::Start,
+    ResizeEdges::End,
+    ResizeEdges::None,
+];
+
+/// Live editing options shared by the Gantt and track demos: which edges resize, and a
+/// global lock. Changing an option touches only the timeline view, not the shell.
+struct EditOptions<V: 'static> {
+    view: Entity<V>,
+    label: &'static str,
+    height: f32,
+    edges: Entity<SegmentedControl>,
+    lock: Entity<SegmentedControl>,
+    note: &'static str,
+    _subs: [gpui_kit::Subscription; 2],
+}
+
+trait Editable: Render {
+    fn set_edges(&mut self, edges: ResizeEdges, cx: &mut Context<Self>);
+    fn set_all_editable(&mut self, editable: bool, cx: &mut Context<Self>);
+}
+
+impl Editable for GanttView {
+    fn set_edges(&mut self, e: ResizeEdges, cx: &mut Context<Self>) {
+        self.set_resize_edges(e, cx)
+    }
+    fn set_all_editable(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.set_editable(on, cx)
+    }
+}
+
+impl Editable for TracksView {
+    fn set_edges(&mut self, e: ResizeEdges, cx: &mut Context<Self>) {
+        self.set_resize_edges(e, cx)
+    }
+    fn set_all_editable(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.set_editable(on, cx)
+    }
+}
+
+fn with_options<V: Editable>(
+    view: Entity<V>,
+    label: &'static str,
+    height: f32,
+    note: &'static str,
+    cx: &mut App,
+) -> AnyView {
+    let edges = SegmentedControl::new(["Resize: both", "Start", "End", "None"], cx);
+    let lock = SegmentedControl::new(["Editable", "Locked"], cx);
+    cx.new(|cx| {
+        let v1 = view.clone();
+        let v2 = view.clone();
+        let s1 = cx.subscribe(&edges, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            let edges = EDGES.get(*i).copied().unwrap_or_default();
+            v1.update(cx, |v, cx| v.set_edges(edges, cx));
+        });
+        let s2 = cx.subscribe(&lock, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            v2.update(cx, |v, cx| v.set_all_editable(*i == 0, cx));
+        });
+        EditOptions {
+            view,
+            label,
+            height,
+            edges,
+            lock,
+            note,
+            _subs: [s1, s2],
+        }
+    })
+    .into()
+}
+
+impl<V: Editable> Render for EditOptions<V> {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        column([
+            example(
+                "Options",
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(16.))
+                    .child(div().w(px(340.)).child(self.edges.clone()))
+                    .child(div().w(px(200.)).child(self.lock.clone()))
+                    .child(Text::new(self.note).size(Size::Xs).dimmed(true)),
+            ),
+            example(
+                self.label,
+                div()
+                    .h(px(self.height))
+                    .overflow_hidden()
+                    .child(self.view.clone()),
+            ),
+        ])
+    }
+}
+
 fn gantt(_: &mut Window, cx: &mut App) -> AnyView {
     let start = 20_400.0 * DAY;
     let t = |id, name: &str, d: f64, after: &[u32]| Task {
@@ -80,7 +184,15 @@ fn gantt(_: &mut Window, cx: &mut App) -> AnyView {
         TimeFormat::Days,
         cx,
     );
-    hold(v, "Project plan (critical path in red)", 260., cx)
+    // Launch date is fixed: lock it to show per-item locks (dashed, faded).
+    v.update(cx, |v, cx| v.set_locked(6, true, cx));
+    with_options(
+        v,
+        "Project plan (critical path in red; Launch is locked)",
+        260.,
+        "Drag bar ends to resize; the cursor shows what a drag will do.",
+        cx,
+    )
 }
 
 fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
@@ -103,7 +215,24 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
         cx,
     );
     v.update(cx, |v, _| v.set_snap(Some(0.25)));
-    hold(v, "Four tracks, 0.25s snap", 220., cx)
+    // Lock the vocal take.
+    v.update(cx, |v, cx| {
+        if let Some(id) = v
+            .tracks()
+            .get(3)
+            .and_then(|(_, t)| t.clips().first())
+            .map(|c| c.id)
+        {
+            v.set_locked(3, id, true, cx);
+        }
+    });
+    with_options(
+        v,
+        "Four tracks, 0.25s snap (vocals locked)",
+        220.,
+        "Trim either edge; clips can't overlap or extend past their media.",
+        cx,
+    )
 }
 
 fn dope(_: &mut Window, cx: &mut App) -> AnyView {

@@ -12,6 +12,8 @@ use guiraffe_core::{ColorName, GuiraffeTheme, Variant};
 
 use crate::{
     axis::{Axis, TimeFormat, label},
+    clips::Edge,
+    edit::{Grab, ResizeEdges, cursor_for, grab_at},
     gantt::{ScheduleError, Scheduled, Task, schedule},
 };
 
@@ -23,11 +25,21 @@ pub const LABEL_W: f32 = 160.0;
 pub enum GanttEvent {
     /// A task was dragged to a new earliest start.
     Rescheduled { id: u32, not_before: f64 },
+    /// A task edge was dragged: new earliest start and duration.
+    Resized {
+        id: u32,
+        not_before: f64,
+        duration: f64,
+    },
 }
 
+/// Shortest duration an edge drag can produce (seconds).
+pub const MIN_DURATION: f64 = 1e-3;
+
+#[derive(Clone, Copy)]
 struct Drag {
     id: u32,
-    grab_dt: f64,
+    grab: Grab,
 }
 
 /// Per-row data derived from tasks + schedule; rebuilt only when either changes, shared
@@ -73,6 +85,13 @@ pub struct GanttView {
     body: Rc<std::cell::Cell<Bounds<Pixels>>>,
     /// Range to fit once the real width is known.
     pending_fit: Option<(f64, f64)>,
+    resize: ResizeEdges,
+    /// Tasks that cannot be moved or resized.
+    locked: std::collections::HashSet<u32>,
+    /// When false, nothing can be edited.
+    editable: bool,
+    /// What the pointer is over, for the cursor.
+    hover: Option<Grab>,
 }
 
 impl EventEmitter<GanttEvent> for GanttView {}
@@ -91,6 +110,10 @@ impl GanttView {
             drag: None,
             body: Rc::default(),
             pending_fit: Some((lo, hi)),
+            resize: ResizeEdges::default(),
+            locked: Default::default(),
+            editable: true,
+            hover: None,
         })
     }
 
@@ -156,28 +179,125 @@ impl GanttView {
             .fold(f64::NEG_INFINITY, f64::max)
     }
 
-    /// Begin a drag at body-local pixel `x` on `row`; only a press on the task's bar grabs.
+    /// What a press at (`row`, `x`) would grab, honouring locks and the resize policy.
+    pub fn grab(&self, row: usize, x: f64) -> Option<(u32, Grab)> {
+        if !self.editable {
+            return None;
+        }
+        let task = self.tasks.get(row)?;
+        if self.locked.contains(&task.id) {
+            return None;
+        }
+        let sc = self.schedule.as_ref().ok()?.get(&task.id)?;
+        let x0 = self.axis.x(sc.early_start);
+        let x1 = self.axis.x(sc.early_finish).max(x0 + 2.0);
+        grab_at(x0, x1, x, self.axis.t(x), sc.early_start, self.resize).map(|g| (task.id, g))
+    }
+
+    /// Begin a drag at body-local pixel `x` on `row`; only a press on an editable bar grabs.
     pub fn press(&mut self, row: usize, x: f64) -> bool {
-        let axis = self.axis;
-        self.drag = self.tasks.get(row).and_then(|task| {
-            let sc = self.schedule.as_ref().ok()?.get(&task.id)?;
-            let x0 = axis.x(sc.early_start);
-            let x1 = axis.x(sc.early_finish).max(x0 + 2.0);
-            (x >= x0 && x <= x1).then(|| Drag {
-                id: task.id,
-                grab_dt: axis.t(x) - sc.early_start,
-            })
-        });
+        self.drag = self.grab(row, x).map(|(id, grab)| Drag { id, grab });
         self.drag.is_some()
     }
 
     /// Continue the active drag to body-local pixel `x`.
     pub fn drag_to(&mut self, x: f64, cx: &mut Context<Self>) {
-        let Some((id, dt)) = self.drag.as_ref().map(|d| (d.id, d.grab_dt)) else {
+        let Some(d) = self.drag else {
             return;
         };
-        let t = self.axis.t(x) - dt;
-        self.reschedule(id, t, cx);
+        let t = self.axis.t(x);
+        match d.grab {
+            Grab::Move { grab_dt } => self.reschedule(d.id, t - grab_dt, cx),
+            Grab::Trim(edge) => self.resize_edge(d.id, edge, t, cx),
+        }
+    }
+
+    /// Move one edge of task `id` to time `t`. The end edge changes the duration; the start
+    /// edge moves the start and keeps the finish. Never below [`MIN_DURATION`], never before
+    /// predecessors.
+    pub fn resize_edge(&mut self, id: u32, edge: Edge, t: f64, cx: &mut Context<Self>) {
+        if !t.is_finite() {
+            return;
+        }
+        let bound = self.predecessor_bound(id);
+        let Some(sc) = self
+            .schedule
+            .as_ref()
+            .ok()
+            .and_then(|m| m.get(&id))
+            .copied()
+        else {
+            return;
+        };
+        let (start, duration) = match edge {
+            Edge::End => (sc.early_start, (t - sc.early_start).max(MIN_DURATION)),
+            Edge::Start => {
+                let start = t.max(bound).min(sc.early_finish - MIN_DURATION);
+                (start, sc.early_finish - start)
+            }
+        };
+        let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        let not_before = if edge == Edge::Start {
+            start
+        } else {
+            task.not_before
+        };
+        if task.duration == duration && task.not_before == not_before {
+            return;
+        }
+        task.duration = duration;
+        task.not_before = not_before;
+        self.schedule = schedule(&self.tasks);
+        self.geometry = geometry(&self.tasks, &self.schedule);
+        cx.emit(GanttEvent::Resized {
+            id,
+            not_before,
+            duration,
+        });
+        cx.notify();
+    }
+
+    /// Which bar edges resize (default: both).
+    pub fn set_resize_edges(&mut self, edges: ResizeEdges, cx: &mut Context<Self>) {
+        self.resize = edges;
+        cx.notify();
+    }
+
+    /// Lock or unlock one task's position and size.
+    pub fn set_locked(&mut self, id: u32, locked: bool, cx: &mut Context<Self>) {
+        let changed = if locked {
+            self.locked.insert(id)
+        } else {
+            self.locked.remove(&id)
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub fn is_locked(&self, id: u32) -> bool {
+        self.locked.contains(&id)
+    }
+
+    /// Allow or forbid all edits (a global lock).
+    pub fn set_editable(&mut self, editable: bool, cx: &mut Context<Self>) {
+        if self.editable != editable {
+            self.editable = editable;
+            self.drag = None;
+            cx.notify();
+        }
+    }
+
+    fn hover_at(&mut self, row: usize, x: f64, cx: &mut Context<Self>) {
+        let g = self.grab(row, x).map(|(_, g)| g);
+        if cursor_for(g) != cursor_for(self.hover) {
+            self.hover = g;
+            cx.notify();
+        } else {
+            self.hover = g;
+        }
     }
 
     pub fn release(&mut self) {
@@ -260,6 +380,13 @@ impl Render for GanttView {
         let format = self.format;
         let error = self.schedule.as_ref().err().map(|e| format!("{e:?}"));
         let geo = self.geometry.clone();
+        let editable = self.editable;
+        let locked_ids = &self.locked;
+        let ids: Vec<u32> = if self.locked.is_empty() {
+            Vec::new()
+        } else {
+            self.tasks.iter().map(|t| t.id).collect()
+        };
         let rows = geo.clone();
         let body = self.body.clone();
         let line = s.border.to_hsla();
@@ -339,6 +466,7 @@ impl Render for GanttView {
                     .child(
                         div()
                             .id("gantt-body")
+                            .cursor(cursor_for(self.drag.map(|d| d.grab).or(self.hover)))
                             .relative()
                             .flex_1()
                             .overflow_hidden()
@@ -357,11 +485,13 @@ impl Render for GanttView {
                                 }),
                             )
                             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                                let b = this.body.get();
+                                let x = f64::from(f32::from(e.position.x - b.origin.x));
+                                let y = f32::from(e.position.y - b.origin.y);
                                 if e.pressed_button == Some(MouseButton::Left) {
-                                    let x = f64::from(f32::from(
-                                        e.position.x - this.body.get().origin.x,
-                                    ));
                                     this.drag_to(x, cx);
+                                } else if y >= 0.0 {
+                                    this.hover_at((y / ROW_H) as usize, x, cx);
                                 }
                             }))
                             .on_mouse_up(
@@ -377,6 +507,8 @@ impl Render for GanttView {
                                 .size_full(),
                             )
                             .children(rows.rows.iter().enumerate().map(|(i, (_, sc))| {
+                                let locked = !editable
+                                    || ids.get(i).is_some_and(|id| locked_ids.contains(id));
                                 let bar = sc.map(|x| {
                                     let (x0, x1) = (
                                         axis.x(x.early_start) as f32,
@@ -393,6 +525,7 @@ impl Render for GanttView {
                                         .bg(v.background.to_hsla())
                                         .border_1()
                                         .border_color(v.foreground.to_hsla())
+                                        .when(locked, |el| el.opacity(0.55).border_dashed())
                                 });
                                 div().children(bar)
                             }))
@@ -526,5 +659,63 @@ mod tests {
         });
         assert_eq!(nb, Some(2.0), "clamped to predecessor finish");
         assert_eq!(*events.borrow(), 0, "start never changed");
+    }
+
+    #[test]
+    fn edges_resize_and_locks_block_edits() {
+        let cx = gpui_kit::TestAppContext::single();
+        let view = cx.update(|cx| GanttView::new(tasks(), TimeFormat::Seconds, cx));
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let ev = events.clone();
+        let _s = cx.update(|cx| {
+            cx.subscribe(&view, move |_, e: &GanttEvent, _| {
+                ev.borrow_mut().push(e.clone())
+            })
+        });
+        view.update(&mut cx.clone(), |v, cx| {
+            let a = *v.axis();
+            // b spans [2,3]. Drag its end to 4.5.
+            assert!(v.press(1, a.x(3.0)));
+            v.drag_to(a.x(4.5), cx);
+            v.release();
+            // Drag a's start right to 0.5: a = [0.5, 2], b unchanged at 2.
+            assert!(v.press(0, a.x(0.0)));
+            v.drag_to(a.x(0.5), cx);
+            v.release();
+            // Start edge cannot cross the finish.
+            assert!(v.press(0, a.x(0.5)));
+            v.drag_to(a.x(9.0), cx);
+            v.release();
+        });
+        let sc = view.read_with(&cx, |v, _| {
+            v.schedule().as_ref().ok().cloned().unwrap_or_default()
+        });
+        let b = sc.get(&2).copied();
+        assert_eq!(b.map(|b| (b.early_start, b.early_finish)), Some((2.0, 4.5)));
+        let a = sc.get(&1).copied();
+        assert!(
+            a.is_some_and(
+                |a| a.early_finish == 2.0 && (2.0 - a.early_start - MIN_DURATION).abs() < 1e-9
+            ),
+            "{a:?}"
+        );
+        assert!(matches!(
+            events.borrow()[0],
+            GanttEvent::Resized { id: 2, .. }
+        ));
+
+        view.update(&mut cx.clone(), |v, cx| {
+            let a = *v.axis();
+            v.set_locked(2, true, cx);
+            assert!(!v.press(1, a.x(3.0)), "locked task");
+            v.set_locked(2, false, cx);
+            v.set_resize_edges(ResizeEdges::None, cx);
+            assert!(
+                matches!(v.grab(1, a.x(4.5)), Some((2, Grab::Move { .. }))),
+                "end edge falls through to move"
+            );
+            v.set_editable(false, cx);
+            assert!(v.grab(1, a.x(3.0)).is_none(), "global lock");
+        });
     }
 }

@@ -5,6 +5,7 @@ pub mod clips;
 pub mod curve_view;
 pub mod curves;
 pub mod dope_sheet;
+pub mod edit;
 pub mod gantt;
 pub mod gantt_view;
 mod measure;
@@ -31,6 +32,8 @@ pub use dope_sheet::{Channel, DopeEvent, DopeSheet};
 pub use gantt::{ScheduleError, Scheduled, Task, schedule};
 pub use gantt_view::{GanttEvent, GanttView};
 pub use tracks_view::{TracksEvent, TracksView};
+
+pub use edit::ResizeEdges;
 
 #[cfg(test)]
 mod visible_tests {

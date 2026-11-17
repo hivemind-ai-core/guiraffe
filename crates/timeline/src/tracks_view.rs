@@ -12,14 +12,13 @@ use guiraffe_core::{GuiraffeTheme, Variant};
 
 use crate::{
     axis::{Axis, TimeFormat, label},
-    clips::{Edge, Track},
+    clips::Track,
 };
 
 pub const TRACK_H: f32 = 40.0;
 pub const HEADER_W: f32 = 140.0;
 pub const RULER_H: f32 = 24.0;
-/// Pixels from a clip edge that grab a trim instead of a move.
-pub const EDGE_GRAB: f64 = 6.0;
+pub use crate::edit::EDGE_GRAB;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TracksEvent {
@@ -27,11 +26,7 @@ pub enum TracksEvent {
     Seek(f64),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Grab {
-    Move { grab_dt: f64 },
-    Trim(Edge),
-}
+pub use crate::edit::{Grab, ResizeEdges};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Drag {
@@ -50,32 +45,27 @@ pub struct TracksView {
     body: Rc<Cell<Bounds<Pixels>>>,
     /// Range to fit once the real width is known.
     pending_fit: Option<(f64, f64)>,
+    resize: ResizeEdges,
+    /// Clips that cannot be moved or resized, by (track, clip id).
+    locked: std::collections::HashSet<(usize, u32)>,
+    /// When false, nothing can be edited (seek still works).
+    editable: bool,
+    /// What the pointer is over, for the cursor.
+    hover: Option<Grab>,
 }
 
 impl EventEmitter<TracksEvent> for TracksView {}
 
 /// Decide what a press at time `t` (pixel `x`) on `track` grabs. Pure; tested.
-pub fn hit(track: &Track, axis: &Axis, x: f64) -> Option<(u32, Grab)> {
+pub fn hit(track: &Track, axis: &Axis, x: f64, edges: ResizeEdges) -> Option<(u32, Grab)> {
     let t = axis.t(x);
-    track.clips().iter().find_map(|c| {
-        let (x0, x1) = (axis.x(c.start), axis.x(c.end()));
-        // Edge zones never take more than a third of the clip, so short clips stay movable.
-        let grab = EDGE_GRAB.min((x1 - x0) / 3.0);
-        if (x - x0).abs() <= grab {
-            Some((c.id, Grab::Trim(Edge::Start)))
-        } else if (x - x1).abs() <= grab {
-            Some((c.id, Grab::Trim(Edge::End)))
-        } else if x > x0 && x < x1 {
-            Some((
-                c.id,
-                Grab::Move {
-                    grab_dt: t - c.start,
-                },
-            ))
-        } else {
-            None
-        }
-    })
+    // Clips are sorted and disjoint; only those near x can match.
+    crate::visible(track.clips(), axis, |c| c.start, |c| c.end())
+        .iter()
+        .find_map(|c| {
+            crate::edit::grab_at(axis.x(c.start), axis.x(c.end()), x, t, c.start, edges)
+                .map(|g| (c.id, g))
+        })
 }
 
 impl TracksView {
@@ -95,6 +85,10 @@ impl TracksView {
             drag: None,
             body: Rc::default(),
             pending_fit: Some((0.0, length.max(1.0))),
+            resize: ResizeEdges::default(),
+            locked: Default::default(),
+            editable: true,
+            hover: None,
         })
     }
 
@@ -134,11 +128,64 @@ impl TracksView {
     /// Begin a drag at body-local pixel `x` on `track`. Returns whether a clip was grabbed.
     pub fn press(&mut self, track: usize, x: f64) -> bool {
         self.drag = self
-            .tracks
-            .get(track)
-            .and_then(|(_, tr)| hit(tr, &self.axis, x))
+            .grab(track, x)
             .map(|(clip, grab)| Drag { track, clip, grab });
         self.drag.is_some()
+    }
+
+    /// What a press at (`track`, `x`) would grab, honouring locks and the resize policy.
+    pub fn grab(&self, track: usize, x: f64) -> Option<(u32, Grab)> {
+        if !self.editable {
+            return None;
+        }
+        let (_, tr) = self.tracks.get(track)?;
+        hit(tr, &self.axis, x, self.resize)
+            .filter(|(clip, _)| !self.locked.contains(&(track, *clip)))
+    }
+
+    /// Which clip edges resize (default: both).
+    pub fn set_resize_edges(&mut self, edges: ResizeEdges, cx: &mut Context<Self>) {
+        self.resize = edges;
+        cx.notify();
+    }
+
+    /// Lock or unlock one clip's position and size.
+    pub fn set_locked(&mut self, track: usize, clip: u32, locked: bool, cx: &mut Context<Self>) {
+        let changed = if locked {
+            self.locked.insert((track, clip))
+        } else {
+            self.locked.remove(&(track, clip))
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub fn is_locked(&self, track: usize, clip: u32) -> bool {
+        self.locked.contains(&(track, clip))
+    }
+
+    /// Allow or forbid all edits (a global lock).
+    pub fn set_editable(&mut self, editable: bool, cx: &mut Context<Self>) {
+        if self.editable != editable {
+            self.editable = editable;
+            self.drag = None;
+            cx.notify();
+        }
+    }
+
+    /// Update the hover grab (cursor); re-renders only when it changes.
+    fn hover_at(&mut self, track: usize, x: f64, cx: &mut Context<Self>) {
+        let g = self.grab(track, x).map(|(_, g)| g);
+        let kind = |g: Option<Grab>| g.map(|g| matches!(g, Grab::Move { .. }));
+        let edge = |g: Option<Grab>| match g {
+            Some(Grab::Trim(e)) => Some(e),
+            _ => None,
+        };
+        if kind(g) != kind(self.hover) || edge(g) != edge(self.hover) {
+            self.hover = g;
+            cx.notify();
+        }
     }
 
     /// Continue the active drag to body-local pixel `x`.
@@ -206,6 +253,8 @@ impl Render for TracksView {
             }
         }
         let axis = self.axis;
+        let editable = self.editable;
+        let locked = &self.locked;
         let format = self.format;
         let ticks = axis.ticks(axis.tick_step(80.0, format));
         let line = s.border.to_hsla();
@@ -283,6 +332,9 @@ impl Render for TracksView {
                     .child(
                         div()
                             .id("tracks-body")
+                            .cursor(crate::edit::cursor_for(
+                                self.drag.map(|d| d.grab).or(self.hover),
+                            ))
                             .relative()
                             .flex_1()
                             .overflow_hidden()
@@ -299,9 +351,11 @@ impl Render for TracksView {
                                 }),
                             )
                             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                                let (x, y) = this.local(e.position);
                                 if e.pressed_button == Some(MouseButton::Left) {
-                                    let (x, _) = this.local(e.position);
                                     this.drag_to(x, cx);
+                                } else if y >= 0.0 {
+                                    this.hover_at((y / TRACK_H) as usize, x, cx);
                                 }
                             }))
                             .on_mouse_up(
@@ -332,6 +386,9 @@ impl Render for TracksView {
                                             .bg(clip_v.background.to_hsla())
                                             .border_1()
                                             .border_color(clip_v.foreground.to_hsla())
+                                            .when(!editable || locked.contains(&(i, c.id)), |el| {
+                                                el.opacity(0.55).border_dashed()
+                                            })
                                     })
                                     .collect::<Vec<_>>()
                             }))
@@ -352,6 +409,7 @@ impl Render for TracksView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clips::Edge;
 
     fn track() -> Track {
         let mut t = Track::default();
@@ -368,10 +426,18 @@ mod tests {
     fn hit_distinguishes_edges_body_and_gaps() {
         let (t, a) = (track(), axis());
         let first = t.clips()[0].id;
-        assert_eq!(hit(&t, &a, 102.0), Some((first, Grab::Trim(Edge::Start))));
-        assert_eq!(hit(&t, &a, 297.0), Some((first, Grab::Trim(Edge::End))));
-        assert!(matches!(hit(&t, &a, 200.0), Some((id, Grab::Move { .. })) if id == first));
-        assert_eq!(hit(&t, &a, 400.0), None);
+        assert_eq!(
+            hit(&t, &a, 102.0, ResizeEdges::Both),
+            Some((first, Grab::Trim(Edge::Start)))
+        );
+        assert_eq!(
+            hit(&t, &a, 297.0, ResizeEdges::Both),
+            Some((first, Grab::Trim(Edge::End)))
+        );
+        assert!(
+            matches!(hit(&t, &a, 200.0, ResizeEdges::Both), Some((id, Grab::Move { .. })) if id == first)
+        );
+        assert_eq!(hit(&t, &a, 400.0, ResizeEdges::Both), None);
     }
 
     #[test]
@@ -426,7 +492,9 @@ mod tests {
         let mut t = Track::default();
         let id = t.insert(1.0, 0.05).unwrap_or_default();
         let a = axis(); // 100 px/s: clip is 5 px wide
-        assert!(matches!(hit(&t, &a, 102.5), Some((i, Grab::Move { .. })) if i == id));
+        assert!(
+            matches!(hit(&t, &a, 102.5, ResizeEdges::Both), Some((i, Grab::Move { .. })) if i == id)
+        );
         let cx = gpui_kit::TestAppContext::single();
         let view = cx.update(|cx| {
             TracksView::new(vec![("A".into(), track())], TimeFormat::Seconds, 10.0, cx)
@@ -445,5 +513,36 @@ mod tests {
             view.read_with(&cx, |v, _| v.snap.is_none()),
             "inf grid rejected"
         );
+    }
+
+    #[test]
+    fn locks_and_resize_policy() {
+        let cx = gpui_kit::TestAppContext::single();
+        let view = cx.update(|cx| {
+            TracksView::new(vec![("A".into(), track())], TimeFormat::Seconds, 10.0, cx)
+        });
+        view.update(&mut cx.clone(), |v, cx| {
+            let a = *v.axis();
+            let first = v.tracks()[0].1.clips()[0].id;
+            // Start-edge trim: clip [1,3] -> [1.5,3] (source offset advances; extending left
+            // past the media start is refused by the model).
+            assert!(v.press(0, a.x(1.0)));
+            v.drag_to(a.x(1.5), cx);
+            v.release();
+            let c = v.tracks()[0].1.clips()[0].clone();
+            assert_eq!((c.start, c.end(), c.source_offset), (1.5, 3.0, 0.5));
+            v.set_locked(0, first, true, cx);
+            assert!(v.grab(0, a.x(2.0)).is_none());
+            v.set_locked(0, first, false, cx);
+            v.set_resize_edges(ResizeEdges::End, cx);
+            assert!(
+                matches!(v.grab(0, a.x(1.5) + 1.0), Some((_, Grab::Move { .. }))),
+                "start edge disabled"
+            );
+            v.set_editable(false, cx);
+            assert!(!v.press(0, a.x(2.0)));
+            v.seek(1.0, cx);
+            assert_eq!(v.playhead(), 1.0, "seek still works when not editable");
+        });
     }
 }
