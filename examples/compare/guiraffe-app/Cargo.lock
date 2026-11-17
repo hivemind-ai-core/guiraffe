@@ -2995,6 +2995,7 @@ dependencies = [
 name = "guiraffe-compare"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "gpui-fast",
  "gpui-kit",
  "guiraffe-chat",
@@ -3005,6 +3006,7 @@ dependencies = [
  "guiraffe-markdown",
  "guiraffe-overlays",
  "guiraffe-router",
+ "guiraffe-state",
  "serde",
  "serde_json",
 ]

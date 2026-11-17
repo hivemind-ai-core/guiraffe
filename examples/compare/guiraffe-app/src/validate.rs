@@ -72,9 +72,7 @@ pub fn validate_field(i: usize, v: &Values) -> Option<&'static str> {
         {
             Some("7–20 digits, spaces, + ( ) -")
         }
-        f::WEBSITE
-            if !s.is_empty() && !(s.starts_with("http://") || s.starts_with("https://")) =>
-        {
+        f::WEBSITE if !s.is_empty() && !(s.starts_with("http://") || s.starts_with("https://")) => {
             Some("Must start with http:// or https://")
         }
         f::AGE => match t.parse::<i64>() {
@@ -84,7 +82,11 @@ pub fn validate_field(i: usize, v: &Values) -> Option<&'static str> {
             Err(_) => Some("Must be a whole number"),
         },
         f::COUNTRY if t.is_empty() => Some("Required"),
-        f::POSTAL if !chars_in(s, 3, 10, |c| c.is_ascii_alphanumeric() || c == ' ' || c == '-') => {
+        f::POSTAL
+            if !chars_in(s, 3, 10, |c| {
+                c.is_ascii_alphanumeric() || c == ' ' || c == '-'
+            }) =>
+        {
             Some("3–10 letters, digits, spaces or -")
         }
         f::PASSWORD

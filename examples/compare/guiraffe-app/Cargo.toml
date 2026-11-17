@@ -17,6 +17,8 @@ guiraffe-core = { path = "../../../crates/core" }
 guiraffe-components = { path = "../../../crates/components" }
 guiraffe-overlays = { path = "../../../crates/overlays" }
 guiraffe-router = { path = "../../../crates/router" }
+guiraffe-state = { path = "../../../crates/state" }
+futures = "0.3"
 guiraffe-icons = { path = "../../../crates/icons" }
 guiraffe-datagrid = { path = "../../../crates/datagrid" }
 guiraffe-chat = { path = "../../../crates/chat" }

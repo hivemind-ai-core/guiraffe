@@ -22,16 +22,40 @@ impl Rng {
 }
 
 pub const FIRST: [&str; 16] = [
-    "Ada", "Alan", "Grace", "Linus", "Barbara", "Ken", "Margaret", "Dennis", "Edsger", "Frances",
-    "John", "Radia", "Donald", "Hedy", "Tim", "Katherine",
+    "Ada",
+    "Alan",
+    "Grace",
+    "Linus",
+    "Barbara",
+    "Ken",
+    "Margaret",
+    "Dennis",
+    "Edsger",
+    "Frances",
+    "John",
+    "Radia",
+    "Donald",
+    "Hedy",
+    "Tim",
+    "Katherine",
 ];
 pub const LAST: [&str; 16] = [
     "Lovelace", "Turing", "Hopper", "Torvalds", "Liskov", "Thompson", "Hamilton", "Ritchie",
     "Dijkstra", "Allen", "Backus", "Perlman", "Knuth", "Lamarr", "Berners", "Johnson",
 ];
 pub const CITIES: [&str; 12] = [
-    "Amsterdam", "Berlin", "Cairo", "Dakar", "Lima", "Oslo", "Seoul", "Tokyo", "Toronto",
-    "Sydney", "Nairobi", "Madrid",
+    "Amsterdam",
+    "Berlin",
+    "Cairo",
+    "Dakar",
+    "Lima",
+    "Oslo",
+    "Seoul",
+    "Tokyo",
+    "Toronto",
+    "Sydney",
+    "Nairobi",
+    "Madrid",
 ];
 pub const COUNTRIES: [&str; 12] = [
     "Netherlands",
