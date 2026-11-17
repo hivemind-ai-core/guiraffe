@@ -78,6 +78,43 @@ impl RowOrder {
             Self::Indices(v) => v.get(view_row).map(|&r| r as usize),
         }
     }
+
+    /// `source row -> view row` lookup, for remapping selection and edits after the order
+    /// changes. Identity needs no table; a permutation costs one `u32` per source row.
+    pub fn inverse(&self, source_rows: usize) -> Inverse {
+        match self {
+            Self::Identity => Inverse::Identity(source_rows),
+            Self::Indices(v) => {
+                let mut inv = vec![u32::MAX; source_rows.min(MAX_ROWS)];
+                for (view, &src) in v.iter().enumerate() {
+                    if let Some(slot) = inv.get_mut(src as usize) {
+                        *slot = view as u32;
+                    }
+                }
+                Inverse::Table(inv)
+            }
+        }
+    }
+}
+
+/// See [`RowOrder::inverse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inverse {
+    Identity(usize),
+    Table(Vec<u32>),
+}
+
+impl Inverse {
+    /// View row showing `source_row`, or `None` when it is filtered out.
+    pub fn view_row(&self, source_row: usize) -> Option<usize> {
+        match self {
+            Self::Identity(n) => (source_row < *n).then_some(source_row),
+            Self::Table(t) => t
+                .get(source_row)
+                .filter(|&&v| v != u32::MAX)
+                .map(|&v| v as usize),
+        }
+    }
 }
 
 /// The job was cancelled (a newer sort/filter superseded it).
@@ -256,6 +293,17 @@ mod tests {
             compute_order(&s, &[f], &[], &AtomicBool::new(true)),
             Err(Cancelled)
         );
+    }
+
+    #[test]
+    fn inverse_maps_back() {
+        let o = RowOrder::Indices(vec![3u32, 0, 2].into());
+        let inv = o.inverse(4);
+        assert_eq!(inv.view_row(3), Some(0));
+        assert_eq!(inv.view_row(2), Some(2));
+        assert_eq!(inv.view_row(1), None, "filtered out");
+        assert_eq!(inv.view_row(9), None);
+        assert_eq!(RowOrder::Identity.inverse(4).view_row(2), Some(2));
     }
 
     #[test]

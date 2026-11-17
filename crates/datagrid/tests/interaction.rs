@@ -612,3 +612,339 @@ fn shared_source_reports_busy_on_edit(cx: &mut TestAppContext) {
     );
     drop(keep);
 }
+
+// ---------------------------------------------------------------- review fixes
+
+fn has(events: &Events, f: impl Fn(&GridEvent) -> bool) -> bool {
+    events.borrow().iter().any(f)
+}
+
+fn multi_people(cx: &mut gpui_kit::App) -> GridHandle {
+    let g = GridHandle::new(people(), people_columns(), cx);
+    g.set_options(
+        GridOptions {
+            selection: SelectionMode::MultiRow,
+            focusable: Some(true),
+            ..Default::default()
+        },
+        cx,
+    );
+    g
+}
+
+#[gpui_kit::test]
+fn selection_follows_source_rows_through_sort_and_filter(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, multi_people);
+    // View row 0 is Carol (source 0).
+    vcx.update(|_, cx| grid.select(CellPos::new(0, 1), false, false, cx));
+    events.borrow_mut().clear();
+    vcx.update(|_, cx| {
+        grid.set_sort(
+            vec![SortKey {
+                column: 1,
+                dir: SortDir::Asc,
+            }],
+            cx,
+        )
+    });
+    vcx.run_until_parked();
+    // Ages 30,30,25,41 sort to [Bob, Carol, alice, Dave]: Carol is now view row 1.
+    assert_eq!(grid.selection().rows.ranges(), &[1..2][..]);
+    assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 1)));
+    assert!(has(
+        &events,
+        |e| matches!(e, GridEvent::SelectionChanged { cursor: Some(c), .. } if c.row == 1)
+    ));
+    events.borrow_mut().clear();
+    // Filtering Carol out drops her from the selection, with an event.
+    vcx.update(|_, cx| {
+        grid.set_filter(
+            0,
+            Some(Arc::new(|c| !matches!(c, CellRef::Text("Carol")))),
+            cx,
+        )
+    });
+    vcx.run_until_parked();
+    assert!(grid.selection().rows.is_empty());
+    assert!(has(&events, |e| matches!(
+        e,
+        GridEvent::SelectionChanged {
+            selected_rows: 0,
+            ..
+        }
+    )));
+}
+
+#[gpui_kit::test]
+fn open_edit_survives_a_sort(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, multi_people);
+    vcx.update(|w, cx| assert!(grid.begin_edit(0, 0, w, cx)));
+    let input = grid.editor().unwrap_or_else(|| panic!("editor"));
+    vcx.update(|w, cx| input.update(cx, |i, cx| i.set_value("Caroline", w, cx)));
+    vcx.update(|_, cx| {
+        grid.set_sort(
+            vec![SortKey {
+                column: 1,
+                dir: SortDir::Asc,
+            }],
+            cx,
+        )
+    });
+    vcx.run_until_parked();
+    assert!(grid.is_editing(), "the sort discarded the open edit");
+    assert_eq!(grid.editing_cell(), Some(CellPos::new(1, 0)));
+    vcx.simulate_keystrokes("enter");
+    assert!(has(&events, |e| matches!(e,
+        GridEvent::CellEdited { row: 0, column: 0, value, .. } if value.as_ref() == "Caroline")));
+    vcx.update(|w, _| assert!(grid.focus_handle().is_focused(w), "focus back on the grid"));
+}
+
+#[gpui_kit::test]
+fn edit_on_a_filtered_out_row_is_cancelled_and_focus_returns(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, multi_people);
+    vcx.update(|w, cx| assert!(grid.begin_edit(0, 0, w, cx)));
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        grid.set_filter(
+            0,
+            Some(Arc::new(|c| !matches!(c, CellRef::Text("Carol")))),
+            cx,
+        )
+    });
+    vcx.run_until_parked();
+    assert!(!grid.is_editing());
+    assert!(has(&events, |e| matches!(
+        e,
+        GridEvent::EditCancelled { row: 0, column: 0 }
+    )));
+    vcx.update(|w, _| {
+        assert!(
+            grid.focus_handle().is_focused(w),
+            "focus left on a dropped Input"
+        )
+    });
+    // Keys reach the grid again.
+    vcx.simulate_keystrokes("down");
+    assert!(grid.selection().cursor.is_some());
+}
+
+#[gpui_kit::test]
+fn commit_during_a_background_sort_is_queued_not_rejected(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, |cx| {
+        let src = VecSource::new((0..120_000i64).collect::<Vec<_>>()).editable_column(
+            |v: &i64| CellRef::Int(*v),
+            |v, t| {
+                *v = t.parse().map_err(|_| EditError::Invalid(t.to_string()))?;
+                Ok(())
+            },
+        );
+        GridHandle::new(src, vec![ColumnDef::new("v", "V", 0).editable(true)], cx)
+    });
+    vcx.update(|w, cx| assert!(grid.begin_edit(0, 0, w, cx)));
+    let input = grid.editor().unwrap_or_else(|| panic!("editor"));
+    vcx.update(|w, cx| input.update(cx, |i, cx| i.set_value("-5", w, cx)));
+    vcx.update(|w, cx| {
+        grid.set_sort(
+            vec![SortKey {
+                column: 0,
+                dir: SortDir::Desc,
+            }],
+            cx,
+        );
+        assert!(grid.is_busy());
+        assert!(
+            grid.commit_edit(w, cx),
+            "commit accepted while the sort runs"
+        );
+    });
+    assert!(!has(&events, |e| matches!(
+        e,
+        GridEvent::EditRejected { .. }
+    )));
+    vcx.run_until_parked();
+    assert!(has(&events, |e| matches!(e,
+        GridEvent::CellEdited { row: 0, value, .. } if value.as_ref() == "-5")));
+    assert!(!has(&events, |e| matches!(
+        e,
+        GridEvent::EditRejected { .. }
+    )));
+}
+
+#[gpui_kit::test]
+fn editor_follows_its_column_and_closes_when_hidden(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, multi_people);
+    // Edit Age (definition 1, display 1).
+    vcx.update(|w, cx| assert!(grid.begin_edit(0, 1, w, cx)));
+    vcx.run_until_parked();
+    vcx.update(|_, cx| grid.move_column(1, Some(0), cx));
+    vcx.run_until_parked();
+    assert_eq!(grid.editing_cell(), Some(CellPos::new(0, 0)));
+    // The Name cell (now display 1) shows its text, not the moved editor.
+    vcx.update(|w, _| assert!(w.try_find_by_label("Carol").is_some()));
+    vcx.update(|_, cx| grid.set_column_visible(1, false, cx));
+    vcx.run_until_parked();
+    assert!(!grid.is_editing());
+    assert!(has(&events, |e| matches!(
+        e,
+        GridEvent::EditCancelled { row: 0, column: 1 }
+    )));
+}
+
+#[gpui_kit::test]
+fn a_new_edit_cancels_the_open_one_and_rerenders_its_row(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, multi_people);
+    vcx.update(|w, cx| assert!(grid.begin_edit(0, 0, w, cx)));
+    vcx.run_until_parked();
+    let before = vcx.update(|_, cx| grid.row_renders(0, cx)).unwrap_or(0);
+    vcx.update(|w, cx| assert!(grid.begin_edit(2, 0, w, cx)));
+    vcx.run_until_parked();
+    let after = vcx.update(|_, cx| grid.row_renders(0, cx)).unwrap_or(0);
+    assert!(after > before, "the old editor's row was not re-rendered");
+    assert!(has(&events, |e| matches!(
+        e,
+        GridEvent::EditCancelled { row: 0, column: 0 }
+    )));
+    assert_eq!(grid.editing_cell(), Some(CellPos::new(2, 0)));
+}
+
+#[gpui_kit::test]
+fn recycled_slots_show_their_new_rows(cx: &mut TestAppContext) {
+    // Scrolling by exactly `pool` rows puts row r + pool in row r's slot at the *same*
+    // bounds, so gpui-fast would replay the old row unless the slot is notified.
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(3), cx));
+    let pool = grid.stats().pool;
+    let h = f64::from(grid.row_height());
+    let old: Vec<_> = grid
+        .visible_rows()
+        .filter_map(|r| grid.row_view_id(r))
+        .collect();
+    vcx.update(|_, cx| grid.set_scroll(0., (pool * 10) as f64 * h, cx));
+    vcx.run_until_parked();
+    let before = grid.stats();
+    vcx.update(|_, cx| grid.set_scroll(0., (pool * 11) as f64 * h, cx));
+    vcx.run_until_parked();
+    let rows = grid.visible_rows();
+    assert!(grid.stats().row_renders - before.row_renders <= pool as u64);
+    vcx.update(|w, _| {
+        for r in rows.clone() {
+            let label = format!("{}", r * 100);
+            assert!(
+                w.try_find_by_label(&label).is_some(),
+                "row {r} not shown in its slot"
+            );
+            let stale = format!("{}", (r - pool) * 100);
+            assert!(
+                w.try_find_by_label(&stale).is_none(),
+                "row {} still shown",
+                r - pool
+            );
+        }
+    });
+    // Same pool of entities, reused (no new views were created).
+    assert_eq!(grid.stats().pool, pool);
+    assert!(rows.clone().all(|r| grid.row_view_id(r).is_some()));
+    assert!(!old.is_empty());
+}
+
+#[gpui_kit::test]
+fn copy_reports_truncation_and_runs_big_copies_off_thread(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, |cx| {
+        let g = GridHandle::new(million(), columns(3), cx);
+        g.set_options(
+            GridOptions {
+                selection: SelectionMode::Range,
+                ..Default::default()
+            },
+            cx,
+        );
+        g
+    });
+    // Small: inline.
+    vcx.update(|_, cx| {
+        grid.select(CellPos::new(0, 0), false, false, cx);
+        grid.select(CellPos::new(1, 1), true, false, cx);
+        assert_eq!(grid.copy(cx).as_deref(), Some("0\t1\n100\t101"));
+    });
+    assert!(has(&events, |e| matches!(
+        e,
+        GridEvent::Copied {
+            cells: 4,
+            truncated: false
+        }
+    )));
+    // 3M cells: background, truncated at MAX_COPY_CELLS.
+    vcx.update(|_, cx| {
+        grid.select(CellPos::new(0, 0), false, false, cx);
+        grid.select(CellPos::new(999_999, 2), true, false, cx);
+        assert_eq!(grid.copy(cx), None, "large copy is deferred");
+    });
+    vcx.run_until_parked();
+    assert!(has(&events, |e| matches!(
+        e,
+        GridEvent::Copied {
+            truncated: true,
+            ..
+        }
+    )));
+    vcx.update(|_, cx| {
+        let text = cx
+            .read_from_clipboard()
+            .and_then(|c| c.text())
+            .unwrap_or_default();
+        let rows = text.lines().count();
+        assert_eq!(rows * 3, guiraffe_datagrid::tsv::MAX_COPY_CELLS - 2);
+    });
+}
+
+#[gpui_kit::test]
+fn header_drop_across_bands_is_ignored(cx: &mut TestAppContext) {
+    let (grid, _, events, vcx) = mount(cx, |cx| {
+        let mut cols = columns(4);
+        cols[0].pin = Pin::Left;
+        GridHandle::new(million(), cols, cx)
+    });
+    let from = at(&grid, None, 0);
+    let to = at(&grid, None, 2) + point(px(30.), px(0.));
+    vcx.simulate_mouse_down(from, MouseButton::Left, Modifiers::default());
+    vcx.simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
+    vcx.simulate_mouse_up(to, MouseButton::Left, Modifiers::default());
+    vcx.run_until_parked();
+    assert_eq!(grid.column_order(), vec![0, 1, 2, 3]);
+    assert!(!has(&events, |e| matches!(
+        e,
+        GridEvent::ColumnReordered { .. }
+    )));
+    // Within the center band it still works.
+    let from = at(&grid, None, 1);
+    vcx.simulate_mouse_down(from, MouseButton::Left, Modifiers::default());
+    vcx.simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
+    vcx.simulate_mouse_up(to, MouseButton::Left, Modifiers::default());
+    vcx.run_until_parked();
+    assert_eq!(grid.column_order(), vec![0, 2, 1, 3]);
+}
+
+#[gpui_kit::test]
+fn rows_expose_their_aria_row_index(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(2), cx));
+    assert_eq!(
+        guiraffe_datagrid::aria_row_index(0),
+        2,
+        "row 1 is the header"
+    );
+    vcx.update(|_, cx| grid.scroll_to_row(500_000, cx));
+    vcx.run_until_parked();
+    vcx.update(|w, cx| {
+        w.render_frame(cx);
+        let rows = w.find_all_by_role(Role::Row);
+        // One unlabelled header row plus data rows labelled with their 1-based index, in
+        // order (rows are listed by position; overscan rows sit above the header).
+        let labels: Vec<_> = rows.iter().filter_map(|r| r.label()).collect();
+        assert_eq!(rows.len(), labels.len() + 1);
+        let first = grid.visible_rows().start;
+        for (i, l) in labels.iter().enumerate() {
+            assert_eq!(*l, format!("Row {}", first + i + 1));
+            assert_eq!(guiraffe_datagrid::aria_row_index(first + i), first + i + 2);
+        }
+        assert!(rows.len() > 10);
+    });
+}

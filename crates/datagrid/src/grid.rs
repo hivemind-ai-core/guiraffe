@@ -19,11 +19,11 @@ use std::{
 };
 
 use gpui_kit::{
-    AnyElement, App, AppContext, Bounds, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, InteractiveElement, IntoElement, KeyBinding, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, RenderOnce, Role, ScrollEvent,
-    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, TestSupportExt, Window,
-    canvas,
+    AnyElement, AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, KeyBinding,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
+    RenderOnce, Role, ScrollEvent, SharedString, StatefulInteractiveElement, StyleRefinement,
+    Styled, TestSupportExt, Window, canvas,
     component::input::{Enter as InputEnter, Escape as InputEscape, Input, InputState},
     div,
     prelude::FluentBuilder,
@@ -170,6 +170,18 @@ pub enum GridEvent {
         column: usize,
         value: SharedString,
     },
+    /// An open editor was closed without committing (Escape, another edit started, its
+    /// column hidden, its row filtered out or the source replaced). Its text is dropped.
+    EditCancelled {
+        row: usize,
+        column: usize,
+    },
+    /// Ctrl+C finished. `truncated` when the selection exceeded
+    /// [`crate::tsv::MAX_COPY_CELLS`] and only the first rows were copied.
+    Copied {
+        cells: usize,
+        truncated: bool,
+    },
     /// Validation or the source vetoed an edit; the editor stays open.
     EditRejected {
         row: usize,
@@ -219,13 +231,62 @@ pub struct GridStats {
     pub stale_jobs: u64,
 }
 
+/// An open editor. Tracked by source row and column *definition*, so it survives sorting,
+/// filtering, reordering and pinning; `row` is the current view row, kept in sync.
 struct Edit {
     row: usize,
-    col: usize,
     def: usize,
     source_row: usize,
     input: Entity<InputState>,
     error: Option<SharedString>,
+    window: AnyWindowHandle,
+}
+
+/// A commit made while a background job shares the source; applied when the job lands.
+struct PendingCommit {
+    source_row: usize,
+    def: usize,
+    key: RowKey,
+    value: SharedString,
+}
+
+/// Selections up to this many cells are copied on the UI thread; larger ones off it.
+pub const INLINE_COPY_CELLS: usize = 100_000;
+
+/// Everything a copy needs, owned (`Arc` clones), so it can run on any thread.
+struct CopyJob {
+    source: Arc<dyn GridSource>,
+    order: RowOrder,
+    defs: Vec<ColumnDef>,
+    rows: Vec<Range<usize>>,
+}
+
+impl CopyJob {
+    fn cells(&self) -> usize {
+        self.rows
+            .iter()
+            .map(|r| r.len())
+            .sum::<usize>()
+            .saturating_mul(self.defs.len())
+    }
+
+    /// `(tsv, complete)`.
+    fn run(&self) -> (String, bool) {
+        let n = self.source.row_count();
+        let mut out = String::new();
+        let cols: Vec<usize> = (0..self.defs.len()).collect();
+        let complete = write_tsv(
+            &mut out,
+            self.rows.iter().cloned().flatten(),
+            &cols,
+            |r, c, buf| {
+                if let (Some(src), Some(def)) = (self.order.source_row(r, n), self.defs.get(c)) {
+                    def.format(self.source.cell(src, def.source), buf);
+                }
+            },
+        );
+        (out, complete)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -299,6 +360,8 @@ struct Model {
     edit: Option<Edit>,
     drag: Option<Drag>,
     validator: Option<Validator>,
+    pending: Option<PendingCommit>,
+    copying: usize,
     stats: GridStats,
     text: String,
 }
@@ -357,6 +420,40 @@ impl Model {
             rect,
         )
     }
+    /// Where a header dragged to grid-relative `x` lands: `(before, indicator x)`, where
+    /// `before` is the definition it is inserted before (`None` = last). Drops are only
+    /// accepted within the dragged column's own band (pinning is changed explicitly), so a
+    /// cross-band position yields `None` and shows no indicator.
+    fn drop_slot(&self, def: usize, x: f32) -> Option<(Option<usize>, f32)> {
+        let w = self.grid_w();
+        let band_of = |d: usize| {
+            self.layout
+                .display_of(d)
+                .and_then(|i| self.layout.display(i))
+                .map(|(b, _)| b)
+        };
+        let own = band_of(def)?;
+        let i = self.layout.hit(x.clamp(0., w - 1.), self.scroll_x, w)?;
+        let (band, target) = self.layout.display(i)?;
+        if target.def == def || band != own {
+            return None;
+        }
+        let sx = self.layout.screen_x(i, self.scroll_x, w)?;
+        if x < sx + target.width / 2. {
+            Some((Some(target.def), sx))
+        } else {
+            // After the target: before whatever follows it in the user order.
+            let pos = self.order.iter().position(|&d| d == target.def)?;
+            let before = self
+                .order
+                .get(pos + 1)
+                .copied()
+                .filter(|&d| d != def)
+                .or_else(|| self.order.get(pos + 2).copied());
+            Some((before, sx + target.width))
+        }
+    }
+
     fn view_row_of_slot(&self, slot: usize) -> Option<usize> {
         let pool = self.pool;
         if pool == 0 || slot >= pool {
@@ -424,6 +521,8 @@ impl GridHandle {
             edit: None,
             drag: None,
             validator: None,
+            pending: None,
+            copying: 0,
             stats: GridStats::default(),
             text: String::with_capacity(64),
         };
@@ -537,13 +636,13 @@ impl GridHandle {
 
     /// Replace all column definitions (resets order, sort and filters).
     pub fn set_columns(&self, defs: Vec<ColumnDef>, cx: &mut App) {
+        self.core.drop_edit(cx);
         {
             let mut m = self.core.m.borrow_mut();
             m.order = (0..defs.len()).collect();
             m.defs = defs;
             m.sort.clear();
             m.filters.clear();
-            m.edit = None;
         }
         self.core.relayout(cx);
         self.core.refresh_order(cx);
@@ -638,10 +737,10 @@ impl GridHandle {
 
     /// Swap the data source (resets the view order and re-runs sort/filter).
     pub fn set_source(&self, source: Arc<dyn GridSource>, cx: &mut App) {
+        self.core.drop_edit(cx);
         {
             let mut m = self.core.m.borrow_mut();
             m.source = source;
-            m.edit = None;
         }
         self.core.refresh_order(cx);
     }
@@ -689,6 +788,14 @@ impl GridHandle {
 
     pub fn is_editing(&self) -> bool {
         self.core.m.borrow().edit.is_some()
+    }
+
+    /// Where the open editor is now (view row, display column); follows sorting, filtering
+    /// and column moves.
+    pub fn editing_cell(&self) -> Option<CellPos> {
+        let m = self.core.m.borrow();
+        let e = m.edit.as_ref()?;
+        Some(CellPos::new(e.row, m.layout.display_of(e.def)?))
     }
 
     /// The open editor's input (for tests and custom editors).
@@ -802,15 +909,41 @@ impl Core {
     }
 
     fn relayout(self: &Rc<Self>, cx: &mut App) {
-        {
+        let (sel_changed, hidden_edit) = {
             let mut m = self.m.borrow_mut();
             m.layout = ColumnLayout::compute(&m.defs, &m.order);
             let cols = m.cols();
             let count = m.count;
+            let before = m.sel.clone();
             m.sel.clamp(count, cols);
             m.clamp_scroll();
+            let hidden = m
+                .edit
+                .as_ref()
+                .is_some_and(|e| m.layout.display_of(e.def).is_none());
+            (m.sel != before, hidden)
+        };
+        if hidden_edit {
+            self.drop_edit(cx);
         }
         self.sync(true, cx);
+        if sel_changed {
+            self.emit_selection(cx);
+        }
+    }
+
+    fn emit_selection(&self, cx: &mut App) {
+        let (cursor, n) = {
+            let m = self.m.borrow();
+            (m.sel.cursor, m.sel.rows.len())
+        };
+        self.emit(
+            GridEvent::SelectionChanged {
+                cursor,
+                selected_rows: n,
+            },
+            cx,
+        );
     }
 
     fn edit_def(self: &Rc<Self>, def: usize, f: impl FnOnce(&mut ColumnDef), cx: &mut App) {
@@ -903,20 +1036,26 @@ impl Core {
         cx.spawn(async move |cx| {
             let r = cx
                 .background_executor()
-                .spawn(async move { compute_order(&*src, &filters, &sort, &cancel) })
+                .spawn(async move {
+                    // `src` is dropped here, before the result reaches the UI thread, so a
+                    // queued commit can take the source back.
+                    compute_order(&*src, &filters, &sort, &cancel)
+                })
                 .await;
             cx.update(|cx| core.apply_order(job, r, cx));
         })
         .detach();
     }
 
+    /// Install a new row order. Selection and an open editor follow their source rows; an
+    /// editor whose row was filtered out is cancelled (with an event and refocus).
     fn apply_order(
         self: &Rc<Self>,
         job: u64,
         r: Result<RowOrder, crate::order::Cancelled>,
         cx: &mut App,
     ) {
-        {
+        let (sel_changed, edit_gone) = {
             let mut m = self.m.borrow_mut();
             let Ok(order) = r else {
                 m.stats.stale_jobs += 1;
@@ -927,17 +1066,101 @@ impl Core {
                 return;
             }
             m.busy = false;
-            m.count = order.len(m.source.row_count());
-            m.rows = order;
-            m.edit = None;
+            let n = m.source.row_count();
+            let old = std::mem::replace(&mut m.rows, order);
+            m.count = m.rows.len(n);
+            let needs_map = !m.sel.is_empty() || m.edit.is_some();
+            let before = m.sel.clone();
+            let mut edit_gone = false;
+            if needs_map {
+                let inv = m.rows.inverse(n);
+                let map = |v: usize| old.source_row(v, n).and_then(|s| inv.view_row(s));
+                m.sel = m.sel.remap(map);
+                if let Some(e) = m.edit.as_ref().map(|e| e.source_row) {
+                    match inv.view_row(e) {
+                        Some(row) => {
+                            if let Some(e) = m.edit.as_mut() {
+                                e.row = row;
+                            }
+                        }
+                        None => edit_gone = true,
+                    }
+                }
+            }
             let (count, cols) = (m.count, m.cols());
             m.sel.clamp(count, cols);
+            (m.sel != before, edit_gone)
+        };
+        if edit_gone {
+            self.drop_edit(cx);
         }
         self.sync(true, cx);
+        if sel_changed {
+            self.emit_selection(cx);
+        }
+        self.flush_pending(cx);
+    }
+
+    /// Apply a commit queued while a background job shared the source.
+    fn flush_pending(self: &Rc<Self>, cx: &mut App) {
+        let result = {
+            let mut m = self.m.borrow_mut();
+            if m.pending.is_none() {
+                return;
+            }
+            if Arc::get_mut(&mut m.source).is_none() && (m.busy || m.copying > 0) {
+                return; // Still shared by a job; try again when it lands.
+            }
+            let Some(p) = m.pending.take() else { return };
+            let src_col = m.defs.get(p.def).map(|d| d.source).unwrap_or(usize::MAX);
+            let r = match Arc::get_mut(&mut m.source) {
+                Some(src) => src
+                    .set_cell(p.source_row, src_col, &p.value)
+                    .map_err(|e| SharedString::from(e.to_string())),
+                None => Err(SharedString::from(EditError::Busy.to_string())),
+            };
+            (p, r)
+        };
+        let (p, r) = result;
+        match r {
+            Ok(()) => {
+                self.notify_source_row(p.source_row, cx);
+                self.emit(
+                    GridEvent::CellEdited {
+                        row: p.source_row,
+                        key: p.key,
+                        column: p.def,
+                        value: p.value,
+                    },
+                    cx,
+                );
+            }
+            Err(reason) => self.emit(
+                GridEvent::EditRejected {
+                    row: p.source_row,
+                    column: p.def,
+                    reason,
+                },
+                cx,
+            ),
+        }
+    }
+
+    fn notify_source_row(&self, source_row: usize, cx: &mut App) {
+        let slot = {
+            let m = self.m.borrow();
+            m.visible
+                .clone()
+                .find(|&v| m.source_row(v) == Some(source_row))
+                .map(|v| vw::slot_of(v, m.pool))
+        };
+        if let Some(s) = slot {
+            self.notify_slot(s, cx);
+        }
     }
 
     fn change_selection(self: &Rc<Self>, cx: &mut App, f: impl FnOnce(&mut Selection, &Model)) {
-        let (dirty, cursor, n) = {
+        let dirty = {
             let mut m = self.m.borrow_mut();
             let before = m.sel.clone();
             let mut sel = std::mem::take(&mut m.sel);
@@ -952,18 +1175,12 @@ impl Core {
                 .filter(|&r| Model::row_sig(&before, r) != Model::row_sig(&m.sel, r))
                 .map(|r| vw::slot_of(r, m.pool))
                 .collect();
-            (dirty, m.sel.cursor, m.sel.rows.len())
+            dirty
         };
         for s in dirty {
             self.notify_slot(s, cx);
         }
-        self.emit(
-            GridEvent::SelectionChanged {
-                cursor,
-                selected_rows: n,
-            },
-            cx,
-        );
+        self.emit_selection(cx);
     }
 
     fn navigate(self: &Rc<Self>, nav: Nav, extend: bool, cx: &mut App) {
@@ -990,24 +1207,66 @@ impl Core {
         });
     }
 
-    fn copy(&self, cx: &mut App) -> Option<String> {
-        let mut out = String::new();
-        {
+    /// Copy the selection as TSV. Up to [`INLINE_COPY_CELLS`] cells are written on the UI
+    /// thread and returned; larger selections are serialized on the background executor
+    /// (returns `None`; the clipboard is written and [`GridEvent::Copied`] emitted when done).
+    /// Selections over [`crate::tsv::MAX_COPY_CELLS`] are truncated and reported.
+    fn copy(self: &Rc<Self>, cx: &mut App) -> Option<String> {
+        let job = {
             let m = self.m.borrow();
             let region = m.sel.region()?;
-            let (rows, cols): (Box<dyn Iterator<Item = usize>>, Vec<usize>) = match region {
-                Region::Rows(r) => (Box::new(r.into_iter().flatten()), (0..m.cols()).collect()),
-                Region::Rect(r, c) => (Box::new(r), c.collect()),
+            let cols: Vec<usize> = match &region {
+                Region::Rows(_) => (0..m.cols()).collect(),
+                Region::Rect(_, c) => c.clone().collect(),
             };
-            let defs: Vec<Option<&ColumnDef>> = (0..m.cols()).map(|d| m.def_at(d)).collect();
-            write_tsv(&mut out, rows, &cols, |r, c, buf| {
-                if let (Some(src), Some(Some(def))) = (m.source_row(r), defs.get(c)) {
-                    def.format(m.source.cell(src, def.source), buf);
-                }
-            });
+            let defs: Vec<ColumnDef> = cols.iter().filter_map(|&d| m.def_at(d).cloned()).collect();
+            let rows: Vec<Range<usize>> = match region {
+                Region::Rows(r) => r,
+                Region::Rect(r, _) => vec![r],
+            };
+            CopyJob {
+                source: m.source.clone(),
+                order: m.rows.clone(),
+                defs,
+                rows,
+            }
+        };
+        let cells = job.cells();
+        if cells <= INLINE_COPY_CELLS {
+            let (text, complete) = job.run();
+            self.finish_copy(text.clone(), cells, complete, cx);
+            return Some(text);
         }
-        cx.write_to_clipboard(ClipboardItem::new_string(out.clone()));
-        Some(out)
+        self.m.borrow_mut().copying += 1;
+        let core = self.clone();
+        cx.spawn(async move |cx| {
+            let (text, complete) = cx
+                .background_executor()
+                .spawn(async move { job.run() })
+                .await;
+            cx.update(|cx| {
+                core.m.borrow_mut().copying -= 1;
+                core.finish_copy(text, cells, complete, cx);
+                core.flush_pending(cx);
+            });
+        })
+        .detach();
+        None
+    }
+
+    fn finish_copy(&self, text: String, cells: usize, complete: bool, cx: &mut App) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.emit(
+            GridEvent::Copied {
+                cells: if complete {
+                    cells
+                } else {
+                    crate::tsv::MAX_COPY_CELLS.min(cells)
+                },
+                truncated: !complete,
+            },
+            cx,
+        );
     }
 
     fn activate(self: &Rc<Self>, window: &mut Window, cx: &mut App) {
@@ -1031,7 +1290,7 @@ impl Core {
 
     fn begin_edit(self: &Rc<Self>, pos: CellPos, window: &mut Window, cx: &mut App) -> bool {
         let prepared = {
-            let mut m = self.m.borrow_mut();
+            let m = self.m.borrow();
             let Some((_, placed)) = m.layout.display(pos.col) else {
                 return false;
             };
@@ -1047,28 +1306,54 @@ impl Core {
             }
             let mut text = String::new();
             def.format(m.source.cell(source_row, def.source), &mut text);
-            m.edit = None;
             (def_ix, source_row, text)
         };
+        // Another open editor is cancelled first: its row re-renders and listeners hear it.
+        self.drop_edit(cx);
         let (def, source_row, text) = prepared;
         let input = cx.new(|cx| InputState::new(window, cx));
         input.update(cx, |i, cx| i.set_value(text, window, cx));
         let focus = input.read(cx).focus_handle(cx);
-        let old_slot = {
+        let slot = {
             let mut m = self.m.borrow_mut();
             m.edit = Some(Edit {
                 row: pos.row,
-                col: pos.col,
                 def,
                 source_row,
                 input,
                 error: None,
+                window: window.window_handle(),
             });
             vw::slot_of(pos.row, m.pool)
         };
         window.focus(&focus, cx);
-        self.notify_slot(old_slot, cx);
+        self.notify_slot(slot, cx);
         true
+    }
+
+    /// Close the editor (if any) from code that has no `Window`: notify its row, emit
+    /// [`GridEvent::EditCancelled`] and hand keyboard focus back to the grid (or blur), so
+    /// focus never stays on a dropped Input.
+    fn drop_edit(self: &Rc<Self>, cx: &mut App) {
+        let (slot, row, def, window) = {
+            let mut m = self.m.borrow_mut();
+            let Some(e) = m.edit.take() else { return };
+            (vw::slot_of(e.row, m.pool), e.source_row, e.def, e.window)
+        };
+        self.notify_slot(slot, cx);
+        let core = self.clone();
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |_, window, cx| core.restore_focus(window, cx));
+        });
+        self.emit(GridEvent::EditCancelled { row, column: def }, cx);
+    }
+
+    fn restore_focus(&self, window: &mut Window, cx: &mut App) {
+        if self.tab_stop() {
+            window.focus(&self.focus, cx);
+        } else {
+            window.blur(cx);
+        }
     }
 
     fn end_edit(self: &Rc<Self>, window: &mut Window, cx: &mut App) {
@@ -1078,25 +1363,23 @@ impl Core {
             vw::slot_of(e.row, m.pool)
         };
         self.notify_slot(slot, cx);
-        let refocus = self.tab_stop();
-        if refocus {
-            window.focus(&self.focus, cx);
-        } else {
-            window.blur(cx);
-        }
+        self.restore_focus(window, cx);
     }
 
     fn cancel_edit(self: &Rc<Self>, window: &mut Window, cx: &mut App) {
+        let ids = self.m.borrow().edit.as_ref().map(|e| (e.source_row, e.def));
         self.end_edit(window, cx);
+        if let Some((row, column)) = ids {
+            self.emit(GridEvent::EditCancelled { row, column }, cx);
+        }
     }
 
     fn commit_edit(self: &Rc<Self>, window: &mut Window, cx: &mut App) -> bool {
-        let Some((value, row, def, source_row, slot)) = ({
+        let Some((value, def, source_row, slot)) = ({
             let m = self.m.borrow();
             m.edit.as_ref().map(|e| {
                 (
                     e.input.read(cx).value(),
-                    e.row,
                     e.def,
                     e.source_row,
                     vw::slot_of(e.row, m.pool),
@@ -1105,7 +1388,12 @@ impl Core {
         }) else {
             return false;
         };
-        let result: Result<RowKey, SharedString> = {
+        enum Outcome {
+            Done(RowKey),
+            Queued,
+            Rejected(SharedString),
+        }
+        let outcome = {
             let mut m = self.m.borrow_mut();
             let key = m.source.row_key(source_row);
             let src_col = m.defs.get(def).map(|d| d.source).unwrap_or(usize::MAX);
@@ -1118,20 +1406,30 @@ impl Core {
                 })
                 .err()
             });
+            let job_running = m.busy || m.copying > 0;
             match veto {
-                Some(reason) => Err(reason),
+                Some(reason) => Outcome::Rejected(reason),
                 None => match Arc::get_mut(&mut m.source) {
-                    Some(src) => src
-                        .set_cell(source_row, src_col, &value)
-                        .map(|()| key)
-                        .map_err(|e| SharedString::from(e.to_string())),
-                    None => Err(SharedString::from(EditError::Busy.to_string())),
+                    Some(src) => match src.set_cell(source_row, src_col, &value) {
+                        Ok(()) => Outcome::Done(key),
+                        Err(e) => Outcome::Rejected(e.to_string().into()),
+                    },
+                    // A background sort/copy holds the source: apply when it lands.
+                    None if job_running => {
+                        m.pending = Some(PendingCommit {
+                            source_row,
+                            def,
+                            key,
+                            value: value.clone(),
+                        });
+                        Outcome::Queued
+                    }
+                    None => Outcome::Rejected(EditError::Busy.to_string().into()),
                 },
             }
         };
-        let _ = row;
-        match result {
-            Ok(key) => {
+        match outcome {
+            Outcome::Done(key) => {
                 self.end_edit(window, cx);
                 self.emit(
                     GridEvent::CellEdited {
@@ -1144,7 +1442,11 @@ impl Core {
                 );
                 true
             }
-            Err(reason) => {
+            Outcome::Queued => {
+                self.end_edit(window, cx);
+                true
+            }
+            Outcome::Rejected(reason) => {
                 if let Some(e) = self.m.borrow_mut().edit.as_mut() {
                     e.error = Some(reason.clone());
                 }
@@ -1179,12 +1481,15 @@ impl Core {
         let in_editor = {
             let m = self.m.borrow();
             m.edit.as_ref().is_some_and(|e| {
+                let Some(col) = m.layout.display_of(e.def) else {
+                    return false;
+                };
                 let top = m.row_h + vw::row_top(e.row, m.scroll_y, f64::from(m.row_h));
                 let sx = m
                     .layout
-                    .screen_x(e.col, m.scroll_x, m.grid_w())
+                    .screen_x(col, m.scroll_x, m.grid_w())
                     .unwrap_or(-1.);
-                let w = m.layout.display(e.col).map(|(_, p)| p.width).unwrap_or(0.);
+                let w = m.layout.display(col).map(|(_, p)| p.width).unwrap_or(0.);
                 y >= top && y < top + m.row_h && x >= sx && x < sx + w
             })
         };
@@ -1399,27 +1704,7 @@ impl Core {
 
     /// Where a dragged header lands: `Some(before)` (None = last in its band's order).
     fn drop_target(&self, def: usize, x: f32) -> Option<Option<usize>> {
-        let m = self.m.borrow();
-        let w = m.grid_w();
-        let i = m.layout.hit(x.clamp(0., w - 1.), m.scroll_x, w)?;
-        let (_, target) = m.layout.display(i)?;
-        if target.def == def {
-            return None;
-        }
-        let sx = m.layout.screen_x(i, m.scroll_x, w)?;
-        if x < sx + target.width / 2. {
-            Some(Some(target.def))
-        } else {
-            // After the target: before whatever follows it in the user order.
-            let pos = m.order.iter().position(|&d| d == target.def)?;
-            Some(
-                m.order
-                    .get(pos + 1)
-                    .copied()
-                    .filter(|&d| d != def)
-                    .or_else(|| m.order.get(pos + 2).copied()),
-            )
-        }
+        self.m.borrow().drop_slot(def, x).map(|(before, _)| before)
     }
 
     fn wheel(self: &Rc<Self>, ev: &ScrollEvent, cx: &mut App) {
@@ -1435,6 +1720,11 @@ impl Core {
         };
         self.set_scroll(x, y, cx);
     }
+}
+
+/// AccessKit row index of view row `row` (1-based; the header row is 1).
+pub fn aria_row_index(row: usize) -> usize {
+    row + 2
 }
 
 /// Vertical scrollbar thumb `(top, height)` within a body `body` px tall.
@@ -1714,18 +2004,7 @@ impl Render for GridView {
                 x,
                 def,
                 ..
-            }) => {
-                let i = m.layout.hit(x.clamp(0., w - 1.), m.scroll_x, w);
-                i.and_then(|i| {
-                    let sx = m.layout.screen_x(i, m.scroll_x, w)?;
-                    let (_, p) = m.layout.display(i)?;
-                    (p.def != def).then_some(if x < sx + p.width / 2. {
-                        sx
-                    } else {
-                        sx + p.width
-                    })
-                })
-            }
+            }) => m.drop_slot(def, x).map(|(_, x)| x),
             _ => None,
         };
         let busy = m.busy;
@@ -1899,7 +2178,7 @@ impl Render for RowView {
             .edit
             .as_ref()
             .filter(|e| e.row == row)
-            .map(|e| (e.col, e.input.clone(), e.error.clone()));
+            .map(|e| (e.def, e.input.clone(), e.error.clone()));
         let mut text = std::mem::take(&mut m.text);
         let mut cells = 0usize;
         let weak_core = self.core.clone();
@@ -1939,7 +2218,7 @@ impl Render for RowView {
                 .when(end, |el| el.justify_end())
                 .when(center, |el| el.justify_center())
                 .when(in_rect && cell_mode, |el| el.bg(hsla(pal.selected)));
-            if let Some((col, input, error)) = editing.as_ref().filter(|e| e.0 == p.display) {
+            if let Some((col, input, error)) = editing.as_ref().filter(|e| e.0 == p.def) {
                 let _ = col;
                 let core = weak_core.clone();
                 return el
@@ -2003,7 +2282,8 @@ impl Render for RowView {
             .id(("row", self.slot))
             .test_support()
             .role(Role::Row)
-            .aria_row_index(row + 2)
+            .aria_row_index(aria_row_index(row))
+            .aria_label(SharedString::from(format!("Row {}", row + 1)))
             .aria_selected(selected)
             .relative()
             .size_full()

@@ -309,6 +309,42 @@ impl Selection {
             .map(|c| Region::Rect(c.row..c.row + 1, c.col..c.col + 1))
     }
 
+    /// Move the selection to new view rows after the row order changed: `map(old_view_row)`
+    /// gives the new view row of the same source row, or `None` when it was filtered out.
+    /// Cursor and anchor follow their rows; selected rows follow individually.
+    pub fn remap(&self, map: impl Fn(usize) -> Option<usize>) -> Selection {
+        let pos =
+            |p: Option<CellPos>| p.and_then(|p| map(p.row).map(|row| CellPos::new(row, p.col)));
+        let mut rows: Vec<usize> = self.rows.iter().filter_map(&map).collect();
+        rows.sort_unstable();
+        let mut set = RowSet::default();
+        let mut run: Option<Range<usize>> = None;
+        for r in rows {
+            run = match run {
+                Some(cur) if cur.end == r => Some(cur.start..r + 1),
+                Some(cur) => {
+                    set.0.push(cur);
+                    Some(r..r + 1)
+                }
+                None => Some(r..r + 1),
+            };
+        }
+        if let Some(cur) = run {
+            set.0.push(cur);
+        }
+        Selection {
+            mode: self.mode,
+            cursor: pos(self.cursor),
+            anchor: pos(self.anchor),
+            rows: set,
+        }
+    }
+
+    /// Whether anything is selected or a cursor exists.
+    pub fn is_empty(&self) -> bool {
+        self.cursor.is_none() && self.anchor.is_none() && self.rows.is_empty()
+    }
+
     /// Drop everything at or past `rows` (after filtering shrinks the view).
     pub fn clamp(&mut self, rows: usize, cols: usize) {
         let ok = |p: &CellPos| p.row < rows && p.col < cols;
@@ -380,6 +416,18 @@ mod tests {
         s.navigate(Nav::Down, true, 10, 2, 3);
         assert_eq!(s.rows.ranges(), &[1..2][..]);
         assert!(!s.select_all(10, 2));
+    }
+
+    #[test]
+    fn remap_follows_rows() {
+        let mut s = Selection::new(SelectionMode::MultiRow);
+        s.rows.insert(1..3);
+        s.rows.insert(5..6);
+        s.cursor = Some(CellPos::new(5, 2));
+        // Reverse 0..10, drop old row 2.
+        let m = s.remap(|r| (r != 2).then_some(9 - r));
+        assert_eq!(m.rows.ranges(), &[4..5, 8..9][..]);
+        assert_eq!(m.cursor, Some(CellPos::new(4, 2)));
     }
 
     #[test]

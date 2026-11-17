@@ -21,6 +21,7 @@ pub use source::{ArcSource, CellRef, EditError, FnSource, GridSource, RowKey, Ve
 mod grid;
 pub use grid::{
     Activate, CONTEXT, CopySelection, DataGrid, EditCell, EditRequest, GridEvent, GridEvents,
-    GridHandle, GridOptions, GridStats, SelectAll, Validator, init,
+    GridHandle, GridOptions, GridStats, INLINE_COPY_CELLS, SelectAll, Validator, aria_row_index,
+    init,
 };
 pub use selection::Selection;
