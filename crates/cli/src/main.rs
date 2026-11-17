@@ -5,10 +5,12 @@
 //! guiraffe preview <file.json|design.mocket.json> [--screen <id|name>]   live preview with hot reload
 //! guiraffe import <design.mocket.json> [--screen <id|name>]              Mocket → GUIraffe document JSON
 //! guiraffe add [<crate>…] [--path <checkout>]       add GUIraffe crates to this app (no args: list)
+//! guiraffe dev [--release]                         watch, rebuild and relaunch the app in this directory
 //! guiraffe doctor                                    check toolchain, system libraries and app pins
 //! ```
 
 mod add;
+mod dev;
 mod doctor;
 mod preview;
 mod scaffold;
@@ -77,6 +79,10 @@ fn run() -> Result<()> {
                 .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")));
             let checkout = checkout.canonicalize().unwrap_or(checkout);
             add::run(&std::env::current_dir()?, &checkout, &names)
+        }
+        Some("dev") => {
+            let release = args[1..].iter().any(|a| a == "--release");
+            dev::run(&std::env::current_dir()?, release)
         }
         Some("doctor") => {
             let ok = doctor::report(&doctor::gather(&std::env::current_dir()?));
