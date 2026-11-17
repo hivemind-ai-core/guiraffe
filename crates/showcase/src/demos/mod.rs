@@ -8,6 +8,7 @@ pub mod chat;
 pub mod components;
 pub mod flow;
 pub mod inputs;
+pub mod kit;
 pub mod layout;
 pub mod markdown;
 pub mod mermaid;

@@ -48,6 +48,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::flow::entries());
     v.extend(crate::demos::timeline::entries());
     v.extend(crate::demos::ui::entries());
+    v.extend(crate::demos::kit::entries());
     v
 }
 
