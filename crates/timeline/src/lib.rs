@@ -35,6 +35,11 @@ pub use tracks_view::{TracksEvent, TracksView};
 
 pub use edit::ResizeEdges;
 
+/// Register the keyboard bindings of the editable views (see [`edit::init`]).
+pub fn init(cx: &mut gpui_kit::App) {
+    edit::init(cx);
+}
+
 #[cfg(test)]
 mod visible_tests {
     use super::*;
