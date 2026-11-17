@@ -116,11 +116,11 @@ pub fn run(root: &Path, release: bool) -> Result<()> {
         let diff = changed(&last, &now);
         if diff.is_empty() {
             // The app exited on its own (closed window): wait for the next change.
-            if let Some(c) = app.as_mut() {
-                if c.try_wait().ok().flatten().is_some() {
-                    app = None;
-                    println!("app exited; save a file to relaunch");
-                }
+            if let Some(c) = app.as_mut()
+                && c.try_wait().ok().flatten().is_some()
+            {
+                app = None;
+                println!("app exited; save a file to relaunch");
             }
             continue;
         }
