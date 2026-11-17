@@ -4,10 +4,12 @@ use gpui_kit::{AnyElement, IntoElement, ParentElement, SharedString, Styled, div
 use guiraffe_components::{Paper, Text};
 use guiraffe_core::Size;
 
+pub mod charts;
 pub mod chat;
 pub mod components;
 pub mod flow;
 pub mod inputs;
+pub mod kit;
 pub mod layout;
 pub mod markdown;
 pub mod mermaid;

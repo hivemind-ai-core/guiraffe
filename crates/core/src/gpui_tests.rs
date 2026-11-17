@@ -39,6 +39,30 @@ fn scheme_switch_updates_both(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn bridge_reaches_derived_kit_fields_in_both_schemes(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init(cx);
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let g = GuiraffeTheme {
+                scheme,
+                primary: ColorName::Teal,
+                ..Default::default()
+            };
+            apply(g.clone(), cx);
+            let k = KitColors::from_theme(&g);
+            let t = Theme::global(cx);
+            assert_eq!(t.mode.is_dark(), scheme == Scheme::Dark);
+            assert_eq!(t.button_primary, k.primary.to_hsla(), "{scheme:?}");
+            assert_eq!(t.tokens.button_primary.color, k.primary.to_hsla());
+            assert_eq!(t.slider_bar, k.primary.to_hsla());
+            assert_eq!(t.progress_bar, k.primary.to_hsla());
+            assert_eq!(t.background, g.surfaces().body.to_hsla());
+            assert_eq!(t.chart_2, k.primary.to_hsla());
+        }
+    });
+}
+
+#[gpui_kit::test]
 fn global_falls_back_without_init(cx: &mut TestAppContext) {
     cx.update(|cx| assert_eq!(*GuiraffeTheme::global(cx), GuiraffeTheme::default()));
 }

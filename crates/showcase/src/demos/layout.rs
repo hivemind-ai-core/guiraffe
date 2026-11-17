@@ -11,6 +11,8 @@ use guiraffe_layout::*;
 
 use super::{column, example, tile};
 use crate::catalog::{Entry, stateless};
+use crate::knobs::{Knob, KnobValues, SIZE_NAMES, with_knobs};
+use gpui_kit::AnyElement;
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -87,8 +89,16 @@ pub fn entries() -> Vec<Entry> {
     ]
 }
 
-fn stack_group(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn stack_group(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live Group",
+        &[
+            Knob::gap(),
+            Knob::new("Align", &["start", "center", "end"]),
+            Knob::new("Justify", &["start", "center", "end", "between", "around"]),
+            Knob::toggle("Grow"),
+        ],
+        stack_group_live,
         |_, cx| {
             column([
                 example(
@@ -111,8 +121,36 @@ fn stack_group(_: &mut Window, cx: &mut App) -> AnyView {
                 ),
             ])
         },
+        window,
         cx,
     )
+}
+
+fn stack_group_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
+    let align = v
+        .pick(1, &[Align::Start, Align::Center, Align::End])
+        .unwrap_or_default();
+    let justify = v
+        .pick(
+            2,
+            &[
+                Justify::Start,
+                Justify::Center,
+                Justify::End,
+                Justify::Between,
+                Justify::Around,
+            ],
+        )
+        .unwrap_or_default();
+    Group::new()
+        .gap(v.size(0))
+        .align(align)
+        .justify(justify)
+        .grow(v.on(3))
+        .child(tile("Short", cx))
+        .child(tile("Taller", cx).min_h(px(64.)))
+        .child(tile("Medium width item", cx))
+        .into_any_element()
 }
 
 fn flex(_: &mut Window, cx: &mut App) -> AnyView {
@@ -139,8 +177,16 @@ fn flex(_: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
-fn grid(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn grid(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live Grid",
+        &[
+            Knob::new("Columns", &["4", "6", "12"]).default(2),
+            Knob::new("Gutter", SIZE_NAMES).default(2),
+            Knob::new("Span", &["1", "2", "3", "4", "6"]).default(3),
+            Knob::toggle("Grow"),
+        ],
+        grid_live,
         |_, cx| {
             column([
                 example(
@@ -158,8 +204,20 @@ fn grid(_: &mut Window, cx: &mut App) -> AnyView {
                 ),
             ])
         },
+        window,
         cx,
     )
+}
+
+fn grid_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
+    let columns = v.pick(0, &[4u16, 6, 12]).unwrap_or(12);
+    let span = v.pick(2, &[1u16, 2, 3, 4, 6]).unwrap_or(4);
+    Grid::new()
+        .columns(columns)
+        .gutter(v.size(1))
+        .grow(v.on(3))
+        .children((1..=5).map(|i| Col::span(span).child(tile(format!("span {span} · {i}"), cx))))
+        .into_any_element()
 }
 
 fn simple_grid(_: &mut Window, cx: &mut App) -> AnyView {

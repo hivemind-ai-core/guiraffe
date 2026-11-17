@@ -6,6 +6,10 @@
 
 use std::{collections::BTreeSet, fs, path::Path};
 
+/// Catalog sections that showcase third-party types (GPUI Controls and its charts), which the
+/// scanner cannot see; their entries are exempt from the covered/stale check.
+const EXTERNAL_SECTIONS: &[&str] = &["kit", "charts"];
+
 /// Crates that are tools or harnesses, not component libraries.
 const NOT_COMPONENT_CRATES: &[&str] = &["showcase", "gallery", "test", "bench", "cli", "mocket"];
 
@@ -70,6 +74,9 @@ fn every_public_component_has_a_showcase_entry() {
 
     let mut covered = BTreeSet::new();
     for e in guiraffe_showcase::catalog::entries() {
+        if EXTERNAL_SECTIONS.contains(&e.krate) {
+            continue;
+        }
         for c in e.covers {
             covered.insert((e.krate.to_string(), (*c).to_string()));
         }

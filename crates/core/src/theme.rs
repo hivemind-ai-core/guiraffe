@@ -27,6 +27,8 @@ pub struct GuiraffeTheme {
     pub scale: f32,
     /// Layout recipes: what each kind of container provides to the widgets inside it.
     pub recipes: Recipes,
+    /// Contrast setting (spec/00 §12.1).
+    pub contrast: crate::state::Contrast,
 }
 
 /// Style recipes per layout kind (spec/14). Containers apply these as [`crate::StylePatch`]es;
@@ -46,11 +48,20 @@ impl Recipes {
         use crate::{Density, Emphasis, StylePatch, SurfaceKind};
         Recipes {
             page: StylePatch::new().density(Density::Comfortable),
-            toolbar: StylePatch::new().control_size(Size::Xs).emphasis(Emphasis::Quiet),
-            form: StylePatch::new().control_size(Size::Sm).emphasis(Emphasis::Default),
+            toolbar: StylePatch::new()
+                .control_size(Size::Xs)
+                .emphasis(Emphasis::Quiet),
+            form: StylePatch::new()
+                .control_size(Size::Sm)
+                .emphasis(Emphasis::Default),
             card: StylePatch::new().surface(SurfaceKind::Raised),
-            sidebar: StylePatch::new().surface(SurfaceKind::Sunken).control_size(Size::Sm).emphasis(Emphasis::Quiet),
-            table: StylePatch::new().density(Density::Compact).emphasis(Emphasis::Quiet),
+            sidebar: StylePatch::new()
+                .surface(SurfaceKind::Sunken)
+                .control_size(Size::Sm)
+                .emphasis(Emphasis::Quiet),
+            table: StylePatch::new()
+                .density(Density::Compact)
+                .emphasis(Emphasis::Quiet),
         }
     };
 }
@@ -71,6 +82,7 @@ impl Default for GuiraffeTheme {
             default_radius: Size::Sm,
             scale: 1.0,
             recipes: Recipes::DEFAULT,
+            contrast: crate::state::Contrast::Standard,
         }
     }
 }
@@ -173,6 +185,7 @@ static DEFAULT: GuiraffeTheme = GuiraffeTheme {
     default_radius: Size::Sm,
     scale: 1.0,
     recipes: Recipes::DEFAULT,
+    contrast: crate::state::Contrast::Standard,
 };
 
 /// Install `theme` and push its primary color, radius and scheme into Controls' theme so
@@ -187,16 +200,46 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
         if Theme::global(cx).mode != mode {
             Theme::change(mode, None, cx);
         }
-        let primary = theme.primary_color();
-        let hover = theme.variant(None, Variant::Filled).hover;
-        let radius = theme.default_radius.radius();
+        let k = crate::kit_bridge::KitColors::from_theme(&theme);
         Theme::update(cx, |t| {
-            t.primary = primary.to_hsla();
-            t.primary_hover = hover.to_hsla();
-            t.primary_active = hover.to_hsla();
-            t.primary_foreground = primary.readable_foreground().to_hsla();
-            t.ring = primary.to_hsla();
-            t.radius = px(radius);
+            let (p, ph, pf) = (
+                k.primary.to_hsla(),
+                k.primary_hover.to_hsla(),
+                k.primary_foreground.to_hsla(),
+            );
+            t.primary = p;
+            t.primary_hover = ph;
+            t.primary_active = ph;
+            t.primary_foreground = pf;
+            t.button_primary = p;
+            t.button_primary_hover = ph;
+            t.button_primary_active = ph;
+            t.button_primary_foreground = pf;
+            t.sidebar_primary = p;
+            t.sidebar_primary_foreground = pf;
+            t.progress_bar = p;
+            t.slider_bar = p;
+            t.slider_thumb = p;
+            t.ring = p;
+            t.caret = p;
+            t.link = p;
+            t.link_hover = ph;
+            t.link_active = ph;
+            t.list_active = k.selection.to_hsla();
+            t.list_active_border = p;
+            t.selection = k.selection.to_hsla();
+            t.background = k.background.to_hsla();
+            t.foreground = k.foreground.to_hsla();
+            t.border = k.border.to_hsla();
+            t.input = k.border.to_hsla();
+            t.muted = k.muted.to_hsla();
+            t.muted_foreground = k.muted_foreground.to_hsla();
+            t.popover = k.popover.to_hsla();
+            t.popover_foreground = k.foreground.to_hsla();
+            t.accent = k.accent.to_hsla();
+            t.accent_foreground = k.foreground.to_hsla();
+            [t.chart_1, t.chart_2, t.chart_3, t.chart_4, t.chart_5] = k.charts.map(Rgb::to_hsla);
+            t.radius = px(k.radius);
         });
     }
     cx.set_global(theme);

@@ -29,6 +29,11 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
         "child of Card; shown in the Card entry",
     ),
     (
+        "components",
+        "ScopedButton",
+        "focus-scope prototype (spec/18 §12 audit); a Kit Button with opt-in tab stop",
+    ),
+    (
         "mermaid",
         "Host",
         "private test host in a non-public module (`mermaid::host`)",
@@ -48,6 +53,8 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::flow::entries());
     v.extend(crate::demos::timeline::entries());
     v.extend(crate::demos::ui::entries());
+    v.extend(crate::demos::kit::entries());
+    v.extend(crate::demos::charts::entries());
     v
 }
 

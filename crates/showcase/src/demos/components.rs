@@ -9,6 +9,8 @@ use guiraffe_core::{ColorName, Size, Variant};
 
 use super::{column, example};
 use crate::catalog::{Entry, stateless};
+use crate::knobs::{Knob, KnobValues, SIZE_NAMES, with_knobs};
+use gpui_kit::AnyElement;
 
 const VARIANTS: [Variant; 5] = [
     Variant::Filled,
@@ -143,8 +145,16 @@ fn highlight(_: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
-fn surfaces(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn surfaces(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live Paper",
+        &[
+            Knob::new("Shadow", SIZE_NAMES).default(2),
+            Knob::radius(),
+            Knob::new("Padding", SIZE_NAMES).default(3),
+            Knob::toggle("Border"),
+        ],
+        surfaces_live,
         |_, _| {
             column([
                 example(
@@ -178,8 +188,28 @@ fn surfaces(_: &mut Window, cx: &mut App) -> AnyView {
                 ),
             ])
         },
+        window,
         cx,
     )
+}
+
+fn surfaces_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
+    div()
+        .w(px(360.))
+        .child(
+            Paper::new()
+                .shadow(v.size(0))
+                .radius(v.size(1))
+                .p(v.size(2))
+                .with_border(v.on(3))
+                .child(Title::new("Quarterly report").order(4))
+                .child(
+                    Text::new("Revenue grew 14% on strong renewals.")
+                        .size(Size::Sm)
+                        .dimmed(true),
+                ),
+        )
+        .into_any_element()
 }
 
 fn blockquote(_: &mut Window, cx: &mut App) -> AnyView {
@@ -194,8 +224,11 @@ fn blockquote(_: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
-fn icons(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn icons(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live ThemeIcon & ActionIcon",
+        &[Knob::variant(), Knob::color(), Knob::size(), Knob::radius()],
+        icons_live,
         |_, _| {
             column([
                 example(
@@ -232,8 +265,31 @@ fn icons(_: &mut Window, cx: &mut App) -> AnyView {
                 example("Close button", close_button("close")),
             ])
         },
+        window,
         cx,
     )
+}
+
+fn icons_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
+    let color = v.color(1).unwrap_or(ColorName::Blue);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(16.))
+        .child(
+            ThemeIcon::new(IconName::Sparkles)
+                .variant(v.variant(0))
+                .color(color)
+                .size(v.size(2))
+                .radius(v.size(3)),
+        )
+        .child(
+            ActionIcon::new("live-act", IconName::Heart)
+                .variant(v.variant(0))
+                .color(color)
+                .size(v.size(2)),
+        )
+        .into_any_element()
 }
 
 fn indicator(_: &mut Window, cx: &mut App) -> AnyView {
@@ -270,8 +326,16 @@ fn indicator(_: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
-fn ring(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn ring(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live RingProgress",
+        &[
+            Knob::new("Value", &["10%", "40%", "75%", "100%"]).default(2),
+            Knob::size(),
+            Knob::new("Thickness", &["thin", "normal", "thick"]).default(1),
+            Knob::color(),
+        ],
+        ring_live,
         |_, _| {
             column([example(
                 "Sections and label",
@@ -295,8 +359,21 @@ fn ring(_: &mut Window, cx: &mut App) -> AnyView {
                     ),
             )])
         },
+        window,
         cx,
     )
+}
+
+fn ring_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
+    let value = v.pick(0, &[10., 40., 75., 100.]).unwrap_or(75.);
+    let diameter = v.pick(1, &[60., 80., 110., 140., 180.]).unwrap_or(110.);
+    let thickness = v.pick(2, &[4., 10., 18.]).unwrap_or(10.);
+    RingProgress::new()
+        .diameter(diameter)
+        .thickness(thickness)
+        .section(value, v.color(3).unwrap_or(ColorName::Blue))
+        .label(format!("{value:.0}%"))
+        .into_any_element()
 }
 
 struct SegmentedDemo(gpui_kit::Entity<SegmentedControl>);
