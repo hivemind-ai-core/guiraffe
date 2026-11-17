@@ -2,11 +2,17 @@
 use std::{fmt::Write, path::Path};
 
 fn main() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/lucide");
+    // Read the manifest dir at run time: `env!` would bake in the path of whichever checkout
+    // first compiled this script, and a cached script from a deleted worktree then silently
+    // embedded zero icons.
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
+    let dir = Path::new(&manifest).join("assets/lucide");
     println!("cargo:rerun-if-changed={}", dir.display());
-    let mut names: Vec<String> = std::fs::read_dir(&dir)
-        .map(|rd| rd.filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.ends_with(".svg")).collect())
-        .unwrap_or_default();
+    let mut names: Vec<String> = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.ends_with(".svg")).collect(),
+        Err(e) => panic!("guiraffe-icons: cannot read {}: {e}", dir.display()),
+    };
+    assert!(names.len() > 1000, "guiraffe-icons: only {} icons found in {}", names.len(), dir.display());
     names.sort();
     let mut out = String::from("pub(crate) static ICONS: &[(&str, &[u8])] = &[\n");
     for n in &names {
