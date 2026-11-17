@@ -16,6 +16,7 @@ guiraffe-components.workspace = true
 guiraffe-layout.workspace = true
 guiraffe-icons.workspace = true
 guiraffe-timeline.workspace = true
+guiraffe-datagrid.workspace = true
 guiraffe-chat.workspace = true
 guiraffe-flow.workspace = true
 guiraffe-inputs.workspace = true

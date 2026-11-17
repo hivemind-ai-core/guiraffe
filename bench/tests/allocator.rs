@@ -54,7 +54,11 @@ fn scopes_are_thread_local() -> anyhow::Result<()> {
 fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
     for suite in guiraffe_bench::suites::registered()
         .into_iter()
-        .filter(|s| !s.name.starts_with("flow-") && !s.name.starts_with("data-ui-"))
+        .filter(|s| {
+            !s.name.starts_with("flow-")
+                && !s.name.starts_with("data-ui-")
+                && s.name != "datagrid-sort-1m"
+        })
     {
         // Immutable code fixtures, like flow fixtures, are initialized during warmup.
         (suite.run)();
@@ -103,6 +107,18 @@ fn data_ui_native_workloads_have_bounded_allocation_traffic() -> anyhow::Result<
         );
     }
     guiraffe_bench::suites::prepare_data_ui();
+    Ok(())
+}
+
+#[test]
+fn datagrid_sort_allocates_only_the_permutation() -> anyhow::Result<()> {
+    guiraffe_bench::suites::datagrid_sort_million();
+    let (_, counts) = count_allocations(guiraffe_bench::suites::datagrid_sort_million)?;
+    eprintln!("datagrid-sort-1m: {counts:?}");
+    // Keyed (CellRef, u32) pairs, std's stable-sort scratch and the final u32 permutation;
+    // never a copy of row data.
+    assert!(counts.allocations <= 8, "{counts:?}");
+    assert!(counts.bytes <= 120_000_000, "{counts:?}");
     Ok(())
 }
 

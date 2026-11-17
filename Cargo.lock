@@ -3308,6 +3308,7 @@ dependencies = [
  "guiraffe-code",
  "guiraffe-components",
  "guiraffe-core",
+ "guiraffe-datagrid",
  "guiraffe-flow-core",
  "guiraffe-ui",
  "guiraffe-windows",
@@ -3380,6 +3381,16 @@ name = "guiraffe-core"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+]
+
+[[package]]
+name = "guiraffe-datagrid"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-test",
+ "proptest",
 ]
 
 [[package]]
@@ -3518,6 +3529,7 @@ dependencies = [
  "guiraffe-code",
  "guiraffe-components",
  "guiraffe-core",
+ "guiraffe-datagrid",
  "guiraffe-flow",
  "guiraffe-icons",
  "guiraffe-inputs",

@@ -8,6 +8,7 @@ pub mod charts;
 pub mod chat;
 pub mod code;
 pub mod components;
+pub mod datagrid;
 pub mod flow;
 pub mod inputs;
 pub mod kit;

@@ -1,0 +1,21 @@
+[package]
+name = "guiraffe-datagrid"
+description = "Virtualized, zero-copy data grid: millions of rows, pinned/resizable/reorderable columns, sort, filter, selection, inline edit."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { workspace = true, features = ["render", "layout"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
