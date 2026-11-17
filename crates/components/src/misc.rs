@@ -1,5 +1,7 @@
 //! Blockquote, Indicator and Pill.
 
+use gpui_kit::component::Sizable;
+use gpui_kit::component::badge::Badge;
 use gpui_kit::{
     AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StyleRefinement, Window, div, prelude::*, px,
@@ -76,10 +78,19 @@ pub enum IndicatorPosition {
     BottomStart,
 }
 
+/// The width of Kit's dot badge, in screen pixels. Kit draws the dot six
+/// pixels wide, whatever the size of the badge.
+const DOT_WIDTH: f32 = 6.;
+
 /// A dot or count badge anchored to the corner of its child.
+///
+/// The mark is Kit's badge: a dot, or a count. The wrapper keeps the two
+/// things the badge does not know about: the size of the context the
+/// indicator sits in, and the corner it is anchored to.
 #[derive(IntoElement)]
 pub struct Indicator {
     child: AnyElement,
+    /// The count of the badge. A label that is not a number is a dot.
     label: Option<SharedString>,
     color: Option<ColorName>,
     position: IndicatorPosition,
@@ -116,52 +127,50 @@ crate::props!(Indicator { position: IndicatorPosition => position, size: Size =>
 impl RenderOnce for Indicator {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let v = variant(cx, self.color, Variant::Filled);
-        let ring = hsla(surfaces(cx).body);
         let size = self
             .size
             .unwrap_or(guiraffe_core::StyleContext::current().control_size);
-        let (dot, badge) = (metrics::dot(size), metrics::badge_height(size));
-        let offset = px(-(if self.label.is_some() { badge } else { dot }) / 3.0);
-        let mark = match &self.label {
-            Some(_) => div()
-                .min_w(px(badge))
-                .h(px(badge))
-                .px(px(metrics::gap(size)))
-                .text_size(px(Size::Xs.font_size() * 0.85)),
-            None => div().size(px(dot)),
+        // The mark is Kit's badge: a count, or a dot. Kit's badge carries the
+        // shape and the colour of the mark, and its size comes from the
+        // context the indicator sits in.
+        let count = self.label.as_ref().and_then(|l| l.parse::<usize>().ok());
+        let badge = match count {
+            Some(count) => Badge::new().count(count),
+            None => Badge::new().dot(),
         }
-        .debug_selector(|| "indicator-mark".into())
-        .absolute()
-        .rounded_full()
-        .bg(hsla(v.background))
-        .text_color(hsla(v.foreground))
-        .border_2()
-        .border_color(ring)
-        .flex()
-        .items_center()
-        .justify_center()
-        .when_some(self.label, |el, l| el.child(l));
-        let mark = match self.position {
-            IndicatorPosition::TopEnd => mark.top(offset).right(offset),
-            IndicatorPosition::TopStart => mark.top(offset).left(offset),
-            IndicatorPosition::BottomEnd => mark.bottom(offset).right(offset),
-            IndicatorPosition::BottomStart => mark.bottom(offset).left(offset),
-        };
+        .color(hsla(v.background))
+        .with_size(guiraffe_core::kit_size(size));
+        // Kit's badge carries its mark at its own top-right corner, so the
+        // badge is placed with that corner on the corner of the child. A dot
+        // hangs to the left of that corner, so it is moved along, to lie
+        // inside the corner it belongs to.
+        let shift = if count.is_some() { 0. } else { DOT_WIDTH };
+        let badge = match self.position {
+            IndicatorPosition::TopEnd => div().absolute().top_0().right_0(),
+            IndicatorPosition::TopStart => div().absolute().top_0().left(px(shift)),
+            IndicatorPosition::BottomEnd => div().absolute().bottom_0().right_0(),
+            IndicatorPosition::BottomStart => div().absolute().bottom_0().left(px(shift)),
+        }
+        .child(badge);
         // Reserve the mark's overhang so it never overflows the wrapper and gets clipped by
         // an ancestor with `overflow_hidden` (e.g. a Paper). The child keeps its position
         // relative to the mark; the wrapper is just that much larger on the mark's sides.
-        let over = -offset;
+        let (dot, badge_height) = (metrics::dot(size), metrics::badge_height(size));
+        let over = if count.is_some() { badge_height } else { dot } / 3.;
         let wrapper = match self.position {
-            IndicatorPosition::TopEnd => div().pt(over).pr(over),
-            IndicatorPosition::TopStart => div().pt(over).pl(over),
-            IndicatorPosition::BottomEnd => div().pb(over).pr(over),
-            IndicatorPosition::BottomStart => div().pb(over).pl(over),
+            IndicatorPosition::TopEnd => div().pt(px(over)).pr(px(over)),
+            IndicatorPosition::TopStart => div().pt(px(over)).pl(px(over)),
+            IndicatorPosition::BottomEnd => div().pb(px(over)).pr(px(over)),
+            IndicatorPosition::BottomStart => div().pb(px(over)).pl(px(over)),
         };
-        let inner = div().relative().child(self.child);
+        let inner = div()
+            .relative()
+            .debug_selector(|| "indicator-child".into())
+            .child(self.child);
         let inner = if self.disabled {
             inner
         } else {
-            inner.child(mark)
+            inner.child(badge)
         };
         refine(wrapper.flex_none(), &self.style).child(inner)
     }
