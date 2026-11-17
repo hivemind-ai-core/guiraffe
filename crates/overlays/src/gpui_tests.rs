@@ -1190,3 +1190,53 @@ fn review_5_removing_modal_rechains_focused_child_handles(cx: &mut TestAppContex
     })
     .expect("window");
 }
+
+/// spec/00 §12: spotlight rows are a ListBox of options with the active one selected;
+/// rows are not tab stops; scrims come from the theme token.
+#[gpui_kit::test]
+fn spotlight_rows_expose_listbox_semantics(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestQueryExt;
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let palette = cx.new(|cx| {
+            Spotlight::new(
+                vec![
+                    search::Command::new("one", "One"),
+                    search::Command::new("two", "Two"),
+                ],
+                window,
+                cx,
+                |_, _, _| {},
+            )
+        });
+        Spotlight::open(&palette, window, cx).expect("open");
+        window.render_frame(cx);
+        let rows = window.find_all_by_role(gpui_kit::Role::ListBoxOption);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            window.find(("spotlight-row", 0_usize)).selected(),
+            Some(true)
+        );
+        window.press("down", cx);
+        assert_eq!(
+            window.find(("spotlight-row", 0_usize)).selected(),
+            Some(false)
+        );
+        assert_eq!(
+            window.find(("spotlight-row", 1_usize)).selected(),
+            Some(true)
+        );
+    })
+    .expect("window");
+}
+
+#[test]
+fn scrims_are_scheme_tokens() {
+    let light = guiraffe_core::GuiraffeTheme::default();
+    let dark = guiraffe_core::GuiraffeTheme {
+        scheme: guiraffe_core::Scheme::Dark,
+        ..light.clone()
+    };
+    assert_ne!(light.scrim(), dark.scrim());
+}
