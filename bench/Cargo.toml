@@ -14,6 +14,7 @@ instruction-counts = ["dep:iai-callgrind"]
 
 [dependencies]
 guiraffe-code.workspace = true
+guiraffe-datagrid.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

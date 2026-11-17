@@ -201,6 +201,79 @@ pub fn flow_delete_child() {
     });
 }
 
+// Data grid: a computed 1M x 50 source (nothing stored), as the showcase uses.
+type GridCellFn = fn(usize, usize) -> guiraffe_datagrid::CellRef<'static>;
+type GridFixture = (
+    guiraffe_datagrid::FnSource<GridCellFn>,
+    Vec<guiraffe_datagrid::ColumnDef>,
+    guiraffe_datagrid::ColumnLayout,
+);
+fn grid_cell(row: usize, col: usize) -> guiraffe_datagrid::CellRef<'static> {
+    use guiraffe_datagrid::CellRef;
+    const NAMES: [&str; 8] = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    ];
+    match col % 3 {
+        0 => CellRef::Int(((row.wrapping_mul(2_654_435_761) ^ col) % 1_000_000) as i64),
+        1 => CellRef::Number((row % 10_007) as f64 * 0.25 + col as f64),
+        _ => CellRef::Text(NAMES[(row ^ col) % NAMES.len()]),
+    }
+}
+fn grid_fixture() -> &'static GridFixture {
+    static FIXTURE: std::sync::OnceLock<GridFixture> = std::sync::OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let cols: Vec<_> = (0..50)
+            .map(|c| guiraffe_datagrid::ColumnDef::new("c", "c", c).width(110.))
+            .collect();
+        let order: Vec<usize> = (0..50).collect();
+        let layout = guiraffe_datagrid::ColumnLayout::compute(&cols, &order);
+        (
+            guiraffe_datagrid::FnSource::new(1_000_000, grid_cell as GridCellFn),
+            cols,
+            layout,
+        )
+    })
+}
+/// 32 viewport jumps (vertical and horizontal) over 1M x 50: window math, visible-column
+/// search and formatting every visible cell into a reused buffer (what a frame reads).
+pub fn datagrid_scroll_million() {
+    use guiraffe_datagrid::{GridSource, window};
+    let (source, cols, layout) = grid_fixture();
+    thread_local! {static TEXT: std::cell::RefCell<String> = std::cell::RefCell::new(String::with_capacity(64));}
+    TEXT.with(|text| {
+        let mut text = text.borrow_mut();
+        for step in 0..32usize {
+            let y = (step * 31_250) as f64 * 36.;
+            let x = (step * 157) as f64;
+            let rows = window::visible_rows(y, 36., 720., source.row_count(), 3);
+            let visible = layout.visible_center(x, 1280.);
+            for r in rows {
+                for p in layout.center.get(visible.clone()).into_iter().flatten() {
+                    if let Some(def) = cols.get(p.def) {
+                        text.clear();
+                        def.format(source.cell(r, def.source), &mut text);
+                        black_box(text.len());
+                    }
+                }
+            }
+        }
+    });
+}
+/// Stable sort of 1M computed rows on an integer column: a `u32` permutation, no row copies.
+pub fn datagrid_sort_million() {
+    use guiraffe_datagrid::order::{SortDir, SortSpec, compute_order};
+    let (source, _, _) = grid_fixture();
+    let spec = [SortSpec {
+        source_col: 0,
+        dir: SortDir::Asc,
+        comparator: None,
+    }];
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let order = compute_order(source, &[], &spec, &cancel);
+    assert!(order.is_ok());
+    black_box(order.ok());
+}
+
 /// Warm the native fixture outside criterion/Callgrind measurement.
 pub fn prepare_data_ui() {
     crate::data_ui::instantiate();
@@ -233,6 +306,8 @@ macro_rules! with_suites {
             (core_variants, "core-variants"),
             (code_scroll_million,"code-scroll-1m"),
             (code_snapshot_arc_clone,"code-snapshot-arc-clone"),
+            (datagrid_scroll_million, "datagrid-scroll-1m"),
+            (datagrid_sort_million, "datagrid-sort-1m"),
             (flow_build,"flow-build-5k"),
             (flow_query,"flow-query-5k"),
             (flow_move,"flow-move-5k"),
