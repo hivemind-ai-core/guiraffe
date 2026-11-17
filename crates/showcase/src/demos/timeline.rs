@@ -6,8 +6,9 @@ use gpui_kit::{
 };
 use guiraffe_timeline::*;
 
+use gpui_kit::component::button::Button;
 use guiraffe_components::{SegmentedControl, SegmentedEvent, Text};
-use guiraffe_core::Size;
+use guiraffe_core::{ColorName, Size};
 
 use super::{column, example};
 use crate::catalog::Entry;
@@ -31,14 +32,21 @@ pub fn entries() -> Vec<Entry> {
         Entry {
             krate: "timeline",
             name: "Dope sheet",
-            summary: "Keyframes per channel, frame-snapped retiming.",
+            summary: "Hierarchical channels, summary keys, locks, box/group selection and frame-snapped editing (keyboard opt-in).",
             covers: &["DopeSheet"],
             demo: dope,
         },
         Entry {
             krate: "timeline",
+            name: "Bar curve editor",
+            summary: "Draw a quantized bipolar curve across 32 bars; fast strokes fill every bar.",
+            covers: &["BarCurveView"],
+            demo: bars,
+        },
+        Entry {
+            krate: "timeline",
             name: "Curve editor",
-            summary: "Keyframe curves (constant, linear, bezier); drag keys.",
+            summary: "Multiple curves, draggable tangent handles; external toolbar edits keys, interpolation and tangents.",
             covers: &["CurveView"],
             demo: curve,
         },
@@ -184,13 +192,13 @@ fn gantt(_: &mut Window, cx: &mut App) -> AnyView {
         TimeFormat::Days,
         cx,
     );
-    // Launch date is fixed: lock it to show per-item locks (dashed, faded).
+    // Item locks keep their own small badge; global lock does not change styling.
     v.update(cx, |v, cx| v.set_locked(6, true, cx));
     with_options(
         v,
         "Project plan (critical path in red; Launch is locked)",
-        260.,
-        "Drag bar ends to resize; the cursor shows what a drag will do.",
+        280.,
+        "Click a row lock icon; drag bar ends to resize; the cursor shows what a drag will do.",
         cx,
     )
 }
@@ -236,18 +244,70 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn dope(_: &mut Window, cx: &mut App) -> AnyView {
-    let v = DopeSheet::new(
-        vec![
-            Channel::new("position.x", vec![0.0, 0.5, 1.0, 2.0]),
-            Channel::new("position.y", vec![0.0, 0.75, 1.5]),
-            Channel::new("rotation", vec![0.25, 1.25, 2.25]),
-            Channel::new("opacity", vec![0.0, 0.2, 2.8, 3.0]),
-        ],
-        TimeFormat::Frames(24.0),
-        3.0,
+    let keys = |times: &[(f64, f64)]| {
+        times
+            .iter()
+            .map(|(t, v)| Key::new(*t, *v, Interp::Constant))
+            .collect()
+    };
+    let view = DopeSheet::new(
+        vec![Channel::group(
+            "Scene summary",
+            vec![
+                Channel::group(
+                    "Camera",
+                    vec![
+                        Channel::with_keyframes(
+                            "position.x",
+                            keys(&[(0., 0.), (0.5, 0.), (1., 1.), (2., 1.)]),
+                        ),
+                        Channel::new("position.y", vec![0., 0.75, 1.5]),
+                    ],
+                ),
+                Channel::group(
+                    "Object",
+                    vec![
+                        Channel::new("rotation", vec![0.25, 1.25, 2.25]),
+                        Channel::new("opacity", vec![0., 0.2, 2.8, 3.]),
+                    ],
+                ),
+            ],
+        )],
+        TimeFormat::Frames(24.),
+        3.,
         cx,
     );
-    hold(v, "24 fps", 140., cx)
+    view.update(cx, |view, cx| view.set_focusable(true, cx));
+    let lock = SegmentedControl::new(["Editable", "Locked"], cx);
+    cx.new(|cx| {
+        let target = view.clone();
+        let sub = cx.subscribe(&lock, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            target.update(cx, |view, cx| view.set_editable(*i == 0, cx));
+        });
+        DopeDemo {
+            view,
+            lock,
+            _sub: sub,
+        }
+    })
+    .into()
+}
+struct DopeDemo {
+    view: Entity<DopeSheet>,
+    lock: Entity<SegmentedControl>,
+    _sub: gpui_kit::Subscription,
+}
+impl Render for DopeDemo {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        column([
+            example("Editing", div().w(px(240.)).child(self.lock.clone())),
+            example(
+                "24 fps · Shift-click / box select · Ctrl+A / Ctrl+D · Delete · Arrow keys",
+                div().h(px(300.)).child(self.view.clone()),
+            ),
+        ])
+    }
 }
 
 fn curve(_: &mut Window, cx: &mut App) -> AnyView {
@@ -260,6 +320,132 @@ fn curve(_: &mut Window, cx: &mut App) -> AnyView {
     c.set(k);
     c.set(Key::new(2.0, 0.3, Interp::Constant));
     c.set(Key::new(3.0, 0.8, Interp::Linear));
-    let v = CurveView::new(c, 0.0, 3.0, -0.2, 1.2, cx);
-    hold(v, "Ease-out, linear, step", 260., cx)
+    let view = CurveView::new(c, 0.0, 3.0, -0.2, 1.2, cx);
+    let mut secondary = Curve::default();
+    secondary.set(Key::new(0., 0.8, Interp::Linear));
+    secondary.set(Key::new(3., 0.2, Interp::Linear));
+    view.update(cx, |v, cx| {
+        v.add_curve(
+            CurveSeries::new("Opacity", secondary, ColorName::Orange),
+            cx,
+        );
+        v.select_key(0, 0, cx);
+    });
+    let interp = SegmentedControl::new(["Constant", "Linear", "Bezier"], cx);
+    let tangent = SegmentedControl::new(["Free", "Aligned", "Mirrored", "Flat"], cx);
+    cx.new(|cx| {
+        let a = view.clone();
+        let b = view.clone();
+        let s1 = cx.subscribe(&interp, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            a.update(cx, |v, cx| {
+                v.set_interpolation(
+                    [Interp::Constant, Interp::Linear, Interp::Bezier]
+                        .get(*i)
+                        .copied()
+                        .unwrap_or(Interp::Linear),
+                    cx,
+                );
+            });
+        });
+        let s2 = cx.subscribe(&tangent, move |_, _, e: &SegmentedEvent, cx| {
+            let SegmentedEvent::Changed(i) = e;
+            b.update(cx, |v, _| {
+                v.set_tangent_mode(
+                    [
+                        TangentMode::Free,
+                        TangentMode::Aligned,
+                        TangentMode::Mirrored,
+                        TangentMode::Flat,
+                    ]
+                    .get(*i)
+                    .copied()
+                    .unwrap_or_default(),
+                )
+            });
+        });
+        CurveDemo {
+            view,
+            interp,
+            tangent,
+            _subs: [s1, s2],
+        }
+    })
+    .into()
+}
+
+struct CurveDemo {
+    view: Entity<CurveView>,
+    interp: Entity<SegmentedControl>,
+    tangent: Entity<SegmentedControl>,
+    _subs: [gpui_kit::Subscription; 2],
+}
+impl Render for CurveDemo {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let add = self.view.clone();
+        let delete = self.view.clone();
+        let fit = self.view.clone();
+        column([
+            example(
+                "External editor toolbar",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(Size::Sm.spacing()))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(Size::Xs.spacing()))
+                            .child(
+                                Button::new("curve-add")
+                                    .label("Add key")
+                                    .tab_stop(false)
+                                    .on_click(move |_, _, cx| {
+                                        add.update(cx, |view, cx| {
+                                            let time = (view.axis().start + view.axis().end()) / 2.;
+                                            view.insert_at(time, cx);
+                                        })
+                                    }),
+                            )
+                            .child(
+                                Button::new("curve-delete")
+                                    .label("Delete key")
+                                    .tab_stop(false)
+                                    .on_click(move |_, _, cx| {
+                                        delete.update(cx, |view, cx| {
+                                            view.remove_selected(cx);
+                                        })
+                                    }),
+                            )
+                            .child(
+                                Button::new("curve-fit")
+                                    .label("Fit + normalize")
+                                    .tab_stop(false)
+                                    .on_click(move |_, _, cx| {
+                                        fit.update(cx, |view, cx| view.fit_view(true, cx))
+                                    }),
+                            ),
+                    )
+                    .child(self.interp.clone())
+                    .child(self.tangent.clone()),
+            ),
+            example(
+                "Select keys to reveal tangent handles",
+                div().h(px(300.)).child(self.view.clone()),
+            ),
+        ])
+    }
+}
+fn bars(_: &mut Window, cx: &mut App) -> AnyView {
+    let mut model = BarCurve::new(32, -1., 1.);
+    model.bipolar = true;
+    model.set_steps(Some(16));
+    model.draw((0., -0.8), (15., 0.8));
+    model.draw((16., 0.8), (31., -0.4));
+    hold(
+        BarCurveView::new(model, cx),
+        "32 bars · bipolar · 16 steps · drag to draw",
+        260.,
+        cx,
+    )
 }
