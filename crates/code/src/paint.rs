@@ -748,22 +748,57 @@ pub(crate) fn paint_traces(
     window: &mut Window,
 ) {
     for trace in traces {
-        let from = viewers
-            .iter()
-            .find(|s| s.id == trace.from.viewer)
-            .and_then(|s| anchor(s, trace.from.position));
-        let to = viewers
-            .iter()
-            .find(|s| s.id == trace.to.viewer)
-            .and_then(|s| anchor(s, trace.to.position));
-        if let (Some(a), Some(b)) = (from, to) {
-            let bend = (b.x - a.x).abs().max(px(guiraffe_core::Size::Lg.spacing()));
-            let mut path = PathBuilder::stroke(px(1.5));
-            path.move_to(a);
-            path.cubic_bezier_to(b, point(a.x + bend, a.y), point(b.x - bend, b.y));
-            if let Ok(path) = path.build() {
-                window.paint_path(path, color(trace.color, theme).opacity(0.65));
-            }
+        let from = viewers.iter().find(|s| s.id == trace.from.viewer);
+        let to = viewers.iter().find(|s| s.id == trace.to.viewer);
+        let (Some(fs), Some(ts)) = (from, to) else {
+            continue;
+        };
+        let (Some(a), Some(b)) = (
+            anchor(fs, trace.from.position),
+            anchor(ts, trace.to.position),
+        ) else {
+            continue;
+        };
+        let c = color(trace.color, theme).opacity(0.75);
+        // Run along the gap below each endpoint's row (not through glyphs) to the facing
+        // edge of its viewer, then cross the space between viewers with one curve.
+        let edges = |s: &Shared, toward_right: bool| {
+            let g = s.geometry.borrow();
+            let edge = if toward_right {
+                g.bounds.right() - px(g.margin + g.mini)
+            } else {
+                g.bounds.origin.x + px(g.gutter)
+            };
+            (edge, px(g.line_height * 0.5))
+        };
+        let rightward = b.x >= a.x;
+        let (ea, ha) = edges(fs, rightward);
+        let (eb, hb) = edges(ts, !rightward);
+        let (ya, yb) = (a.y + ha, b.y + hb);
+        for p in [a, b] {
+            window.paint_quad(
+                fill(
+                    Bounds::new(point(p.x - px(2.5), p.y - px(2.5)), size(px(5.), px(5.))),
+                    c,
+                )
+                .corner_radii(px(2.5)),
+            );
+        }
+        let bend = ((eb - ea).abs() * 0.5).max(px(guiraffe_core::Size::Lg.spacing()));
+        let dir = if rightward { 1. } else { -1. };
+        let mut path = PathBuilder::stroke(px(1.5));
+        path.move_to(a);
+        path.line_to(point(a.x, ya));
+        path.line_to(point(ea, ya));
+        path.cubic_bezier_to(
+            point(eb, yb),
+            point(ea + bend * dir, ya),
+            point(eb - bend * dir, yb),
+        );
+        path.line_to(point(b.x, yb));
+        path.line_to(b);
+        if let Ok(path) = path.build() {
+            window.paint_path(path, c);
         }
     }
 }
