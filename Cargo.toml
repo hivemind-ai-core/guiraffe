@@ -31,6 +31,7 @@ guiraffe-cli = { path = "crates/cli" }
 guiraffe-inputs = { path = "crates/inputs" }
 guiraffe-icons = { path = "crates/icons" }
 guiraffe-timeline = { path = "crates/timeline" }
+guiraffe-charts = { path = "crates/charts" }
 guiraffe-datagrid = { path = "crates/datagrid" }
 guiraffe-devtools = { path = "crates/devtools" }
 gpui-kit = { version = "=0.9.1", features = ["component", "assets"] }

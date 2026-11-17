@@ -3322,6 +3322,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-charts"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-timeline",
+ "proptest",
+]
+
+[[package]]
 name = "guiraffe-chat"
 version = "0.1.0"
 dependencies = [
