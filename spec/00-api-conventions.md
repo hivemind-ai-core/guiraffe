@@ -128,3 +128,11 @@ splitter sizes, collapsed panels and recent spotlight items. Each widget opts in
 6. Visual snapshots in light and dark.
 7. `XProps` registered for the IR, with a Mocket mapping entry if Mocket has an equivalent.
 8. clippy and fmt clean.
+
+## 12. Interactive controls: feedback, focus, accessibility (user directive 2026-11-17)
+
+1. **Build on Kit controls.** Clickable/editable GUIraffe widgets wrap or compose gpui-kit (GPUI Controls) primitives where one exists (Button, Input, Checkbox, Switch, Select, …). A bare `div().on_click` is not a button.
+2. **Full state feedback, Kit conventions.** Every interactive element shows hover, active/pressed, focus-visible, disabled (no hover/press, `not-allowed` cursor, dimmed, events suppressed), and loading/selected where applicable, using the same tokens and timings as Kit controls. Cursor reflects affordance (pointer, text, resize, grab).
+3. **Focus is opt-in for non-text controls.** Pointer clicks on buttons, segments, chips, icons etc. must not take or keep keyboard focus by default. Text inputs (keyboard-grabbing controls) take focus on click. Focusability is enabled per control (`.focusable(true)`) or for a subtree by a form wrapper (`Form`/`FocusScope`) which opts all children into Tab navigation and focus rings. Focus rings show only for keyboard focus (focus-visible).
+4. **Accessibility.** Every control exposes role, accessible name/label, state (checked, selected, expanded, disabled, value/range) and keyboard operation (Space/Enter activate, arrows within groups, Escape dismisses) through GPUI's accessibility support where available; gaps are tracked in KNOWN_ISSUES. Never convey state by color alone.
+5. **Tests.** Each control has interaction tests for: click without focus capture, disabled suppression, keyboard activation inside a form scope, and (once supported) its accessibility node.
