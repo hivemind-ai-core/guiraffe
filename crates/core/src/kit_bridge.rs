@@ -37,31 +37,76 @@ pub struct KitColors {
     pub radius: f32,
 }
 
-/// One semantic colour family of Kit: the fill, its hover and pressed
-/// shades, and the text that reads on it.
+/// One semantic colour family of Kit: the colour of the surface, a shade of it
+/// that carries white text, its hover and pressed shades, and the text that
+/// reads on it.
+///
+/// Kit paints with one colour per family in several places: the text of an
+/// alert on its tint, the fill of a tag, the text of an outlined tag, the
+/// fill of a badge and the fill of a button. The colour therefore has to read
+/// as text on a light tint *and* carry text on it, so it is a shade of the hue
+/// that reaches the text floor against the surface of the app.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SemanticColors {
+    /// The colour of the family: the text of an alert on its tint, the fill of
+    /// a tag, the text of an outlined tag, the fill of a button.
     pub base: Rgb,
+    /// A shade of the family that carries white text: the fill of a badge.
+    ///
+    /// A colour cannot read on a dark surface and carry white text at the
+    /// same time, so the badge takes a shade of its own that is dark in both
+    /// schemes.
+    pub fill: Rgb,
+    /// The hover shade of a fill.
     pub hover: Rgb,
+    /// The pressed shade of a fill.
     pub active: Rgb,
+    /// The text on a fill.
     pub foreground: Rgb,
 }
 
 impl SemanticColors {
-    /// The family of a colour, with the same contrast rules as the primary:
-    /// the filled variant of the colour (darkened until white text reads on
-    /// it) and the foreground that goes with it.
+    /// The family of a colour, with the same rules as the text of the theme:
+    /// the shade of the hue that reads on the surface of the app (see
+    /// [`crate::variant::readable_hue`]), and the text that reads on it.
     fn of(t: &GuiraffeTheme, color: ColorName) -> Self {
-        let filled = t.variant(Some(color), Variant::Filled);
+        let surfaces = t.surfaces();
+        let dark = t.scheme == Scheme::Dark;
+        let start = t.resolve_ctx().filled_shade();
+        // The colour of the family reads on the surface of the app, so it
+        // reads on the tint an alert draws over it as well.
+        let base = crate::variant::readable_hue(
+            color,
+            start,
+            surfaces.body,
+            crate::variant::TEXT_TARGET,
+            dark,
+        );
+        // The hover and pressed shades move away from the surface, so the text
+        // on them reads at least as well as on the fill.
+        let foreground = crate::variant::filled_foreground(color, base);
+        let away = if dark { Rgb::WHITE } else { Rgb::BLACK };
+        let hover = crate::variant::mix_toward(base, away, 0.06);
+        let active = crate::variant::mix_toward(base, away, 0.12);
+        let hover = if foreground.contrast(hover) >= 4.5 {
+            hover
+        } else {
+            base
+        };
+        let active = if foreground.contrast(active) >= 4.5 {
+            active
+        } else {
+            base
+        };
+        // The badge of Kit carries white text, so it takes a shade that is
+        // dark in both schemes.
+        let fill = crate::variant::readable_hue(color, start, Rgb::WHITE, 4.5, false);
         Self {
-            base: filled.background,
-            hover: t
-                .state(crate::StateKind::Hover, Variant::Filled, Some(color))
-                .background,
-            active: t
-                .state(crate::StateKind::Pressed, Variant::Filled, Some(color))
-                .background,
-            foreground: filled.foreground,
+            base,
+            fill,
+            hover,
+            active,
+            foreground,
         }
     }
 }
@@ -153,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_families_follow_the_contrast_rules_of_the_primary() {
+    fn semantic_families_read_on_every_surface_kit_paints_them_on() {
         for scheme in [Scheme::Light, Scheme::Dark] {
             let t = GuiraffeTheme {
                 scheme,
@@ -166,12 +211,34 @@ mod tests {
                 ("warning", k.warning),
                 ("info", k.info),
             ] {
-                // The fill is the contrast-corrected one, so the text reads on
-                // it in every state of the family, as the primary does.
+                let body = t.surfaces().body;
+                // An alert paints the colour of the family as its text, over a
+                // tint of the same colour: Kit mixes four percent of it into
+                // the background of the app.
+                let tint = family.base.alpha(0.04).over(body);
+                assert!(
+                    family.base.contrast(tint) >= 4.5,
+                    "{scheme:?} {name} alert text"
+                );
+                // A tag paints the colour of the family as its fill, with the
+                // foreground of the family on it.
                 assert!(
                     family.foreground.contrast(family.base) >= 4.5,
-                    "{scheme:?} {name} text"
+                    "{scheme:?} {name} tag text"
                 );
+                // An outlined tag paints the colour of the family as its text
+                // on the surface of the app.
+                assert!(
+                    family.base.contrast(body) >= 4.5,
+                    "{scheme:?} {name} outlined tag text"
+                );
+                // A badge of Kit carries white text on the fill of the family.
+                assert!(
+                    Rgb::WHITE.contrast(family.fill) >= 4.5,
+                    "{scheme:?} {name} badge text"
+                );
+                // A button of a semantic variant carries the foreground of the
+                // family on the fill, in every state.
                 assert!(
                     family.foreground.contrast(family.hover) >= 4.5,
                     "{scheme:?} {name} hover text"

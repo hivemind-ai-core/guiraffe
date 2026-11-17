@@ -46,7 +46,7 @@ impl ResolveCtx {
             },
         }
     }
-    fn filled_shade(&self) -> u8 {
+    pub fn filled_shade(&self) -> u8 {
         match self.scheme {
             Scheme::Light => self.primary_shade_light,
             Scheme::Dark => self.primary_shade_dark,
@@ -56,7 +56,7 @@ impl ResolveCtx {
 
 /// Text needs 4.5:1 (WCAG 1.4.3). Tinted text targets a little more so hover/pressed tints
 /// (which sit between rest and the text) still clear the floor.
-const TEXT_TARGET: f32 = 5.0;
+pub const TEXT_TARGET: f32 = 5.0;
 
 /// The shade of `color` nearest `start` that reaches `floor` against `bg`, walking toward the
 /// dark end in light mode and the light end in dark mode (Refactoring UI: keep the hue, move
@@ -81,9 +81,60 @@ pub fn readable_shade(color: ColorName, start: u8, bg: Rgb, floor: f32, dark: bo
         })
 }
 
+/// Mix a colour toward another one, so a state of a fill is a shade of the
+/// same hue.
+pub fn mix_toward(color: Rgb, toward: Rgb, amount: f32) -> Rgb {
+    let amount = amount.clamp(0., 1.);
+    let mix = |a: u8, b: u8| {
+        (a as f32 + (b as f32 - a as f32) * amount)
+            .round()
+            .clamp(0., 255.) as u8
+    };
+    Rgb {
+        r: mix(color.r, toward.r),
+        g: mix(color.g, toward.g),
+        b: mix(color.b, toward.b),
+        a: color.a,
+    }
+}
+
+/// The shade of `color` nearest `start` that reaches `floor` against `bg`, walking toward the
+/// dark end in light mode and the light end in dark mode, like [`readable_shade`].
+///
+/// The scale of a hue runs out of contrast before the floor is reached: the
+/// darkest red of the palette is 4.4:1 on a pale red tint, and the darkest
+/// green is 4.4:1 on white. The hue is darkened past the end of its scale
+/// then, so it keeps its hue and reads, where the grey of [`readable_shade`]
+/// would read as no hue at all.
+pub fn readable_hue(color: ColorName, start: u8, bg: Rgb, floor: f32, dark: bool) -> Rgb {
+    let start = start.min(9);
+    for k in 0..=9u8 {
+        let i = if dark {
+            start.saturating_sub(k)
+        } else {
+            (start + k).min(9)
+        };
+        let shade = color.shade(i);
+        if shade.contrast(bg) >= floor {
+            return shade;
+        }
+    }
+    // The scale ran out of contrast: darken the hue itself, and lighten it in
+    // a dark scheme.
+    let toward = if dark { Rgb::WHITE } else { Rgb::BLACK };
+    let mut shade = color.shade(if dark { 0 } else { 9 });
+    for _ in 0..24 {
+        shade = mix_toward(shade, toward, 0.06);
+        if shade.contrast(bg) >= floor {
+            return shade;
+        }
+    }
+    toward
+}
+
 /// Foreground for a filled background: white when it reads, otherwise "flip the contrast" to
 /// the hue's darkest shade, then near-black.
-fn filled_foreground(color: ColorName, bg: Rgb) -> Rgb {
+pub fn filled_foreground(color: ColorName, bg: Rgb) -> Rgb {
     [
         Rgb::WHITE,
         color.shade(9),
