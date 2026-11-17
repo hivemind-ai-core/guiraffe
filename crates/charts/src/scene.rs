@@ -50,6 +50,7 @@ pub(crate) enum Geometry {
 
 pub(crate) struct Draw {
     pub geometry: Geometry,
+    pub series: SeriesId,
     pub color: Color,
 }
 
@@ -289,9 +290,12 @@ impl Projection<'_> {
 
     fn generate(&self, out: &mut Vec<Draw>, scratch: &mut Vec<usize>) {
         let domain = self.domains[0];
-        let visible = self
-            .run
-            .visible(domain.min(), domain.max(), self.run.mark.connected());
+        let visible = if self.run.mark == Mark::Rule(Orientation::Horizontal) {
+            0..self.run.rows.len()
+        } else {
+            self.run
+                .visible(domain.min(), domain.max(), self.run.mark.connected())
+        };
         if visible.is_empty() {
             return;
         }
@@ -352,10 +356,12 @@ impl Projection<'_> {
             points.extend(scratch.iter().rev().filter_map(|&i| {
                 let row = row(i);
                 self.xy(row.x, row.base)
+                    .or_else(|| self.xy(row.x, self.domains[self.y_axis()].min()))
             }));
         }
         if points.len() > 1 {
             out.push(Draw {
+                series: self.run.id,
                 geometry: Geometry::Path {
                     points,
                     closed: area,
@@ -364,6 +370,7 @@ impl Projection<'_> {
             });
         } else if let Some(point) = points.first() {
             out.push(Draw {
+                series: self.run.id,
                 geometry: Geometry::Dot(*point, 2.),
                 color: self.color(row(first)),
             });
@@ -405,7 +412,13 @@ impl Projection<'_> {
     fn individual(&self, row: &Sample, out: &mut Vec<Draw>) {
         let Some(p) = self.anchor(row) else { return };
         let color = self.color(row);
-        let mut push = |geometry| out.push(Draw { geometry, color });
+        let mut push = |geometry| {
+            out.push(Draw {
+                geometry,
+                color,
+                series: self.run.id,
+            })
+        };
         match self.run.mark {
             Mark::Line | Mark::Area(_) => {}
             Mark::Point | Mark::Bubble if self.rect.contains(p) => {

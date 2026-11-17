@@ -364,7 +364,7 @@ impl ChartSpec {
                     let color = legend.len() as u32;
                     let label = layer.group_labels.get(&group).cloned().unwrap_or_else(|| {
                         if layer.title.is_empty() {
-                            format!("Layer {} · Series {}", index + 1, group + 1)
+                            format!("Layer {} · Series {}", index + 1, u64::from(group) + 1)
                         } else if group == 0 {
                             layer.title.clone()
                         } else {
@@ -394,8 +394,13 @@ impl ChartSpec {
                 });
                 has_right_axis |= layer.secondary;
                 for row in &rows {
-                    extents[0].add(&self.x.scale, row.x);
-                    extents[y_axis].add(y_scale, row.y);
+                    let normalize = layer.mark.arrangement() == Arrangement::Normalize;
+                    if !(normalize && layer.mark.horizontal()) {
+                        extents[0].add(&self.x.scale, row.x);
+                    }
+                    if !(normalize && !layer.mark.horizontal()) {
+                        extents[y_axis].add(y_scale, row.y);
+                    }
                     match layer.mark {
                         Mark::Bar(_, Orientation::Horizontal) => {
                             extents[0].add(&self.x.scale, row.base);
