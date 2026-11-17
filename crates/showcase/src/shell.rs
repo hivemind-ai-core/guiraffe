@@ -182,7 +182,11 @@ impl Render for Showcase {
                         .px(px(Size::Xs.spacing()))
                         .text_size(px(Size::Xs.font_size()))
                         .text_color(s.dimmed.to_hsla())
-                        .child(SharedString::from(e.krate.to_uppercase())),
+                        .child(SharedString::from(if e.krate == "kit-charts" {
+                            "CHARTS".to_owned()
+                        } else {
+                            e.krate.to_uppercase()
+                        })),
                 );
             }
             let active = i == self.selected;
@@ -314,7 +318,10 @@ impl Render for Showcase {
                                         Text::new(match e.krate {
                                             "kit" => "gpui-kit · GPUI Controls, themed by GUIraffe"
                                                 .to_string(),
-                                            "charts" => "gpui-kit · component::chart".to_string(),
+                                            "kit-charts" => {
+                                                "gpui-kit · component::chart".to_string()
+                                            }
+                                            "charts" => "guiraffe-charts".to_string(),
                                             k => {
                                                 format!("guiraffe-{} · {}", k, e.covers.join(", "))
                                             }

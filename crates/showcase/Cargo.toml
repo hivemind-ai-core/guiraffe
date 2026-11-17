@@ -13,6 +13,7 @@ gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-code.workspace = true
 guiraffe-commands.workspace = true
+guiraffe-charts.workspace = true
 guiraffe-components.workspace = true
 guiraffe-layout.workspace = true
 guiraffe-icons.workspace = true
