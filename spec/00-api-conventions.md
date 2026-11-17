@@ -136,3 +136,12 @@ splitter sizes, collapsed panels and recent spotlight items. Each widget opts in
 3. **Focus is opt-in for non-text controls.** Pointer clicks on buttons, segments, chips, icons etc. must not take or keep keyboard focus by default. Text inputs (keyboard-grabbing controls) take focus on click. Focusability is enabled per control (`.focusable(true)`) or for a subtree by a form wrapper (`Form`/`FocusScope`) which opts all children into Tab navigation and focus rings. Focus rings show only for keyboard focus (focus-visible).
 4. **Accessibility.** Every control exposes role, accessible name/label, state (checked, selected, expanded, disabled, value/range) and keyboard operation (Space/Enter activate, arrows within groups, Escape dismisses) through GPUI's accessibility support where available; gaps are tracked in KNOWN_ISSUES. Never convey state by color alone.
 5. **Tests.** Each control has interaction tests for: click without focus capture, disabled suppression, keyboard activation inside a form scope, and (once supported) its accessibility node.
+
+### 12.1 State styling is semantic, not a fixed tweak (user directive 2026-11-17)
+
+"Dimmed", "disabled", "hover", "pressed", "selected" and "focus ring" are **theme tokens resolved per scheme and theme**, never hard-coded opacity or a fixed shade:
+- Resolved by `GuiraffeTheme` for the active scheme (light: darken/desaturate toward text; dark: lighten/reduce contrast toward surface), primary color and variant — e.g. `theme.state(StateKind::Disabled, variant)` → fg/bg/border.
+- **Contrast floors (WCAG 2.2):** dimmed/secondary text ≥ 4.5:1 against its actual background; disabled content distinguishable yet clearly inactive (target ≥ 3:1 for control boundaries, disabled text exempt by WCAG but kept legible ≥ 3:1 in our themes); focus indicator ≥ 3:1 against adjacent colors. Tests compute contrast for every token in both schemes and every primary color.
+- **Respect OS/user preferences:** high-contrast mode (stronger borders, no low-contrast dimming), reduced motion (state transitions instant), and forced colors where the platform reports them; a theme `contrast` setting (standard/high) feeds the same resolver.
+- Never convey state by opacity or color alone: disabled also changes cursor, suppresses interaction and is exposed to accessibility; selected also has a shape/weight cue.
+- Overlays on top of content (LoadingOverlay, modals) dim via a scheme-aware scrim token, not raw black alpha.
