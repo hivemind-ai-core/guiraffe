@@ -513,7 +513,7 @@ mod display_tests {
     fn hints_preserve_unicode_source_coordinates() {
         let source = "let α = 1;";
         let display = DisplayLine::new(source, &[(6, Arc::from(": i32"))]);
-        assert_eq!(display.text.as_ref(), "let α : i32 = 1;");
+        assert_eq!(display.text.as_ref(), "let α: i32 = 1;");
         for byte in 0..=source.len() {
             if source.is_char_boundary(byte) {
                 assert_eq!(
