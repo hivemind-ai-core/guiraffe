@@ -4,7 +4,7 @@ use crate::gpui::IntoElement;
 
 use gpui_kit::{
     AnyElement, App, ElementId, InteractiveElement as _, ParentElement as _, RenderOnce,
-    StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
+    ScrollHandle, StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
 };
 
 /// A region whose content scrolls when it does not fit.
@@ -27,6 +27,7 @@ pub struct ScrollArea {
     scroll_y: bool,
     children: Vec<AnyElement>,
     style: StyleRefinement,
+    handle: Option<ScrollHandle>,
 }
 
 impl ScrollArea {
@@ -38,6 +39,7 @@ impl ScrollArea {
             scroll_y: true,
             children: Vec::new(),
             style: StyleRefinement::default(),
+            handle: None,
         }
     }
 
@@ -55,6 +57,14 @@ impl ScrollArea {
     /// Whether the area scrolls down.
     pub fn scroll_y(mut self, scroll_y: bool) -> Self {
         self.scroll_y = scroll_y;
+        self
+    }
+
+    /// Drive or observe the scroll position from outside, e.g. to jump to a
+    /// section: each direct child is an item of the handle, so
+    /// `handle.scroll_to_item(i)` brings child `i` into view.
+    pub fn track_scroll(mut self, handle: &ScrollHandle) -> Self {
+        self.handle = Some(handle.clone());
         self
     }
 
@@ -89,6 +99,9 @@ impl RenderOnce for ScrollArea {
         }
         if self.scroll_y {
             element = element.overflow_y_scroll();
+        }
+        if let Some(handle) = &self.handle {
+            element = element.track_scroll(handle);
         }
         element = gpui_kit::base::StyledExt::refine_style(element, &self.style);
         for child in self.children {

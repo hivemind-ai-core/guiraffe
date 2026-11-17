@@ -3,7 +3,7 @@
 //! Run it with `cargo run -p guiraffe-layout --example layout_gallery`.
 
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Div, Entity, Render, Window, WindowOptions, div, px, rgb};
+use gpui_kit::{Context, Div, Entity, Render, ScrollHandle, Window, WindowOptions, div, px, rgb};
 use guiraffe_layout::{
     AppShell, AppShellState, AspectRatio, Breakpoint, Center, Col, Container, ContainerWidth,
     Divider, Flex, FlexDirection, Grid, Group, Justify, LabelPosition, Responsive, ScrollArea,
@@ -54,6 +54,7 @@ fn pill(text: impl Into<gpui_kit::SharedString>) -> Div {
 struct Gallery {
     shell: Entity<AppShellState>,
     main: Entity<GalleryMain>,
+    active: Option<usize>,
 }
 
 /// The main content of the gallery, in a view of its own.
@@ -62,25 +63,31 @@ struct Gallery {
 /// shell collapses a bar.
 struct GalleryMain {
     splitter: Entity<SplitterState>,
+    scroll: ScrollHandle,
 }
+
+/// Sidebar entries, in the order of the sections in the main view.
+const SECTIONS: [&str; 4] = [
+    "Stack, Group & Flex",
+    "Grid & SimpleGrid",
+    "Container, Center, AspectRatio & Space",
+    "AppShell & Splitter",
+];
 
 impl Render for GalleryMain {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        ScrollArea::new("gallery-scroll").child(
-            Stack::new()
-                .gap_5()
-                .p_5()
-                .w_full()
-                .child(stacks())
-                .child(grids())
-                .child(shapes())
-                .child(shell(&self.splitter)),
-        )
+        // Each section is a direct child so the scroll handle can jump to it.
+        ScrollArea::new("gallery-scroll")
+            .track_scroll(&self.scroll)
+            .child(div().p_5().w_full().child(stacks()))
+            .child(div().px_5().pb_5().w_full().child(grids()))
+            .child(div().px_5().pb_5().w_full().child(shapes()))
+            .child(div().px_5().pb_5().w_full().child(shell(&self.splitter)))
     }
 }
 
 impl Render for Gallery {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         AppShell::new(&self.shell)
             .header(
                 Group::new()
@@ -94,17 +101,19 @@ impl Render for Gallery {
                     .gap_3()
                     .p_4()
                     .child(muted("Sections"))
-                    .child(pill("Stack"))
-                    .child(pill("Group"))
-                    .child(pill("Flex"))
-                    .child(pill("Grid"))
-                    .child(pill("SimpleGrid"))
-                    .child(pill("Container"))
-                    .child(pill("Center"))
-                    .child(pill("AspectRatio"))
-                    .child(pill("Space"))
-                    .child(pill("AppShell"))
-                    .child(pill("Splitter")),
+                    .children(SECTIONS.iter().enumerate().map(|(i, name)| {
+                        let active = self.active == Some(i);
+                        pill(*name)
+                            .id(("section", i))
+                            .cursor_pointer()
+                            .when(active, |el| el.bg(rgb(GREEN)).text_color(gpui_kit::white()))
+                            .hover(|st| st.opacity(0.8))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.active = Some(i);
+                                this.main.read(cx).scroll.scroll_to_item(i);
+                                cx.notify();
+                            }))
+                    })),
             )
             .main(self.main.clone())
             .footer(
@@ -113,7 +122,7 @@ impl Render for Gallery {
                     .w_full()
                     .px_4()
                     .child(muted("guiraffe-layout"))
-                    .child(muted("gpui-kit 0.7.0")),
+                    .child(muted("gpui-kit 0.9.1")),
             )
     }
 }
@@ -251,8 +260,13 @@ fn main() {
             let shell = AppShellState::new(cx);
             let main = cx.new(|_| GalleryMain {
                 splitter: splitter.clone(),
+                scroll: ScrollHandle::new(),
             });
-            cx.new(|_| Gallery { shell, main })
+            cx.new(|_| Gallery {
+                shell,
+                main,
+                active: None,
+            })
         })
         .expect("the gallery window opens");
     });
