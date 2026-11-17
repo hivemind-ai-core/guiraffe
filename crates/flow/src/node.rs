@@ -15,20 +15,27 @@ impl Render for NodeCard {
         let theme = GuiraffeTheme::global(cx);
         let surfaces = theme.surfaces();
         let accent = theme.primary_color();
+        // The border of a node is painted over the children of the node, so
+        // the handles are children of a frame around the border: the handles
+        // are then painted above the border and sit whole on it.
         let mut frame = div()
             .id(("flow-node", self.node.id))
             .test_support()
             .relative()
             .size_full()
-            .rounded(px(theme.default_radius.radius() * self.zoom))
-            .bg(surfaces.surface.to_hsla())
-            .border_1()
-            .border_color(if self.node.selected {
-                accent.to_hsla()
-            } else {
-                surfaces.border.to_hsla()
-            })
-            .child(self.renderer.render(&self.node, self.zoom, window, cx));
+            .child(
+                div()
+                    .size_full()
+                    .rounded(px(theme.default_radius.radius() * self.zoom))
+                    .bg(surfaces.surface.to_hsla())
+                    .border_1()
+                    .border_color(if self.node.selected {
+                        accent.to_hsla()
+                    } else {
+                        surfaces.border.to_hsla()
+                    })
+                    .child(self.renderer.render(&self.node, self.zoom, window, cx)),
+            );
         for handle in &self.node.handles {
             let p = handle.position(Rect {
                 origin: WorldPoint::default(),
@@ -39,9 +46,10 @@ impl Render for NodeCard {
                     .id(SharedString::from(format!("handle-{}", handle.id)))
                     .test_support()
                     .absolute()
-                    .left(px(p.x - 6.))
-                    .top(px(p.y - 6.))
-                    .size(px(10.))
+                    // The dot is centred on the border of the node.
+                    .left(px(p.x - crate::HANDLE_RADIUS))
+                    .top(px(p.y - crate::HANDLE_RADIUS))
+                    .size(px(crate::HANDLE_RADIUS * 2.))
                     .rounded_full()
                     .bg(accent.to_hsla()),
             );
