@@ -2226,6 +2226,11 @@ impl Render for RowView {
                     .child(
                         div()
                             .id("editor")
+                            .test_support()
+                            .aria_label(SharedString::from(format!(
+                                "Edit {}",
+                                def.map(|d| d.title.as_ref()).unwrap_or("")
+                            )))
                             .size_full()
                             .flex()
                             .items_center()

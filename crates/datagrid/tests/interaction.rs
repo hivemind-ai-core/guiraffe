@@ -779,8 +779,17 @@ fn editor_follows_its_column_and_closes_when_hidden(cx: &mut TestAppContext) {
     vcx.update(|_, cx| grid.move_column(1, Some(0), cx));
     vcx.run_until_parked();
     assert_eq!(grid.editing_cell(), Some(CellPos::new(0, 0)));
-    // The Name cell (now display 1) shows its text, not the moved editor.
-    vcx.update(|w, _| assert!(w.try_find_by_label("Carol").is_some()));
+    // The editor is drawn in the Age cell, now display column 0, not in display column 1.
+    let col0 = at(&grid, Some(0), 0);
+    vcx.update(|w, cx| {
+        w.render_frame(cx);
+        let ed = w.find_by_label("Edit Age");
+        assert!(
+            ed.bounds().contains(&col0),
+            "editor at {:?}, Age cell at {col0:?}",
+            ed.bounds()
+        );
+    });
     vcx.update(|_, cx| grid.set_column_visible(1, false, cx));
     vcx.run_until_parked();
     assert!(!grid.is_editing());
