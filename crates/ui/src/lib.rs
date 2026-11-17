@@ -33,3 +33,6 @@ mod repeat;
 mod controls;
 
 mod position;
+
+mod viewport;
+pub use viewport::{RepeatViewport, RepeatViewportError};
