@@ -169,6 +169,20 @@ impl Press {
     }
 }
 
+/// Release focus held inside a view that is about to be swapped out (spec/00 §12): if the
+/// focus is within `container`, move it to `container` itself (whose element is still
+/// rendered, so it stays valid and receives nothing). Routers and shells call this before
+/// replacing a page so a hidden control never keeps keyboard focus. Returns whether focus
+/// was moved.
+pub fn release_focus_within(container: &FocusHandle, window: &mut Window, cx: &mut App) -> bool {
+    if container.contains_focused(window, cx) && !container.is_focused(window) {
+        window.focus(container, cx);
+        true
+    } else {
+        false
+    }
+}
+
 /// A focus handle kept per element id across renders (for `RenderOnce` controls).
 pub fn keyed_focus(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> FocusHandle {
     window

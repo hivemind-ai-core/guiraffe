@@ -42,6 +42,7 @@ fn loading_dims_without_hiding_the_underlying_surface() {
                 && i16::from(right[2]) > i16::from(left[2]) + 50,
             "backdrop must preserve distinct underlying colors, got {left:?} and {right:?}"
         );
-        assert!(left[2] > 0, "overlay must also tint the surface");
+        // The scheme-aware scrim token (spec/00 §12.1) dims the surface.
+        assert!(left[0] < 250, "overlay must dim the surface, got {left:?}");
     }
 }

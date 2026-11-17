@@ -18,7 +18,7 @@ pub use context::{
 };
 pub use control::{
     A11yDisabled, A11yDisabledExt, Press, PressColors, PressableExt, RING_OFFSET, RING_WIDTH,
-    focus_ring, keyed_focus, ring_visible,
+    focus_ring, keyed_focus, release_focus_within, ring_visible,
 };
 pub use kit_bridge::{KitColors, kit_size};
 pub use palette::{ColorName, Shade};
