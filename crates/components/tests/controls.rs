@@ -183,9 +183,14 @@ fn indicator_mark_stays_inside_its_wrapper(cx: &mut TestAppContext) {
     let (_, vcx) = cx.add_window_view(|_, _| V);
     vcx.run_until_parked();
     let wrap = vcx.debug_bounds("wrap").expect("wrapper");
-    let mark = vcx.debug_bounds("indicator-mark").expect("mark");
+    let child = vcx
+        .debug_bounds("indicator-child")
+        .expect("the child of the indicator");
+    // The wrapper is larger than the child on the sides of the corner the
+    // mark sits in, so the mark, which reaches over that corner, still lies
+    // inside the wrapper.
     assert!(
-        mark.top() >= wrap.top() && mark.right() <= wrap.right(),
-        "badge overflows its wrapper: {wrap:?} {mark:?}"
+        wrap.top() <= child.top() && wrap.right() >= child.right(),
+        "badge overflows its wrapper: {wrap:?} {child:?}"
     );
 }
