@@ -161,3 +161,31 @@ fn focus_hover_and_press_never_move_layout(cx: &mut TestAppContext) {
     vcx.update(|window, cx| window.click("fav", cx));
     assert_same_bounds(vcx, &sels, &base, "clicked");
 }
+
+/// The Indicator reserves its badge overhang: the mark lies inside the wrapper, so an
+/// `overflow_hidden` ancestor (Paper) never clips it.
+#[gpui_kit::test]
+fn indicator_mark_stays_inside_its_wrapper(cx: &mut TestAppContext) {
+    use guiraffe_components::{Indicator, ThemeIcon};
+    struct V;
+    impl Render for V {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().p(px(20.)).child(
+                div().debug_selector(|| "wrap".into()).flex().child(
+                    Indicator::new(ThemeIcon::new(IconName::Mail))
+                        .label("12")
+                        .color(guiraffe_core::ColorName::Red),
+                ),
+            )
+        }
+    }
+    cx.update(guiraffe_components::init);
+    let (_, vcx) = cx.add_window_view(|_, _| V);
+    vcx.run_until_parked();
+    let wrap = vcx.debug_bounds("wrap").expect("wrapper");
+    let mark = vcx.debug_bounds("indicator-mark").expect("mark");
+    assert!(
+        mark.top() >= wrap.top() && mark.right() <= wrap.right(),
+        "badge overflows its wrapper: {wrap:?} {mark:?}"
+    );
+}

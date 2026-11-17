@@ -130,6 +130,7 @@ impl RenderOnce for Indicator {
                 .text_size(px(Size::Xs.font_size() * 0.85)),
             None => div().size(px(dot)),
         }
+        .debug_selector(|| "indicator-mark".into())
         .absolute()
         .rounded_full()
         .bg(hsla(v.background))
@@ -146,9 +147,23 @@ impl RenderOnce for Indicator {
             IndicatorPosition::BottomEnd => mark.bottom(offset).right(offset),
             IndicatorPosition::BottomStart => mark.bottom(offset).left(offset),
         };
-        refine(div().relative(), &self.style)
-            .child(self.child)
-            .when(!self.disabled, |el| el.child(mark))
+        // Reserve the mark's overhang so it never overflows the wrapper and gets clipped by
+        // an ancestor with `overflow_hidden` (e.g. a Paper). The child keeps its position
+        // relative to the mark; the wrapper is just that much larger on the mark's sides.
+        let over = -offset;
+        let wrapper = match self.position {
+            IndicatorPosition::TopEnd => div().pt(over).pr(over),
+            IndicatorPosition::TopStart => div().pt(over).pl(over),
+            IndicatorPosition::BottomEnd => div().pb(over).pr(over),
+            IndicatorPosition::BottomStart => div().pb(over).pl(over),
+        };
+        let inner = div().relative().child(self.child);
+        let inner = if self.disabled {
+            inner
+        } else {
+            inner.child(mark)
+        };
+        refine(wrapper.flex_none(), &self.style).child(inner)
     }
 }
 
