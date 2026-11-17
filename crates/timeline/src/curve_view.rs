@@ -4,11 +4,11 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{
-    App, Bounds, Context, Entity, EventEmitter, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, PathBuilder, Pixels, Render, Styled, Window, canvas, div, point,
-    prelude::*, px,
+    App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement, PathBuilder, Pixels, Render, Role, Styled,
+    TestSupportExt, Window, canvas, div, point, prelude::*, px,
 };
-use guiraffe_core::{ColorName, GuiraffeTheme};
+use guiraffe_core::{ColorName, GuiraffeTheme, Variant};
 
 use crate::{axis::Axis, curves::Curve};
 
@@ -142,14 +142,21 @@ pub struct CurveView {
     pending_fit: Option<(f64, f64)>,
     tangent_mode: crate::TangentMode,
     editable: bool,
+    focus: FocusHandle,
+    focusable: Option<bool>,
 }
 impl EventEmitter<CurveEvent> for CurveView {}
+impl Focusable for CurveView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
 impl CurveView {
     pub fn new(curve: Curve, t0: f64, t1: f64, lo: f64, hi: f64, cx: &mut App) -> Entity<Self> {
         let mut surface =
             crate::PlotSurface::timeline(Axis::new(t0, t1, 600.), crate::TimeFormat::Seconds);
         surface.range = Some(ValueRange::new(lo, hi, 300.));
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             curves: vec![CurveSeries::new("Curve", curve, ColorName::Blue)],
             active: 0,
             surface,
@@ -159,6 +166,8 @@ impl CurveView {
             pending_fit: Some((t0, t1)),
             tangent_mode: Default::default(),
             editable: true,
+            focus: cx.focus_handle(),
+            focusable: None,
         })
     }
     pub fn curve(&self) -> &Curve {
@@ -190,6 +199,10 @@ impl CurveView {
             c.visible = visible;
             cx.notify();
         }
+    }
+    pub fn set_focusable(&mut self, on: Option<bool>, cx: &mut Context<Self>) {
+        self.focusable = on;
+        cx.notify();
     }
     pub fn set_editable(&mut self, on: bool, cx: &mut Context<Self>) {
         self.editable = on;
@@ -269,12 +282,38 @@ impl CurveView {
         let Some((c, i)) = self.selected else {
             return false;
         };
+        if !handle.0.is_finite() || !handle.1.is_finite() {
+            return false;
+        }
+        if self.editable && self.tangent_mode == crate::TangentMode::Aligned {
+            let opposite = self.curves[c]
+                .curve
+                .keys()
+                .get(i)
+                .map(|k| if incoming { k.out_handle } else { k.in_handle });
+            if opposite == Some((0., 0.))
+                && let Some((_, fallback)) = tangent_handles(&self.curves[c].curve, i)
+                    .and_then(|handles| handles.into_iter().find(|(side, _)| *side != incoming))
+            {
+                Rc::make_mut(&mut self.curves[c].curve).set_tangent(
+                    i,
+                    !incoming,
+                    fallback,
+                    crate::TangentMode::Free,
+                );
+            }
+        }
+        let metric = (
+            1. / self.surface.axis.scale,
+            self.range().height / (self.range().hi - self.range().lo),
+        );
         if self.editable
-            && Rc::make_mut(&mut self.curves[c].curve).set_tangent(
+            && Rc::make_mut(&mut self.curves[c].curve).set_tangent_scaled(
                 i,
                 incoming,
                 handle,
                 self.tangent_mode,
+                metric,
             )
         {
             cx.emit(CurveEvent::Changed);
@@ -397,7 +436,7 @@ const DEFAULT_RANGE: ValueRange = ValueRange {
     height: 1.,
 };
 impl Render for CurveView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
         let b = self.body.get();
         let (w, h) = (
@@ -419,8 +458,18 @@ impl Render for CurveView {
         let body = self.body.clone();
         let owner = cx.entity_id();
         let paint_theme = theme.clone();
-        div()
+        let ring_on = guiraffe_core::ring_visible(&self.focus, window);
+        let ring = theme
+            .state(guiraffe_core::StateKind::FocusRing, Variant::Default, None)
+            .border;
+        let tab = guiraffe_core::tab_stop(self.focusable);
+        let root = div()
             .id("curve-body")
+            .test_support()
+            .role(Role::Group)
+            .aria_label("Curve editor")
+            .track_focus(&self.focus.clone().tab_stop(tab))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .debug_selector(|| "curve-body".into())
             .size_full()
             .relative()
@@ -466,7 +515,7 @@ impl Render for CurveView {
                 .absolute()
                 .size_full(),
             )
-            .child(self.surface.element(theme, false, 24., 0.))
+            .child(self.surface.element(theme.clone(), false, 24., 0.))
             .child(
                 canvas(
                     |_, _, _| (),
@@ -553,6 +602,8 @@ impl Render for CurveView {
                 .absolute()
                 .size_full(),
             )
+            .child(self.surface.value_labels(theme));
+        guiraffe_core::focus_ring(div().size_full().child(root), ring_on, px(0.), ring)
     }
 }
 #[cfg(test)]

@@ -15,6 +15,7 @@ pub enum Ink {
     Accent,
     Selection,
     SelectionText,
+    LabelBackground,
     Stripe,
     Color(ColorName),
 }
@@ -23,6 +24,7 @@ impl Ink {
         let s = theme.surfaces();
         match self {
             Self::Border => s.border,
+            Self::LabelBackground => s.body,
             Self::Minor | Self::Stripe => s.surface,
             Self::Text => s.text,
             Self::Dimmed => s.dimmed,
@@ -156,13 +158,37 @@ impl Layer for Gridlines {
             for v in axis.ticks(axis.tick_step(48., TimeFormat::Seconds)) {
                 let yy = y.y(v);
                 line(o, (0., yy), (p.x.width, yy), Ink::Border);
-                o.push(Primitive::Text {
-                    x: 4.,
-                    y: yy + 2.,
-                    text: format!("{v:.2}"),
-                    ink: Ink::Dimmed,
-                });
             }
+        }
+    }
+}
+/// Value labels paint in a foreground pass so data never obscures them.
+#[derive(Clone, Copy)]
+pub struct ValueLabels;
+impl Layer for ValueLabels {
+    fn prepaint(&self, p: &PlotContext, o: &mut Vec<Primitive>) {
+        if p.header {
+            return;
+        }
+        let Some(y) = p.y else { return };
+        let axis = Axis::new(y.lo, y.hi, y.height.max(1.));
+        for value in axis.ticks(axis.tick_step(48., TimeFormat::Seconds)) {
+            let text = format!("{value:.2}");
+            let yy = (y.y(value) - 8.).clamp(2., (p.height - 18.).max(2.));
+            let width = (text.len() as f64 * 7. + 8.).min(p.x.width);
+            o.push(Primitive::Rect {
+                x: 2.,
+                y: yy,
+                w: width,
+                h: 16.,
+                ink: Ink::LabelBackground,
+            });
+            o.push(Primitive::Text {
+                x: 6.,
+                y: yy,
+                text,
+                ink: Ink::Dimmed,
+            });
         }
     }
 }
@@ -192,15 +218,19 @@ impl Layer for Playhead {
         line(o, (x, 0.), (x, p.height), Ink::Accent);
         if p.header {
             let text = crate::axis::label(self.time, self.format);
+            let width = (text.len() as f64 * 8. + 8.)
+                .clamp(24., 150.)
+                .min(p.x.width);
+            let left = (x - width / 2.).clamp(0., (p.x.width - width).max(0.));
             o.push(Primitive::Rect {
-                x,
+                x: left,
                 y: 0.,
-                w: (text.len() as f64 * 8. + 8.).min(150.),
+                w: width,
                 h: p.height,
                 ink: Ink::Selection,
             });
             o.push(Primitive::Text {
-                x: x + 4.,
+                x: left + 4.,
                 y: 4.,
                 text,
                 ink: Ink::SelectionText,
@@ -353,6 +383,12 @@ impl PlotSurface {
     }
     pub fn fit(&mut self, start: f64, end: f64, margin: f64) {
         self.axis.fit(start, end, margin);
+    }
+    pub fn value_labels(&self, theme: GuiraffeTheme) -> AnyElement {
+        let mut labels = Self::new(self.axis);
+        labels.range = self.range;
+        labels.add_layer(ValueLabels);
+        labels.element(theme, false, 1., 0.)
     }
     pub fn element(
         &self,

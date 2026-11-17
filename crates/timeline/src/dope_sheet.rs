@@ -2,11 +2,14 @@
 use crate::{
     Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
-use gpui_kit::component::{Selectable, Sizable, button::Button};
+use gpui_kit::component::{
+    Disableable, Selectable, Sizable,
+    button::{Button, ButtonVariants},
+};
 use gpui_kit::{
-    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled, Window, canvas, div,
-    prelude::*, px,
+    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, Styled,
+    TestSupportExt, Window, canvas, div, prelude::*, px,
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant};
 use std::{cell::Cell, rc::Rc};
@@ -28,7 +31,7 @@ enum Gesture {
         last: f64,
     },
     Box {
-        start: (f64, f32),
+        start: (f64, f64),
         end: (f64, f32),
         add: bool,
         base: std::collections::BTreeSet<(usize, u64)>,
@@ -43,12 +46,17 @@ pub struct DopeSheet {
     pending_fit: Option<(f64, f64)>,
     offset: f64,
     editable: bool,
-    focusable: bool,
+    focusable: Option<bool>,
     focus: FocusHandle,
     playhead: f64,
     lock_style: LockStyle,
 }
 impl EventEmitter<DopeEvent> for DopeSheet {}
+impl Focusable for DopeSheet {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
 impl DopeSheet {
     pub fn new(
         channels: Vec<Channel>,
@@ -65,7 +73,7 @@ impl DopeSheet {
             pending_fit: Some((0., length.max(1e-3))),
             offset: 0.,
             editable: true,
-            focusable: false,
+            focusable: None,
             focus: cx.focus_handle(),
             playhead: 0.,
             lock_style: LockStyle::Badge,
@@ -85,7 +93,7 @@ impl DopeSheet {
         cx.notify();
     }
     pub fn set_focusable(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.focusable = on;
+        self.focusable = Some(on);
         cx.notify();
     }
     pub fn set_editable(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -167,8 +175,9 @@ impl DopeSheet {
                     self.model.select(channel, t, add);
                 }
             }
-            self.drag = (self.editable && self.model.editable(channel))
-                .then_some(Gesture::Keys { last: t });
+            self.drag = (self.editable && self.model.editable(channel)).then_some(Gesture::Keys {
+                last: self.surface.axis.t(x),
+            });
             true
         } else {
             false
@@ -181,17 +190,17 @@ impl DopeSheet {
         if !self.editable {
             return;
         }
-        let to = snap_time(self.surface.axis.t(x), self.format).max(0.);
+        let delta = snap_time(self.surface.axis.t(x) - last, self.format);
         let before = self.model.selected.clone();
-        if self.model.translate(to - last, self.format) {
-            self.drag = Some(Gesture::Keys { last: to });
+        if self.model.translate(delta, self.format) {
+            self.drag = Some(Gesture::Keys { last: last + delta });
             for (channel, t) in before {
                 if self.model.editable(channel) {
                     let from = f64::from_bits(t);
                     cx.emit(DopeEvent::KeyRetimed {
                         channel,
                         from,
-                        to: snap_time(from + to - last, self.format),
+                        to: snap_time(from + delta, self.format),
                     });
                 }
             }
@@ -266,7 +275,7 @@ impl Render for DopeSheet {
         });
         if let Some(Gesture::Box { start, end, .. }) = self.drag {
             foreground.add_layer(SelectionBox {
-                start: (start.0, f64::from(start.1)),
+                start: (self.surface.axis.x(start.0), start.1 - self.offset),
                 end: (end.0, f64::from(end.1)),
             });
         }
@@ -293,19 +302,17 @@ impl Render for DopeSheet {
                     })
                     .map(|(i, t)| {
                         let i = i + lo;
-                        let selected = self.model.selected.contains(&(row.channel, t.to_bits()));
-                        let decor = c.decor.get(i).copied().unwrap_or((None, KeyShape::Diamond));
-                        let hold = c
-                            .decor
-                            .get(i + 1)
-                            .is_some_and(|next| decor.0.is_some() && decor.0 == next.0)
-                            .then(|| c.keys.get(i + 1).copied())
-                            .flatten();
+                        let selected = if row.summary {
+                            self.model.summary_selected(row.channel, t)
+                        } else {
+                            self.model.selected.contains(&(row.channel, t.to_bits()))
+                        };
+                        let (shape, hold) = self.model.key_display(row.channel, row.summary, i);
                         (
                             axis.x(t),
                             *r as f64 * f64::from(ROW_H) - offset,
                             selected,
-                            decor.1,
+                            shape,
                             hold.map(|t| axis.x(t)),
                             c.muted,
                             row.summary,
@@ -319,27 +326,27 @@ impl Render for DopeSheet {
         let owner = cx.entity_id();
         let key_theme = theme.clone();
         let lock_style = self.lock_style;
-        let focus = self.focus.clone();
-        let focus_visible =
-            self.focusable && self.focus.is_focused(window) && window.last_input_was_keyboard();
+        let tab = guiraffe_core::tab_stop(self.focusable);
+        let focus_visible = guiraffe_core::ring_visible(&self.focus, window);
         let ring = theme
             .state(StateKind::FocusRing, Variant::Default, None)
-            .border
-            .to_hsla();
-        div()
+            .border;
+        let root = div()
             .id("dope-sheet")
-            .relative()
+            .test_support()
+            .role(Role::Tree)
+            .aria_label("Dope sheet")
+            .track_focus(&self.focus.clone().tab_stop(tab))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .size_full()
             .flex()
             .flex_col()
             .bg(s.body.to_hsla())
             .text_color(s.text.to_hsla())
             .text_size(px(12.))
-            .when(self.focusable, |el| {
-                el.track_focus(&focus)
-                    .tab_stop(true)
-                    .key_context("TimelineDope")
-                    .on_key_down(cx.listener(|this, e: &gpui_kit::KeyDownEvent, _, cx| {
+            .when(tab, |el| {
+                el.key_context("TimelineDope").on_key_down(cx.listener(
+                    |this, e: &gpui_kit::KeyDownEvent, _, cx| {
                         let key = e.keystroke.key.as_str();
                         match key {
                             "delete" | "backspace" => this.delete_selected(cx),
@@ -357,7 +364,8 @@ impl Render for DopeSheet {
                             }
                             _ => {}
                         }
-                    }))
+                    },
+                ))
             })
             .child(
                 div()
@@ -421,23 +429,36 @@ impl Render for DopeSheet {
                                         "channel-expand",
                                         i,
                                         Button::new(("channel-expand", i))
+                                            .ghost()
                                             .with_size(gpui_kit::component::Size::XSmall)
                                             .tab_stop(false)
-                                            .label(if c.group {
-                                                if c.collapsed { "▶" } else { "▼" }
+                                            .disabled(!c.group)
+                                            .icon(gpui_kit::component::Icon::new(if !c.group {
+                                                gpui_kit::assets::IconName::Minus
+                                            } else if c.collapsed {
+                                                gpui_kit::assets::IconName::ChevronRight
                                             } else {
-                                                "·"
-                                            })
+                                                gpui_kit::assets::IconName::ChevronDown
+                                            }))
                                             .tooltip("Expand or collapse channel")
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.toggle(i, 0, cx)
                                             })),
                                     ))
+                                    .child(
+                                        div().w(px(4.)).h(px(12.)).rounded(px(2.)).mr(px(4.)).bg(
+                                            theme
+                                                .variant(Some(c.color), Variant::Filled)
+                                                .background
+                                                .to_hsla(),
+                                        ),
+                                    )
                                     .child(div().flex_1().overflow_hidden().child(c.name.clone()))
                                     .child(crate::locks::probe(
                                         "channel-mute",
                                         i,
                                         Button::new(("channel-mute", i))
+                                            .ghost()
                                             .with_size(gpui_kit::component::Size::XSmall)
                                             .tab_stop(false)
                                             .icon(gpui_kit::component::Icon::new(if c.muted {
@@ -456,6 +477,7 @@ impl Render for DopeSheet {
                                         "channel-lock",
                                         i,
                                         Button::new(("channel-lock", i))
+                                            .ghost()
                                             .with_size(gpui_kit::component::Size::XSmall)
                                             .tab_stop(false)
                                             .icon(gpui_kit::component::Icon::new(if c.locked {
@@ -474,6 +496,7 @@ impl Render for DopeSheet {
                                         "channel-visible",
                                         i,
                                         Button::new(("channel-visible", i))
+                                            .ghost()
                                             .with_size(gpui_kit::component::Size::XSmall)
                                             .tab_stop(false)
                                             .icon(gpui_kit::component::Icon::new(if c.visible {
@@ -515,10 +538,7 @@ impl Render for DopeSheet {
                             }))
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, e: &MouseDownEvent, window, cx| {
-                                    if this.focusable {
-                                        window.focus(&this.focus, cx);
-                                    }
+                                cx.listener(|this, e: &MouseDownEvent, _, cx| {
                                     let (x, y) = this.local(e.position);
                                     let row = ((f64::from(y) + this.offset) / f64::from(ROW_H))
                                         .max(0.)
@@ -528,7 +548,10 @@ impl Render for DopeSheet {
                                             this.model.selected.clear();
                                         }
                                         this.drag = Some(Gesture::Box {
-                                            start: (x, y),
+                                            start: (
+                                                this.surface.axis.t(x),
+                                                f64::from(y) + this.offset,
+                                            ),
                                             end: (x, y),
                                             add: e.modifiers.shift,
                                             base: this.model.selected.clone(),
@@ -550,9 +573,7 @@ impl Render for DopeSheet {
                                     {
                                         *end = (x, y);
                                         let (a, b) = (
-                                            ((f64::from(start.1) + this.offset) / f64::from(ROW_H))
-                                                .max(0.)
-                                                as usize,
+                                            (start.1 / f64::from(ROW_H)).max(0.) as usize,
                                             ((f64::from(y) + this.offset) / f64::from(ROW_H))
                                                 .max(0.)
                                                 as usize,
@@ -562,7 +583,7 @@ impl Render for DopeSheet {
                                         }
                                         this.model.box_select(
                                             a.min(b)..=a.max(b),
-                                            this.surface.axis.t(start.0),
+                                            start.0,
                                             this.surface.axis.t(x),
                                             *add,
                                         );
@@ -688,10 +709,8 @@ impl Render for DopeSheet {
                             )
                             .child(foreground.element(theme, false, f64::from(ROW_H), self.offset)),
                     ),
-            )
-            .when(focus_visible, |el| {
-                el.child(div().absolute().inset_0().border_2().border_color(ring))
-            })
+            );
+        guiraffe_core::focus_ring(root, focus_visible, px(0.), ring)
     }
 }
 #[cfg(test)]

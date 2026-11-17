@@ -1,7 +1,8 @@
 //! Real native gestures and shell invalidation, on either GPUI backend.
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    App, AppContext, Context, Entity, IntoElement, Modifiers, MouseButton, ParentElement, Render,
-    Styled, TestAppContext, VisualTestContext, Window, div, point, px,
+    App, AppContext, Context, Entity, Focusable, IntoElement, Modifiers, MouseButton,
+    ParentElement, Render, Role, Styled, TestAppContext, VisualTestContext, Window, div, point, px,
 };
 use guiraffe_timeline::*;
 use std::{cell::Cell, rc::Rc};
@@ -173,6 +174,14 @@ fn dope_keyboard_is_opt_in_and_per_channel_locks_survive(cx: &mut TestAppContext
     vcx.update(|_, cx| view.update(cx, |v, cx| v.set_focusable(true, cx)));
     vcx.run_until_parked();
     click(vcx, a, false);
+    assert!(
+        !vcx.update(|w, cx| view.read(cx).focus_handle(cx).is_focused(w)),
+        "pointer must not take focus even when opted in"
+    );
+    vcx.update(|w, cx| {
+        let focus = view.read(cx).focus_handle(cx);
+        w.focus(&focus, cx);
+    });
     vcx.simulate_keystrokes("right");
     vcx.run_until_parked();
     assert_eq!(
@@ -430,4 +439,120 @@ fn additive_box_selection_can_shrink_without_leaving_trailing_keys(cx: &mut Test
     assert_eq!(selected.len(), 2);
     assert!(selected.contains(&(1, 0.5_f64.to_bits())));
     assert!(selected.contains(&(2, 1.3_f64.to_bits())));
+}
+
+#[gpui_kit::test]
+fn new_surfaces_have_roles_opt_in_focus_and_shared_ring(cx: &mut TestAppContext) {
+    {
+        let (view, _, vcx) = mount(cx, dope);
+        let p = dope_at(&view, vcx, 1, 0.5);
+        click(vcx, p, false);
+        assert!(!vcx.update(|w, cx| view.read(cx).focus_handle(cx).is_focused(w)));
+        vcx.update(|w, cx| {
+            w.render_frame(cx);
+            let node = w.find("dope-sheet");
+            assert_eq!(node.role(), Some(Role::Tree));
+            assert_eq!(node.label(), Some("Dope sheet"));
+        });
+        vcx.update(|_, cx| view.update(cx, |v, cx| v.set_focusable(true, cx)));
+        let before = vcx.debug_bounds("dope-body").expect("body");
+        vcx.update(|w, cx| {
+            w.focus_next(cx);
+            w.press("f13", cx);
+        });
+        vcx.run_until_parked();
+        assert!(vcx.debug_bounds("focus-ring").is_some());
+        assert_eq!(vcx.debug_bounds("dope-body"), Some(before));
+    }
+    {
+        let (view, _, vcx) = mount(cx, curves);
+        let p = curve_at(&view, vcx, 0.5, 0.5);
+        click(vcx, p, false);
+        assert!(!vcx.update(|w, cx| view.read(cx).focus_handle(cx).is_focused(w)));
+        vcx.update(|w, cx| {
+            w.render_frame(cx);
+            let node = w.find("curve-body");
+            assert_eq!(node.role(), Some(Role::Group));
+            assert_eq!(node.label(), Some("Curve editor"));
+        });
+        vcx.update(|_, cx| view.update(cx, |v, cx| v.set_focusable(Some(true), cx)));
+        let before = vcx.debug_bounds("curve-body").expect("body");
+        vcx.update(|w, cx| {
+            w.focus_next(cx);
+            w.press("f13", cx);
+        });
+        vcx.run_until_parked();
+        assert!(vcx.debug_bounds("focus-ring").is_some());
+        assert_eq!(vcx.debug_bounds("curve-body"), Some(before));
+    }
+    {
+        let (view, _, vcx) = mount(cx, |cx| BarCurveView::new(BarCurve::new(8, 0., 1.), cx));
+        let p = vcx.debug_bounds("bar-curve").expect("bars").center();
+        click(vcx, p, false);
+        assert!(!vcx.update(|w, cx| view.read(cx).focus_handle(cx).is_focused(w)));
+        vcx.update(|w, cx| {
+            w.render_frame(cx);
+            let node = w.find("bar-curve");
+            assert_eq!(node.role(), Some(Role::Group));
+            assert_eq!(node.label(), Some("Bar curve editor"));
+        });
+        vcx.update(|_, cx| view.update(cx, |v, cx| v.set_focusable(Some(true), cx)));
+        let before = vcx.debug_bounds("bar-curve").expect("bars");
+        vcx.update(|w, cx| {
+            w.focus_next(cx);
+            w.press("f13", cx);
+        });
+        vcx.run_until_parked();
+        assert!(vcx.debug_bounds("focus-ring").is_some());
+        assert_eq!(vcx.debug_bounds("bar-curve"), Some(before));
+    }
+}
+#[gpui_kit::test]
+fn dope_grab_offset_does_not_jump_on_first_move(cx: &mut TestAppContext) {
+    let (view, _, vcx) = mount(cx, |cx| {
+        DopeSheet::new(
+            vec![Channel::new("x", vec![0.5])],
+            TimeFormat::Seconds,
+            2.,
+            cx,
+        )
+    });
+    let b = vcx.debug_bounds("dope-body").expect("body");
+    let (x, scale) = vcx.update(|_, cx| {
+        let a = view.read(cx).axis();
+        (a.x(0.5), a.scale)
+    });
+    let press = point(b.left() + px(x as f32 + 5.), b.top() + px(14.));
+    let end = point(press.x + px(1.), press.y);
+    drag(vcx, press, end);
+    let time = vcx.update(|_, cx| view.read(cx).channels()[0].keys()[0]);
+    assert!((time - 0.5 - scale).abs() < 1e-7);
+}
+#[gpui_kit::test]
+fn box_anchor_stays_on_original_content_row_during_scroll(cx: &mut TestAppContext) {
+    let (view, _, vcx) = mount(cx, |cx| {
+        DopeSheet::new(
+            (0..100)
+                .map(|i| Channel::new(format!("row{i}"), vec![0.5]))
+                .collect(),
+            TimeFormat::Seconds,
+            1.,
+            cx,
+        )
+    });
+    let a = dope_at(&view, vcx, 0, 0.1);
+    let end = dope_at(&view, vcx, 1, 0.8);
+    vcx.simulate_mouse_down(a, MouseButton::Left, Default::default());
+    vcx.simulate_event(gpui_kit::ScrollEvent {
+        position: a,
+        delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-56.))),
+        ..Default::default()
+    });
+    vcx.simulate_mouse_move(end, Some(MouseButton::Left), Default::default());
+    vcx.simulate_mouse_up(end, MouseButton::Left, Default::default());
+    vcx.run_until_parked();
+    let selected = vcx.update(|_, cx| view.read(cx).model().selected.clone());
+    assert_eq!(selected.len(), 4);
+    assert!(selected.contains(&(0, 0.5_f64.to_bits())));
+    assert!(selected.contains(&(3, 0.5_f64.to_bits())));
 }

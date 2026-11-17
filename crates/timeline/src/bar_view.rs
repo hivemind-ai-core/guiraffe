@@ -1,8 +1,9 @@
 //! Native bar drawing surface; the pure model interpolates sparse pointer events.
 use crate::{Axis, BarCurve, PlotSurface, ValueRange};
 use gpui_kit::{
-    App, Bounds, Context, Entity, EventEmitter, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Pixels, Render, Styled, Window, canvas, div, prelude::*, px,
+    App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, Styled, TestSupportExt,
+    Window, canvas, div, prelude::*, px,
 };
 use guiraffe_core::{GuiraffeTheme, Variant};
 use std::{cell::Cell, rc::Rc};
@@ -16,8 +17,15 @@ pub struct BarCurveView {
     body: Rc<Cell<Bounds<Pixels>>>,
     drag: Option<(f64, f64)>,
     editable: bool,
+    focus: FocusHandle,
+    focusable: Option<bool>,
 }
 impl EventEmitter<BarEvent> for BarCurveView {}
+impl Focusable for BarCurveView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
 impl BarCurveView {
     pub fn new(model: BarCurve, cx: &mut App) -> Entity<Self> {
         let (lo, hi) = model.range();
@@ -25,16 +33,22 @@ impl BarCurveView {
         let mut surface = PlotSurface::new(Axis::new(0., n as f64, 600.));
         surface.range = Some(ValueRange::new(lo, hi, 200.));
         surface.add_layer(crate::Gridlines::default());
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             model,
             surface,
             body: Rc::default(),
             drag: None,
             editable: true,
+            focus: cx.focus_handle(),
+            focusable: None,
         })
     }
     pub fn model(&self) -> &BarCurve {
         &self.model
+    }
+    pub fn set_focusable(&mut self, on: Option<bool>, cx: &mut Context<Self>) {
+        self.focusable = on;
+        cx.notify();
     }
     pub fn set_editable(&mut self, on: bool, cx: &mut Context<Self>) {
         self.editable = on;
@@ -80,7 +94,7 @@ impl BarCurveView {
     }
 }
 impl Render for BarCurveView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
         let width = f64::from(f32::from(self.body.get().size.width));
         if width > 0. {
@@ -94,8 +108,18 @@ impl Render for BarCurveView {
         let (lo, hi) = self.model.range();
         let bipolar = self.model.bipolar;
         let fill = theme.variant(None, Variant::Filled).background.to_hsla();
-        div()
+        let ring_on = guiraffe_core::ring_visible(&self.focus, window);
+        let ring = theme
+            .state(guiraffe_core::StateKind::FocusRing, Variant::Default, None)
+            .border;
+        let tab = guiraffe_core::tab_stop(self.focusable);
+        let root = div()
             .id("bar-curve")
+            .test_support()
+            .role(Role::Group)
+            .aria_label("Bar curve editor")
+            .track_focus(&self.focus.clone().tab_stop(tab))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .debug_selector(|| "bar-curve".into())
             .relative()
             .size_full()
@@ -132,7 +156,7 @@ impl Render for BarCurveView {
                 .absolute()
                 .size_full(),
             )
-            .child(self.surface.element(theme, false, 24., 0.))
+            .child(self.surface.element(theme.clone(), false, 24., 0.))
             .child(
                 canvas(
                     |_, _, _| (),
@@ -166,5 +190,7 @@ impl Render for BarCurveView {
                 .absolute()
                 .size_full(),
             )
+            .child(self.surface.value_labels(theme));
+        guiraffe_core::focus_ring(div().size_full().child(root), ring_on, px(0.), ring)
     }
 }
