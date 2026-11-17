@@ -181,6 +181,7 @@ fn dropzone(_: &mut Window, cx: &mut App) -> AnyView {
             this.caption = match e {
                 DropEvent::Accepted(p) => format!("accepted: {}", names(p)).into(),
                 DropEvent::Rejected(p) => format!("rejected: {}", names(p)).into(),
+                DropEvent::BrowseRequested => "browse requested (open a file picker)".into(),
             };
             cx.notify();
         });

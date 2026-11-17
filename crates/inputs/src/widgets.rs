@@ -5,14 +5,18 @@ use std::rc::Rc;
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-    Render, RenderOnce, SharedString, Styled, Subscription, Window, actions, canvas,
+    Render, RenderOnce, Role, SharedString, Styled, Subscription, TestSupportExt, Window, actions,
+    canvas,
     component::input::{Input, InputEvent, InputState},
     div,
     prelude::*,
     px,
 };
 use guiraffe_components::{Pill, Text};
-use guiraffe_core::{ColorName, GuiraffeTheme, Size, StyleContext, Variant};
+use guiraffe_core::{
+    A11yDisabledExt, ColorName, GuiraffeTheme, Press, PressableExt, Size, StateKind, StyleContext,
+    Variant, focus_ring, keyed_focus, ring_visible,
+};
 
 use crate::logic::{
     ChipSelection, Range2, TagRejected, TagRules, Thumb, accept_tag, accepts, password_strength,
@@ -31,10 +35,17 @@ pub enum ChipEvent {
 }
 
 /// A group of toggleable chips (single or multiple selection).
+///
+/// Interaction (spec/00 §12): each chip is a toggle button (AccessKit `CheckBox` with toggled
+/// state when multiple, `RadioButton` with selected state when single). A pointer press never
+/// takes focus; chips are tab stops only inside a focus scope or with
+/// [`ChipGroup::set_focusable`], and then Enter/Space toggle and a focus ring shows.
 pub struct ChipGroup {
     labels: Vec<SharedString>,
     selection: ChipSelection,
     color: Option<ColorName>,
+    disabled: bool,
+    focusable: Option<bool>,
 }
 
 impl EventEmitter<ChipEvent> for ChipGroup {}
@@ -53,13 +64,23 @@ impl ChipGroup {
                 ..Default::default()
             },
             color: None,
+            disabled: false,
+            focusable: None,
         })
+    }
+    pub fn set_disabled(&mut self, v: bool, cx: &mut Context<Self>) {
+        self.disabled = v;
+        cx.notify();
+    }
+    pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
+        self.focusable = v;
+        cx.notify();
     }
     pub fn selected(&self) -> Vec<usize> {
         self.selection.selected.iter().copied().collect()
     }
     pub fn toggle(&mut self, i: usize, cx: &mut Context<Self>) {
-        if i < self.labels.len() && self.selection.toggle(i) {
+        if !self.disabled && i < self.labels.len() && self.selection.toggle(i) {
             cx.emit(ChipEvent::Changed(self.selected()));
             cx.notify();
         }
@@ -71,45 +92,86 @@ impl ChipGroup {
 }
 
 impl Render for ChipGroup {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = GuiraffeTheme::global(cx);
         let size = ctx_size(None);
         let (on, off) = (
             t.variant(self.color, Variant::Light),
             t.variant(Some(ColorName::Gray), Variant::Outline),
         );
+        let (on_c, off_c) = (
+            t.press_colors(Variant::Light, self.color),
+            t.press_colors(Variant::Outline, Some(ColorName::Gray)),
+        );
         let fs = px(size.font_size());
-        div()
-            .flex()
-            .flex_wrap()
-            .gap(px((size.spacing() / 2.0).round()))
-            .children(self.labels.iter().enumerate().map(|(i, label)| {
+        let h = (size.control_height() * 0.8).round();
+        let (disabled, focusable, multiple) =
+            (self.disabled, self.focusable, self.selection.multiple);
+        let chips: Vec<_> = self
+            .labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
                 let checked = self.selection.selected.contains(&i);
                 let v = if checked { on } else { off };
+                let mut colors = if checked { on_c } else { off_c };
+                // Keep the chip's own look: checked chips outline in their text color.
+                // Border width never changes, only its color (§12.2).
+                colors.rest.border = if checked { v.foreground } else { v.border };
+                colors.hover.border = colors.rest.border;
+                let press = Press::new(colors)
+                    .disabled(disabled)
+                    .focusable(focusable)
+                    .radius(px(h / 2.0))
+                    .role(if multiple {
+                        Role::CheckBox
+                    } else {
+                        Role::RadioButton
+                    })
+                    .label(label.clone());
+                // Toggle state goes to AccessKit; the chip paints its own checked look
+                // (colors + check mark) rather than the filled Selected token.
+                let press = if multiple {
+                    press.toggled(checked)
+                } else {
+                    press
+                };
+                let focus = keyed_focus(("chip-focus", i), window, cx);
                 div()
                     .id(("chip", i))
-                    .h(px((size.control_height() * 0.8).round()))
+                    .a11y_disabled(disabled)
+                    .test_support()
+                    .h(px(h))
                     .px(px(size.spacing()))
                     .flex()
                     .items_center()
                     .rounded_full()
                     .border_1()
-                    .cursor_pointer()
                     .text_size(fs)
-                    .bg(v.background.to_hsla())
-                    .border_color(if checked {
-                        v.foreground.to_hsla()
-                    } else {
-                        v.border.to_hsla()
-                    })
-                    .text_color(v.foreground.to_hsla())
                     .child(if checked {
                         format!("✓ {label}")
                     } else {
                         label.to_string()
                     })
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle(i, cx)))
-            }))
+                    .press(&press, &focus, window)
+                    .when(!multiple, |el| el.aria_selected(checked))
+                    .on_press(
+                        disabled,
+                        cx.listener(move |this, _, _, cx| this.toggle(i, cx)),
+                    )
+            })
+            .collect();
+        div()
+            .id("chips")
+            .role(if multiple {
+                Role::Group
+            } else {
+                Role::RadioGroup
+            })
+            .flex()
+            .flex_wrap()
+            .gap(px((size.spacing() / 2.0).round()))
+            .children(chips)
     }
 }
 
@@ -257,21 +319,32 @@ impl Render for TagsInput {
 
 // ------------------------------------------------------------------ RangeSlider
 
-actions!(guiraffe_range, [LowDown, LowUp, HighDown, HighUp]);
+actions!(
+    guiraffe_range,
+    [LowDown, LowUp, HighDown, HighUp, LowMin, HighMax]
+);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RangeEvent {
     Changed(f32, f32),
 }
 
-/// A two-thumb slider. Drag either thumb (the nearer one is grabbed); keyboard: ←/→ move
-/// the low thumb, Shift+←/→ the high thumb.
+/// A two-thumb slider. Drag either thumb (the nearer one is grabbed).
+///
+/// Interaction (spec/00 §12): a pointer press drags without taking keyboard focus. The slider
+/// is a tab stop only inside a focus scope or with [`RangeSlider::set_focusable`]; focused,
+/// ←/→ move the low thumb, Shift+←/→ the high thumb, Home sends the low thumb to the minimum
+/// and End the high thumb to the maximum, and a focus ring shows. AccessKit: `Slider` with
+/// numeric value (low), min, max, step and a "low – high" value text.
 pub struct RangeSlider {
     range: Range2,
     dragging: Option<Thumb>,
     track: Rc<std::cell::Cell<Bounds<Pixels>>>,
     focus: FocusHandle,
     color: Option<ColorName>,
+    disabled: bool,
+    focusable: Option<bool>,
+    label: SharedString,
 }
 
 impl EventEmitter<RangeEvent> for RangeSlider {}
@@ -290,6 +363,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("right", LowUp, Some(RANGE_CONTEXT)),
         KeyBinding::new("shift-left", HighDown, Some(RANGE_CONTEXT)),
         KeyBinding::new("shift-right", HighUp, Some(RANGE_CONTEXT)),
+        KeyBinding::new("home", LowMin, Some(RANGE_CONTEXT)),
+        KeyBinding::new("end", HighMax, Some(RANGE_CONTEXT)),
     ]);
 }
 
@@ -301,7 +376,27 @@ impl RangeSlider {
             track: Rc::default(),
             focus: cx.focus_handle(),
             color: None,
+            disabled: false,
+            focusable: None,
+            label: "Range".into(),
         })
+    }
+    /// Disabled: no dragging or keys, disabled tokens, `not-allowed` cursor.
+    pub fn set_disabled(&mut self, v: bool, cx: &mut Context<Self>) {
+        self.disabled = v;
+        if v {
+            self.dragging = None;
+        }
+        cx.notify();
+    }
+    pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
+        self.focusable = v;
+        cx.notify();
+    }
+    /// Accessible name (default "Range").
+    pub fn set_label(&mut self, l: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.label = l.into();
+        cx.notify();
     }
     pub fn values(&self) -> (f32, f32) {
         (self.range.low, self.range.high)
@@ -322,6 +417,9 @@ impl RangeSlider {
             .value_at((f32::from(x) - f32::from(b.origin.x)) / w)
     }
     fn step(&mut self, thumb: Thumb, dir: f32, cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         let cur = if thumb == Thumb::Low {
             self.range.low
         } else {
@@ -335,7 +433,16 @@ impl Render for RangeSlider {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
-        let fill = t.variant(self.color, Variant::Filled).background.to_hsla();
+        let disabled = self.disabled;
+        let off = t.state(StateKind::Disabled, Variant::Filled, self.color);
+        let ring = t
+            .state(StateKind::FocusRing, Variant::Filled, self.color)
+            .border;
+        let fill = if disabled {
+            off.foreground.to_hsla()
+        } else {
+            t.variant(self.color, Variant::Filled).background.to_hsla()
+        };
         let size = ctx_size(None);
         let thumb = (size.control_height() * 0.45).round();
         let (lo, hi) = (
@@ -343,7 +450,9 @@ impl Render for RangeSlider {
             self.range.fraction(self.range.high),
         );
         let track = self.track.clone();
-        let focused = self.focus.is_focused(window);
+        let ring_on = !disabled && ring_visible(&self.focus, window);
+        let tab = !disabled && guiraffe_core::tab_stop(self.focusable);
+        let r = self.range;
         let thumb_el = |frac: f32| {
             div()
                 .absolute()
@@ -355,29 +464,52 @@ impl Render for RangeSlider {
                 .bg(fill)
                 .border_2()
                 .border_color(s.body.to_hsla())
-                .when(focused, |el| {
-                    let mut halo = fill;
-                    halo.a = 0.35;
-                    el.shadow(vec![
-                        gpui_kit::BoxShadow::new(px(0.), px(0.), halo).spread_radius(px(3.)),
-                    ])
-                })
         };
-        div()
+        let root = div()
             .id("range")
-            .track_focus(&self.focus)
+            .a11y_disabled(disabled)
+            .test_support()
+            .role(Role::Slider)
+            .aria_label(self.label.clone())
+            .aria_numeric_value(f64::from(r.low))
+            .aria_min_numeric_value(f64::from(r.min))
+            .aria_max_numeric_value(f64::from(r.max))
+            .aria_numeric_value_step(f64::from(r.step))
+            .aria_value(format!("{} – {}", r.low, r.high))
+            .track_focus(&self.focus.clone().tab_stop(tab))
             .key_context(RANGE_CONTEXT)
             .on_action(cx.listener(|this, _: &LowDown, _, cx| this.step(Thumb::Low, -1.0, cx)))
             .on_action(cx.listener(|this, _: &LowUp, _, cx| this.step(Thumb::Low, 1.0, cx)))
             .on_action(cx.listener(|this, _: &HighDown, _, cx| this.step(Thumb::High, -1.0, cx)))
             .on_action(cx.listener(|this, _: &HighUp, _, cx| this.step(Thumb::High, 1.0, cx)))
+            .on_action(cx.listener(|this, _: &LowMin, _, cx| {
+                if !this.disabled {
+                    this.set(Thumb::Low, this.range.min, cx)
+                }
+            }))
+            .on_action(cx.listener(|this, _: &HighMax, _, cx| {
+                if !this.disabled {
+                    this.set(Thumb::High, this.range.max, cx)
+                }
+            }))
             .py(px(thumb / 2.0))
             .w_full()
-            .cursor_pointer()
+            .rounded(px(4.))
+            .map(|el| {
+                if disabled {
+                    el.cursor_not_allowed()
+                } else {
+                    el.cursor_pointer()
+                }
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, e: &MouseDownEvent, window, cx| {
-                    window.focus(&this.focus, cx);
+                    // A pointer press drags but never takes keyboard focus (§12.3).
+                    window.prevent_default();
+                    if this.disabled {
+                        return;
+                    }
                     let v = this.value_at_x(e.position.x);
                     let thumb = this.range.nearest(v);
                     this.dragging = Some(thumb);
@@ -399,7 +531,7 @@ impl Render for RangeSlider {
                     .relative()
                     .h(px(4.))
                     .rounded_full()
-                    .bg(s.track.to_hsla())
+                    .bg(if disabled { off.background } else { s.track }.to_hsla())
                     .child(
                         canvas(move |b, _, _| track.set(b), |_, _, _, _| {})
                             .absolute()
@@ -416,7 +548,8 @@ impl Render for RangeSlider {
                     )
                     .child(thumb_el(lo))
                     .child(thumb_el(hi)),
-            )
+            );
+        focus_ring(root, ring_on, px(4.), ring)
     }
 }
 
@@ -472,12 +605,22 @@ impl RenderOnce for PasswordStrength {
 pub enum DropEvent {
     Accepted(Vec<std::path::PathBuf>),
     Rejected(Vec<std::path::PathBuf>),
+    /// Click, or Enter/Space when focused: the host should open a file picker
+    /// (GPUI `App::prompt_for_paths`) and pass the result to [`Dropzone::receive`].
+    BrowseRequested,
 }
 
 /// A file drop target with an accept filter (`[".png", "image/*"]`).
+///
+/// Interaction (spec/00 §12): also a button (AccessKit `Button` named by its label) that
+/// emits [`DropEvent::BrowseRequested`] on click or Enter/Space. It never takes focus on
+/// pointer press; it is a tab stop inside a focus scope or with [`Dropzone::set_focusable`].
 pub struct Dropzone {
     accept: Vec<&'static str>,
     label: SharedString,
+    disabled: bool,
+    focusable: Option<bool>,
+    focus: FocusHandle,
 }
 
 impl EventEmitter<DropEvent> for Dropzone {}
@@ -489,11 +632,32 @@ impl Dropzone {
         cx: &mut App,
     ) -> Entity<Self> {
         let label = label.into();
-        cx.new(|_| Self { accept, label })
+        cx.new(|cx| Self {
+            accept,
+            label,
+            disabled: false,
+            focusable: None,
+            focus: cx.focus_handle(),
+        })
+    }
+    /// Disabled: drops, clicks and keys are ignored; disabled tokens and cursor.
+    pub fn set_disabled(&mut self, v: bool, cx: &mut Context<Self>) {
+        self.disabled = v;
+        cx.notify();
+    }
+    pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
+        self.focusable = v;
+        cx.notify();
+    }
+    pub fn disabled(&self) -> bool {
+        self.disabled
     }
 
     /// Split dropped paths into accepted and rejected (testable without a real drop).
     pub fn receive(&mut self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
+        if self.disabled {
+            return;
+        }
         let (ok, bad): (Vec<_>, Vec<_>) = paths.iter().cloned().partition(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
@@ -509,27 +673,49 @@ impl Dropzone {
 }
 
 impl Render for Dropzone {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
         let hover = t.variant(None, Variant::Light);
+        let mut colors = t.press_colors(Variant::Subtle, Some(ColorName::Gray));
+        // The dashed outline and dimmed label are the zone's rest look.
+        colors.rest.border = s.border;
+        colors.rest.foreground = s.dimmed;
+        colors.hover.border = s.border;
+        colors.hover.foreground = s.text;
+        let r = px(t.default_radius.radius());
+        let disabled = self.disabled;
+        let press = Press::new(colors)
+            .disabled(disabled)
+            .focusable(self.focusable)
+            .radius(r)
+            .label(self.label.clone());
         div()
             .id("dropzone")
+            .a11y_disabled(disabled)
+            .test_support()
             .p(px(Size::Xl.spacing()))
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(t.default_radius.radius()))
+            .rounded(r)
             .border_2()
             .border_dashed()
-            .border_color(s.border.to_hsla())
-            .text_color(s.dimmed.to_hsla())
-            .drag_over::<ExternalPaths>(move |st, _, _, _| {
-                st.bg(hover.background.to_hsla())
-                    .border_color(hover.foreground.to_hsla())
+            .press(&press, &self.focus, window)
+            .when(!disabled, |el| {
+                el.drag_over::<ExternalPaths>(move |st, _, _, _| {
+                    st.bg(hover.background.to_hsla())
+                        .border_color(hover.foreground.to_hsla())
+                })
+                .on_drop(
+                    cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                        this.receive(paths.paths(), cx)
+                    }),
+                )
             })
-            .on_drop(
-                cx.listener(|this, paths: &ExternalPaths, _, cx| this.receive(paths.paths(), cx)),
+            .on_press(
+                disabled,
+                cx.listener(|_, _, _, cx| cx.emit(DropEvent::BrowseRequested)),
             )
             .child(self.label.clone())
     }
