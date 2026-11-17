@@ -201,6 +201,7 @@ impl RenderOnce for Pill {
             .bg(hsla(s.track))
             .text_color(hsla(s.text))
             .text_size(px(size.font_size()));
+        let name = format!("Remove {}", self.label);
         refine(el, &self.style)
             .id(self.id)
             .child(self.label)
@@ -209,6 +210,7 @@ impl RenderOnce for Pill {
                 el.child(
                     crate::icons::close_button((id, "remove"))
                         .size(Size::Xs)
+                        .label(name)
                         .on_click(move |_, w, cx| f(&pill, w, cx)),
                 )
             })
