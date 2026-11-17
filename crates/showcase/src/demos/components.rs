@@ -1,7 +1,7 @@
 //! guiraffe-components: typography, surfaces, icons, feedback.
 
 use gpui_kit::{
-    AnyView, App, AppContext, Context, IntoElement, ParentElement, Render, Styled, Window,
+    AnyView, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window,
     assets::IconName, div, px,
 };
 use guiraffe_components::*;
@@ -9,7 +9,8 @@ use guiraffe_core::{ColorName, Size, Variant};
 
 use super::{column, example};
 use crate::catalog::{Entry, stateless};
-use crate::knobs::{Knob, KnobValues, SIZE_NAMES, with_knobs};
+use crate::events::EventLog;
+use crate::knobs::{Applied, Knob, KnobValues, SIZE_NAMES, playground_with, with_knobs};
 use gpui_kit::AnyElement;
 
 const VARIANTS: [Variant; 5] = [
@@ -81,8 +82,17 @@ pub fn entries() -> Vec<Entry> {
     ]
 }
 
-fn typography(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn typography(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live Text",
+        &[
+            Knob::size(),
+            Knob::color(),
+            Knob::new("Weight", &["normal", "medium", "bold"]),
+            Knob::toggle("Dimmed"),
+            Knob::toggle("Truncate"),
+        ],
+        typography_live,
         |_, _| {
             column([
                 example(
@@ -103,21 +113,28 @@ fn typography(_: &mut Window, cx: &mut App) -> AnyView {
                             [Size::Xs, Size::Sm, Size::Md, Size::Lg, Size::Xl].map(|s| {
                                 Text::new(format!("{s:?}: the quick brown giraffe")).size(s)
                             }),
-                        )
-                        .child(Text::new("Colored text").color(ColorName::Grape))
-                        .child(Text::new("Dimmed secondary text").dimmed(true)),
-                ),
-                example(
-                    "Truncate",
-                    div().w(px(220.)).child(
-                        Text::new("A very long line that is truncated rather than wrapped")
-                            .truncate(true),
-                    ),
+                        ),
                 ),
             ])
         },
+        window,
         cx,
     )
+}
+
+fn typography_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
+    let weight = v
+        .pick(2, &[FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::BOLD])
+        .unwrap_or_default();
+    let mut text = Text::new("Release 0.1 ships native charts, flow graphs and a data grid.")
+        .size(v.size(0))
+        .fw(weight)
+        .dimmed(v.on(3))
+        .truncate(v.on(4));
+    if let Some(c) = v.color(1) {
+        text = text.color(c);
+    }
+    div().w(px(360.)).child(text).into_any_element()
 }
 
 fn highlight(_: &mut Window, cx: &mut App) -> AnyView {
@@ -166,6 +183,14 @@ fn surfaces(window: &mut Window, cx: &mut App) -> AnyView {
                                 .p(Size::Md)
                                 .child(Text::new(format!("{s:?}")).size(Size::Sm))
                         }),
+                    ),
+                ),
+                example(
+                    "Paper p_0: flush content",
+                    div().w(px(320.)).child(
+                        Paper::new().with_border(true).p_0().child(
+                            div().h(px(56.)).bg(ColorName::Teal.shade(1).to_hsla()),
+                        ),
                     ),
                 ),
                 example(
@@ -225,12 +250,13 @@ fn blockquote(_: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn icons(window: &mut Window, cx: &mut App) -> AnyView {
-    with_knobs(
+    playground_with(
         "Live ThemeIcon & ActionIcon",
         &[Knob::variant(), Knob::color(), Knob::size(), Knob::radius()],
-        icons_live,
-        |_, _| {
+        |_, cx| EventLog::new(cx),
+        |log, v, window, cx| {
             column([
+                icons_live(v, log, window, cx),
                 example(
                     "Variants",
                     div()
@@ -270,7 +296,8 @@ fn icons(window: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
-fn icons_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
+fn icons_live(v: &KnobValues, log: &Entity<EventLog>, _: &mut Window, _: &mut App) -> AnyElement {
+    let (l1, l2) = (log.clone(), log.clone());
     let color = v.color(1).unwrap_or(ColorName::Blue);
     div()
         .flex()
@@ -287,41 +314,62 @@ fn icons_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
             ActionIcon::new("live-act", IconName::Heart)
                 .variant(v.variant(0))
                 .color(color)
-                .size(v.size(2)),
+                .size(v.size(2))
+                .label("Like")
+                .on_click(move |_, _, cx| EventLog::log(&l1, "Like · on_click", cx)),
         )
+        .child(
+            ActionIcon::new("live-act-focus", IconName::Bookmark)
+                .variant(v.variant(0))
+                .color(color)
+                .size(v.size(2))
+                .label("Save (focusable: Tab reaches it)")
+                .focusable(true)
+                .on_click(move |_, _, cx| EventLog::log(&l2, "Save · on_click", cx)),
+        )
+        .child(div().ml(px(16.)).child(log.clone()))
         .into_any_element()
 }
 
-fn indicator(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
-        |_, _| {
+fn indicator(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "Live Indicator & Pill",
+        &[
+            Knob::color().default(4),
+            Knob::new("Label", &["dot", "3", "99+"]).default(1),
+        ],
+        |_, cx| EventLog::new(cx),
+        |log, v, _, _| {
+            let mut ind = Indicator::new(ThemeIcon::new(IconName::Inbox).variant(Variant::Light))
+                .color(v.color(0).unwrap_or(ColorName::Blue));
+            if let Some(Some(l)) = v.pick(1, &[None, Some("3"), Some("99+")]) {
+                ind = ind.label(l);
+            }
+            let pill = |id: &'static str, label: &'static str| {
+                let log = log.clone();
+                Pill::new(id, label).on_remove(move |id, _, cx| {
+                    EventLog::log(&log, format!("on_remove {id:?}"), cx)
+                })
+            };
             column([
-                example(
-                    "Indicator",
-                    div()
-                        .flex()
-                        .gap(px(24.))
-                        .child(
-                            Indicator::new(ThemeIcon::new(IconName::Mail).variant(Variant::Light))
-                                .label("12")
-                                .color(ColorName::Red),
-                        )
-                        .child(
-                            Indicator::new(ThemeIcon::new(IconName::Bell).variant(Variant::Light))
-                                .color(ColorName::Teal),
-                        ),
-                ),
-                example(
-                    "Pills",
-                    div()
-                        .flex()
-                        .gap(px(8.))
-                        .child(Pill::new("p1", "Rust").on_remove(|_, _, _| {}))
-                        .child(Pill::new("p2", "GPUI"))
-                        .child(Pill::new("p3", "Native")),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(32.))
+                    .child(ind)
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.))
+                            .child(pill("rust", "Rust"))
+                            .child(pill("gpui", "GPUI"))
+                            .child(Pill::new("native", "Native (not removable)")),
+                    )
+                    .into_any_element(),
+                example("Events", log.clone()),
             ])
         },
+        window,
         cx,
     )
 }
@@ -376,18 +424,35 @@ fn ring_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
         .into_any_element()
 }
 
-struct SegmentedDemo(gpui_kit::Entity<SegmentedControl>);
-
-impl Render for SegmentedDemo {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        column([example(
-            "Pick a view",
-            div().w(px(360.)).child(self.0.clone()),
-        )])
-    }
-}
-
-fn segmented(_: &mut Window, cx: &mut App) -> AnyView {
-    let control = SegmentedControl::new(["Preview", "Code", "Export"], cx);
-    cx.new(|_| SegmentedDemo(control)).into()
+fn segmented(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "Live SegmentedControl",
+        &[
+            Knob::size(),
+            Knob::toggle("Full width"),
+            Knob::toggle("Disabled"),
+        ],
+        |_, cx| {
+            let control = SegmentedControl::new(["Preview", "Code", "Export"], cx);
+            let log = EventLog::new(cx);
+            EventLog::watch::<SegmentedEvent, _>(&log, &control, cx);
+            (control, log, Applied::default())
+        },
+        |(control, log, applied), v, _, cx| {
+            if applied.changed(v) {
+                let (size, full, disabled) = (v.size(0), v.on(1), v.on(2));
+                control.update(cx, |c, cx| {
+                    c.set_size(Some(size), cx);
+                    c.set_full_width(full, cx);
+                    c.set_disabled(disabled, cx);
+                });
+            }
+            column([
+                div().w(px(420.)).child(control.clone()).into_any_element(),
+                example("Events", log.clone()),
+            ])
+        },
+        window,
+        cx,
+    )
 }

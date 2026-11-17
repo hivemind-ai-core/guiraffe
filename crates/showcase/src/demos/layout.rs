@@ -6,13 +6,25 @@ use gpui_kit::{
     div, prelude::*, px,
 };
 use guiraffe_components::Text;
-use guiraffe_core::Size;
+use guiraffe_core::{ColorName, Size};
 use guiraffe_layout::*;
 
 use super::{column, example, tile};
 use crate::catalog::{Entry, stateless};
+use crate::events::EventLog;
 use crate::knobs::{Knob, KnobValues, SIZE_NAMES, with_knobs};
 use gpui_kit::AnyElement;
+
+const ALIGNS: [Align; 3] = [Align::Start, Align::Center, Align::End];
+const ALIGN_NAMES: &[&str] = &["start", "center", "end"];
+const JUSTIFIES: [Justify; 5] = [
+    Justify::Start,
+    Justify::Center,
+    Justify::End,
+    Justify::Between,
+    Justify::Around,
+];
+const JUSTIFY_NAMES: &[&str] = &["start", "center", "end", "between", "around"];
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -94,18 +106,33 @@ fn stack_group(window: &mut Window, cx: &mut App) -> AnyView {
         "Live Group",
         &[
             Knob::gap(),
-            Knob::new("Align", &["start", "center", "end"]),
-            Knob::new("Justify", &["start", "center", "end", "between", "around"]),
+            Knob::new("Align", ALIGN_NAMES),
+            Knob::new("Justify", JUSTIFY_NAMES),
             Knob::toggle("Grow"),
+            Knob::toggle("Wrap"),
         ],
         stack_group_live,
         |_, cx| {
             column([
                 example(
-                    "Stack gap=Md",
-                    Stack::new()
-                        .gap(Size::Md)
-                        .children((1..=3).map(|i| tile(format!("Item {i}"), cx))),
+                    "Stack gap=Md · Stack align=Center, gap_px(4)",
+                    div()
+                        .flex()
+                        .gap(px(24.))
+                        .child(
+                            div().w(px(220.)).child(
+                                Stack::new()
+                                    .gap(Size::Md)
+                                    .children((1..=3).map(|i| tile(format!("Item {i}"), cx))),
+                            ),
+                        )
+                        .child(
+                            div().w(px(220.)).child(
+                                Stack::new().align(Align::Center).gap_px(4.).children(
+                                    ["Narrow", "A wider row", "Mid"].map(|l| tile(l, cx)),
+                                ),
+                            ),
+                        ),
                 ),
                 example(
                     "Group justify=Between",
@@ -127,34 +154,31 @@ fn stack_group(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn stack_group_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
-    let align = v
-        .pick(1, &[Align::Start, Align::Center, Align::End])
-        .unwrap_or_default();
-    let justify = v
-        .pick(
-            2,
-            &[
-                Justify::Start,
-                Justify::Center,
-                Justify::End,
-                Justify::Between,
-                Justify::Around,
-            ],
-        )
-        .unwrap_or_default();
     Group::new()
         .gap(v.size(0))
-        .align(align)
-        .justify(justify)
+        .align(v.pick(1, &ALIGNS).unwrap_or_default())
+        .justify(v.pick(2, &JUSTIFIES).unwrap_or_default())
         .grow(v.on(3))
+        .wrap(v.on(4))
         .child(tile("Short", cx))
         .child(tile("Taller", cx).min_h(px(64.)))
         .child(tile("Medium width item", cx))
+        .children(["Tags", "Filters", "Sort by date", "Export"].map(|l| tile(l, cx)))
         .into_any_element()
 }
 
-fn flex(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn flex(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live Flex",
+        &[
+            Knob::new("Direction", &["row", "row-rev", "column", "col-rev"]),
+            Knob::toggle("Wrap").default(1),
+            Knob::gap(),
+            Knob::new("Align", ALIGN_NAMES),
+            Knob::new("Justify", JUSTIFY_NAMES),
+            Knob::toggle("Grow"),
+        ],
+        flex_live,
         |_, cx| {
             column([
                 example(
@@ -173,8 +197,38 @@ fn flex(_: &mut Window, cx: &mut App) -> AnyView {
                 ),
             ])
         },
+        window,
         cx,
     )
+}
+
+fn flex_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
+    let direction = v
+        .pick(
+            0,
+            &[
+                FlexDirection::Row,
+                FlexDirection::RowReverse,
+                FlexDirection::Column,
+                FlexDirection::ColumnReverse,
+            ],
+        )
+        .unwrap_or_default();
+    Flex::new()
+                .h(px(170.))
+                .direction(direction)
+                .wrap(v.on(1))
+                .gap(v.size(2))
+                .align(v.pick(3, &ALIGNS).unwrap_or_default())
+                .justify(v.pick(4, &JUSTIFIES).unwrap_or_default())
+                .grow(v.on(5))
+                .children(
+                    ["Design", "Build", "Review", "Ship it", "Measure", "Learn"]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| tile(*l, cx).w(px(110.)).min_h(px(28. + 8. * (i % 3) as f32))),
+                )
+        .into_any_element()
 }
 
 fn grid(window: &mut Window, cx: &mut App) -> AnyView {
@@ -220,15 +274,29 @@ fn grid_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
         .into_any_element()
 }
 
-fn simple_grid(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn simple_grid(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live SimpleGrid",
+        &[
+            Knob::new("Cols", &["1", "2", "3", "4", "6"]).default(2),
+            Knob::new("Spacing", SIZE_NAMES).default(2),
+            Knob::new("Vertical", &["same", "xs", "xl"]),
+        ],
+        simple_grid_live,
         |_, cx| {
             column([
                 example(
-                    "cols=3",
+                    "Responsive cols: 1 → 2 at Xs → 4 at Sm (resize the window)",
                     SimpleGrid::new()
-                        .cols(3)
-                        .children((1..=6).map(|i| tile(format!("Cell {i}"), cx))),
+                        .cols(
+                            Responsive::base(1u16)
+                                .at(Breakpoint::Xs, 2)
+                                .at(Breakpoint::Sm, 4),
+                        )
+                        .spacing(Responsive::base(Size::Xs.spacing()).at(Breakpoint::Sm, Size::Lg.spacing()))
+                        .children(
+                            ["Revenue", "Users", "Churn", "NPS"].map(|l| tile(l, cx)),
+                        ),
                 ),
                 example(
                     "min child width 140px",
@@ -238,172 +306,306 @@ fn simple_grid(_: &mut Window, cx: &mut App) -> AnyView {
                 ),
             ])
         },
+        window,
         cx,
     )
 }
 
-fn container(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
-        |_, cx| {
-            column([
-                example(
-                    "Container size=Xs",
-                    Container::new()
-                        .size(Size::Xs)
-                        .child(tile("max-width content", cx)),
-                ),
-                example(
-                    "Center",
-                    Center::new()
-                        .min_height(px(120.))
-                        .child(tile("centered", cx).w(px(140.))),
-                ),
-            ])
-        },
-        cx,
-    )
+fn simple_grid_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
+    let mut grid = SimpleGrid::new()
+        .cols(v.pick(0, &[1u16, 2, 3, 4, 6]).unwrap_or(3))
+        .spacing(v.size(1));
+    if let Some(Some(vs)) = v.pick(2, &[None, Some(Size::Xs), Some(Size::Xl)]) {
+        grid = grid.vertical_spacing(vs);
+    }
+    grid.children((1..=6).map(|i| tile(format!("Cell {i}"), cx)))
+        .into_any_element()
 }
 
-fn aspect(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
+fn container(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live Container",
+        &[
+            Knob::size().default(0),
+            Knob::toggle("Fluid"),
+            Knob::new("Padding", SIZE_NAMES).default(2),
+        ],
+        container_live,
         |_, cx| {
             column([example(
-                "16:9 and 1:1",
-                div()
-                    .flex()
-                    .gap(px(16.))
-                    .child(
-                        div()
-                            .w(px(320.))
-                            .child(AspectRatio::new(16. / 9.).child(tile("16:9", cx).size_full())),
-                    )
-                    .child(
-                        div()
-                            .w(px(160.))
-                            .child(AspectRatio::new(1.).child(tile("1:1", cx).size_full())),
-                    ),
+                "Center min_height=120",
+                Center::new()
+                    .min_height(px(120.))
+                    .child(tile("centered", cx).w(px(140.))),
             )])
         },
+        window,
         cx,
     )
 }
 
-fn divider(_: &mut Window, cx: &mut App) -> AnyView {
-    stateless(
-        |_, cx| {
-            column([
-                example(
-                    "Labels",
-                    Stack::new()
-                        .gap(Size::Md)
-                        .child(Divider::new())
-                        .child(Divider::new().label("Center"))
-                        .child(
-                            Divider::new()
-                                .label("Start")
-                                .label_position(LabelPosition::Start),
-                        ),
-                ),
-                example(
-                    "Vertical + Space",
-                    Group::new()
-                        .child(tile("A", cx))
-                        .child(Divider::vertical())
-                        .child(tile("B", cx))
-                        .child(Space::w(Size::Xl))
-                        .child(tile("after Space::w(Xl)", cx)),
-                ),
-            ])
+fn container_live(v: &KnobValues, _: &mut Window, cx: &mut App) -> AnyElement {
+    Container::new()
+        .size(v.size(0))
+        .fluid(v.on(1))
+        .padding(v.size(2))
+        .child(tile("max-width content column", cx))
+        .into_any_element()
+}
+
+fn aspect(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live AspectRatio",
+        &[Knob::new("Ratio", &["1:1", "4:3", "16:9", "21:9"]).default(2)],
+        |v, _, cx| {
+            let (label, ratio) = v
+                .pick(
+                    0,
+                    &[
+                        ("1:1", 1.),
+                        ("4:3", 4. / 3.),
+                        ("16:9", 16. / 9.),
+                        ("21:9", 21. / 9.),
+                    ],
+                )
+                .unwrap_or(("16:9", 16. / 9.));
+            div()
+                .w(px(300.))
+                .child(AspectRatio::new(1.).ratio(ratio).child(tile(label, cx).size_full()))
+                .into_any_element()
         },
+        |_, _| column([]),
+        window,
         cx,
     )
+}
+
+fn divider(window: &mut Window, cx: &mut App) -> AnyView {
+    with_knobs(
+        "Live Divider",
+        &[
+            Knob::new("Label", &["none", "start", "center", "end"]).default(2),
+            Knob::new("Thickness", &["1", "2", "4"]),
+            Knob::new("Color", &["default", "teal", "red"]),
+        ],
+        divider_live,
+        |_, cx| {
+            column([example(
+                "Vertical, orientation() and Space",
+                Group::new()
+                    .child(tile("A", cx))
+                    .child(Divider::vertical())
+                    .child(tile("B", cx))
+                    .child(Divider::new().orientation(DividerOrientation::Vertical).thickness(2.))
+                    .child(tile("C", cx))
+                    .child(Space::w(Size::Xl))
+                    .child(tile("after Space::w(Xl)", cx))
+                    .child(Space::new().width_px(48.).height(Size::Md))
+                    .child(tile("after Space 48px", cx)),
+            )])
+        },
+        window,
+        cx,
+    )
+}
+
+fn divider_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
+    let mut d = Divider::new().thickness(v.pick(1, &[1., 2., 4.]).unwrap_or(1.));
+    if let Some(pos) = v
+        .pick(
+            0,
+            &[
+                None,
+                Some(LabelPosition::Start),
+                Some(LabelPosition::Center),
+                Some(LabelPosition::End),
+            ],
+        )
+        .flatten()
+    {
+        d = d.label("Continue with email").label_position(pos);
+    }
+    if let Some(c) = v
+        .pick(2, &[None, Some(ColorName::Teal), Some(ColorName::Red)])
+        .flatten()
+    {
+        d = d.color(c.shade(6).to_hsla());
+    }
+    Stack::new()
+        .gap(Size::Md)
+        .child(Text::new("Sign in with a passkey").size(Size::Sm))
+        .child(d)
+        .child(Text::new("you@example.com").size(Size::Sm).dimmed(true))
+        .into_any_element()
 }
 
 fn scroll(_: &mut Window, cx: &mut App) -> AnyView {
     stateless(
         |_, cx| {
-            column([example(
-                "Vertical, 200px tall",
-                div().h(px(200.)).child(
-                    ScrollArea::new("scroll-demo").child(
-                        Stack::new()
-                            .gap(Size::Xs)
-                            .children((1..=30).map(|i| tile(format!("Row {i}"), cx))),
+            let cx: &App = cx;
+            column([
+                example(
+                    "Vertical (default), 160px tall",
+                    div().h(px(160.)).child(
+                        ScrollArea::new("scroll-y").child(
+                            Stack::new()
+                                .gap(Size::Xs)
+                                .children((1..=30).map(|i| tile(format!("Row {i}"), cx))),
+                        ),
                     ),
                 ),
-            )])
+                example(
+                    "Horizontal: scroll_x(true).scroll_y(false)",
+                    div().w_full().child(
+                        ScrollArea::new("scroll-x")
+                            .scroll_x(true)
+                            .scroll_y(false)
+                            .child(
+                                Group::new().children(
+                                    (1..=24).map(|i| tile(format!("Frame {i}"), cx).w(px(96.))),
+                                ),
+                            ),
+                    ),
+                ),
+                example(
+                    "Both axes: ScrollArea::both",
+                    div().h(px(140.)).child(
+                        ScrollArea::both("scroll-both").child(
+                            Stack::new().gap(Size::Xs).children((1..=12).map(|r| {
+                                Group::new().children(
+                                    (1..=14).map(move |c| tile(format!("R{r}C{c}"), cx).w(px(72.))),
+                                )
+                            })),
+                        ),
+                    ),
+                ),
+            ])
         },
         cx,
     )
 }
 
-struct SplitterDemo(Entity<SplitterState>);
+struct SplitterDemo {
+    two: Entity<SplitterState>,
+    three: Entity<SplitterState>,
+    log: Entity<EventLog>,
+}
 
 impl Render for SplitterDemo {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        column([example(
-            "Drag the handle",
-            div().h(px(220.)).child(
-                Splitter::new(&self.0)
-                    .first_size(px(220.))
-                    .min_size(px(120.))
-                    .first(tile("Files", cx).size_full())
-                    .second(tile("Editor", cx).size_full()),
+        let log = self.log.clone();
+        column([
+            example(
+                "Horizontal: min 120px, max 360px, persist_key, on_resize",
+                div().h(px(150.)).child(
+                    Splitter::new(&self.two)
+                        .first_size(px(220.))
+                        .min_size(px(120.))
+                        .max_size(px(360.))
+                        .persist_key("showcase-splitter")
+                        .on_resize(move |sizes, _, cx| {
+                            let s: Vec<_> = sizes.iter().map(|p| format!("{:.0}", f32::from(*p))).collect();
+                            EventLog::log(&log, format!("on_resize [{}]", s.join(", ")), cx);
+                        })
+                        .first(tile("Files", cx).size_full())
+                        .second(tile("Editor", cx).size_full()),
+                ),
             ),
-        )])
+            example(
+                "Vertical axis, three panes (pane_size)",
+                div().h(px(220.)).child(
+                    Splitter::new(&self.three)
+                        .axis(SplitterAxis::Vertical)
+                        .min_size(px(40.))
+                        .pane_size(0, px(60.))
+                        .pane_size(2, px(60.))
+                        .panes(["Toolbar", "Canvas", "Console"].map(|l| tile(l, cx).size_full())),
+                ),
+            ),
+            example("Events", self.log.clone()),
+        ])
     }
 }
 
 fn splitter(_: &mut Window, cx: &mut App) -> AnyView {
-    let state = SplitterState::new(cx);
-    cx.new(|_| SplitterDemo(state)).into()
+    let two = SplitterState::new(cx);
+    let three = SplitterState::new(cx);
+    let log = EventLog::new(cx);
+    EventLog::watch::<SplitterEvent, _>(&log, &two, cx);
+    EventLog::watch::<SplitterEvent, _>(&log, &three, cx);
+    cx.new(|_| SplitterDemo { two, three, log }).into()
 }
 
 struct AppShellDemo {
     state: Entity<AppShellState>,
     main: AnyView,
+    log: Entity<EventLog>,
+}
+
+fn link(id: &'static str, label: &'static str) -> gpui_kit::Stateful<gpui_kit::Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .child(Text::new(label).size(Size::Sm).color(ColorName::Blue))
 }
 
 impl Render for AppShellDemo {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let state = self.state.clone();
-        column([example(
-            "Header, navbar, main, aside",
-            div().h(px(320.)).child(
-                AppShell::new(&self.state)
-                    .border()
-                    .header(
-                        Group::new()
-                            .grow(true)
-                            .justify(Justify::Between)
-                            .child(Text::new("My app"))
-                            .child(
-                                div()
-                                    .id("toggle-nav")
-                                    .cursor_pointer()
-                                    .child(Text::new("Toggle navbar").size(Size::Sm))
-                                    .on_click(move |_, _, cx| {
-                                        state.update(cx, |s, cx| s.toggle_navbar(cx))
-                                    }),
-                            ),
-                    )
-                    .navbar(
-                        Stack::new()
-                            .gap(Size::Xs)
-                            .children(["Inbox", "Drafts", "Sent"].map(|l| tile(l, cx))),
-                    )
-                    .main(self.main.clone())
-                    .aside(tile("Aside", cx).size_full()),
+        let (nav, aside) = (self.state.clone(), self.state.clone());
+        column([
+            example(
+                "Header, navbar, main, aside, footer · resizable panels · collapse below Sm",
+                div().h(px(300.)).child(
+                    AppShell::new(&self.state)
+                        .border()
+                        .header_height(px(44.))
+                        .footer_height(px(28.))
+                        .padding(Size::Sm)
+                        .collapse_below(Breakpoint::Sm)
+                        .collapse_aside_below(Breakpoint::Md)
+                        .resizable_navbar()
+                        .resizable_aside()
+                        .header(
+                            Group::new()
+                                .grow(true)
+                                .justify(Justify::Between)
+                                .child(Text::new("Acme Mail"))
+                                .child(
+                                    Group::new()
+                                        .child(link("toggle-nav", "Toggle navbar").on_click(
+                                            move |_, _, cx| {
+                                                nav.update(cx, |s, cx| s.toggle_navbar(cx))
+                                            },
+                                        ))
+                                        .child(link("toggle-aside", "Toggle aside").on_click(
+                                            move |_, _, cx| {
+                                                aside.update(cx, |s, cx| s.toggle_aside(cx))
+                                            },
+                                        )),
+                                ),
+                        )
+                        .navbar(
+                            Stack::new()
+                                .gap(Size::Xs)
+                                .children(["Inbox", "Drafts", "Sent"].map(|l| tile(l, cx))),
+                        )
+                        .main(self.main.clone())
+                        .aside(tile("Details", cx).size_full())
+                        .footer(Text::new("3 unread · synced just now").size(Size::Xs).dimmed(true)),
+                ),
             ),
-        )])
+            example("Events", self.log.clone()),
+        ])
     }
 }
 
 fn app_shell(_: &mut Window, cx: &mut App) -> AnyView {
     let state = AppShellState::new(cx);
+    let log = EventLog::new(cx);
+    EventLog::watch::<AppShellEvent, _>(&log, &state, cx);
     let main = stateless(
         |_, cx| tile("Main content", cx).size_full().into_any_element(),
         cx,
     );
-    cx.new(|_| AppShellDemo { state, main }).into()
+    cx.new(|_| AppShellDemo { state, main, log }).into()
 }
