@@ -282,6 +282,7 @@ pub(crate) struct Run {
     pub rows: Vec<Sample>,
     pub max_x_extent: f64,
     pub levels: Vec<Vec<usize>>,
+    pub line_breaks: Vec<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -330,6 +331,7 @@ impl ChartSpec {
                 &self.y.scale
             };
             let mut groups: BTreeMap<(u32, u32), Vec<Sample>> = BTreeMap::new();
+            let mut gaps = BTreeMap::<(u32, u32), Vec<f64>>::new();
             (layer.visit)(index, &mut |mut sample| {
                 let invalid_log = |scale: &Scale, value: f64| {
                     matches!(scale, Scale::Log) && value.is_finite() && value <= 0.
@@ -345,6 +347,11 @@ impl ChartSpec {
                 {
                     nonpositive_log_rows += 1;
                     return;
+                }
+                if layer.mark == Mark::Line && self.x.scale.accepts(sample.x) && sample.y.is_nan() {
+                    gaps.entry((sample.id.facet, sample.id.series.group))
+                        .or_default()
+                        .push(sample.x);
                 }
                 if !self.x.scale.accepts(sample.x) || !y_scale.accepts(sample.y) {
                     return;
@@ -455,6 +462,15 @@ impl ChartSpec {
                 if !rows.is_sorted_by(|a, b| a.x <= b.x) {
                     rows.sort_by(|a, b| a.x.total_cmp(&b.x));
                 }
+                let mut line_breaks: Vec<_> = gaps
+                    .remove(&(facet, group))
+                    .into_iter()
+                    .flatten()
+                    .map(|x| rows.partition_point(|row| row.x <= x))
+                    .filter(|&index| index > 0 && index < rows.len())
+                    .collect();
+                line_breaks.sort_unstable();
+                line_breaks.dedup();
                 let mut run = Run {
                     mark: layer.mark,
                     id: SeriesId {
@@ -469,6 +485,7 @@ impl ChartSpec {
                     rows,
                     max_x_extent,
                     levels: Vec::new(),
+                    line_breaks,
                 };
                 run.build_levels();
                 runs.push(run);

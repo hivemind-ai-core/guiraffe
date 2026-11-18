@@ -329,7 +329,7 @@ impl Run {
     }
 
     pub(crate) fn build_levels(&mut self) {
-        if !self.mark.connected() {
+        if !self.mark.connected() || !self.line_breaks.is_empty() {
             return;
         }
         let mut len = self.rows.len();
@@ -399,7 +399,18 @@ impl Projection<'_> {
             return;
         }
         if self.run.mark.connected() {
-            self.connected(visible, out, scratch);
+            let mut start = visible.start;
+            for end in self
+                .run
+                .line_breaks
+                .iter()
+                .copied()
+                .filter(|&i| visible.start < i && i < visible.end)
+                .chain(std::iter::once(visible.end))
+            {
+                self.connected(start..end, out, scratch);
+                start = end;
+            }
             return;
         }
         if matches!(self.run.mark, Mark::Point | Mark::Bubble) && visible.len() > 8_192 {
@@ -651,6 +662,20 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn nan_splits_a_line_into_two_paths() {
+        let chart = ChartSpec::new("gaps")
+            .layer(Layer::new(
+                Mark::Line,
+                vec![(0., 1.), (1., 2.), (2., f64::NAN), (3., 1.), (4., 2.)],
+                Channels::new(|p: &(f64, f64)| p.0, |p| p.1),
+            ))
+            .prepare();
+        let scene = chart.scene(600., 300., chart.x_domain(), &BTreeSet::new());
+        assert_eq!(scene.primitive_count(), 2);
+        assert_eq!(scene.vertex_count(), 4);
+    }
 
     #[test]
     fn stacked_area_paths_share_sampled_x_coordinates() {
