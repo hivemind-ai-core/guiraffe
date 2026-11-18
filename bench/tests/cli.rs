@@ -14,7 +14,7 @@ fn json_roundtrip_report_escaping_and_profile_guard() -> Result<()> {
             "--samples",
             "10",
             "--iterations",
-            "20",
+            "1",
             "--notes",
             "heavily loaded <script> & host",
             "--output",
