@@ -145,22 +145,28 @@ pub fn compute_order(
         }
     };
     let mut rows: Vec<u32> = Vec::with_capacity(if filters.is_empty() { n } else { n / 4 });
+    const CANCEL_INTERVAL: usize = 65_536;
     for r in 0..n {
-        if r % 65_536 == 0 {
+        if r % CANCEL_INTERVAL == 0 {
             check()?;
         }
         if filters.iter().all(|f| (f.pred)(src.cell(r, f.source_col))) {
             rows.push(r as u32);
         }
     }
+    check()?;
     let Some((primary, rest)) = sort.split_first() else {
         return Ok(RowOrder::Indices(rows.into()));
     };
-    check()?;
-    let mut keyed: Vec<(CellRef<'_>, u32)> = rows
-        .iter()
-        .map(|&r| (src.cell(r as usize, primary.source_col), r))
-        .collect();
+    let mut keyed = Vec::with_capacity(rows.len());
+    for chunk in rows.chunks(CANCEL_INTERVAL) {
+        check()?;
+        keyed.extend(
+            chunk
+                .iter()
+                .map(|&r| (src.cell(r as usize, primary.source_col), r)),
+        );
+    }
     drop(rows);
     check()?;
     // `sort_by` is stable: equal keys keep source order.
@@ -251,6 +257,27 @@ mod tests {
         assert_eq!(o, Ok(RowOrder::Identity));
         assert_eq!(RowOrder::Identity.source_row(5, 10), Some(5));
         assert_eq!(RowOrder::Identity.source_row(10, 10), None);
+    }
+
+    #[test]
+    fn cancellation_during_key_reads_avoids_reading_the_remaining_rows() {
+        use std::sync::atomic::AtomicUsize;
+        let reads = Arc::new(AtomicUsize::new(0));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let source = FnSource::new(262_144, {
+            let reads = reads.clone();
+            let cancel = cancel.clone();
+            move |row, _| {
+                reads.fetch_add(1, AtomicOrdering::Relaxed);
+                cancel.store(true, AtomicOrdering::Relaxed);
+                CellRef::Int(row as i64)
+            }
+        });
+        assert_eq!(
+            compute_order(&source, &[], &[spec(0, SortDir::Asc)], &cancel),
+            Err(Cancelled),
+        );
+        assert!(reads.load(AtomicOrdering::Relaxed) <= 65_536);
     }
 
     #[test]
