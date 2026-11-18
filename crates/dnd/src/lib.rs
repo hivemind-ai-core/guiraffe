@@ -5,10 +5,13 @@ pub mod sortable;
 
 use gpui_kit::{
     AnyView, App, AppContext, Bounds, Context, CursorStyle, Entity, FocusHandle,
-    InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render, ScrollHandle,
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Window, div, px,
 };
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::{Rc, Weak},
+};
 
 #[derive(Clone, Copy, Default)]
 pub enum Axis {
@@ -45,6 +48,7 @@ pub struct Drag<T> {
     pub payload: Rc<T>,
     pub constraints: Constraints,
     origin: Cell<Point<Pixels>>,
+    gesture: RefCell<Weak<()>>,
 }
 
 impl<T> Drag<T> {
@@ -58,6 +62,7 @@ struct Preview {
     constraints: Constraints,
     origin: Point<Pixels>,
     _cancel: Subscription,
+    _gesture: Rc<()>,
 }
 
 impl Render for Preview {
@@ -96,6 +101,7 @@ impl<T: 'static> DragSource<T> {
             payload: Rc::new(self.payload),
             constraints: self.constraints,
             origin: Cell::default(),
+            gesture: RefCell::default(),
         };
         let element =
             element
@@ -103,6 +109,8 @@ impl<T: 'static> DragSource<T> {
                 .on_drag(drag, move |drag, _, window, cx| {
                     let origin = window.mouse_position();
                     drag.origin.set(origin);
+                    let gesture = Rc::new(());
+                    *drag.gesture.borrow_mut() = Rc::downgrade(&gesture);
                     let view = preview(&drag.payload, window, cx).into();
                     let window_id = window.window_handle().window_id();
                     let cancel = cx.intercept_keystrokes(move |event, window, cx| {
@@ -118,6 +126,7 @@ impl<T: 'static> DragSource<T> {
                         origin,
                         constraints: drag.constraints,
                         _cancel: cancel,
+                        _gesture: gesture,
                     })
                 });
         if let Some(focus) = self.focus {
@@ -243,32 +252,64 @@ pub fn announce<E: StatefulInteractiveElement>(element: E, message: gpui_kit::Sh
     })
 }
 
-/// Scroll a vertical viewport during a matching drag. Put this on the
-/// scrollable element itself, with the same handle passed to track_scroll.
-pub fn auto_scroll_vertical<T: 'static, E: InteractiveElement>(
-    element: E,
-    scroll: gpui_kit::ScrollHandle,
+/// Keeps a vertical viewport scrolling while a matching drag stays near an edge.
+/// Retain the handle across renders and pass the same scroll handle to GPUI's
+/// `track_scroll` on the attached element.
+#[derive(Clone)]
+pub struct EdgeAutoScroll {
+    scroll: ScrollHandle,
     edge: Pixels,
     speed: Pixels,
-) -> E {
-    element.on_drag_move::<Drag<T>>(move |event, window, cx| {
-        let pointer = event.drag(cx).position(event.event.position);
-        if !event.bounds.contains(&pointer) {
-            return;
-        }
-        let mut offset = scroll.offset();
-        let amount = edge_scroll(
-            pointer.y,
-            event.bounds.origin.y,
-            event.bounds.bottom_right().y,
+    scheduled: Rc<Cell<bool>>,
+}
+
+impl EdgeAutoScroll {
+    pub fn new(scroll: ScrollHandle, edge: Pixels, speed: Pixels) -> Self {
+        Self {
+            scroll,
             edge,
             speed,
-        );
-        let next = (offset.y - amount).max(-scroll.max_offset().y).min(px(0.));
-        if next != offset.y {
-            offset.y = next;
-            scroll.set_offset(offset);
-            window.refresh();
+            scheduled: Rc::new(Cell::new(false)),
         }
-    })
+    }
+
+    pub fn attach<T: 'static, E: InteractiveElement>(&self, element: E) -> E {
+        let control = self.clone();
+        element.on_drag_move::<Drag<T>>(move |event, window, cx| {
+            let drag = event.drag(cx);
+            if control.scheduled.get() || !event.bounds.contains(&event.event.position) {
+                return;
+            }
+            let gesture = drag.gesture.borrow().clone();
+            control.clone().tick(gesture, window, cx);
+        })
+    }
+
+    fn tick(self, gesture: Weak<()>, window: &mut Window, cx: &mut App) {
+        self.scheduled.set(false);
+        let bounds = self.scroll.bounds();
+        let pointer = window.mouse_position();
+        if !cx.has_active_drag() || gesture.upgrade().is_none() || !bounds.contains(&pointer) {
+            return;
+        }
+        let amount = edge_scroll(
+            pointer.y,
+            bounds.top(),
+            bounds.bottom(),
+            self.edge,
+            self.speed,
+        );
+        let mut offset = self.scroll.offset();
+        let next = (offset.y - amount)
+            .max(-self.scroll.max_offset().y)
+            .min(px(0.));
+        if next == offset.y {
+            return;
+        }
+        offset.y = next;
+        self.scroll.set_offset(offset);
+        window.refresh();
+        self.scheduled.set(true);
+        window.on_next_frame(move |window, cx| self.tick(gesture, window, cx));
+    }
 }
