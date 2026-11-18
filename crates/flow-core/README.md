@@ -75,7 +75,7 @@ Use `LayoutEngine::layout` with an `AutoLayout` engine and `LayoutOptions`.
 Layered layout supports four directions, Tree centers parents over a spanning
 forest, Radial places ranks on concentric rings, Grid packs rows, and Force
 uses seeded initial positions and local repulsion. The built-in engines
-return world positions and orthogonal paths anchored to the node handles.
+return world positions and port-anchored orthogonal or spline paths.
 
 Pinned nodes freeze their entire root group. Group members retain their
 relative offsets. Relative constraints refer to the named nodes' top-left

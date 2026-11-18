@@ -187,6 +187,17 @@ pub(super) fn positions(
         depth += thickness + rank_gap;
         radius += diameter / 2.;
     }
+    if options.direction.reversed() && !matches!(engine, AutoLayout::Radial) {
+        let shift = (depth - rank_gap).max(0.);
+        let offset = if horizontal {
+            Point::new(shift, 0.)
+        } else {
+            Point::new(0., shift)
+        };
+        for position in &mut positions {
+            *position = *position + offset;
+        }
+    }
     Ok(positions)
 }
 
@@ -314,7 +325,7 @@ fn crossing_count(
             count += seen as u64 - non_crossing;
             while index < tree.len() {
                 tree[index] += 1;
-                index += index & index.wrapping_neg();
+                index += 1 << index.trailing_zeros();
             }
         }
     }

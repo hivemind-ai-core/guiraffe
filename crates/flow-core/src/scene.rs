@@ -287,9 +287,6 @@ impl EdgePath {
         };
         let from = sh.position(source);
         let to = th.position(target);
-        let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
-        let c1 = from + sh.side.direction() * distance;
-        let c2 = to + th.side.direction() * distance;
         let points = match edge.edge_type {
             EdgeType::OrthogonalHorizontal | EdgeType::OrthogonalVertical => {
                 crate::auto_layout::orthogonal(
@@ -299,17 +296,11 @@ impl EdgePath {
                 )
             }
             EdgeType::Straight => vec![from, to],
-            EdgeType::Bezier => (0..=32)
-                .map(|i| {
-                    let t = i as f32 / 32.;
-                    let u = 1. - t;
-                    from * (u * u * u)
-                        + c1 * (3. * u * u * t)
-                        + c2 * (3. * u * t * t)
-                        + to * (t * t * t)
-                })
-                .collect(),
+            EdgeType::Bezier => bezier(from, sh.side.direction(), to, th.side.direction()),
             EdgeType::Step | EdgeType::SmoothStep => {
+                let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
+                let c1 = from + sh.side.direction() * distance;
+                let c2 = to + th.side.direction() * distance;
                 let horizontal = sh.side.direction().x != 0.;
                 let (a, b) = if horizontal {
                     let x = (c1.x + c2.x) * 0.5;
@@ -400,6 +391,19 @@ fn rounded(corners: &[Point], radius: f32) -> Vec<Point> {
     }
     points
 }
+pub(crate) fn bezier(from: Point, outward: Point, to: Point, inward: Point) -> Vec<Point> {
+    let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
+    let c1 = from + outward * distance;
+    let c2 = to + inward * distance;
+    (0..=32)
+        .map(|i| {
+            let t = i as f32 / 32.;
+            let u = 1. - t;
+            from * (u * u * u) + c1 * (3. * u * u * t) + c2 * (3. * u * t * t) + to * (t * t * t)
+        })
+        .collect()
+}
+
 fn midpoint(points: &[Point]) -> Point {
     let length: f32 = points
         .iter()

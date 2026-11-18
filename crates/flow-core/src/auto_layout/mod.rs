@@ -68,9 +68,17 @@ pub enum LayoutConstraint {
     SameRank(NodeId, NodeId),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayoutRouting {
+    #[default]
+    Orthogonal,
+    Spline,
+}
+
 #[derive(Clone, Debug)]
 pub struct LayoutOptions {
     pub direction: LayoutDirection,
+    pub routing: LayoutRouting,
     pub spacing: Point,
     pub pinned: BTreeSet<NodeId>,
     pub constraints: Vec<LayoutConstraint>,
@@ -87,6 +95,7 @@ impl Default for LayoutOptions {
     fn default() -> Self {
         Self {
             direction: LayoutDirection::default(),
+            routing: LayoutRouting::default(),
             spacing: Point::new(80., 40.),
             pinned: BTreeSet::new(),
             constraints: Vec::new(),
@@ -100,10 +109,11 @@ impl Default for LayoutOptions {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayoutResult {
     pub positions: BTreeMap<NodeId, Point>,
-    /// Orthogonal previews. Applying the result selects the corresponding live
+    /// Route previews. Applying the result selects the corresponding live
     /// route style for each listed edge, so subsequent drags reroute it.
     pub routes: BTreeMap<EdgeId, Vec<Point>>,
     pub direction: LayoutDirection,
+    pub routing: LayoutRouting,
 }
 
 pub trait LayoutEngine: Send + Sync {
@@ -282,6 +292,7 @@ impl LayoutEngine for AutoLayout {
 
         let mut result = LayoutResult {
             direction: options.direction,
+            routing: options.routing,
             ..LayoutResult::default()
         };
         for node in graph.nodes.values() {
@@ -340,11 +351,21 @@ impl LayoutEngine for AutoLayout {
                     handle,
                 ))
             };
-            let route = orthogonal(
-                endpoint(&edge.source)?,
-                endpoint(&edge.target)?,
-                options.direction.horizontal(),
-            );
+            let (source, source_handle) = endpoint(&edge.source)?;
+            let (target, target_handle) = endpoint(&edge.target)?;
+            let route = match options.routing {
+                LayoutRouting::Orthogonal => orthogonal(
+                    (source, source_handle),
+                    (target, target_handle),
+                    options.direction.horizontal(),
+                ),
+                LayoutRouting::Spline => crate::scene::bezier(
+                    source_handle.position(source),
+                    source_handle.side.direction(),
+                    target_handle.position(target),
+                    target_handle.side.direction(),
+                ),
+            };
             if route.iter().any(|p| !p.finite()) {
                 return Err(LayoutError::Infeasible);
             }
@@ -364,10 +385,12 @@ impl Editor {
                     .ok_or(FlowError::MissingNode(id))?
                     .pos = position;
             }
-            let kind = if result.direction.horizontal() {
-                EdgeType::OrthogonalHorizontal
-            } else {
-                EdgeType::OrthogonalVertical
+            let kind = match result.routing {
+                LayoutRouting::Spline => EdgeType::Bezier,
+                LayoutRouting::Orthogonal if result.direction.horizontal() => {
+                    EdgeType::OrthogonalHorizontal
+                }
+                LayoutRouting::Orthogonal => EdgeType::OrthogonalVertical,
             };
             for id in result.routes.keys() {
                 if let Some(edge) = graph.edges.get_mut(id) {
