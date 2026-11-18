@@ -74,6 +74,15 @@ impl Render for KitchenSink {
                     .child(self.burgers[1].clone())
                     .child(self.copy.clone()),
             )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .items_center()
+                    .child(KbdGroup::new(["Ctrl", "K"]))
+                    .child(KbdGroup::new(["g", "d"]).separator(KbdSeparator::Then))
+                    .child(KbdGroup::new(["Shift", "Enter"]).color(ColorName::Teal)),
+            )
             .child(self.spoiler.clone())
             .child(
                 Timeline::new([
