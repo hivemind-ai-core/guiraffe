@@ -1,4 +1,6 @@
 //! GPUI-independent flow document, editing, camera, routes and spatial queries.
+mod auto_layout;
+pub use auto_layout::*;
 mod editor;
 mod geometry;
 mod layout;

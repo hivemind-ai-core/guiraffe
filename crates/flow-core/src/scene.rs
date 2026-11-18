@@ -289,6 +289,15 @@ impl EdgePath {
         let c1 = from + sh.side.direction() * distance;
         let c2 = to + th.side.direction() * distance;
         let points = match edge.edge_type {
+            EdgeType::OrthogonalHorizontal | EdgeType::OrthogonalVertical => {
+                crate::auto_layout::orthogonal(
+                    from,
+                    sh.side.direction(),
+                    to,
+                    th.side.direction(),
+                    edge.edge_type == EdgeType::OrthogonalHorizontal,
+                )
+            }
             EdgeType::Straight => vec![from, to],
             EdgeType::Bezier => (0..=32)
                 .map(|i| {
