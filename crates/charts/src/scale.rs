@@ -224,6 +224,10 @@ impl Scale {
             } else {
                 Vec::new()
             }
+        } else if let Self::Time(format) = self {
+            let mut axis = Axis::new(domain.min, domain.max, target as f64);
+            axis.scale = domain.span() / target as f64;
+            axis.major_ticks(1., *format)
         } else {
             multiples(domain.min, domain.max, self.step(domain, target))
         };

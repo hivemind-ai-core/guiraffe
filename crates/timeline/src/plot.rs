@@ -103,7 +103,7 @@ impl Layer for Ruler {
         if !p.header {
             return;
         }
-        for t in p.x.ticks(p.x.tick_step(90., self.0)) {
+        for t in p.x.major_ticks(90., self.0) {
             let x = p.x.x(t);
             line(o, (x, 0.), (x, p.height), Ink::Border);
             o.push(Primitive::Text {
@@ -139,10 +139,16 @@ impl Layer for Gridlines {
         }
         if self.x {
             let major = p.x.tick_step(90., self.format);
+            let calendar = matches!(self.format, TimeFormat::Days) && major >= 30. * 86_400.;
             let step = if self.minor { major / 5. } else { major };
-            for t in p.x.ticks(step) {
+            let ticks = if calendar {
+                p.x.major_ticks(90., self.format)
+            } else {
+                p.x.ticks(step)
+            };
+            for t in ticks {
                 let x = p.x.x(t);
-                let major_tick = (t / major - (t / major).round()).abs() < 1e-6;
+                let major_tick = calendar || (t / major - (t / major).round()).abs() < 1e-6;
                 line(
                     o,
                     (x, 0.),
@@ -197,7 +203,7 @@ pub struct GridMarks(pub TimeFormat);
 impl Layer for GridMarks {
     fn prepaint(&self, p: &PlotContext, o: &mut Vec<Primitive>) {
         if p.header {
-            for t in p.x.ticks(p.x.tick_step(18., self.0)) {
+            for t in p.x.major_ticks(18., self.0) {
                 let x = p.x.x(t);
                 line(o, (x, p.height - 4.), (x, p.height), Ink::Dimmed);
             }

@@ -37,6 +37,7 @@ secondary y domains. Secondary layers opt into the right axis.
 
 Axis titles, ticks and grids explain the shared domains. Continuous time uses
 the timeline ruler's tick ladder and date formatter. Text and rule layers
+Day-format month and year ticks fall on Gregorian boundaries at midnight UTC.
 place annotations in data coordinates. Legend buttons toggle series and
 support keyboard operation.
 

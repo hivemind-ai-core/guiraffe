@@ -141,6 +141,39 @@ impl Axis {
         }
     }
 
+    /// Major ticks for a ruler. Long day-format intervals use the first day
+    /// of a Gregorian month or year at midnight UTC.
+    pub fn major_ticks(&self, min_px: f64, format: TimeFormat) -> Vec<f64> {
+        let step = self.tick_step(min_px, format);
+        const DAY: f64 = 86_400.;
+        if !matches!(format, TimeFormat::Days) || step < 30. * DAY {
+            return self.ticks(step);
+        }
+        let end = self.end();
+        if !step.is_finite() || self.start.abs().max(end.abs()) >= 1e15 {
+            return Vec::new();
+        }
+        let stride = if step < 365. * DAY {
+            1
+        } else {
+            (step / (365. * DAY)).round().min(1e9) as i64 * 12
+        };
+        let index = |seconds: f64| {
+            let (year, month, _) = civil_from_days((seconds / DAY).floor() as i64);
+            year * 12 + i64::from(month) - 1
+        };
+        let first = index(self.start).div_euclid(stride) * stride;
+        let last = index(end);
+        if (last - first) / stride > 10_000 {
+            return Vec::new();
+        }
+        (first..=last)
+            .step_by(stride as usize)
+            .map(|month| days_from_month(month) as f64 * DAY)
+            .filter(|&tick| (self.start..=end).contains(&tick))
+            .collect()
+    }
+
     /// Tick times within the view for `step` (aligned to multiples of the step).
     pub fn ticks(&self, step: f64) -> Vec<f64> {
         if !(step.is_finite() && step > 0.0) {
@@ -214,9 +247,37 @@ pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+// Inverse of civil_from_days for the first day of a month.
+fn days_from_month(index: i64) -> i64 {
+    let month = index.rem_euclid(12) + 1;
+    let year = index.div_euclid(12) - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year.rem_euclid(400);
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    era * 146_097 + 365 * yoe + yoe / 4 - yoe / 100 + (153 * mp + 2) / 5 - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn major_ticks_follow_utc_calendar() {
+        let start = 1_701_993_600.; // 2023-12-08
+        let end = 1_709_337_600.; // 2024-03-02
+        let mut axis = Axis::new(start, end, 100.);
+        axis.scale = (end - start) / 100.;
+        let ticks = axis.major_ticks(30., TimeFormat::Days);
+        assert_eq!(ticks, [1_704_067_200., 1_706_745_600., 1_709_251_200.]);
+
+        let end = 1_768_000_000.;
+        let mut axis = Axis::new(start, end, 100.);
+        axis.scale = (end - start) / 100.;
+        assert_eq!(
+            axis.major_ticks(40., TimeFormat::Days),
+            [1_704_067_200., 1_735_689_600., 1_767_225_600.]
+        );
+    }
 
     #[test]
     fn mapping_round_trips_and_zoom_keeps_anchor() {
