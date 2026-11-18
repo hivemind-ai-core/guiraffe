@@ -58,9 +58,11 @@ impl<'a> CellRef<'a> {
     pub fn total_cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Self::Int(a), Self::Int(b)) => a.cmp(b),
-            (Self::Int(a), Self::Number(b)) => (*a as f64).total_cmp(b),
-            (Self::Number(a), Self::Int(b)) => a.total_cmp(&(*b as f64)),
-            (Self::Number(a), Self::Number(b)) => a.total_cmp(b),
+            (Self::Int(a), Self::Number(b)) => compare_int_float(*a, *b),
+            (Self::Number(a), Self::Int(b)) => compare_int_float(*b, *a).reverse(),
+            (Self::Number(a), Self::Number(b)) => {
+                a.is_nan().cmp(&b.is_nan()).then_with(|| a.total_cmp(b))
+            }
             (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
             (Self::Text(a), Self::Text(b)) => a.cmp(b),
             _ => self.rank().cmp(&other.rank()),
@@ -90,6 +92,16 @@ impl<'a> CellRef<'a> {
     pub fn is_numeric(&self) -> bool {
         matches!(self, Self::Int(_) | Self::Number(_))
     }
+}
+
+fn compare_int_float(integer: i64, float: f64) -> Ordering {
+    if float.is_nan() || float >= -(i64::MIN as f64) {
+        return Ordering::Less;
+    }
+    let truncated = float as i64;
+    integer
+        .cmp(&truncated)
+        .then_with(|| (truncated as f64).total_cmp(&float))
 }
 
 /// Why an edit was rejected.
@@ -375,6 +387,31 @@ mod tests {
         assert_eq!(v[2], CellRef::Number(2.5));
         assert_eq!(v[3], CellRef::Int(3));
         assert_eq!(v[5], CellRef::Text("b"));
+    }
+
+    #[test]
+    fn mixed_numeric_order_preserves_large_integers_and_places_nan_last() {
+        let exact = CellRef::Int(9_007_199_254_740_992);
+        let next = CellRef::Int(9_007_199_254_740_993);
+        let rounded = CellRef::Number(9_007_199_254_740_992.);
+        assert_eq!(exact.total_cmp(&rounded), Ordering::Equal);
+        assert_eq!(next.total_cmp(&rounded), Ordering::Greater);
+        assert_eq!(
+            CellRef::Int(i64::MAX).total_cmp(&CellRef::Number(-(i64::MIN as f64))),
+            Ordering::Less
+        );
+        assert_eq!(
+            CellRef::Int(i64::MIN).total_cmp(&CellRef::Number(i64::MIN as f64)),
+            Ordering::Equal
+        );
+        assert_eq!(
+            CellRef::Number(-f64::NAN).total_cmp(&CellRef::Number(f64::INFINITY)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            CellRef::Int(0).total_cmp(&CellRef::Number(f64::NEG_INFINITY)),
+            Ordering::Greater
+        );
     }
 
     #[test]
