@@ -593,6 +593,34 @@ fn horizontal_scroll_is_bounded_and_long_line_shaping_is_capped(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
+fn scroll_burst_and_theme_change_preserve_selection_and_keyboard_focus(cx: &mut TestAppContext) {
+    let line = "א界🙂";
+    let source: Arc<str> = format!("{line}\n").repeat(128).into();
+    let (code, _, vcx) = mount(cx, source);
+    let selection = SourceRange::new(Position::new(120, 0), Position::new(120, line.len()));
+    vcx.update(|window, cx| {
+        code.focus(window, cx);
+        code.select(Some(selection), cx);
+        for target in 0..127 {
+            code.scroll_to_line(target, cx);
+            if target == 64 {
+                guiraffe_core::set_scheme(guiraffe_core::Scheme::Dark, cx);
+            }
+        }
+    });
+    vcx.run_until_parked();
+    assert_eq!(code.selection(), Some(selection));
+    assert!(code.anchor_in_window(selection.start).is_some());
+    vcx.simulate_keystrokes("ctrl-c");
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+            Some(line)
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn dragging_on_the_minimap_scrolls_continuously_and_does_not_select(cx: &mut TestAppContext) {
     use gpui_kit::{Modifiers, MouseButton, point, px};
     let (code, _, vcx) = mount(cx, Arc::from("let value = 42;\n".repeat(1000)));
