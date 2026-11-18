@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
+use gpui_kit::test::TestQueryExt;
 use gpui_kit::{
     Context, Entity, IntoElement, KeyUpEvent, Keystroke, Modifiers, ParentElement, Render, Styled,
     TestAppContext, VisualTestContext, Window, assets::IconName, div, point, px,
@@ -189,10 +190,13 @@ fn accordion_controlled_requests_leave_the_authoritative_value_in_place(cx: &mut
     let (host, window) = cx.add_window_view(|_, cx| Host {
         renders: RenderCounter::new(),
         control: Accordion::new(
-            ["One", "Two"]
-                .into_iter()
-                .map(|title| DisclosureItem::new(title, || "Details".into_any_element()))
-                .collect(),
+            vec![
+                DisclosureItem::new("One", || "Details".into_any_element()),
+                DisclosureItem {
+                    disabled: true,
+                    ..DisclosureItem::new("Two", || "Details".into_any_element())
+                },
+            ],
             AccordionOptions {
                 focusable: Some(true),
                 ..AccordionOptions::default()
@@ -212,6 +216,12 @@ fn accordion_controlled_requests_leave_the_authoritative_value_in_place(cx: &mut
         .detach();
     });
     frames(window, 2);
+    let disabled = window.update(|window, _| {
+        let item = window.find_by_label("Two");
+        assert_eq!(item.disabled(), Some(true));
+        item.bounds().center()
+    });
+    window.simulate_click(disabled, Modifiers::none());
     window.update(|window, cx| window.focus_next(cx));
     tap_enter(window);
     assert_eq!(*events.borrow(), [AccordionChange(vec![])]);

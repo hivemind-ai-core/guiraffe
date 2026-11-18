@@ -10,7 +10,7 @@ use gpui_kit::{
     prelude::*,
     *,
 };
-use guiraffe_core::{GuiraffeTheme, Press, PressableExt, Variant, keyed_focus};
+use guiraffe_core::{A11yDisabledExt, GuiraffeTheme, Press, PressableExt, Variant, keyed_focus};
 
 use guiraffe_motion::{Animated, Spring, Timing};
 
@@ -157,87 +157,118 @@ impl Render for Accordion {
         let separated = self.options.variant == AccordionVariant::Separated;
         let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, None);
         let id = cx.entity_id();
-        let element = KitAccordion::new(("accordion", id.as_u64() as usize))
-            .flex()
-            .flex_col()
-            .w_full()
-            .when(separated, |el| el.gap_2())
-            .when(!separated, |el| {
-                el.border_1()
-                    .border_color(hsla(surface.border))
-                    .rounded(radius)
-            })
-            .children(self.items.iter().zip(&mut self.progress).enumerate().map(
-                |(index, (item, progress))| {
-                    let open = self.open.contains(&index);
-                    let p = disclosure_motion::progress(progress, &mut needs_frame, cx);
-                    let trigger_id = ElementId::from((
-                        SharedString::from(format!("accordion-{}", id.as_u64() as usize)),
-                        index,
-                    ));
-                    let focus = keyed_focus(trigger_id.clone(), window, cx);
-                    let press = Press::new(colors)
-                        .label(item.title.clone())
-                        .disabled(item.disabled)
-                        .focusable(self.options.focusable)
-                        .radius(radius);
-                    let chevron = if open {
-                        IconName::ChevronUp
-                    } else {
-                        IconName::ChevronDown
-                    };
-                    let trigger = AccordionTrigger::new(trigger_id)
-                        .open(open)
-                        .disabled(item.disabled)
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_3()
-                        .py_2()
+        let element =
+            KitAccordion::new(("accordion", id.as_u64() as usize))
+                .flex()
+                .flex_col()
+                .w_full()
+                .when(separated, |el| el.gap_2())
+                .when(!separated, |el| {
+                    el.border_1()
+                        .border_color(hsla(surface.border))
                         .rounded(radius)
-                        .when(self.options.chevron == ChevronPosition::Start, |el| {
-                            el.child(Icon::new(chevron.clone()))
-                        })
-                        .child(div().flex_1().child(item.title.clone()))
-                        .when(self.options.chevron == ChevronPosition::End, |el| {
-                            el.child(Icon::new(chevron))
-                        })
-                        .press(&press, &focus, window)
-                        .on_press(
-                            item.disabled,
-                            cx.listener(move |this, _, _, cx| this.toggle(index, cx)),
+                })
+                .children(self.items.iter().zip(&mut self.progress).enumerate().map(
+                    |(index, (item, progress))| {
+                        let open = self.open.contains(&index);
+                        let p = disclosure_motion::progress(progress, &mut needs_frame, cx);
+                        let trigger_id = ElementId::from((
+                            SharedString::from(format!("accordion-{}", id.as_u64() as usize)),
+                            index,
+                        ));
+                        let focus = keyed_focus(trigger_id.clone(), window, cx);
+                        let press = Press::new(colors)
+                            .label(item.title.clone())
+                            .disabled(item.disabled)
+                            .focusable(self.options.focusable)
+                            .radius(radius);
+                        let chevron = if open {
+                            IconName::ChevronUp
+                        } else {
+                            IconName::ChevronDown
+                        };
+                        let title = div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .when(self.options.chevron == ChevronPosition::Start, |el| {
+                                el.child(Icon::new(chevron.clone()))
+                            })
+                            .child(div().flex_1().child(item.title.clone()))
+                            .when(self.options.chevron == ChevronPosition::End, |el| {
+                                el.child(Icon::new(chevron))
+                            });
+                        let kit_item = KitItem::new().flex().flex_col().open(open).when(
+                            open || p != 0.,
+                            |el| {
+                                el.panel(
+                                    AccordionPanel::new()
+                                        .id(("accordion-panel", index))
+                                        .keep_mounted(true)
+                                        .child(MotionReveal::new(
+                                            ("accordion-content", index),
+                                            p,
+                                            div()
+                                                .px_3()
+                                                .pb_3()
+                                                .child((item.body)())
+                                                .into_any_element(),
+                                        )),
+                                )
+                            },
                         );
-                    KitItem::new()
-                        .open(open)
-                        .disabled(item.disabled)
-                        .flex()
-                        .flex_col()
-                        .when(separated, |el| {
-                            el.border_1()
-                                .border_color(hsla(surface.border))
+                        // Kit's trigger can suppress activation but cannot project AccessKit's
+                        // disabled state. Use the shared Press adapter for an inert heading.
+                        let row = if item.disabled {
+                            div()
+                                .child(
+                                    div()
+                                        .id(("accordion-heading", index))
+                                        .role(Role::Heading)
+                                        .aria_level(3)
+                                        .child(
+                                            div()
+                                                .id(trigger_id)
+                                                .a11y_disabled(true)
+                                                .test_support()
+                                                .aria_expanded(open)
+                                                .rounded(radius)
+                                                .child(title)
+                                                .press(&press, &focus, window),
+                                        ),
+                                )
+                                .child(kit_item)
+                        } else {
+                            let trigger = AccordionTrigger::new(trigger_id)
+                                .open(open)
                                 .rounded(radius)
-                        })
-                        .when(!separated && index != 0, |el| {
-                            el.border_t_1().border_color(hsla(surface.border))
-                        })
-                        .when(self.options.variant == AccordionVariant::Filled, |el| {
-                            el.bg(hsla(surface.track))
-                        })
-                        .header(AccordionHeader::new(trigger).id(("accordion-heading", index)))
-                        .when(open || p != 0., |el| {
-                            el.panel(
-                                AccordionPanel::new()
-                                    .id(("accordion-panel", index))
-                                    .keep_mounted(true)
-                                    .child(MotionReveal::new(
-                                        ("accordion-content", index),
-                                        p,
-                                        div().px_3().pb_3().child((item.body)()).into_any_element(),
-                                    )),
-                            )
-                        })
-                },
-            ));
+                                .child(title)
+                                .press(&press, &focus, window)
+                                .on_press(
+                                    false,
+                                    cx.listener(move |this, _, _, cx| this.toggle(index, cx)),
+                                );
+                            div().child(kit_item.header(
+                                AccordionHeader::new(trigger).id(("accordion-heading", index)),
+                            ))
+                        };
+                        row.flex()
+                            .flex_col()
+                            .when(separated, |el| {
+                                el.border_1()
+                                    .border_color(hsla(surface.border))
+                                    .rounded(radius)
+                            })
+                            .when(!separated && index != 0, |el| {
+                                el.border_t_1().border_color(hsla(surface.border))
+                            })
+                            .when(self.options.variant == AccordionVariant::Filled, |el| {
+                                el.bg(hsla(surface.track))
+                            })
+                    },
+                ));
         disclosure_motion::schedule(needs_frame, cx.entity_id(), window);
         element
     }
