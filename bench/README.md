@@ -136,3 +136,21 @@ audit, fuzzing, mutation and flake jobs remain roadmap work.
 Instantiation creates/drops a host from an already compiled four-node template with no-op logic; lazy first rendering and list seeding are excluded. Patch changes a mounted text node's color. Splice updates one keyed item in the middle of the seeded list, alternating prebuilt shared records. Structural splice alternates that row's key to exercise creation/disposal and live order-statistics maintenance. The text template explicitly opts into a bounded single-line row, and native row views are allocated only when rendered. Patch/splice include slot processing, reconciliation, and targeted notifications, excluding the subsequent draw. These are operation costs, not frame times. The fixture initializes native GPUI once per thread, so `gpui-kit/test-support` is enabled for this benchmark harness.
 
 `tests/allocator.rs` warms these workloads then counts requested allocation traffic, with separate bounds for each operation. The original zero-allocation assertions remain unchanged for core variants and window placement. Run one workload with `cargo run --release -p guiraffe-bench -- run --suite data-ui-splice --samples 20 --iterations 1000`; use a quiet machine and a recorded profile for performance comparisons.
+
+## Production-scale diagnostics
+
+The new production-scale suites default to one invocation per timing batch.
+Pass a suite explicitly when inspecting a specific path, for example
+`cargo run --release --locked -p guiraffe-bench -- run --suite chart-scatter-1m-100-series --samples 10`.
+The sampler still repeats batches until each timed sample covers at least 1 ms.
+The 10M-point chart fixtures can use several GiB while preparing their models.
+
+On Linux, run the headless interaction soak with
+`cargo run --release --locked -p guiraffe-bench --example soak -- timeline`.
+The other component arguments are `flow`, `chart-line` and `chart-scatter`.
+Each run warms for 10 seconds, samples for 30 minutes, and prints frame-time
+percentiles, the maximum, RSS and PSS every 10 seconds. It fails on the spec/23
+timing limits or more than 2% upward drift from the warmed sample.
+Use `--short` for two 10-second windows with absolute limits disabled for CI.
+The runner measures headless dispatch and CPU paint and reads `/proc/self/smaps_rollup`.
+The production audits identify which native and streaming coverage is still missing.

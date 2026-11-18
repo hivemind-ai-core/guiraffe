@@ -96,9 +96,15 @@ fn shift() -> Modifiers {
 }
 
 #[gpui_kit::test]
-fn scrolling_a_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
-    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(50), cx));
-    assert_eq!(grid.view_row_count(), 1_000_000);
+fn scrolling_ten_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| {
+        GridHandle::new(
+            FnSource::new(10_000_000, |r, c| CellRef::Int((r * 100 + c) as i64)),
+            columns(50),
+            cx,
+        )
+    });
+    assert_eq!(grid.view_row_count(), 10_000_000);
     let stats = grid.stats();
     assert!(stats.pool < 40, "pool is O(viewport): {}", stats.pool);
     assert!(
@@ -108,19 +114,19 @@ fn scrolling_a_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
     );
     vcx.update(|w, _| assert!(w.try_find_by_label("0").is_some()));
 
-    vcx.update(|_, cx| grid.scroll_to_row(999_999, cx));
+    vcx.update(|_, cx| grid.scroll_to_row(9_999_999, cx));
     vcx.run_until_parked();
     let vis = grid.visible_rows();
-    assert_eq!(vis.end, 1_000_000);
+    assert_eq!(vis.end, 10_000_000);
     vcx.update(|w, _| {
-        assert!(w.try_find_by_label("99999900").is_some(), "last row shown");
+        assert!(w.try_find_by_label("999999900").is_some(), "last row shown");
         assert!(w.try_find_by_label("0").is_none(), "first row recycled");
     });
 
-    // Wheel: three rows up, f64-precise near the end of a 36M px document.
+    // Wheel: three rows up, f64-precise near the end of a 360M px document.
     let (_, before) = grid.scroll_offset();
     let h = f64::from(grid.row_height());
-    let pos = at(&grid, Some(999_990), 1);
+    let pos = at(&grid, Some(9_999_990), 1);
     vcx.simulate_event(ScrollEvent {
         position: pos,
         delta: ScrollDelta::Pixels(point(px(0.), px((3. * h) as f32))),
@@ -141,6 +147,67 @@ fn scrolling_a_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
     let first = grid.visible_rows().start;
     let label = format!("{}", first * 100 + 40);
     vcx.update(|w, _| assert!(w.try_find_by_label(&label).is_some(), "{label} visible"));
+}
+
+#[gpui_kit::test]
+fn palette_is_shared_across_row_recycling_and_refreshes_on_theme_change(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(12), cx));
+    vcx.update(|window, cx| {
+        guiraffe_core::set_scheme(guiraffe_core::Scheme::Light, cx);
+        grid.focus(window, cx);
+        for row in 500_000..500_100 {
+            grid.scroll_to_row(row, cx);
+            grid.select(CellPos::new(row, 0), false, false, cx);
+        }
+    });
+    vcx.run_until_parked();
+    let before = grid.stats();
+    assert_eq!(before.palette_resolutions, 1);
+    let selected = grid.selection();
+    vcx.update(|_, cx| guiraffe_core::set_scheme(guiraffe_core::Scheme::Dark, cx));
+    vcx.run_until_parked();
+    assert_eq!(grid.stats().palette_resolutions, 2);
+    assert_eq!(grid.selection(), selected);
+    vcx.update(|window, _| assert!(grid.focus_handle().is_focused(window)));
+}
+
+#[gpui_kit::test]
+fn materialised_million_rows_keep_viewport_sized_slots(cx: &mut TestAppContext) {
+    let rows = (0..1_000_000_i64).collect();
+    let source = VecSource::new(rows).column(|&value| CellRef::Int(value));
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(source, columns(1), cx));
+    for row in [0, 500_000, 999_999] {
+        vcx.update(|_, cx| grid.scroll_to_row(row, cx));
+        vcx.run_until_parked();
+        assert!(grid.visible_rows().contains(&row));
+        assert!(grid.stats().pool < 40);
+        vcx.update(|window, _| {
+            assert!(window.try_find_by_label(&row.to_string()).is_some());
+        });
+    }
+}
+
+#[gpui_kit::test]
+fn long_multilingual_cells_have_bounded_labels_and_full_copy(cx: &mut TestAppContext) {
+    let value = "א界🙂".repeat(112_000);
+    let source = VecSource::new(vec![value.clone()]).column(|value| CellRef::Text(value));
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(source, columns(1), cx));
+    let end = value.floor_char_boundary(4096 - "…".len());
+    let label = format!("{}…", &value[..end]);
+    vcx.update(|window, cx| {
+        assert!(window.try_find_by_label(&label).is_some());
+        grid.select(CellPos::new(0, 0), false, false, cx);
+        assert!(grid.copy(cx).is_some());
+    });
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(value.as_str()),
+        );
+    });
 }
 
 #[gpui_kit::test]

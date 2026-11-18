@@ -513,9 +513,15 @@ impl Projection<'_> {
             let x = (self.rect.fraction(point.0) * columns as f64) as usize;
             let y = ((point.1 - self.rect.top) / self.rect.height() * rows as f32) as usize;
             let cell = y.min(rows - 1) * columns + x.min(columns - 1);
-            if !occupied[cell] {
+            if !occupied[cell]
+                && let Some(radius) = self.dot_radius(row)
+            {
                 occupied[cell] = true;
-                self.individual(row, out);
+                out.push(Draw {
+                    geometry: Geometry::Dot(point, radius),
+                    series: self.run.id,
+                    color: self.color(row),
+                });
             }
         }
     }
@@ -561,6 +567,15 @@ impl Projection<'_> {
         }
     }
 
+    fn dot_radius(&self, row: &Sample) -> Option<f32> {
+        let radius = if self.run.mark == Mark::Point {
+            3.
+        } else {
+            row.size.clamp(1., 48.)
+        };
+        radius.is_finite().then_some(radius)
+    }
+
     fn individual(&self, row: &Sample, out: &mut Vec<Draw>) {
         let Some(p) = self.anchor(row) else { return };
         let color = self.color(row);
@@ -574,12 +589,7 @@ impl Projection<'_> {
         match self.run.mark {
             Mark::Line | Mark::Area(_) => {}
             Mark::Point | Mark::Bubble if self.rect.contains(p) => {
-                let radius = if self.run.mark == Mark::Point {
-                    3.
-                } else {
-                    row.size.clamp(1., 48.)
-                };
-                if radius.is_finite() {
+                if let Some(radius) = self.dot_radius(row) {
                     push(Geometry::Dot(p, radius));
                 }
             }
@@ -662,6 +672,19 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn dense_bubble_keeps_drawable_representative_after_nan_radius() {
+        let chart = ChartSpec::new("bubble sizes")
+            .layer(Layer::new(
+                Mark::Bubble,
+                (0..8_193).collect::<Vec<_>>(),
+                Channels::new(|_| 1., |_| 1.).size(|index| if *index == 0 { f32::NAN } else { 4. }),
+            ))
+            .prepare();
+        let scene = chart.scene(600., 300., chart.x_domain(), &BTreeSet::new());
+        assert_eq!(scene.primitive_count(), 1);
+    }
 
     #[test]
     fn nan_splits_a_line_into_two_paths() {

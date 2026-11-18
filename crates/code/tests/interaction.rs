@@ -129,21 +129,21 @@ fn real_keyboard_selection_copy_and_folding(cx: &mut TestAppContext) {
     assert_eq!(code.stats().last_visible_rows, before.last_visible_rows);
 }
 #[gpui_kit::test]
-fn million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut TestAppContext) {
+fn ten_million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut TestAppContext) {
     use std::fmt::Write;
-    let mut source = String::with_capacity(32_000_000);
-    for line in 0..999_999 {
-        let _ = writeln!(source, "let value_{line} = {line};");
+    let mut source = String::with_capacity(20_000_000);
+    for line in 0..9_999_999 {
+        let _ = writeln!(source, "{}", line % 10);
     }
     let (code, _, vcx) = mount(cx, Arc::from(source));
-    assert_eq!(code.document().line_count(), 1_000_000);
+    assert_eq!(code.document().line_count(), 10_000_000);
     assert!(code.stats().last_visible_rows < 100);
     let before = code.stats();
-    vcx.update(|_, cx| code.scroll_to_line(900_000, cx));
+    vcx.update(|_, cx| code.scroll_to_line(9_900_000, cx));
     vcx.run_until_parked();
     let after = code.stats();
     let anchor_before = code
-        .anchor_in_window(Position::new(900_000, 0))
+        .anchor_in_window(Position::new(9_900_000, 0))
         .expect("anchor");
     let y = code.viewport().y;
     vcx.update(|_, cx| {
@@ -158,7 +158,7 @@ fn million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut TestAp
     vcx.run_until_parked();
     assert_eq!(code.viewport().y, y + 0.25);
     let anchor_after = code
-        .anchor_in_window(Position::new(900_000, 0))
+        .anchor_in_window(Position::new(9_900_000, 0))
         .expect("anchor after subpixel scroll");
     assert!((f32::from(anchor_before.y - anchor_after.y) - 0.25).abs() < 0.01);
     assert!(code.viewport().y > 1_000_000.);
@@ -574,7 +574,7 @@ fn copy_without_a_nonempty_selection_keeps_clipboard(cx: &mut TestAppContext) {
 }
 #[gpui_kit::test]
 fn horizontal_scroll_is_bounded_and_long_line_shaping_is_capped(cx: &mut TestAppContext) {
-    let source: Arc<str> = "α界value ".repeat(100_000).into();
+    let source: Arc<str> = "א界🙂".repeat(112_000).into();
     let (code, _, vcx) = mount(cx, source.clone());
     assert!(code.stats().max_shaped_bytes <= guiraffe_code::MAX_SHAPED_LINE_BYTES);
     assert_eq!(code.stats().last_truncated_rows, 1);
@@ -589,6 +589,34 @@ fn horizontal_scroll_is_bounded_and_long_line_shaping_is_capped(cx: &mut TestApp
             cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
             Some(source.as_ref())
         )
+    });
+}
+
+#[gpui_kit::test]
+fn scroll_burst_and_theme_change_preserve_selection_and_keyboard_focus(cx: &mut TestAppContext) {
+    let line = "א界🙂";
+    let source: Arc<str> = format!("{line}\n").repeat(128).into();
+    let (code, _, vcx) = mount(cx, source);
+    let selection = SourceRange::new(Position::new(120, 0), Position::new(120, line.len()));
+    vcx.update(|window, cx| {
+        code.focus(window, cx);
+        code.select(Some(selection), cx);
+        for target in 0..127 {
+            code.scroll_to_line(target, cx);
+            if target == 64 {
+                guiraffe_core::set_scheme(guiraffe_core::Scheme::Dark, cx);
+            }
+        }
+    });
+    vcx.run_until_parked();
+    assert_eq!(code.selection(), Some(selection));
+    assert!(code.anchor_in_window(selection.start).is_some());
+    vcx.simulate_keystrokes("ctrl-c");
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+            Some(line)
+        );
     });
 }
 

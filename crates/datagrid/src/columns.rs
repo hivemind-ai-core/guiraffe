@@ -150,6 +150,26 @@ impl ColumnDef {
         }
     }
 
+    /// Bound the text sent to layout, preserving the full value for editing and copying.
+    pub(crate) fn format_preview(&self, cell: CellRef<'_>, out: &mut String) {
+        const LIMIT: usize = 4096;
+        const ELLIPSIS: &str = "…";
+        let clip_at = |text: &str| text.floor_char_boundary(LIMIT - ELLIPSIS.len());
+        if let CellRef::Text(text) = cell
+            && self.formatter.is_none()
+            && text.len() > LIMIT
+        {
+            out.push_str(&text[..clip_at(text)]);
+            out.push_str(ELLIPSIS);
+            return;
+        }
+        self.format(cell, out);
+        if out.len() > LIMIT {
+            out.truncate(clip_at(out));
+            out.push_str(ELLIPSIS);
+        }
+    }
+
     pub fn compare(&self, a: &CellRef<'_>, b: &CellRef<'_>) -> Ordering {
         match &self.comparator {
             Some(c) => c(a, b),

@@ -151,7 +151,8 @@ impl Interaction {
             .and_then(|g| g.preview(id, self.editor.graph(), self.grid))
     }
     pub fn handle_at(&mut self, at: Point, kind: HandleKind) -> Option<Endpoint> {
-        let radius = 9. / self.viewport.zoom;
+        // Keep tiny handles easy to pick while covering the full visible dot at high zoom.
+        let radius = (9. / self.viewport.zoom).max(crate::HANDLE_RADIUS);
         self.editor.scene().query_nodes(
             Rect {
                 origin: at,

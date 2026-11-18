@@ -136,7 +136,8 @@ impl TracksView {
         }
     }
 
-    /// Opt into (or out of) Tab focus regardless of the enclosing focus scope.
+    /// `Some(true)` enables Tab and focus on item clicks. `None` follows the
+    /// enclosing Tab scope and preserves focus on clicks. `Some(false)` opts out.
     pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
         self.focusable = v;
         cx.notify();
@@ -240,16 +241,22 @@ impl TracksView {
 
     /// Begin a drag at body-local pixel `x` on `track`. Returns whether a clip was grabbed.
     pub fn press(&mut self, track: usize, x: f64) -> bool {
-        // Any press on a clip selects it (locked clips too); only editable clips drag.
-        if let Some((_, tr)) = self.tracks.get(track)
-            && let Some((clip, _)) = hit(tr, &self.surface.axis, x, ResizeEdges::None)
-        {
+        self.press_item(track, x);
+        self.drag.is_some()
+    }
+
+    fn press_item(&mut self, track: usize, x: f64) -> bool {
+        let hit = self
+            .tracks
+            .get(track)
+            .and_then(|(_, track)| hit(track, &self.surface.axis, x, ResizeEdges::None));
+        if let Some((clip, _)) = hit {
             self.selected = Some((track, clip));
         }
         self.drag = self
             .grab(track, x)
             .map(|(clip, grab)| Drag { track, clip, grab });
-        self.drag.is_some()
+        hit.is_some()
     }
 
     /// What a press at (`track`, `x`) would grab, honouring locks and the resize policy.
@@ -503,12 +510,15 @@ impl Render for TracksView {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, e: &MouseDownEvent, window, cx| {
-                                    // Pointer edits never take keyboard focus (§12.3).
+                                    // Claim focus only for a clicked item in an explicitly opted-in editor.
                                     window.prevent_default();
                                     cx.notify();
                                     let (x, y) = this.local(e.position);
                                     if y >= 0.0 {
-                                        this.press((y / TRACK_H) as usize, x);
+                                        let hit = this.press_item((y / TRACK_H) as usize, x);
+                                        if hit && this.focusable == Some(true) {
+                                            this.focus.focus(window, cx);
+                                        }
                                     }
                                 }),
                             )

@@ -56,8 +56,10 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
         .into_iter()
         .filter(|s| {
             !s.name.starts_with("flow-")
+                && !matches!(s.name, "timeline-box-select-100k" | "timeline-draw-bars-100k")
                 && !s.name.starts_with("data-ui-")
                 && s.name != "datagrid-sort-1m"
+                && s.name != "code-index-10m"
                 // Compiling a chart scene for a new viewport builds its output geometry; it is
                 // budgeted below (bounded by the viewport, independent of data size). Repaints
                 // reuse the cached scene.
@@ -77,6 +79,28 @@ fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     guiraffe_bench::suites::flow_query();
     let (_, counts) = count_allocations(guiraffe_bench::suites::flow_query)?;
     assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn production_flow_pan_and_hit_reuse_storage() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::flow_pan_hit_50k;
+    flow_pan_hit_50k();
+    let (_, counts) = count_allocations(flow_pan_hit_50k)?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn production_timeline_edits_have_bounded_allocation_traffic() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{timeline_box_select_100k, timeline_draw_bars_100k};
+    timeline_box_select_100k();
+    timeline_draw_bars_100k();
+    let (_, selection) = count_allocations(timeline_box_select_100k)?;
+    let (_, bars) = count_allocations(timeline_draw_bars_100k)?;
+    assert!(selection.allocations <= 64, "{selection:?}");
+    assert!(selection.bytes <= 16 * 1024, "{selection:?}");
+    assert_eq!(bars.allocations, 0);
     Ok(())
 }
 
@@ -123,6 +147,42 @@ fn datagrid_sort_allocates_only_the_permutation() -> anyhow::Result<()> {
     // never a copy of row data.
     assert!(counts.allocations <= 8, "{counts:?}");
     assert!(counts.bytes <= 120_000_000, "{counts:?}");
+    Ok(())
+}
+
+#[test]
+fn code_document_index_allocations_are_bounded() -> anyhow::Result<()> {
+    // Warm the shared source before measuring only index construction.
+    guiraffe_bench::suites::code_index_ten_million();
+    let (_, counts) = count_allocations(guiraffe_bench::suites::code_index_ten_million)?;
+    let lines = 10_000_000;
+    let index_bytes = lines * (size_of::<u64>() + size_of::<usize>());
+    assert_eq!(counts.allocations, 2, "{counts:?}");
+    assert_eq!(counts.bytes, index_bytes as u64, "{counts:?}");
+    Ok(())
+}
+
+#[test]
+fn grid_permutation_and_inverse_stay_within_row_budget() -> anyhow::Result<()> {
+    use guiraffe_datagrid::{
+        CellRef, FnSource,
+        order::{FilterSpec, RowOrder, compute_order},
+    };
+    use std::sync::{Arc, atomic::AtomicBool};
+    let rows = 1_000_000;
+    let source = FnSource::new(rows, |row, _| CellRef::Int(row as i64));
+    let filter = FilterSpec {
+        source_col: 0,
+        pred: Arc::new(|_| true),
+    };
+    let order = compute_order(&source, &[filter], &[], &AtomicBool::new(false))
+        .map_err(|_| anyhow::anyhow!("unexpected cancellation"))?;
+    let RowOrder::Indices(indices) = &order else {
+        anyhow::bail!("filtered row order must store a permutation");
+    };
+    let (inverse, counts) = count_allocations(|| order.inverse(rows))?;
+    assert_eq!(inverse.view_row(rows - 1), Some(rows - 1));
+    assert!(std::mem::size_of_val(indices.as_ref()) as u64 + counts.bytes <= 16 * rows as u64);
     Ok(())
 }
 
@@ -183,6 +243,42 @@ fn chart_scene_compile_allocations_are_bounded_by_the_viewport_not_the_data() ->
         "chart-scatter-100k allocates {} (> {BUDGET})",
         scatter.allocations
     );
+    Ok(())
+}
+
+// The budget is zero allocations for warmed CPU layout traversal at overview and
+// detail zoom. Native painting shapes at most one label per visible segment wider
+// than 32 px. GPU scene storage and the text shaper are outside this counter.
+#[test]
+fn warmed_flamegraph_million_frame_traversal_allocates_nothing() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::flamegraph_million;
+    flamegraph_million();
+    let (_, counts) = count_allocations(flamegraph_million)?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn large_timeline_bar_storage_is_one_value_per_bar() -> anyhow::Result<()> {
+    const BARS: usize = 100_000;
+    let (bars, storage) = count_allocations(|| guiraffe_timeline::BarCurve::new(BARS, -1., 1.))?;
+    assert_eq!(bars.values().len(), BARS);
+    // One shared allocation containing the vector header, plus the value buffer.
+    assert!(storage.allocations <= 2, "{storage:?}");
+    assert!(
+        storage.bytes <= (BARS * size_of::<f64>() + 64) as u64,
+        "{storage:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn production_scatter_recompute_bounds_allocation_traffic() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::chart_scatter_1m_100_series;
+    chart_scatter_1m_100_series();
+    let (_, counts) = count_allocations(chart_scatter_1m_100_series)?;
+    assert!(counts.allocations <= 1_024, "{counts:?}");
+    assert!(counts.bytes <= 128 * 1024 * 1024, "{counts:?}");
     Ok(())
 }
 
