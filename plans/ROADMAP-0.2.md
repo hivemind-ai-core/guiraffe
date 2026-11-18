@@ -59,7 +59,9 @@ Status audit of `guiraffe import` vs Mocket's JSON; write **spec/19-mocket-inter
   layout runs off the UI thread, cancellable; deterministic for tests. Evaluate ELK-style options
   and existing crates (e.g. a Rust Sugiyama/`layout-rs`, force engines) before writing our own.
 
-- **Drag & drop framework (0.2)**, on GPUI's typed `on_drag`/`on_drag_move`/`on_drop`:
+- **Drag & drop framework (0.2)**, on GUIraffe-managed pointer gestures (decision 2026-11-18: GPUI's native
+  drag refreshes the whole window on every move on both backends, defeating render isolation; native
+  drag is kept only for opt-in external/file drops):
   a `DragSource`/`DropTarget` API with typed payloads, drag previews (ghost), drop indicators,
   auto-scroll near edges, keyboard alternative (pick up with Space, move with arrows, drop with
   Space, Esc cancels — accessible DnD), cancel on Esc, constraints (axis lock, containment, accept
