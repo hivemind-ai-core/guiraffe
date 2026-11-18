@@ -166,6 +166,29 @@ fn materialised_million_rows_keep_viewport_sized_slots(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
+fn long_multilingual_cells_have_bounded_labels_and_full_copy(cx: &mut TestAppContext) {
+    let value = "א界🙂".repeat(112_000);
+    let source = VecSource::new(vec![value.clone()]).column(|value| CellRef::Text(value));
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(source, columns(1), cx));
+    let end = value.floor_char_boundary(4096 - "…".len());
+    let label = format!("{}…", &value[..end]);
+    vcx.update(|window, cx| {
+        assert!(window.try_find_by_label(&label).is_some());
+        grid.select(CellPos::new(0, 0), false, false, cx);
+        assert!(grid.copy(cx).is_some());
+    });
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(value.as_str()),
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn click_shift_click_and_ctrl_click_select_rows(cx: &mut TestAppContext) {
     let (grid, _, events, vcx) = mount(cx, |cx| {
         let g = GridHandle::new(million(), columns(5), cx);

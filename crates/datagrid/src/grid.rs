@@ -3055,7 +3055,7 @@ impl Render for RowView {
             let value = def.map_or(CellRef::Empty, |d| m.source.cell(src_row, d.source));
             text.clear();
             if let Some(d) = def {
-                d.format(value, &mut text);
+                d.format_preview(value, &mut text);
             }
             let end = match def.map_or(Align::Auto, |d| d.align) {
                 Align::Auto => value.is_numeric(),
