@@ -242,6 +242,9 @@ impl Render for SpeedDial {
             .id(id(0))
             .debug_selector(|| "speed-dial-primary".into())
             .aria_expanded(self.open)
+            .absolute()
+            .left_0()
+            .top_0()
             .size_full()
             .flex()
             .items_center()
@@ -263,6 +266,8 @@ impl Render for SpeedDial {
             .child(
                 canvas(move |b, _, _| measured.set(b), |_, _, _, _| {})
                     .absolute()
+                    .left_0()
+                    .top_0()
                     .size_full(),
             )
             .when(self.open, |el| {

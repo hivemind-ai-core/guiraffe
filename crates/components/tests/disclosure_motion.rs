@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui_kit::{
-    Context, Entity, IntoElement, Modifiers, ParentElement, Render, Styled, TestAppContext,
-    VisualTestContext, Window, assets::IconName, div, point, px,
+    Context, Entity, IntoElement, KeyUpEvent, Keystroke, Modifiers, ParentElement, Render, Styled,
+    TestAppContext, VisualTestContext, Window, assets::IconName, div, point, px,
 };
 use guiraffe_components::*;
 use guiraffe_test::render::RenderCounter;
@@ -28,6 +28,14 @@ fn frames(cx: &mut VisualTestContext, n: usize) {
         });
         cx.run_until_parked();
     }
+}
+
+fn tap_enter(cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("enter");
+    cx.simulate_event(KeyUpEvent {
+        keystroke: Keystroke::parse("enter").expect("valid key"),
+    });
+    cx.run_until_parked();
 }
 
 #[gpui_kit::test]
@@ -175,7 +183,7 @@ fn accordion_controlled_requests_leave_the_authoritative_value_in_place(cx: &mut
     });
     frames(window, 2);
     window.update(|window, cx| window.focus_next(cx));
-    window.simulate_keystrokes("enter");
+    tap_enter(window);
     assert_eq!(*events.borrow(), [AccordionChange(vec![])]);
     assert_eq!(window.update(|_, cx| control.read(cx).open().to_vec()), [0]);
 }
@@ -208,11 +216,14 @@ fn dial_keyboard_navigation_activates_actions_and_escape_dismisses(cx: &mut Test
     });
     frames(window, 2);
     window.update(|window, cx| window.focus_next(cx));
-    window.simulate_keystrokes("enter");
+    tap_enter(window);
     frames(window, 45);
-    window.simulate_keystrokes("right enter");
+    window.simulate_keystrokes("right");
+    tap_enter(window);
     frames(window, 45);
-    window.simulate_keystrokes("enter escape");
+    tap_enter(window);
+    frames(window, 1);
+    window.simulate_keystrokes("escape");
     assert_eq!(
         *events.borrow(),
         [
