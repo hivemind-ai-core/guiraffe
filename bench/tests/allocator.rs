@@ -185,3 +185,12 @@ fn chart_scene_compile_allocations_are_bounded_by_the_viewport_not_the_data() ->
     );
     Ok(())
 }
+
+#[test]
+fn warmed_flamegraph_million_frame_traversal_allocates_nothing() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::flamegraph_million;
+    flamegraph_million();
+    let (_, counts) = count_allocations(flamegraph_million)?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}

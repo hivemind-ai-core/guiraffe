@@ -356,6 +356,39 @@ pub fn chart_scatter_hundred_thousand() {
     black_box(chart.scene(1200., 440., chart.x_domain(), &Default::default()));
 }
 
+/// Warm visible-row traversal over one million frames at overview and detail zoom.
+pub fn flamegraph_million() {
+    use guiraffe_flamegraph::{FlameLayout, Frame, FrameSource};
+    use std::sync::{Arc, OnceLock};
+
+    struct Profile;
+    impl FrameSource for Profile {
+        fn len(&self) -> usize {
+            1_000_000
+        }
+        fn frame(&self, index: usize) -> Frame<'_> {
+            Frame {
+                id: index as u64,
+                parent: None,
+                self_value: 1.,
+                total: 1.,
+                label: "frame",
+                package: "bench",
+            }
+        }
+    }
+    static LAYOUT: OnceLock<FlameLayout> = OnceLock::new();
+    let layout = LAYOUT.get_or_init(|| {
+        FlameLayout::new(Arc::new(Profile))
+            .unwrap_or_else(|error| panic!("invalid flame benchmark: {error:?}"))
+    });
+    for domain in [layout.domain(), 490_000.0..510_000.0] {
+        layout.visit_row(0, domain, 1200., None, |segment| {
+            black_box(segment);
+        });
+    }
+}
+
 /// Shared registration table consumed by the CLI, criterion and iai-callgrind.
 /// Add workloads here once; each tool expands its own registration from this list.
 #[macro_export]
@@ -364,6 +397,7 @@ macro_rules! with_suites {
         $callback! {
             (core_variants, "core-variants"),
             (chart_line_million, "chart-line-1m"),
+            (flamegraph_million, "flamegraph-1m"),
             (chart_scatter_hundred_thousand, "chart-scatter-100k"),
             (code_scroll_million,"code-scroll-1m"),
             (code_snapshot_arc_clone,"code-snapshot-arc-clone"),
