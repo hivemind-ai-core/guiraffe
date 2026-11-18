@@ -313,3 +313,31 @@ impl EdgeAutoScroll {
         window.on_next_frame(move |window, cx| self.tick(gesture, window, cx));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{point, size};
+
+    #[test]
+    fn edge_scroll_ramps_and_stops_outside_the_viewport() {
+        let displacement = |position| edge_scroll(px(position), px(10.), px(110.), px(20.), px(8.));
+        assert_eq!(displacement(9.), px(0.));
+        assert_eq!(displacement(20.), px(-4.));
+        assert_eq!(displacement(60.), px(0.));
+        assert_eq!(displacement(100.), px(4.));
+        assert_eq!(displacement(111.), px(0.));
+    }
+
+    #[test]
+    fn axis_lock_and_containment_project_drag_coordinates() {
+        let limits = Constraints {
+            axis: Axis::Vertical,
+            containment: Some(Bounds::new(point(px(10.), px(20.)), size(px(60.), px(40.)))),
+        };
+        assert_eq!(
+            limits.position(point(px(30.), px(30.)), point(px(0.), px(100.))),
+            point(px(30.), px(60.))
+        );
+    }
+}

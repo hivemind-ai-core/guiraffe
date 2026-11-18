@@ -1,10 +1,11 @@
 use crate::{
-    DragSource, DropTarget, KeyboardDrag, KeyboardEvent, announce,
+    DragSource, DropTarget, EdgeAutoScroll, KeyboardDrag, KeyboardEvent, announce,
     sortable::{Selection, SortEvent, Sortable},
 };
 use gpui_kit::{
     AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Window,
+    ParentElement, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Window,
     base::{TestSupportExt, spring},
     component::ActiveTheme,
     div, px,
@@ -24,6 +25,7 @@ pub struct Card {
 /// A sortable board with one column per list. Focus and selection follow card IDs.
 pub struct SortableBoard {
     headings: Vec<SharedString>,
+    scroll: Vec<(ScrollHandle, EdgeAutoScroll)>,
     cards_per_row: u16,
     cards: Sortable<Card>,
     focus: HashMap<usize, FocusHandle>,
@@ -43,8 +45,17 @@ impl SortableBoard {
             .flatten()
             .map(|card| (card.id, cx.focus_handle()))
             .collect();
+        let scroll = headings
+            .iter()
+            .map(|_| {
+                let handle = ScrollHandle::new();
+                let edge = EdgeAutoScroll::new(handle.clone(), px(28.), px(10.));
+                (handle, edge)
+            })
+            .collect();
         Self {
             headings,
+            scroll,
             cards_per_row: 1,
             cards: Sortable::new(cards),
             focus,
@@ -291,6 +302,21 @@ impl Render for SortableBoard {
                 let position = spring((("card", id), "sortable-position"), y, motion, window, cx);
                 Some(row.top(position - y))
             });
+            let (scroll, auto_scroll) = &self.scroll[list];
+            let viewport = auto_scroll.attach::<Selection, _>(
+                div()
+                    .id(("card-viewport", list))
+                    .max_h(px(300.))
+                    .overflow_y_scroll()
+                    .track_scroll(scroll)
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(self.cards_per_row)
+                            .gap(px(CARD_GAP))
+                            .children(rows),
+                    ),
+            );
             div()
                 .flex_1()
                 .min_w_0()
@@ -298,13 +324,7 @@ impl Render for SortableBoard {
                 .flex_col()
                 .gap_2()
                 .child(self.headings[list].clone())
-                .child(
-                    div()
-                        .grid()
-                        .grid_cols(self.cards_per_row)
-                        .gap(px(CARD_GAP))
-                        .children(rows),
-                )
+                .child(viewport)
                 .child(target(
                     div()
                         .id(("end", list))
