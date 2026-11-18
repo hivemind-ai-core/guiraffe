@@ -1,7 +1,9 @@
 //! Opt-in allocator for per-thread allocation assertions.
 //!
-//! Install once in a test or benchmark executable:
-//! ```
+//! Install once in a test or benchmark executable (exercised for real by
+//! `bench/tests/allocator.rs`; not compiled as a doctest because workspace-wide doctests can
+//! see two feature-builds of a dependency and fail to link, rustdoc E0460):
+//! ```ignore
 //! use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
 //! #[global_allocator]
 //! static ALLOCATOR: CountingAllocator = CountingAllocator;
