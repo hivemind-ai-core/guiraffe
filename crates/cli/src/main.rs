@@ -16,6 +16,7 @@ mod preview;
 mod scaffold;
 
 const CATALOGUE: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.json"));
+const CATALOGUE_REFERENCE: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.md"));
 const SCREEN_SCHEMA: &str = include_str!(concat!(env!("OUT_DIR"), "/screen.schema.json"));
 
 use std::path::PathBuf;
@@ -53,7 +54,8 @@ fn run() -> Result<()> {
             match args.get(1..).unwrap_or_default() {
                 [flag] if flag == "--json" => print!("{CATALOGUE}"),
                 [flag] if flag == "--schema" => print!("{SCREEN_SCHEMA}"),
-                _ => bail!("usage: guiraffe catalog --json | --schema"),
+                [flag] if flag == "--markdown" => print!("{CATALOGUE_REFERENCE}"),
+                _ => bail!("usage: guiraffe catalog --json | --schema | --markdown"),
             }
             Ok(())
         }
@@ -106,7 +108,7 @@ fn run() -> Result<()> {
         }
         Some("--help" | "-h") | None => {
             println!(
-                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe add [<crate>…]\nguiraffe catalog --json | --schema\nguiraffe doctor"
+                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe add [<crate>…]\nguiraffe catalog --json | --schema | --markdown\nguiraffe doctor"
             );
             Ok(())
         }

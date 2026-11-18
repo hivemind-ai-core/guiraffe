@@ -19,5 +19,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_string_pretty(&value)? + "\n",
         )?;
     }
+    fs::write(output.join("catalogue.md"), catalog::reference_markdown())?;
     Ok(())
 }

@@ -154,6 +154,15 @@ impl PropSpec {
     }
 }
 
+impl EventSpec {
+    fn schema(&self) -> Value {
+        match self.payload_type {
+            "selection" => json!({"type":["string","null"]}),
+            ty => json!({"type":ty}),
+        }
+    }
+}
+
 impl WidgetSpec {
     pub fn example(&self) -> Value {
         let props: serde_json::Map<String, Value> = self
@@ -177,14 +186,7 @@ impl WidgetSpec {
         let events = self
             .events
             .iter()
-            .map(|e| {
-                let payload = if e.payload_type == "selection" {
-                    json!({"type":["string","null"]})
-                } else {
-                    json!({"type":e.payload_type})
-                };
-                json!({"id":e.id,"payloadSchema":payload})
-            })
+            .map(|e| json!({"id":e.id,"payloadSchema":e.schema()}))
             .collect::<Vec<_>>();
         let slots = if self.accepts_children {
             json!([{"name":"children","min":0,"max":null,"accepted":KINDS}])
@@ -259,4 +261,49 @@ pub fn screen_schema() -> Value {
         "type":"object","required":["version","root"],"additionalProperties":false,
         "properties":{"version":{"const":1},"root":{"$ref":"#/$defs/node"}},
         "$defs":{"node":{"oneOf":WIDGETS.iter().map(|w| w.node_schema()).collect::<Vec<_>>()}}})
+}
+
+/// Render a reference for screen authors from the same metadata consumed by the CLI and showcase.
+pub fn reference_markdown() -> String {
+    use std::fmt::Write as _;
+
+    let mut text = format!("# DataUi widget reference\n\nCatalogue {VERSION}\n");
+    for widget in WIDGETS {
+        let _ = write!(
+            text,
+            "\n## `{}`\n\n{}\n\n- Crate `{}`\n- State {}\n- Accessibility role `{}`\n",
+            widget.id, widget.summary, widget.krate, widget.state, widget.a11y_role,
+        );
+        if widget.accepts_children {
+            text.push_str("- The `children` slot accepts any number of document widgets.\n");
+        }
+        if !widget.theme_tokens.is_empty() {
+            let _ = writeln!(text, "- Theme tokens {}", widget.theme_tokens.join(", "));
+        }
+        for property in widget.props {
+            let required = if property.required {
+                "required"
+            } else {
+                "optional"
+            };
+            let _ = writeln!(
+                text,
+                "- Property `{}` ({required}) accepts `{}` and defaults to `{}`.",
+                property.name,
+                property.schema(),
+                property.default_json,
+            );
+        }
+        for event in widget.events {
+            let _ = writeln!(
+                text,
+                "- Event `{}` has payload `{}`.",
+                event.id,
+                event.schema()
+            );
+        }
+        let example = serde_json::to_string_pretty(&widget.example()).unwrap_or_default();
+        let _ = writeln!(text, "\n```json\n{example}\n```");
+    }
+    text
 }
