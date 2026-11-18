@@ -13,6 +13,7 @@ pub struct Channel {
     pub color: guiraffe_core::ColorName,
     pub(crate) keys: Vec<f64>,
     pub(crate) decor: Vec<(Option<f64>, KeyShape)>,
+    pub(crate) has_keyframe_values: bool,
     pub children: Vec<Channel>,
     pub parent: Option<usize>,
     pub group: bool,
@@ -42,6 +43,7 @@ impl Channel {
             color: guiraffe_core::ColorName::Blue,
             keys,
             decor,
+            has_keyframe_values: false,
             children: Vec::new(),
             parent: None,
             group: false,
@@ -69,6 +71,7 @@ impl Channel {
                 .keys
                 .binary_search_by(|t| t.total_cmp(&if k.t == 0. { 0. } else { k.t }))
             {
+                c.has_keyframe_values = true;
                 c.decor[i] = (
                     Some(k.v),
                     match k.interp {
@@ -129,6 +132,7 @@ impl Channel {
             self.keys.iter().position(|t| *t == time),
         ) {
             self.decor[to] = source.decor[from];
+            self.has_keyframe_values |= source.has_keyframe_values;
         }
     }
     pub(crate) fn remove_time(&mut self, t: f64) -> bool {

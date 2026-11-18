@@ -288,47 +288,60 @@ impl Render for DopeSheet {
         }
         let axis = self.surface.axis;
         let offset = self.offset;
-        let keys: Vec<_> = rows
-            .iter()
-            .flat_map(|(r, row)| {
-                let c = &self.model.channels[row.channel];
-                let keys = if row.summary {
-                    self.model.summary_keys(row.channel)
+        let mut keys = Vec::new();
+        for (r, row) in &rows {
+            let channel = row.channel;
+            let c = &self.model.channels[channel];
+            if !c.visible {
+                continue;
+            }
+            let times = if row.summary {
+                self.model.summary_keys(channel)
+            } else {
+                c.keys()
+            };
+            let first = times.partition_point(|t| *t < axis.t(-KEY_GRAB));
+            let end = times.partition_point(|t| *t <= axis.t(axis.width + KEY_GRAB));
+            let mut index = first;
+            let has_selection = self
+                .model
+                .selected
+                .range((channel, 0)..=(channel, u64::MAX))
+                .next()
+                .is_some();
+            let compact = !row.summary
+                && !c.has_keyframe_values
+                && !has_selection
+                && end.saturating_sub(first) > (axis.width / 4.) as usize;
+            let locked = !self.model.editable(channel);
+            let y = *r as f64 * f64::from(ROW_H) - offset;
+            while index < end {
+                let time = times[index];
+                let x = axis.x(time);
+                let selected = if row.summary {
+                    self.model.summary_selected(channel, time)
                 } else {
-                    c.keys()
+                    self.model.selected.contains(&(channel, time.to_bits()))
                 };
-                let lo = keys.partition_point(|t| *t < axis.start - KEY_GRAB * axis.scale);
-                let hi = keys.partition_point(|t| *t <= axis.end() + KEY_GRAB * axis.scale);
-                keys.get(lo..hi)
-                    .unwrap_or(&[])
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .filter(|(_, t)| {
-                        c.visible && axis.x(*t) >= -KEY_GRAB && axis.x(*t) <= axis.width + KEY_GRAB
-                    })
-                    .map(|(i, t)| {
-                        let i = i + lo;
-                        let selected = if row.summary {
-                            self.model.summary_selected(row.channel, t)
-                        } else {
-                            self.model.selected.contains(&(row.channel, t.to_bits()))
-                        };
-                        let (shape, hold) = self.model.key_display(row.channel, row.summary, i);
-                        (
-                            axis.x(t),
-                            *r as f64 * f64::from(ROW_H) - offset,
-                            selected,
-                            shape,
-                            hold.map(|t| axis.x(t)),
-                            c.muted,
-                            row.summary,
-                            !self.model.editable(row.channel),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+                let (shape, hold) = self.model.key_display(channel, row.summary, index);
+                keys.push((
+                    x,
+                    y,
+                    selected,
+                    shape,
+                    hold.map(|t| axis.x(t)),
+                    c.muted,
+                    row.summary,
+                    locked,
+                ));
+                index += 1;
+                if compact {
+                    // Overlapping undecorated diamonds represent the same visual
+                    // region. Keep source times intact for hit testing and edits.
+                    index += times[index..end].partition_point(|&t| t < time + 4. * axis.scale);
+                }
+            }
+        }
         let body = self.body.clone();
         let owner = cx.entity_id();
         let key_theme = theme.clone();
