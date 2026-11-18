@@ -15,6 +15,7 @@ instruction-counts = ["dep:iai-callgrind"]
 [dependencies]
 guiraffe-code.workspace = true
 guiraffe-charts.workspace = true
+guiraffe-timeline.workspace = true
 guiraffe-datagrid.workspace = true
 anyhow.workspace = true
 serde.workspace = true

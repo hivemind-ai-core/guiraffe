@@ -101,35 +101,38 @@ pub fn code_snapshot_arc_clone() {
 // Each flow invocation is described below. Fixture creation is paid only by
 // warmup; the measured move/delete workloads restore their document each time.
 fn flow_graph() -> &'static guiraffe_flow_core::Graph {
-    use guiraffe_flow_core::{Edge, Graph, Node, Point};
-    static GRAPH: std::sync::OnceLock<Graph> = std::sync::OnceLock::new();
-    GRAPH.get_or_init(|| {
-        let graph = Graph::from_parts(
-            (0..5000).map(|id| {
-                let mut n = Node::new(
-                    id,
-                    "node",
-                    Point::new((id % 100) as f32 * 240., (id / 100) as f32 * 150.),
-                );
-                if id == 1 {
-                    n.parent = Some(0);
-                }
-                n
-            }),
-            (0..10000).map(|id| {
-                Edge::new(
-                    id,
-                    id % 5000,
-                    (id % 5000 + if id < 5000 { 1 } else { 100 }) % 5000,
-                )
-            }),
-        );
-        match graph {
-            Ok(graph) => graph,
-            Err(error) => panic!("flow benchmark fixture rejected: {error}"),
-        }
-    })
+    static GRAPH: std::sync::OnceLock<guiraffe_flow_core::Graph> = std::sync::OnceLock::new();
+    GRAPH.get_or_init(|| build_flow_graph(5_000))
 }
+
+fn build_flow_graph(count: u64) -> guiraffe_flow_core::Graph {
+    use guiraffe_flow_core::{Edge, Graph, Node, Point};
+    let graph = Graph::from_parts(
+        (0..count).map(|id| {
+            let mut node = Node::new(
+                id,
+                "node",
+                Point::new((id % 100) as f32 * 240., (id / 100) as f32 * 150.),
+            );
+            if id == 1 {
+                node.parent = Some(0);
+            }
+            node
+        }),
+        (0..count * 2).map(|id| {
+            Edge::new(
+                id,
+                id % count,
+                (id % count + if id < count { 1 } else { 100 }) % count,
+            )
+        }),
+    );
+    match graph {
+        Ok(graph) => graph,
+        Err(error) => panic!("flow benchmark fixture rejected: {error}"),
+    }
+}
+
 fn flow_editor(f: impl FnOnce(&mut guiraffe_flow_core::Editor)) {
     thread_local! {static EDITOR:std::cell::RefCell<Option<guiraffe_flow_core::Editor>>=const {std::cell::RefCell::new(None)};}
     EDITOR.with(|cell| {
@@ -356,6 +359,115 @@ pub fn chart_scatter_hundred_thousand() {
     black_box(chart.scene(1200., 440., chart.x_domain(), &Default::default()));
 }
 
+fn production_flow_graph() -> &'static guiraffe_flow_core::Graph {
+    static GRAPH: std::sync::OnceLock<guiraffe_flow_core::Graph> = std::sync::OnceLock::new();
+    GRAPH.get_or_init(|| build_flow_graph(50_000))
+}
+
+pub fn flow_build_50k() {
+    let scene = guiraffe_flow_core::Scene::new(black_box(production_flow_graph().clone()));
+    assert!(black_box(scene).is_ok());
+}
+
+pub fn flow_pan_hit_50k() {
+    use guiraffe_flow_core::{Point, Rect, Scene, Visible};
+    static SCENE: std::sync::OnceLock<Scene> = std::sync::OnceLock::new();
+    let scene = SCENE.get_or_init(|| match Scene::new(production_flow_graph().clone()) {
+        Ok(scene) => scene,
+        Err(error) => panic!("flow production fixture rejected: {error}"),
+    });
+    thread_local! {
+        static VISIBLE: std::cell::RefCell<Visible> = Default::default();
+        static HIT: std::cell::RefCell<Vec<u64>> = Default::default();
+    }
+    VISIBLE.with_borrow_mut(|visible| {
+        HIT.with_borrow_mut(|hit| {
+            for row in [0, 250, 490] {
+                let y = row as f32 * 150.;
+                scene.visible(black_box(Rect::new(0., y, 1920., 1080.)), visible);
+                black_box(visible.nodes.len());
+                black_box(visible.edges.len());
+                black_box(scene.hit_node(Point::new(1., y + 1.), hit));
+            }
+        });
+    });
+}
+
+pub fn timeline_box_select_100k() {
+    use guiraffe_timeline::{Channel, DopeModel};
+    thread_local! {
+        static MODEL: std::cell::RefCell<DopeModel> = std::cell::RefCell::new(DopeModel::new(
+            vec![Channel::new("Production keys", (0..100_000).map(f64::from).collect())],
+        ));
+    }
+    MODEL.with_borrow_mut(|model| {
+        for start in [0., 50_000., 99_900.] {
+            model.box_select(0..=0, start, start + 99., false);
+            assert_eq!(black_box(model.selected.len()), 100);
+        }
+    });
+}
+
+pub fn timeline_draw_bars_100k() {
+    use guiraffe_timeline::BarCurve;
+    thread_local! {
+        static BARS: std::cell::RefCell<BarCurve> =
+            std::cell::RefCell::new(BarCurve::new(100_000, -1., 1.));
+    }
+    BARS.with_borrow_mut(|bars| {
+        black_box(bars.draw((0., 1.), (99_999., -1.)));
+        black_box(bars.draw((99_999., 1.), (0., -1.)));
+    });
+}
+
+fn production_line_spec() -> guiraffe_charts::ChartSpec {
+    use guiraffe_charts::{Channels, ChartSpec, Layer, Mark};
+    ChartSpec::new("Production line").layer(Layer::new(
+        Mark::Line,
+        (0..10_000_000_u32).collect::<Vec<_>>(),
+        Channels::new(
+            |index: &u32| f64::from(*index),
+            |index| (f64::from(*index) * 0.002).sin(),
+        ),
+    ))
+}
+
+pub fn chart_prepare_line_10m() {
+    black_box(production_line_spec().prepare());
+}
+
+pub fn chart_line_10m() {
+    use guiraffe_charts::{Domain, PreparedChart};
+    static LINE: std::sync::OnceLock<PreparedChart> = std::sync::OnceLock::new();
+    let chart = LINE.get_or_init(|| production_line_spec().prepare());
+    let hidden = Default::default();
+    black_box(chart.scene(1200., 440., chart.x_domain(), &hidden));
+    for start in [0., 5_000_000., 9_980_000.] {
+        if let Some(domain) = Domain::new(start, start + 19_999.) {
+            black_box(chart.scene(1200., 440., domain, &hidden));
+        }
+    }
+}
+
+pub fn chart_scatter_1m_100_series() {
+    use guiraffe_charts::{Channels, ChartSpec, Layer, Mark, PreparedChart};
+    static SCATTER: std::sync::OnceLock<PreparedChart> = std::sync::OnceLock::new();
+    let chart = SCATTER.get_or_init(|| {
+        ChartSpec::new("Production scatter")
+            .layer(Layer::new(
+                Mark::Point,
+                (0..1_000_000_u32).collect::<Vec<_>>(),
+                Channels::new(
+                    |index: &u32| f64::from(*index),
+                    |index| f64::from(index.wrapping_mul(2_654_435_761).rotate_left(11)),
+                )
+                .group(|index| index % 100),
+            ))
+            .prepare()
+    });
+    black_box(chart.scene(1200., 440., chart.x_domain(), &Default::default()));
+}
+
 /// Shared registration table consumed by the CLI, criterion and iai-callgrind.
 /// Add workloads here once; each tool expands its own registration from this list.
 #[macro_export]
@@ -363,6 +475,13 @@ macro_rules! with_suites {
     ($callback:ident) => {
         $callback! {
             (core_variants, "core-variants"),
+            (flow_build_50k, "flow-build-50k"),
+            (flow_pan_hit_50k, "flow-pan-hit-50k"),
+            (timeline_box_select_100k, "timeline-box-select-100k"),
+            (timeline_draw_bars_100k, "timeline-draw-bars-100k"),
+            (chart_prepare_line_10m, "chart-prepare-line-10m"),
+            (chart_line_10m, "chart-line-10m"),
+            (chart_scatter_1m_100_series, "chart-scatter-1m-100-series"),
             (chart_line_million, "chart-line-1m"),
             (chart_scatter_hundred_thousand, "chart-scatter-100k"),
             (code_scroll_million,"code-scroll-1m"),

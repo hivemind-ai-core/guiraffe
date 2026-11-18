@@ -3374,6 +3374,7 @@ dependencies = [
  "guiraffe-core",
  "guiraffe-datagrid",
  "guiraffe-flow-core",
+ "guiraffe-timeline",
  "guiraffe-ui",
  "guiraffe-windows",
  "iai-callgrind",
@@ -3506,6 +3507,7 @@ name = "guiraffe-flow-core"
 version = "0.1.0"
 dependencies = [
  "im",
+ "proptest",
  "serde",
  "serde_json",
 ]
@@ -3676,6 +3678,7 @@ dependencies = [
  "guiraffe-core",
  "guiraffe-test",
  "image",
+ "proptest",
 ]
 
 [[package]]

@@ -56,6 +56,7 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
         .into_iter()
         .filter(|s| {
             !s.name.starts_with("flow-")
+                && !s.name.starts_with("timeline-")
                 && !s.name.starts_with("data-ui-")
                 && s.name != "datagrid-sort-1m"
                 // Compiling a chart scene for a new viewport builds its output geometry; it is
@@ -77,6 +78,28 @@ fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     guiraffe_bench::suites::flow_query();
     let (_, counts) = count_allocations(guiraffe_bench::suites::flow_query)?;
     assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn production_flow_pan_and_hit_reuse_storage() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::flow_pan_hit_50k;
+    flow_pan_hit_50k();
+    let (_, counts) = count_allocations(flow_pan_hit_50k)?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn production_timeline_edits_have_bounded_allocation_traffic() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{timeline_box_select_100k, timeline_draw_bars_100k};
+    timeline_box_select_100k();
+    timeline_draw_bars_100k();
+    let (_, selection) = count_allocations(timeline_box_select_100k)?;
+    let (_, bars) = count_allocations(timeline_draw_bars_100k)?;
+    assert!(selection.allocations <= 64, "{selection:?}");
+    assert!(selection.bytes <= 16 * 1024, "{selection:?}");
+    assert_eq!(bars.allocations, 0);
     Ok(())
 }
 
