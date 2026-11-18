@@ -5,3 +5,4 @@ bench/history/
 *.actual.png
 *.diff.png
 Refactoring_UI_-_Complete_Package/
+/target-*/
