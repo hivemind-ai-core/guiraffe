@@ -1,6 +1,7 @@
 //! Sorting and filtering produce a row *permutation* (`view row -> source row`), never a copy
 //! of the data. Pure and `Send`, so the grid runs it on the background executor.
 
+use std::cmp::Ordering;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering as AtomicOrdering},
@@ -160,7 +161,7 @@ pub fn compute_order(
         }
     };
     let mut rows: Vec<u32> = Vec::with_capacity(if filters.is_empty() { n } else { n / 4 });
-    const CANCEL_INTERVAL: usize = 65_536;
+    const CANCEL_INTERVAL: usize = 4096;
     for r in 0..n {
         if r % CANCEL_INTERVAL == 0 {
             check()?;
@@ -184,8 +185,9 @@ pub fn compute_order(
     }
     drop(rows);
     check()?;
-    // `sort_by` is stable: equal keys keep source order.
-    keyed.sort_by(|(ka, a), (kb, b)| {
+    // Break sorting into bounded runs. Source index breaks ties so unstable
+    // sorting within a run still preserves source order in the final permutation.
+    let compare = |(ka, a): &(CellRef<'_>, u32), (kb, b): &(CellRef<'_>, u32)| {
         primary.cmp(ka, kb).then_with(|| {
             for s in rest {
                 let o = s.cmp(
@@ -196,13 +198,55 @@ pub fn compute_order(
                     return o;
                 }
             }
-            std::cmp::Ordering::Equal
+            a.cmp(b)
         })
-    });
+    };
+    sort_runs(&mut keyed, compare, &check)?;
     check()?;
     Ok(RowOrder::Indices(
         keyed.into_iter().map(|(_, r)| r).collect(),
     ))
+}
+
+fn sort_runs<T: Copy>(
+    rows: &mut Vec<T>,
+    compare: impl Fn(&T, &T) -> Ordering,
+    check: &impl Fn() -> Result<(), Cancelled>,
+) -> Result<(), Cancelled> {
+    const RUN: usize = 8192;
+    for run in rows.chunks_mut(RUN) {
+        check()?;
+        run.sort_unstable_by(&compare);
+    }
+    if rows.len() <= RUN {
+        return Ok(());
+    }
+
+    let mut merged = Vec::with_capacity(rows.len());
+    let mut run_size = RUN;
+    while run_size < rows.len() {
+        let pair_size = run_size.saturating_mul(2);
+        merged.clear();
+        for pair in rows.chunks(pair_size) {
+            let (left, right) = pair.split_at(pair.len().min(run_size));
+            let mut left = left.iter().peekable();
+            let mut right = right.iter().peekable();
+            for index in 0..pair.len() {
+                if index % RUN == 0 {
+                    check()?;
+                }
+                let next = match (left.peek(), right.peek()) {
+                    (Some(a), Some(b)) if compare(a, b).is_gt() => right.next(),
+                    (Some(_), _) => left.next(),
+                    _ => right.next(),
+                };
+                merged.extend(next.copied());
+            }
+        }
+        std::mem::swap(rows, &mut merged);
+        run_size = pair_size;
+    }
+    Ok(())
 }
 
 /// Header-click sort cycling. Without `multi`: asc -> desc -> none on the clicked column,
@@ -272,6 +316,27 @@ mod tests {
         assert_eq!(o, Ok(RowOrder::Identity));
         assert_eq!(RowOrder::Identity.source_row(5, 10), Some(5));
         assert_eq!(RowOrder::Identity.source_row(10, 10), None);
+    }
+
+    #[test]
+    fn sort_merges_runs_in_order_and_stops_during_merge() {
+        let source: Vec<_> = (0..20_000).map(|i| i * 7919 % 20_000).collect();
+        let mut rows = source.clone();
+        let checks = std::cell::Cell::new(0);
+        assert_eq!(
+            sort_runs(&mut rows, i32::cmp, &|| {
+                checks.set(checks.get() + 1);
+                if checks.get() == 5 {
+                    Err(Cancelled)
+                } else {
+                    Ok(())
+                }
+            }),
+            Err(Cancelled)
+        );
+        let mut rows = source;
+        assert_eq!(sort_runs(&mut rows, i32::cmp, &|| Ok(())), Ok(()));
+        assert_eq!(rows, (0..20_000).collect::<Vec<_>>());
     }
 
     #[test]

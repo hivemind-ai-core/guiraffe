@@ -1409,7 +1409,18 @@ impl Core {
             let mut edit_gone = false;
             if needs_map {
                 let map = |v: usize| old.source_row(v, n).and_then(|s| inv.view_row(s));
+                let all_source_rows = old == RowOrder::Identity
+                    && matches!(m.sel.rows.ranges(), [range] if *range == (0..n));
+                if all_source_rows {
+                    // Every row in the new view was selected. Keep the range
+                    // compact while remapping just the cursor and anchor.
+                    m.sel.rows.clear();
+                }
                 m.sel = m.sel.remap(map);
+                if all_source_rows {
+                    let count = m.count;
+                    m.sel.rows.insert(0..count);
+                }
                 if let Some(e) = m.edit.as_ref().map(|e| e.source_row) {
                     match inv.view_row(e) {
                         Some(row) => {

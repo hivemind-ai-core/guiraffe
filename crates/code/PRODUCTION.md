@@ -12,7 +12,7 @@ Audit and follow-up on `feat-prod-a` from `62b8de3`, against [spec/23](../../spe
 | §4 Model and parser checks | ⚠️ | [Model tests](src/model.rs) and [document tests](src/document.rs) cover row mapping and positions. A split-line reference property now exercises UTF-8 and CRLF offsets. The [line-index fuzz target](../../fuzz/fuzz_targets/code_line_index.rs) compares offsets and UTF-8 columns with a split-line reference in the [fuzz smoke workflow](../../.github/workflows/model-fuzz.yml). Fold update sequences compare visible rows with a naive filter. Bounded malformed syntax analysis remains open. |
 | §4 Edges and concurrency | ⚠️ | [Interaction tests](tests/interaction.rs) cover rapid revision publication and viewport interactions. The long-line test includes RTL, CJK and emoji and verifies full copying. The viewport model handles zero and extreme finite dimensions. A mounted scroll burst and theme change preserve selection and keyboard copy. Mounted DPI and scale input bursts remain open. |
 | §5 Soak, RSS and streaming | ⚠️ | The [headless soak](../../bench/examples/production_soak.rs) runs a structural smoke in the bench tests. Its nightly profile samples percentiles and RSS every 10 s and gates frame time and RSS growth. Inspect/drive replay of source updates and full 30-minute evidence remain open. |
-| §6 Accessibility | ⚠️ | [Interaction tests](tests/interaction.rs) cover keyboard navigation, selection and copy. The 10M-line test drives repeated page movement in both directions. Screen-reader announcements and virtual indices remain open. |
+| §6 Accessibility | ⚠️ | [Interaction tests](tests/interaction.rs) cover keyboard navigation, selection and copy. The 10M-line test drives repeated page movement in both directions. The [virtual-node test](src/surface.rs) queries a bounded window of source lines with absolute positions. Native screen-reader announcements remain open. |
 | §6 Visual snapshots | ✅ | [Snapshots](tests/snapshots.rs) cover the top, middle and end of the 10M-line viewer in both themes and both backends. |
 | §7 Review and baseline | ⚠️ | Default test batch (component, Bench and Showcase), fast-backend component and Showcase tests, and all-target Clippy on both backends exited 0. The added scale goldens passed separate comparisons on both backends. Independent review and quiet-host baselines remain open. Historical timings are qualified in [VALIDATION.md](VALIDATION.md). |
 
@@ -49,3 +49,21 @@ measures allocation traffic. It leaves the zero-allocation UI criterion open.
 Run the headless smoke with
 `cargo run --release -p guiraffe-bench --example production_soak -- code`.
 Append `--nightly` for the 30-minute threshold run on a quiet Linux host.
+
+## Follow-up profiling
+
+The before source was `7859897`. The after source includes the gutter
+buffer reuse in `2856359`. The same headless fixture ran with 60 warmed
+samples per build. Both builds used `-C opt-level=3` for the component and
+harness, with shared cached dependencies. One-minute host loads ranged from
+107 to 113 with concurrent builds.
+
+| CodeViewer metric | Before | After |
+|---|---:|---:|
+| Headless p50 (ms) | 1.312 | 5.398 |
+| Headless p99 and max (ms) | 36.454 | 55.061 |
+| Median allocations per frame | 302 | 138 |
+| Median requested bytes per frame | 194,468 | 192,500 |
+
+The allocation counts show the effect of reusing the gutter buffer. Timing
+varied across repeated runs and exceeded the frame budget in this capture.

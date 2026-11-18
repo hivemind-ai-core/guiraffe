@@ -743,6 +743,44 @@ fn selection_follows_source_rows_through_sort_and_filter(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+fn select_all_stays_compact_through_background_filter(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| {
+        let grid = GridHandle::new(
+            FnSource::new(1_000_000, |row, _| CellRef::Int(row as i64)),
+            columns(1),
+            cx,
+        );
+        grid.set_options(
+            GridOptions {
+                selection: SelectionMode::MultiRow,
+                focusable: Some(true),
+                ..Default::default()
+            },
+            cx,
+        );
+        grid
+    });
+    click(vcx, at(&grid, Some(2), 0), Modifiers::default());
+    vcx.simulate_keystrokes("ctrl-a");
+    assert_eq!(grid.selection().rows.ranges(), &[0..1_000_000][..]);
+    vcx.update(|_, cx| {
+        grid.set_filter(
+            0,
+            Some(Arc::new(
+                |cell| matches!(cell, CellRef::Int(n) if n % 2 == 0),
+            )),
+            cx,
+        );
+        assert!(grid.is_busy());
+    });
+    vcx.run_until_parked();
+    assert!(!grid.is_busy());
+    assert_eq!(grid.view_row_count(), 500_000);
+    assert_eq!(grid.selection().rows.ranges(), &[0..500_000][..]);
+    assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 0)));
+}
+
+#[gpui_kit::test]
 fn open_edit_survives_a_sort(cx: &mut TestAppContext) {
     let (grid, _, events, vcx) = mount(cx, multi_people);
     vcx.update(|w, cx| assert!(grid.begin_edit(0, 0, w, cx)));

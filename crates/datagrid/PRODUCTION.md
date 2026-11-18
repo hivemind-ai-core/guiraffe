@@ -7,9 +7,9 @@ Audit and follow-up on `feat-prod-a` from `62b8de3`, against [spec/23](../../spe
 |---|---|---|
 | §1 Scale | ✅ | [Interaction tests](tests/interaction.rs) mount 10M computed rows × 50 columns and 1M materialised rows. The [scroll suite](../../bench/src/suites.rs) adds 10M-row virtual-window, pan and formatting coverage. |
 | §2 Frame and cold mount | ⚠️ | The scroll suites measure model access and formatting. The [headless soak](../../bench/examples/production_soak.rs) times scripted updates and draws, with night-only p99/max gates. Desktop input-to-frame and first useful frame remain open. |
-| §2 Background work | ⚠️ | [Grid](src/grid.rs) computes large permutations off-thread with supersession. Background sorting prepares its inverse before publication. Key collection and the inverse build poll cancellation, and dropping the core signals cancellation. Stable sort runs between checks and large selection remapping still runs on the UI thread. |
+| §2 Background work | ⚠️ | [Grid](src/grid.rs) computes large permutations off-thread with supersession. Background sorting prepares its inverse before publication. Key collection, sorting runs, merge passes and the inverse build poll cancellation. Dropping the core signals cancellation. The [select-all filter test](tests/interaction.rs) verifies compact whole-source selections. Other large selection remaps still run on the UI thread. |
 | §3 Memory and allocation | ⚠️ | [Row order](src/order.rs) uses 32-bit forward and inverse indices. [Allocator tests](../../bench/tests/allocator.rs) gate model scrolling, sort recompute and forward/inverse overhead. Forward plus inverse indices use 8 B per row on x86-64 before container headers. The scroll path streams dirty slots without a scratch vector. GPUI warm paint allocation remains open. |
-| §4 Model and importer checks | ⚠️ | [Order properties](src/order.rs) cover stable sorting and filtering. [Editing tests](tests/editing.rs) exercise editing transactions. [Undo, selection and clipboard models](src/model/) also have property tests. Ragged TSV storage is linear in explicit fields. The [clipboard fuzz target](../../fuzz/fuzz_targets/clipboard_tsv.rs) checks malformed input and canonical round trips in the [fuzz smoke workflow](../../.github/workflows/model-fuzz.yml). The ordering properties also compare a sequence of filter and multi-key sort updates and their inverse against a reference. |
+| §4 Model and importer checks | ✅ | [Order properties](src/order.rs) cover stable sorting and filtering. [Editing tests](tests/editing.rs) exercise editing transactions. [Undo, selection and clipboard models](src/model/) also have property tests. Ragged TSV storage is linear in explicit fields. The [clipboard fuzz target](../../fuzz/fuzz_targets/clipboard_tsv.rs) checks malformed input and canonical round trips in the [fuzz smoke workflow](../../.github/workflows/model-fuzz.yml). The ordering properties also compare a sequence of filter and multi-key sort updates and their inverse against a reference. |
 | §4 Edges and concurrency | ⚠️ | [Source tests](src/source.rs) include numeric ordering. [Interaction tests](tests/interaction.rs) cover keyboard and mouse behavior. Added invalid-viewport and exact mixed numeric comparisons, plus a mounted long RTL/CJK/emoji cell test. An interaction regression covers a scroll and selection burst, palette reuse, theme changes and focus. Mounted DPI coverage remains open. |
 | §5 Soak, RSS and streaming | ⚠️ | The [headless soak](../../bench/examples/production_soak.rs) runs a structural smoke in the bench tests. Its nightly profile samples percentiles and RSS every 10 s and gates frame time and RSS growth. Inspect/drive replay of edits and full 30-minute evidence remain open. |
 | §6 Accessibility | ⚠️ | [Interaction tests](tests/interaction.rs) drive a 10M-row jump and repeated keyboard movement, then verify bounded virtual row nodes and their labels. Screen-reader announcements and extended keyboard replay remain open. |
@@ -50,3 +50,28 @@ measures allocation traffic. It leaves the zero-allocation UI criterion open.
 Run the headless smoke with
 `cargo run --release -p guiraffe-bench --example production_soak -- grid`.
 Append `--nightly` for the 30-minute threshold run on a quiet Linux host.
+
+## Follow-up profiling
+
+The before source was `7859897`. The after source includes the selection
+notification change in `2856359`. The same headless fixture ran with 60 warmed
+samples per build. Both builds used `-C opt-level=3` for the component and
+harness, with shared cached dependencies. One-minute host loads ranged from
+108 to 114 with concurrent builds.
+
+| Grid metric | Before | After |
+|---|---:|---:|
+| Headless p50 (ms) | 156.357 | 126.911 |
+| Headless p99 and max (ms) | 258.512 | 258.258 |
+| Median allocations per frame | 23,522 | 23,521 |
+| Median requested bytes per frame | 14,674,472 | 14,674,440 |
+
+The observed p99 breached the budget. The average update and explicit
+draw stages took 62.051 ms and 75.435 ms after the change. These stages
+include backend work. The scripted viewport jumps recycle most row slots.
+
+A separate 15-sample optimized model run measured 1M-row sorting at
+1,572.133 ms median before and 1,586.404 ms after adding cancellation
+checkpoints. Starting one-minute loads were 102.52 and 98.13 respectively.
+The [model checks](src/order.rs) exercise cancellation during a merge pass
+and verify the stable permutation against a reference.
