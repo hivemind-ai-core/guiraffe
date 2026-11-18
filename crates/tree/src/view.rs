@@ -312,7 +312,9 @@ impl<const P: bool> TreeView<P> {
                 }))
                 .into_any_element(),
             _ => match self.edit.as_ref().filter(|edit| edit.id == id) {
-                Some(edit) => Input::new(&edit.input).into_any_element(),
+                Some(edit) => Input::new(&edit.input)
+                    .aria_label(self.source.label(id).to_owned())
+                    .into_any_element(),
                 None => Button::new(("property-value", id as usize))
                     .tab_stop(self.tab_stop)
                     .label(property.value.text())
@@ -351,7 +353,8 @@ impl<const P: bool> Render for TreeView<P> {
         let colours = theme.press_colors(Variant::Light, None);
         let range = self.model.window(self.scroll, f64::from(self.height), ROW);
         let offset = range.start as f64 * ROW - self.scroll;
-        let rows = self.model.rows()[range].iter().copied().map(|row| {
+        let rows = range.map(|index| {
+            let row = self.model.rows()[index];
             let id = row.id;
             let open = self.model.expanded(id);
             let branch = self.source.children(id) != Children::Ready(&[]);
@@ -369,6 +372,7 @@ impl<const P: bool> Render for TreeView<P> {
                 .role(Role::TreeItem)
                 .aria_label(label.clone())
                 .aria_selected(selected)
+                .aria_level(row.depth + 1)
                 .h(px(ROW as f32))
                 .w_full()
                 .flex()
@@ -376,6 +380,14 @@ impl<const P: bool> Render for TreeView<P> {
                 .gap(px(4.))
                 .pl(px((row.depth.min(45) * 16) as f32))
                 .hover(|style| style.bg(colours.hover.background.to_hsla()));
+            if let Some((position, count)) = self.model.sibling_position(index) {
+                element = element
+                    .aria_position_in_set(position)
+                    .aria_size_of_set(count);
+            }
+            if active {
+                element = element.aria_active_descendant();
+            }
             if branch {
                 element = element.aria_expanded(open);
             }
@@ -472,9 +484,12 @@ impl<const P: bool> Render for TreeView<P> {
             .h(px(self.height))
             .w_full()
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                let before = this.scroll;
                 this.scroll -= f64::from(f32::from(event.delta.pixel_delta(px(24.)).y));
                 this.clamp_scroll();
-                cx.notify();
+                if this.scroll != before {
+                    cx.notify();
+                }
                 cx.stop_propagation();
             }))
             .on_key_down(
@@ -498,7 +513,11 @@ impl<const P: bool> Render for TreeView<P> {
                 px(0.),
                 colours.ring,
             ))
-            .children(self.error.clone().map(|error| div().child(error)))
+            .children(
+                self.error
+                    .clone()
+                    .map(|error| div().role(Role::Alert).child(error)),
+            )
     }
 }
 
