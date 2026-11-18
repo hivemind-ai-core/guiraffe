@@ -6,6 +6,19 @@
 - Timeline overhaul in flight (codex): composable plot surface layers, Blender-level dope sheet, curve-editor API, quantized bar editor.
 - Candidates (to triage): tree view (virtualised, async children), command palette (exists: Spotlight), stepper/wizard, carousel, color picker (Kit?), rich text editor, file browser, terminal emulator view, log viewer (virtualised, ANSI), diff viewer (pairs with code viewer), JSON/inspector tree, kanban board, calendar (month/week/agenda), map/geo (later), audio waveform, image annotator, property inspector (pairs with node graph), hex/asm view, code canvas, git graph (spec/16).
 
+- **DataGrid: spreadsheet-grade editing (user 2026-11-18).** Excel/Sheets parity for the
+  editing loop: type-to-edit (start typing replaces the cell; F2/Enter edit in place), Enter/Tab
+  commit and move (Shift reverses; Enter wraps within a selected range), arrow keys commit and
+  move, Esc cancels; Shift+arrows / Shift+click / drag extend a range; Ctrl+arrows jump to data
+  edges, Ctrl+Shift+arrows extend to edges; Ctrl+Space/Shift+Space select column/row; multiple
+  ranges with Ctrl+drag; cut/copy/paste of ranges as TSV (and HTML) with paste-into-range
+  (tiling a smaller clipboard, clipped to editable/visible columns, validation per cell with a
+  summary of rejections); Delete clears a range; fill handle (drag to copy/extend series);
+  Ctrl+D/Ctrl+R fill down/right; undo/redo of every edit, paste and fill as one transaction;
+  auto-scroll while drag-selecting; marching-ants copy marquee; formulas belong to the Sheet
+  component, not the grid. Shares the selection/clipboard/undo model with the Sheet component.
+  Tests: keyboard tables mirroring Excel behaviour, property tests for range ops and paste tiling.
+
 ## B. Mocket → GUIraffe (0.2)
 Status audit of `guiraffe import` vs Mocket's JSON; write **spec/19-mocket-interop.md** (hand-off for Mocket devs): event annotations (`on:<event> → <event-id>` with payload schema), data bindings (`bind:<prop> → <path>` incl. lists/keys, two-way for inputs, formatters), slots/components, style tokens (map to GUIraffe theme/StyleContext, not raw px), versioned schema + validation, round-trip guarantees.
 
