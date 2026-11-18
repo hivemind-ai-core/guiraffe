@@ -202,9 +202,32 @@ impl PreparedChart {
                 rect: panel.rect,
                 run,
             };
-            for row in &run.rows[run.visible(min, max, false)] {
-                if let Some(point) = projection.anchor(row).filter(|&p| panel.rect.contains(p)) {
-                    let d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
+            let range = match run.mark {
+                Mark::Bar(_, Orientation::Horizontal) => 0..run.rows.len(),
+                Mark::Bar(_, Orientation::Vertical) => {
+                    let reach = radius + projection.thickness(0) / 2.;
+                    let left = x_scale.invert(domain, panel.rect.fraction(cursor.0 - reach));
+                    let right = x_scale.invert(domain, panel.rect.fraction(cursor.0 + reach));
+                    run.visible(left, right, false)
+                }
+                _ => run.visible(min, max, false),
+            };
+            for row in &run.rows[range] {
+                if let Some(mut point) = projection.anchor(row) {
+                    let mut d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
+                    if let Mark::Bar(arrangement, orientation) = run.mark {
+                        let (a, b) = projection.bar_bounds(row, point, arrangement, orientation);
+                        if panel.rect.contains(cursor)
+                            && (a.0.min(b.0)..=a.0.max(b.0)).contains(&cursor.0)
+                            && (a.1.min(b.1)..=a.1.max(b.1)).contains(&cursor.1)
+                        {
+                            point = cursor;
+                            d = 0.;
+                        }
+                    }
+                    if !panel.rect.contains(point) {
+                        continue;
+                    }
                     if d <= distance {
                         distance = d;
                         best = Some(Hit {
@@ -412,6 +435,34 @@ impl Projection<'_> {
         if band > 0. { band } else { 12. }
     }
 
+    fn bar_bounds(
+        &self,
+        row: &Sample,
+        p: Position,
+        arrangement: Arrangement,
+        orientation: Orientation,
+    ) -> (Position, Position) {
+        let horizontal = orientation == Orientation::Horizontal;
+        let axis = if horizontal { self.y_axis() } else { 0 };
+        let mut width = self.thickness(axis);
+        let mut offset = 0.;
+        if arrangement == Arrangement::Group {
+            width /= self.run.slots as f32;
+            offset = (self.run.slot as f32 - (self.run.slots - 1) as f32 / 2.) * width;
+        }
+        let base = if horizontal {
+            self.xy(row.base, row.y).map_or(self.rect.left, |p| p.0)
+        } else {
+            self.xy(row.x, row.base).map_or(self.rect.bottom, |p| p.1)
+        };
+        let half = width / 2.;
+        if horizontal {
+            ((base, p.1 + offset - half), (p.0, p.1 + offset + half))
+        } else {
+            ((p.0 + offset - half, base), (p.0 + offset + half, p.1))
+        }
+    }
+
     fn individual(&self, row: &Sample, out: &mut Vec<Draw>) {
         let Some(p) = self.anchor(row) else { return };
         let color = self.color(row);
@@ -440,31 +491,8 @@ impl Projection<'_> {
                 }
             }
             Mark::Bar(arrangement, orientation) => {
-                let horizontal = orientation == Orientation::Horizontal;
-                let axis = if horizontal { self.y_axis() } else { 0 };
-                let mut width = self.thickness(axis);
-                let mut offset = 0.;
-                if arrangement == Arrangement::Group {
-                    width /= self.run.slots as f32;
-                    offset = (self.run.slot as f32 - (self.run.slots - 1) as f32 / 2.) * width;
-                }
-                let base = if horizontal {
-                    self.xy(row.base, row.y).map_or(self.rect.left, |p| p.0)
-                } else {
-                    self.xy(row.x, row.base).map_or(self.rect.bottom, |p| p.1)
-                };
-                let half = width / 2.;
-                if horizontal {
-                    push(Geometry::Box(
-                        (base, p.1 + offset - half),
-                        (p.0, p.1 + offset + half),
-                    ));
-                } else {
-                    push(Geometry::Box(
-                        (p.0 + offset - half, base),
-                        (p.0 + offset + half, p.1),
-                    ));
-                }
+                let (start, end) = self.bar_bounds(row, p, arrangement, orientation);
+                push(Geometry::Box(start, end));
             }
             Mark::Rect => {
                 let other = row.x2.zip(row.y2).and_then(|(x, y)| self.xy(x, y));
@@ -536,6 +564,26 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn bar_hit_uses_its_interior() {
+        let model = ChartSpec::new("bars")
+            .layer(Layer::new(
+                Mark::Bar(Arrangement::Overlap, Orientation::Vertical),
+                vec![(1., 100.)],
+                Channels::new(|p: &(f64, f64)| p.0, |p| p.1),
+            ))
+            .prepare();
+        let hidden = BTreeSet::new();
+        let domain = model.x_domain();
+        let scene = model.scene(600., 300., domain, &hidden);
+        let panel = &scene.panels[0];
+        let Geometry::Box(a, b) = panel.draws[0].geometry else {
+            panic!("expected bar");
+        };
+        let center = ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
+        assert!(model.nearest(panel, domain, &hidden, center, 8.).is_some());
+    }
 
     #[test]
     fn viewport_culls_and_downsamples_connected_runs() {
