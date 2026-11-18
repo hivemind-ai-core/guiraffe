@@ -9,13 +9,38 @@ use guiraffe_datagrid::{
 };
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 
-struct Scene(GridHandle);
+struct Scene {
+    grid: GridHandle,
+    initial_row: Option<usize>,
+}
+
 impl Render for Scene {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let initial_scroll = self.initial_row.take().map(|row| {
+            let grid = self.grid.clone();
+            gpui_kit::canvas(
+                move |_, _, cx| {
+                    cx.defer(move |cx| {
+                        grid.set_scroll(0., row as f64 * f64::from(grid.row_height()), cx);
+                    });
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .w(px(0.))
+            .h(px(0.))
+        });
         div()
+            .relative()
             .size_full()
             .p(px(12.))
-            .child(div().w(px(360.)).h(px(180.)).child(DataGrid::new(&self.0)))
+            .child(
+                div()
+                    .w(px(360.))
+                    .h(px(180.))
+                    .child(DataGrid::new(&self.grid)),
+            )
+            .children(initial_scroll)
     }
 }
 
@@ -81,7 +106,10 @@ fn cell_cursor_selected_and_editing() {
                     if editing {
                         g.begin_edit(1, 0, window, cx);
                     }
-                    cx.new(|_| Scene(g))
+                    cx.new(|_| Scene {
+                        grid: g,
+                        initial_row: None,
+                    })
                 })
                 .unwrap_or_else(|e| panic!("{e:#}"));
             let name = format!(
@@ -96,4 +124,42 @@ fn cell_cursor_selected_and_editing() {
             assert_snapshot(&name, &img, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
         }
     }
+}
+
+#[test]
+fn computed_grid_at_production_scale() -> Result<(), Box<dyn std::error::Error>> {
+    use guiraffe_datagrid::FnSource;
+    const ROWS: usize = 10_000_000;
+    let config = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for (scheme, theme) in [(Scheme::Light, "light"), (Scheme::Dark, "dark")] {
+        let mut snapshot = Snapshotter::new()?.with_setup(move |cx| {
+            apply(
+                GuiraffeTheme {
+                    scheme,
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        for (row, position) in [(0, "top"), (ROWS / 2, "middle"), (ROWS - 1, "end")] {
+            let mut control = None;
+            let image = snapshot.render(size(px(384.), px(204.)), |_, cx| {
+                let source = FnSource::new(ROWS, |r, c| CellRef::Int((r * 100 + c) as i64));
+                let columns = (0..50)
+                    .map(|col| ColumnDef::new(format!("c{col}"), format!("Col {col}"), col))
+                    .collect();
+                let grid = GridHandle::new(source, columns, cx);
+                grid.select(CellPos::new(row, 0), false, false, cx);
+                control = Some(grid.clone());
+                cx.new(|_| Scene {
+                    grid,
+                    initial_row: Some(row),
+                })
+            })?;
+            assert!(control.is_some_and(|grid| grid.visible_rows().contains(&row)));
+            assert_snapshot(&format!("scale/{position}-{theme}"), &image, &config)?;
+        }
+    }
+    Ok(())
 }

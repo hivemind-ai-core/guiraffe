@@ -58,7 +58,8 @@ impl Track {
 
     /// Insert a clip if it fits without overlapping; returns its id.
     pub fn insert(&mut self, start: f64, len: f64) -> Option<u32> {
-        if !(start.is_finite() && len.is_finite()) || len < MIN_LEN {
+        let end = start + len;
+        if !(start.is_finite() && end.is_finite()) || len < MIN_LEN || end <= start {
             return None;
         }
         let pos = self.clips.partition_point(|c| c.start < start);
@@ -72,7 +73,7 @@ impl Track {
             .get(pos)
             .map(|c| c.start)
             .unwrap_or(f64::INFINITY);
-        if start < lo - 1e-12 || start + len > hi + 1e-12 {
+        if start < lo - 1e-12 || end > hi + 1e-12 {
             return None;
         }
         self.next_id += 1;
@@ -163,6 +164,28 @@ impl Track {
 mod tests {
     use super::*;
 
+    proptest::proptest! {
+        #[test]
+        fn insertion_matches_linear_overlap_check(
+            inserts in proptest::collection::vec((-100_i16..100, 1_i16..25), 0..100),
+        ) {
+            let mut track = Track::default();
+            let mut reference = Vec::<(i16, i16)>::new();
+            for (start, len) in inserts {
+                let end = start + len;
+                let fits = reference.iter().all(|&(a, b)| end <= a || start >= b);
+                let actual = track.insert(f64::from(start), f64::from(len));
+                proptest::prop_assert_eq!(actual.is_some(), fits);
+                if fits {
+                    reference.push((start, end));
+                    reference.sort_unstable();
+                }
+                let spans: Vec<_> = track.clips().iter().map(|c| (c.start as i16, c.end() as i16)).collect();
+                proptest::prop_assert_eq!(&spans, &reference);
+            }
+        }
+    }
+
     #[test]
     fn insert_rejects_overlaps() {
         let mut t = Track::default();
@@ -172,6 +195,14 @@ mod tests {
         assert!(t.insert(2.0, 1.0).is_some(), "touching is fine");
         assert!(t.insert(5.0, 0.0).is_none() && t.insert(f64::NAN, 1.0).is_none());
         assert!(t.is_valid());
+    }
+
+    #[test]
+    fn overflowing_clip_end_is_rejected_without_mutation() {
+        let mut track = Track::default();
+        assert_eq!(track.insert(f64::MAX, f64::MAX), None);
+        assert!(track.clips().is_empty());
+        assert_eq!(track.insert(0., 1.), Some(1));
     }
 
     #[test]

@@ -17,6 +17,7 @@ guiraffe-code.workspace = true
 guiraffe-charts.workspace = true
 guiraffe-flamegraph.workspace = true
 guiraffe-tree.workspace = true
+guiraffe-timeline.workspace = true
 guiraffe-datagrid.workspace = true
 anyhow.workspace = true
 serde.workspace = true
@@ -35,6 +36,7 @@ nix = { version = "0.31", features = ["signal", "process"] }
 iai-callgrind = { version = "=0.16.1", optional = true }
 
 [dev-dependencies]
+guiraffe-flow.workspace = true
 criterion = "0.8"
 
 [[bench]]
@@ -45,3 +47,7 @@ harness = false
 name = "instructions"
 harness = false
 required-features = ["instruction-counts"]
+
+[[example]]
+name = "production_soak"
+test = true

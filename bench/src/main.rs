@@ -27,8 +27,9 @@ struct Options {
     profile: String,
     #[arg(long, default_value_t = 20)]
     samples: usize,
-    #[arg(long, default_value_t = 10_000)]
-    iterations: usize,
+    /// Invocations per timing batch. Defaults to 1 for production-scale suites and 10,000 otherwise.
+    #[arg(long)]
+    iterations: Option<usize>,
     #[arg(long)]
     suite: Option<String>,
     #[arg(long, default_value = "")]
@@ -92,19 +93,34 @@ fn selected(name: Option<&str>) -> Result<Vec<guiraffe_bench::Suite>> {
     ensure!(!list.is_empty(), "no matching suite");
     Ok(list)
 }
+fn iterations_for(suite: &guiraffe_bench::Suite, requested: Option<usize>) -> usize {
+    requested.unwrap_or(match suite.name {
+        "flow-build-50k"
+        | "flow-pan-hit-50k"
+        | "timeline-box-select-100k"
+        | "timeline-draw-bars-100k"
+        | "timeline-navigation-hit-100k"
+        | "chart-prepare-line-10m"
+        | "chart-line-10m"
+        | "chart-scatter-1m-100-series" => 1,
+        _ => 10_000,
+    })
+}
+
 fn run(options: Options, output: Option<PathBuf>, baseline: bool) -> Result<()> {
     ensure!(options.samples >= 10, "at least ten samples required");
     let root = root()?;
     let meta = metadata(&root, &options.profile, &options.notes)?;
     let mut records = Vec::new();
     for suite in selected(options.suite.as_deref())? {
+        let iterations = iterations_for(&suite, options.iterations);
         let values = guiraffe_bench::measure_cancellable(
             suite,
             options.samples,
-            options.iterations,
+            iterations,
             process::interrupted,
         )?;
-        let result = record(suite.name, meta.clone(), values, options.iterations)?;
+        let result = record(suite.name, meta.clone(), values, iterations)?;
         if baseline {
             write_record(
                 &root
@@ -214,7 +230,7 @@ fn compare(args: CompareOptions) -> Result<()> {
         output,
     } = args;
     ensure!(
-        options.samples >= 10 && options.iterations > 0,
+        options.samples >= 10 && options.iterations != Some(0),
         "need at least ten samples and positive iterations"
     );
     ensure!(
@@ -274,6 +290,7 @@ fn compare(args: CompareOptions) -> Result<()> {
             );
             continue;
         }
+        let iterations = iterations_for(&suite, options.iterations);
         let mut a = Vec::new();
         let mut b = Vec::new();
         // Alternate AB/BA across rounds, not just all of A followed by all of B.
@@ -281,21 +298,18 @@ fn compare(args: CompareOptions) -> Result<()> {
             check_interrupt()?;
             let (av, bv) = if round.is_multiple_of(2) {
                 (
-                    sample(&old_binary, suite.name, options.iterations, cpu)?,
-                    sample(&new_binary, suite.name, options.iterations, cpu)?,
+                    sample(&old_binary, suite.name, iterations, cpu)?,
+                    sample(&new_binary, suite.name, iterations, cpu)?,
                 )
             } else {
-                let bv = sample(&new_binary, suite.name, options.iterations, cpu)?;
-                (
-                    sample(&old_binary, suite.name, options.iterations, cpu)?,
-                    bv,
-                )
+                let bv = sample(&new_binary, suite.name, iterations, cpu)?;
+                (sample(&old_binary, suite.name, iterations, cpu)?, bv)
             };
             a.push(av);
             b.push(bv);
         }
-        let old = record(suite.name, old_meta.clone(), a, options.iterations)?;
-        let new = record(suite.name, new_meta.clone(), b, options.iterations)?;
+        let old = record(suite.name, old_meta.clone(), a, iterations)?;
+        let new = record(suite.name, new_meta.clone(), b, iterations)?;
         guiraffe_bench::compatible(&old, &new, force)?;
         let ci = stats::relative_change(&old.samples, &new.samples, RESAMPLES, SEED)?;
         let status = stats::classify(ci, threshold);

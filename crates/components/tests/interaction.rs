@@ -1,10 +1,11 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui_kit::{
-    Entity, Focusable, IntoElement, ParentElement, Render, Styled, TestAppContext,
-    VisualTestContext, Window, div, px,
+    AppContext, Context, Entity, Focusable, IntoElement, Modifiers, ParentElement, Render, Styled,
+    TestAppContext, VisualTestContext, Window, div, px,
 };
-use guiraffe_components::{SegmentedControl, SegmentedEvent};
+use guiraffe_components::{Burger, CopyButton, Loader, SegmentedControl, SegmentedEvent, Spoiler};
+use guiraffe_motion::MotionPrefs;
 use guiraffe_test::render::RenderCounter;
 
 struct Host {
@@ -188,4 +189,482 @@ fn the_first_click_moves_the_painted_indicator_without_another_input(cx: &mut Te
         after.left() > before.left() + px(200.),
         "indicator stayed on the old segment: {before:?} -> {after:?}"
     );
+}
+// --- Loader: a Control whose animation is its own view. ---
+
+struct LoaderScene {
+    renders: RenderCounter,
+    loader: Entity<Loader>,
+}
+
+impl Render for LoaderScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div().w(px(200.)).child(self.loader.clone())
+    }
+}
+
+fn loader_scene(
+    cx: &mut TestAppContext,
+) -> (Entity<Loader>, Entity<LoaderScene>, &mut VisualTestContext) {
+    cx.update(guiraffe_components::init);
+    let renders = RenderCounter::new();
+    let counter = renders.clone();
+    let mut loader = None;
+    let (scene, vcx) = cx.add_window_view(|_, cx| {
+        let l = Loader::new(cx);
+        l.update(cx, |l, cx| {
+            l.set_kind(guiraffe_components::LoaderType::Dots, cx);
+            l.set_color(Some(guiraffe_core::ColorName::Teal), cx);
+        });
+        loader = Some(l.clone());
+        LoaderScene {
+            renders: counter,
+            loader: l,
+        }
+    });
+    (loader.unwrap_or_else(|| unreachable!()), scene, vcx)
+}
+
+fn next_frame(vcx: &mut VisualTestContext) -> usize {
+    vcx.executor().advance_clock(Duration::from_millis(16));
+    let n = vcx.update(|w, cx| w.simulate_next_frame(cx));
+    vcx.run_until_parked();
+    n
+}
+
+#[gpui_kit::test]
+fn loader_animates_while_rendered(cx: &mut TestAppContext) {
+    let (_loader, _scene, vcx) = loader_scene(cx);
+    vcx.run_until_parked();
+    assert!(next_frame(vcx) > 0, "a visible loader animates");
+    assert!(next_frame(vcx) > 0, "and keeps animating");
+}
+
+#[gpui_kit::test]
+fn loader_under_reduced_motion_requests_no_frames(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guiraffe_components::init(cx);
+        MotionPrefs::set(
+            MotionPrefs {
+                reduced: true,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+    let (_loader, _scene, vcx) = loader_scene(cx);
+    vcx.run_until_parked();
+    assert_eq!(next_frame(vcx), 0, "reduced motion: no animation frames");
+    assert_eq!(next_frame(vcx), 0, "and none later either");
+}
+
+#[gpui_kit::test]
+fn loader_animation_does_not_rerender_its_host(cx: &mut TestAppContext) {
+    let (_loader, scene, vcx) = loader_scene(cx);
+    vcx.run_until_parked();
+    next_frame(vcx);
+    let before = vcx.update(|_, cx| scene.read(cx).renders.get());
+    frames(vcx, 6);
+    let after = vcx.update(|_, cx| scene.read(cx).renders.get());
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            after, before,
+            "only the loader re-renders while it animates"
+        );
+    } else {
+        assert!(after >= before, "upstream re-renders ancestors (recorded)");
+    }
+}
+
+#[gpui_kit::test]
+fn loader_settings_are_idsempotent_and_clamped(cx: &mut TestAppContext) {
+    let (loader, _scene, vcx) = loader_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        loader.update(cx, |l, cx| {
+            l.set_count(0, cx);
+            l.set_kind(guiraffe_components::LoaderType::Bars, cx);
+            l.set_kind(guiraffe_components::LoaderType::Bars, cx);
+        })
+    });
+    vcx.run_until_parked();
+    let kind = vcx.update(|_, cx| loader.read(cx).kind());
+    assert_eq!(kind, guiraffe_components::LoaderType::Bars);
+}
+
+// --- Spoiler: the reveal animates in its own view; reduced motion jumps. ---
+
+struct SpoilerScene {
+    renders: RenderCounter,
+    spoiler: Entity<Spoiler>,
+}
+
+impl Render for SpoilerScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div().w(px(240.)).child(self.spoiler.clone())
+    }
+}
+
+fn spoiler_scene(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Spoiler>,
+    Entity<SpoilerScene>,
+    &mut VisualTestContext,
+) {
+    cx.update(guiraffe_components::init);
+    let renders = RenderCounter::new();
+    let counter = renders.clone();
+    let mut out = None;
+    let (scene, vcx) = cx.add_window_view(|_, cx| {
+        let spoiler = Spoiler::new(cx);
+        // Twelve lines of body against a three-line preview.
+        spoiler.update(cx, |s, cx| {
+            s.set_content(
+                |_, _| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children((0..12).map(|i| div().h(px(20.0)).child(format!("line {i}"))))
+                        .into_any_element()
+                },
+                cx,
+            );
+            s.set_collapsed_lines(3, cx);
+        });
+        out = Some(spoiler.clone());
+        SpoilerScene {
+            renders: counter,
+            spoiler,
+        }
+    });
+    (out.unwrap_or_else(|| unreachable!()), scene, vcx)
+}
+
+#[gpui_kit::test]
+fn spoiler_toggles_on_click_and_animates_its_height(cx: &mut TestAppContext) {
+    let (spoiler, _scene, vcx) = spoiler_scene(cx);
+    vcx.run_until_parked();
+    frames(vcx, 2);
+    let toggle = vcx.debug_bounds("gr-spoiler-toggle:gr-spoiler");
+    let before = vcx
+        .debug_bounds("gr-spoiler:gr-spoiler")
+        .map(|b| f32::from(b.size.height))
+        .unwrap_or_default();
+    let toggle = toggle.expect("the spoiler's label is laid out");
+    vcx.simulate_click(toggle.center(), Modifiers::default());
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| spoiler.read(cx).is_expanded()),
+        "clicking the label expands"
+    );
+    let mut heights = Vec::new();
+    for _ in 0..12 {
+        frames(vcx, 1);
+        heights.push(
+            vcx.debug_bounds("gr-spoiler:gr-spoiler")
+                .map(|b| f32::from(b.size.height))
+                .unwrap_or_default(),
+        );
+    }
+    let after = heights.last().copied().unwrap_or_default();
+    assert!(
+        after > before + 50.0,
+        "the reveal grew: {before} -> {after}"
+    );
+    assert!(
+        heights.iter().any(|h| *h > before && *h < after),
+        "it grew over several frames, not in one jump: {heights:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn spoiler_reduced_motion_expands_immediately(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guiraffe_components::init(cx);
+        MotionPrefs::set(
+            MotionPrefs {
+                reduced: true,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+    let (spoiler, _scene, vcx) = spoiler_scene(cx);
+    vcx.run_until_parked();
+    frames(vcx, 2);
+    let before = vcx
+        .debug_bounds("gr-spoiler:gr-spoiler")
+        .map(|b| f32::from(b.size.height))
+        .unwrap_or_default();
+    vcx.update(|_, cx| spoiler.update(cx, |s, cx| s.set_expanded(true, cx)));
+    vcx.run_until_parked();
+    next_frame(vcx);
+    let after = vcx
+        .debug_bounds("gr-spoiler:gr-spoiler")
+        .map(|b| f32::from(b.size.height))
+        .unwrap_or_default();
+    assert!(
+        after > before + 50.0,
+        "one frame is enough under reduced motion: {before} -> {after}"
+    );
+}
+
+#[gpui_kit::test]
+fn spoiler_animates_only_itself_and_settles(cx: &mut TestAppContext) {
+    let (spoiler, _scene, vcx) = spoiler_scene(cx);
+    vcx.run_until_parked();
+    frames(vcx, 2);
+    let sibling = vcx.update(|_, cx| cx.new(|_| SideEffect::new()));
+    let counter = vcx.update(|_, cx| {
+        let renders = RenderCounter::new();
+        sibling.update(cx, |s, cx| {
+            s.renders = renders.clone();
+            cx.notify();
+        });
+        renders
+    });
+    vcx.run_until_parked();
+    let before = counter.get();
+    vcx.update(|_, cx| spoiler.update(cx, |s, cx| s.set_expanded(true, cx)));
+    frames(vcx, 40);
+    assert_eq!(
+        counter.get(),
+        before,
+        "a sibling view never re-renders while the spoiler animates"
+    );
+    assert_eq!(
+        next_frame(vcx),
+        0,
+        "the animation stops and requests nothing at rest"
+    );
+}
+
+/// A view with no relationship to the spoiler, used to prove isolation.
+struct SideEffect {
+    renders: RenderCounter,
+}
+
+impl SideEffect {
+    fn new() -> Self {
+        Self {
+            renders: RenderCounter::new(),
+        }
+    }
+}
+
+impl Render for SideEffect {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div()
+    }
+}
+
+// --- Burger: the bars animate in the burger's own view. ---
+
+struct BurgerScene {
+    renders: RenderCounter,
+    burger: Entity<Burger>,
+}
+
+impl Render for BurgerScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div().p(px(8.0)).child(self.burger.clone())
+    }
+}
+
+fn burger_scene(
+    cx: &mut TestAppContext,
+) -> (Entity<Burger>, Entity<BurgerScene>, &mut VisualTestContext) {
+    cx.update(guiraffe_components::init);
+    let renders = RenderCounter::new();
+    let counter = renders.clone();
+    let mut out = None;
+    let (scene, vcx) = cx.add_window_view(|_, cx| {
+        let burger = Burger::new(cx);
+        out = Some(burger.clone());
+        BurgerScene {
+            renders: counter,
+            burger,
+        }
+    });
+    (out.unwrap_or_else(|| unreachable!()), scene, vcx)
+}
+
+#[gpui_kit::test]
+fn burger_click_toggles_and_animates(cx: &mut TestAppContext) {
+    let (burger, scene, vcx) = burger_scene(cx);
+    vcx.run_until_parked();
+    let bounds = vcx
+        .debug_bounds("gr-burger:gr-burger")
+        .expect("the burger is laid out");
+    vcx.simulate_click(bounds.center(), Modifiers::default());
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| burger.read(cx).is_open()),
+        "clicking opens the menu"
+    );
+    assert!(next_frame(vcx) > 0, "the bars animate");
+    let before = vcx.update(|_, cx| scene.read(cx).renders.get());
+    frames(vcx, 8);
+    let after = vcx.update(|_, cx| scene.read(cx).renders.get());
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            after, before,
+            "the scene never re-renders for the animation"
+        );
+    } else {
+        assert!(after >= before, "upstream re-renders ancestors (recorded)");
+    }
+}
+
+#[gpui_kit::test]
+fn burger_reduced_motion_requests_no_frames(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guiraffe_components::init(cx);
+        MotionPrefs::set(
+            MotionPrefs {
+                reduced: true,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+    let (burger, _scene, vcx) = burger_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.set_open(true, cx)));
+    vcx.run_until_parked();
+    assert_eq!(next_frame(vcx), 0, "reduced motion: no animation frames");
+}
+
+#[gpui_kit::test]
+fn burger_set_open_is_idempotent(cx: &mut TestAppContext) {
+    let (burger, _scene, vcx) = burger_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.set_open(true, cx)));
+    let opened = vcx.update(|_, cx| burger.read(cx).is_open());
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.set_open(true, cx)));
+    assert!(opened);
+    assert!(vcx.update(|_, cx| burger.read(cx).is_open()));
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.toggle(cx)));
+    assert!(!vcx.update(|_, cx| burger.read(cx).is_open()));
+}
+
+// --- CopyButton: writes to the clipboard and confirms for two seconds. ---
+
+struct CopyScene {
+    renders: RenderCounter,
+    copy: Entity<CopyButton>,
+}
+
+impl Render for CopyScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div().p(px(8.0)).child(self.copy.clone())
+    }
+}
+
+fn copy_scene(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<CopyButton>,
+    Entity<CopyScene>,
+    &mut VisualTestContext,
+) {
+    cx.update(guiraffe_components::init);
+    let renders = RenderCounter::new();
+    let counter = renders.clone();
+    let mut out = None;
+    let (scene, vcx) = cx.add_window_view(|_, cx| {
+        let copy = CopyButton::new(cx);
+        copy.update(cx, |b, cx| b.set_value("npm install guiraffe", cx));
+        out = Some(copy.clone());
+        CopyScene {
+            renders: counter,
+            copy,
+        }
+    });
+    (out.unwrap_or_else(|| unreachable!()), scene, vcx)
+}
+
+#[gpui_kit::test]
+fn copy_button_writes_the_value_and_confirms_for_two_seconds(cx: &mut TestAppContext) {
+    let (copy, _scene, vcx) = copy_scene(cx);
+    vcx.run_until_parked();
+    let bounds = vcx
+        .debug_bounds("gr-copy-button:npm install guiraffe")
+        .expect("the button is laid out");
+    vcx.simulate_click(bounds.center(), Modifiers::default());
+    vcx.run_until_parked();
+    assert!(vcx.update(|_, cx| copy.read(cx).copied()), "shows copied");
+    let clip = vcx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert_eq!(
+        clip, "npm install guiraffe",
+        "the value reached the clipboard"
+    );
+    // 1 s later it is still confirming; after 2 s it is back to "copy".
+    vcx.executor().advance_clock(Duration::from_millis(1000));
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| copy.read(cx).copied()),
+        "still copied at 1 s"
+    );
+    vcx.executor().advance_clock(Duration::from_millis(1100));
+    vcx.run_until_parked();
+    assert!(
+        !vcx.update(|_, cx| copy.read(cx).copied()),
+        "the confirmation clears after two seconds"
+    );
+}
+
+#[gpui_kit::test]
+fn copy_button_a_second_copy_restarts_the_timer(cx: &mut TestAppContext) {
+    let (copy, _scene, vcx) = copy_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        copy.update(cx, |b, cx| {
+            b.copy(window, cx);
+        })
+    });
+    vcx.executor().advance_clock(Duration::from_millis(1500));
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        copy.update(cx, |b, cx| {
+            b.copy(window, cx);
+        })
+    });
+    vcx.executor().advance_clock(Duration::from_millis(1500));
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| copy.read(cx).copied()),
+        "the second copy restarts the two seconds"
+    );
+    vcx.executor().advance_clock(Duration::from_millis(700));
+    vcx.run_until_parked();
+    assert!(!vcx.update(|_, cx| copy.read(cx).copied()));
+}
+
+#[gpui_kit::test]
+fn copy_button_disabled_copies_nothing_and_rerenders_only_itself(cx: &mut TestAppContext) {
+    let (copy, scene, vcx) = copy_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|_, cx| copy.update(cx, |b, cx| b.set_disabled(true, cx)));
+    let copied = vcx.update(|window, cx| copy.update(cx, |b, cx| b.copy(window, cx)));
+    assert!(!copied, "a disabled button copies nothing");
+    assert!(!vcx.update(|_, cx| copy.read(cx).copied()));
+    let before = vcx.update(|_, cx| scene.read(cx).renders.get());
+    vcx.update(|_, cx| copy.update(cx, |b, cx| b.set_disabled(false, cx)));
+    vcx.run_until_parked();
+    let after = vcx.update(|_, cx| scene.read(cx).renders.get());
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(after, before, "only the button re-renders");
+    } else {
+        assert!(after >= before, "upstream re-renders ancestors (recorded)");
+    }
 }

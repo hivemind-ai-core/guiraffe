@@ -120,18 +120,26 @@ impl DopeModel {
         if !add {
             self.selected.clear()
         }
-        for r in rows {
-            if let Some(row) = self.rows.get(r) {
-                let c = &self.channels[row.channel];
-                if c.visible {
-                    for t in c
-                        .keys()
+        if rows.is_empty() {
+            return;
+        }
+        let Some(rows) = self
+            .rows
+            .get(*rows.start()..rows.end().saturating_add(1).min(self.rows.len()))
+        else {
+            return;
+        };
+        let (min, max) = (a.min(b), a.max(b));
+        for row in rows {
+            if let Some(channel) = self.channels.get(row.channel).filter(|c| c.visible) {
+                let keys = channel.keys();
+                let first = keys.partition_point(|time| *time < min);
+                let last = keys.partition_point(|time| *time <= max);
+                self.selected.extend(
+                    keys[first..last]
                         .iter()
-                        .filter(|t| **t >= a.min(b) && **t <= a.max(b))
-                    {
-                        self.selected.insert((row.channel, t.to_bits()));
-                    }
-                }
+                        .map(|time| (row.channel, time.to_bits())),
+                );
             }
         }
     }
@@ -310,6 +318,33 @@ impl DopeModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn box_selection_ignores_rows_removed_by_host() {
+        let mut model = DopeModel::new(vec![Channel::new("Track", vec![1.])]);
+        model.select_all();
+        model.channels.clear();
+        model.box_select(0..=0, 0., 2., false);
+        assert!(model.selected.is_empty());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn box_selection_matches_naive_scan(
+            keys in proptest::collection::vec(-100_i16..100, 0..100),
+            a in -120_i16..120,
+            b in -120_i16..120,
+        ) {
+            let channel = Channel::new("Track", keys.iter().copied().map(f64::from).collect());
+            let mut model = DopeModel::new(vec![channel]);
+            model.box_select(0..=usize::MAX, f64::from(a), f64::from(b), false);
+            let expected: BTreeSet<_> = keys.iter()
+                .filter(|&&time| (a.min(b)..=a.max(b)).contains(&time))
+                .map(|&time| (0, f64::from(time).to_bits()))
+                .collect();
+            proptest::prop_assert_eq!(model.selected, expected);
+        }
+    }
+
     #[test]
     fn hierarchy_and_atomic_selection_moves() {
         let mut m = DopeModel::new(vec![Channel::group(
