@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Entity, Render, TestAppContext, TestDispatcher, Window, div};
+use gpui_kit::{Context, Entity, HeadlessAppContext, Render, Window, div, px, size};
 use guiraffe_test::drive::Driver;
-use guiraffe_test::inspect::EventSink;
+use guiraffe_test::inspect::{EventSink, HeadlessTarget, InspectTarget};
 use guiraffe_test::replay::Script;
 use guiraffe_test::transport::Server;
 use guiraffe_ui::{DataUi, Document, NoLogic, Registry};
@@ -67,8 +67,14 @@ pub fn serve(socket: &Path, document: Option<&Path>) -> Result<()> {
 }
 
 /// Runs the app headless and hands the server to `f`.
-fn with_app<R>(document: Option<&Path>, f: impl FnOnce(&mut Server) -> Result<R>) -> Result<R> {
-    let mut cx = TestAppContext::build(TestDispatcher::new(0), None);
+///
+/// The app runs in the headless context, which has the renderer of the
+/// snapshots: a capture of the window is a picture, and the app needs no
+/// display server.
+fn with_app<R>(
+    document: Option<&Path>,
+    f: impl FnOnce(&mut Server<'_, HeadlessTarget<'_>>) -> Result<R>,
+) -> Result<R> {
     let text = document
         .map(std::fs::read_to_string)
         .transpose()
@@ -78,14 +84,25 @@ fn with_app<R>(document: Option<&Path>, f: impl FnOnce(&mut Server) -> Result<R>
         .and_then(|text| Document::from_json(text).ok());
     let events = EventSink::new();
     let app_events = events.clone();
-    let (_, vcx) = cx.add_window_view(move |_, cx| AppRoot {
-        ui: doc.and_then(|doc| {
-            DataUi::new(&doc, Arc::new(Registry::with_builtins()), NoLogic, cx).ok()
-        }),
-        events: app_events,
-    });
-    vcx.run_until_parked();
-    let driver = Driver::new(vcx, events);
+    let assets = Arc::new(guiraffe_icons::GuiraffeAssets);
+    let mut cx = HeadlessAppContext::with_platform(
+        gpui_kit::platform::current_platform(true).text_system(),
+        assets,
+        gpui_kit::platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(size(px(1280.), px(800.)), move |_, app| {
+            app.new(|cx| AppRoot {
+                ui: doc.and_then(|doc| {
+                    DataUi::new(&doc, Arc::new(Registry::with_builtins()), NoLogic, cx).ok()
+                }),
+                events: app_events,
+            })
+        })
+        .context("open the headless window")?;
+    let mut target = HeadlessTarget::new(&mut cx, window.into());
+    target.park();
+    let driver = Driver::new(&mut target, events);
     let mut server = Server::new(driver);
     f(&mut server)
 }

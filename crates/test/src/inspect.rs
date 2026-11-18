@@ -473,7 +473,6 @@ impl AccessKitTree {
     }
 }
 
-
 /// The app the inspector looks at: a window and the context it runs in.
 ///
 /// The test context and the headless context both are one, so the same API
@@ -510,7 +509,10 @@ pub struct HeadlessTarget<'a> {
 
 impl<'a> HeadlessTarget<'a> {
     /// The headless app and the window of it.
-    pub fn new(cx: &'a mut gpui_kit::HeadlessAppContext, window: gpui_kit::AnyWindowHandle) -> Self {
+    pub fn new(
+        cx: &'a mut gpui_kit::HeadlessAppContext,
+        window: gpui_kit::AnyWindowHandle,
+    ) -> Self {
         Self { cx, window }
     }
 }
@@ -569,7 +571,6 @@ impl<'a, T: InspectTarget> Inspector<'a, T> {
         let focus_order = focus_order(self.target, &nodes);
         A11yReport { nodes, focus_order }
     }
-
 
     /// The resolved tokens of the app and the context they came from.
     pub fn style(&mut self) -> StyleReport {

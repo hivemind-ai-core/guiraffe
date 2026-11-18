@@ -80,3 +80,7 @@ required-features = ["inspect"]
 [[test]]
 name = "transport"
 required-features = ["inspect"]
+
+[[test]]
+name = "headless"
+required-features = ["inspect"]
