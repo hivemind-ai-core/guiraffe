@@ -14,6 +14,7 @@ mod host;
 pub mod ir;
 pub mod slots;
 pub mod template;
+pub mod validation;
 pub mod value;
 pub mod widget;
 

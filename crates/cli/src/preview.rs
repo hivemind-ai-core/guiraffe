@@ -24,9 +24,28 @@ pub fn load(path: &Path, screen: Option<&str>) -> Result<Document> {
 pub fn parse(text: &str, screen: Option<&str>) -> Result<Document> {
     let probe: serde_json::Value = serde_json::from_str(text).context("not JSON")?;
     if probe.get("screens").is_some() && probe.get("nodes").is_some() {
-        return Ok(guiraffe_mocket::import(text, screen)?.document);
+        let document = guiraffe_mocket::import(text, screen)?.document;
+        validate(&document, true)?;
+        return Ok(document);
     }
-    Document::from_json(text).map_err(anyhow::Error::msg)
+    let document = Document::from_json(text).map_err(anyhow::Error::msg)?;
+    validate(&document, true)?;
+    Ok(document)
+}
+
+pub(crate) fn validate(document: &Document, mocket_placeholders: bool) -> Result<()> {
+    let issues = guiraffe_ui::validation::Validation {
+        mocket_placeholders,
+        ..Default::default()
+    }
+    .check(document);
+    if !issues.is_empty() {
+        anyhow::bail!(
+            "document validation failed\n{}",
+            serde_json::to_string_pretty(&issues)?
+        );
+    }
+    Ok(())
 }
 
 /// Change detection by modification time + length (cheap; no extra dependencies).
@@ -59,7 +78,17 @@ impl Preview {
     fn apply(&mut self, loaded: Result<Document>, cx: &mut Context<Self>) {
         match loaded {
             Ok(doc) => {
-                self.error = None;
+                let handlers = std::collections::BTreeSet::new();
+                let issues = guiraffe_ui::validation::Validation {
+                    mocket_placeholders: true,
+                    bound_events: Some(&handlers),
+                }
+                .check(&doc);
+                self.error = if issues.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string_pretty(&issues).ok()
+                };
                 match &self.ui {
                     Some(ui) => {
                         if let Err(e) = ui.update(cx, |u, cx| u.set_document(&doc, cx)) {
