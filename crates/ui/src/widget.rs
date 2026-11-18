@@ -21,19 +21,7 @@ use crate::{
 pub(crate) type InputEmit = Rc<dyn Fn(crate::payload::InputRequest, &mut App)>;
 pub type Emit = Rc<dyn Fn(EventId, Value, u64, u32, &mut Window, &mut App)>;
 
-/// The props and events a widget kind understands, in positional order.
-#[derive(Debug)]
-pub struct Schema {
-    pub props: &'static [&'static str],
-    pub events: &'static [&'static str],
-}
-
-impl Schema {
-    pub const EMPTY: Schema = Schema {
-        props: &[],
-        events: &[],
-    };
-}
+pub use crate::catalog::Schema;
 
 /// Everything a widget needs to render one node.
 pub struct NodeView<'a> {

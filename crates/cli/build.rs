@@ -2,11 +2,6 @@ use std::{env, fs, io, path::PathBuf};
 
 // The positional schemas are consumed by DataUi. The build only exports metadata.
 #[allow(dead_code)]
-struct Schema {
-    props: &'static [&'static str],
-    events: &'static [&'static str],
-}
-
 #[path = "../ui/src/catalog.rs"]
 mod catalog;
 

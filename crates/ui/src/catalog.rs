@@ -2,7 +2,19 @@
 
 use serde_json::{Value, json};
 
-use crate::Schema;
+/// The props and events a widget kind understands, in positional order.
+#[derive(Debug)]
+pub struct Schema {
+    pub props: &'static [&'static str],
+    pub events: &'static [&'static str],
+}
+
+impl Schema {
+    pub const EMPTY: Schema = Schema {
+        props: &[],
+        events: &[],
+    };
+}
 
 pub const VERSION: &str = "1.0.0";
 
@@ -118,7 +130,7 @@ widgets! {
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
-         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "string"];
+         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "selection"];
 }
 
 impl PropSpec {
@@ -165,7 +177,14 @@ impl WidgetSpec {
         let events = self
             .events
             .iter()
-            .map(|e| json!({"id":e.id,"payloadSchema":{"type":e.payload_type}}))
+            .map(|e| {
+                let payload = if e.payload_type == "selection" {
+                    json!({"type":["string","null"]})
+                } else {
+                    json!({"type":e.payload_type})
+                };
+                json!({"id":e.id,"payloadSchema":payload})
+            })
             .collect::<Vec<_>>();
         let slots = if self.accepts_children {
             json!([{"name":"children","min":0,"max":null,"accepted":KINDS}])
@@ -181,7 +200,12 @@ impl WidgetSpec {
         let props: serde_json::Map<String, Value> = self
             .props
             .iter()
-            .map(|p| (p.name.into(), p.schema()))
+            .map(|p| {
+                (
+                    p.name.into(),
+                    json!({"anyOf":[p.schema(),{"type":"string","pattern":"^@.+"}]}),
+                )
+            })
             .collect();
         let bind: serde_json::Map<String, Value> = self
             .props

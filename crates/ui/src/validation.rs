@@ -151,6 +151,11 @@ impl Validation<'_> {
                 }
                 continue;
             };
+            if let Some(reference) = got.as_str().and_then(|text| text.strip_prefix('@'))
+                && !reference.is_empty()
+            {
+                continue;
+            }
             let valid = match prop.type_name {
                 "string" => got
                     .as_str()
@@ -250,6 +255,17 @@ mod tests {
         assert_eq!(issues[5].got, json!("svae"));
         assert_eq!(issues[5].accepted, json!(["save"]));
         assert_eq!(issues[5].hint, "Did you mean \"save\"?");
+    }
+
+    #[test]
+    fn accepts_inline_bindings_for_typed_props() {
+        let document = Document::new(
+            Node::new("text")
+                .prop("text", "@item.name")
+                .prop("size", "@size")
+                .prop("dimmed", "@muted"),
+        );
+        assert!(Validation::default().check(&document).is_empty());
     }
 
     #[test]
