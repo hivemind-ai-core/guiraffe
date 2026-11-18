@@ -600,8 +600,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    proptest! {
-        #[test]
+    #[test]
     fn reports_nonpositive_log_rows() {
         let mut spec = ChartSpec::new("log").layer(Layer::new(
             Mark::Line,
@@ -614,7 +613,8 @@ mod tests {
         assert_eq!(chart.len(), 1);
     }
 
-    #[test]
+    proptest! {
+        #[test]
         fn stacks_diverge_and_normalize(values in proptest::collection::vec(-100f64..100., 1..25)) {
             for arrangement in [Arrangement::Stack, Arrangement::Normalize] {
                 let source: Vec<_> = values.iter().copied().enumerate().collect();
