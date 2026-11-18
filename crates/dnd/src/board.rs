@@ -3,12 +3,16 @@ use crate::{
     sortable::{Selection, SortEvent, Sortable},
 };
 use gpui_kit::{
-    AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Window,
-    base::TestSupportExt, div, px,
+    AnimationExt, AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement,
+    IntoElement, ParentElement, Render, Role, SharedString, SpringAnimation,
+    StatefulInteractiveElement, Styled, Window, base::TestSupportExt, component::ActiveTheme, div,
+    px,
 };
 use guiraffe_core::{GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 use std::collections::{HashMap, HashSet};
+
+const CARD_HEIGHT: f32 = 40.;
+const CARD_GAP: f32 = 8.;
 
 /// A card's ID must be unique within its board and stable across transfers.
 pub struct Card {
@@ -207,6 +211,7 @@ impl Render for SortableBoard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
         let indicator = theme.primary_color().to_hsla();
+        let motion = cx.theme().motion_tokens().spring_move;
         let scope = cx.entity_id();
         let board = cx.entity();
         let columns = self.lists().iter().enumerate().map(|(list, cards)| {
@@ -244,8 +249,10 @@ impl Render for SortableBoard {
                     .tab_stop(true)
                     .border_1()
                     .border_color(theme.surfaces().border.to_hsla())
+                    .h(px(CARD_HEIGHT))
+                    .flex()
+                    .items_center()
                     .px_3()
-                    .py_2()
                     .child(if selected { "✓ " } else { "" })
                     .child(label.clone())
                     .on_mouse_down(
@@ -274,9 +281,16 @@ impl Render for SortableBoard {
                         .state(StateKind::FocusRing, Variant::Default, None)
                         .border,
                 );
-                Some(target(
+                let row = target(
                     source.attach(row, move |_, _, cx| cx.new(|_| Preview(label.clone()))),
                     index,
+                );
+                let y =
+                    px((index / usize::from(self.cards_per_row)) as f32 * (CARD_HEIGHT + CARD_GAP));
+                Some(row.with_spring(
+                    ("sortable-card-position", id),
+                    SpringAnimation::new(motion).to(y).with_epsilon(0.5),
+                    move |row, position| row.top(position - y),
                 ))
             });
             div()
@@ -290,7 +304,7 @@ impl Render for SortableBoard {
                     div()
                         .grid()
                         .grid_cols(self.cards_per_row)
-                        .gap_2()
+                        .gap(px(CARD_GAP))
                         .children(rows),
                 )
                 .child(target(
