@@ -513,11 +513,13 @@ impl<const P: bool> Render for TreeView<P> {
                 px(0.),
                 colours.ring,
             ))
-            .children(
-                self.error
-                    .clone()
-                    .map(|error| div().role(Role::Alert).child(error)),
-            )
+            .children(self.error.clone().map(|error| {
+                div()
+                    .id("tree-edit-error")
+                    .role(Role::Alert)
+                    .aria_label(error.clone())
+                    .child(error)
+            }))
     }
 }
 
@@ -687,6 +689,12 @@ mod tests {
         window.simulate_keystrokes("enter");
         window.run_until_parked();
         assert!(view.read_with(window, |view, _| view.error.is_some()));
+        window.update(|window, _| {
+            assert_eq!(
+                window.find_by_label("Out of range").role(),
+                Some(Role::Alert)
+            );
+        });
         window.update(|window, cx| input.update(cx, |input, cx| input.set_value("5", window, cx)));
         window.simulate_keystrokes("enter");
         window.run_until_parked();
