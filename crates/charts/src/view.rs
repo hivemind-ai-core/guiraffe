@@ -13,7 +13,15 @@ use gpui_kit::{
     div, px,
 };
 use guiraffe_core::GuiraffeTheme;
-use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::BTreeSet,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 const PAGE_SIZE: usize = 8;
 const HIT_RADIUS: f32 = 24.;
@@ -54,8 +62,17 @@ impl Default for ChartOptions {
 struct Frame {
     bounds: Bounds<Pixels>,
     scene: Option<Scene>,
+    pending: Option<SceneRequest>,
     builds: usize,
     paints: usize,
+}
+
+struct SceneRequest(Arc<AtomicBool>);
+
+impl Drop for SceneRequest {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 struct PlotState {
@@ -69,22 +86,56 @@ struct PlotState {
 impl PlotState {
     fn invalidate(&mut self) {
         self.frame.scene = None;
+        self.frame.pending = None;
     }
 
-    fn prepare(&mut self, bounds: Bounds<Pixels>) {
+    fn prepare(&mut self, bounds: Bounds<Pixels>, ink: &WeakEntity<PlotInk>, cx: &mut App) {
         if self.frame.bounds.size != bounds.size {
             self.invalidate();
         }
         self.frame.bounds = bounds;
-        if self.frame.scene.is_none() {
-            self.frame.scene = Some(self.chart.scene(
-                f32::from(bounds.size.width),
-                f32::from(bounds.size.height),
-                self.domain,
-                &self.hidden,
-            ));
-            self.frame.builds += 1;
+        if self.frame.scene.is_some() || self.frame.pending.is_some() {
+            return;
         }
+        let width = f32::from(bounds.size.width);
+        let height = f32::from(bounds.size.height);
+        if self.chart.len() < 100_000 {
+            self.frame.scene = Some(self.chart.scene(width, height, self.domain, &self.hidden));
+            self.frame.builds += 1;
+            return;
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.frame.pending = Some(SceneRequest(cancelled.clone()));
+        let chart = self.chart.clone();
+        let hidden = self.hidden.clone();
+        let domain = self.domain;
+        let ink = ink.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |cx| {
+            let stop = cancelled.clone();
+            let scene = executor
+                .spawn(async move {
+                    chart.scene_with_cancel(width, height, domain, &hidden, &|| {
+                        stop.load(Ordering::Relaxed)
+                    })
+                })
+                .await;
+            let _ = ink.update(cx, |ink, cx| {
+                let mut state = ink.0.borrow_mut();
+                if state
+                    .frame
+                    .pending
+                    .as_ref()
+                    .is_some_and(|request| Arc::ptr_eq(&request.0, &cancelled))
+                {
+                    state.frame.pending = None;
+                    state.frame.scene = Some(scene);
+                    state.frame.builds += 1;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn local(&self, pos: Point<Pixels>) -> Position {
@@ -594,6 +645,7 @@ impl Render for PlotInk {
         let layout = self.0.clone();
         let paint = self.0.clone();
         let overlay = self.1.clone();
+        let ink = cx.weak_entity();
         canvas(
             move |bounds, window, cx| {
                 let mut layout = layout.borrow_mut();
@@ -602,7 +654,7 @@ impl Render for PlotInk {
                 {
                     window.defer(cx, move |_, cx| App::notify(cx, overlay.entity_id()));
                 }
-                layout.prepare(bounds);
+                layout.prepare(bounds, &ink, cx);
             },
             move |bounds, _, window, cx| {
                 let mut state = paint.borrow_mut();

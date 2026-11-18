@@ -107,6 +107,17 @@ impl PreparedChart {
         domain: Domain,
         hidden: &BTreeSet<SeriesId>,
     ) -> Scene {
+        self.scene_with_cancel(width, height, domain, hidden, &|| false)
+    }
+
+    pub(crate) fn scene_with_cancel(
+        &self,
+        width: f32,
+        height: f32,
+        domain: Domain,
+        hidden: &BTreeSet<SeriesId>,
+        cancelled: &impl Fn() -> bool,
+    ) -> Scene {
         if !width.is_finite() || !height.is_finite() {
             return Scene { panels: Vec::new() };
         }
@@ -198,6 +209,9 @@ impl PreparedChart {
                 .count()
                 .max(1);
             for run in visible_runs {
+                if cancelled() {
+                    return Scene { panels: Vec::new() };
+                }
                 let projection = Projection {
                     chart: self,
                     domains,
@@ -249,7 +263,7 @@ impl PreparedChart {
                     }
                     continue;
                 }
-                projection.generate(&mut panel.draws, &mut scratch, scatter_runs);
+                projection.generate(&mut panel.draws, &mut scratch, scatter_runs, cancelled);
             }
             panels.push(panel);
         }
@@ -392,7 +406,13 @@ impl Projection<'_> {
         row.color.unwrap_or(Color::Category(self.run.palette))
     }
 
-    fn generate(&self, out: &mut Vec<Draw>, scratch: &mut Vec<usize>, scatter_runs: usize) {
+    fn generate(
+        &self,
+        out: &mut Vec<Draw>,
+        scratch: &mut Vec<usize>,
+        scatter_runs: usize,
+        cancelled: &impl Fn() -> bool,
+    ) {
         let domain = self.domains[0];
         let visible = if self.run.mark == Mark::Rule(Orientation::Horizontal) {
             0..self.run.rows.len()
@@ -423,7 +443,7 @@ impl Projection<'_> {
             let columns = (self.rect.width() / cell_size).clamp(1., 128.) as usize;
             let rows = (self.rect.height() / cell_size).clamp(1., 64.) as usize;
             if visible.len() > 8_192 / scatter_runs.max(1) {
-                self.scatter(visible, columns, rows, out);
+                self.scatter(visible, columns, rows, out, cancelled);
                 return;
             }
         }
@@ -511,11 +531,21 @@ impl Projection<'_> {
         }
     }
 
-    fn scatter(&self, visible: Range<usize>, columns: usize, rows: usize, out: &mut Vec<Draw>) {
+    fn scatter(
+        &self,
+        visible: Range<usize>,
+        columns: usize,
+        rows: usize,
+        out: &mut Vec<Draw>,
+        cancelled: &impl Fn() -> bool,
+    ) {
         // Share the viewport draw budget across visible series. Hit testing uses source points.
         let mut free_cells = columns * rows;
         let mut occupied = vec![false; columns * rows];
-        for row in &self.run.rows[visible] {
+        for (index, row) in self.run.rows[visible].iter().enumerate() {
+            if index % 256 == 0 && cancelled() {
+                return;
+            }
             let Some(point) = self.anchor(row).filter(|&p| self.rect.contains(p)) else {
                 continue;
             };
