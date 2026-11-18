@@ -558,7 +558,7 @@ impl Projection<'_> {
         let mut free_cells = columns * rows;
         let mut occupied = vec![false; columns * rows];
         for (index, row) in self.run.rows[visible].iter().enumerate() {
-            if index % 256 == 0 && cancelled() {
+            if index.is_multiple_of(256) && cancelled() {
                 return;
             }
             let Some(point) = self.anchor(row).filter(|&p| self.rect.contains(p)) else {

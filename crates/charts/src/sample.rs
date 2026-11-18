@@ -33,7 +33,7 @@ pub(crate) fn lttb_with_cancel(
     let start = |bucket: usize| ((bucket as f64 * width) as usize + 1).min(len - 1);
     let mut anchor = point(0);
     for bucket in 0..buckets {
-        if bucket % 64 == 0 && cancelled() {
+        if bucket.is_multiple_of(64) && cancelled() {
             out.clear();
             return;
         }

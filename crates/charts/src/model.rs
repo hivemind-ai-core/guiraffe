@@ -210,11 +210,11 @@ impl Layer {
                 let count = source.len();
                 let stride = limit.map_or(1, |limit| count.div_ceil(limit).max(1));
                 for (slot, start) in (0..count).step_by(stride).enumerate() {
-                    if slot % 256 == 0 && cancelled() {
+                    if slot.is_multiple_of(256) && cancelled() {
                         return;
                     }
                     let remaining = count - start;
-                    let offset = if slot == 0 {
+                    let offset = if stride == 1 || slot == 0 {
                         0
                     } else if remaining <= stride {
                         remaining - 1
@@ -468,7 +468,7 @@ impl ChartSpec {
                 });
                 has_right_axis |= layer.secondary;
                 for (index, row) in rows.iter().enumerate() {
-                    if index % 256 == 0 && cancelled() {
+                    if index.is_multiple_of(256) && cancelled() {
                         break 'layers;
                     }
                     let normalize = layer.mark.arrangement() == Arrangement::Normalize;
