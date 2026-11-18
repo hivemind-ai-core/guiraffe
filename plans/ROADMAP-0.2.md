@@ -49,6 +49,12 @@
 ## B. Mocket → GUIraffe (0.2)
 Status audit of `guiraffe import` vs Mocket's JSON; write **spec/19-mocket-interop.md** (hand-off for Mocket devs): event annotations (`on:<event> → <event-id>` with payload schema), data bindings (`bind:<prop> → <path>` incl. lists/keys, two-way for inputs, formatters), slots/components, style tokens (map to GUIraffe theme/StyleContext, not raw px), versioned schema + validation, round-trip guarantees.
 
+## C2. Production-readiness pass (0.2; spec/23)
+Audit and harden DataGrid, Sheet, FlameGraph, Tree views, Flow, Timeline, CodeViewer, Charts,
+Markdown/Mermaid and Chat against spec/23: scale targets, ≤8 ms p99 frame work, O(viewport)
+memory with per-item budgets, zero-alloc warm paths, property tests + fuzzing, 30-min soak tests
+with flat memory, keyboard/a11y under load. Output: PRODUCTION.md readiness table backed by CI.
+
 ## C. Optimisation pass (0.2)
 Fewer re-renders, lower-latency frames, fewer copies, less memory. Measure first (bench + devtools counters + RSS), per crate; publish Electron/React comparison numbers.
 
