@@ -222,3 +222,13 @@ fn large_timeline_bar_storage_is_one_value_per_bar() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn production_scatter_recompute_bounds_allocation_traffic() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::chart_scatter_1m_100_series;
+    chart_scatter_1m_100_series();
+    let (_, counts) = count_allocations(chart_scatter_1m_100_series)?;
+    assert!(counts.allocations <= 1_024, "{counts:?}");
+    assert!(counts.bytes <= 128 * 1024 * 1024, "{counts:?}");
+    Ok(())
+}
