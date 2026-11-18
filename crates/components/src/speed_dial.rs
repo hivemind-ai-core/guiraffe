@@ -178,7 +178,8 @@ impl Render for SpeedDial {
             if p == 0. {
                 continue;
             }
-            positions.push(point(px(x * p), px(y * p)));
+            let offset = point(px(x * p), px(y * p));
+            positions.push(offset);
             let action_id = id(index + 1);
             let focus = keyed_focus(action_id.clone(), window, cx);
             if self.open {
@@ -229,15 +230,16 @@ impl Render for SpeedDial {
                         this.set_open(false, cx);
                     }),
                 );
-            // Press positions its own focus ring, so position a wrapper for each bubble.
-            content = content.child(
-                div()
+            content = content.child(DialBubble {
+                offset,
+                child: div()
                     .absolute()
                     .size(px(40.))
-                    .left(px(x * p))
-                    .top(px(y * p))
-                    .child(bubble),
-            );
+                    .left_0()
+                    .top_0()
+                    .child(bubble)
+                    .into_any_element(),
+            });
         }
         disclosure_motion::schedule(needs_frame, cx.entity_id(), window);
         let press = Press::new(primary_colors)
@@ -313,6 +315,71 @@ impl Render for SpeedDial {
                 }
                 cx.stop_propagation();
             }))
+    }
+}
+
+/// All bubble layout boxes overlap the anchor. Translate their hitboxes and paint
+/// during prepaint so moving bubbles cannot change ancestor overflow or layout.
+struct DialBubble {
+    offset: Point<Pixels>,
+    child: AnyElement,
+}
+
+impl IntoElement for DialBubble {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for DialBubble {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.with_element_offset(self.offset, |window| {
+            self.child.prepaint(window, cx);
+        });
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
     }
 }
 
