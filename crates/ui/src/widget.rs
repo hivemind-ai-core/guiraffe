@@ -1,7 +1,7 @@
 //! The dynamic widget interface and registry (the `dyn` side of static + dynamic UI).
 //!
 //! Widgets declare a [`Schema`]; the compiler stores each node's props and events in schema
-//! order, so rendering reads them **by position** (no string lookups at runtime), and unknown
+//! order, so rendering can address them by name or position, and unknown
 //! props/events in a document are reported as diagnostics.
 
 use std::{collections::HashMap, rc::Rc, sync::Arc};
@@ -23,6 +23,12 @@ pub type Emit = Rc<dyn Fn(EventId, Value, u64, u32, &mut Window, &mut App)>;
 
 pub use crate::catalog::Schema;
 
+impl Schema {
+    pub(crate) fn prop_index(&self, name: &str) -> Option<usize> {
+        self.props.iter().position(|prop| *prop == name)
+    }
+}
+
 /// Everything a widget needs to render one node.
 pub struct NodeView<'a> {
     pub spec: &'a NodeSpec,
@@ -43,6 +49,24 @@ pub struct NodeView<'a> {
 static NULL: Value = Value::Null;
 
 impl NodeView<'_> {
+    pub(crate) fn prop_index(&self, name: &str) -> usize {
+        self.spec
+            .widget
+            .schema()
+            .prop_index(name)
+            .unwrap_or(usize::MAX)
+    }
+
+    pub(crate) fn event_index(&self, name: &str) -> usize {
+        self.spec
+            .widget
+            .schema()
+            .events
+            .iter()
+            .position(|event| *event == name)
+            .unwrap_or(usize::MAX)
+    }
+
     /// Prop at schema position `i` (literal, or the current value of its bound slot).
     pub fn prop(&self, i: usize) -> &Value {
         match self.spec.props.get(i) {

@@ -92,19 +92,12 @@ pub(crate) struct Props {
 impl Props {
     pub(crate) fn from_node(n: &NodeView<'_>) -> Self {
         Self {
-            value: n.prop(0).clone(),
-            label: n.text(1),
-            options: n.prop(2).clone(),
-            disabled: n.bool(3),
-            invalid: n
-                .spec
-                .widget
-                .schema()
-                .props
-                .iter()
-                .position(|name| *name == "invalid")
-                .is_some_and(|index| n.bool(index)),
-            placeholder: n.text(4),
+            value: n.prop(n.prop_index("value")).clone(),
+            label: n.text(n.prop_index("label")),
+            options: n.prop(n.prop_index("options")).clone(),
+            disabled: n.bool(n.prop_index("disabled")),
+            invalid: n.bool(n.prop_index("invalid")),
+            placeholder: n.text(n.prop_index("placeholder")),
         }
     }
 }

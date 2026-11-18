@@ -9,10 +9,10 @@ use guiraffe_core::{Size, StyleContext};
 
 use crate::widget::{NodeView, Registry, widget};
 
-fn gap(n: &NodeView<'_>, i: usize) -> f32 {
+fn gap(n: &NodeView<'_>) -> f32 {
     StyleContext::current()
         .density
-        .space(n.size(i).unwrap_or(Size::Sm))
+        .space(n.size(n.prop_index("gap")).unwrap_or(Size::Sm))
 }
 
 /// Split children into rows of `cols` (the last row may be shorter).
@@ -41,7 +41,7 @@ pub fn register(r: &mut Registry) {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(gap(n, 0)))
+                .gap(px(gap(n)))
                 .children(kids)
                 .into_any_element()
         }),
@@ -54,7 +54,7 @@ pub fn register(r: &mut Registry) {
                 .flex_row()
                 .flex_wrap()
                 .items_center()
-                .gap(px(gap(n, 0)))
+                .gap(px(gap(n)))
                 .children(kids)
                 .into_any_element()
         }),
@@ -62,8 +62,11 @@ pub fn register(r: &mut Registry) {
     r.register(
         GRID.0.id,
         widget(&GRID.1, |n, kids, _, _| {
-            let cols = n.num(1).unwrap_or(2.0).clamp(1.0, 12.0) as usize;
-            let g = gap(n, 0);
+            let cols = n
+                .num(n.prop_index("columns"))
+                .unwrap_or(2.0)
+                .clamp(1.0, 12.0) as usize;
+            let g = gap(n);
             div()
                 .flex()
                 .flex_col()
@@ -80,22 +83,27 @@ pub fn register(r: &mut Registry) {
     r.register(
         TITLE.0.id,
         widget(&TITLE.1, |n, _, _, _| {
-            Title::new(n.text(0))
-                .order(n.num(1).map(|o| o.clamp(1.0, 6.0) as u8).unwrap_or(3))
+            Title::new(n.text(n.prop_index("text")))
+                .order(
+                    n.num(n.prop_index("order"))
+                        .map(|o| o.clamp(1.0, 6.0) as u8)
+                        .unwrap_or(3),
+                )
                 .into_any_element()
         }),
     );
     r.register(
         TEXT.0.id,
         widget(&TEXT.1, |n, _, _, _| {
-            let mut t = Text::new(n.text(0)).dimmed(n.bool(1));
-            if let Some(s) = n.size(2) {
+            let mut t =
+                Text::new(n.text(n.prop_index("text"))).dimmed(n.bool(n.prop_index("dimmed")));
+            if let Some(s) = n.size(n.prop_index("size")) {
                 t = t.size(s);
             }
-            if let Some(c) = n.color(3) {
+            if let Some(c) = n.color(n.prop_index("color")) {
                 t = t.color(c);
             }
-            if n.bool(4) {
+            if n.bool(n.prop_index("single-line")) {
                 t = t
                     .truncate(true)
                     .h(px(Size::Xl.control_height()))
@@ -105,7 +113,9 @@ pub fn register(r: &mut Registry) {
         })
         .uniform_rows_if(|props| {
             matches!(
-                props.get(4),
+                TEXT.1
+                    .prop_index("single-line")
+                    .and_then(|index| props.get(index)),
                 Some(crate::Prop::Lit(crate::Value::Bool(true)))
             )
         }),
@@ -113,13 +123,15 @@ pub fn register(r: &mut Registry) {
     r.register(
         HIGHLIGHT.0.id,
         widget(&HIGHLIGHT.1, |n, _, _, _| {
-            Highlight::new(n.text(0)).term(n.text(1)).into_any_element()
+            Highlight::new(n.text(n.prop_index("text")))
+                .term(n.text(n.prop_index("term")))
+                .into_any_element()
         }),
     );
     r.register(
         PILL.0.id,
         widget(&PILL.1, |n, _, _, _| {
-            Pill::new(n.element_id(), n.text(0)).into_any_element()
+            Pill::new(n.element_id(), n.text(n.prop_index("label"))).into_any_element()
         }),
     );
     r.register(
@@ -132,20 +144,20 @@ pub fn register(r: &mut Registry) {
         RING.0.id,
         widget(&RING.1, |n, _, _, _| {
             RingProgress::new()
-                .diameter(n.num(2).unwrap_or(64.0) as f32)
+                .diameter(n.num(n.prop_index("diameter")).unwrap_or(64.0) as f32)
                 .section(
-                    n.num(0).unwrap_or(0.0) as f32,
-                    n.color(1).unwrap_or_default(),
+                    n.num(n.prop_index("value")).unwrap_or(0.0) as f32,
+                    n.color(n.prop_index("color")).unwrap_or_default(),
                 )
-                .label(n.text(3))
+                .label(n.text(n.prop_index("label")))
                 .into_any_element()
         }),
     );
     r.register(
         BUTTON.0.id,
         widget(&BUTTON.1, |n, _, _, _| {
-            let b = Button::new(n.element_id()).label(n.text(0));
-            let b = match n.handler(0) {
+            let b = Button::new(n.element_id()).label(n.text(n.prop_index("label")));
+            let b = match n.handler(n.event_index("click")) {
                 Some(h) => b
                     .on_click(move |_, w, cx| h(crate::Value::Null, w, cx))
                     .into_any_element(),
