@@ -629,6 +629,10 @@ impl Render for DopeSheet {
                                                 b.origin.y + px(y as f32),
                                             )
                                         };
+                                        let mut diamonds: Option<(
+                                            gpui_kit::Hsla,
+                                            gpui_kit::Path<Pixels>,
+                                        )> = None;
                                         for (x, y, selected, shape, hold, muted, summary, locked) in
                                             &keys
                                         {
@@ -654,6 +658,40 @@ impl Render for DopeSheet {
                                             }
                                             .to_hsla();
                                             let cy = *y + f64::from(ROW_H) / 2.;
+                                            let radius =
+                                                if *selected || *summary { 6. } else { 4. };
+                                            if *shape == KeyShape::Diamond
+                                                && hold.is_none()
+                                                && !(*locked && lock_style == LockStyle::Hatched)
+                                            {
+                                                if diamonds
+                                                    .as_ref()
+                                                    .is_some_and(|(color, _)| *color != ink)
+                                                    && let Some((color, mesh)) = diamonds.take()
+                                                {
+                                                    window.paint_path(mesh, color);
+                                                }
+                                                let (_, mesh) = diamonds.get_or_insert_with(|| {
+                                                    (ink, gpui_kit::Path::new(at(*x, cy)))
+                                                });
+                                                let top = at(*x, cy - radius);
+                                                let right = at(x + radius, cy);
+                                                let bottom = at(*x, cy + radius);
+                                                let left = at(x - radius, cy);
+                                                let uv = gpui_kit::point(0., 1.);
+                                                mesh.push_triangle(
+                                                    (top, right, bottom),
+                                                    (uv, uv, uv),
+                                                );
+                                                mesh.push_triangle(
+                                                    (top, bottom, left),
+                                                    (uv, uv, uv),
+                                                );
+                                                continue;
+                                            }
+                                            if let Some((color, mesh)) = diamonds.take() {
+                                                window.paint_path(mesh, color);
+                                            }
                                             if let Some(end) = hold {
                                                 let mut path =
                                                     gpui_kit::PathBuilder::stroke(px(3.));
@@ -663,8 +701,6 @@ impl Render for DopeSheet {
                                                     window.paint_path(path, ink);
                                                 }
                                             }
-                                            let radius =
-                                                if *selected || *summary { 6. } else { 4. };
                                             let mut path = gpui_kit::PathBuilder::fill();
                                             if *shape == KeyShape::Diamond {
                                                 for (i, (dx, dy)) in [
@@ -709,6 +745,9 @@ impl Render for DopeSheet {
                                             if let Ok(path) = path.build() {
                                                 window.paint_path(path, ink);
                                             }
+                                        }
+                                        if let Some((color, mesh)) = diamonds {
+                                            window.paint_path(mesh, color);
                                         }
                                     },
                                 )
