@@ -303,6 +303,14 @@ impl PreparedChart {
                     let right = x_scale.invert(domain, panel.rect.fraction(cursor.0 + reach));
                     run.visible(left, right, false)
                 }
+                Mark::Point | Mark::Bubble => {
+                    // A closer hit in an earlier series narrows the horizontal
+                    // candidate interval. One pixel covers projection rounding.
+                    let reach = (distance.sqrt() + 1.).min(radius);
+                    let left = x_scale.invert(domain, panel.rect.fraction(cursor.0 - reach));
+                    let right = x_scale.invert(domain, panel.rect.fraction(cursor.0 + reach));
+                    run.visible(left, right, false)
+                }
                 _ => run.visible(min, max, false),
             };
             for row in &run.rows[range] {
@@ -447,7 +455,10 @@ impl Projection<'_> {
             return;
         }
         if matches!(self.run.mark, Mark::Point | Mark::Bubble) {
-            let cell_size = 6. * (scatter_runs as f32).sqrt();
+            let pixels_per_series = self.rect.width() * self.rect.height() * scatter_runs as f32;
+            let cell_size = (pixels_per_series / 4_096.)
+                .sqrt()
+                .max(6. * (scatter_runs as f32).sqrt());
             let columns = (self.rect.width() / cell_size).clamp(1., 128.) as usize;
             let rows = (self.rect.height() / cell_size).clamp(1., 64.) as usize;
             if visible.len() > 8_192 / scatter_runs.max(1) {
