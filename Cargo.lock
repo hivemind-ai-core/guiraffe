@@ -3645,6 +3645,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
+ "guiraffe-dnd",
  "guiraffe-flow",
  "guiraffe-icons",
  "guiraffe-inputs",

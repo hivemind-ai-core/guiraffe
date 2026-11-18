@@ -1,16 +1,13 @@
-//! Run with `cargo run -p guiraffe-dnd --example workspace -- [ide]`.
+use crate::catalog::Entry;
 use gpui_kit::{
     AnyView, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, Window, WindowOptions,
-    component::{
-        Root,
-        dock::{BasePanel, DockLayout},
-    },
+    ParentElement, Render, SharedString, Styled, Subscription, Window,
+    component::dock::{BasePanel, DockLayout},
     div, px,
 };
 use guiraffe_dnd::{
     Card, SortableBoard,
-    dock::{self, DockEvent, Panel, PanelEvent},
+    dock::{self, DockEvent, DockPlacement, Panel, PanelEvent},
     sortable::SortEvent,
 };
 use guiraffe_layout::LayoutStore;
@@ -34,7 +31,8 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
-            .size_full()
+            .w_full()
+            .h(px(440.))
             .flex()
             .flex_col()
             .gap_3()
@@ -82,6 +80,7 @@ impl Render for IdePanel {
             "Files" => "src/\n  main.rs\n  lib.rs\nCargo.toml",
             "main.rs" => "fn main() {\n    println!(\"Hello, GUIraffe!\");\n}",
             "lib.rs" => "pub mod workspace;",
+            "Outline" => "main()\nworkspace",
             _ => "$ cargo check\nFinished dev profile",
         };
         div().size_full().p_4().font_family("monospace").child(body)
@@ -98,7 +97,7 @@ fn ide_panel(name: &'static str, cx: &mut App) -> Entity<IdePanel> {
 fn ide(window: &mut Window, cx: &mut Context<Workspace>) -> Workspace {
     const KEY: &str = "guiraffe.examples.ide";
     const VERSION: usize = 1;
-    for name in ["Files", "main.rs", "lib.rs", "Terminal"] {
+    for name in ["Files", "main.rs", "lib.rs", "Terminal", "Outline"] {
         dock::register_panel(cx, name, move |_, _, cx| {
             dock::panel_handle(ide_panel(name, cx))
         });
@@ -117,18 +116,16 @@ fn ide(window: &mut Window, cx: &mut Context<Workspace>) -> Workspace {
             })
         };
         area.update(cx, |area, cx| {
-            area.set_center(
-                DockLayout::h_split()
-                    .child(tabs(&["Files"], cx), Some(px(180.)))
-                    .child(
-                        DockLayout::v_split()
-                            .child(tabs(&["main.rs", "lib.rs"], cx), None)
-                            .child(tabs(&["Terminal"], cx), Some(px(150.))),
-                        None,
-                    ),
-                window,
-                cx,
-            );
+            area.set_center(tabs(&["main.rs", "lib.rs"], cx), window, cx);
+            for (placement, name, size) in [
+                (DockPlacement::Left, "Files", px(170.)),
+                (DockPlacement::Right, "Outline", px(170.)),
+                (DockPlacement::Bottom, "Terminal", px(130.)),
+            ] {
+                area.set_dock(placement, tabs(&[name], cx), window, cx);
+                area.set_dock_size(placement, size, window, cx);
+            }
+            area.toggle_dock(DockPlacement::Right, window, cx);
         });
     }
     let persistence = dock::persist_changes(&area, KEY.into(), |error, _| eprintln!("{error}"), cx);
@@ -204,18 +201,21 @@ fn kanban(cx: &mut Context<Workspace>) -> Workspace {
     }
 }
 
-fn main() {
-    let use_ide = std::env::args().nth(1).as_deref() == Some("ide");
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
-        .run(move |cx| {
-            guiraffe_layout::init(cx);
-            if let Err(error) = cx.open_window(WindowOptions::default(), move |window, cx| {
-                let view = cx.new(|cx| if use_ide { ide(window, cx) } else { kanban(cx) });
-                cx.new(|cx| Root::new(view, window, cx))
-            }) {
-                eprintln!("{error}");
-                cx.quit();
-            }
-        });
+pub fn entries() -> [Entry; 2] {
+    [
+        Entry {
+            krate: "dnd",
+            name: "Kanban",
+            summary: "Reorder cards, transfer them between columns, or use Space and the arrow keys.",
+            covers: &["SortableBoard"],
+            demo: |_, cx| cx.new(kanban).into(),
+        },
+        Entry {
+            krate: "dnd",
+            name: "IDE layout",
+            summary: "Drag a tab to reorder it or split a group. Layout changes are saved through LayoutStore.",
+            covers: &[],
+            demo: |window, cx| cx.new(|cx| ide(window, cx)).into(),
+        },
+    ]
 }
