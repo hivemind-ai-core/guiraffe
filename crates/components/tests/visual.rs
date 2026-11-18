@@ -115,6 +115,15 @@ impl Render for KitchenSink {
                         .color(ColorName::Violet),
                     ),
             )
+            .child(
+                Stepper::new([
+                    Step::new("Account").description("Your details"),
+                    Step::new("Verify").description("Confirm email"),
+                    Step::new("Done"),
+                ])
+                .active(1)
+                .color(ColorName::Teal),
+            )
             .child(self.spoiler.clone())
             .child(
                 Timeline::new([

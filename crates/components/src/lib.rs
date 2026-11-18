@@ -17,6 +17,7 @@ pub mod paper;
 pub mod ring;
 pub mod segmented;
 pub mod spoiler;
+pub mod stepper;
 mod style;
 pub mod timeline;
 pub mod typography;
@@ -34,6 +35,7 @@ pub use paper::{Card, CardSection, Paper};
 pub use ring::{RingProgress, arc_spans};
 pub use segmented::{SegmentedControl, SegmentedEvent};
 pub use spoiler::Spoiler;
+pub use stepper::{Step, StepState, Stepper, connector_complete, step_state};
 pub use timeline::{ItemState, Timeline, TimelineItem};
 pub use typography::{Text, Title};
 

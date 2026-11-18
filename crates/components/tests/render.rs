@@ -8,8 +8,8 @@ use gpui_kit::{
     Window, div, px,
 };
 use guiraffe_components::{
-    AvatarGroup, ColorSwatch, KbdGroup, KbdSeparator, Person, SwatchSelected, Timeline,
-    TimelineItem,
+    AvatarGroup, ColorSwatch, KbdGroup, KbdSeparator, Person, Step, StepState, Stepper,
+    SwatchSelected, Timeline, TimelineItem, step_state,
 };
 use guiraffe_core::{ColorName, Size};
 
@@ -238,4 +238,68 @@ fn avatar_group_limit_of_zero_and_empty_render_without_panicking(cx: &mut TestAp
         .expect("an empty group is laid out");
     assert_eq!(f32::from(empty.size.width), 0.0, "nothing to draw");
     assert!(vcx.debug_bounds("zero-limit").is_some());
+}
+
+struct StepperScene {
+    clicked: std::rc::Rc<std::cell::Cell<Option<usize>>>,
+}
+
+impl Render for StepperScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let clicked = self.clicked.clone();
+        div().w(px(420.)).child(
+            Stepper::new([
+                Step::new("Account").description("Your details"),
+                Step::new("Verify").description("Confirm email"),
+                Step::new("Done"),
+            ])
+            .active(1)
+            .on_step_click(move |i, _, _, _| clicked.set(Some(i))),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn stepper_draws_three_distinct_states_and_reports_clicks(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let clicked = std::rc::Rc::new(std::cell::Cell::new(None));
+    let c = clicked.clone();
+    let (_view, vcx) = cx.add_window_view(move |_, _| StepperScene { clicked: c });
+    vcx.run_until_parked();
+    let first = vcx.debug_bounds("gr-step-bubble:0").expect("first bubble");
+    let second = vcx.debug_bounds("gr-step-bubble:1").expect("active bubble");
+    let third = vcx.debug_bounds("gr-step-bubble:2").expect("last bubble");
+    assert!(first.origin.x < second.origin.x && second.origin.x < third.origin.x);
+    assert_eq!(
+        f32::from(first.size.width),
+        f32::from(third.size.width),
+        "bubbles share a size"
+    );
+    assert_eq!(step_state(0, 1), StepState::Completed);
+    // Clicking the third step reports its index; the component stays stateless.
+    let target = vcx
+        .debug_bounds("gr-step:2")
+        .expect("the third step column");
+    vcx.simulate_mouse_move(target.center(), None, Modifiers::default());
+    vcx.simulate_click(target.center(), Modifiers::default());
+    assert_eq!(clicked.get(), Some(2));
+}
+
+#[gpui_kit::test]
+fn stepper_with_no_steps_is_safe(cx: &mut TestAppContext) {
+    struct Empty;
+    impl Render for Empty {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(200.))
+                .child(Stepper::new(Vec::<Step>::new()).active(3))
+        }
+    }
+    cx.update(guiraffe_components::init);
+    let (_view, vcx) = cx.add_window_view(|_, _| Empty);
+    vcx.run_until_parked();
+    assert!(
+        vcx.debug_bounds("gr-step-bubble:0").is_none(),
+        "nothing to draw"
+    );
 }
