@@ -187,6 +187,7 @@ impl PreparedChart {
                 draws: Vec::new(),
                 ticks,
             };
+            let mut stack_indices = std::collections::BTreeMap::new();
             for run in self
                 .runs
                 .iter()
@@ -198,6 +199,51 @@ impl PreparedChart {
                     rect,
                     run,
                 };
+                if matches!(
+                    run.mark,
+                    Mark::Area(Arrangement::Stack | Arrangement::Normalize)
+                ) {
+                    let visible = run.visible(domain.min(), domain.max(), true);
+                    let indices = stack_indices.entry(run.id.layer).or_insert_with(|| {
+                        let aligned = self
+                            .runs
+                            .iter()
+                            .filter(|other| {
+                                other.id.layer == run.id.layer && other.facet == run.facet
+                            })
+                            .all(|other| {
+                                other.rows.len() == run.rows.len()
+                                    && other.rows.iter().zip(&run.rows).all(|(a, b)| a.x == b.x)
+                            });
+                        if !aligned {
+                            return None;
+                        }
+                        let mut indices = Vec::new();
+                        let budget = (rect.width().ceil() as usize).clamp(3, 4096);
+                        lttb(
+                            visible.len(),
+                            budget,
+                            |i| {
+                                let row = &run.rows[visible.start + i];
+                                (row.x, row.top)
+                            },
+                            &mut indices,
+                        );
+                        Some(
+                            indices
+                                .into_iter()
+                                .map(|i| i + visible.start)
+                                .collect::<Vec<_>>(),
+                        )
+                    });
+                    if let Some(indices) = indices {
+                        projection.connected_path(indices.iter().copied(), &mut panel.draws);
+                    } else {
+                        // Preserve all source knots when series do not share an x grid.
+                        projection.connected_path(visible, &mut panel.draws);
+                    }
+                    continue;
+                }
                 projection.generate(&mut panel.draws, &mut scratch);
             }
             panels.push(panel);
@@ -397,16 +443,30 @@ impl Projection<'_> {
             },
             scratch,
         );
-        let Some(&first) = scratch.first() else {
+        self.connected_path(
+            scratch
+                .iter()
+                .map(|&i| source.map_or(range.start + i, |level| level[range.start + i])),
+            out,
+        );
+    }
+
+    fn connected_path(
+        &self,
+        indices: impl DoubleEndedIterator<Item = usize> + Clone,
+        out: &mut Vec<Draw>,
+    ) {
+        let row = |i| &self.run.rows[i];
+        let Some(first) = indices.clone().next() else {
             return;
         };
         let area = matches!(self.run.mark, Mark::Area(_));
-        let mut points: Vec<_> = scratch
-            .iter()
-            .filter_map(|&i| self.anchor(row(i)))
+        let mut points: Vec<_> = indices
+            .clone()
+            .filter_map(|i| self.anchor(row(i)))
             .collect();
         if area {
-            points.extend(scratch.iter().rev().filter_map(|&i| {
+            points.extend(indices.rev().filter_map(|i| {
                 let row = row(i);
                 self.xy(row.x, row.base)
                     .or_else(|| self.xy(row.x, self.domains[self.y_axis()].min()))
@@ -591,6 +651,38 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn stacked_area_paths_share_sampled_x_coordinates() {
+        let model = ChartSpec::new("stack")
+            .layer(Layer::new(
+                Mark::Area(Arrangement::Stack),
+                (0..1000)
+                    .flat_map(|x| {
+                        [
+                            (x as f64, 2. + (x as f64).sin(), 0),
+                            (x as f64, 2. + (x as f64 / 7.).cos(), 1),
+                        ]
+                    })
+                    .collect::<Vec<_>>(),
+                Channels::new(|p: &(f64, f64, u32)| p.0, |p| p.1).group(|p| p.2),
+            ))
+            .prepare();
+        let scene = model.scene(300., 300., model.x_domain(), &BTreeSet::new());
+        let draws = &scene.panels[0].draws;
+        let Geometry::Path { points: first, .. } = &draws[0].geometry else {
+            panic!("expected area")
+        };
+        let Geometry::Path { points: second, .. } = &draws[1].geometry else {
+            panic!("expected area")
+        };
+        let count = first.len() / 2;
+        assert!(count < 1000);
+        assert_eq!(
+            &first[..count],
+            second[count..].iter().rev().copied().collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn left_margin_grows_for_long_axis_title() {
