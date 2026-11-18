@@ -3,11 +3,11 @@ use crate::{
     scene::{Hit, Position, Rect},
 };
 use gpui_kit::{
-    AnyElement, App, AppContext, Bounds, Context, Entity, EventEmitter, InteractiveElement,
-    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Point, Render, Role, ScrollEvent, StatefulInteractiveElement, StyleRefinement, Styled,
-    WeakEntity, Window,
-    base::{Disableable, TestSupportExt},
+    AnyElement, App, AppContext, Bounds, Context, DispatchPhase, Entity, EventEmitter,
+    HitboxBehavior, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, Role, ScrollEvent,
+    StatefulInteractiveElement, StyleRefinement, Styled, WeakEntity, Window,
+    base::{Disableable, Root, RootPlugin, TestSupportExt},
     canvas,
     component::{Sizable, button::Button},
     div, px,
@@ -93,6 +93,35 @@ impl PlotState {
     }
 }
 
+/// Install chart hover support before creating GPUI Kit window roots.
+///
+/// Upstream GPUI paints hover in a root layer so a cached embedding view
+/// can stay cached. The fast backend retains the chart-local overlay.
+pub fn init(cx: &mut App) {
+    if !gpui_kit::GPUI_FAST {
+        Root::register_plugin(cx, |_, _| ChartOverlayLayer::default());
+    }
+}
+
+#[derive(Default)]
+struct ChartOverlayLayer {
+    overlays: Vec<WeakEntity<Overlay>>,
+}
+
+impl RootPlugin for ChartOverlayLayer {}
+
+impl Render for ChartOverlayLayer {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.overlays.retain(|overlay| overlay.upgrade().is_some());
+        div().absolute().size_full().children(
+            self.overlays
+                .iter()
+                .filter_map(WeakEntity::upgrade)
+                .map(|overlay| overlay.cached(StyleRefinement::default().absolute().size_full())),
+        )
+    }
+}
+
 /// Owns persistent chart settings and a child entity for transient pointer state.
 /// Prepare large models on a background executor and publish them through `replace`.
 pub struct ChartView {
@@ -101,6 +130,8 @@ pub struct ChartView {
     ink: Entity<PlotInk>,
     options: ChartOptions,
     table: Option<usize>,
+    window_overlay: bool,
+    overlay_mount_checked: bool,
 }
 
 impl EventEmitter<ChartEvent> for ChartView {}
@@ -122,14 +153,17 @@ impl ChartView {
                 options,
                 hover: None,
                 anchor: None,
+                in_window_layer: false,
             });
-            let ink = cx.new(|_| PlotInk(plot.clone()));
+            let ink = cx.new(|_| PlotInk(plot.clone(), overlay.downgrade()));
             Self {
                 plot,
                 ink,
                 overlay,
                 options,
                 table: None,
+                window_overlay: false,
+                overlay_mount_checked: false,
             }
         })
     }
@@ -317,7 +351,32 @@ fn table_row(values: [String; 4], row: usize) -> impl IntoElement {
 }
 
 impl Render for ChartView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !gpui_kit::GPUI_FAST && !self.overlay_mount_checked {
+            self.overlay_mount_checked = true;
+            if let Some(root) = window.root::<Root>().flatten() {
+                let chart = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let Some(layer) = root.read(cx).plugin::<ChartOverlayLayer>() else {
+                        return;
+                    };
+                    let Ok(overlay) = chart.update(cx, |chart, cx| {
+                        chart.window_overlay = true;
+                        chart
+                            .overlay
+                            .update(cx, |overlay, _| overlay.in_window_layer = true);
+                        cx.notify();
+                        chart.overlay.downgrade()
+                    }) else {
+                        return;
+                    };
+                    layer.update(cx, |layer, cx| {
+                        layer.overlays.push(overlay);
+                        cx.notify();
+                    });
+                });
+            }
+        }
         let theme = GuiraffeTheme::global(cx).clone();
         let surfaces = theme.surfaces();
         let palette = paint::categorical_palette(&theme);
@@ -387,6 +446,7 @@ impl Render for ChartView {
                 .tab_stop(self.options.keyboard)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.table = if this.table.is_some() { None } else { Some(0) };
+                    this.clear_hover(cx);
                     cx.notify();
                 })),
         );
@@ -451,7 +511,29 @@ impl Render for ChartView {
                         .clone()
                         .cached(StyleRefinement::default().absolute().size_full()),
                 )
-                .child(self.overlay.clone())
+                .child(
+                    div()
+                        .id("chart-interaction")
+                        .absolute()
+                        .size_full()
+                        .child(pointer_motion(&self.overlay))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            overlay_listener(&self.overlay, |overlay, event, _| {
+                                overlay.press(event)
+                            }),
+                        )
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            overlay_listener(&self.overlay, Overlay::release),
+                        )
+                        .on_mouse_up_out(
+                            MouseButton::Left,
+                            overlay_listener(&self.overlay, Overlay::release),
+                        )
+                        .on_scroll(overlay_listener(&self.overlay, Overlay::scroll)),
+                )
+                .children((!self.window_overlay).then(|| self.overlay.clone()))
                 .into_any_element()
         };
         div()
@@ -465,15 +547,63 @@ impl Render for ChartView {
     }
 }
 
-struct PlotInk(Rc<RefCell<PlotState>>);
+fn pointer_motion(overlay: &Entity<Overlay>) -> impl IntoElement {
+    let overlay = overlay.downgrade();
+    canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        move |_, hitbox, window, _| {
+            let motion = overlay.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let _ = motion.update(cx, |overlay, cx| {
+                        if hitbox.is_hovered(window) {
+                            overlay.motion(event, cx);
+                        } else {
+                            overlay.leave(cx);
+                        }
+                    });
+                }
+            });
+            let exit = overlay.clone();
+            window.on_mouse_event(move |_: &MouseExitEvent, phase, _, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let _ = exit.update(cx, Overlay::leave);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
+}
+
+fn overlay_listener<E>(
+    overlay: &Entity<Overlay>,
+    handle: impl Fn(&mut Overlay, &E, &mut Context<Overlay>) + 'static,
+) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+    let overlay = overlay.downgrade();
+    move |event, _, cx| {
+        let _ = overlay.update(cx, |overlay, cx| handle(overlay, event, cx));
+    }
+}
+
+struct PlotInk(Rc<RefCell<PlotState>>, WeakEntity<Overlay>);
 
 impl Render for PlotInk {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
         let layout = self.0.clone();
         let paint = self.0.clone();
+        let overlay = self.1.clone();
         canvas(
-            move |bounds, _, _| layout.borrow_mut().prepare(bounds),
+            move |bounds, window, cx| {
+                let mut layout = layout.borrow_mut();
+                if layout.frame.bounds != bounds
+                    && let Some(overlay) = overlay.upgrade()
+                {
+                    window.defer(cx, move |_, cx| App::notify(cx, overlay.entity_id()));
+                }
+                layout.prepare(bounds);
+            },
             move |bounds, _, window, cx| {
                 let mut state = paint.borrow_mut();
                 state.frame.paints += 1;
@@ -511,6 +641,7 @@ struct Overlay {
     options: ChartOptions,
     hover: Option<Hover>,
     anchor: Option<(u32, f32)>,
+    in_window_layer: bool,
 }
 
 impl Overlay {
@@ -543,6 +674,12 @@ impl Overlay {
         }
         if self.hover != next {
             self.hover = next;
+            cx.notify();
+        }
+    }
+
+    fn leave(&mut self, cx: &mut Context<Self>) {
+        if self.hover.take().is_some() {
             cx.notify();
         }
     }
@@ -651,33 +788,17 @@ impl Render for Overlay {
         let selected = theme
             .variant(None, guiraffe_core::Variant::Filled)
             .background;
-        let mut overlay = div()
-            .id("chart-interaction")
-            .absolute()
-            .size_full()
-            .on_mouse_move(cx.listener(|this, event, _, cx| this.motion(event, cx)))
-            .on_hover(cx.listener(|this, inside: &bool, _, cx| {
-                if !inside && this.hover.take().is_some() {
-                    cx.notify();
-                }
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event, _, _| this.press(event)),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, event, _, cx| this.release(event, cx)),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, event, _, cx| {
-                    if this.anchor.is_some() {
-                        this.release(event, cx);
-                    }
-                }),
-            )
-            .on_scroll(cx.listener(|this, event, _, cx| this.scroll(event, cx)));
+        let mut overlay = div().absolute().overflow_hidden();
+        if self.in_window_layer {
+            let bounds = self.plot.borrow().frame.bounds;
+            overlay = overlay
+                .left(bounds.origin.x)
+                .top(bounds.origin.y)
+                .w(bounds.size.width)
+                .h(bounds.size.height);
+        } else {
+            overlay = overlay.size_full();
+        }
         if let Some(hover) = &self.hover {
             let rect = hover.rect;
             let (x, y) = hover.hit.as_ref().map_or(hover.pos, |hit| hit.point);

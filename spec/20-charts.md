@@ -52,7 +52,11 @@ binary-search culling. Large line runs use Largest Triangle Three Buckets
 (LTTB), preserving endpoints and source keys. Canvas painting uses paths and
 quads. The plot caches geometry by chart generation, viewport, visibility and
 dimensions. Hover reads the cached scene and uses a chart-local overlay;
-transient interaction leaves the prepared data intact.
+transient interaction leaves the prepared data intact. Call
+`guiraffe_charts::init` before opening GPUI Kit windows and mount the chart
+and its host as cached views to retain the host during pointer movement.
+Upstream GPUI paints hover in a window-root layer. GPUI Fast retains the
+chart-local overlay.
 
 Crosshair and nearest-point tooltip operate on enabled marks. Brush changes
 the x viewport and emits the selected domain. Wheel zoom is anchored to the

@@ -15,4 +15,4 @@ pub use paint::categorical_palette;
 pub use sample::lttb;
 pub use scale::*;
 pub use scene::Scene;
-pub use view::{ChartEvent, ChartOptions, ChartView};
+pub use view::{ChartEvent, ChartOptions, ChartView, init};

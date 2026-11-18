@@ -22,7 +22,7 @@ impl Render for Host {
         div().size_full().child(
             self.chart
                 .clone()
-                .cached(StyleRefinement::default().w_full()),
+                .cached(StyleRefinement::default().w_full().h(px(400.))),
         )
     }
 }
@@ -68,6 +68,7 @@ struct TestChart {
 fn mount(cx: &mut TestAppContext) -> (TestChart, &mut VisualTestContext) {
     cx.update(|cx| {
         gpui_kit::base::init(cx);
+        guiraffe_charts::init(cx);
         gpui_kit::component::init(cx);
         guiraffe_core::apply(Default::default(), cx);
     });
@@ -182,12 +183,31 @@ fn native_hover_tooltip_selection_and_render_counts(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-#[ignore = "pinned GPUI invalidates cached ancestors on overlay notification"]
 fn native_hover_across_points_keeps_host_cached(cx: &mut TestAppContext) {
     let (chart, window) = mount(cx);
+    // Draw the root overlay registration and deliver the initial pointer event.
+    if !gpui_kit::GPUI_FAST {
+        window.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    if !gpui_kit::GPUI_FAST {
+        window.simulate_mouse_move(point(px(1.), px(390.)), None, Default::default());
+        window.run_until_parked();
+    }
+    let mid = mouse_at(window, 0.5, 0.5);
+    let left = mouse_at(window, 0.01, 0.99);
+    let right = mouse_at(window, 0.99, 0.01);
+    if !gpui_kit::GPUI_FAST {
+        window.update(|window, cx| window.draw(cx).clear(cx));
+    }
     let before = chart.host_renders.get();
-    for (x, y, key) in [(0.5, 0.5, 1), (0.01, 0.99, 0)] {
-        let point = mouse_at(window, x, y);
+    for (point, key) in [
+        (mid, 1),
+        (left, 0),
+        (right, 2),
+        (mid, 1),
+        (left, 0),
+        (right, 2),
+    ] {
         window.simulate_mouse_move(point, None, Default::default());
         window.run_until_parked();
         assert_eq!(
@@ -197,8 +217,8 @@ fn native_hover_across_points_keeps_host_cached(cx: &mut TestAppContext) {
                 .map(|id| id.key),
             Some(key),
         );
+        assert_eq!(chart.host_renders.get(), before, "hovered key {key}");
     }
-    assert_eq!(chart.host_renders.get(), before);
 }
 
 #[gpui_kit::test]
