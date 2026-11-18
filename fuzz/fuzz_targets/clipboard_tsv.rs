@@ -1,6 +1,11 @@
 #![no_main]
+#![allow(dead_code)]
+#[path = "../../crates/datagrid/src/model/clipboard.rs"]
+mod clipboard;
+#[path = "../../crates/datagrid/src/model/selection.rs"]
+mod selection;
 
-use guiraffe_datagrid::tsv::{parse_tsv, write_tsv};
+use clipboard::{parse_tsv, write_tsv};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|bytes: &[u8]| {

@@ -1,6 +1,9 @@
 #![no_main]
+#![allow(dead_code)]
+#[path = "../../crates/code/src/document.rs"]
+mod document;
 
-use guiraffe_code::{CodeDocument, Position};
+use document::{CodeDocument, Position};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|bytes: &[u8]| {

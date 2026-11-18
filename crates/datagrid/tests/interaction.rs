@@ -1044,7 +1044,7 @@ fn rows_expose_their_aria_row_index(cx: &mut TestAppContext) {
             assert_eq!(*l, format!("Row {}", first + i + 1));
             assert_eq!(guiraffe_datagrid::aria_row_index(first + i), first + i + 2);
         }
-        assert!(rows.len() > 10);
+        assert!(rows.len() > 10 && rows.len() <= grid.stats().pool + 1);
     });
 }
 

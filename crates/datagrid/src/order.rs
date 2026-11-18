@@ -420,6 +420,44 @@ mod tests {
         }
 
         #[test]
+        fn filter_sort_sequence_and_inverse_match_reference(
+            values in proptest::collection::vec((0i64..5, 0i64..5), 0..200),
+            steps in proptest::collection::vec((any::<bool>(), any::<bool>(), 0i64..5), 1..20),
+        ) {
+            let source = src(values.clone());
+            for (filter, descending, minimum) in steps {
+                let filters = filter.then(|| FilterSpec {
+                    source_col: 1,
+                    pred: Arc::new(move |cell| matches!(cell, CellRef::Int(v) if v >= minimum)),
+                });
+                let direction = if descending { SortDir::Desc } else { SortDir::Asc };
+                let result = compute_order(
+                    &source, filters.as_slice(),
+                    &[spec(0, direction), spec(1, SortDir::Asc)],
+                    &AtomicBool::new(false),
+                ).map_err(|_| TestCaseError::fail("unexpected cancellation"))?;
+                let mut expected: Vec<_> = (0..values.len())
+                    .filter(|&row| !filter || values[row].1 >= minimum)
+                    .collect();
+                expected.sort_by_key(|&row| {
+                    let (a, b) = values[row];
+                    (if descending { -a } else { a }, b)
+                });
+                let inverse = result.inverse(values.len());
+                prop_assert_eq!(result.len(values.len()), expected.len());
+                for (view, &source) in expected.iter().enumerate() {
+                    prop_assert_eq!(result.source_row(view, values.len()), Some(source));
+                    prop_assert_eq!(inverse.view_row(source), Some(view));
+                }
+                for (row, &(_, b)) in values.iter().enumerate() {
+                    if filter && b < minimum {
+                        prop_assert_eq!(inverse.view_row(row), None);
+                    }
+                }
+            }
+        }
+
+        #[test]
         fn filter_keeps_exactly_matches(vals in proptest::collection::vec((0i64..5, 0i64..5), 0..300), want in 0i64..5) {
             let s = src(vals.clone());
             let f = FilterSpec { source_col: 1, pred: Arc::new(move |c| matches!(c, CellRef::Int(v) if v == want)) };

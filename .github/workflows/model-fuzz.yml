@@ -1,0 +1,23 @@
+name: Data model fuzz smoke
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  model-fuzz:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/fuzz-build
+      TMPDIR: ${{ github.workspace }}/target/tmp
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-fuzz
+        run: |
+          mkdir -p "$TMPDIR"
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install cargo-fuzz --version 0.13.2 --locked
+      - name: Exercise production clipboard and line index models
+        run: |
+          cargo +nightly fuzz run clipboard_tsv -- -max_len=16384 -runs=10000
+          cargo +nightly fuzz run code_line_index -- -max_len=16384 -runs=10000

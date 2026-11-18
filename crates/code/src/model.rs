@@ -428,6 +428,34 @@ mod properties {
             for (row,line) in expected.into_iter().enumerate(){prop_assert_eq!(rows.row(row),Some(Row::Source(line)));prop_assert_eq!(rows.source_row(line),Some(row));}
         }
         #[test]
+        fn fold_updates_match_visible_source_lines(
+            operations in prop::collection::vec((0usize..40, 0usize..40, any::<bool>()), 1..30),
+        ) {
+            const LINES: usize = 40;
+            let mut folds = std::collections::BTreeMap::new();
+            for (a, b, collapsed) in operations {
+                let start = a.min(b);
+                let end = a.max(b);
+                folds.insert(start, Fold { start, end, collapsed });
+                let snapshot: Vec<_> = folds.values().cloned().collect();
+                let row_map = RowMap::new(LINES, &snapshot, &[]);
+                let mut next_row = 0;
+                for line in 0..LINES {
+                    let hidden = snapshot.iter().any(|fold| {
+                        fold.collapsed && fold.start < line && line < fold.end
+                    });
+                    if hidden {
+                        prop_assert_eq!(row_map.source_row(line), None);
+                    } else {
+                        prop_assert_eq!(row_map.source_row(line), Some(next_row));
+                        prop_assert_eq!(row_map.row(next_row), Some(Row::Source(line)));
+                        next_row += 1;
+                    }
+                }
+                prop_assert_eq!(row_map.len(), next_row);
+            }
+        }
+        #[test]
         fn interval_tree_matches_linear_query(raw in prop::collection::vec((0usize..199,0usize..199),0..100),start in 0usize..199,width in 1usize..20) {
             let doc=CodeDocument::new(Arc::<str>::from("x\n".repeat(200)));
             let annotations:Vec<_>=raw.iter().enumerate().map(|(id,(a,b))|Annotation{id:id as u64,range:SourceRange::new(Position::new((*a).min(*b),0),Position::new((*a).max(*b),1)),kind:AnnotationKind::Highlight,payload:"".into(),color:ColorName::Blue}).collect();

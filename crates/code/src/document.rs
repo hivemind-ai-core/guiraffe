@@ -172,8 +172,7 @@ impl CodeDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    proptest::proptest! {
-        #[test]
+    #[test]
     fn index_build_stops_after_supersession_during_line_scan() {
         let source: Arc<str> = "a\n".repeat(600).into();
         let calls = std::cell::Cell::new(0);
@@ -185,7 +184,8 @@ mod tests {
         assert_eq!(calls.get(), 4);
     }
 
-    #[test]
+    proptest::proptest! {
+        #[test]
         fn positions_match_split_lines(lines in proptest::collection::vec("[a-zאב界🙂]{0,16}", 1..40)) {
             let source = lines.join("\r\n");
             let doc = CodeDocument::new(source.as_str());

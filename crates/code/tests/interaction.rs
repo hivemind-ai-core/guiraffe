@@ -138,11 +138,17 @@ fn ten_million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut Te
     let (code, _, vcx) = mount(cx, Arc::from(source));
     assert_eq!(code.document().line_count(), 10_000_000);
     vcx.update(|window, cx| code.focus(window, cx));
+    let start_y = code.viewport().y;
     for _ in 0..32 {
-        vcx.simulate_keystrokes("pagedown pageup");
+        vcx.simulate_keystrokes("pagedown");
     }
     vcx.run_until_parked();
-    assert_eq!(code.viewport().y, 0.);
+    assert!(code.viewport().y > start_y);
+    for _ in 0..32 {
+        vcx.simulate_keystrokes("pageup");
+    }
+    vcx.run_until_parked();
+    assert!((code.viewport().y - start_y).abs() < 0.01);
 
     assert!(code.stats().last_visible_rows < 100);
     let before = code.stats();
