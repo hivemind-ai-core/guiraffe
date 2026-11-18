@@ -1,3 +1,4 @@
+use crate::disclosure_motion;
 use std::{f32::consts::PI, time::Duration};
 
 use gpui_kit::assets::IconName;
@@ -154,6 +155,7 @@ impl SpeedDial {
 
 impl Render for SpeedDial {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut needs_frame = false;
         let corner = radius(None, cx);
         let theme = GuiraffeTheme::global(cx);
         let primary_colors = theme.press_colors(Variant::Filled, None);
@@ -172,7 +174,7 @@ impl Render for SpeedDial {
             .zip(&self.actions)
             .enumerate()
         {
-            let p = spring.sample(window, cx).clamp(0., 1.);
+            let p = disclosure_motion::progress(spring, &mut needs_frame, cx).clamp(0., 1.);
             if p == 0. {
                 continue;
             }
@@ -232,6 +234,7 @@ impl Render for SpeedDial {
                 );
             content = content.child(bubble);
         }
+        disclosure_motion::schedule(needs_frame, cx.entity_id(), window);
         let press = Press::new(primary_colors)
             .label(self.label.clone())
             .radius(corner)

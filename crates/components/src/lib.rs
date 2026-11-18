@@ -5,6 +5,7 @@
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
 
 pub mod accordion;
+mod disclosure_motion;
 pub mod expanding_list;
 pub mod focus;
 pub mod highlight;

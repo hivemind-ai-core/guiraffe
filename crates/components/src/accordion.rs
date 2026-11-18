@@ -1,3 +1,4 @@
+use crate::disclosure_motion;
 use std::rc::Rc;
 
 use gpui_kit::{
@@ -150,12 +151,13 @@ impl Accordion {
 
 impl Render for Accordion {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut needs_frame = false;
         let surface = surfaces(cx);
         let radius = radius(None, cx);
         let separated = self.options.variant == AccordionVariant::Separated;
         let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, None);
         let id = cx.entity_id();
-        KitAccordion::new(("accordion", id.as_u64() as usize))
+        let element = KitAccordion::new(("accordion", id.as_u64() as usize))
             .flex()
             .flex_col()
             .w_full()
@@ -168,7 +170,7 @@ impl Render for Accordion {
             .children(self.items.iter().zip(&mut self.progress).enumerate().map(
                 |(index, (item, progress))| {
                     let open = self.open.contains(&index);
-                    let p = progress.sample(window, cx);
+                    let p = disclosure_motion::progress(progress, &mut needs_frame, cx);
                     let trigger_id = ElementId::from((
                         SharedString::from(format!("accordion-{}", id.as_u64() as usize)),
                         index,
@@ -235,6 +237,8 @@ impl Render for Accordion {
                             )
                         })
                 },
-            ))
+            ));
+        disclosure_motion::schedule(needs_frame, cx.entity_id(), window);
+        element
     }
 }

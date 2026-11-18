@@ -1,3 +1,4 @@
+use crate::disclosure_motion;
 use gpui_kit::{
     component::{Icon, IconName},
     prelude::*,
@@ -68,11 +69,12 @@ impl ExpandingList {
 
 impl Render for ExpandingList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut needs_frame = false;
         let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, None);
         let surface = surfaces(cx);
         let corner = radius(None, cx);
         let id = cx.entity_id().as_u64();
-        div()
+        let element = div()
             .id(("expanding-list", id as usize))
             .w_full()
             .flex()
@@ -85,7 +87,8 @@ impl Render for ExpandingList {
             }))
             .children(self.items.iter().zip(&mut self.progress).enumerate().map(
                 |(index, (item, progress))| {
-                    let p = progress.sample(window, cx).clamp(0., 1.);
+                    let p =
+                        disclosure_motion::progress(progress, &mut needs_frame, cx).clamp(0., 1.);
                     let open = self.open == Some(index);
                     let trigger =
                         ElementId::from((SharedString::from(format!("expanding-{id}")), index));
@@ -155,6 +158,8 @@ impl Render for ExpandingList {
                             }),
                     )
                 },
-            ))
+            ));
+        disclosure_motion::schedule(needs_frame, cx.entity_id(), window);
+        element
     }
 }
