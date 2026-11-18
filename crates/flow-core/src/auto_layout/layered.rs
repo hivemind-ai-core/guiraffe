@@ -2,6 +2,8 @@ use super::{AutoLayout, LayoutCancellation, LayoutError, LayoutOptions, Link, Un
 use crate::Point;
 use std::collections::BTreeSet;
 
+type Adjacency = Vec<Vec<(usize, f32, f32)>>;
+
 pub(super) fn positions(
     units: &[Unit],
     links: &[Link],
@@ -50,6 +52,12 @@ pub(super) fn positions(
     }
     let sweeps = (options.crossing_weight * 4.).ceil().min(16.) as usize;
     let mut score = vec![0.; units.len()];
+    let mut best = layers.clone();
+    let mut best_crossings = if sweeps > 0 {
+        crossing_count(links, &ranks, &order, cancel)?
+    } else {
+        0
+    };
     for sweep in 0..sweeps {
         let forward = sweep % 2 == 0;
         let adjacent = if forward { &incoming } else { &outgoing };
@@ -88,7 +96,7 @@ pub(super) fn positions(
                 if units[a].order != units[b].order {
                     continue;
                 }
-                let improvement = |adjacent: &[Vec<(usize, f32, f32)>]| {
+                let improvement = |adjacent: &Adjacency| {
                     let mut change = 0;
                     // Bound the local refinement for high-degree hubs.
                     if adjacent[a].len().saturating_mul(adjacent[b].len()) <= 4096 {
@@ -110,26 +118,39 @@ pub(super) fn positions(
             }
             record_order(layer, &mut order);
         }
+        let crossings = crossing_count(links, &ranks, &order, cancel)?;
+        if crossings < best_crossings {
+            best_crossings = crossings;
+            best.clone_from(&layers);
+        }
+    }
+    layers = best;
+    for layer in &layers {
+        record_order(layer, &mut order);
     }
 
     let horizontal = options.direction.horizontal();
     let axes = |p: Point| if horizontal { (p.x, p.y) } else { (p.y, p.x) };
     let (rank_gap, node_gap) = axes(options.spacing);
+    let tree_cross = if matches!(engine, AutoLayout::Tree) {
+        Some(tree_positions(
+            units,
+            &layers,
+            (&ranks, &order),
+            &incoming,
+            horizontal,
+            node_gap,
+            cancel,
+        )?)
+    } else {
+        None
+    };
     let mut positions = vec![Point::default(); units.len()];
     let mut depth = 0.;
     let mut radius = 0.;
     for (rank, layer) in layers.iter().enumerate() {
         cancel.check()?;
-        let span = layer
-            .iter()
-            .map(|&id| axes(units[id].bounds.size).1 + node_gap)
-            .sum::<f32>()
-            - node_gap;
-        let mut cross = if matches!(engine, AutoLayout::Tree) {
-            -span / 2.
-        } else {
-            0.
-        };
+        let mut cross = 0.;
         let mut thickness: f32 = 0.;
         let diameter = layer
             .iter()
@@ -151,13 +172,14 @@ pub(super) fn positions(
             } else {
                 depth
             };
+            let cross_position = tree_cross.as_ref().map_or(cross, |tree| tree[id]);
             positions[id] = if radial {
                 let angle = std::f32::consts::TAU * slot as f32 / layer.len() as f32;
                 Point::new(angle.cos(), angle.sin()) * radius - size * 0.5
             } else if horizontal {
-                Point::new(primary, cross)
+                Point::new(primary, cross_position)
             } else {
-                Point::new(cross, primary)
+                Point::new(cross_position, primary)
             };
             thickness = thickness.max(length);
             cross += width + node_gap;
@@ -172,4 +194,129 @@ fn record_order(layer: &[usize], order: &mut [usize]) {
     for (slot, &id) in layer.iter().enumerate() {
         order[id] = slot;
     }
+}
+
+/// Select a deterministic spanning forest and center every parent over its
+/// children's combined span. Cross-links remain routed in the result.
+fn tree_positions(
+    units: &[Unit],
+    layers: &[Vec<usize>],
+    (ranks, order): (&[usize], &[usize]),
+    incoming: &Adjacency,
+    horizontal: bool,
+    gap: f32,
+    cancel: &LayoutCancellation,
+) -> Result<Vec<f32>, LayoutError> {
+    let mut children = vec![Vec::new(); units.len()];
+    let mut roots = Vec::new();
+    let width = |id: usize| {
+        let size = units[id].bounds.size;
+        if horizontal { size.y } else { size.x }
+    };
+    for layer in layers {
+        for &id in layer {
+            cancel.check()?;
+            let parent = incoming[id]
+                .iter()
+                .map(|&(parent, _, _)| parent)
+                .filter(|&parent| ranks[parent] < ranks[id])
+                .max_by_key(|&parent| {
+                    (
+                        ranks[parent],
+                        std::cmp::Reverse(order[parent]),
+                        std::cmp::Reverse(parent),
+                    )
+                });
+            if let Some(parent) = parent {
+                children[parent].push(id);
+            } else {
+                roots.push(id);
+            }
+        }
+    }
+    let mut spans = vec![0.; units.len()];
+    for layer in layers.iter().rev() {
+        for &id in layer {
+            cancel.check()?;
+            spans[id] = width(id).max(child_span(&children[id], &spans, gap));
+        }
+    }
+    let mut positions = vec![0.; units.len()];
+    let mut stack = Vec::new();
+    let mut offset = 0.;
+    for id in roots {
+        stack.push((id, offset));
+        offset += spans[id] + gap;
+    }
+    while let Some((id, left)) = stack.pop() {
+        cancel.check()?;
+        positions[id] = left + (spans[id] - width(id)) * 0.5;
+        let mut child_left = left + (spans[id] - child_span(&children[id], &spans, gap)) * 0.5;
+        for &child in &children[id] {
+            stack.push((child, child_left));
+            child_left += spans[child] + gap;
+        }
+    }
+    Ok(positions)
+}
+
+fn child_span(children: &[usize], spans: &[f32], gap: f32) -> f32 {
+    children.iter().map(|&id| spans[id]).sum::<f32>()
+        + children.len().saturating_sub(1) as f32 * gap
+}
+
+/// Count inversions between distinct ports of links sharing the same rank pair.
+fn crossing_count(
+    links: &[Link],
+    ranks: &[usize],
+    order: &[usize],
+    cancel: &LayoutCancellation,
+) -> Result<u64, LayoutError> {
+    let mut edges = Vec::with_capacity(links.len());
+    for link in links {
+        cancel.check()?;
+        let (a, b) = (ranks[link.source], ranks[link.target]);
+        let source = (order[link.source], link.source_port);
+        let target = (order[link.target], link.target_port);
+        if a < b {
+            edges.push(((a, b), source, target));
+        } else if a > b {
+            edges.push(((b, a), target, source));
+        }
+    }
+    let port_cmp =
+        |a: &(usize, f32), b: &(usize, f32)| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1));
+    edges.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| port_cmp(&a.1, &b.1))
+            .then_with(|| port_cmp(&a.2, &b.2))
+    });
+    let mut count = 0;
+    let mut ports = Vec::new();
+    let mut tree = Vec::<u64>::new();
+    for layer in edges.chunk_by(|a, b| a.0 == b.0) {
+        cancel.check()?;
+        ports.clear();
+        ports.extend(layer.iter().map(|edge| edge.2));
+        ports.sort_unstable_by(port_cmp);
+        ports.dedup();
+        tree.clear();
+        tree.resize(ports.len() + 1, 0);
+        for (seen, &(_, _, port)) in layer.iter().enumerate() {
+            cancel.check()?;
+            let mut index = ports.partition_point(|p| port_cmp(p, &port).is_lt()) + 1;
+            let mut prefix = index;
+            let mut non_crossing = 0;
+            while prefix != 0 {
+                non_crossing += tree[prefix];
+                prefix &= prefix - 1;
+            }
+            count += seen as u64 - non_crossing;
+            while index < tree.len() {
+                tree[index] += 1;
+                index += index & index.wrapping_neg();
+            }
+        }
+    }
+    Ok(count)
 }

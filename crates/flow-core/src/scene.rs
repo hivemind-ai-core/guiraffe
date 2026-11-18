@@ -277,24 +277,24 @@ impl EdgePath {
     ) -> Result<Self, FlowError> {
         let sh = Graph::node_handle(source, &edge.source)?;
         let th = Graph::node_handle(target, &edge.target)?;
-        let from = sh.position(Rect {
+        let source = Rect {
             origin: source_override.unwrap_or(source.pos),
             size: source.size,
-        });
-        let to = th.position(Rect {
+        };
+        let target = Rect {
             origin: target_override.unwrap_or(target.pos),
             size: target.size,
-        });
+        };
+        let from = sh.position(source);
+        let to = th.position(target);
         let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
         let c1 = from + sh.side.direction() * distance;
         let c2 = to + th.side.direction() * distance;
         let points = match edge.edge_type {
             EdgeType::OrthogonalHorizontal | EdgeType::OrthogonalVertical => {
                 crate::auto_layout::orthogonal(
-                    from,
-                    sh.side.direction(),
-                    to,
-                    th.side.direction(),
+                    (source, sh),
+                    (target, th),
                     edge.edge_type == EdgeType::OrthogonalHorizontal,
                 )
             }

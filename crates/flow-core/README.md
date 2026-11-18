@@ -68,3 +68,23 @@ updates affected descendants. BVH refits track a normalized perimeter cost and
 rebalance when it exceeds 1.8 times the build quality (plus the insertion-depth
 safeguard). Run `cargo run --release -p guiraffe-flow-core --example delete_child_stress`
 for child deletion/undo timings on 5,000 nodes and 10,000 edges.
+
+### Auto-layout
+
+Use `LayoutEngine::layout` with an `AutoLayout` engine and `LayoutOptions`.
+Layered layout supports four directions, Tree centers parents over a spanning
+forest, Radial places ranks on concentric rings, Grid packs rows, and Force
+uses seeded initial positions and local repulsion. The built-in engines
+return world positions and orthogonal paths anchored to the node handles.
+
+Pinned nodes freeze their entire root group. Group members retain their
+relative offsets. Relative constraints refer to the named nodes' top-left
+coordinates. The solver rejects contradictory or unplaceable requests with
+`LayoutError::Infeasible`. Collision repair is heuristic, so a rejected
+request may still have a solution. Routes use port sides and endpoint bounds
+and can cross unrelated nodes.
+
+For incremental layout, set `affected` to the node IDs in the edited region.
+The solver holds the remaining groups fixed. Cancel a running invocation with
+a clone of its `LayoutCancellation`. `Editor::apply_layout` applies positions
+and route styles together so undo restores both.

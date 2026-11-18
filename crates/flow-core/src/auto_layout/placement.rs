@@ -102,6 +102,60 @@ pub(super) fn force(
     Ok(positions)
 }
 
+/// Translate each affected connected component toward its previous position.
+/// A median offset minimizes the sum of axis-wise movement for a fixed layout.
+pub(super) fn anchor_affected(
+    units: &[Unit],
+    links: &[Link],
+    positions: &mut [Point],
+    cancel: &LayoutCancellation,
+) -> Result<(), LayoutError> {
+    let mut adjacent = vec![Vec::new(); units.len()];
+    for link in links {
+        cancel.check()?;
+        if !units[link.source].fixed && !units[link.target].fixed {
+            adjacent[link.source].push(link.target);
+            adjacent[link.target].push(link.source);
+        }
+    }
+    let mut visited: Vec<_> = units.iter().map(|unit| unit.fixed).collect();
+    let mut stack = Vec::new();
+    let mut members = Vec::new();
+    let mut x = Vec::new();
+    let mut y = Vec::new();
+    for root in 0..units.len() {
+        cancel.check()?;
+        if visited[root] {
+            continue;
+        }
+        visited[root] = true;
+        stack.push(root);
+        members.clear();
+        x.clear();
+        y.clear();
+        while let Some(id) = stack.pop() {
+            cancel.check()?;
+            members.push(id);
+            let delta = units[id].bounds.origin - positions[id];
+            x.push(delta.x);
+            y.push(delta.y);
+            for &other in &adjacent[id] {
+                if !visited[other] {
+                    visited[other] = true;
+                    stack.push(other);
+                }
+            }
+        }
+        let middle = members.len() / 2;
+        let (_, &mut dx, _) = x.select_nth_unstable_by(middle, f32::total_cmp);
+        let (_, &mut dy, _) = y.select_nth_unstable_by(middle, f32::total_cmp);
+        for &id in &members {
+            positions[id] = positions[id] + Point::new(dx, dy);
+        }
+    }
+    Ok(())
+}
+
 type Constraint = (usize, usize, usize, bool, Point, Point, Point);
 
 pub(super) fn resolve(
