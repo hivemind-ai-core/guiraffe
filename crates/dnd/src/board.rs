@@ -3,10 +3,11 @@ use crate::{
     sortable::{Selection, SortEvent, Sortable},
 };
 use gpui_kit::{
-    AnimationExt, AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement,
-    IntoElement, ParentElement, Render, Role, SharedString, SpringAnimation,
-    StatefulInteractiveElement, Styled, Window, base::TestSupportExt, component::ActiveTheme, div,
-    px,
+    AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
+    ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Window,
+    base::{TestSupportExt, spring},
+    component::ActiveTheme,
+    div, px,
 };
 use guiraffe_core::{GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 use std::collections::{HashMap, HashSet};
@@ -211,7 +212,7 @@ impl Render for SortableBoard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
         let indicator = theme.primary_color().to_hsla();
-        let motion = cx.theme().motion_tokens().spring_move;
+        let motion = cx.theme().motion_tokens().spring_move.with_epsilon(0.5);
         let scope = cx.entity_id();
         let board = cx.entity();
         let columns = self.lists().iter().enumerate().map(|(list, cards)| {
@@ -287,11 +288,8 @@ impl Render for SortableBoard {
                 );
                 let y =
                     px((index / usize::from(self.cards_per_row)) as f32 * (CARD_HEIGHT + CARD_GAP));
-                Some(row.with_spring(
-                    ("sortable-card-position", id),
-                    SpringAnimation::new(motion).to(y).with_epsilon(0.5),
-                    move |row, position| row.top(position - y),
-                ))
+                let position = spring(("sortable-card-position", id), y, motion, window, cx);
+                Some(row.top(position - y))
             });
             div()
                 .flex_1()
