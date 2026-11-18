@@ -39,3 +39,8 @@
 - [ ] compare app: Document page wraps a plain MarkdownView in a scroll container because scrollable mode used to collapse — now fixed (fix-user-bugs-3); switch it to MarkdownView scrollable. Add input-latency and RAPL energy to the harness.
 - [ ] catalogue recipes polish: error helper text should use error colour + smaller size; DataUi input height a bit short vs Kit inputs
 - [ ] palette polish: light-mode tinted/subtle primary text walks to near-black (blue 9) to reach 5:1 — loses hue cue (Spoiler 'Show more', Burger, Stepper active). Prefer the first passing shade that keeps hue/chroma (or a 4.5 target for ≥14pt bold), and re-check
+
+## DnD showcase polish (foreman golden review, 2026-11-18)
+- Kanban: the "Drop at end" target renders like a real card in every column; make it a subtle dashed drop zone shown only while dragging (or when the column is empty).
+- IDE layout: "Left / Bottom / Right" panel toggles are bare text; use ActionIcon/segmented toggles.
+- Tree/flame demo polish landed in feat-flame-tree; DataGrid/CodeViewer, Flow/Timeline/Charts wall-clock budgets pending the quiet-machine run.

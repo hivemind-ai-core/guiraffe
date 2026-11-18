@@ -228,14 +228,14 @@ pub fn entries() -> [Entry; 2] {
             krate: "dnd",
             name: "Kanban",
             summary: "Reorder cards, transfer them between columns, or use Space and the arrow keys.",
-            covers: &["SortableBoard"],
+            covers: &["SortableBoard", "BoardDragOverlay"],
             demo: |_, cx| cx.new(kanban).into(),
         },
         Entry {
             krate: "dnd",
             name: "IDE layout",
             summary: "Drag tabs to reorder, merge, or split. Use Alt+arrows to reorder, Alt+Shift+arrows to split, or Ctrl+Space on two tabs to move between groups.",
-            covers: &[],
+            covers: &["DockDragOverlay"],
             demo: |window, cx| cx.new(|cx| ide(window, cx)).into(),
         },
     ]
