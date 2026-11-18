@@ -1370,7 +1370,8 @@ impl Core {
                     let order = compute_order(&*src, &filters, &sort, &cancel)?;
                     // Publication needs only lookups even when a selection was made
                     // while this job was running.
-                    let inverse = order.inverse(src.row_count());
+                    let inverse = order
+                        .build_inverse(src.row_count(), || cancel.load(AtomicOrdering::Relaxed))?;
                     Ok((order, inverse))
                 })
                 .await;
@@ -1408,7 +1409,18 @@ impl Core {
             let mut edit_gone = false;
             if needs_map {
                 let map = |v: usize| old.source_row(v, n).and_then(|s| inv.view_row(s));
+                let all_source_rows = old == RowOrder::Identity
+                    && matches!(m.sel.rows.ranges(), [range] if *range == (0..n));
+                if all_source_rows {
+                    // Every row in the new view was selected. Keep the range
+                    // compact while remapping just the cursor and anchor.
+                    m.sel.rows.clear();
+                }
                 m.sel = m.sel.remap(map);
+                if all_source_rows {
+                    let count = m.count;
+                    m.sel.rows.insert(0..count);
+                }
                 if let Some(e) = m.edit.as_ref().map(|e| e.source_row) {
                     match inv.view_row(e) {
                         Some(row) => {
@@ -1490,7 +1502,7 @@ impl Core {
     }
 
     fn change_selection(self: &Rc<Self>, cx: &mut App, f: impl FnOnce(&mut Selection, &Model)) {
-        let dirty = {
+        {
             let mut m = self.m.borrow_mut();
             let before = m.sel.clone();
             let mut sel = std::mem::take(&mut m.sel);
@@ -1499,16 +1511,11 @@ impl Core {
             if m.sel == before {
                 return;
             }
-            let dirty: Vec<usize> = m
-                .visible
-                .clone()
-                .filter(|&r| Model::row_sig(&before, r) != Model::row_sig(&m.sel, r))
-                .map(|r| vw::slot_of(r, m.pool))
-                .collect();
-            dirty
-        };
-        for s in dirty {
-            self.notify_slot(s, cx);
+            for row in m.visible.clone() {
+                if Model::row_sig(&before, row) != Model::row_sig(&m.sel, row) {
+                    self.notify_slot(vw::slot_of(row, m.pool), cx);
+                }
+            }
         }
         self.emit_selection(cx);
     }
@@ -3217,17 +3224,13 @@ impl Render for RowView {
                     .when_some(error.clone(), |el, e| el.aria_description(e))
                     .into_any_element();
             }
-            el.child(
-                div()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(label),
-            )
-            .when(is_cursor && cell_mode, |el| {
-                el.child(cursor_box(hsla(pal.accent)))
-            })
-            .into_any_element()
+            el.whitespace_nowrap()
+                .text_ellipsis()
+                .child(label)
+                .when(is_cursor && cell_mode, |el| {
+                    el.child(cursor_box(hsla(pal.accent)))
+                })
+                .into_any_element()
         };
         let mut center = div()
             .absolute()

@@ -8,7 +8,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 enum AnalysisRequest {
@@ -16,15 +19,16 @@ enum AnalysisRequest {
     Document(Arc<CodeDocument>, Arc<str>, bool),
 }
 impl AnalysisRequest {
-    fn compute(self) -> Highlighted {
-        match self {
-            Self::Source(source, language, dark) => {
-                Highlighted::compute(Arc::new(CodeDocument::new(source)), &language, dark)
-            }
-            Self::Document(document, language, dark) => {
-                Highlighted::compute(document, &language, dark)
-            }
-        }
+    fn compute(self, cancelled: impl Fn() -> bool) -> Option<Highlighted> {
+        let (document, language, dark) = match self {
+            Self::Source(source, language, dark) => (
+                Arc::new(CodeDocument::build(source, &cancelled)?),
+                language,
+                dark,
+            ),
+            Self::Document(document, language, dark) => (document, language, dark),
+        };
+        Highlighted::compute_cancellable(document, &language, dark, cancelled)
     }
 }
 
@@ -116,6 +120,7 @@ pub(crate) struct Shared {
     pub dependents: RefCell<Vec<WeakEntity<TraceView>>>,
     pub revision: Cell<u64>,
     pending: RefCell<Option<AnalysisRequest>>,
+    analysis_generation: Arc<AtomicU64>,
     analyzing: Cell<bool>,
     presentation: RefCell<Option<PendingPresentation>>,
     pub text_epoch: Cell<u64>,
@@ -164,6 +169,7 @@ impl CodeHandle {
             dependents: RefCell::default(),
             revision: Cell::default(),
             pending: RefCell::default(),
+            analysis_generation: Arc::default(),
             analyzing: Cell::default(),
             presentation: RefCell::default(),
             text_epoch: Cell::default(),
@@ -188,6 +194,10 @@ impl CodeHandle {
     }
     pub fn id(&self) -> u64 {
         self.shared.id
+    }
+    /// Whether indexing or syntax highlighting is queued or running.
+    pub fn is_analyzing(&self) -> bool {
+        self.shared.analyzing.get()
     }
     pub fn highlight_error(&self) -> Option<Arc<str>> {
         self.shared.highlighted.borrow().error.clone()
@@ -557,6 +567,9 @@ impl CodeHandle {
     fn queue(&self, request: AnalysisRequest, preserve: bool, cx: &mut App) {
         let revision = self.shared.revision.get().wrapping_add(1);
         self.shared.revision.set(revision);
+        self.shared
+            .analysis_generation
+            .store(revision, Ordering::Relaxed);
         if let AnalysisRequest::Source(source, _, _) = &request {
             let mut presentation = self.shared.presentation.borrow_mut();
             if preserve && let Some(pending) = presentation.as_mut() {
@@ -576,38 +589,55 @@ impl CodeHandle {
         if self.shared.analyzing.replace(true) {
             return;
         }
-        let this = self.clone();
+        let weak = Rc::downgrade(&self.shared);
+        let text = self.text.downgrade();
+        let overlay = self.overlay.downgrade();
         cx.spawn(async move |cx| {
             loop {
-                let next = cx.update(|_| {
-                    let request = this.shared.pending.borrow_mut().take();
-                    let revision = this.shared.revision.get();
-                    if request.is_some() {
-                        let mut stats = this.stats();
-                        stats.analyses_started += 1;
-                        this.shared.stats.set(stats);
-                    }
-                    request.map(|request| (revision, request))
-                });
-                let Some((revision, request)) = next else {
-                    this.shared.analyzing.set(false);
+                let Some(shared) = weak.upgrade() else {
                     break;
                 };
+                let Some(request) = shared.pending.borrow_mut().take() else {
+                    shared.analyzing.set(false);
+                    break;
+                };
+                let revision = shared.revision.get();
+                let mut stats = shared.stats.get();
+                stats.analyses_started += 1;
+                shared.stats.set(stats);
+                let generation = Arc::downgrade(&shared.analysis_generation);
+                drop(shared);
                 let result = cx
                     .background_executor()
-                    .spawn(async move { request.compute() })
+                    .spawn(async move {
+                        request.compute(|| {
+                            generation
+                                .upgrade()
+                                .is_none_or(|current| current.load(Ordering::Relaxed) != revision)
+                        })
+                    })
                     .await;
                 let keep_going = cx.update(|cx| {
-                    if this.shared.revision.get() == revision {
-                        this.publish(result, cx);
+                    let Some(shared) = weak.upgrade() else {
+                        return false;
+                    };
+                    if let Some(result) = result.filter(|_| shared.revision.get() == revision)
+                        && let (Some(text), Some(overlay)) = (text.upgrade(), overlay.upgrade())
+                    {
+                        CodeHandle {
+                            shared: shared.clone(),
+                            text,
+                            overlay,
+                        }
+                        .publish(result, cx);
                     } else {
-                        let mut stats = this.stats();
+                        let mut stats = shared.stats.get();
                         stats.stale_analyses += 1;
-                        this.shared.stats.set(stats);
+                        shared.stats.set(stats);
                     }
-                    let more = this.shared.pending.borrow().is_some();
+                    let more = shared.pending.borrow().is_some();
                     if !more {
-                        this.shared.analyzing.set(false);
+                        shared.analyzing.set(false);
                     }
                     more
                 });
@@ -625,6 +655,9 @@ impl CodeHandle {
         self.shared
             .revision
             .set(self.shared.revision.get().wrapping_add(1));
+        self.shared
+            .analysis_generation
+            .store(self.shared.revision.get(), Ordering::Relaxed);
         self.publish(snapshot, cx);
     }
     /// Visible source anchor in window coordinates; folded/offscreen positions return None.
@@ -754,8 +787,57 @@ impl Render for TextLayer {
 pub(crate) struct OverlayLayer {
     shared: Rc<Shared>,
 }
+fn accessible_lines(
+    document: &CodeDocument,
+    rows: &RowMap,
+    viewport: Viewport,
+    line_height: f32,
+    height: f32,
+    selection: Option<SourceRange>,
+) -> impl IntoElement {
+    let mut list = div()
+        .id("code-source-lines")
+        .test_support()
+        .role(Role::List)
+        .aria_label("Source lines")
+        .absolute()
+        .size_full();
+    for row in viewport.visible(rows.len(), line_height, height) {
+        let Some(Row::Source(line)) = rows.row(row) else {
+            continue;
+        };
+        let text = document.line(line).unwrap_or_default();
+        // Bound the accessible preview just as paint bounds line shaping.
+        let end = text
+            .char_indices()
+            .nth(256)
+            .map_or(text.len(), |(byte, _)| byte);
+        let selected = selection.is_some_and(|range| {
+            range.start != range.end
+                && range.start.line <= line
+                && (line < range.end.line || (line == range.end.line && range.end.column > 0))
+        });
+        let y = (row as f64 * f64::from(line_height) - viewport.y) as f32;
+        list = list.child(
+            div()
+                .id(("source-line", line))
+                .test_support()
+                .role(Role::ListItem)
+                .aria_label(format!("Line {}: {}", line + 1, &text[..end]))
+                .aria_position_in_set(line + 1)
+                .aria_size_of_set(document.line_count())
+                .aria_selected(selected)
+                .absolute()
+                .top(px(y))
+                .w_full()
+                .h(px(line_height)),
+        );
+    }
+    list
+}
+
 impl Render for OverlayLayer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut stats = self.shared.stats.get();
         stats.overlay_renders += 1;
         self.shared.stats.set(stats);
@@ -816,6 +898,16 @@ impl Render for OverlayLayer {
                 .absolute()
                 .size_full(),
             );
+        if window.is_a11y_active() {
+            root = root.child(accessible_lines(
+                &self.shared.highlighted.borrow().document,
+                &rows,
+                viewport,
+                lh,
+                h,
+                self.shared.selection.get(),
+            ));
+        }
         if self.shared.stats.get().last_truncated_rows > 0 {
             root = root.child(
                 div()
@@ -1137,6 +1229,46 @@ mod review_tests {
             color: guiraffe_core::ColorName::Blue,
         }
     }
+    #[gpui_kit::test]
+    fn accessible_line_nodes_expose_a_bounded_near_end_viewport(cx: &mut TestAppContext) {
+        use gpui_kit::{
+            Context, IntoElement, Render, Role, Window,
+            test::{TestQueryExt, TestWindowExt},
+        };
+
+        struct AccessibleFixture {
+            document: CodeDocument,
+            rows: crate::RowMap,
+        }
+        impl Render for AccessibleFixture {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                super::accessible_lines(
+                    &self.document,
+                    &self.rows,
+                    crate::Viewport {
+                        x: 0.,
+                        y: 9_999_996. * 20.,
+                    },
+                    20.,
+                    80.,
+                    None,
+                )
+            }
+        }
+        let (_, vcx) = cx.add_window_view(|_, _| AccessibleFixture {
+            document: CodeDocument::new("\n".repeat(9_999_999) + "end"),
+            rows: crate::RowMap::new(10_000_000, &[], &[]),
+        });
+        vcx.run_until_parked();
+        vcx.update(|window, cx| {
+            window.render_frame(cx);
+            let lines = window.find_all_by_role(Role::ListItem);
+            assert_eq!(lines.len(), 4);
+            assert_eq!(lines[0].label(), Some("Line 9999997: "));
+            assert_eq!(lines[3].label(), Some("Line 10000000: end"));
+        });
+    }
+
     #[gpui_kit::test]
     fn changing_provider_refreshes_an_existing_hover(cx: &mut TestAppContext) {
         let code = cx.update(|cx| {

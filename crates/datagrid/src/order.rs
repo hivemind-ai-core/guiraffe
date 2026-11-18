@@ -1,6 +1,7 @@
 //! Sorting and filtering produce a row *permutation* (`view row -> source row`), never a copy
 //! of the data. Pure and `Send`, so the grid runs it on the background executor.
 
+use std::cmp::Ordering;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering as AtomicOrdering},
@@ -82,18 +83,33 @@ impl RowOrder {
     /// `source row -> view row` lookup, for remapping selection and edits after the order
     /// changes. Identity needs no table; a permutation costs one `u32` per source row.
     pub fn inverse(&self, source_rows: usize) -> Inverse {
-        match self {
+        self.build_inverse(source_rows, || false)
+            .unwrap_or(Inverse::Identity(source_rows))
+    }
+
+    pub(crate) fn build_inverse(
+        &self,
+        source_rows: usize,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Inverse, Cancelled> {
+        if cancelled() {
+            return Err(Cancelled);
+        }
+        Ok(match self {
             Self::Identity => Inverse::Identity(source_rows),
             Self::Indices(v) => {
                 let mut inv = vec![u32::MAX; source_rows.min(MAX_ROWS)];
                 for (view, &src) in v.iter().enumerate() {
+                    if view % 4096 == 0 && cancelled() {
+                        return Err(Cancelled);
+                    }
                     if let Some(slot) = inv.get_mut(src as usize) {
                         *slot = view as u32;
                     }
                 }
                 Inverse::Table(inv)
             }
-        }
+        })
     }
 }
 
@@ -145,7 +161,7 @@ pub fn compute_order(
         }
     };
     let mut rows: Vec<u32> = Vec::with_capacity(if filters.is_empty() { n } else { n / 4 });
-    const CANCEL_INTERVAL: usize = 65_536;
+    const CANCEL_INTERVAL: usize = 4096;
     for r in 0..n {
         if r % CANCEL_INTERVAL == 0 {
             check()?;
@@ -169,8 +185,9 @@ pub fn compute_order(
     }
     drop(rows);
     check()?;
-    // `sort_by` is stable: equal keys keep source order.
-    keyed.sort_by(|(ka, a), (kb, b)| {
+    // Break sorting into bounded runs. Source index breaks ties so unstable
+    // sorting within a run still preserves source order in the final permutation.
+    let compare = |(ka, a): &(CellRef<'_>, u32), (kb, b): &(CellRef<'_>, u32)| {
         primary.cmp(ka, kb).then_with(|| {
             for s in rest {
                 let o = s.cmp(
@@ -181,13 +198,65 @@ pub fn compute_order(
                     return o;
                 }
             }
-            std::cmp::Ordering::Equal
+            a.cmp(b)
         })
-    });
+    };
+    sort_runs(&mut keyed, compare, &check)?;
     check()?;
     Ok(RowOrder::Indices(
         keyed.into_iter().map(|(_, r)| r).collect(),
     ))
+}
+
+fn sort_runs<T: Copy>(
+    rows: &mut [T],
+    compare: impl Fn(&T, &T) -> Ordering,
+    check: &impl Fn() -> Result<(), Cancelled>,
+) -> Result<(), Cancelled> {
+    const RUN: usize = 8192;
+    for run in rows.chunks_mut(RUN) {
+        check()?;
+        run.sort_unstable_by(&compare);
+    }
+    if rows.len() <= RUN {
+        return Ok(());
+    }
+
+    // Merge backwards with only the shorter right run in scratch. The
+    // unread left items stay ahead of the write cursor.
+    let mut scratch = Vec::with_capacity(rows.len() / 2);
+    let mut run_size = RUN;
+    while run_size < rows.len() {
+        let pair_size = run_size.saturating_mul(2);
+        for pair in rows.chunks_mut(pair_size) {
+            if pair.len() <= run_size {
+                continue;
+            }
+            scratch.clear();
+            for chunk in pair[run_size..].chunks(RUN) {
+                check()?;
+                scratch.extend_from_slice(chunk);
+            }
+            let mut left = run_size;
+            let mut right = scratch.len();
+            let mut write = pair.len();
+            while right > 0 {
+                if write % RUN == 0 {
+                    check()?;
+                }
+                write -= 1;
+                if left > 0 && compare(&pair[left - 1], &scratch[right - 1]).is_gt() {
+                    left -= 1;
+                    pair[write] = pair[left];
+                } else {
+                    right -= 1;
+                    pair[write] = scratch[right];
+                }
+            }
+        }
+        run_size = pair_size;
+    }
+    Ok(())
 }
 
 /// Header-click sort cycling. Without `multi`: asc -> desc -> none on the clicked column,
@@ -257,6 +326,42 @@ mod tests {
         assert_eq!(o, Ok(RowOrder::Identity));
         assert_eq!(RowOrder::Identity.source_row(5, 10), Some(5));
         assert_eq!(RowOrder::Identity.source_row(10, 10), None);
+    }
+
+    #[test]
+    fn sort_merges_runs_in_order_and_stops_during_merge() {
+        let source: Vec<_> = (0..20_000).map(|i| i * 7919 % 20_000).collect();
+        let mut rows = source.clone();
+        let checks = std::cell::Cell::new(0);
+        assert_eq!(
+            sort_runs(&mut rows, i32::cmp, &|| {
+                checks.set(checks.get() + 1);
+                if checks.get() == 5 {
+                    Err(Cancelled)
+                } else {
+                    Ok(())
+                }
+            }),
+            Err(Cancelled)
+        );
+        let mut rows = source;
+        assert_eq!(sort_runs(&mut rows, i32::cmp, &|| Ok(())), Ok(()));
+        assert_eq!(rows, (0..20_000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn cancelled_inverse_does_not_publish_a_partial_permutation() {
+        let order = RowOrder::Indices((0..10_000).rev().collect());
+        let checks = std::cell::Cell::new(0);
+        assert_eq!(
+            order.build_inverse(10_000, || {
+                checks.set(checks.get() + 1);
+                checks.get() >= 3
+            }),
+            Err(Cancelled)
+        );
+        assert_eq!(checks.get(), 3);
+        assert_eq!(order.inverse(10_000).view_row(0), Some(9_999));
     }
 
     #[test]
@@ -387,6 +492,44 @@ mod tests {
                 if desc { o.reverse() } else { o }
             });
             prop_assert_eq!(o, expect);
+        }
+
+        #[test]
+        fn filter_sort_sequence_and_inverse_match_reference(
+            values in proptest::collection::vec((0i64..5, 0i64..5), 0..200),
+            steps in proptest::collection::vec((any::<bool>(), any::<bool>(), 0i64..5), 1..20),
+        ) {
+            let source = src(values.clone());
+            for (filter, descending, minimum) in steps {
+                let filters = filter.then(|| FilterSpec {
+                    source_col: 1,
+                    pred: Arc::new(move |cell| matches!(cell, CellRef::Int(v) if v >= minimum)),
+                });
+                let direction = if descending { SortDir::Desc } else { SortDir::Asc };
+                let result = compute_order(
+                    &source, filters.as_slice(),
+                    &[spec(0, direction), spec(1, SortDir::Asc)],
+                    &AtomicBool::new(false),
+                ).map_err(|_| TestCaseError::fail("unexpected cancellation"))?;
+                let mut expected: Vec<_> = (0..values.len())
+                    .filter(|&row| !filter || values[row].1 >= minimum)
+                    .collect();
+                expected.sort_by_key(|&row| {
+                    let (a, b) = values[row];
+                    (if descending { -a } else { a }, b)
+                });
+                let inverse = result.inverse(values.len());
+                prop_assert_eq!(result.len(values.len()), expected.len());
+                for (view, &source) in expected.iter().enumerate() {
+                    prop_assert_eq!(result.source_row(view, values.len()), Some(source));
+                    prop_assert_eq!(inverse.view_row(source), Some(view));
+                }
+                for (row, &(_, b)) in values.iter().enumerate() {
+                    if filter && b < minimum {
+                        prop_assert_eq!(inverse.view_row(row), None);
+                    }
+                }
+            }
         }
 
         #[test]

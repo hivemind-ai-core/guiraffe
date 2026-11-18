@@ -154,3 +154,18 @@ timing limits or more than 2% upward drift from the warmed sample.
 Use `--short` for two 10-second windows with absolute limits disabled for CI.
 The runner measures headless dispatch and CPU paint and reads `/proc/self/smaps_rollup`.
 The production audits identify which native and streaming coverage is still missing.
+
+### Mounted DataGrid and CodeViewer frames
+
+Run the dedicated instruction suite with Valgrind and
+`iai-callgrind-runner` 0.16.1 on PATH.
+
+```sh
+cargo bench -p guiraffe-bench --features instruction-counts --bench production_frames
+cargo test -p guiraffe-bench --test allocator mounted_frame_allocations_do_not_grow_with_source_size
+```
+
+Each case creates the document or computed source and warms the window
+before measuring one viewport switch and draw. The 100k and 10M cases
+use the same window dimensions and target rows. Instruction counts cover
+CPU-side drawing, including GPUI layout and painting work.

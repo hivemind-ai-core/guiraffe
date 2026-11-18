@@ -6,15 +6,15 @@ Audit and follow-up on `feat-prod-a` from `62b8de3`, against [spec/23](../../spe
 | Criterion | Status | Evidence and remaining check |
 |---|---|---|
 | §1 Scale | ✅ | [Mounted tests](tests/interaction.rs) cover 10M lines and a 1 MB multilingual line. [Bench suites](../../bench/src/suites.rs) cover 10M-line model scroll and index construction. |
-| §2 Frame and cold mount | ⚠️ | [Paint](src/paint.rs) bounds visible rows and shaped bytes per source line. The [headless soak](../../bench/examples/production_soak.rs) times updates and draws, with night-only p99/max gates. Desktop input-to-frame and first useful frame remain open. |
-| §2 Background work | ⚠️ | [Surface](src/surface.rs) dispatches analysis and indexing off-thread and restricts publication to the correct revision. Verify compute cancellation on supersede/drop and progress. |
-| §3 Memory and allocation | ⚠️ | [Document](src/document.rs) shares source bytes and retains a line-start index and hash per line. Retained index metadata takes 16 B per line on x86-64, excluding shared source and the fixed minimap summary. [Allocator tests](../../bench/tests/allocator.rs) cover warmed model scrolling and exact index allocation. GPUI paint allocation remains open. |
-| §4 Model and parser checks | ⚠️ | [Model tests](src/model.rs) and [document tests](src/document.rs) cover row mapping and positions. A split-line reference property now exercises UTF-8 and CRLF offsets. Bounded malformed-source analysis and additional view-state sequence coverage remain open. |
+| §2 Frame and cold mount | ⚠️ | [Paint](src/paint.rs) bounds visible rows and shaped bytes per source line. The [headless soak](../../bench/examples/production_soak.rs) times updates and draws, with night-only p99/max gates. [Mounted complexity checks](tests/interaction.rs) compare work at 100k and 10M lines. Quiet-host run pending for the frame and mount budgets. Desktop presentation latency remains open. |
+| §2 Background work | ⚠️ | [Surface](src/surface.rs) dispatches analysis and indexing off-thread and restricts publication to the correct revision. Supersession and drop stop indexing at checkpoints and skip later highlight phases. An in-progress parser/style call still runs to its next phase boundary. The [coalescing test](tests/interaction.rs) verifies the queued and completed states exposed by `CodeHandle::is_analyzing`. |
+| §3 Memory and allocation | ⚠️ | [Document](src/document.rs) shares source bytes and retains a line-start index and hash per line. Retained index metadata takes 16 B per line on x86-64, excluding shared source and the fixed minimap summary. [Allocator tests](../../bench/tests/allocator.rs) cover warmed model scrolling and exact index allocation. The [mounted allocation check](../../bench/tests/allocator.rs) gates viewport-scale requests. The zero-allocation GPUI paint target remains open. |
+| §4 Model and parser checks | ⚠️ | [Model tests](src/model.rs) and [document tests](src/document.rs) cover row mapping and positions. A split-line reference property now exercises UTF-8 and CRLF offsets. The [line-index fuzz target](../../fuzz/fuzz_targets/code_line_index.rs) compares offsets and UTF-8 columns with a split-line reference in the [fuzz smoke workflow](../../.github/workflows/model-fuzz.yml). Fold update sequences compare visible rows with a naive filter. Bounded malformed syntax analysis remains open. |
 | §4 Edges and concurrency | ⚠️ | [Interaction tests](tests/interaction.rs) cover rapid revision publication and viewport interactions. The long-line test includes RTL, CJK and emoji and verifies full copying. The viewport model handles zero and extreme finite dimensions. A mounted scroll burst and theme change preserve selection and keyboard copy. Mounted DPI and scale input bursts remain open. |
 | §5 Soak, RSS and streaming | ⚠️ | The [headless soak](../../bench/examples/production_soak.rs) runs a structural smoke in the bench tests. Its nightly profile samples percentiles and RSS every 10 s and gates frame time and RSS growth. Inspect/drive replay of source updates and full 30-minute evidence remain open. |
-| §6 Accessibility | ⚠️ | [Interaction tests](tests/interaction.rs) cover keyboard navigation, selection and copy. Screen-reader announcements and virtual indices remain open. |
+| §6 Accessibility | ⚠️ | [Interaction tests](tests/interaction.rs) cover keyboard navigation, selection and copy. The 10M-line test drives repeated page movement in both directions. The [virtual-node test](src/surface.rs) queries a bounded window of source lines with absolute positions. Native screen-reader announcements remain open. |
 | §6 Visual snapshots | ✅ | [Snapshots](tests/snapshots.rs) cover the top, middle and end of the 10M-line viewer in both themes and both backends. |
-| §7 Review and baseline | ⚠️ | Default test batch (component, Bench and Showcase), fast-backend component and Showcase tests, and all-target Clippy on both backends exited 0. The added scale goldens passed separate comparisons on both backends. Independent review and quiet-host baselines remain open. Historical timings are qualified in [VALIDATION.md](VALIDATION.md). |
+| §7 Review and baseline | ⚠️ | Scoped Cargo tests and all-target Clippy passed on the upstream backend. The [interaction checks](tests/interaction.rs) also passed with cached GPUI-fast dependencies. The full release gate and independent review remain open. |
 
 ## Loaded-host measurements
 
@@ -49,3 +49,47 @@ measures allocation traffic. It leaves the zero-allocation UI criterion open.
 Run the headless smoke with
 `cargo run --release -p guiraffe-bench --example production_soak -- code`.
 Append `--nightly` for the 30-minute threshold run on a quiet Linux host.
+
+## Follow-up profiling
+
+The before source was `7859897`. The after source includes the gutter
+buffer reuse in `2856359`. The same headless fixture ran with 60 warmed
+samples per build. Both builds used `-C opt-level=3` for the component and
+harness, with shared cached dependencies. One-minute host loads ranged from
+107 to 113 with concurrent builds.
+
+| CodeViewer metric | Before | After |
+|---|---:|---:|
+| Headless p50 (ms) | 1.312 | 5.398 |
+| Headless p99 and max (ms) | 36.454 | 55.061 |
+| Median allocations per frame | 302 | 138 |
+| Median requested bytes per frame | 194,468 | 192,500 |
+
+The allocation counts show the effect of reusing the gutter buffer. Timing
+varied across repeated runs and exceeded the frame budget in this capture.
+
+## Deterministic mounted frame checks
+
+The [CI instruction check](../../.github/workflows/ci.yml) caps the growth in
+instructions from 100k to 10M items at 2%.
+The release iai-callgrind gate measured 6,393,770 instructions at 100k
+lines and 6,460,295 instructions at 10M lines.
+
+The [instruction suite](../../bench/benches/production_frames.rs) measures a
+warmed scroll and draw in a 1,200 by 800 headless viewport. The [allocator
+test](../../bench/tests/allocator.rs) requires equal allocation counts at
+100k and 10M lines. It caps each draw at 160 allocations and 192 KiB of
+requests. The [mounted interaction test](tests/interaction.rs) requires
+equal visible row counts, shaped-line counts and shape-cache hits.
+
+The Callgrind captures below used the same fixture and cached dependencies
+with optimized component and harness builds, from `7859897` to the gutter
+buffer reuse. The warmed captures revisit the same two ranges in both datasets.
+
+| CodeViewer source size | Instructions before → after | Allocations before → after | Requested bytes before → after |
+|---|---:|---:|---:|
+| 100k lines | 8,270,193 → 8,247,657 | 219 → 137 | 175,132 → 174,476 |
+| 10M lines | 8,350,548 → 8,316,344 | 301 → 137 | 176,444 → 174,476 |
+
+The same fixture linked against cached GPUI-fast dependencies requested
+154 allocations and 21,088 bytes at each source size.

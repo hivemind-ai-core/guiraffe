@@ -584,6 +584,33 @@ macro_rules! with_production_suites {
     };
 }
 
+// Mounted DataGrid and CodeViewer scroll-and-draw workloads.
+macro_rules! production_frame_suite {
+    ($name:ident, $component:ident, $rows:literal) => {
+        pub fn $name() {
+            use crate::production_frame::{Component, Frame};
+            thread_local! {
+                static FRAME: std::cell::RefCell<anyhow::Result<Frame>> =
+                    std::cell::RefCell::new(Frame::new(Component::$component, $rows));
+            }
+            FRAME.with_borrow_mut(|frame| {
+                let result = match frame {
+                    Ok(frame) => frame.draw(),
+                    Err(error) => panic!("production frame setup failed: {error:#}"),
+                };
+                if let Err(error) = result {
+                    panic!("production frame draw failed: {error:#}");
+                }
+            });
+        }
+    };
+}
+
+production_frame_suite!(datagrid_frame_100k, Grid, 100_000);
+production_frame_suite!(datagrid_frame_10m, Grid, 10_000_000);
+production_frame_suite!(code_frame_100k, Code, 100_000);
+production_frame_suite!(code_frame_10m, Code, 10_000_000);
+
 /// Shared workload list, extended by the wall-clock harnesses.
 #[macro_export]
 macro_rules! with_suites {
@@ -620,7 +647,14 @@ macro_rules! make_registry {
     ($(($function:ident, $name:literal),)*) => {
         /// Registered headless workloads. Names are stable baseline filenames.
         pub fn registered() -> Vec<Suite> {
-            vec![$(Suite { name: $name, run: $function }),*]
+            vec![
+                $(Suite { name: $name, run: $function },)*
+                // Mounted DataGrid and CodeViewer draws.
+                Suite { name: "datagrid-frame-100k", run: datagrid_frame_100k },
+                Suite { name: "datagrid-frame-10m", run: datagrid_frame_10m },
+                Suite { name: "code-frame-100k", run: code_frame_100k },
+                Suite { name: "code-frame-10m", run: code_frame_10m },
+            ]
         }
     };
 }

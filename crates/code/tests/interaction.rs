@@ -129,6 +129,33 @@ fn real_keyboard_selection_copy_and_folding(cx: &mut TestAppContext) {
     assert_eq!(code.stats().last_visible_rows, before.last_visible_rows);
 }
 #[gpui_kit::test]
+fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt;
+
+    let mut measure = |line_count: usize| {
+        let (code, _, vcx) = mount(cx, Arc::from("x\n".repeat(line_count - 1) + "x"));
+        let before = code.stats();
+        vcx.update(|window, cx| {
+            code.scroll_to_line(42_000, cx);
+            window.render_frame(cx);
+        });
+        let after = code.stats();
+        assert!(code.anchor_in_window(Position::new(42_000, 0)).is_some());
+        (
+            after.shaped_lines - before.shaped_lines,
+            after.cache_hits - before.cache_hits,
+            after.last_visible_rows,
+        )
+    };
+
+    let smaller = measure(100_000);
+    let larger = measure(10_000_000);
+    assert!(smaller.0 > 0);
+    assert_eq!(smaller, larger);
+    assert!(larger.2 < 100);
+}
+
+#[gpui_kit::test]
 fn ten_million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut TestAppContext) {
     use std::fmt::Write;
     let mut source = String::with_capacity(20_000_000);
@@ -137,6 +164,19 @@ fn ten_million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut Te
     }
     let (code, _, vcx) = mount(cx, Arc::from(source));
     assert_eq!(code.document().line_count(), 10_000_000);
+    vcx.update(|window, cx| code.focus(window, cx));
+    let start_y = code.viewport().y;
+    for _ in 0..32 {
+        vcx.simulate_keystrokes("pagedown");
+    }
+    vcx.run_until_parked();
+    assert!(code.viewport().y > start_y);
+    for _ in 0..32 {
+        vcx.simulate_keystrokes("pageup");
+    }
+    vcx.run_until_parked();
+    assert!((code.viewport().y - start_y).abs() < 0.01);
+
     assert!(code.stats().last_visible_rows < 100);
     let before = code.stats();
     vcx.update(|_, cx| code.scroll_to_line(9_900_000, cx));
@@ -203,6 +243,7 @@ fn annotation_updates_preserve_source_and_plain_hover_does_not_shape(cx: &mut Te
 #[gpui_kit::test]
 fn latest_source_wins_and_queued_analysis_is_coalesced(cx: &mut TestAppContext) {
     let (code, _, vcx) = mount(cx, Arc::from("initial"));
+    assert!(!code.is_analyzing());
     vcx.update(|_, cx| {
         for i in 0..100 {
             code.set_source(
@@ -211,8 +252,10 @@ fn latest_source_wins_and_queued_analysis_is_coalesced(cx: &mut TestAppContext) 
                 cx,
             );
         }
+        assert!(code.is_analyzing());
     });
     vcx.run_until_parked();
+    assert!(!code.is_analyzing());
     assert_eq!(code.document().source().as_ref(), "source 99");
     assert_eq!(
         code.stats().analyses_started,

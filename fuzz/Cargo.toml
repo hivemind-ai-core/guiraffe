@@ -1,0 +1,27 @@
+[package]
+name = "guiraffe-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[workspace]
+
+[[bin]]
+name = "clipboard_tsv"
+path = "fuzz_targets/clipboard_tsv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "code_line_index"
+path = "fuzz_targets/code_line_index.rs"
+test = false
+doc = false
+bench = false

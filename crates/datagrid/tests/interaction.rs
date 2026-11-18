@@ -96,6 +96,47 @@ fn shift() -> Modifiers {
 }
 
 #[gpui_kit::test]
+fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut measure = |row_count| {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let source_reads = reads.clone();
+        let (grid, _, _, vcx) = mount(cx, |cx| {
+            let columns = columns(50);
+            GridHandle::new(
+                FnSource::new(row_count, move |row, column| {
+                    source_reads.fetch_add(1, Ordering::Relaxed);
+                    CellRef::Int((row * 100 + column) as i64)
+                }),
+                columns,
+                cx,
+            )
+        });
+        let before = grid.stats();
+        reads.store(0, Ordering::Relaxed);
+        vcx.update(|window, cx| {
+            grid.scroll_to_row(42_000, cx);
+            window.render_frame(cx);
+        });
+        let after = grid.stats();
+        assert!(grid.visible_rows().contains(&42_000));
+        (
+            reads.load(Ordering::Relaxed),
+            after.row_renders - before.row_renders,
+            after.cells_built - before.cells_built,
+            after.pool,
+        )
+    };
+
+    let smaller = measure(100_000);
+    let larger = measure(10_000_000);
+    assert!(smaller.0 > 0);
+    assert_eq!(smaller, larger);
+    assert!(larger.3 < 100);
+}
+
+#[gpui_kit::test]
 fn scrolling_ten_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
     let (grid, _, _, vcx) = mount(cx, |cx| {
         GridHandle::new(
@@ -743,6 +784,44 @@ fn selection_follows_source_rows_through_sort_and_filter(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+fn select_all_stays_compact_through_background_filter(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| {
+        let grid = GridHandle::new(
+            FnSource::new(1_000_000, |row, _| CellRef::Int(row as i64)),
+            columns(1),
+            cx,
+        );
+        grid.set_options(
+            GridOptions {
+                selection: SelectionMode::MultiRow,
+                focusable: Some(true),
+                ..Default::default()
+            },
+            cx,
+        );
+        grid
+    });
+    click(vcx, at(&grid, Some(2), 0), Modifiers::default());
+    vcx.simulate_keystrokes("ctrl-a");
+    assert_eq!(grid.selection().rows.ranges(), &[0..1_000_000][..]);
+    vcx.update(|_, cx| {
+        grid.set_filter(
+            0,
+            Some(Arc::new(
+                |cell| matches!(cell, CellRef::Int(n) if n % 2 == 0),
+            )),
+            cx,
+        );
+        assert!(grid.is_busy());
+    });
+    vcx.run_until_parked();
+    assert!(!grid.is_busy());
+    assert_eq!(grid.view_row_count(), 500_000);
+    assert_eq!(grid.selection().rows.ranges(), &[0..500_000][..]);
+    assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 0)));
+}
+
+#[gpui_kit::test]
 fn open_edit_survives_a_sort(cx: &mut TestAppContext) {
     let (grid, _, events, vcx) = mount(cx, multi_people);
     vcx.update(|w, cx| assert!(grid.begin_edit(0, 0, w, cx)));
@@ -1001,14 +1080,37 @@ fn header_drop_across_bands_is_ignored(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn rows_expose_their_aria_row_index(cx: &mut TestAppContext) {
-    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(2), cx));
+    let (grid, _, _, vcx) = mount(cx, |cx| {
+        let grid = GridHandle::new(
+            FnSource::new(10_000_000, |row, col| {
+                CellRef::Int((row * 100 + col) as i64)
+            }),
+            columns(2),
+            cx,
+        );
+        grid.set_options(
+            GridOptions {
+                selection: SelectionMode::Range,
+                focusable: Some(true),
+                ..Default::default()
+            },
+            cx,
+        );
+        grid
+    });
     assert_eq!(
         guiraffe_datagrid::aria_row_index(0),
         2,
         "row 1 is the header"
     );
-    vcx.update(|_, cx| grid.scroll_to_row(500_000, cx));
+    click(vcx, at(&grid, Some(0), 0), Modifiers::default());
+    vcx.simulate_keystrokes("ctrl-end");
+    for _ in 0..32 {
+        vcx.simulate_keystrokes("up down");
+    }
     vcx.run_until_parked();
+    assert_eq!(grid.selection().cursor, Some(CellPos::new(9_999_999, 1)));
+    assert_eq!(grid.visible_rows().end, 10_000_000);
     vcx.update(|w, cx| {
         w.render_frame(cx);
         let rows = w.find_all_by_role(Role::Row);
@@ -1021,7 +1123,7 @@ fn rows_expose_their_aria_row_index(cx: &mut TestAppContext) {
             assert_eq!(*l, format!("Row {}", first + i + 1));
             assert_eq!(guiraffe_datagrid::aria_row_index(first + i), first + i + 2);
         }
-        assert!(rows.len() > 10);
+        assert!(rows.len() > 10 && rows.len() <= grid.stats().pool + 1);
     });
 }
 

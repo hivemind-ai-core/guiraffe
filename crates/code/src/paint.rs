@@ -4,6 +4,7 @@ use gpui_kit::*;
 use guiraffe_core::{ColorName, GuiraffeTheme, Scheme, StyleContext};
 use std::{
     collections::{HashMap, VecDeque},
+    fmt::Write,
     rc::Rc,
 };
 
@@ -32,6 +33,7 @@ pub(crate) struct ShapeCache {
     items: HashMap<(u64, u64, usize, u32, u32), Rc<ShapedLine>>,
     order: VecDeque<(u64, u64, usize, u32, u32)>,
     frame: Rc<std::cell::RefCell<Vec<PaintedRow>>>,
+    gutter_label: String,
 }
 impl ShapeCache {
     fn line(
@@ -299,6 +301,7 @@ pub(crate) fn prepare(
         ]));
     let appearance = if theme.scheme == Scheme::Dark { 1 } else { 0 };
     let s = theme.surfaces();
+    let mut label = std::mem::take(&mut cache.gutter_label);
     for row in visible {
         let y = bounds.origin.y + px((row as f64 * f64::from(lh) - viewport.y) as f32);
         match map.row(row) {
@@ -337,29 +340,32 @@ pub(crate) fn prepare(
                     origin: point(bounds.origin.x + px(gutter - viewport.x as f32), y),
                     gutter: false,
                 });
-                let marker = shared
-                    .folds
-                    .borrow()
-                    .iter()
-                    .find(|f| f.start == line)
-                    .map(|f| if f.collapsed { "+" } else { "−" })
+                let folds = shared.folds.borrow();
+                let marker = folds
+                    .get(folds.partition_point(|fold| fold.start < line))
+                    .filter(|fold| fold.start == line)
+                    .map(|fold| if fold.collapsed { "+" } else { "−" })
                     .unwrap_or(" ");
-                let mut label = if options.line_numbers {
-                    format!("{:>digits$} {marker}", line + 1)
+                label.clear();
+                if options.line_numbers {
+                    let _ = write!(label, "{:>digits$} {marker}", line + 1);
                 } else {
-                    marker.to_owned()
-                };
+                    label.push_str(marker);
+                }
                 for column in shared.gutters.borrow().iter() {
                     let value = column.cells.get(&line).map(|s| s.as_ref()).unwrap_or("");
-                    let value: String = value
+                    let width = column.width_chars.min(64);
+                    label.push(' ');
+                    let mut used = 0;
+                    for ch in value
                         .chars()
                         .filter(|c| *c != '\n' && *c != '\r')
-                        .take(column.width_chars.min(64))
-                        .collect();
-                    label.push_str(&format!(
-                        " {value:width$}",
-                        width = column.width_chars.min(64)
-                    ));
+                        .take(width)
+                    {
+                        label.push(ch);
+                        used += 1;
+                    }
+                    label.extend(std::iter::repeat_n(' ', width - used));
                 }
                 let label_hash = content_hash(label.as_bytes());
                 let label_shape = cache.line(
@@ -409,6 +415,7 @@ pub(crate) fn prepare(
             None => {}
         }
     }
+    cache.gutter_label = label;
     drop(rows);
     TextFrame {
         rows: frame,
