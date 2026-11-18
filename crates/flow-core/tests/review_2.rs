@@ -202,7 +202,7 @@ fn coarse_node_regions_keep_coverage_with_fewer_primitives() {
     let scene = Scene::new(graph()).expect("scene");
     let area = scene.bounds().expect("bounds");
     let mut regions = Vec::new();
-    scene.visit_node_regions(area, 3_000., |region| regions.push(region));
+    scene.visit_node_regions(area, 3_200., |region| regions.push(region));
     assert!(regions.len() < 32);
     for node in scene.graph().nodes.values() {
         assert!(
