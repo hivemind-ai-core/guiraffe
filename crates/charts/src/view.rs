@@ -222,6 +222,9 @@ impl ChartView {
 
     fn navigate(&mut self, domain: Domain, brush: bool, cx: &mut Context<Self>) {
         let mut plot = self.plot.borrow_mut();
+        let Some(domain) = constrained_domain(&plot.chart.axes[0].scale, plot.chart.x_domain(), domain) else {
+            return;
+        };
         if plot.domain == domain {
             return;
         }
@@ -737,5 +740,43 @@ impl Render for Overlay {
             }
         }
         overlay
+    }
+}
+
+// Work in projected coordinates so log axes retain a positive minimum.
+fn constrained_domain(scale: &crate::Scale, full: Domain, requested: Domain) -> Option<Domain> {
+    const SLACK: f64 = 0.05;
+    const MIN_SPAN: f64 = 0.0001;
+    if requested == full {
+        return Some(full);
+    }
+    let min = scale.project(full, requested.min())?;
+    let max = scale.project(full, requested.max())?;
+    if min >= -SLACK && max <= 1. + SLACK && max - min >= MIN_SPAN {
+        return Some(requested);
+    }
+    let span = (max - min).clamp(MIN_SPAN, 1. + 2. * SLACK);
+    let start = (min + ((max - min) - span) * 0.5).clamp(-SLACK, (1. + SLACK - span).max(-SLACK));
+    Domain::new(scale.invert(full, start), scale.invert(full, start + span))
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    use crate::Scale;
+
+    #[test]
+    fn viewport_has_bounded_pan_and_zoom() {
+        let full = Domain::new(0., 100.).unwrap();
+        let outside = Domain::new(200., 220.).unwrap();
+        let panned = constrained_domain(&Scale::Linear, full, outside).unwrap();
+        assert!((panned.max() - 105.).abs() < 1e-9);
+        assert!((panned.span() - 20.).abs() < 1e-9);
+        let tiny = Domain::new(50., 50.00001).unwrap();
+        let zoomed = constrained_domain(&Scale::Linear, full, tiny).unwrap();
+        assert!((zoomed.span() - 0.01).abs() < 1e-9);
+        let log = Domain::new(1., 1000.).unwrap();
+        let zoomed = constrained_domain(&Scale::Log, log, tiny).unwrap();
+        assert!(zoomed.min() > 0. && zoomed.span() > tiny.span());
     }
 }
