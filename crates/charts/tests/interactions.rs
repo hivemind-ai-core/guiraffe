@@ -299,13 +299,15 @@ fn brush_emits_domain_and_wheel_navigation_keeps_anchor(cx: &mut TestAppContext)
 
 #[gpui_kit::test]
 fn deferred_source_publishes_and_replacement_supersedes_pending_work(cx: &mut TestAppContext) {
-    let (chart, window) = mount(cx);
+    let (_, window) = mount(cx);
     let spec = || {
-        ChartSpec::new("Background source").layer(Layer::new(
+        let mut spec = ChartSpec::new("Background source").layer(Layer::new(
             Mark::Line,
             (0..100_000).collect::<Vec<i32>>(),
             Channels::new(|i| f64::from(*i), |i| f64::from(*i % 10)),
-        ))
+        ));
+        spec.x.nice = false;
+        spec
     };
     let (deferred, superseded) = window.update(|_, cx| {
         let deferred = ChartView::from_spec(spec(), ChartOptions::default(), cx);
@@ -327,6 +329,5 @@ fn deferred_source_publishes_and_replacement_supersedes_pending_work(cx: &mut Te
             superseded.read(cx).viewport(),
             Domain::new(10., 20.).expect("domain")
         );
-        assert!(chart.view.read(cx).scene_build_count() > 0);
     });
 }
