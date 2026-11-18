@@ -3224,17 +3224,13 @@ impl Render for RowView {
                     .when_some(error.clone(), |el, e| el.aria_description(e))
                     .into_any_element();
             }
-            el.child(
-                div()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(label),
-            )
-            .when(is_cursor && cell_mode, |el| {
-                el.child(cursor_box(hsla(pal.accent)))
-            })
-            .into_any_element()
+            el.whitespace_nowrap()
+                .text_ellipsis()
+                .child(label)
+                .when(is_cursor && cell_mode, |el| {
+                    el.child(cursor_box(hsla(pal.accent)))
+                })
+                .into_any_element()
         };
         let mut center = div()
             .absolute()
