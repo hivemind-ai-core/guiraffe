@@ -37,27 +37,46 @@ impl<S> History<S> {
     }
 }
 
+/// Called after every recorded event (e.g. to refresh an open panel).
+pub type RecordHook = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+
 /// Install a clone as a Store interceptor; retain the handle to inspect it.
-pub struct Recorder<S>(pub Rc<RefCell<History<S>>>);
+pub struct Recorder<S>(pub Rc<RefCell<History<S>>>, pub RecordHook);
 impl<S> Clone for Recorder<S> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(self.0.clone(), self.1.clone())
+    }
+}
+impl<S> Recorder<S> {
+    pub fn new(capacity: usize) -> Self {
+        Self(Rc::new(RefCell::new(History::new(capacity))), Rc::default())
+    }
+    /// Seq of the newest recorded event (0 when empty).
+    pub fn latest_seq(&self) -> u64 {
+        self.0.borrow().entries.back().map_or(0, |e| e.event.seq)
     }
 }
 impl<S: 'static> Interceptor<S> for Recorder<S> {
     fn after(&mut self, event: &EventRecord, before: &Arc<S>, after: &Arc<S>) {
-        let mut history = self.0.borrow_mut();
-        if history.capacity == 0 {
-            return;
+        {
+            let mut history = self.0.borrow_mut();
+            if history.capacity == 0 {
+                return;
+            }
+            if history.entries.len() == history.capacity {
+                history.entries.pop_front();
+            }
+            history.entries.push_back(HistoryEntry {
+                event: event.clone(),
+                before: before.clone(),
+                after: after.clone(),
+            });
         }
-        if history.entries.len() == history.capacity {
-            history.entries.pop_front();
+        // Clone the hook out so it may freely touch the recorder.
+        let hook = self.1.borrow().clone();
+        if let Some(hook) = hook {
+            hook();
         }
-        history.entries.push_back(HistoryEntry {
-            event: event.clone(),
-            before: before.clone(),
-            after: after.clone(),
-        });
     }
 }
 
@@ -85,41 +104,79 @@ pub struct EventRow {
     pub changes: Vec<StateDiff>,
 }
 
+/// The first row of the last page: an "Older" offset never runs past a store's history.
+pub fn clamp_offset(offset: usize, len: usize, page: usize) -> usize {
+    if len == 0 || page == 0 {
+        return 0;
+    }
+    offset.min((len - 1) / page * page)
+}
+
 /// Adapter for heterogeneous stores in one panel.
 pub trait InspectStore {
     fn name(&self) -> &str;
-    fn rows(&self, offset: usize, limit: usize) -> Vec<EventRow>;
+    /// Recorded events currently retained.
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Newest-first rows of one page; `offset` is clamped to this store's last page.
+    /// Diffs are cached per (latest event, offset, limit), so an unchanged page costs
+    /// no serialization or diffing on re-render.
+    fn rows(&self, offset: usize, limit: usize) -> Rc<Vec<EventRow>>;
+    /// Install (or clear) a callback run after each recorded event.
+    fn set_on_record(&self, _hook: Option<Rc<dyn Fn()>>) {}
     /// Queue a normal, non-undoable restore event; effects are never replayed.
     fn jump(&self, seq: u64, before: bool, cx: &mut App) -> bool;
 }
 
 type Describe<S> = Rc<dyn Fn(&S) -> Value>;
+type RowKey = (u64, usize, usize, usize);
 struct StoreAdapter<S: Clone + PartialEq + 'static> {
     name: String,
     store: guiraffe_state::WeakStore<S>,
     history: Recorder<S>,
     describe: Describe<S>,
+    cache: RefCell<Option<(RowKey, Rc<Vec<EventRow>>)>>,
 }
 impl<S: Clone + PartialEq + 'static> InspectStore for StoreAdapter<S> {
     fn name(&self) -> &str {
         &self.name
     }
-    fn rows(&self, offset: usize, limit: usize) -> Vec<EventRow> {
-        self.history
-            .0
-            .borrow()
-            .entries
-            .iter()
-            .rev()
-            .skip(offset)
-            .take(limit)
-            .map(|e| EventRow {
-                seq: e.event.seq,
-                description: e.event.description.clone(),
-                changed: e.event.changed,
-                changes: diff(&(self.describe)(&e.before), &(self.describe)(&e.after)),
-            })
-            .collect()
+    fn len(&self) -> usize {
+        self.history.0.borrow().entries.len()
+    }
+    fn rows(&self, offset: usize, limit: usize) -> Rc<Vec<EventRow>> {
+        let len = self.len();
+        let offset = clamp_offset(offset, len, limit);
+        let key = (self.history.latest_seq(), len, offset, limit);
+        if let Some((cached, rows)) = &*self.cache.borrow()
+            && *cached == key
+        {
+            return rows.clone();
+        }
+        let rows: Rc<Vec<EventRow>> = Rc::new(
+            self.history
+                .0
+                .borrow()
+                .entries
+                .iter()
+                .rev()
+                .skip(offset)
+                .take(limit)
+                .map(|e| EventRow {
+                    seq: e.event.seq,
+                    description: e.event.description.clone(),
+                    changed: e.event.changed,
+                    changes: diff(&(self.describe)(&e.before), &(self.describe)(&e.after)),
+                })
+                .collect(),
+        );
+        *self.cache.borrow_mut() = Some((key, rows.clone()));
+        rows
+    }
+    fn set_on_record(&self, hook: Option<Rc<dyn Fn()>>) {
+        *self.history.1.borrow_mut() = hook;
     }
     fn jump(&self, seq: u64, before: bool, cx: &mut App) -> bool {
         let Some(snapshot) = self.history.0.borrow().snapshot(seq, before) else {
@@ -144,13 +201,14 @@ pub fn inspect_store<S: Clone + PartialEq + 'static>(
     describe: impl Fn(&S) -> Value + 'static,
     cx: &mut App,
 ) -> (Rc<dyn InspectStore>, Recorder<S>) {
-    let recorder = Recorder(Rc::new(RefCell::new(History::new(capacity))));
+    let recorder = Recorder::new(capacity);
     store.add_interceptor(recorder.clone(), cx);
     let adapter = StoreAdapter {
         name: name.into(),
         store: store.downgrade(),
         history: recorder.clone(),
         describe: Rc::new(describe),
+        cache: RefCell::new(None),
     };
     (Rc::new(adapter), recorder)
 }
@@ -168,7 +226,7 @@ mod tests {
     }
     #[test]
     fn snapshots_survive_eviction_and_restore_branches_history() {
-        let recorder = Recorder(Rc::new(RefCell::new(History::new(2))));
+        let recorder = Recorder::new(2);
         let mut engine = Engine::new(0u32);
         engine.add_interceptor(recorder.clone());
         engine.dispatch(Add);

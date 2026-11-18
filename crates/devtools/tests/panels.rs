@@ -120,10 +120,12 @@ fn keyboard_toggle_polling_and_controls_preserve_app_renders(cx: &mut TestAppCon
     );
     let before = renders.get();
     let host_before = host_renders.get();
+    // The open panel does not poll every frame (upstream would redraw the whole window)...
+    let callbacks = vcx.update(|window, cx| window.simulate_next_frame(cx));
+    assert_eq!(callbacks, 0, "no per-frame animation request while open");
+    // ...it samples on a timer instead.
     for _ in 0..5 {
-        vcx.update(|window, cx| {
-            window.simulate_next_frame(cx);
-        });
+        vcx.executor().advance_clock(SAMPLE_INTERVAL);
         vcx.run_until_parked();
     }
     if gpui_kit::GPUI_FAST {
@@ -147,9 +149,7 @@ fn keyboard_toggle_polling_and_controls_preserve_app_renders(cx: &mut TestAppCon
     vcx.update(|_, cx| tools.set_paused(false, cx));
     vcx.run_until_parked();
     for _ in 0..3 {
-        vcx.update(|window, cx| {
-            window.simulate_next_frame(cx);
-        });
+        vcx.executor().advance_clock(SAMPLE_INTERVAL);
         vcx.run_until_parked();
     }
     assert!(

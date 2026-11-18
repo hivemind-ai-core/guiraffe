@@ -11,8 +11,33 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     rc::Rc,
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
+
+/// How often an open, unpaused panel refreshes itself (profiler numbers, highlight fades).
+/// The panel never polls every frame: on upstream GPUI any refresh redraws the whole
+/// window, so per-frame polling would itself become the dominant measured work.
+pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Events shown per history page.
+pub const PAGE: usize = 8;
+
+/// Slow-motion restore: return to `previous` unless something else changed the scale
+/// after we applied `applied`, in which case that newer value is kept.
+pub fn restore_time_scale(previous: f32, applied: f32, current: f32) -> f32 {
+    if current == applied {
+        previous
+    } else {
+        current
+    }
+}
+
+/// Next "Older events" offset: advance one page while any store still has older rows.
+pub fn older_offset(offset: usize, longest: usize) -> usize {
+    let next = offset.saturating_add(PAGE);
+    if next < longest { next } else { offset }
+}
 
 gpui_kit::actions!(guiraffe_devtools, [ToggleDevtools]);
 struct Initialized;
@@ -52,6 +77,9 @@ impl ViewInfo {
 
 struct Shared {
     open: Cell<bool>,
+    /// Mirrors `open`; read by `track` on every app render, so the closed path is one
+    /// relaxed atomic load and no map access.
+    tracking: AtomicBool,
     focus: gpui_kit::FocusHandle,
     trace: RefCell<Option<TraceGuard>>,
     collection_epoch: Cell<u64>,
@@ -59,7 +87,8 @@ struct Shared {
     inspect: Cell<bool>,
     paused: Cell<bool>,
     history_offset: Cell<usize>,
-    slow_previous: Cell<Option<f32>>,
+    /// (previous, applied) time scale while slow motion is on.
+    slow: Cell<Option<(f32, f32)>>,
     views: RefCell<BTreeMap<SharedString, ViewInfo>>,
     stores: RefCell<Vec<Rc<dyn InspectStore>>>,
 }
@@ -85,6 +114,7 @@ impl Devtools {
         init(cx);
         let shared = Rc::new(Shared {
             open: Cell::new(false),
+            tracking: AtomicBool::new(false),
             focus: cx.focus_handle(),
             trace: RefCell::new(None),
             collection_epoch: Cell::new(0),
@@ -92,7 +122,7 @@ impl Devtools {
             inspect: Cell::new(false),
             paused: Cell::new(false),
             history_offset: Cell::new(0),
-            slow_previous: Cell::new(None),
+            slow: Cell::new(None),
             views: RefCell::default(),
             stores: RefCell::default(),
         });
@@ -101,6 +131,7 @@ impl Devtools {
             frames: FrameLog::new(240),
             collector: FrameTimingCollector::new(),
             collection_epoch: 0,
+            ticker: None,
         });
         Self { shared, panel }
     }
@@ -129,6 +160,11 @@ impl Devtools {
     pub fn set_open(&self, open: bool, cx: &mut App) {
         if self.shared.set_open(open) {
             cx.notify(self.panel.entity_id());
+            if open {
+                // `track` records nothing while closed; one full refresh on open lets every
+                // tracked view register its counters, style and bounds immediately.
+                cx.refresh_windows();
+            }
         }
     }
     /// Freeze sampling and highlights for repeatable visual inspection. No animation frames
@@ -147,7 +183,32 @@ impl Devtools {
     pub fn toggle(&self, cx: &mut App) {
         self.set_open(!self.is_open(), cx);
     }
+    /// Connect a store. While the panel is open, each recorded event refreshes it (also
+    /// when paused), coalesced to one deferred notify of the tools leaf.
     pub fn add_store(&self, store: Rc<dyn InspectStore>, cx: &mut App) {
+        let shared = Rc::downgrade(&self.shared);
+        let panel = self.panel.downgrade();
+        let async_cx = cx.to_async();
+        let pending = Rc::new(Cell::new(false));
+        store.set_on_record(Some(Rc::new(move || {
+            let open = shared.upgrade().is_some_and(|s| s.open.get());
+            if !open || pending.replace(true) {
+                return;
+            }
+            let panel = panel.clone();
+            let pending = pending.clone();
+            // Interceptors run inside the Store's flush; notify after it, not re-entrantly.
+            async_cx
+                .spawn(async move |cx| {
+                    pending.set(false);
+                    let _ = cx.update(|cx| {
+                        if let Some(panel) = panel.upgrade() {
+                            cx.notify(panel.entity_id());
+                        }
+                    });
+                })
+                .detach();
+        })));
         self.shared.stores.borrow_mut().push(store);
         cx.notify(self.panel.entity_id());
     }
@@ -171,8 +232,18 @@ impl Devtools {
     }
     /// Call exactly once from a view's render, using a stable, unique id/debug selector.
     /// The wrapper captures bounds and inherited style at layout/prepaint time. No app notify.
+    ///
+    /// While the tools are closed this is a single atomic load: no bookkeeping, so render
+    /// counters cover the time the panel is open.
     pub fn track(&self, id: impl Into<SharedString>, child: impl IntoElement) -> Tracked {
         let id = id.into();
+        if !self.shared.tracking.load(Ordering::Relaxed) {
+            return Tracked {
+                id,
+                shared: None,
+                child: Some(child.into_any_element()),
+            };
+        }
         let now = Instant::now();
         let mut views = self.shared.views.borrow_mut();
         let info = views.entry(id.clone()).or_insert_with(|| ViewInfo {
@@ -186,7 +257,7 @@ impl Devtools {
         info.last_render = now;
         Tracked {
             id,
-            shared: self.shared.clone(),
+            shared: Some(self.shared.clone()),
             child: Some(child.into_any_element()),
         }
     }
@@ -202,7 +273,7 @@ impl Devtools {
 /// Transparent instrumentation element: delegates layout, prepaint and paint to its child.
 pub struct Tracked {
     id: SharedString,
-    shared: Rc<Shared>,
+    shared: Option<Rc<Shared>>,
     child: Option<AnyElement>,
 }
 impl IntoElement for Tracked {
@@ -227,7 +298,9 @@ impl Element for Tracked {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, AnyElement) {
-        if let Some(info) = self.shared.views.borrow_mut().get_mut(&self.id) {
+        if let Some(shared) = &self.shared
+            && let Some(info) = shared.views.borrow_mut().get_mut(&self.id)
+        {
             info.style = StyleContext::current();
         }
         let mut child = self
@@ -245,7 +318,9 @@ impl Element for Tracked {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(info) = self.shared.views.borrow_mut().get_mut(&self.id) {
+        if let Some(shared) = &self.shared
+            && let Some(info) = shared.views.borrow_mut().get_mut(&self.id)
+        {
             info.bounds = bounds;
         }
         child.prepaint(window, cx);
@@ -291,6 +366,8 @@ pub struct DevtoolsPanel {
     frames: FrameLog,
     collector: FrameTimingCollector,
     collection_epoch: u64,
+    /// Periodic refresh while open and unpaused; dropped (cancelled) otherwise.
+    ticker: Option<gpui_kit::Task<()>>,
 }
 impl DevtoolsPanel {
     fn button(
@@ -335,12 +412,22 @@ impl Render for DevtoolsPanel {
                 });
             }
         }
+        let active = self.shared.open.get() && !self.shared.paused.get();
+        if !active {
+            self.ticker = None;
+        } else if self.ticker.is_none() {
+            // Sample on a timer rather than every frame (see SAMPLE_INTERVAL).
+            self.ticker = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(SAMPLE_INTERVAL).await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
         if !self.shared.open.get() {
             return div().into_any_element();
-        }
-        // Pure notify: no entity write and no application/global telemetry dependency.
-        if !self.shared.paused.get() {
-            window.request_animation_frame();
         }
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
@@ -432,7 +519,7 @@ impl Render for DevtoolsPanel {
                     ))
                     .child(self.button(
                         "devtools-slow",
-                        if self.shared.slow_previous.get().is_some() {
+                        if self.shared.slow.get().is_some() {
                             "Motion: 0.1×"
                         } else {
                             "Motion: 1×"
@@ -440,11 +527,13 @@ impl Render for DevtoolsPanel {
                         cx,
                         |s, cx| {
                             let mut prefs = MotionPrefs::global(cx);
-                            if let Some(previous) = s.slow_previous.take() {
-                                prefs.time_scale = previous;
+                            if let Some((previous, applied)) = s.slow.take() {
+                                prefs.time_scale =
+                                    restore_time_scale(previous, applied, prefs.time_scale);
                             } else {
-                                s.slow_previous.set(Some(prefs.time_scale));
-                                prefs.time_scale *= 10.;
+                                let applied = prefs.time_scale * 10.;
+                                s.slow.set(Some((prefs.time_scale, applied)));
+                                prefs.time_scale = applied;
                             }
                             // Preference changes intentionally affect animations; telemetry never does.
                             MotionPrefs::set(prefs, cx);
@@ -466,7 +555,12 @@ impl Render for DevtoolsPanel {
                 ms(frame.map(|f| f.prepaint)),
                 ms(frame.map(|f| f.paint))
             ))
-            .child("Draw work (CPU), includes tools; excludes vsync / GPU presentation");
+            .child("Draw work (CPU), includes tools; excludes vsync / GPU presentation")
+            .child(if gpui_kit::GPUI_FAST {
+                "Sampled every 250 ms and on events"
+            } else {
+                "Upstream GPUI: each refresh redraws the window; samples include tools refreshes"
+            });
         for (label, count) in ["≤4", "≤8", "≤16", "≤33", "≤50", ">50"]
             .into_iter()
             .zip(self.frames.histogram())
@@ -515,8 +609,9 @@ impl Render for DevtoolsPanel {
                 .flex()
                 .gap(px(Size::Xs.spacing()))
                 .child(self.button("devtools-older", "Older events", cx, |s, _| {
+                    let longest = s.stores.borrow().iter().map(|st| st.len()).max();
                     s.history_offset
-                        .set(s.history_offset.get().saturating_add(8))
+                        .set(older_offset(s.history_offset.get(), longest.unwrap_or(0)))
                 }))
                 .child(self.button("devtools-latest", "Latest events", cx, |s, _| {
                     s.history_offset.set(0)
@@ -538,7 +633,7 @@ impl Render for DevtoolsPanel {
             let mut store_panel = div()
                 .id(("devtools-store", index))
                 .child(store.name().to_owned());
-            for row in store.rows(self.shared.history_offset.get(), 8) {
+            for row in store.rows(self.shared.history_offset.get(), PAGE).iter() {
                 let seq = row.seq;
                 let before = store.clone();
                 let after = store.clone();
@@ -657,6 +752,7 @@ impl Shared {
     }
     fn set_open(&self, open: bool) -> bool {
         let changed = self.open.replace(open) != open;
+        self.tracking.store(open, Ordering::Relaxed);
         self.sync_trace();
         changed
     }
