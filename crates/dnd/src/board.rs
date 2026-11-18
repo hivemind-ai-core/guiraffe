@@ -1,17 +1,23 @@
 use crate::{
-    DragSource, DropTarget, EdgeAutoScroll, KeyboardDrag, KeyboardEvent, announce,
+    KeyboardDrag, KeyboardEvent, announce, edge_scroll,
     sortable::{Selection, SortEvent, Sortable},
 };
 use gpui_kit::{
-    AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window,
+    App, AppContext, Bounds, Context, DispatchPhase, Entity, EntityId, EventEmitter, FocusHandle,
+    Hsla, InteractiveElement, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, Role, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
     base::{TestSupportExt, spring},
+    canvas,
     component::ActiveTheme,
     div, px,
 };
 use guiraffe_core::{GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 const CARD_HEIGHT: f32 = 40.;
 const CARD_GAP: f32 = 8.;
@@ -25,7 +31,9 @@ pub struct Card {
 /// A sortable board with one column per list. Focus and selection follow card IDs.
 pub struct SortableBoard {
     headings: Vec<SharedString>,
-    scroll: Vec<(ScrollHandle, EdgeAutoScroll)>,
+    scroll: Vec<ScrollHandle>,
+    drag: Entity<BoardDragOverlay>,
+    targets: Targets,
     cards_per_row: u16,
     cards: Sortable<Card>,
     focus: HashMap<usize, FocusHandle>,
@@ -45,17 +53,22 @@ impl SortableBoard {
             .flatten()
             .map(|card| (card.id, cx.focus_handle()))
             .collect();
-        let scroll = headings
-            .iter()
-            .map(|_| {
-                let handle = ScrollHandle::new();
-                let edge = EdgeAutoScroll::new(handle.clone(), px(28.), px(10.));
-                (handle, edge)
-            })
-            .collect();
+        let scroll = headings.iter().map(|_| ScrollHandle::new()).collect();
+        let board = cx.weak_entity();
+        let targets = Targets::default();
+        let drag = cx.new(|_| BoardDragOverlay {
+            board,
+            gesture: None,
+            cancel: None,
+            targets: targets.clone(),
+            origin: Rc::default(),
+            scroll_pending: false,
+        });
         Self {
             headings,
             scroll,
+            drag,
+            targets,
             cards_per_row: 1,
             cards: Sortable::new(cards),
             focus,
@@ -64,6 +77,11 @@ impl SortableBoard {
             keyboard_source: None,
             status: "Ready".into(),
         }
+    }
+
+    /// Mount once in the board's window, as a sibling of any cached host.
+    pub fn drag_overlay(&self) -> Entity<BoardDragOverlay> {
+        self.drag.clone()
     }
 
     /// Arrange cards in each list in a grid with the given number of columns.
@@ -219,35 +237,216 @@ impl Render for Preview {
     }
 }
 
+type Targets = Rc<RefCell<HashMap<(usize, usize), Bounds<Pixels>>>>;
+
+struct PointerGesture {
+    selection: Selection,
+    origin: Point<Pixels>,
+    preview: Entity<Preview>,
+    position: Option<Point<Pixels>>,
+    target: Option<(usize, usize, Bounds<Pixels>)>,
+}
+
+/// Window-level pointer tracking and feedback for a sortable board.
+pub struct BoardDragOverlay {
+    board: WeakEntity<SortableBoard>,
+    gesture: Option<PointerGesture>,
+    cancel: Option<Subscription>,
+    targets: Targets,
+    origin: Rc<Cell<Point<Pixels>>>,
+    scroll_pending: bool,
+}
+
+impl BoardDragOverlay {
+    fn target_at(
+        &self,
+        selection: &Selection,
+        position: Point<Pixels>,
+        cx: &App,
+    ) -> Option<(usize, usize, Bounds<Pixels>)> {
+        let board = self.board.upgrade()?;
+        self.targets
+            .borrow()
+            .iter()
+            .find_map(|(&(list, gap), &bounds)| {
+                (bounds.contains(&position)
+                    && board
+                        .read(cx)
+                        .cards
+                        .accepts(board.entity_id(), selection, list, gap))
+                .then_some((list, gap, bounds))
+            })
+    }
+
+    fn moved(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut drag) = self.gesture.take() else {
+            return;
+        };
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.cancel = None;
+            cx.notify();
+            return;
+        }
+        let delta = event.position - drag.origin;
+        if drag.position.is_some() || delta.x.abs().max(delta.y.abs()) >= px(5.) {
+            drag.position = Some(event.position);
+            drag.target = self.target_at(&drag.selection, event.position, cx);
+            cx.notify();
+        }
+        let active = drag.position.is_some();
+        self.gesture = Some(drag);
+        if active && !self.scroll_pending {
+            self.scroll(window, cx);
+        }
+    }
+
+    fn scroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.scroll_pending = false;
+        let Some(drag) = &self.gesture else { return };
+        let Some(position) = drag.position else {
+            return;
+        };
+        let Some(board) = self.board.upgrade() else {
+            return;
+        };
+        let next_target = self.target_at(&drag.selection, position, cx);
+        if drag.target != next_target
+            && let Some(drag) = &mut self.gesture
+        {
+            drag.target = next_target;
+            cx.notify();
+        }
+        let mut scrolled = false;
+        for handle in &board.read(cx).scroll {
+            let bounds = handle.bounds();
+            if !bounds.contains(&position) {
+                continue;
+            }
+            let mut offset = handle.offset();
+            let next = (offset.y
+                - edge_scroll(position.y, bounds.top(), bounds.bottom(), px(28.), px(10.)))
+            .max(-handle.max_offset().y)
+            .min(px(0.));
+            if next != offset.y {
+                offset.y = next;
+                handle.set_offset(offset);
+                scrolled = true;
+            }
+            break;
+        }
+        if scrolled {
+            App::notify(cx, board.entity_id());
+            self.scroll_pending = true;
+            let overlay = cx.weak_entity();
+            window.on_next_frame(move |window, cx| {
+                let _ = overlay.update(cx, |overlay, cx| overlay.scroll(window, cx));
+            });
+        }
+    }
+
+    fn released(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
+        if event.button != MouseButton::Left {
+            return;
+        }
+        let Some(drag) = self.gesture.take() else {
+            return;
+        };
+        self.cancel = None;
+        cx.notify();
+        if drag.position.is_some()
+            && let Some((list, gap, _)) = self.target_at(&drag.selection, event.position, cx)
+            && let Some(board) = self.board.upgrade()
+        {
+            board.update(cx, |board, cx| board.commit(&drag.selection, list, gap, cx));
+        }
+    }
+}
+
+impl Render for BoardDragOverlay {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let movement = cx.weak_entity();
+        let release = movement.clone();
+        let color: Hsla = GuiraffeTheme::global(cx).primary_color().to_hsla();
+        let origin = self.origin.clone();
+        let mut layer = div().absolute().top_0().left_0().size_full().child(
+            canvas(
+                move |bounds, _, _| origin.set(bounds.origin),
+                move |_, _, window, _| {
+                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Capture {
+                            let _ = movement.update(cx, |drag, cx| drag.moved(event, window, cx));
+                        }
+                    });
+                    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                        if phase == DispatchPhase::Capture {
+                            let _ = release.update(cx, |drag, cx| drag.released(event, cx));
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_full(),
+        );
+        if let Some(drag) = &self.gesture
+            && let Some(position) = drag.position
+        {
+            if let Some((_, _, bounds)) = drag.target {
+                layer = layer.child(
+                    div()
+                        .absolute()
+                        .left(bounds.left() - self.origin.get().x)
+                        .top(bounds.top() - self.origin.get().y)
+                        .w(bounds.size.width)
+                        .h(bounds.size.height)
+                        .border_1()
+                        .border_color(color),
+                );
+            }
+            layer = layer.child(
+                div()
+                    .absolute()
+                    .left(position.x - self.origin.get().x + px(8.))
+                    .top(position.y - self.origin.get().y + px(8.))
+                    .child(drag.preview.clone()),
+            );
+        }
+        layer
+    }
+}
+
 impl Render for SortableBoard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
-        let indicator = theme.primary_color().to_hsla();
         let motion = cx.theme().motion_tokens().spring_move.with_epsilon(0.5);
         let scope = cx.entity_id();
-        let board = cx.entity();
+        let drag = self.drag.clone();
+        let targets = self.targets.clone();
+        targets.borrow_mut().clear();
         let columns = self.lists().iter().enumerate().map(|(list, cards)| {
-            let target = |row, gap| {
-                let check = board.clone();
-                let commit = board.clone();
-                DropTarget::attach(
-                    row,
-                    move |drag: &Selection, _, cx| {
-                        check.read(cx).cards.accepts(scope, drag, list, gap)
-                    },
-                    move |mut style, _, _| {
-                        style.border_color = Some(indicator);
-                        style
-                    },
-                    move |drag, _, _, cx| {
-                        commit.update(cx, |board, cx| board.commit(drag, list, gap, cx))
-                    },
-                )
-            };
+            let target =
+                |row: gpui_kit::base::ObservedElement<gpui_kit::Stateful<gpui_kit::Div>>, gap| {
+                    let targets = targets.clone();
+                    row.child(
+                        canvas(
+                            move |bounds, window, _| {
+                                targets.borrow_mut().insert(
+                                    (list, gap),
+                                    bounds.intersect(&window.content_mask().bounds),
+                                );
+                            },
+                            |_, (), _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
+                };
             let rows = cards.iter().enumerate().filter_map(|(index, card)| {
                 let focus = self.focus.get(&card.id)?;
-                let mut source = DragSource::new(self.pick(scope, list, index)?);
-                source.focus = Some(focus.clone());
+                let selection = self.pick(scope, list, index)?;
+                let source = drag.clone();
+                let source_focus = focus.clone();
                 let id = card.id;
                 let label = card.label.clone();
                 let selected = self.selected.contains(&id);
@@ -258,6 +457,7 @@ impl Render for SortableBoard {
                     .aria_label(label.clone())
                     .aria_selected(selected)
                     .aria_keyshortcuts("Space ArrowUp ArrowDown ArrowLeft ArrowRight Escape")
+                    .track_focus(focus)
                     .tab_stop(true)
                     .border_1()
                     .border_color(theme.surfaces().border.to_hsla())
@@ -294,7 +494,45 @@ impl Render for SortableBoard {
                         .border,
                 );
                 let row = target(
-                    source.attach(row, move |_, _, cx| cx.new(|_| Preview(label.clone()))),
+                    row.cursor(gpui_kit::CursorStyle::OpenHand).on_mouse_down(
+                        MouseButton::Left,
+                        move |event, window, cx| {
+                            if event.modifiers.shift {
+                                return;
+                            }
+                            source_focus.focus(window, cx);
+                            let overlay = source.downgrade();
+                            let window_id = window.window_handle().window_id();
+                            let cancel = cx.intercept_keystrokes(move |event, window, cx| {
+                                if window.window_handle().window_id() == window_id
+                                    && event.keystroke.key == "escape"
+                                    && overlay
+                                        .update(cx, |overlay, cx| {
+                                            overlay.cancel = None;
+                                            let cleared = overlay.gesture.take().is_some();
+                                            if cleared {
+                                                cx.notify();
+                                            }
+                                            cleared
+                                        })
+                                        .unwrap_or(false)
+                                {
+                                    cx.stop_propagation();
+                                }
+                            });
+                            let preview = cx.new(|_| Preview(label.clone()));
+                            source.update(cx, |drag, _| {
+                                drag.cancel = Some(cancel);
+                                drag.gesture = Some(PointerGesture {
+                                    selection: selection.clone(),
+                                    origin: event.position,
+                                    preview,
+                                    position: None,
+                                    target: None,
+                                });
+                            });
+                        },
+                    ),
                     index,
                 );
                 let y =
@@ -302,21 +540,18 @@ impl Render for SortableBoard {
                 let position = spring((("card", id), "sortable-position"), y, motion, window, cx);
                 Some(row.top(position - y))
             });
-            let (scroll, auto_scroll) = &self.scroll[list];
-            let viewport = auto_scroll.attach::<Selection, _>(
-                div()
-                    .id(("card-viewport", list))
-                    .max_h(px(300.))
-                    .overflow_y_scroll()
-                    .track_scroll(scroll)
-                    .child(
-                        div()
-                            .grid()
-                            .grid_cols(self.cards_per_row)
-                            .gap(px(CARD_GAP))
-                            .children(rows),
-                    ),
-            );
+            let viewport = div()
+                .id(("card-viewport", list))
+                .max_h(px(300.))
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll[list])
+                .child(
+                    div()
+                        .grid()
+                        .grid_cols(self.cards_per_row)
+                        .gap(px(CARD_GAP))
+                        .children(rows),
+                );
             div()
                 .flex_1()
                 .min_w_0()
@@ -408,8 +643,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    #[ignore = "pinned GPUI refreshes all cached views on native drag movement"]
-    fn native_drag_move_preserves_cached_host(cx: &mut TestAppContext) {
+    fn pointer_drag_move_preserves_cached_host(cx: &mut TestAppContext) {
         use gpui_kit::{MouseButton, StyleRefinement, point};
         use std::cell::Cell;
 
@@ -425,21 +659,24 @@ mod tests {
             }
         }
 
-        struct Root(gpui_kit::Entity<CachedHost>);
+        struct Root(Entity<CachedHost>, Entity<BoardDragOverlay>);
 
         impl Render for Root {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div().size_full().child(
-                    self.0
-                        .clone()
-                        .cached(StyleRefinement::default().w(px(800.)).h(px(320.))),
-                )
+                div()
+                    .size_full()
+                    .child(
+                        self.0
+                            .clone()
+                            .cached(StyleRefinement::default().w(px(800.)).h(px(320.))),
+                    )
+                    .child(self.1.clone())
             }
         }
 
         let renders = Rc::new(Cell::new(0));
         let counter = renders.clone();
-        let (_, window) = cx.add_window_view(move |_, cx| {
+        let (root, window) = cx.add_window_view(move |_, cx| {
             guiraffe_core::init(cx);
             let board = cx.new(|cx| {
                 SortableBoard::new(
@@ -456,10 +693,14 @@ mod tests {
                     cx,
                 )
             });
-            Root(cx.new(|_| CachedHost {
-                board,
-                renders: counter,
-            }))
+            let overlay = board.read(cx).drag_overlay();
+            Root(
+                cx.new(|_| CachedHost {
+                    board,
+                    renders: counter,
+                }),
+                overlay,
+            )
         });
         let from = window.update(|window, cx| {
             window.render_frame(cx);
@@ -470,16 +711,31 @@ mod tests {
         let start = from + point(px(18.), px(0.));
         window.simulate_mouse_move(start, Some(MouseButton::Left), Default::default());
         window.update(|window, cx| {
-            assert!(cx.has_active_drag());
+            assert!(
+                root.read(cx)
+                    .1
+                    .read(cx)
+                    .gesture
+                    .as_ref()
+                    .is_some_and(|drag| drag.position.is_some())
+            );
             let _ = window.draw(cx);
         });
+        let destination =
+            window.update(|window, _| window.find(("end", 1_usize)).bounds().center());
         let before = renders.get();
-        window.simulate_mouse_move(
-            start + point(px(3.), px(0.)),
-            Some(MouseButton::Left),
-            Default::default(),
-        );
+        window.simulate_mouse_move(destination, Some(MouseButton::Left), Default::default());
         window.update(|window, cx| {
+            let root = root.read(cx);
+            assert_eq!(
+                root.1
+                    .read(cx)
+                    .gesture
+                    .as_ref()
+                    .and_then(|drag| drag.target)
+                    .map(|(list, gap, _)| (list, gap)),
+                Some((1, 0)),
+            );
             let _ = window.draw(cx);
         });
         assert_eq!(
@@ -487,13 +743,23 @@ mod tests {
             before,
             "mouse movement during a drag rendered its host"
         );
+        window.simulate_keystrokes("escape");
+        window.simulate_mouse_up(destination, MouseButton::Left, Default::default());
+        window.update(|_, cx| {
+            let root = root.read(cx);
+            assert!(root.1.read(cx).gesture.is_none());
+            assert_eq!(root.0.read(cx).board.read(cx).lists()[0][0].id, 1);
+        });
     }
 
     struct TestHost(gpui_kit::Entity<SortableBoard>);
 
     impl Render for TestHost {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().w(px(800.)).child(self.0.clone())
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(div().w(px(800.)).child(self.0.clone()))
+                .child(self.0.read(cx).drag_overlay())
         }
     }
 }

@@ -1,5 +1,5 @@
 mod board;
-pub use board::{Card, SortableBoard};
+pub use board::{BoardDragOverlay, Card, SortableBoard};
 pub mod dock;
 pub mod sortable;
 

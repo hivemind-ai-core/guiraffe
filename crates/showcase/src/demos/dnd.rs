@@ -14,6 +14,7 @@ use guiraffe_layout::LayoutStore;
 
 struct Workspace {
     content: AnyView,
+    drag_overlay: Option<AnyView>,
     log: Vec<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -36,6 +37,7 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .gap_3()
+            .children(self.drag_overlay.clone())
             .p_4()
             .child(div().flex_1().min_h_0().child(self.content.clone()))
             .child(
@@ -140,6 +142,7 @@ fn ide(window: &mut Window, cx: &mut Context<Workspace>) -> Workspace {
     });
     Workspace {
         content: area.into(),
+        drag_overlay: None,
         log: vec![
             if restored {
                 "Layout restored"
@@ -199,6 +202,7 @@ fn kanban(cx: &mut Context<Workspace>) -> Workspace {
         );
     });
     Workspace {
+        drag_overlay: Some(board.read(cx).drag_overlay().into()),
         content: board.into(),
         log: vec!["Shift-click to select multiple cards".into()],
         _subscriptions: vec![events],
