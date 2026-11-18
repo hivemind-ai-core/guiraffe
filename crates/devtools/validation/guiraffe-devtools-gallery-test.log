@@ -1,9 +1,0 @@
-   Compiling guiraffe-gallery v0.1.0 (/tmp/guiraffe-devtools-gallery-proposal)
-    Finished `test` profile [unoptimized] target(s) in 1.01s
-     Running tests/devtools.rs (target/debug/deps/devtools-8b47db322d03ddd1)
-
-running 1 test
-test gallery_toolbar_and_shortcut_toggle_devtools ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-

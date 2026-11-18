@@ -68,4 +68,6 @@ pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_overlays::init(cx);
     guiraffe_router::init(cx);
     guiraffe_state::init(cx);
+    #[cfg(feature = "devtools")]
+    guiraffe_devtools::init(cx);
 }
