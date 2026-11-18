@@ -2449,6 +2449,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
+ "hdrhistogram",
  "heapless",
  "icu_segmenter",
  "image",
@@ -2797,6 +2798,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
+ "hdrhistogram",
  "heapless",
  "icu_segmenter",
  "image",
@@ -3407,6 +3409,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-devtools"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-motion",
+ "guiraffe-state",
+ "guiraffe-test",
+ "serde_json",
+]
+
+[[package]]
 name = "guiraffe-flow"
 version = "0.1.0"
 dependencies = [
@@ -3433,6 +3447,7 @@ dependencies = [
  "guiraffe-chat",
  "guiraffe-components",
  "guiraffe-core",
+ "guiraffe-devtools",
  "guiraffe-flow",
  "guiraffe-icons",
  "guiraffe-motion",
@@ -3691,6 +3706,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash",
+]
+
+[[package]]
+name = "hdrhistogram"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f49d1053f4708f0af3cf9fc5bffc7e68a914a3c45becb231c80068c9c3f78bea"
+dependencies = [
+ "byteorder",
+ "num-traits",
 ]
 
 [[package]]

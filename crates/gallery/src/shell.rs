@@ -20,17 +20,56 @@ pub struct Gallery {
     router: Router<Page>,
     current: Selected<Page>,
     pages: HashMap<Page, AnyView>,
+    #[cfg(feature = "devtools")]
+    devtools: guiraffe_devtools::Devtools,
 }
 
 impl Gallery {
     pub fn new(initial: Page, cx: &mut Context<Self>) -> Self {
         let router = Router::new(initial, cx);
         let current = router.select(cx, |p| *p);
+        #[cfg(feature = "devtools")]
+        let devtools = {
+            use guiraffe_devtools::{Devtools, DiagnosticValue, inspect_store};
+            let tools = Devtools::new(cx);
+            let (store, _) = inspect_store(
+                "Gallery navigation",
+                router.store(),
+                128,
+                |state| {
+                    DiagnosticValue::Object(
+                        [
+                            (
+                                "page".into(),
+                                DiagnosticValue::String(state.history.current().title().into()),
+                            ),
+                            (
+                                "history_index".into(),
+                                DiagnosticValue::from(state.history.index()),
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )
+                },
+                cx,
+            );
+            tools.add_store(store, cx);
+            tools
+        };
         Self {
             router,
             current,
             pages: HashMap::new(),
+            #[cfg(feature = "devtools")]
+            devtools,
         }
+    }
+
+    /// Developer tools for the gallery window (available with the devtools feature).
+    #[cfg(feature = "devtools")]
+    pub fn devtools(&self) -> &guiraffe_devtools::Devtools {
+        &self.devtools
     }
 
     pub fn router(&self) -> &Router<Page> {
@@ -81,7 +120,7 @@ impl Render for Gallery {
         let s = t.surfaces();
         let dark = t.scheme == Scheme::Dark;
         let router = self.router.clone();
-        div()
+        let content = div()
             .size_full()
             .flex()
             .flex_col()
@@ -105,20 +144,34 @@ impl Render for Gallery {
                             .child(Title::new("GUIraffe 🦒").order(4))
                             .child(Text::new("gallery").dimmed(true).size(Size::Sm)),
                     )
-                    .child(
-                        ActionIcon::new(
-                            "theme",
-                            if dark {
-                                gpui_kit::assets::IconName::Sun
-                            } else {
-                                gpui_kit::assets::IconName::Moon
-                            },
+                    .child({
+                        let controls = div().flex().items_center().gap(px(Size::Xs.spacing()));
+                        #[cfg(feature = "devtools")]
+                        let controls = {
+                            let tools = self.devtools.clone();
+                            controls.child(
+                                div().debug_selector(|| "gallery-devtools".into()).child(
+                                    gpui_kit::component::button::Button::new("devtools")
+                                        .label("Devtools")
+                                        .on_click(move |_, _, cx| tools.toggle(cx)),
+                                ),
+                            )
+                        };
+                        controls.child(
+                            ActionIcon::new(
+                                "theme",
+                                if dark {
+                                    gpui_kit::assets::IconName::Sun
+                                } else {
+                                    gpui_kit::assets::IconName::Moon
+                                },
+                            )
+                            .variant(Variant::Default)
+                            .on_click(move |_, _, cx| {
+                                set_scheme(if dark { Scheme::Light } else { Scheme::Dark }, cx)
+                            }),
                         )
-                        .variant(Variant::Default)
-                        .on_click(move |_, _, cx| {
-                            set_scheme(if dark { Scheme::Light } else { Scheme::Dark }, cx)
-                        }),
-                    ),
+                    }),
             )
             .child(
                 div()
@@ -152,7 +205,16 @@ impl Render for Gallery {
                             .when(current != Page::Chat, |el| el.overflow_y_scroll())
                             .child(content),
                     ),
-            )
+            );
+        #[cfg(feature = "devtools")]
+        {
+            self.devtools
+                .layer(self.devtools.track("gallery-shell", content))
+        }
+        #[cfg(not(feature = "devtools"))]
+        {
+            content.into_any_element()
+        }
     }
 }
 
@@ -172,6 +234,8 @@ pub fn open(page: Page, cx: &mut App) -> anyhow::Result<()> {
         },
         move |window, cx| {
             let view = cx.new(|cx| Gallery::new(page, cx));
+            #[cfg(feature = "devtools")]
+            view.read(cx).devtools.clone().focus(window, cx);
             guiraffe_overlays::root(view, window, cx)
         },
         cx,
