@@ -58,6 +58,10 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
             !s.name.starts_with("flow-")
                 && !s.name.starts_with("data-ui-")
                 && s.name != "datagrid-sort-1m"
+                // Compiling a chart scene for a new viewport builds its output geometry; it is
+                // budgeted below (bounded by the viewport, independent of data size). Repaints
+                // reuse the cached scene.
+                && !s.name.starts_with("chart-")
         })
     {
         // Immutable code fixtures, like flow fixtures, are initialized during warmup.
@@ -156,5 +160,28 @@ fn one_item_splice_shares_an_immutable_large_list_snapshot() -> anyhow::Result<(
             counts.allocations, counts.bytes
         );
     }
+    Ok(())
+}
+
+#[test]
+fn chart_scene_compile_allocations_are_bounded_by_the_viewport_not_the_data() -> anyhow::Result<()>
+{
+    // Warm both suites, then count one scene compile each.
+    guiraffe_bench::suites::chart_line_million();
+    guiraffe_bench::suites::chart_scatter_hundred_thousand();
+    let (_, line) = count_allocations(guiraffe_bench::suites::chart_line_million)?;
+    let (_, scatter) = count_allocations(guiraffe_bench::suites::chart_scatter_hundred_thousand)?;
+    // A 1M-point line (two viewports) and a 100k scatter stay within a small fixed budget.
+    const BUDGET: u64 = 1024;
+    assert!(
+        line.allocations <= BUDGET,
+        "chart-line-1m allocates {} (> {BUDGET})",
+        line.allocations
+    );
+    assert!(
+        scatter.allocations <= BUDGET,
+        "chart-scatter-100k allocates {} (> {BUDGET})",
+        scatter.allocations
+    );
     Ok(())
 }
