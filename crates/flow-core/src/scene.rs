@@ -474,11 +474,14 @@ impl Scene {
                 children.entry(parent).or_default().push(n.id);
             }
         }
-        let depths = Self::depths(&graph);
-        let revisions = graph.nodes.keys().map(|id| (*id, 0u64)).collect();
+        let depths = if children.is_empty() {
+            im::OrdMap::new()
+        } else {
+            Self::depths(&graph)
+        };
         Ok(Self {
             depths,
-            revisions,
+            revisions: im::OrdMap::new(),
             revision: 0,
             children,
             graph,
