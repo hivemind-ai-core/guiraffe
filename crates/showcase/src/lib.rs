@@ -22,6 +22,17 @@ pub fn window_root(
     guiraffe_overlays::root(view, window, cx)
 }
 
+/// Showcase root for snapshots with a stable header across catalog additions.
+pub fn snapshot_window_root(
+    start: Option<&str>,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::App,
+) -> gpui_kit::Entity<gpui_kit::base::Root> {
+    use gpui_kit::AppContext as _;
+    let view = cx.new(|cx| shell::Showcase::new(start, window, cx).with_static_header());
+    guiraffe_overlays::root(view, window, cx)
+}
+
 /// Initialize every crate the showcase demonstrates (idempotent).
 pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_components::init(cx);

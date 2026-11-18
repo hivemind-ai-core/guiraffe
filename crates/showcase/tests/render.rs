@@ -44,7 +44,7 @@ fn every_entry_renders_in_both_themes() {
                         },
                         cx,
                     );
-                    guiraffe_showcase::window_root(Some(name), window, cx)
+                    guiraffe_showcase::snapshot_window_root(Some(name), window, cx)
                 })
                 .unwrap_or_else(|err| panic!("{name}: {err:#}"));
             let tag = format!(
