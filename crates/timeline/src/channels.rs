@@ -13,6 +13,7 @@ pub struct Channel {
     pub color: guiraffe_core::ColorName,
     pub(crate) keys: Vec<f64>,
     pub(crate) decor: Vec<(Option<f64>, KeyShape)>,
+    pub(crate) has_keyframe_values: bool,
     pub children: Vec<Channel>,
     pub parent: Option<usize>,
     pub group: bool,
@@ -42,6 +43,7 @@ impl Channel {
             color: guiraffe_core::ColorName::Blue,
             keys,
             decor,
+            has_keyframe_values: false,
             children: Vec::new(),
             parent: None,
             group: false,
@@ -65,7 +67,11 @@ impl Channel {
     pub fn with_keyframes(name: impl Into<String>, keys: Vec<crate::Key>) -> Self {
         let mut c = Self::new(name, keys.iter().map(|k| k.t).collect());
         for k in keys {
-            if let Some(i) = c.keys.iter().position(|t| *t == k.t) {
+            if let Ok(i) = c
+                .keys
+                .binary_search_by(|t| t.total_cmp(&if k.t == 0. { 0. } else { k.t }))
+            {
+                c.has_keyframe_values = true;
                 c.decor[i] = (
                     Some(k.v),
                     match k.interp {
@@ -86,10 +92,11 @@ impl Channel {
         if !t.is_finite() || from == t || self.keys.contains(&t) {
             return None;
         }
-        self.replace_times(&[(from, t)]);
+        self.replace_times(&mut [(from, t)]);
         self.keys.iter().position(|k| *k == t)
     }
-    pub(crate) fn replace_times(&mut self, edits: &[(f64, f64)]) {
+    pub(crate) fn replace_times(&mut self, edits: &mut [(f64, f64)]) {
+        edits.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut keys: Vec<_> = self
             .keys
             .iter()
@@ -98,9 +105,9 @@ impl Channel {
             .map(|(t, d)| {
                 (
                     edits
-                        .iter()
-                        .find(|(from, _)| *from == t)
-                        .map(|(_, to)| *to)
+                        .binary_search_by(|(from, _)| from.total_cmp(&t))
+                        .ok()
+                        .map(|i| edits[i].1)
                         .unwrap_or(t),
                     d,
                 )
@@ -125,6 +132,7 @@ impl Channel {
             self.keys.iter().position(|t| *t == time),
         ) {
             self.decor[to] = source.decor[from];
+            self.has_keyframe_values |= source.has_keyframe_values;
         }
     }
     pub(crate) fn remove_time(&mut self, t: f64) -> bool {

@@ -1,5 +1,5 @@
 use crate::{
-    DatumId, Domain, PreparedChart, Scene, SeriesId, paint,
+    ChartSpec, DatumId, Domain, PreparedChart, Scene, SeriesId, paint,
     scene::{Hit, Position, Rect},
 };
 use gpui_kit::{
@@ -13,7 +13,15 @@ use gpui_kit::{
     div, px,
 };
 use guiraffe_core::GuiraffeTheme;
-use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::BTreeSet,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 const PAGE_SIZE: usize = 8;
 const HIT_RADIUS: f32 = 24.;
@@ -53,9 +61,18 @@ impl Default for ChartOptions {
 #[derive(Default)]
 struct Frame {
     bounds: Bounds<Pixels>,
-    scene: Option<Scene>,
+    scene: Option<(Domain, Scene)>,
+    pending: Option<SceneRequest>,
     builds: usize,
     paints: usize,
+}
+
+struct SceneRequest(Arc<AtomicBool>);
+
+impl Drop for SceneRequest {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 struct PlotState {
@@ -69,22 +86,65 @@ struct PlotState {
 impl PlotState {
     fn invalidate(&mut self) {
         self.frame.scene = None;
+        self.frame.pending = None;
     }
 
-    fn prepare(&mut self, bounds: Bounds<Pixels>) {
+    fn prepare(&mut self, bounds: Bounds<Pixels>, ink: &WeakEntity<PlotInk>, cx: &mut App) {
         if self.frame.bounds.size != bounds.size {
             self.invalidate();
         }
         self.frame.bounds = bounds;
-        if self.frame.scene.is_none() {
-            self.frame.scene = Some(self.chart.scene(
-                f32::from(bounds.size.width),
-                f32::from(bounds.size.height),
+        if self
+            .frame
+            .scene
+            .as_ref()
+            .is_some_and(|(domain, _)| *domain == self.domain)
+            || self.frame.pending.is_some()
+        {
+            return;
+        }
+        let width = f32::from(bounds.size.width);
+        let height = f32::from(bounds.size.height);
+        if self.chart.len() < 100_000 {
+            self.frame.scene = Some((
                 self.domain,
-                &self.hidden,
+                self.chart.scene(width, height, self.domain, &self.hidden),
             ));
             self.frame.builds += 1;
+            return;
         }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.frame.pending = Some(SceneRequest(cancelled.clone()));
+        let chart = self.chart.clone();
+        let hidden = self.hidden.clone();
+        let domain = self.domain;
+        let ink = ink.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |cx| {
+            let stop = cancelled.clone();
+            let scene = executor
+                .spawn(async move {
+                    chart.scene_with_cancel(width, height, domain, &hidden, &|| {
+                        stop.load(Ordering::Relaxed)
+                    })
+                })
+                .await;
+            let _ = ink.update(cx, |ink, cx| {
+                let mut state = ink.0.borrow_mut();
+                if state
+                    .frame
+                    .pending
+                    .as_ref()
+                    .is_some_and(|request| Arc::ptr_eq(&request.0, &cancelled))
+                {
+                    state.frame.pending = None;
+                    state.frame.scene = Some((domain, scene));
+                    state.frame.builds += 1;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn local(&self, pos: Point<Pixels>) -> Position {
@@ -130,6 +190,7 @@ pub struct ChartView {
     ink: Entity<PlotInk>,
     options: ChartOptions,
     table: Option<usize>,
+    preparing: Option<SceneRequest>,
     window_overlay: bool,
     overlay_mount_checked: bool,
 }
@@ -162,13 +223,41 @@ impl ChartView {
                 overlay,
                 options,
                 table: None,
+                preparing: None,
                 window_overlay: false,
                 overlay_mount_checked: false,
             }
         })
     }
 
+    /// Mount a bounded preview of supported marks while preparing the complete
+    /// source. Use `new` when a prepared chart is already available.
+    pub fn from_spec(spec: ChartSpec, options: ChartOptions, cx: &mut App) -> Entity<Self> {
+        let view = Self::new(spec.preview(), options, cx);
+        view.update(cx, |view, cx| {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            view.preparing = Some(SceneRequest(cancelled.clone()));
+            let executor = cx.background_executor().clone();
+            cx.spawn(async move |view, cx| {
+                let stop = cancelled.clone();
+                let chart = executor
+                    .spawn(
+                        async move { spec.prepare_with_cancel(&|| stop.load(Ordering::Relaxed)) },
+                    )
+                    .await;
+                let _ = view.update(cx, |view, cx| {
+                    if !cancelled.load(Ordering::Relaxed) {
+                        view.replace(chart, cx);
+                    }
+                });
+            })
+            .detach();
+        });
+        view
+    }
+
     pub fn replace(&mut self, chart: PreparedChart, cx: &mut Context<Self>) {
+        self.preparing = None;
         let mut plot = self.plot.borrow_mut();
         let following = plot.domain == plot.chart.x_domain();
         if following {
@@ -265,7 +354,7 @@ impl ChartView {
             return;
         }
         plot.domain = domain;
-        plot.invalidate();
+        plot.frame.pending = None;
         drop(plot);
         App::notify(cx, self.ink.entity_id());
         // Gesture callbacks already hold the overlay entity through Context::listener.
@@ -543,6 +632,11 @@ impl Render for ChartView {
             .gap(px(6.))
             .text_color(surfaces.text.to_hsla())
             .child(controls)
+            .children(
+                self.preparing
+                    .as_ref()
+                    .map(|_| div().child("Preparing full chart…")),
+            )
             .child(body)
     }
 }
@@ -594,6 +688,7 @@ impl Render for PlotInk {
         let layout = self.0.clone();
         let paint = self.0.clone();
         let overlay = self.1.clone();
+        let ink = cx.weak_entity();
         canvas(
             move |bounds, window, cx| {
                 let mut layout = layout.borrow_mut();
@@ -602,17 +697,17 @@ impl Render for PlotInk {
                 {
                     window.defer(cx, move |_, cx| App::notify(cx, overlay.entity_id()));
                 }
-                layout.prepare(bounds);
+                layout.prepare(bounds, &ink, cx);
             },
             move |bounds, _, window, cx| {
                 let mut state = paint.borrow_mut();
                 state.frame.paints += 1;
-                if let Some(scene) = &state.frame.scene {
+                if let Some((domain, scene)) = &state.frame.scene {
                     paint::paint_scene(
                         paint::PaintScene {
                             scene,
                             chart: &state.chart,
-                            domain: state.domain,
+                            domain: *domain,
                             theme: &theme,
                             origin: bounds.origin,
                             focused: state.focused,
@@ -648,7 +743,10 @@ impl Overlay {
     fn locate(&self, point: Point<Pixels>) -> Option<Hover> {
         let state = self.plot.borrow();
         let pos = state.local(point);
-        let scene = state.frame.scene.as_ref()?;
+        let (domain, scene) = state.frame.scene.as_ref()?;
+        if *domain != state.domain {
+            return None;
+        }
         let panel = scene.panel(pos)?;
         let hit = state
             .chart
@@ -691,7 +789,8 @@ impl Overlay {
             .frame
             .scene
             .as_ref()
-            .and_then(|scene| scene.panel(pos))
+            .filter(|(domain, _)| *domain == state.domain)
+            .and_then(|(_, scene)| scene.panel(pos))
             .map(|panel| (panel.facet, pos.0));
     }
 
@@ -711,7 +810,9 @@ impl Overlay {
                 let panel = state
                     .frame
                     .scene
-                    .as_ref()?
+                    .as_ref()
+                    .filter(|(rendered, _)| *rendered == domain)?
+                    .1
                     .panels
                     .iter()
                     .find(|p| p.facet == facet)?;
@@ -751,7 +852,7 @@ impl Overlay {
             .frame
             .scene
             .as_ref()
-            .and_then(|scene| scene.panel(pos))
+            .and_then(|(_, scene)| scene.panel(pos))
         else {
             return;
         };

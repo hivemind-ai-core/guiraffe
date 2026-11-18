@@ -255,8 +255,13 @@ impl Graph {
                 return Err(FlowError::InvalidGeometry);
             }
             let mut handles = BTreeSet::new();
-            for h in &node.handles {
-                if !handles.insert(&h.id) {
+            for (index, h) in node.handles.iter().enumerate() {
+                let duplicate = if node.handles.len() <= 8 {
+                    node.handles[..index].iter().any(|prior| prior.id == h.id)
+                } else {
+                    !handles.insert(&h.id)
+                };
+                if duplicate {
                     return Err(FlowError::DuplicateId);
                 }
                 if !h.offset.is_finite() || !(0. ..=1.).contains(&h.offset) {
@@ -266,9 +271,9 @@ impl Graph {
         }
         // Three-color traversal visits every parent chain once, including deep hierarchies.
         let mut complete = BTreeSet::new();
-        for id in self.nodes.keys() {
-            let mut visiting = BTreeSet::new();
-            let mut next = Some(*id);
+        for (&id, node) in nodes.iter().filter(|(_, node)| node.parent.is_some()) {
+            let mut visiting = BTreeSet::from([id]);
+            let mut next = node.parent;
             while let Some(current) = next {
                 if complete.contains(&current) {
                     break;

@@ -119,6 +119,58 @@ fn review2_10_rejected_arbitrary_edit_preserves_history_and_routes() {
 
 proptest::proptest! {
     #[test]
+    fn editor_operation_sequences_match_reference_history(
+        operations in proptest::collection::vec((0_u8..4, 0_u64..16, -40_i16..40), 0..80),
+    ) {
+        let mut editor = Editor::new(Graph::from_parts([], []).expect("empty graph")).expect("editor");
+        let mut positions = BTreeMap::new();
+        let mut undo = Vec::new();
+        let mut redo = Vec::new();
+        for (op, id, x) in operations {
+            match op {
+                0 | 1 => {
+                    let before = positions.clone();
+                    let point = Point::new(f32::from(x), 0.);
+                    if op == 0 {
+                        positions.insert(id, point);
+                    } else {
+                        positions.remove(&id);
+                    }
+                    let edited = editor.edit(|graph| {
+                        if op == 0 {
+                            graph.nodes.insert(id, Node::new(id, "", point));
+                        } else {
+                            graph.nodes.remove(&id);
+                        }
+                        Ok(())
+                    }).expect("edit");
+                    proptest::prop_assert_eq!(edited, before != positions);
+                    if edited {
+                        undo.push(before);
+                        redo.clear();
+                    }
+                }
+                2 => {
+                    let expected = undo.pop();
+                    proptest::prop_assert_eq!(editor.undo().expect("undo"), expected.is_some());
+                    if let Some(previous) = expected {
+                        redo.push(std::mem::replace(&mut positions, previous));
+                    }
+                }
+                _ => {
+                    let expected = redo.pop();
+                    proptest::prop_assert_eq!(editor.redo().expect("redo"), expected.is_some());
+                    if let Some(next) = expected {
+                        undo.push(std::mem::replace(&mut positions, next));
+                    }
+                }
+            }
+            let actual: BTreeMap<_, _> = editor.graph().nodes.values().map(|n| (n.id, n.pos)).collect();
+            proptest::prop_assert_eq!(&actual, &positions);
+        }
+    }
+
+    #[test]
     fn spatial_updates_match_linear_scan(
         changes in proptest::collection::vec((0_u64..32, proptest::option::of(-50_i16..50), -50_i16..50), 0..100),
     ) {
@@ -142,6 +194,22 @@ proptest::proptest! {
                 .collect();
             proptest::prop_assert_eq!(&actual, &expected);
         }
+    }
+}
+
+#[test]
+fn coarse_node_regions_keep_coverage_with_fewer_primitives() {
+    let scene = Scene::new(graph()).expect("scene");
+    let area = scene.bounds().expect("bounds");
+    let mut regions = Vec::new();
+    scene.visit_node_regions(area, 3_200., |region| regions.push(region));
+    assert!(regions.len() < 32);
+    for node in scene.graph().nodes.values() {
+        assert!(
+            regions
+                .iter()
+                .any(|region| region.contains(node.rect().center()))
+        );
     }
 }
 

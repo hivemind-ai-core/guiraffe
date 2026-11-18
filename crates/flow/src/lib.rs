@@ -509,10 +509,21 @@ impl Render for FlowViewport {
             .layout_preview
             .clone()
             .unwrap_or_else(|| self.interaction.editor.scene_shared());
-        display.visible(
-            viewport.visible(size).expand(12. / viewport.zoom),
-            &mut self.visible,
-        );
+        // At this scale node cards are only a few pixels wide. Draw a spatial
+        // overview and keep exact geometry available to the editor for picking.
+        let overview = viewport.zoom <= 0.05
+            && self.graph().nodes.len() >= 4_096
+            && self.interaction.gesture.is_none()
+            && !window.is_a11y_active();
+        if overview {
+            self.visible.nodes.clear();
+            self.visible.edges.clear();
+        } else {
+            display.visible(
+                viewport.visible(size).expand(12. / viewport.zoom),
+                &mut self.visible,
+            );
+        }
         if let Some(Gesture::Move { origins, .. }) = &self.interaction.gesture {
             self.visible.nodes.extend(origins.keys().copied());
             for id in origins.keys() {
@@ -637,7 +648,7 @@ impl Render for FlowViewport {
         let epoch = *self.anim_epoch.get_or_insert(now);
         let phase = (!cx.reduce_motion())
             .then(|| (now.saturating_duration_since(epoch).as_millis() % 1000) as f32 / 1000.);
-        let frame = paint::Frame::new(
+        let mut frame = paint::Frame::new(
             &self.interaction,
             &mut self.visible,
             self.options.background,
@@ -645,6 +656,7 @@ impl Render for FlowViewport {
             &theme,
             phase,
         );
+        frame.overview = overview;
         let frame = Rc::new(RefCell::new(frame.with_scene(display)));
         let base_frame = frame.clone();
         let map_meshes = self.meshes.clone();

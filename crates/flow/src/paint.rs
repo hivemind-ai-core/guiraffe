@@ -208,6 +208,7 @@ fn paint_mesh(
     window.paint_path(transformed_mesh(path, viewport, origin), color.to_hsla());
 }
 pub(crate) struct Frame {
+    pub overview: bool,
     scene: Arc<Scene>,
     viewport: Viewport,
     edges: Vec<EdgeId>,
@@ -232,6 +233,7 @@ impl Frame {
         phase: Option<f32>,
     ) -> Self {
         Self {
+            overview: false,
             scene: i.editor.scene_shared(),
             viewport: i.viewport(),
             edges: std::mem::take(&mut visible.edges),
@@ -261,6 +263,33 @@ impl Frame {
         self.grid(bounds, cache, window);
         let grid_us = started.elapsed().as_micros();
         let edge_started = std::time::Instant::now();
+        if self.overview {
+            let size = WorldPoint::new(bounds.size.width.as_f32(), bounds.size.height.as_f32());
+            let area = self.viewport.visible(size);
+            let mut path = Path::new(pixel(WorldPoint::default()));
+            self.scene
+                .visit_node_regions(area, 32. / self.viewport.zoom, |region| {
+                    rectangle(
+                        &mut path,
+                        Rect {
+                            origin: self.viewport.screen(region.origin),
+                            size: region.size * self.viewport.zoom,
+                        },
+                    );
+                });
+            if !path.vertices.is_empty() {
+                paint_mesh(
+                    &path,
+                    Viewport::default(),
+                    bounds.origin,
+                    window,
+                    self.surfaces.dimmed,
+                );
+            }
+            cache.timings = (grid_us, edge_started.elapsed().as_micros(), 0);
+            cache.edge_buffer = std::mem::take(&mut self.edges);
+            return;
+        }
         let graph = self.scene.graph();
         // GPUI takes ownership of submitted vertices. Batch by colour, so its
         // ownership boundary requires one allocation per batch, not per edge.
@@ -308,6 +337,12 @@ impl Frame {
             let Some(edge) = graph.edges.get(id) else {
                 continue;
             };
+            if edge.marker_start == Marker::None
+                && edge.marker_end == Marker::None
+                && !(edge.animated && self.phase.is_some())
+            {
+                continue;
+            }
             let from = self.preview(edge.source.node);
             let to = self.preview(edge.target.node);
             let route = if from.is_some() || to.is_some() {
@@ -424,6 +459,7 @@ impl Frame {
             .last()
             .zip(route.points.get(route.points.len().saturating_sub(2)))
             .map(|(tip, neighbor)| (end, *tip, *neighbor));
+        let canvas = Rect::new(0., 0., b.size.width.as_f32(), b.size.height.as_f32());
         for (marker, tip, neighbor) in start_points.into_iter().chain(end_points) {
             if marker == Marker::None {
                 continue;
@@ -431,6 +467,12 @@ impl Frame {
             let Some([left, tip, right]) = marker_triangle(tip, neighbor, self.viewport) else {
                 continue;
             };
+            let marker_bounds = Rect::between(left, tip)
+                .union(Rect::between(tip, right))
+                .expand(2. + EDGE_STROKE * self.viewport.zoom);
+            if !marker_bounds.intersects(canvas) {
+                continue;
+            }
             let mut builder = if marker == Marker::ArrowClosed {
                 PathBuilder::fill()
             } else {

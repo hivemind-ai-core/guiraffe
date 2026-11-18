@@ -6,8 +6,18 @@ pub fn lttb(
     point: impl Fn(usize) -> (f64, f64),
     out: &mut Vec<usize>,
 ) {
+    lttb_with_cancel(len, threshold, point, out, &|| false);
+}
+
+pub(crate) fn lttb_with_cancel(
+    len: usize,
+    threshold: usize,
+    point: impl Fn(usize) -> (f64, f64),
+    out: &mut Vec<usize>,
+    cancelled: &impl Fn() -> bool,
+) {
     out.clear();
-    if threshold == 0 || len == 0 {
+    if threshold == 0 || len == 0 || cancelled() {
         return;
     }
     if threshold >= len {
@@ -23,6 +33,10 @@ pub fn lttb(
     let start = |bucket: usize| ((bucket as f64 * width) as usize + 1).min(len - 1);
     let mut anchor = point(0);
     for bucket in 0..buckets {
+        if bucket.is_multiple_of(64) && cancelled() {
+            out.clear();
+            return;
+        }
         let average = start(bucket + 1)..(start(bucket + 2)).max(start(bucket + 1) + 1);
         let count = average.len() as f64;
         let (x, y) = average.fold((0., 0.), |(x, y), index| {
@@ -66,6 +80,24 @@ mod tests {
                 prop_assert_eq!(indices.last(), Some(&(data.len() - 1)));
             }
         }
+    }
+
+    #[test]
+    fn cancelled_sampling_discards_partial_indices() {
+        let reads = std::cell::Cell::new(0);
+        let mut indices = Vec::new();
+        lttb_with_cancel(
+            100_000,
+            1_000,
+            |i| {
+                reads.set(reads.get() + 1);
+                (i as f64, 0.)
+            },
+            &mut indices,
+            &|| reads.get() > 50,
+        );
+        assert!(indices.is_empty());
+        assert!(reads.get() < 15_000);
     }
 
     #[test]

@@ -189,7 +189,7 @@ impl<T> Channels<T> {
     }
 }
 
-type Visit = dyn Fn(usize, &mut dyn FnMut(Sample)) + Send + Sync;
+type Visit = dyn Fn(usize, Option<usize>, &dyn Fn() -> bool, &mut dyn FnMut(Sample)) + Send + Sync;
 
 /// Heterogeneous, mark-local source and channels.
 pub struct Layer {
@@ -202,34 +202,53 @@ pub struct Layer {
 
 impl Layer {
     pub fn new<S: ChartSource>(mark: Mark, source: S, channels: Channels<S::Row>) -> Self {
-        let visit = Box::new(move |layer, emit: &mut dyn FnMut(Sample)| {
-            for index in 0..source.len() {
-                let Some(row) = source.row(index) else {
-                    continue;
-                };
-                let group = (channels.group)(row);
-                let text = (channels.text)(row);
-                emit(Sample {
-                    id: DatumId {
-                        series: SeriesId { layer, group },
-                        index,
-                        key: source.key(index),
-                        facet: (channels.facet)(row),
-                    },
-                    x: (channels.x)(row),
-                    y: (channels.y)(row),
-                    x2: (channels.x2)(row),
-                    y2: (channels.y2)(row),
-                    low: (channels.low)(row),
-                    ohlc: (channels.ohlc)(row),
-                    base: 0.,
-                    top: 0.,
-                    size: (channels.size)(row),
-                    color: (channels.color)(row),
-                    text: (!text.is_empty()).then(|| Arc::from(text)),
-                });
-            }
-        });
+        let visit = Box::new(
+            move |layer,
+                  limit: Option<usize>,
+                  cancelled: &dyn Fn() -> bool,
+                  emit: &mut dyn FnMut(Sample)| {
+                let count = source.len();
+                let stride = limit.map_or(1, |limit| count.div_ceil(limit).max(1));
+                for (slot, start) in (0..count).step_by(stride).enumerate() {
+                    if slot.is_multiple_of(256) && cancelled() {
+                        return;
+                    }
+                    let remaining = count - start;
+                    let offset = if stride == 1 || slot == 0 {
+                        0
+                    } else if remaining <= stride {
+                        remaining - 1
+                    } else {
+                        slot.wrapping_mul(41) % stride
+                    };
+                    let index = start + offset;
+                    let Some(row) = source.row(index) else {
+                        continue;
+                    };
+                    let group = (channels.group)(row);
+                    let text = (channels.text)(row);
+                    emit(Sample {
+                        id: DatumId {
+                            series: SeriesId { layer, group },
+                            index,
+                            key: source.key(index),
+                            facet: (channels.facet)(row),
+                        },
+                        x: (channels.x)(row),
+                        y: (channels.y)(row),
+                        x2: (channels.x2)(row),
+                        y2: (channels.y2)(row),
+                        low: (channels.low)(row),
+                        ohlc: (channels.ohlc)(row),
+                        base: 0.,
+                        top: 0.,
+                        size: (channels.size)(row),
+                        color: (channels.color)(row),
+                        text: (!text.is_empty()).then(|| Arc::from(text)),
+                    });
+                }
+            },
+        );
         Self {
             mark,
             title: String::new(),
@@ -317,6 +336,30 @@ impl ChartSpec {
     }
 
     pub fn prepare(&self) -> PreparedChart {
+        self.prepare_with_cancel(&|| false)
+    }
+
+    pub(crate) fn prepare_with_cancel(&self, cancelled: &impl Fn() -> bool) -> PreparedChart {
+        self.prepare_samples(None, cancelled)
+    }
+
+    pub(crate) fn preview(&self) -> PreparedChart {
+        if self.layers.len() > 64
+            || self
+                .layers
+                .iter()
+                .any(|layer| !matches!(layer.mark, Mark::Line | Mark::Point | Mark::Bubble))
+        {
+            return Self::new(self.summary.clone()).prepare();
+        }
+        self.prepare_samples(Some(2_048 / self.layers.len().max(1)), &|| false)
+    }
+
+    fn prepare_samples(
+        &self,
+        limit: Option<usize>,
+        cancelled: &impl Fn() -> bool,
+    ) -> PreparedChart {
         let mut extents = [Extent::default(); 3];
         let mut runs = Vec::new();
         let mut legend = Vec::new();
@@ -324,7 +367,10 @@ impl ChartSpec {
         let mut count = 0;
         let mut nonpositive_log_rows = 0;
         let mut has_right_axis = false;
-        for (index, layer) in self.layers.iter().enumerate() {
+        'layers: for (index, layer) in self.layers.iter().enumerate() {
+            if cancelled() {
+                break;
+            }
             let y_axis = if layer.secondary { 2 } else { 1 };
             let y_scale = if layer.secondary {
                 &self.right.scale
@@ -333,7 +379,7 @@ impl ChartSpec {
             };
             let mut groups: BTreeMap<(u32, u32), Vec<Sample>> = BTreeMap::new();
             let mut gaps = BTreeMap::<(u32, u32), Vec<f64>>::new();
-            (layer.visit)(index, &mut |mut sample| {
+            (layer.visit)(index, limit, cancelled, &mut |mut sample| {
                 let invalid_log = |scale: &Scale, value: f64| {
                     matches!(scale, Scale::Log) && value.is_finite() && value <= 0.
                 };
@@ -379,6 +425,9 @@ impl ChartSpec {
                     .or_default()
                     .push(sample);
             });
+            if cancelled() {
+                break;
+            }
             arrange(layer.mark, &mut groups);
             let mut palette = BTreeMap::new();
             let mut slots = BTreeMap::new();
@@ -418,7 +467,10 @@ impl ChartSpec {
                         .unwrap_or_else(|| format!("Facet {facet}"))
                 });
                 has_right_axis |= layer.secondary;
-                for row in &rows {
+                for (index, row) in rows.iter().enumerate() {
+                    if index.is_multiple_of(256) && cancelled() {
+                        break 'layers;
+                    }
                     let normalize = layer.mark.arrangement() == Arrangement::Normalize;
                     if !(normalize && layer.mark.horizontal()) {
                         extents[0].add(&self.x.scale, row.x);
@@ -489,7 +541,7 @@ impl ChartSpec {
                     levels: Vec::new(),
                     line_breaks,
                 };
-                run.build_levels();
+                run.build_levels(cancelled);
                 runs.push(run);
                 *slot += 1;
             }
@@ -618,6 +670,21 @@ fn arrange(mark: Mark, groups: &mut BTreeMap<(u32, u32), Vec<Sample>>) {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn preview_limits_row_reads_and_retains_original_datum_indices() {
+        let spec = ChartSpec::new("large line").layer(Layer::new(
+            Mark::Line,
+            (0..100_000).collect::<Vec<i32>>(),
+            Channels::new(|i| f64::from(*i), |i| f64::from(*i % 10)),
+        ));
+        let chart = spec.preview();
+        assert!(chart.len() <= 2_048);
+        let rows = &chart.runs[0].rows;
+        assert_eq!(rows.first().expect("first").id.index, 0);
+        assert_eq!(rows.last().expect("last").id.index, 99_999);
+        assert!(rows.iter().all(|row| row.x == row.id.index as f64));
+    }
 
     #[test]
     fn reports_nonpositive_log_rows() {

@@ -296,3 +296,38 @@ fn brush_emits_domain_and_wheel_navigation_keeps_anchor(cx: &mut TestAppContext)
     assert!(zoom.span() < domain.span());
     assert!((zoom.min() + zoom.max() - domain.min() - domain.max()).abs() < 1e-6);
 }
+
+#[gpui_kit::test]
+fn deferred_source_publishes_and_replacement_supersedes_pending_work(cx: &mut TestAppContext) {
+    let (_, window) = mount(cx);
+    let spec = || {
+        let mut spec = ChartSpec::new("Background source").layer(Layer::new(
+            Mark::Line,
+            (0..100_000).collect::<Vec<i32>>(),
+            Channels::new(|i| f64::from(*i), |i| f64::from(*i % 10)),
+        ));
+        spec.x.nice = false;
+        spec
+    };
+    let (deferred, superseded) = window.update(|_, cx| {
+        let deferred = ChartView::from_spec(spec(), ChartOptions::default(), cx);
+        let superseded = ChartView::from_spec(spec(), ChartOptions::default(), cx);
+        superseded.update(cx, |view, cx| {
+            let mut replacement = ChartSpec::new("Replacement");
+            replacement.x.domain = Domain::new(10., 20.);
+            view.replace(replacement.prepare(), cx);
+        });
+        (deferred, superseded)
+    });
+    window.run_until_parked();
+    window.update(|_, cx| {
+        assert_eq!(
+            deferred.read(cx).viewport(),
+            Domain::new(0., 99_999.).expect("domain")
+        );
+        assert_eq!(
+            superseded.read(cx).viewport(),
+            Domain::new(10., 20.).expect("domain")
+        );
+    });
+}

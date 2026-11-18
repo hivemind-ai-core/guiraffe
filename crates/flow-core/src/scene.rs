@@ -487,11 +487,14 @@ impl Scene {
                 children.entry(parent).or_default().push(n.id);
             }
         }
-        let depths = Self::depths(&graph);
-        let revisions = graph.nodes.keys().map(|id| (*id, 0u64)).collect();
+        let depths = if children.is_empty() {
+            im::OrdMap::new()
+        } else {
+            Self::depths(&graph)
+        };
         Ok(Self {
             depths,
-            revisions,
+            revisions: im::OrdMap::new(),
             revision: 0,
             children,
             graph,
@@ -652,6 +655,30 @@ impl Scene {
     pub fn visible(&self, area: Rect, output: &mut Visible) {
         output.visited =
             self.nodes.query(area, &mut output.nodes) + self.edges.query(area, &mut output.edges);
+    }
+    /// Visit a coarse coverage map for zoomed-out drawing. Small BVH branches
+    /// contribute one region and leaf entries retain their individual bounds.
+    pub fn visit_node_regions(&self, area: Rect, detail: f32, mut emit: impl FnMut(Rect)) {
+        fn visit(branch: &Branch, area: Rect, detail: f32, emit: &mut impl FnMut(Rect)) {
+            let Some(bounds) = branch.bounds.filter(|bounds| bounds.intersects(area)) else {
+                return;
+            };
+            if bounds.size.x.max(bounds.size.y) <= detail {
+                emit(bounds);
+            } else if let Some((left, right)) = &branch.children {
+                visit(left, area, detail, emit);
+                visit(right, area, detail, emit);
+            } else {
+                for (_, rect) in &branch.entries {
+                    if rect.intersects(area) {
+                        emit(*rect);
+                    }
+                }
+            }
+        }
+        if let Some(root) = self.nodes.root.as_ref().filter(|_| area.valid()) {
+            visit(root, area, detail, &mut emit);
+        }
     }
     pub fn query_nodes(&self, area: Rect, output: &mut Vec<NodeId>) {
         self.nodes.query(area, output);
