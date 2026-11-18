@@ -77,6 +77,12 @@ impl FlameGraph {
         }
     }
 
+    /// Height of the plot area needed to display the full profile at once.
+    /// The controls above the plot take additional space.
+    pub fn full_plot_height(&self) -> Pixels {
+        px(self.layout.rows() as f32 * ROW_HEIGHT as f32)
+    }
+
     pub fn set_search(&mut self, query: &str, cx: &mut Context<Self>) {
         self.search_task = None;
         if self.search.take().is_some() {

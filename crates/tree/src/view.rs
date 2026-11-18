@@ -69,6 +69,12 @@ pub trait TreeData: TreeSource {
     fn icon(&self, _: NodeId) -> Option<&str> {
         None
     }
+    /// Render a custom row icon. The default preserves text icons supplied by
+    /// [Self::icon].
+    fn icon_element(&self, id: NodeId) -> Option<AnyElement> {
+        self.icon(id)
+            .map(|icon| div().child(icon.to_owned()).into_any_element())
+    }
     fn badge(&self, _: NodeId) -> Option<&str> {
         None
     }
@@ -425,9 +431,11 @@ impl<const P: bool> Render for TreeView<P> {
                     );
             }
             element
-                .child(if branch {
+                .child(div().w(px(28.)).flex_none().children(branch.then(|| {
                     Button::new(("tree-expand", id as usize))
                         .tab_stop(false)
+                        .compact()
+                        .w_full()
                         .label(if open { "▾" } else { "▸" })
                         .accessibility_label(format!(
                             "{} {label}",
@@ -436,15 +444,8 @@ impl<const P: bool> Render for TreeView<P> {
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.set_expanded(id, !open, cx)),
                         )
-                        .into_any_element()
-                } else {
-                    div().w(px(28.)).into_any_element()
-                })
-                .children(
-                    (!P).then(|| self.source.icon(id))
-                        .flatten()
-                        .map(str::to_owned),
-                )
+                })))
+                .children((!P).then(|| self.source.icon_element(id)).flatten())
                 .child(
                     div().flex_1().overflow_hidden().child(
                         Button::new(("tree-select", id as usize))

@@ -4,7 +4,8 @@ use crate::{
     knobs::{Knob, playground_with},
 };
 use gpui_kit::{
-    AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Styled, Window, div, px,
+    AnyElement, AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Styled,
+    Window, assets::IconName, component::Icon, div, px,
 };
 use guiraffe_flamegraph::{ColourScheme, FlameGraph, FlameLayout, Frame, FrameSource, Orientation};
 use guiraffe_tree::{Children, NodeId, Property, TreeData, TreeEvent, TreeSource, TreeView, Value};
@@ -106,8 +107,12 @@ fn flame(window: &mut Window, cx: &mut App) -> AnyView {
                     })
                 });
             }
+            let height = view.read(cx).full_plot_height() + px(38.);
             div()
-                .child(div().h(px(255.)).child(view.clone()))
+                .flex()
+                .flex_col()
+                .gap(px(16.))
+                .child(div().h(height).child(view.clone()))
                 .child(log.clone())
                 .into_any_element()
         },
@@ -137,7 +142,7 @@ impl Settings {
         ]);
         Self {
             children: vec![1, 2, 3, 4, 5, 6],
-            checked: BTreeMap::from([(1, true), (2, false), (5, false)]),
+            checked: BTreeMap::from([(3, true)]),
             defaults: values.clone(),
             values,
             choices: vec!["Auto".into(), "Manual".into()],
@@ -175,8 +180,13 @@ impl TreeSource for Settings {
 }
 
 impl TreeData for Settings {
-    fn icon(&self, id: NodeId) -> Option<&str> {
-        matches!(id, 0 | 6 | 8).then_some("▣")
+    fn icon_element(&self, id: NodeId) -> Option<AnyElement> {
+        let icon = if matches!(id, 0 | 6 | 8) {
+            IconName::Folder
+        } else {
+            IconName::File
+        };
+        Some(Icon::new(icon).size(px(16.)).flex_none().into_any_element())
     }
     fn badge(&self, id: NodeId) -> Option<&str> {
         (id == 6).then_some("1 setting")
