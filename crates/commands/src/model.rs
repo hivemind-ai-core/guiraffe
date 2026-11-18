@@ -2,10 +2,10 @@
 use crate::{
     Error,
     context::{ContextStack, When},
-    keybinding::Keybinding,
+    keybinding::{Keybinding, Platform},
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
     str::FromStr,
 };
@@ -136,28 +136,72 @@ fn order<Run>(command: &Command<Run>) -> OrderKey {
 pub struct Registry<Run = ()> {
     commands: BTreeMap<CommandId, Command<Run>>,
     order: BTreeSet<OrderKey>,
+    platform: Platform,
+    /// Platform-resolved canonical binding -> commands bound to it, in catalog order.
+    /// Maintained on every mutation so a keystroke never scans the catalog.
+    index: HashMap<String, Vec<CommandId>>,
 }
 impl<Run> Default for Registry<Run> {
     fn default() -> Self {
-        Self {
-            commands: BTreeMap::new(),
-            order: BTreeSet::new(),
-        }
+        Self::with_platform(Platform::current())
     }
 }
 impl<Run> Registry<Run> {
+    /// A registry that resolves `secondary` bindings for `platform`.
+    pub fn with_platform(platform: Platform) -> Self {
+        Self {
+            commands: BTreeMap::new(),
+            order: BTreeSet::new(),
+            platform,
+            index: HashMap::new(),
+        }
+    }
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+    fn index_insert(&mut self, command: &Command<Run>) {
+        let Some(binding) = &command.keybinding else {
+            return;
+        };
+        let key = order(command);
+        let commands = &self.commands;
+        let ids = self
+            .index
+            .entry(binding.resolve(self.platform).as_str().to_owned())
+            .or_default();
+        // Keep each bucket in catalog order so ties resolve without sorting per keystroke.
+        let at = ids
+            .iter()
+            .position(|id| commands.get(id).is_some_and(|other| order(other) > key))
+            .unwrap_or(ids.len());
+        ids.insert(at, command.id.clone());
+    }
+    fn index_remove(&mut self, command: &Command<Run>) {
+        let Some(binding) = &command.keybinding else {
+            return;
+        };
+        let key = binding.resolve(self.platform);
+        if let Some(ids) = self.index.get_mut(key.as_str()) {
+            ids.retain(|id| id != &command.id);
+            if ids.is_empty() {
+                self.index.remove(key.as_str());
+            }
+        }
+    }
     pub fn register(&mut self, command: Command<Run>) -> Result<(), Error> {
         command.validate()?;
         if self.commands.contains_key(&command.id) {
             return Err(Error::Duplicate(command.id.to_string()));
         }
         self.order.insert(order(&command));
+        self.index_insert(&command);
         self.commands.insert(command.id.clone(), command);
         Ok(())
     }
     pub fn unregister(&mut self, id: &CommandId) -> Option<Command<Run>> {
         let command = self.commands.remove(id)?;
         self.order.remove(&order(&command));
+        self.index_remove(&command);
         Some(command)
     }
     pub fn lookup(&self, id: &CommandId) -> Option<&Command<Run>> {
@@ -198,14 +242,20 @@ impl<Run> Registry<Run> {
         id: &CommandId,
         binding: Option<Keybinding>,
     ) -> Result<bool, Error> {
-        let command = self
-            .commands
-            .get_mut(id)
-            .ok_or_else(|| Error::NotFound(id.to_string()))?;
+        let Some(command) = self.commands.remove(id) else {
+            return Err(Error::NotFound(id.to_string()));
+        };
         if command.keybinding == binding {
+            self.commands.insert(id.clone(), command);
             return Ok(false);
         }
-        command.keybinding = binding;
+        self.index_remove(&command);
+        let command = Command {
+            keybinding: binding,
+            ..command
+        };
+        self.index_insert(&command);
+        self.commands.insert(id.clone(), command);
         Ok(true)
     }
     pub fn replace(&mut self, command: Command<Run>) -> Result<bool, Error>
@@ -219,61 +269,142 @@ impl<Run> Registry<Run> {
         if old == &command {
             return Ok(false);
         }
-        self.order.remove(&order(old));
-        self.order.insert(order(&command));
-        self.commands.insert(command.id.clone(), command);
+        let id = command.id.clone();
+        self.unregister(&id);
+        self.register(command)?;
         Ok(true)
     }
-    /// Resolve one shortcut without allocating the complete keymap/conflict report.
+    /// Every command bound to `binding` (resolved for this registry's platform), in
+    /// catalog order, enabled or not. An index lookup, not a catalog scan.
+    pub fn bound_to(&self, binding: &Keybinding) -> impl Iterator<Item = &Command<Run>> {
+        let resolved = binding.resolve(self.platform);
+        self.index
+            .get(resolved.as_str())
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.commands.get(id))
+    }
+    /// As [`Self::bound_to`], keyed by a platform-resolved canonical string (the form
+    /// carried by native routes), so dispatch does not re-parse the keystroke.
+    pub fn bound_to_native<'a>(
+        &'a self,
+        resolved: &str,
+    ) -> impl Iterator<Item = &'a Command<Run>> + 'a {
+        self.index
+            .get(resolved)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.commands.get(id))
+    }
+    /// Matching commands for one shortcut in precedence order: deepest matching `when`
+    /// context first (specificity), catalog order breaking ties. Disabled commands are
+    /// skipped, so they never swallow a key that a shadowed command could handle.
+    pub fn candidates_native<'a>(
+        &'a self,
+        resolved: &str,
+        contexts: &ContextStack,
+    ) -> Vec<&'a Command<Run>> {
+        let mut ranked = self
+            .bound_to_native(resolved)
+            .filter(|command| command.enabled)
+            .filter_map(|command| command.when.depth(contexts).map(|d| (d, command)))
+            .collect::<Vec<_>>();
+        // Stable sort keeps catalog order for equal depth.
+        ranked.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+        ranked.into_iter().map(|(_, command)| command).collect()
+    }
+    /// Resolve one shortcut: the most specific enabled, active command.
     pub fn resolve_binding(
         &self,
         binding: &Keybinding,
         contexts: &ContextStack,
     ) -> Option<&Command<Run>> {
-        self.ordered().find(|command| {
-            command.enabled
-                && command.keybinding.as_ref() == Some(binding)
-                && command.when.matches(contexts)
-        })
+        let resolved = binding.resolve(self.platform);
+        self.resolve_native(resolved.as_str(), contexts)
     }
-    /// Resolve exact binding conflicts among enabled, reachable commands. The first
-    /// catalog entry (category/title/id) wins, independently of registration order.
-    pub fn bindings<'a>(&'a self, contexts: &'a ContextStack) -> Bindings<'a, Run> {
-        let mut winners: BTreeMap<Keybinding, &Command<Run>> = BTreeMap::new();
-        let mut conflicts: BTreeMap<Keybinding, Conflict> = BTreeMap::new();
-        for command in self.visible(contexts).filter(|command| command.enabled) {
-            let Some(binding) = &command.keybinding else {
+    /// As [`Self::resolve_binding`] for a platform-resolved canonical string. Allocation
+    /// free: one index lookup plus one predicate evaluation per bound command.
+    pub fn resolve_native(&self, resolved: &str, contexts: &ContextStack) -> Option<&Command<Run>> {
+        let mut best: Option<(usize, &Command<Run>)> = None;
+        for command in self.bound_to_native(resolved) {
+            if !command.enabled {
+                continue;
+            }
+            let Some(depth) = command.when.depth(contexts) else {
                 continue;
             };
-            if let Some(winner) = winners.get(binding) {
-                conflicts
-                    .entry(binding.clone())
-                    .or_insert_with(|| Conflict {
-                        binding: binding.clone(),
-                        winner: winner.id.clone(),
-                        shadowed: Vec::new(),
-                    })
-                    .shadowed
-                    .push(command.id.clone());
-            } else {
-                winners.insert(binding.clone(), command);
+            // Buckets are in catalog order: only a strictly deeper match replaces.
+            if best.is_none_or(|(d, _)| depth > d) {
+                best = Some((depth, command));
+            }
+        }
+        best.map(|(_, command)| command)
+    }
+    /// The effective keymap for `contexts`: per platform-resolved binding the winner
+    /// (specificity, then catalog order), exact conflicts with every shadowed ID, and
+    /// chord-prefix conflicts where a shorter binding shadows (delays) a longer chord.
+    pub fn bindings<'a>(&'a self, contexts: &'a ContextStack) -> Bindings<'a, Run> {
+        let mut winners: BTreeMap<Keybinding, &Command<Run>> = BTreeMap::new();
+        let mut conflicts = Vec::new();
+        for key in self.index.keys() {
+            let ranked = self.candidates_native(key, contexts);
+            let Some((winner, shadowed)) = ranked.split_first() else {
+                continue;
+            };
+            let Some(binding) = winner.keybinding.as_ref().map(|b| b.resolve(self.platform)) else {
+                continue;
+            };
+            if !shadowed.is_empty() {
+                conflicts.push(Conflict {
+                    binding: binding.clone(),
+                    winner: winner.id.clone(),
+                    shadowed: shadowed.iter().map(|c| c.id.clone()).collect(),
+                });
+            }
+            winners.insert(binding, *winner);
+        }
+        conflicts.sort_by(|a, b| a.binding.cmp(&b.binding));
+        let mut prefixes = Vec::new();
+        for (prefix, short) in &winners {
+            for (chord, long) in &winners {
+                if prefix != chord && prefix.is_prefix_of(chord) {
+                    prefixes.push(PrefixConflict {
+                        prefix: prefix.clone(),
+                        prefix_command: short.id.clone(),
+                        chord: chord.clone(),
+                        chord_command: long.id.clone(),
+                    });
+                }
             }
         }
         Bindings {
             winners,
-            conflicts: conflicts.into_values().collect(),
+            conflicts,
+            prefixes,
         }
     }
 }
 pub struct Bindings<'a, Run> {
     pub winners: BTreeMap<Keybinding, &'a Command<Run>>,
     pub conflicts: Vec<Conflict>,
+    /// Active bindings that are a strict chord prefix of another active binding.
+    pub prefixes: Vec<PrefixConflict>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
     pub binding: Keybinding,
     pub winner: CommandId,
     pub shadowed: Vec<CommandId>,
+}
+/// `prefix` (e.g. `ctrl+k`) is the first chord of `chord` (e.g. `ctrl+k ctrl+s`): pressing
+/// it waits for the next keystroke, so `prefix_command` runs only after a timeout or a
+/// non-matching key instead of immediately.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefixConflict {
+    pub prefix: Keybinding,
+    pub prefix_command: CommandId,
+    pub chord: Keybinding,
+    pub chord_command: CommandId,
 }
 #[cfg(test)]
 mod tests {

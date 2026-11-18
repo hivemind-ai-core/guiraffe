@@ -170,9 +170,18 @@ impl When {
         &self.source
     }
     pub fn matches(&self, contexts: &ContextStack) -> bool {
-        (0..=contexts.frames.len())
+        self.depth(contexts).is_some()
+    }
+    /// Specificity: the deepest stack depth at which the expression matches (GPUI's
+    /// `depth_of`), or `None`. An unconditional `When::always()` is the least specific
+    /// (depth 0), so any matching context-specific binding outranks it.
+    pub fn depth(&self, contexts: &ContextStack) -> Option<usize> {
+        if matches!(self.expr, Expr::Always) {
+            return Some(0);
+        }
+        (1..=contexts.frames.len())
             .rev()
-            .any(|depth| eval(&self.expr, &contexts.frames[..depth], &contexts.frames))
+            .find(|&depth| eval(&self.expr, &contexts.frames[..depth], &contexts.frames))
     }
 }
 fn eval(expr: &Expr, frames: &[Context], all: &[Context]) -> bool {

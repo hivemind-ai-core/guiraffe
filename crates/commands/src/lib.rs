@@ -24,15 +24,15 @@ pub mod keybinding;
 pub mod model;
 pub use context::{Context as WhenContext, ContextStack, When};
 pub use error::Error;
-pub use keybinding::Keybinding;
-pub use model::{Bindings, Command, CommandId, Conflict, Registry};
+pub use keybinding::{Keybinding, Platform};
+pub use model::{Bindings, Command, CommandId, Conflict, PrefixConflict, Registry};
 
 mod menu;
 mod service;
 pub use menu::{CommandScope, Menu, MenuProps};
 pub use service::{
-    Commands, Handler, InvocationSource, Payload, RegistryState, execute, init, register, registry,
-    unregister,
+    Commands, ConflictReport, Handler, InvocationSource, PALETTE_SHORTCUT, Payload, RegistryState,
+    execute, init, register, registry, unregister,
 };
 #[cfg(test)]
 mod gpui_tests;

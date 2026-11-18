@@ -1,9 +1,7 @@
-use crate::{Command, CommandId, ContextStack, Error, Keybinding, model};
-use gpui_kit::{
-    App, AppContext, BorrowAppContext, Entity, Global, KeyBinding, KeyBindingContextPredicate,
-    Window,
-};
-use std::{collections::HashSet, rc::Rc};
+use crate::{Command, CommandId, ContextStack, Error, Keybinding, Platform, model};
+use gpui_kit::{App, AppContext, BorrowAppContext, Entity, Global, KeyBinding, Window};
+use guiraffe_core::keys;
+use std::{cell::OnceCell, collections::HashMap, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvocationSource {
@@ -31,6 +29,18 @@ impl PartialEq for Handler {
     }
 }
 impl Eq for Handler {}
+/// Every conflict in the active keymap: same binding on several commands, and bindings
+/// that are a chord prefix of another (the shorter one waits for a possible second key).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConflictReport {
+    pub exact: Vec<model::Conflict>,
+    pub prefixes: Vec<model::PrefixConflict>,
+}
+impl ConflictReport {
+    pub fn is_empty(&self) -> bool {
+        self.exact.is_empty() && self.prefixes.is_empty()
+    }
+}
 #[derive(Clone)]
 pub(crate) enum MenuRow {
     Heading(gpui_kit::SharedString),
@@ -42,13 +52,13 @@ pub(crate) enum MenuRow {
     },
 }
 /// Mutable service state lives in an entity, never in the configuration global.
-#[derive(Default)]
 pub struct RegistryState {
     catalog: model::Registry<Handler>,
     contexts: ContextStack,
     revision: u64,
-    pub(crate) rows: Rc<Vec<MenuRow>>,
-    pub(crate) flat_rows: Rc<Vec<MenuRow>>,
+    /// Menu projections, built lazily on first render after a change.
+    rows: OnceCell<Rc<Vec<MenuRow>>>,
+    flat_rows: OnceCell<Rc<Vec<MenuRow>>>,
 }
 impl RegistryState {
     pub fn catalog(&self) -> &model::Registry<Handler> {
@@ -60,8 +70,28 @@ impl RegistryState {
     pub fn revision(&self) -> u64 {
         self.revision
     }
+    fn new(platform: Platform) -> Self {
+        Self {
+            catalog: model::Registry::with_platform(platform),
+            contexts: ContextStack::default(),
+            revision: 0,
+            rows: OnceCell::new(),
+            flat_rows: OnceCell::new(),
+        }
+    }
     fn changed(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+        self.rows = OnceCell::new();
+        self.flat_rows = OnceCell::new();
+    }
+    /// Menu rows for the current catalog and host contexts; computed once per revision.
+    pub(crate) fn rows(&self, grouped: bool) -> Rc<Vec<MenuRow>> {
+        let cell = if grouped { &self.rows } else { &self.flat_rows };
+        cell.get_or_init(|| Rc::new(self.build_rows(grouped)))
+            .clone()
+    }
+    fn build_rows(&self, with_headings: bool) -> Vec<MenuRow> {
+        let platform = self.catalog.platform();
         let mut grouped = Vec::new();
         let mut flat = Vec::new();
         let mut category = None;
@@ -80,7 +110,7 @@ impl RegistryState {
                 hint: command
                     .keybinding
                     .as_ref()
-                    .map(ToString::to_string)
+                    .map(|b| b.label(platform))
                     .unwrap_or_default()
                     .into(),
                 enabled: command.enabled,
@@ -88,8 +118,7 @@ impl RegistryState {
             grouped.push(row.clone());
             flat.push(row);
         }
-        self.rows = Rc::new(grouped);
-        self.flat_rows = Rc::new(flat);
+        if with_headings { grouped } else { flat }
     }
 }
 #[derive(Clone)]
@@ -97,8 +126,10 @@ pub struct Commands {
     state: Entity<RegistryState>,
 }
 struct Configuration {
-    installed: HashSet<Keybinding>,
-    predicate: Rc<KeyBindingContextPredicate>,
+    /// Native route (platform-resolved canonical binding) -> number of commands, across
+    /// every live service, bound to it. A route is removed from the GPUI keymap when its
+    /// count drops to zero, so unmounted views leave no stale bindings behind.
+    routes: HashMap<String, usize>,
     default: Commands,
 }
 impl Global for Configuration {}
@@ -106,59 +137,142 @@ gpui_kit::actions!(guiraffe_commands, [ShowCommands]);
 #[derive(Clone, PartialEq, serde::Deserialize, gpui_kit::Action)]
 #[action(namespace=guiraffe_commands,no_json)]
 pub(crate) struct InvokeBinding {
+    /// Platform-resolved canonical binding; an index key, never re-parsed per keystroke.
     pub binding: String,
 }
-/// Register the `GrCommand` scope and its Ctrl+Shift+P palette action once.
-/// Dynamic shortcuts use native `KeyBinding::load`, supporting chords without leaks.
-pub fn init(cx: &mut App) {
+/// The palette shortcut: ⌘⇧P on macOS, Ctrl+Shift+P elsewhere.
+pub const PALETTE_SHORTCUT: &str = "secondary-shift-p";
+/// The keyboard convention GPUI reports for this app (tests may emulate another OS).
+pub fn platform(cx: &App) -> Platform {
+    if cx.platform_info().os == gpui_kit::OperatingSystem::Mac {
+        Platform::Mac
+    } else {
+        Platform::Other
+    }
+}
+/// Register the `GrCommand` scope and its palette action once. Returns bindings GPUI
+/// rejected (none for the built-in shortcut); dynamic shortcuts use the same fallible path.
+pub fn init(cx: &mut App) -> Vec<guiraffe_core::keys::InvalidBinding> {
     if cx.has_global::<Configuration>() {
-        return;
+        return Vec::new();
     }
     guiraffe_overlays::init(cx);
     let default = Commands::empty(cx);
     cx.set_global(Configuration {
-        installed: HashSet::new(),
-        predicate: Rc::new(KeyBindingContextPredicate::Identifier("GrCommand".into())),
+        routes: HashMap::new(),
         default,
     });
-    cx.bind_keys([KeyBinding::new(
-        "ctrl-shift-p",
-        ShowCommands,
-        Some("GrCommand"),
-    )]);
+    let palette = keys::binding(PALETTE_SHORTCUT, ShowCommands, Some("GrCommand"), cx);
+    keys::bind_keys(vec![palette], cx)
 }
 pub fn registry(cx: &App) -> Result<Commands, Error> {
     cx.try_global::<Configuration>()
         .map(|config| config.default.clone())
         .ok_or(Error::NotInitialized)
 }
-fn install(binding: &Keybinding, cx: &mut App) -> Result<(), Error> {
-    if cx.global::<Configuration>().installed.contains(binding) {
-        return Ok(());
+/// Parse a native route without installing it, so a bad binding fails before any write.
+fn native_route(resolved: &Keybinding, cx: &App) -> Result<Option<KeyBinding>, Error> {
+    let config = cx
+        .try_global::<Configuration>()
+        .ok_or(Error::NotInitialized)?;
+    if config.routes.contains_key(resolved.as_str()) {
+        return Ok(None);
     }
-    let predicate = cx.global::<Configuration>().predicate.clone();
-    let native = KeyBinding::load(
-        binding.gpui_keystrokes(),
-        Box::new(InvokeBinding {
-            binding: binding.to_string(),
-        }),
-        Some(predicate),
-        false,
-        None,
-        cx,
-    )
-    .map_err(|error| Error::NativeBinding(error.to_string()))?;
-    cx.update_global::<Configuration, _>(|config, _| {
-        config.installed.insert(binding.clone());
+    let action = InvokeBinding {
+        binding: resolved.as_str().to_owned(),
+    };
+    keys::binding(resolved.gpui_keystrokes(), action, Some("GrCommand"), cx)
+        .map(Some)
+        .map_err(|error| Error::NativeBinding(error.to_string()))
+}
+fn is_route(binding: &KeyBinding, resolved: &str) -> bool {
+    binding
+        .action()
+        .as_any()
+        .downcast_ref::<InvokeBinding>()
+        .is_some_and(|route| route.binding == resolved)
+}
+/// Take one reference on a route, installing it on the first.
+fn acquire(resolved: &Keybinding, native: Option<KeyBinding>, cx: &mut App) {
+    let first = cx.update_global::<Configuration, _>(|config, _| {
+        let count = config
+            .routes
+            .entry(resolved.as_str().to_owned())
+            .or_insert(0);
+        *count += 1;
+        *count == 1
     });
-    cx.bind_keys([native]);
-    Ok(())
+    if first {
+        // `native_route` built it when the route was absent; rebuild only if it raced.
+        let native = native.or_else(|| {
+            let action = InvokeBinding {
+                binding: resolved.as_str().to_owned(),
+            };
+            keys::binding(resolved.gpui_keystrokes(), action, Some("GrCommand"), cx).ok()
+        });
+        let keymap = cx.key_bindings();
+        let present = keymap
+            .borrow()
+            .bindings()
+            .any(|b| is_route(b, resolved.as_str()));
+        if !present && let Some(native) = native {
+            cx.bind_keys([native]);
+        }
+    }
+}
+/// Drop one reference on a route; the last one removes it from the GPUI keymap while
+/// keeping every other (application) binding and its precedence order.
+fn release(resolved: &str, cx: &mut App) {
+    let Some(config) = cx.try_global::<Configuration>() else {
+        return;
+    };
+    if !config.routes.contains_key(resolved) {
+        return;
+    }
+    let last = cx.update_global::<Configuration, _>(|config, _| {
+        let Some(count) = config.routes.get_mut(resolved) else {
+            return false;
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            config.routes.remove(resolved);
+            true
+        } else {
+            false
+        }
+    });
+    if last {
+        let keymap = cx.key_bindings();
+        let kept = keymap
+            .borrow()
+            .bindings()
+            .filter(|b| !is_route(b, resolved))
+            .cloned()
+            .collect::<Vec<_>>();
+        cx.clear_key_bindings();
+        cx.bind_keys(kept);
+    }
+}
+fn resolved(binding: &Option<Keybinding>, platform: Platform) -> Option<Keybinding> {
+    binding.as_ref().map(|b| b.resolve(platform))
 }
 impl Commands {
     fn empty(cx: &mut App) -> Self {
-        Self {
-            state: cx.new(|_| RegistryState::default()),
-        }
+        let platform = platform(cx);
+        let state = cx.new(|_| RegistryState::new(platform));
+        // A dropped service (an unmounted view's registry) releases all of its routes.
+        cx.observe_release(&state, |state: &mut RegistryState, cx| {
+            let held = state
+                .catalog
+                .ordered()
+                .filter_map(|c| resolved(&c.keybinding, state.catalog.platform()))
+                .collect::<Vec<_>>();
+            for binding in held {
+                release(binding.as_str(), cx);
+            }
+        })
+        .detach();
+        Self { state }
     }
     /// Prefer a distinct service per window when application contexts differ.
     pub fn new(cx: &mut App) -> Self {
@@ -168,6 +282,34 @@ impl Commands {
     pub fn entity(&self) -> &Entity<RegistryState> {
         &self.state
     }
+    /// The keyboard convention this service resolves `secondary` for.
+    pub fn platform(&self, cx: &App) -> Platform {
+        self.state.read(cx).catalog.platform()
+    }
+    /// Swap the route held for `old` to `new` (both platform-resolved), validating `new`
+    /// first. Returns the parsed native binding to pass to `acquire`.
+    fn prepare(&self, new: &Option<Keybinding>, cx: &App) -> Result<Option<KeyBinding>, Error> {
+        match new {
+            Some(binding) => native_route(binding, cx),
+            None => Ok(None),
+        }
+    }
+    fn swap_routes(
+        old: Option<Keybinding>,
+        new: Option<Keybinding>,
+        native: Option<KeyBinding>,
+        cx: &mut App,
+    ) {
+        if old == new {
+            return;
+        }
+        if let Some(new) = &new {
+            acquire(new, native, cx);
+        }
+        if let Some(old) = &old {
+            release(old.as_str(), cx);
+        }
+    }
     pub fn register<F>(&self, command: Command<F>, cx: &mut App) -> Result<(), Error>
     where
         F: Fn(&Payload, &mut Window, &mut App) + 'static,
@@ -176,26 +318,34 @@ impl Commands {
         if self.state.read(cx).catalog.lookup(&command.id).is_some() {
             return Err(Error::Duplicate(command.id.to_string()));
         }
-        if let Some(binding) = &command.keybinding {
-            install(binding, cx)?;
-        }
+        let new = resolved(&command.keybinding, self.platform(cx));
+        let native = self.prepare(&new, cx)?;
         let command = command.map_run(Handler::new);
         self.state.update(cx, |state, _| {
             state.catalog.register(command)?;
             state.changed();
             Ok::<(), Error>(())
         })?;
+        Self::swap_routes(None, new, native, cx);
         cx.notify(self.state.entity_id());
         Ok(())
     }
     pub fn unregister(&self, id: &CommandId, cx: &mut App) -> bool {
-        if self.state.read(cx).catalog.lookup(id).is_none() {
+        let Some(old) = self
+            .state
+            .read(cx)
+            .catalog
+            .lookup(id)
+            .map(|c| c.keybinding.clone())
+        else {
             return false;
-        }
+        };
+        let old = resolved(&old, self.platform(cx));
         self.state.update(cx, |state, _| {
             state.catalog.unregister(id);
             state.changed();
         });
+        Self::swap_routes(old, None, None, cx);
         cx.notify(self.state.entity_id());
         true
     }
@@ -215,14 +365,16 @@ impl Commands {
         if old == &command {
             return Ok(false);
         }
-        if let Some(binding) = &command.keybinding {
-            install(binding, cx)?;
-        }
+        let platform = self.platform(cx);
+        let old = resolved(&old.keybinding, platform);
+        let new = resolved(&command.keybinding, platform);
+        let native = self.prepare(&new, cx)?;
         self.state.update(cx, |state, _| {
             state.catalog.replace(command)?;
             state.changed();
             Ok::<(), Error>(())
         })?;
+        Self::swap_routes(old, new, native, cx);
         cx.notify(self.state.entity_id());
         Ok(true)
     }
@@ -259,14 +411,16 @@ impl Commands {
         if old.keybinding == binding {
             return Ok(false);
         }
-        if let Some(binding) = &binding {
-            install(binding, cx)?;
-        }
+        let platform = self.platform(cx);
+        let old = resolved(&old.keybinding, platform);
+        let new = resolved(&binding, platform);
+        let native = self.prepare(&new, cx)?;
         self.state.update(cx, |state, _| {
             state.catalog.set_keybinding(id, binding)?;
             state.changed();
             Ok::<(), Error>(())
         })?;
+        Self::swap_routes(old, new, native, cx);
         cx.notify(self.state.entity_id());
         Ok(true)
     }
@@ -280,6 +434,14 @@ impl Commands {
         });
         cx.notify(self.state.entity_id());
         true
+    }
+    /// Exact and chord-prefix conflicts among the commands active in `contexts`.
+    pub fn conflict_report(&self, contexts: &ContextStack, cx: &App) -> ConflictReport {
+        let bindings = self.state.read(cx).catalog.bindings(contexts);
+        ConflictReport {
+            exact: bindings.conflicts,
+            prefixes: bindings.prefixes,
+        }
     }
     pub fn binding_conflicts(&self, contexts: &ContextStack, cx: &App) -> Vec<model::Conflict> {
         self.state.read(cx).catalog.bindings(contexts).conflicts
@@ -325,15 +487,23 @@ impl Commands {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        let Ok(binding) = Keybinding::parse(binding) else {
+        // Fast path: a route this service has no command for costs one hash lookup.
+        if self
+            .state
+            .read(cx)
+            .catalog
+            .bound_to_native(binding)
+            .next()
+            .is_none()
+        {
             return false;
-        };
+        }
         let contexts = self.window_contexts(window, cx);
         let id = self
             .state
             .read(cx)
             .catalog
-            .resolve_binding(&binding, &contexts)
+            .resolve_native(binding, &contexts)
             .map(|command| command.id.clone());
         id.is_some_and(|id| {
             self.execute(&id, &contexts, InvocationSource::Keyboard, window, cx)

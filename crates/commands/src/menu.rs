@@ -12,7 +12,7 @@ use gpui_kit::{
     prelude::*,
     px, uniform_list,
 };
-use guiraffe_core::{GuiraffeTheme, Size, StyleContext, Variant};
+use guiraffe_core::{GuiraffeTheme, Size, StateKind, StyleContext, Variant};
 
 /// Stateless command-routing boundary. All focused descendants reuse their actual
 /// GPUI key contexts; only keyboard routing lives here, not the registry's data.
@@ -117,11 +117,7 @@ impl Styled for Menu {
 impl RenderOnce for Menu {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = self.commands.entity().read(cx);
-        let rows = if self.props.show_categories {
-            state.rows.clone()
-        } else {
-            state.flat_rows.clone()
-        };
+        let rows = state.rows(self.props.show_categories);
         let count = rows.len();
         let service = self.commands;
         let hints = self.props.show_keybindings;
@@ -148,6 +144,14 @@ impl RenderOnce for Menu {
                 uniform_list((self.id, "items"), count, move |range, _, cx| {
                     let theme = GuiraffeTheme::global(cx);
                     let surfaces = theme.surfaces();
+                    // Semantic state tokens (spec/00 §12.1), resolved per scheme.
+                    let state = |kind| theme.state(kind, Variant::Subtle, None);
+                    let dimmed = state(StateKind::Dimmed).foreground.to_hsla();
+                    let disabled = state(StateKind::Disabled).foreground.to_hsla();
+                    let hover = state(StateKind::Hover).background.to_hsla();
+                    let pressed = state(StateKind::Pressed).background.to_hsla();
+                    // Opt-in tab stops (§12.3): only inside a focus scope.
+                    let tab_stop = guiraffe_core::tab_stop(None);
                     range
                         .filter_map(|index| rows.get(index))
                         .map(|row| match row {
@@ -156,7 +160,7 @@ impl RenderOnce for Menu {
                                 .px(px(context.density.space(Size::Xs)))
                                 .flex()
                                 .items_center()
-                                .text_color(surfaces.dimmed.to_hsla())
+                                .text_color(dimmed)
                                 .text_size(px(Size::Xs.font_size()))
                                 .child(title.clone())
                                 .into_any_element(),
@@ -176,16 +180,17 @@ impl RenderOnce for Menu {
                                     .custom(
                                         ButtonCustomVariant::new(cx)
                                             .color(surfaces.surface.to_hsla())
-                                            .hover(surfaces.hover.to_hsla())
-                                            .active(surfaces.hover.to_hsla())
+                                            .hover(hover)
+                                            .active(pressed)
                                             .foreground(if *enabled {
                                                 surfaces.text.to_hsla()
                                             } else {
-                                                surfaces.dimmed.to_hsla()
+                                                disabled
                                             }),
                                     )
                                     .border_color(quiet.border.to_hsla())
                                     .disabled(!*enabled)
+                                    .tab_stop(tab_stop && *enabled)
                                     .accessibility_label(title.clone())
                                     .child(
                                         div()
@@ -198,7 +203,7 @@ impl RenderOnce for Menu {
                                             .when(hints, |el| {
                                                 el.child(
                                                     div()
-                                                        .text_color(surfaces.dimmed.to_hsla())
+                                                        .text_color(dimmed)
                                                         .text_size(px(Size::Xs.font_size()))
                                                         .child(hint.clone()),
                                                 )

@@ -12,7 +12,12 @@ struct Stroke {
     modifiers: u8,
     key: String,
 }
-const MODIFIERS: [(&str, u8); 5] = [
+/// The platform-neutral primary modifier: Cmd on macOS, Ctrl elsewhere.
+const SECONDARY: u8 = 32;
+const CTRL: u8 = 1;
+const CMD: u8 = 8;
+const MODIFIERS: [(&str, u8); 6] = [
+    ("secondary", SECONDARY),
     ("ctrl", 1),
     ("alt", 2),
     ("shift", 4),
@@ -26,6 +31,7 @@ fn modifier(value: &str) -> Option<u8> {
         "shift" => Some(4),
         "cmd" | "command" | "meta" | "super" => Some(8),
         "fn" => Some(16),
+        "secondary" | "mod" | "primary" => Some(SECONDARY),
         _ => None,
     }
 }
@@ -97,6 +103,35 @@ impl FromStr for Keybinding {
             }
             strokes.push(Stroke { modifiers, key });
         }
+        Ok(Self::from_strokes(strokes))
+    }
+}
+/// The keyboard convention a binding is resolved for. `secondary`/`mod` means Cmd on
+/// [`Platform::Mac`] and Ctrl on [`Platform::Other`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Platform {
+    Mac,
+    Other,
+}
+impl Platform {
+    /// The convention of the compilation target.
+    pub const fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Mac
+        } else {
+            Self::Other
+        }
+    }
+}
+fn title_key(key: &str) -> String {
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
+}
+impl Keybinding {
+    fn from_strokes(strokes: Vec<Stroke>) -> Self {
         let encode = |separator: &str, native: bool| {
             strokes
                 .iter()
@@ -117,14 +152,79 @@ impl FromStr for Keybinding {
                 .collect::<Vec<_>>()
                 .join(" ")
         };
-        Ok(Self {
+        Self {
             canonical: encode("+", false),
             native: encode("-", true),
             strokes,
-        })
+        }
     }
-}
-impl Keybinding {
+    /// Whether any stroke uses the platform-neutral `secondary` modifier.
+    pub fn is_platform_neutral(&self) -> bool {
+        self.strokes.iter().any(|s| s.modifiers & SECONDARY != 0)
+    }
+    /// Replace `secondary` with Cmd (macOS) or Ctrl (elsewhere). Bindings that name
+    /// the physical key are returned unchanged, so `secondary+s` and `ctrl+s` compare
+    /// equal on Linux and Windows and conflict there.
+    pub fn resolve(&self, platform: Platform) -> Self {
+        if !self.is_platform_neutral() {
+            return self.clone();
+        }
+        let physical = match platform {
+            Platform::Mac => CMD,
+            Platform::Other => CTRL,
+        };
+        Self::from_strokes(
+            self.strokes
+                .iter()
+                .map(|s| Stroke {
+                    modifiers: if s.modifiers & SECONDARY != 0 {
+                        (s.modifiers & !SECONDARY) | physical
+                    } else {
+                        s.modifiers
+                    },
+                    key: s.key.clone(),
+                })
+                .collect(),
+        )
+    }
+    /// Human-readable shortcut for menus and palettes: `⌘⇧P` on macOS, `Ctrl+Shift+P`
+    /// elsewhere.
+    pub fn label(&self, platform: Platform) -> String {
+        let resolved = self.resolve(platform);
+        resolved
+            .strokes
+            .iter()
+            .map(|s| {
+                let key = match s.key.as_str() {
+                    "minus" => "-".to_owned(),
+                    "plus" => "+".to_owned(),
+                    k if k.chars().count() == 1 => k.to_ascii_uppercase(),
+                    k => title_key(k),
+                };
+                let mut out = String::new();
+                for (bit, mac, other) in [
+                    (CTRL, "⌃", "Ctrl"),
+                    (2, "⌥", "Alt"),
+                    (4, "⇧", "Shift"),
+                    (CMD, "⌘", "Super"),
+                    (16, "fn", "Fn"),
+                ] {
+                    if s.modifiers & bit != 0 {
+                        match platform {
+                            Platform::Mac => out.push_str(mac),
+                            Platform::Other => {
+                                out.push_str(other);
+                                out.push('+');
+                            }
+                        }
+                    }
+                }
+                out.push_str(&key);
+                out
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
     pub fn parse(value: &str) -> Result<Self, Error> {
         value.parse()
     }
