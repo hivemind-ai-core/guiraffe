@@ -39,6 +39,7 @@ pub enum Navigation {
 #[derive(Default)]
 pub struct TreeModel {
     rows: Vec<Row>,
+    sibling_positions: Vec<(usize, usize)>,
     indices: HashMap<NodeId, usize>,
     expanded: HashSet<NodeId>,
     pending: HashSet<NodeId>,
@@ -58,28 +59,22 @@ impl TreeModel {
     /// Apply a new source snapshot, including results delivered by async loaders.
     pub fn refresh(&mut self, source: &dyn TreeSource) {
         self.rows.clear();
+        self.sibling_positions.clear();
         self.indices.clear();
         self.pending
             .retain(|&id| source.children(id) == Children::Unloaded);
-        let mut stack = vec![(source.roots().iter(), None)];
-        while let Some((siblings, parent)) = stack.last_mut() {
-            let parent = *parent;
-            let Some(&id) = siblings.next() else {
-                stack.pop();
-                continue;
-            };
-            self.indices.insert(id, self.rows.len());
-            self.rows.push(Row {
-                id,
-                depth: stack.len() - 1,
-                parent,
-            });
-            if self.expanded.contains(&id)
-                && let Children::Ready(children) = source.children(id)
-            {
-                stack.push((children.iter(), Some(id)));
-            }
-        }
+        walk_visible(
+            source,
+            &self.expanded,
+            source.roots(),
+            None,
+            0,
+            |row, siblings| {
+                self.indices.insert(row.id, self.rows.len());
+                self.rows.push(row);
+                self.sibling_positions.push(siblings);
+            },
+        );
         if self.cursor.is_some_and(|id| self.row_index(id).is_none()) {
             self.cursor = self.rows.first().map(|row| row.id);
         }
@@ -87,6 +82,11 @@ impl TreeModel {
 
     pub fn rows(&self) -> &[Row] {
         &self.rows
+    }
+
+    /// One-based position and total count within the row's sibling set.
+    pub fn sibling_position(&self, index: usize) -> Option<(usize, usize)> {
+        self.sibling_positions.get(index).copied()
     }
 
     pub fn expanded(&self, id: NodeId) -> bool {
@@ -105,29 +105,76 @@ impl TreeModel {
         self.indices.get(&id).copied()
     }
 
-    /// Returns the ID to request once if an expanded branch is unloaded.
+    /// Toggle a branch in the current snapshot. Call [Self::refresh] when the
+    /// source changes. Returns the ID to request once if the branch is unloaded.
     pub fn set_expanded(
         &mut self,
         id: NodeId,
         open: bool,
         source: &dyn TreeSource,
     ) -> Option<NodeId> {
-        if open {
-            self.expanded.insert(id);
+        let changed = if open {
+            self.expanded.insert(id)
         } else {
-            self.expanded.remove(&id);
-            if let Some(cursor) = self.cursor
-                && let (Some(ancestor), Some(active)) = (self.row_index(id), self.row_index(cursor))
-                && ancestor < active
-                && self.rows[ancestor + 1..=active]
-                    .iter()
-                    .all(|row| row.depth > self.rows[ancestor].depth)
-            {
-                self.cursor = Some(id);
+            self.expanded.remove(&id)
+        };
+        if changed && let Some(index) = self.row_index(id) {
+            let depth = self.rows[index].depth;
+            let start = index + 1;
+            if open {
+                if let Children::Ready(children) = source.children(id)
+                    && !children.is_empty()
+                {
+                    let mut descendants = Vec::new();
+                    let mut positions = Vec::new();
+                    walk_visible(
+                        source,
+                        &self.expanded,
+                        children,
+                        Some(id),
+                        depth + 1,
+                        |row, siblings| {
+                            descendants.push(row);
+                            positions.push(siblings);
+                        },
+                    );
+                    self.rows.splice(start..start, descendants);
+                    self.sibling_positions.splice(start..start, positions);
+                    self.reindex(start);
+                }
+            } else {
+                let end = start
+                    + self.rows[start..]
+                        .iter()
+                        .take_while(|row| row.depth > depth)
+                        .count();
+                if end != start {
+                    if let Some(cursor) = self.cursor.and_then(|id| self.row_index(id))
+                        && (start..end).contains(&cursor)
+                    {
+                        self.cursor = Some(id);
+                    }
+                    self.sibling_positions.drain(start..end);
+                    for row in self.rows.drain(start..end) {
+                        self.indices.remove(&row.id);
+                    }
+                    self.reindex(start);
+                }
             }
         }
-        self.refresh(source);
+        if self
+            .cursor
+            .is_some_and(|cursor| self.row_index(cursor).is_none())
+        {
+            self.cursor = self.rows.first().map(|row| row.id);
+        }
         (open && source.children(id) == Children::Unloaded && self.pending.insert(id)).then_some(id)
+    }
+
+    fn reindex(&mut self, start: usize) {
+        for (offset, row) in self.rows[start..].iter().enumerate() {
+            self.indices.insert(row.id, start + offset);
+        }
     }
 
     pub fn retry_children(&mut self, id: NodeId) {
@@ -219,5 +266,39 @@ impl TreeModel {
         let start = (scroll / row_height).floor() as usize;
         let end = ((scroll + height) / row_height).ceil() as usize;
         start.min(self.rows.len())..end.max(start).min(self.rows.len())
+    }
+}
+
+fn walk_visible(
+    source: &dyn TreeSource,
+    expanded: &HashSet<NodeId>,
+    roots: &[NodeId],
+    parent: Option<NodeId>,
+    depth: usize,
+    mut visit: impl FnMut(Row, (usize, usize)),
+) {
+    let mut stack = vec![(roots.iter(), roots.len(), parent)];
+    while let Some((siblings, total, parent)) = stack.last_mut() {
+        let parent = *parent;
+        let total = *total;
+        let Some(&id) = siblings.next() else {
+            stack.pop();
+            continue;
+        };
+        let position = total - siblings.len();
+        visit(
+            Row {
+                id,
+                depth: depth + stack.len() - 1,
+                parent,
+            },
+            (position, total),
+        );
+        if expanded.contains(&id)
+            && let Children::Ready(children) = source.children(id)
+            && !children.is_empty()
+        {
+            stack.push((children.iter(), children.len(), Some(id)));
+        }
     }
 }

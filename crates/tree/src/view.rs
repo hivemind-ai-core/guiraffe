@@ -3,7 +3,7 @@ use gpui_kit::base::Selectable;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
-    ScrollEvent, StatefulInteractiveElement, Styled, Window,
+    ScrollEvent, StatefulInteractiveElement, Styled, TestSupportExt, Window,
     component::{
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
@@ -68,6 +68,12 @@ pub struct Property<'a> {
 pub trait TreeData: TreeSource {
     fn icon(&self, _: NodeId) -> Option<&str> {
         None
+    }
+    /// Render a custom row icon. The default preserves text icons supplied by
+    /// [Self::icon].
+    fn icon_element(&self, id: NodeId) -> Option<AnyElement> {
+        self.icon(id)
+            .map(|icon| div().child(icon.to_owned()).into_any_element())
     }
     fn badge(&self, _: NodeId) -> Option<&str> {
         None
@@ -312,7 +318,9 @@ impl<const P: bool> TreeView<P> {
                 }))
                 .into_any_element(),
             _ => match self.edit.as_ref().filter(|edit| edit.id == id) {
-                Some(edit) => Input::new(&edit.input).into_any_element(),
+                Some(edit) => Input::new(&edit.input)
+                    .aria_label(self.source.label(id).to_owned())
+                    .into_any_element(),
                 None => Button::new(("property-value", id as usize))
                     .tab_stop(self.tab_stop)
                     .label(property.value.text())
@@ -351,7 +359,8 @@ impl<const P: bool> Render for TreeView<P> {
         let colours = theme.press_colors(Variant::Light, None);
         let range = self.model.window(self.scroll, f64::from(self.height), ROW);
         let offset = range.start as f64 * ROW - self.scroll;
-        let rows = self.model.rows()[range].iter().copied().map(|row| {
+        let rows = range.map(|index| {
+            let row = self.model.rows()[index];
             let id = row.id;
             let open = self.model.expanded(id);
             let branch = self.source.children(id) != Children::Ready(&[]);
@@ -366,9 +375,11 @@ impl<const P: bool> Render for TreeView<P> {
             });
             let mut element = div()
                 .id(("tree-row", id as usize))
+                .test_support()
                 .role(Role::TreeItem)
                 .aria_label(label.clone())
                 .aria_selected(selected)
+                .aria_level(row.depth + 1)
                 .h(px(ROW as f32))
                 .w_full()
                 .flex()
@@ -376,6 +387,14 @@ impl<const P: bool> Render for TreeView<P> {
                 .gap(px(4.))
                 .pl(px((row.depth.min(45) * 16) as f32))
                 .hover(|style| style.bg(colours.hover.background.to_hsla()));
+            if let Some((position, count)) = self.model.sibling_position(index) {
+                element = element
+                    .aria_position_in_set(position)
+                    .aria_size_of_set(count);
+            }
+            if active {
+                element = element.aria_active_descendant();
+            }
             if branch {
                 element = element.aria_expanded(open);
             }
@@ -412,9 +431,11 @@ impl<const P: bool> Render for TreeView<P> {
                     );
             }
             element
-                .child(if branch {
+                .child(div().w(px(28.)).flex_none().children(branch.then(|| {
                     Button::new(("tree-expand", id as usize))
                         .tab_stop(false)
+                        .compact()
+                        .w_full()
                         .label(if open { "▾" } else { "▸" })
                         .accessibility_label(format!(
                             "{} {label}",
@@ -423,15 +444,8 @@ impl<const P: bool> Render for TreeView<P> {
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.set_expanded(id, !open, cx)),
                         )
-                        .into_any_element()
-                } else {
-                    div().w(px(28.)).into_any_element()
-                })
-                .children(
-                    (!P).then(|| self.source.icon(id))
-                        .flatten()
-                        .map(str::to_owned),
-                )
+                })))
+                .children((!P).then(|| self.source.icon_element(id)).flatten())
                 .child(
                     div().flex_1().overflow_hidden().child(
                         Button::new(("tree-select", id as usize))
@@ -472,9 +486,12 @@ impl<const P: bool> Render for TreeView<P> {
             .h(px(self.height))
             .w_full()
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                let before = this.scroll;
                 this.scroll -= f64::from(f32::from(event.delta.pixel_delta(px(24.)).y));
                 this.clamp_scroll();
-                cx.notify();
+                if this.scroll != before {
+                    cx.notify();
+                }
                 cx.stop_propagation();
             }))
             .on_key_down(
@@ -498,7 +515,14 @@ impl<const P: bool> Render for TreeView<P> {
                 px(0.),
                 colours.ring,
             ))
-            .children(self.error.clone().map(|error| div().child(error)))
+            .children(self.error.clone().map(|error| {
+                div()
+                    .id("tree-edit-error")
+                    .test_support()
+                    .role(Role::Alert)
+                    .aria_label(error.clone())
+                    .child(error)
+            }))
     }
 }
 
@@ -568,6 +592,8 @@ mod tests {
 
     #[gpui_kit::test]
     fn keyboard_expand_scroll_and_validation(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+
         cx.update(|cx| {
             gpui_kit::base::init(cx);
             gpui_kit::component::init(cx);
@@ -606,7 +632,20 @@ mod tests {
         window.simulate_keystrokes("home");
         window.run_until_parked();
         let initial = renders.get();
-        window.simulate_keystrokes("right down space end");
+        window.simulate_keystrokes("right down space");
+        window.run_until_parked();
+        window.update(|window, _| {
+            let rows = window.find_all_by_role(Role::TreeItem);
+            assert!(
+                rows.iter()
+                    .any(|row| { row.label() == Some("Settings") && row.expanded() == Some(true) })
+            );
+            assert!(
+                rows.iter()
+                    .any(|row| { row.label() == Some("Property") && row.selected() == Some(true) })
+            );
+        });
+        window.simulate_keystrokes("end");
         window.run_until_parked();
         assert_eq!(
             view.read_with(window, |view, _| view.model.rows().len()),
@@ -653,6 +692,12 @@ mod tests {
         window.simulate_keystrokes("enter");
         window.run_until_parked();
         assert!(view.read_with(window, |view, _| view.error.is_some()));
+        window.update(|window, _| {
+            assert_eq!(
+                window.find_by_label("Out of range").role(),
+                Some(Role::Alert)
+            );
+        });
         window.update(|window, cx| input.update(cx, |input, cx| input.set_value("5", window, cx)));
         window.simulate_keystrokes("enter");
         window.run_until_parked();

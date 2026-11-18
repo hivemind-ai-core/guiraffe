@@ -58,3 +58,83 @@ proptest! {
         prop_assert_eq!(model.window(scroll, height, 20.).collect::<Vec<_>>(), expected);
     }
 }
+struct Forest {
+    roots: Vec<NodeId>,
+    children: Vec<Vec<NodeId>>,
+}
+
+impl TreeSource for Forest {
+    fn roots(&self) -> &[NodeId] {
+        &self.roots
+    }
+
+    fn children(&self, id: NodeId) -> Children<'_> {
+        Children::Ready(&self.children[id as usize])
+    }
+
+    fn label(&self, _: NodeId) -> &str {
+        "Node"
+    }
+}
+
+fn visible(
+    forest: &Forest,
+    siblings: &[NodeId],
+    expanded: &[bool],
+    parent: Option<NodeId>,
+    depth: usize,
+    out: &mut Vec<guiraffe_tree::Row>,
+) {
+    for &id in siblings {
+        out.push(guiraffe_tree::Row { id, depth, parent });
+        if expanded[id as usize] {
+            visible(
+                forest,
+                &forest.children[id as usize],
+                expanded,
+                Some(id),
+                depth + 1,
+                out,
+            );
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn expansion_matches_recursive_preorder(
+        ancestors in prop::collection::vec(any::<usize>(), 1..64),
+        operations in prop::collection::vec((any::<usize>(), any::<bool>()), 1..200),
+    ) {
+        let count = ancestors.len();
+        let mut forest = Forest { roots: Vec::new(), children: vec![Vec::new(); count] };
+        for (id, seed) in ancestors.into_iter().enumerate() {
+            let parent = seed % (id + 1);
+            if parent == id {
+                forest.roots.push(id as NodeId);
+            } else {
+                forest.children[parent].push(id as NodeId);
+            }
+        }
+        let mut model = TreeModel::new(&forest);
+        let mut expanded = vec![false; count];
+        for (target, open) in operations {
+            let target = target % count;
+            model.set_expanded(target as NodeId, open, &forest);
+            expanded[target] = open;
+            let mut expected = Vec::new();
+            visible(&forest, forest.roots(), &expanded, None, 0, &mut expected);
+            prop_assert_eq!(model.rows(), expected.as_slice());
+            for (index, row) in expected.iter().enumerate() {
+                let siblings = row.parent.map_or(forest.roots(), |id| forest.children[id as usize].as_slice());
+                let ordinal = siblings.iter().position(|id| *id == row.id).expect("member of its sibling set") + 1;
+                prop_assert_eq!(model.sibling_position(index), Some((ordinal, siblings.len())));
+            }
+            for (id, &open) in expanded.iter().enumerate() {
+                let id = id as NodeId;
+                prop_assert_eq!(model.expanded(id), open);
+                prop_assert_eq!(model.row_index(id), expected.iter().position(|row| row.id == id));
+            }
+        }
+    }
+}

@@ -1,8 +1,9 @@
 use crate::{FlameLayout, FrameClicked, FrameId, Search};
 use gpui_kit::{
     App, AppContext, Bounds, ContentMask, Context, DispatchPhase, Entity, EventEmitter,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, Render, Role,
-    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Task, WeakEntity, Window,
+    FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
+    Point, Render, Role, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Task,
+    TestSupportExt, WeakEntity, Window,
     base::{Root, RootPlugin},
     canvas,
     component::button::Button,
@@ -16,6 +17,7 @@ use std::{
 };
 
 const ROW_HEIGHT: f64 = 21.;
+const KEYBOARD_HELP: &str = "Use arrow keys to explore frames and Home to reset";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Orientation {
@@ -32,11 +34,15 @@ pub enum ColourScheme {
     Heat,
 }
 
+/// Flame and icicle plot. Tab into the plot, use the arrows to move among
+/// frames, Enter or Space to activate a frame, and Home or Escape to reset.
 pub struct FlameGraph {
     layout: Arc<FlameLayout>,
     domain: Range<f64>,
     focus: Option<FrameId>,
     hover: Option<FrameId>,
+    keyboard_focus: Option<FocusHandle>,
+    accessible_frame: SharedString,
     tooltip: Option<Entity<Tooltip>>,
     window_tooltip: bool,
     drag: Option<(Point<Pixels>, bool)>,
@@ -57,6 +63,8 @@ impl FlameGraph {
             layout,
             focus: None,
             hover: None,
+            keyboard_focus: None,
+            accessible_frame: KEYBOARD_HELP.into(),
             tooltip: None,
             window_tooltip: false,
             drag: None,
@@ -67,6 +75,12 @@ impl FlameGraph {
             bounds: Bounds::default(),
             first_row: 0,
         }
+    }
+
+    /// Height of the plot area needed to display the full profile at once.
+    /// The controls above the plot take additional space.
+    pub fn full_plot_height(&self) -> Pixels {
+        px(self.layout.rows() as f32 * ROW_HEIGHT as f32)
     }
 
     pub fn set_search(&mut self, query: &str, cx: &mut Context<Self>) {
@@ -107,6 +121,7 @@ impl FlameGraph {
         self.first_row = 0;
         self.set_hover(None, cx);
         self.focus = None;
+        self.accessible_frame = KEYBOARD_HELP.into();
         cx.notify();
     }
 
@@ -173,8 +188,58 @@ impl FlameGraph {
         }
     }
 
+    fn key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+        let next = match key {
+            "escape" | "home" => {
+                self.reset(cx);
+                None
+            }
+            "left" | "right" => {
+                if let Some(id) = self.focus {
+                    self.layout.adjacent_sibling(id, key == "right")
+                } else {
+                    self.layout.first_frame()
+                }
+            }
+            "up" | "down" => {
+                if let Some(id) = self.focus {
+                    if (key == "up") == (self.orientation == Orientation::Flame) {
+                        self.layout.first_child(id)
+                    } else {
+                        self.layout.frame(id).and_then(|frame| frame.parent)
+                    }
+                } else {
+                    self.layout.first_frame()
+                }
+            }
+            "enter" | "space" => {
+                let id = self.focus.or_else(|| self.layout.first_frame());
+                if let Some(clicked) = id.and_then(|id| self.layout.click(id)) {
+                    cx.emit(clicked);
+                }
+                id.filter(|_| self.focus.is_none())
+            }
+            _ => return,
+        };
+        if let Some(id) = next {
+            self.focus_frame(id, cx);
+            cx.notify();
+        }
+        cx.stop_propagation();
+    }
+
     fn focus_frame(&mut self, id: FrameId, cx: &mut Context<Self>) {
-        if let (Some(domain), Some(event)) = (self.layout.focus(id), self.layout.click(id)) {
+        if let (Some(domain), Some(event), Some(frame)) = (
+            self.layout.focus(id),
+            self.layout.click(id),
+            self.layout.frame(id),
+        ) {
+            self.accessible_frame = format!(
+                "{} · self {:.3} · total {:.3}",
+                frame.label, frame.self_value, frame.total
+            )
+            .into();
             self.domain = domain;
             self.first_row = event.path.len() - 1;
             self.focus = Some(id);
@@ -233,6 +298,10 @@ impl Render for FlameGraph {
                 tooltip
             })
             .clone();
+        let keyboard_focus = self
+            .keyboard_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
         let prepare = cx.entity().downgrade();
         let pointer = prepare.clone();
         let layout = self.layout.clone();
@@ -280,12 +349,17 @@ impl Render for FlameGraph {
             .child(
                 div()
                     .id("flame-plot")
+                    .test_support()
                     .relative()
                     .flex_1()
                     .overflow_hidden()
                     .cursor_grab()
                     .role(Role::Canvas)
                     .aria_label("Flame graph")
+                    .aria_description(self.accessible_frame.clone())
+                    .track_focus(&keyboard_focus)
+                    .tab_stop(true)
+                    .on_key_down(cx.listener(|this, event, _, cx| this.key(event, cx)))
                     .bg(surface.body.to_hsla())
                     .on_mouse_down(
                         MouseButton::Left,
@@ -630,5 +704,26 @@ mod tests {
             graph.read_with(window, |graph, _| graph.domain.clone()),
             0.0..100.0
         );
+
+        let keyboard_focus = graph
+            .read_with(window, |graph, _| graph.keyboard_focus.clone())
+            .expect("plot has a focus handle");
+        window.update(|window, cx| {
+            let plot = window.find_by_label("Flame graph");
+            assert_eq!(plot.role(), Some(Role::Canvas));
+            assert_eq!(plot.description(), Some(KEYBOARD_HELP));
+            window.focus(&keyboard_focus, cx);
+        });
+        window.simulate_keystrokes("right up enter");
+        window.run_until_parked();
+        assert_eq!(graph.read_with(window, |graph, _| graph.focus), Some(1));
+        assert_eq!(clicks.get(), 2);
+        window.update(|window, _| {
+            let plot = window.find_by_label("Flame graph");
+            assert!(plot.description().is_some_and(|text| text.contains("self")));
+        });
+        window.simulate_keystrokes("right left down home");
+        window.run_until_parked();
+        assert_eq!(graph.read_with(window, |graph, _| graph.focus), None);
     }
 }

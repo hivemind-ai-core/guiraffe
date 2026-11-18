@@ -158,6 +158,36 @@ impl FlameLayout {
         })
     }
 
+    pub(crate) fn first_frame(&self) -> Option<FrameId> {
+        self.hit(0, 0.)
+    }
+
+    pub(crate) fn first_child(&self, id: FrameId) -> Option<FrameId> {
+        let &(depth, _) = self.locations.get(&id)?;
+        let domain = self.focus(id)?;
+        let child = self.hit(depth + 1, domain.start)?;
+        (self.frame(child)?.parent == Some(id)).then_some(child)
+    }
+
+    pub(crate) fn adjacent_sibling(&self, id: FrameId, forward: bool) -> Option<FrameId> {
+        let &(depth, offset) = self.locations.get(&id)?;
+        let row = self.rows.get(depth)?;
+        let current = row.get(offset)?;
+        let adjacent = if forward {
+            self.hit(depth, current.right)?
+        } else {
+            let previous = row[..offset]
+                .partition_point(|span| span.left < current.left)
+                .checked_sub(1)?;
+            let span = &row[previous];
+            if span.left == span.right || span.right != current.left {
+                return None;
+            }
+            self.source.frame(span.index).id
+        };
+        (self.frame(adjacent)?.parent == self.frame(id)?.parent).then_some(adjacent)
+    }
+
     pub fn hit(&self, depth: usize, x: f64) -> Option<FrameId> {
         let row = self.rows.get(depth)?;
         let span = row.get(row.partition_point(|span| span.right <= x))?;
@@ -192,7 +222,7 @@ impl FlameLayout {
             let mut end = cursor + 1;
             if right - x < 1. {
                 let bucket_end = domain.start + (x.floor() + 2.) / scale;
-                end += row[end..].partition_point(|span| span.right <= bucket_end);
+                end += skip_bucket(&row[end..], bucket_end);
             }
             let range_end = pixel(row[end - 1].right).max((x + 1.).min(width));
             let highlighted = search.is_some_and(|search| {
@@ -248,4 +278,40 @@ impl FlameLayout {
 
 pub struct Search {
     rows: Vec<Vec<usize>>,
+}
+
+fn skip_bucket(spans: &[Span], right: f64) -> usize {
+    // Adjacent pixel buckets commonly cover only a few frames. Bound the
+    // search from the near end so its cost depends on the frames skipped.
+    let mut low = 0;
+    let mut high = 1;
+    while high <= spans.len() && spans[high - 1].right <= right {
+        low = high;
+        high = high.saturating_mul(2);
+    }
+    let high = high.min(spans.len());
+    low + spans[low..high].partition_point(|span| span.right <= right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn bucket_search_matches_full_binary_search(mut ends in prop::collection::vec(0u16..512, 0..512), edge in 0u16..512) {
+            ends.sort_unstable();
+            let spans = ends
+                .into_iter()
+                .enumerate()
+                .map(|(index, end)| Span { index, left: 0., right: f64::from(end) })
+                .collect::<Vec<_>>();
+            let edge = f64::from(edge);
+            prop_assert_eq!(
+                skip_bucket(&spans, edge),
+                spans.partition_point(|span| span.right <= edge),
+            );
+        }
+    }
 }
