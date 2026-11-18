@@ -71,8 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             v.set_viewport(
                 Viewport {
                     pan: Point::new(
-                        -(i % 100) as f32 * 200.,
-                        -(i % (nodes as usize / 100)) as f32 * 100.,
+                        -((i % 100) as f32) * 200.,
+                        -((i % (nodes as usize / 100)) as f32) * 100.,
                     ),
                     zoom: if (soak || short) && i % 31 < 15 {
                         1.25
