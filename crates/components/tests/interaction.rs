@@ -4,7 +4,7 @@ use gpui_kit::{
     AppContext, Context, Entity, Focusable, IntoElement, Modifiers, ParentElement, Render, Styled,
     TestAppContext, VisualTestContext, Window, div, px,
 };
-use guiraffe_components::{Loader, SegmentedControl, SegmentedEvent, Spoiler};
+use guiraffe_components::{Burger, Loader, SegmentedControl, SegmentedEvent, Spoiler};
 use guiraffe_motion::MotionPrefs;
 use guiraffe_test::render::RenderCounter;
 
@@ -407,4 +407,95 @@ impl Render for SideEffect {
         self.renders.hit();
         div()
     }
+}
+
+// --- Burger: the bars animate in the burger's own view. ---
+
+struct BurgerScene {
+    renders: RenderCounter,
+    burger: Entity<Burger>,
+}
+
+impl Render for BurgerScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div().p(px(8.0)).child(self.burger.clone())
+    }
+}
+
+fn burger_scene(
+    cx: &mut TestAppContext,
+) -> (Entity<Burger>, Entity<BurgerScene>, &mut VisualTestContext) {
+    cx.update(guiraffe_components::init);
+    let renders = RenderCounter::new();
+    let counter = renders.clone();
+    let mut out = None;
+    let (scene, vcx) = cx.add_window_view(|_, cx| {
+        let burger = Burger::new(cx);
+        out = Some(burger.clone());
+        BurgerScene {
+            renders: counter,
+            burger,
+        }
+    });
+    (out.unwrap_or_else(|| unreachable!()), scene, vcx)
+}
+
+#[gpui_kit::test]
+fn burger_click_toggles_and_animates(cx: &mut TestAppContext) {
+    let (burger, scene, vcx) = burger_scene(cx);
+    vcx.run_until_parked();
+    let bounds = vcx
+        .debug_bounds("gr-burger:gr-burger")
+        .expect("the burger is laid out");
+    vcx.simulate_click(bounds.center(), Modifiers::default());
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| burger.read(cx).is_open()),
+        "clicking opens the menu"
+    );
+    assert!(next_frame(vcx) > 0, "the bars animate");
+    let before = vcx.update(|_, cx| scene.read(cx).renders.get());
+    frames(vcx, 8);
+    let after = vcx.update(|_, cx| scene.read(cx).renders.get());
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            after, before,
+            "the scene never re-renders for the animation"
+        );
+    } else {
+        assert!(after >= before, "upstream re-renders ancestors (recorded)");
+    }
+}
+
+#[gpui_kit::test]
+fn burger_reduced_motion_requests_no_frames(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guiraffe_components::init(cx);
+        MotionPrefs::set(
+            MotionPrefs {
+                reduced: true,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+    let (burger, _scene, vcx) = burger_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.set_open(true, cx)));
+    vcx.run_until_parked();
+    assert_eq!(next_frame(vcx), 0, "reduced motion: no animation frames");
+}
+
+#[gpui_kit::test]
+fn burger_set_open_is_idempotent(cx: &mut TestAppContext) {
+    let (burger, _scene, vcx) = burger_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.set_open(true, cx)));
+    let opened = vcx.update(|_, cx| burger.read(cx).is_open());
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.set_open(true, cx)));
+    assert!(opened);
+    assert!(vcx.update(|_, cx| burger.read(cx).is_open()));
+    vcx.update(|_, cx| burger.update(cx, |b, cx| b.toggle(cx)));
+    assert!(!vcx.update(|_, cx| burger.read(cx).is_open()));
 }

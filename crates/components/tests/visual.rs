@@ -13,6 +13,7 @@ struct KitchenSink {
     segmented: gpui_kit::Entity<SegmentedControl>,
     loaders: [gpui_kit::Entity<Loader>; 3],
     spoiler: gpui_kit::Entity<Spoiler>,
+    burgers: [gpui_kit::Entity<Burger>; 2],
 }
 
 impl Render for KitchenSink {
@@ -62,6 +63,14 @@ impl Render for KitchenSink {
                     .child(self.loaders[0].clone())
                     .child(self.loaders[1].clone())
                     .child(self.loaders[2].clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .items_center()
+                    .child(self.burgers[0].clone())
+                    .child(self.burgers[1].clone()),
             )
             .child(self.spoiler.clone())
             .child(
@@ -143,10 +152,13 @@ fn render(scheme: Scheme) -> image::RgbaImage {
             );
             s.set_collapsed_lines(2, cx);
         });
+        let burgers = [Burger::new(cx), Burger::new(cx)];
+        burgers[1].update(cx, |b, cx| b.set_open_instant(true, cx));
         cx.new(|_| KitchenSink {
             segmented,
             loaders,
             spoiler,
+            burgers,
         })
     })
     .unwrap_or_else(|e| panic!("{e:#}"))

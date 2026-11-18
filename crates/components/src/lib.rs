@@ -4,6 +4,7 @@
 //! uses Mantine prop names (`.size(Size::Md)`, `.variant(Variant::Light)`, `.color(..)`),
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
 
+pub mod burger;
 pub mod highlight;
 pub mod icons;
 pub mod loader;
@@ -16,6 +17,7 @@ mod style;
 pub mod timeline;
 pub mod typography;
 
+pub use burger::Burger;
 pub use highlight::{Highlight, Mark, highlight_ranges};
 pub use icons::{ActionIcon, ThemeIcon, close_button};
 pub use loader::{Loader, LoaderType};
