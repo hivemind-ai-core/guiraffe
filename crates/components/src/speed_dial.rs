@@ -196,10 +196,7 @@ impl Render for SpeedDial {
                 .id(action_id)
                 .debug_selector(move || format!("speed-dial-action-{index}"))
                 .a11y_disabled(!self.open)
-                .absolute()
-                .size(px(40.))
-                .left(px(x * p))
-                .top(px(y * p))
+                .size_full()
                 .opacity(p)
                 .flex()
                 .items_center()
@@ -232,7 +229,15 @@ impl Render for SpeedDial {
                         this.set_open(false, cx);
                     }),
                 );
-            content = content.child(bubble);
+            // Press positions its own focus ring, so position a wrapper for each bubble.
+            content = content.child(
+                div()
+                    .absolute()
+                    .size(px(40.))
+                    .left(px(x * p))
+                    .top(px(y * p))
+                    .child(bubble),
+            );
         }
         disclosure_motion::schedule(needs_frame, cx.entity_id(), window);
         let press = Press::new(primary_colors)
@@ -245,9 +250,6 @@ impl Render for SpeedDial {
             .id(id(0))
             .debug_selector(|| "speed-dial-primary".into())
             .aria_expanded(self.open)
-            .absolute()
-            .left_0()
-            .top_0()
             .size_full()
             .flex()
             .items_center()
@@ -265,7 +267,7 @@ impl Render for SpeedDial {
         let bounds = std::rc::Rc::new(std::cell::Cell::new(Bounds::<Pixels>::default()));
         let measured = bounds.clone();
         content
-            .child(primary)
+            .child(div().absolute().left_0().top_0().size_full().child(primary))
             .child(
                 canvas(move |b, _, _| measured.set(b), |_, _, _, _| {})
                     .absolute()
