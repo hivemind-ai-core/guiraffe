@@ -189,7 +189,7 @@ impl<T> Channels<T> {
     }
 }
 
-type Visit = dyn Fn(usize, &mut dyn FnMut(Sample)) + Send + Sync;
+type Visit = dyn Fn(usize, &dyn Fn() -> bool, &mut dyn FnMut(Sample)) + Send + Sync;
 
 /// Heterogeneous, mark-local source and channels.
 pub struct Layer {
@@ -202,34 +202,39 @@ pub struct Layer {
 
 impl Layer {
     pub fn new<S: ChartSource>(mark: Mark, source: S, channels: Channels<S::Row>) -> Self {
-        let visit = Box::new(move |layer, emit: &mut dyn FnMut(Sample)| {
-            for index in 0..source.len() {
-                let Some(row) = source.row(index) else {
-                    continue;
-                };
-                let group = (channels.group)(row);
-                let text = (channels.text)(row);
-                emit(Sample {
-                    id: DatumId {
-                        series: SeriesId { layer, group },
-                        index,
-                        key: source.key(index),
-                        facet: (channels.facet)(row),
-                    },
-                    x: (channels.x)(row),
-                    y: (channels.y)(row),
-                    x2: (channels.x2)(row),
-                    y2: (channels.y2)(row),
-                    low: (channels.low)(row),
-                    ohlc: (channels.ohlc)(row),
-                    base: 0.,
-                    top: 0.,
-                    size: (channels.size)(row),
-                    color: (channels.color)(row),
-                    text: (!text.is_empty()).then(|| Arc::from(text)),
-                });
-            }
-        });
+        let visit = Box::new(
+            move |layer, cancelled: &dyn Fn() -> bool, emit: &mut dyn FnMut(Sample)| {
+                for index in 0..source.len() {
+                    if index % 256 == 0 && cancelled() {
+                        return;
+                    }
+                    let Some(row) = source.row(index) else {
+                        continue;
+                    };
+                    let group = (channels.group)(row);
+                    let text = (channels.text)(row);
+                    emit(Sample {
+                        id: DatumId {
+                            series: SeriesId { layer, group },
+                            index,
+                            key: source.key(index),
+                            facet: (channels.facet)(row),
+                        },
+                        x: (channels.x)(row),
+                        y: (channels.y)(row),
+                        x2: (channels.x2)(row),
+                        y2: (channels.y2)(row),
+                        low: (channels.low)(row),
+                        ohlc: (channels.ohlc)(row),
+                        base: 0.,
+                        top: 0.,
+                        size: (channels.size)(row),
+                        color: (channels.color)(row),
+                        text: (!text.is_empty()).then(|| Arc::from(text)),
+                    });
+                }
+            },
+        );
         Self {
             mark,
             title: String::new(),
@@ -317,6 +322,10 @@ impl ChartSpec {
     }
 
     pub fn prepare(&self) -> PreparedChart {
+        self.prepare_with_cancel(&|| false)
+    }
+
+    pub(crate) fn prepare_with_cancel(&self, cancelled: &impl Fn() -> bool) -> PreparedChart {
         let mut extents = [Extent::default(); 3];
         let mut runs = Vec::new();
         let mut legend = Vec::new();
@@ -324,7 +333,10 @@ impl ChartSpec {
         let mut count = 0;
         let mut nonpositive_log_rows = 0;
         let mut has_right_axis = false;
-        for (index, layer) in self.layers.iter().enumerate() {
+        'layers: for (index, layer) in self.layers.iter().enumerate() {
+            if cancelled() {
+                break;
+            }
             let y_axis = if layer.secondary { 2 } else { 1 };
             let y_scale = if layer.secondary {
                 &self.right.scale
@@ -333,7 +345,7 @@ impl ChartSpec {
             };
             let mut groups: BTreeMap<(u32, u32), Vec<Sample>> = BTreeMap::new();
             let mut gaps = BTreeMap::<(u32, u32), Vec<f64>>::new();
-            (layer.visit)(index, &mut |mut sample| {
+            (layer.visit)(index, cancelled, &mut |mut sample| {
                 let invalid_log = |scale: &Scale, value: f64| {
                     matches!(scale, Scale::Log) && value.is_finite() && value <= 0.
                 };
@@ -379,6 +391,9 @@ impl ChartSpec {
                     .or_default()
                     .push(sample);
             });
+            if cancelled() {
+                break;
+            }
             arrange(layer.mark, &mut groups);
             let mut palette = BTreeMap::new();
             let mut slots = BTreeMap::new();
@@ -418,7 +433,10 @@ impl ChartSpec {
                         .unwrap_or_else(|| format!("Facet {facet}"))
                 });
                 has_right_axis |= layer.secondary;
-                for row in &rows {
+                for (index, row) in rows.iter().enumerate() {
+                    if index % 256 == 0 && cancelled() {
+                        break 'layers;
+                    }
                     let normalize = layer.mark.arrangement() == Arrangement::Normalize;
                     if !(normalize && layer.mark.horizontal()) {
                         extents[0].add(&self.x.scale, row.x);

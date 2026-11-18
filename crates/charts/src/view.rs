@@ -1,5 +1,5 @@
 use crate::{
-    DatumId, Domain, PreparedChart, Scene, SeriesId, paint,
+    ChartSpec, DatumId, Domain, PreparedChart, Scene, SeriesId, paint,
     scene::{Hit, Position, Rect},
 };
 use gpui_kit::{
@@ -181,6 +181,7 @@ pub struct ChartView {
     ink: Entity<PlotInk>,
     options: ChartOptions,
     table: Option<usize>,
+    preparing: Option<SceneRequest>,
     window_overlay: bool,
     overlay_mount_checked: bool,
 }
@@ -213,13 +214,41 @@ impl ChartView {
                 overlay,
                 options,
                 table: None,
+                preparing: None,
                 window_overlay: false,
                 overlay_mount_checked: false,
             }
         })
     }
 
+    /// Mount an empty chart with a progress indicator, then publish the prepared
+    /// source. Use `new` when a prepared chart is already available.
+    pub fn from_spec(spec: ChartSpec, options: ChartOptions, cx: &mut App) -> Entity<Self> {
+        let view = Self::new(ChartSpec::new(spec.summary.clone()).prepare(), options, cx);
+        view.update(cx, |view, cx| {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            view.preparing = Some(SceneRequest(cancelled.clone()));
+            let executor = cx.background_executor().clone();
+            cx.spawn(async move |view, cx| {
+                let stop = cancelled.clone();
+                let chart = executor
+                    .spawn(
+                        async move { spec.prepare_with_cancel(&|| stop.load(Ordering::Relaxed)) },
+                    )
+                    .await;
+                let _ = view.update(cx, |view, cx| {
+                    if !cancelled.load(Ordering::Relaxed) {
+                        view.replace(chart, cx);
+                    }
+                });
+            })
+            .detach();
+        });
+        view
+    }
+
     pub fn replace(&mut self, chart: PreparedChart, cx: &mut Context<Self>) {
+        self.preparing = None;
         let mut plot = self.plot.borrow_mut();
         let following = plot.domain == plot.chart.x_domain();
         if following {
@@ -594,6 +623,11 @@ impl Render for ChartView {
             .gap(px(6.))
             .text_color(surfaces.text.to_hsla())
             .child(controls)
+            .children(
+                self.preparing
+                    .as_ref()
+                    .map(|_| div().child("Preparing chart…")),
+            )
             .child(body)
     }
 }
