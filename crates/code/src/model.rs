@@ -176,7 +176,7 @@ impl Viewport {
             return 0..0;
         }
         let first = (self.y.max(0.) / f64::from(line_height)).floor() as usize;
-        let count = (height / line_height).ceil() as usize + 1;
+        let count = ((height / line_height).ceil() as usize).saturating_add(1);
         first.min(rows)..first.saturating_add(count).min(rows)
     }
 }
@@ -411,6 +411,13 @@ mod tests {
 mod properties {
     use super::*;
     use proptest::prelude::*;
+    #[test]
+    fn visible_rows_handles_zero_and_extreme_finite_viewports() {
+        let viewport = Viewport::default();
+        assert_eq!(viewport.visible(10, 20., 0.), 0..0);
+        assert_eq!(viewport.visible(10, 20., f32::INFINITY), 0..0);
+        assert_eq!(viewport.visible(10, f32::MIN_POSITIVE, f32::MAX), 0..10);
+    }
     proptest! {
         #[test]
         fn sparse_folding_matches_a_naive_line_filter(lines in 1usize..200, raw in prop::collection::vec((0usize..200,0usize..200,any::<bool>()),0..30)) {

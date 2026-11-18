@@ -55,33 +55,30 @@ pub fn write_tsv(
     true
 }
 
-/// A rectangular block of decoded clipboard cells (row-major; ragged rows padded with "").
+/// A rectangular block of decoded clipboard cells. Ragged rows have implicit empty fields.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Block {
-    rows: usize,
+    rows: Vec<Vec<String>>,
     cols: usize,
-    cells: Vec<String>,
 }
 
 impl Block {
     /// A block from rows of fields; short rows are padded with empty fields.
-    pub fn from_rows(rows: Vec<Vec<String>>) -> Self {
+    pub fn from_rows(mut rows: Vec<Vec<String>>) -> Self {
         let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
-        let n = if cols == 0 { 0 } else { rows.len() };
-        let mut cells = Vec::with_capacity(n.saturating_mul(cols));
-        for mut r in rows {
-            r.resize(cols, String::new());
-            cells.extend(r);
+        if cols == 0 {
+            rows.clear();
         }
-        Self {
-            rows: n,
-            cols,
-            cells,
+        for row in &mut rows {
+            while row.last().is_some_and(String::is_empty) {
+                row.pop();
+            }
         }
+        Self { rows, cols }
     }
 
     pub fn rows(&self) -> usize {
-        self.rows
+        self.rows.len()
     }
 
     pub fn cols(&self) -> usize {
@@ -89,16 +86,15 @@ impl Block {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rows == 0 || self.cols == 0
+        self.rows.is_empty()
     }
 
     pub fn get(&self, row: usize, col: usize) -> Option<&str> {
         if col >= self.cols {
             return None;
         }
-        self.cells
-            .get(row.checked_mul(self.cols)?.checked_add(col)?)
-            .map(String::as_str)
+        let row = self.rows.get(row)?;
+        Some(row.get(col).map_or("", String::as_str))
     }
 
     /// The value that lands on `(row, col)` of a target whose top-left is `origin`, tiling
@@ -108,7 +104,7 @@ impl Block {
             return None;
         }
         self.get(
-            (row - origin.row) % self.rows,
+            (row - origin.row) % self.rows(),
             (col - origin.col) % self.cols,
         )
     }
@@ -290,6 +286,18 @@ mod tests {
         assert_eq!(b.tiled(o, 2, 1), Some("a"));
         assert_eq!(b.tiled(o, 5, 4), Some("d"));
         assert_eq!(b.tiled(o, 1, 1), None);
+    }
+
+    #[test]
+    fn ragged_clipboard_does_not_materialise_implicit_empty_cells() {
+        let text = format!("{}x\n{}y", "\t".repeat(2_000), "x\n".repeat(2_000));
+        let block = parse_tsv(&text);
+        assert_eq!((block.rows(), block.cols()), (2_002, 2_001));
+        assert_eq!(block.get(0, 2_000), Some("x"));
+        assert_eq!(block.get(2_001, 2_000), Some(""));
+        assert_eq!(block.get(2_002, 2_000), None);
+        assert!(block.rows.iter().map(Vec::capacity).sum::<usize>() <= 8 * 2_002);
+        assert_eq!(parse_tsv("a\tb\nc\t"), parse_tsv("a\tb\nc"));
     }
 
     proptest! {

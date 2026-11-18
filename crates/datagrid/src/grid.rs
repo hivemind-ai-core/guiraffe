@@ -44,7 +44,10 @@ use crate::{
         selection::{Advance, CellPos, Nav, Region, Selection, SelectionMode},
         undo::{Change, UndoLog},
     },
-    order::{Filter, FilterSpec, RowOrder, SortDir, SortKey, SortSpec, compute_order, toggle_sort},
+    order::{
+        Filter, FilterSpec, Inverse, RowOrder, SortDir, SortKey, SortSpec, compute_order,
+        toggle_sort,
+    },
     source::{CellRef, EditError, GridSource, RowKey},
     window as vw,
 };
@@ -360,6 +363,7 @@ pub struct GridStats {
     pub pool: usize,
     pub order_jobs: u64,
     pub stale_jobs: u64,
+    pub palette_resolutions: u64,
 }
 
 /// An open editor. Tracked by source row and column *definition*, so it survives sorting,
@@ -705,6 +709,13 @@ pub(crate) struct Core {
     events: Entity<GridEvents>,
     view: RefCell<Option<gpui_kit::EntityId>>,
     rows: RefCell<Vec<Entity<RowView>>>,
+    palette: RefCell<Option<(GuiraffeTheme, Palette)>>,
+}
+
+impl Drop for Core {
+    fn drop(&mut self) {
+        self.m.get_mut().cancel.store(true, AtomicOrdering::Relaxed);
+    }
 }
 
 /// The grid control handle: cheap to clone; owns the shared state and the retained views.
@@ -773,6 +784,7 @@ impl GridHandle {
             events: cx.new(|_| GridEvents),
             view: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
+            palette: RefCell::new(None),
         });
         let view = cx.new(|_| GridView { core: core.clone() });
         *core.view.borrow_mut() = Some(view.entity_id());
@@ -1169,7 +1181,7 @@ impl Core {
     /// Recompute the visible window and pool; notify the grid and every row view whose row
     /// changed (all of them when `all`).
     fn sync(self: &Rc<Self>, all: bool, cx: &mut App) {
-        let (dirty, pool): (Vec<usize>, usize) = {
+        let (old, visible, pool, all) = {
             let mut m = self.m.borrow_mut();
             m.clamp_scroll();
             let row_h = f64::from(m.row_h);
@@ -1181,14 +1193,7 @@ impl Core {
             m.pool = pool;
             m.stats.pool = pool;
             m.stats.visible_rows = vis.len();
-            let dirty = if all {
-                (0..pool).collect()
-            } else {
-                vw::entering(old, vis)
-                    .map(|r| vw::slot_of(r, pool))
-                    .collect()
-            };
-            (dirty, pool)
+            (old, vis, pool, all)
         };
         {
             let mut rows = self.rows.borrow_mut();
@@ -1203,8 +1208,14 @@ impl Core {
             }
         }
         self.notify_grid(cx);
-        for s in dirty {
-            self.notify_slot(s, cx);
+        if all {
+            for slot in 0..pool {
+                self.notify_slot(slot, cx);
+            }
+        } else {
+            for row in vw::entering(old, visible) {
+                self.notify_slot(vw::slot_of(row, pool), cx);
+            }
         }
     }
 
@@ -1341,24 +1352,31 @@ impl Core {
             )
         };
         if inline {
-            let r = compute_order(&*src, &filters, &sort, &cancel);
+            let r = compute_order(&*src, &filters, &sort, &cancel).map(|order| {
+                let inverse = order.inverse(src.row_count());
+                (order, inverse)
+            });
             drop(src);
             self.apply_order(job, r, cx);
             return;
         }
         self.m.borrow_mut().busy = true;
         self.notify_grid(cx);
-        let core = self.clone();
+        let core = Rc::downgrade(self);
         cx.spawn(async move |cx| {
             let r = cx
                 .background_executor()
                 .spawn(async move {
-                    // `src` is dropped here, before the result reaches the UI thread, so a
-                    // queued commit can take the source back.
-                    compute_order(&*src, &filters, &sort, &cancel)
+                    let order = compute_order(&*src, &filters, &sort, &cancel)?;
+                    // Publication needs only lookups even when a selection was made
+                    // while this job was running.
+                    let inverse = order.inverse(src.row_count());
+                    Ok((order, inverse))
                 })
                 .await;
-            cx.update(|cx| core.apply_order(job, r, cx));
+            if let Some(core) = core.upgrade() {
+                cx.update(|cx| core.apply_order(job, r, cx));
+            }
         })
         .detach();
     }
@@ -1368,12 +1386,12 @@ impl Core {
     fn apply_order(
         self: &Rc<Self>,
         job: u64,
-        r: Result<RowOrder, crate::order::Cancelled>,
+        r: Result<(RowOrder, Inverse), crate::order::Cancelled>,
         cx: &mut App,
     ) {
         let (sel_changed, edit_gone) = {
             let mut m = self.m.borrow_mut();
-            let Ok(order) = r else {
+            let Ok((order, inv)) = r else {
                 m.stats.stale_jobs += 1;
                 return;
             };
@@ -1389,7 +1407,6 @@ impl Core {
             let before = m.sel.clone();
             let mut edit_gone = false;
             if needs_map {
-                let inv = m.rows.inverse(n);
                 let map = |v: usize| old.source_row(v, n).and_then(|s| inv.view_row(s));
                 m.sel = m.sel.remap(map);
                 if let Some(e) = m.edit.as_ref().map(|e| e.source_row) {
@@ -2537,7 +2554,7 @@ fn hsla(c: Rgb) -> Hsla {
     c.to_hsla()
 }
 
-/// Colors resolved once per render from theme tokens.
+/// Colors shared by the grid and its recycled rows.
 #[derive(Clone, Copy)]
 struct Palette {
     body: Rgb,
@@ -2553,28 +2570,45 @@ struct Palette {
     error: Rgb,
 }
 
-fn palette(cx: &App) -> Palette {
-    let t = GuiraffeTheme::global(cx);
-    let s = t.surfaces();
-    let light = t.variant(None, Variant::Light);
-    Palette {
-        body: s.body,
-        zebra: s.surface,
-        header: s.surface,
-        hover: s.hover,
-        border: s.border,
-        text: s.text,
-        dimmed: t
-            .state(StateKind::Dimmed, Variant::Default, None)
-            .foreground,
-        selected: light.background.over(s.body),
-        accent: t
-            .state(StateKind::Selected, Variant::Filled, None)
-            .background,
-        ring: t.state(StateKind::FocusRing, Variant::Default, None).border,
-        error: t
-            .state(StateKind::Rest, Variant::Outline, Some(ColorName::Red))
-            .border,
+impl Core {
+    fn palette(&self, cx: &App) -> Palette {
+        let theme = GuiraffeTheme::global(cx);
+        let mut cached = self.palette.borrow_mut();
+        if let Some((key, palette)) = cached.as_ref()
+            && key == theme
+        {
+            return *palette;
+        }
+        let palette = Palette::resolve(theme);
+        self.m.borrow_mut().stats.palette_resolutions += 1;
+        *cached = Some((theme.clone(), palette));
+        palette
+    }
+}
+
+impl Palette {
+    fn resolve(t: &GuiraffeTheme) -> Self {
+        let s = t.surfaces();
+        let light = t.variant(None, Variant::Light);
+        Self {
+            body: s.body,
+            zebra: s.surface,
+            header: s.surface,
+            hover: s.hover,
+            border: s.border,
+            text: s.text,
+            dimmed: t
+                .state(StateKind::Dimmed, Variant::Default, None)
+                .foreground,
+            selected: light.background.over(s.body),
+            accent: t
+                .state(StateKind::Selected, Variant::Filled, None)
+                .background,
+            ring: t.state(StateKind::FocusRing, Variant::Default, None).border,
+            error: t
+                .state(StateKind::Rest, Variant::Outline, Some(ColorName::Red))
+                .border,
+        }
     }
 }
 
@@ -2612,7 +2646,7 @@ impl Render for GridView {
             let c = core.clone();
             cx.defer(move |cx| c.sync(true, cx));
         }
-        let pal = palette(cx);
+        let pal = core.palette(cx);
         let tab = core.tab_stop();
         let focused = core.focus.is_focused(window);
         let m = core.m.borrow();
@@ -2995,7 +3029,7 @@ impl Render for RowView {
         let Some(core) = self.core.upgrade() else {
             return div().into_any_element();
         };
-        let pal = palette(cx);
+        let pal = core.palette(cx);
         let mut m = core.m.borrow_mut();
         m.stats.row_renders += 1;
         let Some(row) = m.view_row_of_slot(self.slot) else {
@@ -3040,7 +3074,7 @@ impl Render for RowView {
             let value = def.map_or(CellRef::Empty, |d| m.source.cell(src_row, d.source));
             text.clear();
             if let Some(d) = def {
-                d.format(value, &mut text);
+                d.format_preview(value, &mut text);
             }
             let end = match def.map_or(Align::Auto, |d| d.align) {
                 Align::Auto => value.is_numeric(),
@@ -3050,7 +3084,7 @@ impl Render for RowView {
             let center = def.is_some_and(|d| d.align == Align::Center);
             let in_rect = rect_cols.as_ref().is_some_and(|c| c.contains(&p.display));
             let is_cursor = cursor == Some(p.display);
-            let label = SharedString::from(text.clone());
+            let label = SharedString::from(text.as_str());
             // The cell cursor (selected or editing): a 2px outline over the gridlines. It
             // extends 1px sideways over the column separators; vertically it stays inside the
             // row (rows clip) and covers the row's own bottom gridline, so all four edges are
