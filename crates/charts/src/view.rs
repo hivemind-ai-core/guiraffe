@@ -786,16 +786,18 @@ mod navigation_tests {
 
     #[test]
     fn viewport_has_bounded_pan_and_zoom() {
-        let full = Domain::new(0., 100.).unwrap();
-        let outside = Domain::new(200., 220.).unwrap();
-        let panned = constrained_domain(&Scale::Linear, full, outside).unwrap();
+        let full = Domain::new(0., 100.).expect("valid regression fixture");
+        let outside = Domain::new(200., 220.).expect("valid regression fixture");
+        let panned =
+            constrained_domain(&Scale::Linear, full, outside).expect("valid regression fixture");
         assert!((panned.max() - 105.).abs() < 1e-9);
         assert!((panned.span() - 20.).abs() < 1e-9);
-        let tiny = Domain::new(50., 50.00001).unwrap();
-        let zoomed = constrained_domain(&Scale::Linear, full, tiny).unwrap();
+        let tiny = Domain::new(50., 50.00001).expect("valid regression fixture");
+        let zoomed =
+            constrained_domain(&Scale::Linear, full, tiny).expect("valid regression fixture");
         assert!((zoomed.span() - 0.01).abs() < 1e-9);
-        let log = Domain::new(1., 1000.).unwrap();
-        let zoomed = constrained_domain(&Scale::Log, log, tiny).unwrap();
+        let log = Domain::new(1., 1000.).expect("valid regression fixture");
+        let zoomed = constrained_domain(&Scale::Log, log, tiny).expect("valid regression fixture");
         assert!(zoomed.min() > 0. && zoomed.span() > tiny.span());
     }
 }

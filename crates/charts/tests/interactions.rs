@@ -67,6 +67,7 @@ struct TestChart {
 
 fn mount(cx: &mut TestAppContext) -> (TestChart, &mut VisualTestContext) {
     cx.update(|cx| {
+        gpui_kit::base::init(cx);
         gpui_kit::component::init(cx);
         guiraffe_core::apply(Default::default(), cx);
     });
@@ -74,7 +75,7 @@ fn mount(cx: &mut TestAppContext) -> (TestChart, &mut VisualTestContext) {
     let unrelated_renders = Rc::new(Cell::new(0));
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut view = None;
-    let (_, window) = cx.add_window_view(|_, cx| {
+    let (_, window) = cx.add_window_view(|window, cx| {
         let mut spec = ChartSpec::new("Revenue observations").layer(
             Layer::new(
                 Mark::Line,
@@ -90,13 +91,14 @@ fn mount(cx: &mut TestAppContext) -> (TestChart, &mut VisualTestContext) {
         cx.subscribe(&chart, move |_, _, event, _| log.borrow_mut().push(*event))
             .detach();
         view = Some(chart.clone());
-        Root {
+        let content = cx.new(|cx| Root {
             host: cx.new(|_| Host {
                 chart,
                 renders: host_renders.clone(),
             }),
             unrelated: cx.new(|_| Unrelated(unrelated_renders.clone())),
-        }
+        });
+        gpui_kit::base::Root::new(content, window, cx)
     });
     window.run_until_parked();
     (
@@ -239,7 +241,7 @@ fn legend_and_data_table_buttons_are_operable(cx: &mut TestAppContext) {
             .read_with(window, |view, _| view.series_visible(series))
     );
     window.update(|window, cx| {
-        window.focus_next(cx);
+        window.press("tab", cx);
         window.render_frame(cx);
         window.press("space", cx);
     });

@@ -739,7 +739,7 @@ mod tests {
         assert_eq!(
             model
                 .nearest(panel, domain, &hidden, center, 20.)
-                .unwrap()
+                .expect("valid regression fixture")
                 .id
                 .key,
             0
@@ -747,7 +747,7 @@ mod tests {
         assert_eq!(
             model
                 .nearest(panel, domain, &hidden, (center.0 + 7., center.1), 20.)
-                .unwrap()
+                .expect("valid regression fixture")
                 .id
                 .key,
             1

@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn narrow_log_domains_use_round_ticks() {
-        let ticks = Scale::Log.ticks(Domain::new(21., 46.).unwrap(), 5);
+        let ticks = Scale::Log.ticks(Domain::new(21., 46.).expect("valid regression fixture"), 5);
         assert_eq!(
             ticks.into_iter().map(|tick| tick.value).collect::<Vec<_>>(),
             [25., 30., 35., 40., 45.]
