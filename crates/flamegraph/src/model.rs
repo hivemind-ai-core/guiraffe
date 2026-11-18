@@ -1,0 +1,244 @@
+use std::{collections::HashMap, ops::Range, sync::Arc};
+
+pub type FrameId = u64;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Frame<'a> {
+    pub id: FrameId,
+    pub parent: Option<FrameId>,
+    pub self_value: f64,
+    pub total: f64,
+    pub label: &'a str,
+    pub package: &'a str,
+}
+
+/// Frames in depth-first preorder. A snapshot must remain stable for the life of its index.
+pub trait FrameSource: Send + Sync {
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    fn frame(&self, index: usize) -> Frame<'_>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrameClicked {
+    pub id: FrameId,
+    pub path: Vec<FrameId>,
+    pub value: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutError {
+    InvalidValue(FrameId),
+    InvalidParent(FrameId),
+    DuplicateId(FrameId),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Span {
+    index: usize,
+    left: f64,
+    right: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Segment {
+    /// Present for a single frame. Aggregate segments represent several subpixel frames.
+    pub id: Option<FrameId>,
+    pub x: Range<f64>,
+    pub highlighted: bool,
+}
+
+pub struct FlameLayout {
+    source: Arc<dyn FrameSource>,
+    rows: Vec<Vec<Span>>,
+    locations: HashMap<FrameId, (usize, usize)>,
+    extent: f64,
+}
+
+impl FlameLayout {
+    /// Build outside the paint path. Child totals plus self must fit inside the parent.
+    pub fn new(source: Arc<dyn FrameSource>) -> Result<Self, LayoutError> {
+        let mut result = Self {
+            locations: HashMap::with_capacity(source.len()),
+            source,
+            rows: Vec::new(),
+            extent: 0.,
+        };
+        let mut stack: Vec<(FrameId, f64, f64)> = Vec::new();
+        for index in 0..result.source.len() {
+            let frame = result.source.frame(index);
+            if !frame.total.is_finite()
+                || !frame.self_value.is_finite()
+                || frame.self_value < 0.
+                || frame.total < frame.self_value
+            {
+                return Err(LayoutError::InvalidValue(frame.id));
+            }
+
+            while stack.last().map(|entry| entry.0) != frame.parent {
+                if stack.pop().is_none() {
+                    return Err(LayoutError::InvalidParent(frame.id));
+                }
+            }
+
+            let depth = stack.len();
+            let (left, right) = if let Some((_, cursor, limit)) = stack.last_mut() {
+                let left = *cursor;
+                let right = left + frame.total;
+                if right > *limit {
+                    return Err(LayoutError::InvalidValue(frame.id));
+                }
+                *cursor = right;
+                (left, right)
+            } else {
+                let left = result.extent;
+                result.extent += frame.total;
+                if !result.extent.is_finite() {
+                    return Err(LayoutError::InvalidValue(frame.id));
+                }
+                (left, result.extent)
+            };
+
+            if depth == result.rows.len() {
+                result.rows.push(Vec::new());
+            }
+            let row = &mut result.rows[depth];
+            if result
+                .locations
+                .insert(frame.id, (depth, row.len()))
+                .is_some()
+            {
+                return Err(LayoutError::DuplicateId(frame.id));
+            }
+            row.push(Span { index, left, right });
+            stack.push((frame.id, left, right - frame.self_value));
+        }
+        Ok(result)
+    }
+
+    pub fn rows(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn domain(&self) -> Range<f64> {
+        0.0..self.extent
+    }
+
+    fn span(&self, id: FrameId) -> Option<&Span> {
+        let &(depth, offset) = self.locations.get(&id)?;
+        self.rows.get(depth)?.get(offset)
+    }
+
+    pub fn frame(&self, id: FrameId) -> Option<Frame<'_>> {
+        Some(self.source.frame(self.span(id)?.index))
+    }
+
+    pub fn focus(&self, id: FrameId) -> Option<Range<f64>> {
+        let span = self.span(id)?;
+        (span.left < span.right).then_some(span.left..span.right)
+    }
+
+    pub fn click(&self, id: FrameId) -> Option<FrameClicked> {
+        let frame = self.frame(id)?;
+        let mut path = vec![id];
+        let mut parent = frame.parent;
+        while let Some(id) = parent {
+            path.push(id);
+            parent = self.frame(id)?.parent;
+        }
+        path.reverse();
+        Some(FrameClicked {
+            id,
+            path,
+            value: frame.total,
+        })
+    }
+
+    pub fn hit(&self, depth: usize, x: f64) -> Option<FrameId> {
+        let row = self.rows.get(depth)?;
+        let span = row.get(row.partition_point(|span| span.right <= x))?;
+        (span.left <= x && x < span.right).then(|| self.source.frame(span.index).id)
+    }
+
+    /// Visit visible spans in pixel coordinates without building a scratch list.
+    /// A binary search skips all subpixel spans ending within a pixel bucket.
+    pub fn visit_row(
+        &self,
+        depth: usize,
+        domain: Range<f64>,
+        width: f64,
+        search: Option<&Search>,
+        mut visit: impl FnMut(Segment),
+    ) {
+        let Some(row) = self.rows.get(depth) else {
+            return;
+        };
+        if !width.is_finite() || width <= 0. || domain.start >= domain.end {
+            return;
+        }
+        let scale = width / (domain.end - domain.start);
+        if !scale.is_finite() || scale <= 0. {
+            return;
+        }
+        let pixel = |x: f64| ((x - domain.start) * scale).clamp(0., width);
+        let mut cursor = row.partition_point(|span| span.right <= domain.start);
+        while let Some(span) = row.get(cursor).filter(|span| span.left < domain.end) {
+            let x = pixel(span.left);
+            let right = pixel(span.right);
+            let mut end = cursor + 1;
+            if right - x < 1. {
+                let bucket_end = domain.start + (x.floor() + 2.) / scale;
+                end += row[end..].partition_point(|span| span.right <= bucket_end);
+            }
+            let range_end = pixel(row[end - 1].right).max((x + 1.).min(width));
+            let highlighted = search.is_some_and(|search| {
+                let Some(matches) = search.rows.get(depth) else {
+                    return false;
+                };
+                matches.partition_point(|&offset| offset < cursor)
+                    < matches.partition_point(|&offset| offset < end)
+            });
+            if range_end > x {
+                visit(Segment {
+                    id: (end == cursor + 1).then(|| self.source.frame(span.index).id),
+                    x: x..range_end,
+                    highlighted,
+                });
+            }
+            cursor = end;
+        }
+    }
+
+    /// Build on query changes, independently of the visible viewport.
+    pub fn search(&self, query: &str) -> Option<Search> {
+        if query.is_empty() {
+            return None;
+        }
+        let query = query.to_lowercase();
+        Some(Search {
+            rows: self
+                .rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .enumerate()
+                        .filter(|(_, span)| {
+                            self.source
+                                .frame(span.index)
+                                .label
+                                .to_lowercase()
+                                .contains(&query)
+                        })
+                        .map(|(offset, _)| offset)
+                        .collect()
+                })
+                .collect(),
+        })
+    }
+}
+
+pub struct Search {
+    rows: Vec<Vec<usize>>,
+}

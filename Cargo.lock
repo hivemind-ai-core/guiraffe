@@ -3493,6 +3493,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-flamegraph"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "proptest",
+]
+
+[[package]]
 name = "guiraffe-flow"
 version = "0.1.0"
 dependencies = [
@@ -3676,6 +3685,15 @@ dependencies = [
  "guiraffe-core",
  "guiraffe-test",
  "image",
+]
+
+[[package]]
+name = "guiraffe-tree"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "proptest",
 ]
 
 [[package]]
