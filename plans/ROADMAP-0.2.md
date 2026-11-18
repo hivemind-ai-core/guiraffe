@@ -49,6 +49,16 @@
 ## B. Mocket → GUIraffe (0.2)
 Status audit of `guiraffe import` vs Mocket's JSON; write **spec/19-mocket-interop.md** (hand-off for Mocket devs): event annotations (`on:<event> → <event-id>` with payload schema), data bindings (`bind:<prop> → <path>` incl. lists/keys, two-way for inputs, formatters), slots/components, style tokens (map to GUIraffe theme/StyleContext, not raw px), versioned schema + validation, round-trip guarantees.
 
+- **Flow auto-layout** (crates/flow-core + flow): pluggable layout engines with beautiful defaults
+  — layered/Sugiyama (directions TB/LR/BT/RL, crossing minimisation, orthogonal/spline edge
+  routing, port-aware), force-directed (stable, incremental), tree/radial, grid/compact packing;
+  **constraints**: pinned nodes (fixed position, others lay out around them), relative constraints
+  (left-of/above/aligned/same-layer/same-rank), groups/subflows laid out as units, min spacing,
+  adjacency/ordering hints, edge-crossing minimisation weight, minimal-movement relayout
+  (incremental: only affected region moves, existing layout preserved); animated transitions;
+  layout runs off the UI thread, cancellable; deterministic for tests. Evaluate ELK-style options
+  and existing crates (e.g. a Rust Sugiyama/`layout-rs`, force engines) before writing our own.
+
 ## C2. Production-readiness pass (0.2; spec/23)
 Audit and harden DataGrid, Sheet, FlameGraph, Tree views, Flow, Timeline, CodeViewer, Charts,
 Markdown/Mermaid and Chat against spec/23: scale targets, ≤8 ms p99 frame work, O(viewport)
