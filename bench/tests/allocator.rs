@@ -208,3 +208,17 @@ fn chart_scene_compile_allocations_are_bounded_by_the_viewport_not_the_data() ->
     );
     Ok(())
 }
+
+#[test]
+fn large_timeline_bar_storage_is_one_value_per_bar() -> anyhow::Result<()> {
+    const BARS: usize = 100_000;
+    let (bars, storage) = count_allocations(|| guiraffe_timeline::BarCurve::new(BARS, -1., 1.))?;
+    assert_eq!(bars.values().len(), BARS);
+    // One shared allocation containing the vector header, plus the value buffer.
+    assert!(storage.allocations <= 2, "{storage:?}");
+    assert!(
+        storage.bytes <= (BARS * size_of::<f64>() + 64) as u64,
+        "{storage:?}"
+    );
+    Ok(())
+}

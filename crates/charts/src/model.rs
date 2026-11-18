@@ -632,6 +632,32 @@ mod tests {
         assert_eq!(chart.len(), 1);
     }
 
+    #[test]
+    fn prepared_line_buffers_have_bounded_bytes_per_point() {
+        const POINTS: usize = 100_000;
+        let chart = ChartSpec::new("storage")
+            .layer(Layer::new(
+                Mark::Line,
+                (0..POINTS).map(|index| index as f64).collect::<Vec<_>>(),
+                Channels::new(|x| *x, |x| x.sin()),
+            ))
+            .prepare();
+        let run = &chart.runs[0];
+        let bytes = run.rows.capacity() * size_of::<Sample>()
+            + run
+                .levels
+                .iter()
+                .map(|level| level.capacity())
+                .sum::<usize>()
+                * size_of::<usize>()
+            + run.line_breaks.capacity() * size_of::<usize>();
+        assert!(
+            bytes <= POINTS * 256,
+            "prepared line buffers: {} bytes per point",
+            bytes.div_ceil(POINTS)
+        );
+    }
+
     proptest! {
         #[test]
         fn stacks_diverge_and_normalize(values in proptest::collection::vec(-100f64..100., 1..25)) {

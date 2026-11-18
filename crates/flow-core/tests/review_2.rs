@@ -144,3 +144,17 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn default_node_payload_fits_document_storage_budget() {
+    let node = Node::new(1, "", Point::new(0., 0.));
+    let bytes = size_of::<Node>()
+        + node.node_type.capacity()
+        + node.handles.capacity() * size_of::<Handle>()
+        + node
+            .handles
+            .iter()
+            .map(|handle| handle.id.capacity())
+            .sum::<usize>();
+    assert!(bytes <= 256, "default node payload uses {bytes} bytes");
+}
