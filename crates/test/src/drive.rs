@@ -4,10 +4,10 @@
 //! focus that moved and the nodes that were laid out again.
 
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{ScrollDelta, VisualTestContext, px};
+use gpui_kit::{App, ScrollDelta, Window, px};
 use serde::{Deserialize, Serialize};
 
-use crate::inspect::{EventSink, NodeId, NodeIndex, RecordedEvent};
+use crate::inspect::{EventSink, InspectTarget, NodeId, NodeIndex, RecordedEvent};
 
 /// An action an agent performs on the app.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,18 +90,18 @@ pub struct DriveResult {
 pub type Hook = Box<dyn FnMut(&str, &mut gpui_kit::App) -> bool>;
 
 /// The driver: performs actions on a running app.
-pub struct Driver<'a> {
-    vcx: &'a mut VisualTestContext,
+pub struct Driver<'a, T> {
+    target: &'a mut T,
     events: EventSink,
     theme: Option<Hook>,
     fixture: Option<Hook>,
 }
 
-impl<'a> Driver<'a> {
+impl<'a, T: InspectTarget> Driver<'a, T> {
     /// A driver over a running window.
-    pub fn new(vcx: &'a mut VisualTestContext, events: EventSink) -> Self {
+    pub fn new(target: &'a mut T, events: EventSink) -> Self {
         Self {
-            vcx,
+            target,
             events,
             theme: None,
             fixture: None,
@@ -133,7 +133,7 @@ impl<'a> Driver<'a> {
             Ok(()) => result.ok = true,
             Err(error) => result.error = Some(error),
         }
-        self.vcx.run_until_parked();
+        self.target.park();
         let after = self.nodes();
         result.events = self
             .events
@@ -154,20 +154,20 @@ impl<'a> Driver<'a> {
         match action {
             Action::Click { id } => {
                 let id = self.require(id)?;
-                self.vcx.update(|window, cx| {
+                self.with_window(|window, cx| {
                     window.click(id, cx);
                 });
             }
             Action::Hover { id } => {
                 let id = self.require(id)?;
-                self.vcx.update(|window, cx| {
+                self.with_window(|window, cx| {
                     window.hover(id, cx);
                 });
             }
             Action::Type { id, text } => {
                 self.focus_node(id)?;
                 let text = text.clone();
-                self.vcx.update(|window, cx| {
+                self.with_window(|window, cx| {
                     window.input(&text, cx);
                 });
             }
@@ -176,11 +176,11 @@ impl<'a> Driver<'a> {
                 if key.eq_ignore_ascii_case("tab") {
                     // The Tab key moves the focus; the framework owns the
                     // order, so the driver asks it for the next stop.
-                    self.vcx.update(|window, cx| {
+                    self.with_window(|window, cx| {
                         window.focus_next(cx);
                     });
                 } else {
-                    self.vcx.update(|window, cx| {
+                    self.with_window(|window, cx| {
                         window.press(&key, cx);
                     });
                 }
@@ -192,14 +192,14 @@ impl<'a> Driver<'a> {
                     x: px(*dx),
                     y: px(*dy),
                 });
-                self.vcx.update(|window, cx| {
+                self.with_window(|window, cx| {
                     window.scroll(id, delta, cx);
                 });
             }
             Action::Drag { id, to } => {
                 let from = self.require(id)?;
                 let to = self.require(to)?;
-                self.vcx.update(|window, cx| {
+                self.with_window(|window, cx| {
                     window.drag_to(from, to, cx);
                 });
             }
@@ -208,7 +208,7 @@ impl<'a> Driver<'a> {
                     width: px(*width),
                     height: px(*height),
                 };
-                self.vcx.update(|window, _| {
+                self.with_window(|window, _| {
                     window.resize(size);
                 });
             }
@@ -217,9 +217,9 @@ impl<'a> Driver<'a> {
                 let Some(mut hook) = self.theme.take() else {
                     return Err("the app does not let the driver switch the theme".into());
                 };
-                let changed = self.vcx.update(|_, cx| hook(&scheme, cx));
+                let changed = self.with_window(|_, cx| hook(&scheme, cx));
                 self.theme = Some(hook);
-                if !changed {
+                if changed != Some(true) {
                     return Err(format!("the app does not know the theme {scheme:?}"));
                 }
             }
@@ -228,9 +228,9 @@ impl<'a> Driver<'a> {
                 let Some(mut hook) = self.fixture.take() else {
                     return Err("the app does not let the driver switch the fixture".into());
                 };
-                let changed = self.vcx.update(|_, cx| hook(&name, cx));
+                let changed = self.with_window(|_, cx| hook(&name, cx));
                 self.fixture = Some(hook);
-                if !changed {
+                if changed != Some(true) {
                     return Err(format!("the app does not know the fixture {name:?}"));
                 }
             }
@@ -258,10 +258,10 @@ impl<'a> Driver<'a> {
             if self.focused(&index).as_ref() == Some(id) {
                 return Ok(());
             }
-            self.vcx.update(|window, cx| {
+            self.with_window(|window, cx| {
                 window.focus_next(cx);
             });
-            self.vcx.run_until_parked();
+            self.target.park();
             let index = self.nodes();
             if self.focused(&index).as_ref() == Some(id) {
                 return Ok(());
@@ -270,19 +270,27 @@ impl<'a> Driver<'a> {
         Err(format!("the focus never reached {id}"))
     }
 
+    /// Runs `f` against the window of the app.
+    ///
+    /// The answer is `None` when the window is gone.
+    fn with_window<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> Option<R> {
+        self.target.with_window(f)
+    }
+
     /// The nodes of the last frame.
     pub fn nodes(&mut self) -> NodeIndex {
-        self.vcx.update(|window, _| NodeIndex::collect(window))
+        self.with_window(|window, _| NodeIndex::collect(window))
+            .unwrap_or_default()
     }
 
     /// The accessibility facts of the last frame, with the Tab order.
     pub fn a11y(&mut self) -> crate::inspect::A11yReport {
-        crate::inspect::a11y_report(self.vcx)
+        crate::inspect::a11y_report(self.target)
     }
 
     /// The layout of one node, or of every node.
     pub fn layout(&mut self, node: Option<&NodeId>) -> crate::inspect::LayoutReport {
-        crate::inspect::layout_report(self.vcx, node)
+        crate::inspect::layout_report(self.target, node)
     }
 
     /// The resolved tokens of the app and the context they came from.
@@ -292,7 +300,7 @@ impl<'a> Driver<'a> {
 
     /// A PNG of the window, or of the bounds of a node.
     pub fn screenshot(&mut self, node: Option<&NodeId>) -> Option<Vec<u8>> {
-        crate::inspect::screenshot_of(self.vcx, node)
+        crate::inspect::screenshot_of(self.target, node)
     }
 
     /// The events the app emitted, oldest first.

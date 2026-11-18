@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::drive::{Action, Driver};
-use crate::inspect::NodeId;
+use crate::inspect::{InspectTarget, NodeId};
 
 /// An assertion about the state after a step.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -100,7 +100,7 @@ impl ReplayResult {
 }
 
 /// Runs a script against a running app.
-pub fn run(driver: &mut Driver, script: &Script) -> ReplayResult {
+pub fn run<T: InspectTarget>(driver: &mut Driver<'_, T>, script: &Script) -> ReplayResult {
     let mut result = ReplayResult {
         name: script.name.clone(),
         ..Default::default()
@@ -128,8 +128,8 @@ pub fn run(driver: &mut Driver, script: &Script) -> ReplayResult {
 }
 
 /// Checks one assertion.
-fn check(
-    driver: &mut Driver,
+fn check<T: InspectTarget>(
+    driver: &mut Driver<'_, T>,
     assertion: &Assertion,
     driven: &crate::drive::DriveResult,
 ) -> Result<(), String> {

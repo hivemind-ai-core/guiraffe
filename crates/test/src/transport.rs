@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::checks::CheckReport;
 use crate::drive::{Action, DriveResult, Driver};
-use crate::inspect::{A11yReport, LayoutReport, NodeId, NodeIndex, RecordedEvent, StyleReport};
+use crate::inspect::{
+    A11yReport, InspectTarget, LayoutReport, NodeId, NodeIndex, RecordedEvent, StyleReport,
+};
 use crate::replay::{ReplayResult, Script};
 
 /// A call of the API.
@@ -86,14 +88,14 @@ pub struct Answer {
 }
 
 /// The server: answers the calls of the API.
-pub struct Server<'a> {
-    driver: Driver<'a>,
+pub struct Server<'a, T> {
+    driver: Driver<'a, T>,
     theme: GuiraffeTheme,
 }
 
-impl<'a> Server<'a> {
+impl<'a, T: InspectTarget> Server<'a, T> {
     /// A server over a running app.
-    pub fn new(driver: Driver<'a>) -> Self {
+    pub fn new(driver: Driver<'a, T>) -> Self {
         Self {
             driver,
             theme: GuiraffeTheme::default(),
@@ -101,7 +103,7 @@ impl<'a> Server<'a> {
     }
 
     /// The driver of the app, for the calls that drive it.
-    pub fn driver_mut(&mut self) -> &mut Driver<'a> {
+    pub fn driver_mut(&mut self) -> &mut Driver<'a, T> {
         &mut self.driver
     }
 
@@ -265,7 +267,7 @@ pub fn tools() -> Vec<Tool> {
 ///
 /// The answer is the JSON-RPC document, or `None` when the request is a
 /// notification (the client does not wait for an answer then).
-pub fn mcp(request: &str, server: &mut Server) -> Option<String> {
+pub fn mcp<T: InspectTarget>(request: &str, server: &mut Server<'_, T>) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(request).ok()?;
     let id = value.get("id").cloned();
     let method = value.get("method").and_then(|method| method.as_str())?;
@@ -361,23 +363,47 @@ pub fn read_request(reader: &mut impl BufRead, line: &mut String) -> std::io::Re
 }
 
 /// Serves the API on a local socket, one JSON document per line.
+///
+/// The socket is a Unix socket, so the API is only reachable from the
+/// machine it runs on. The server takes at most [`MAX_CLIENTS`] clients at a
+/// time, every read and write has a timeout, and a request or an answer
+/// larger than a mebibyte is refused.
 #[cfg(unix)]
-pub fn serve(path: &Path, server: &mut Server) -> std::io::Result<()> {
+pub fn serve<T: InspectTarget>(path: &Path, server: &mut Server<'_, T>) -> std::io::Result<()> {
+    // A socket left over from a run that died would keep the path busy.
+    let _ = std::fs::remove_file(path);
     let listener = std::os::unix::net::UnixListener::bind(path)?;
+    let mut clients = 0usize;
     for stream in listener.incoming() {
-        let _ = serve_client(stream?, server);
+        if clients >= MAX_CLIENTS {
+            // Too many clients: the connection is closed again right away.
+            let _ = stream?;
+            continue;
+        }
+        clients += 1;
+        let outcome = serve_client(stream?, server);
+        clients -= 1;
+        outcome?;
     }
     Ok(())
 }
 
+/// How many clients the socket serves at the same time.
+pub const MAX_CLIENTS: usize = 8;
+
+/// How long a client may take to send a request or to read an answer.
+const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How large a request or an answer may be.
+const LIMIT: usize = 1024 * 1024;
+
 #[cfg(unix)]
-fn serve_client(
+fn serve_client<T: InspectTarget>(
     mut stream: std::os::unix::net::UnixStream,
-    server: &mut Server,
+    server: &mut Server<'_, T>,
 ) -> std::io::Result<()> {
-    let timeout = Some(std::time::Duration::from_secs(30));
-    stream.set_read_timeout(timeout)?;
-    stream.set_write_timeout(timeout)?;
+    stream.set_read_timeout(Some(TIMEOUT))?;
+    stream.set_write_timeout(Some(TIMEOUT))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
     while read_request(&mut reader, &mut line)? {
@@ -392,14 +418,25 @@ fn serve_client(
                 ..Default::default()
             },
         };
-        serde_json::to_writer(&mut stream, &answer)?;
-        writeln!(stream)?;
+        let text = serde_json::to_string(&answer)?;
+        if text.len() > LIMIT {
+            let answer = Answer {
+                ok: false,
+                error: Some("the answer is too large".into()),
+                ..Default::default()
+            };
+            serde_json::to_writer(&mut stream, &answer)?;
+            writeln!(stream)?;
+            continue;
+        }
+        writeln!(stream, "{text}")?;
+        stream.flush()?;
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
 /// Reports that the local socket transport requires Unix sockets.
-pub fn serve(_: &Path, _: &mut Server) -> std::io::Result<()> {
+pub fn serve<T: InspectTarget>(_: &Path, _: &mut Server<'_, T>) -> std::io::Result<()> {
     Err(std::io::ErrorKind::Unsupported.into())
 }

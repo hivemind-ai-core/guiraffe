@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
-use gpui_kit::{Bounds, ElementId, Pixels, Role, VisualTestContext, Window};
+use gpui_kit::{App, Bounds, ElementId, Pixels, Role, VisualTestContext, Window};
 use guiraffe_core::{ColorName, GuiraffeTheme, StyleContext, Variant, color::Rgb};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
@@ -473,17 +473,71 @@ impl AccessKitTree {
     }
 }
 
+
+/// The app the inspector looks at: a window and the context it runs in.
+///
+/// The test context and the headless context both are one, so the same API
+/// works in a test and in a running app (which is what the CLI serves).
+pub trait InspectTarget {
+    /// Runs `f` against the window of the app.
+    ///
+    /// The answer is `None` when the window is gone.
+    fn with_window<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> Option<R>;
+
+    /// Runs until the app has nothing left to do.
+    fn park(&mut self);
+}
+
+impl InspectTarget for VisualTestContext {
+    fn with_window<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> Option<R> {
+        Some(self.update(|window, cx| f(window, cx)))
+    }
+
+    fn park(&mut self) {
+        self.run_until_parked();
+    }
+}
+
+/// The headless app the inspector looks at: the headless context and the
+/// window of the app.
+///
+/// The headless context has the renderer of the snapshots, so a capture of
+/// the window is a picture and not nothing.
+pub struct HeadlessTarget<'a> {
+    cx: &'a mut gpui_kit::HeadlessAppContext,
+    window: gpui_kit::AnyWindowHandle,
+}
+
+impl<'a> HeadlessTarget<'a> {
+    /// The headless app and the window of it.
+    pub fn new(cx: &'a mut gpui_kit::HeadlessAppContext, window: gpui_kit::AnyWindowHandle) -> Self {
+        Self { cx, window }
+    }
+}
+
+impl InspectTarget for HeadlessTarget<'_> {
+    fn with_window<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> Option<R> {
+        self.cx
+            .update_window(self.window, |_, window, app| f(window, app))
+            .ok()
+    }
+
+    fn park(&mut self) {
+        self.cx.run_until_parked();
+    }
+}
+
 /// The in-process inspector: the API an agent uses to look at an app.
-pub struct Inspector<'a> {
-    vcx: &'a mut VisualTestContext,
+pub struct Inspector<'a, T> {
+    target: &'a mut T,
     events: EventSink,
 }
 
-impl<'a> Inspector<'a> {
+impl<'a, T: InspectTarget> Inspector<'a, T> {
     /// An inspector over a running window.
-    pub fn new(vcx: &'a mut VisualTestContext) -> Self {
+    pub fn new(target: &'a mut T) -> Self {
         Self {
-            vcx,
+            target,
             events: EventSink::new(),
         }
     }
@@ -495,12 +549,14 @@ impl<'a> Inspector<'a> {
 
     /// The nodes of the last frame.
     pub fn nodes(&mut self) -> NodeIndex {
-        self.vcx.update(|window, _| NodeIndex::collect(window))
+        self.target
+            .with_window(|window, _| NodeIndex::collect(window))
+            .unwrap_or_default()
     }
 
     /// The layout of one node, or of every node.
     pub fn layout(&mut self, node: Option<&NodeId>) -> LayoutReport {
-        layout_report(self.vcx, node)
+        layout_report(self.target, node)
     }
 
     /// The accessibility facts of every node.
@@ -510,46 +566,10 @@ impl<'a> Inspector<'a> {
     pub fn a11y(&mut self) -> A11yReport {
         let index = self.nodes();
         let nodes = index.nodes().to_vec();
-        let focus_order = self.focus_order(&nodes);
+        let focus_order = focus_order(self.target, &nodes);
         A11yReport { nodes, focus_order }
     }
 
-    /// The order the Tab key visits the focusable nodes in.
-    fn focus_order(&mut self, nodes: &[NodeFacts]) -> Vec<NodeId> {
-        let mut order: Vec<NodeId> = Vec::new();
-        let mut current = self.focused_node(nodes);
-        for _ in 0..nodes.len().saturating_add(2) {
-            self.vcx.update(|window, cx| {
-                window.focus_next(cx);
-            });
-            self.vcx.run_until_parked();
-            let Some(next) = self.focused_node(nodes) else {
-                break;
-            };
-            if Some(&next) == current.as_ref() || order.contains(&next) {
-                break;
-            }
-            order.push(next.clone());
-            current = Some(next);
-        }
-        order
-    }
-
-    /// The node that has the keyboard focus now.
-    fn focused_node(&mut self, nodes: &[NodeFacts]) -> Option<NodeId> {
-        let index = self.nodes();
-        index
-            .nodes()
-            .iter()
-            .find(|node| node.a11y.focused)
-            .map(|node| node.id.clone())
-            .or_else(|| {
-                nodes
-                    .iter()
-                    .find(|node| node.a11y.focused)
-                    .map(|n| n.id.clone())
-            })
-    }
 
     /// The resolved tokens of the app and the context they came from.
     pub fn style(&mut self) -> StyleReport {
@@ -558,7 +578,7 @@ impl<'a> Inspector<'a> {
 
     /// A PNG of the window, or of the bounds of a node.
     pub fn screenshot(&mut self, node: Option<&NodeId>) -> Option<Vec<u8>> {
-        screenshot_of(self.vcx, node)
+        screenshot_of(self.target, node)
     }
 
     /// The events the app emitted, oldest first.
@@ -568,8 +588,10 @@ impl<'a> Inspector<'a> {
 }
 
 /// The layout of one node, or of every node.
-pub fn layout_report(vcx: &mut VisualTestContext, node: Option<&NodeId>) -> LayoutReport {
-    let index = vcx.update(|window, _| NodeIndex::collect(window));
+pub fn layout_report<T: InspectTarget>(target: &mut T, node: Option<&NodeId>) -> LayoutReport {
+    let index = target
+        .with_window(|window, _| NodeIndex::collect(window))
+        .unwrap_or_default();
     let nodes = match node {
         Some(id) => index
             .nodes()
@@ -663,23 +685,25 @@ fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, image::ImageError> {
 /// the focusable nodes in.
 ///
 /// The order is measured: the Tab key is pressed and the focus is watched.
-pub fn a11y_report(vcx: &mut VisualTestContext) -> A11yReport {
-    let index = vcx.update(|window, _| NodeIndex::collect(window));
+pub fn a11y_report<T: InspectTarget>(target: &mut T) -> A11yReport {
+    let index = target
+        .with_window(|window, _| NodeIndex::collect(window))
+        .unwrap_or_default();
     let nodes = index.nodes().to_vec();
-    let focus_order = focus_order(vcx, &nodes);
+    let focus_order = focus_order(target, &nodes);
     A11yReport { nodes, focus_order }
 }
 
 /// The order the Tab key visits the focusable nodes in.
-fn focus_order(vcx: &mut VisualTestContext, nodes: &[NodeFacts]) -> Vec<NodeId> {
+fn focus_order<T: InspectTarget>(target: &mut T, nodes: &[NodeFacts]) -> Vec<NodeId> {
     let mut order: Vec<NodeId> = Vec::new();
-    let mut current = focused_node(vcx, nodes);
+    let mut current = focused_node(target, nodes);
     for _ in 0..nodes.len().saturating_add(2) {
-        vcx.update(|window, cx| {
+        target.with_window(|window, cx| {
             window.focus_next(cx);
         });
-        vcx.run_until_parked();
-        let Some(next) = focused_node(vcx, nodes) else {
+        target.park();
+        let Some(next) = focused_node(target, nodes) else {
             break;
         };
         if Some(&next) == current.as_ref() || order.contains(&next) {
@@ -692,8 +716,10 @@ fn focus_order(vcx: &mut VisualTestContext, nodes: &[NodeFacts]) -> Vec<NodeId> 
 }
 
 /// The node that has the keyboard focus now.
-fn focused_node(vcx: &mut VisualTestContext, nodes: &[NodeFacts]) -> Option<NodeId> {
-    let index = vcx.update(|window, _| NodeIndex::collect(window));
+fn focused_node<T: InspectTarget>(target: &mut T, nodes: &[NodeFacts]) -> Option<NodeId> {
+    let index = target
+        .with_window(|window, _| NodeIndex::collect(window))
+        .unwrap_or_default();
     index
         .nodes()
         .iter()
@@ -708,11 +734,11 @@ fn focused_node(vcx: &mut VisualTestContext, nodes: &[NodeFacts]) -> Option<Node
 }
 
 /// The layout of one node, or of every node.
-pub fn screenshot_of(vcx: &mut VisualTestContext, node: Option<&NodeId>) -> Option<Vec<u8>> {
-    let image = vcx.update(|window, _| window.render_to_image().ok())?;
+pub fn screenshot_of<T: InspectTarget>(target: &mut T, node: Option<&NodeId>) -> Option<Vec<u8>> {
+    let image = target.with_window(|window, _| window.render_to_image().ok())??;
     let image = match node {
         Some(id) => {
-            let bounds = layout_report(vcx, Some(id)).nodes.first()?.layout.bounds;
+            let bounds = layout_report(target, Some(id)).nodes.first()?.layout.bounds;
             crop(&image, bounds)?
         }
         None => image,

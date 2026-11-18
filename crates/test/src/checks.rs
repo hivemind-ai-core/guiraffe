@@ -82,7 +82,10 @@ fn is_interactive(role: Option<&str>) -> bool {
 ///
 /// The checks that need the app (the layout jumps on focus and hover) drive
 /// it; the rest read the frame.
-pub fn run(driver: &mut Driver, theme: &GuiraffeTheme) -> CheckReport {
+pub fn run<T: crate::inspect::InspectTarget>(
+    driver: &mut Driver<'_, T>,
+    theme: &GuiraffeTheme,
+) -> CheckReport {
     let index = driver.nodes();
     let a11y = driver.a11y();
     let mut findings = Vec::new();
@@ -258,7 +261,7 @@ fn tab_order(a11y: &A11yReport) -> Vec<Finding> {
 }
 
 /// The nodes that move when the pointer or the focus touches them.
-fn layout_jumps(driver: &mut Driver) -> Vec<Finding> {
+fn layout_jumps<T: crate::inspect::InspectTarget>(driver: &mut Driver<'_, T>) -> Vec<Finding> {
     let index = driver.nodes();
     let before: Vec<(NodeId, crate::inspect::Rect)> = index
         .nodes()
