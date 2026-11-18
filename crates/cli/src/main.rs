@@ -15,6 +15,9 @@ mod doctor;
 mod preview;
 mod scaffold;
 
+const CATALOGUE: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.json"));
+const SCREEN_SCHEMA: &str = include_str!(concat!(env!("OUT_DIR"), "/screen.schema.json"));
+
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
@@ -44,6 +47,14 @@ fn run() -> Result<()> {
                 &scaffold::Source::Path(checkout),
             )?;
             println!("Created {}\n  cd {name} && cargo run", dir.display());
+            Ok(())
+        }
+        Some("catalog") => {
+            match args.get(1..).unwrap_or_default() {
+                [flag] if flag == "--json" => print!("{CATALOGUE}"),
+                [flag] if flag == "--schema" => print!("{SCREEN_SCHEMA}"),
+                _ => bail!("usage: guiraffe catalog --json | --schema"),
+            }
             Ok(())
         }
         Some("preview") => {
@@ -94,7 +105,7 @@ fn run() -> Result<()> {
         }
         Some("--help" | "-h") | None => {
             println!(
-                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe add [<crate>…]\nguiraffe doctor"
+                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe add [<crate>…]\nguiraffe catalog --json | --schema\nguiraffe doctor"
             );
             Ok(())
         }

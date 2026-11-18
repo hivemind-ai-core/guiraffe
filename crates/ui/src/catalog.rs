@@ -141,3 +141,98 @@ impl PropSpec {
         schema
     }
 }
+
+impl WidgetSpec {
+    pub fn example(&self) -> Value {
+        let props: serde_json::Map<String, Value> = self
+            .props
+            .iter()
+            .filter(|p| p.required)
+            .map(|p| (p.name.into(), p.default_value()))
+            .collect();
+        json!({"version": 1, "root": {"kind": self.id, "props": props}})
+    }
+
+    fn description(&self) -> Value {
+        let props = self
+            .props
+            .iter()
+            .map(|p| {
+                json!({"name":p.name, "schema":p.schema(), "default":p.default_value(),
+                "required":p.required, "tokenBacked":p.token_backed})
+            })
+            .collect::<Vec<_>>();
+        let events = self
+            .events
+            .iter()
+            .map(|e| json!({"id":e.id,"payloadSchema":{"type":e.payload_type}}))
+            .collect::<Vec<_>>();
+        let slots = if self.accepts_children {
+            json!([{"name":"children","min":0,"max":null,"accepted":KINDS}])
+        } else {
+            json!([])
+        };
+        json!({"id":self.id, "crate":self.krate, "summary":self.summary,"props":props,
+            "slots":slots,"events":events,"state":self.state,"themeTokens":self.theme_tokens,
+            "a11yRole":self.a11y_role,"examples":[{"name":"minimal","document":self.example()}]})
+    }
+
+    fn node_schema(&self) -> Value {
+        let props: serde_json::Map<String, Value> = self
+            .props
+            .iter()
+            .map(|p| (p.name.into(), p.schema()))
+            .collect();
+        let bind: serde_json::Map<String, Value> = self
+            .props
+            .iter()
+            .map(|p| (p.name.into(), json!({"type":"string","minLength":1})))
+            .collect();
+        let events: serde_json::Map<String, Value> = self
+            .events
+            .iter()
+            .map(|e| (e.id.into(), json!({"type":"string","minLength":1})))
+            .collect();
+        let mut children = json!({"type":"array","items":{"$ref":"#/$defs/node"}});
+        if !self.accepts_children {
+            children["maxItems"] = json!(0);
+        }
+        let required = self
+            .props
+            .iter()
+            .filter(|p| p.required)
+            .map(|p| {
+                json!({"anyOf":[
+                    {"required":["props"], "properties":{"props":{"required":[p.name]}}},
+                    {"required":["bind"], "properties":{"bind":{"required":[p.name]}}}
+                ]})
+            })
+            .collect::<Vec<_>>();
+        let mut schema = json!({"type":"object","required":["kind"],"additionalProperties":false,
+            "properties":{
+                "kind":{"const":self.id},
+                "id":{"type":["string","null"],"minLength":1},
+                "each":{"type":["string","null"]},
+                "when":{"type":["string","null"]},
+                "key":{"type":["string","null"]},
+                "props":{"type":"object","properties":props,"additionalProperties":false},
+                "bind":{"type":"object","properties":bind,"additionalProperties":false},
+                "on":{"type":"object","properties":events,"additionalProperties":false},
+                "children":children}});
+        if !required.is_empty() {
+            schema["allOf"] = json!(required);
+        }
+        schema
+    }
+}
+
+pub fn catalogue() -> Value {
+    json!({"version": VERSION, "widgets": WIDGETS.iter().map(|w| w.description()).collect::<Vec<_>>()})
+}
+
+pub fn screen_schema() -> Value {
+    json!({"$schema":"https://json-schema.org/draft/2020-12/schema",
+        "type":"object","required":["version","root"],"additionalProperties":false,
+        "properties":{"version":{"const":1},"root":{"$ref":"#/$defs/node"}},
+        "$defs":{"node":{"oneOf":WIDGETS.iter().map(|w| w.node_schema()).collect::<Vec<_>>()}}})
+}

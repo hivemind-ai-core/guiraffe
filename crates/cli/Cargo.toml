@@ -30,3 +30,6 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 
 [features]
 gpui-fast = ["gpui-kit/gpui-fast"]
+
+[build-dependencies]
+serde_json.workspace = true
