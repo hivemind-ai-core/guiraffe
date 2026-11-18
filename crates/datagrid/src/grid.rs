@@ -19,12 +19,16 @@ use std::{
 };
 
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, KeyBinding,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
-    RenderOnce, Role, ScrollEvent, SharedString, StatefulInteractiveElement, StyleRefinement,
-    Styled, TestSupportExt, Window, canvas,
-    component::input::{Enter as InputEnter, Escape as InputEscape, Input, InputState},
+    AnyElement, AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Context, DispatchPhase,
+    Entity, EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement,
+    KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Render, RenderOnce, Role, ScrollEvent, SharedString,
+    StatefulInteractiveElement, StyleRefinement, Styled, TestSupportExt, Window, canvas,
+    component::input::{
+        Enter as InputEnter, Escape as InputEscape, IndentInline as InputTab, Input, InputState,
+        MoveDown as InputDown, MoveLeft as InputLeft, MoveRight as InputRight, MoveUp as InputUp,
+        OutdentInline as InputShiftTab,
+    },
     div,
     prelude::FluentBuilder,
     px,
@@ -35,10 +39,13 @@ use guiraffe_core::{
 
 use crate::{
     columns::{Align, ColumnDef, ColumnLayout, Pin, reorder},
+    model::{
+        clipboard::{parse_tsv, paste_target, write_tsv},
+        selection::{Advance, CellPos, Nav, Region, Selection, SelectionMode},
+        undo::{Change, UndoLog},
+    },
     order::{Filter, FilterSpec, RowOrder, SortDir, SortKey, SortSpec, compute_order, toggle_sort},
-    selection::{CellPos, Nav, Region, Selection, SelectionMode},
     source::{CellRef, EditError, GridSource, RowKey},
-    tsv::write_tsv,
     window as vw,
 };
 
@@ -71,7 +78,15 @@ gpui_kit::actions!(
         SelectAll,
         CopySelection,
         EditCell,
-        Activate
+        Activate,
+        Paste,
+        Cut,
+        ClearCells,
+        Undo,
+        Redo,
+        TabNext,
+        TabPrev,
+        EnterPrev
     ]
 );
 
@@ -117,6 +132,20 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", CopySelection, c),
         KeyBinding::new("f2", EditCell, c),
         KeyBinding::new("enter", Activate, c),
+        KeyBinding::new("shift-enter", EnterPrev, c),
+        KeyBinding::new("tab", TabNext, c),
+        KeyBinding::new("shift-tab", TabPrev, c),
+        KeyBinding::new("ctrl-v", Paste, c),
+        KeyBinding::new("cmd-v", Paste, c),
+        KeyBinding::new("ctrl-x", Cut, c),
+        KeyBinding::new("cmd-x", Cut, c),
+        KeyBinding::new("delete", ClearCells, c),
+        KeyBinding::new("backspace", ClearCells, c),
+        KeyBinding::new("ctrl-z", Undo, c),
+        KeyBinding::new("cmd-z", Undo, c),
+        KeyBinding::new("ctrl-shift-z", Redo, c),
+        KeyBinding::new("cmd-shift-z", Redo, c),
+        KeyBinding::new("ctrl-y", Redo, c),
     ]);
 }
 
@@ -201,6 +230,92 @@ pub enum GridEvent {
         column: usize,
         order: Arc<[usize]>,
     },
+    /// A bulk operation (paste, cut, clear, undo, redo) wrote `cells` cells as one undo
+    /// step. `truncated` when the target exceeded [`MAX_EDIT_CELLS`] and only the first rows
+    /// were written.
+    CellsChanged {
+        op: EditOp,
+        cells: usize,
+        truncated: bool,
+    },
+    /// Some cells of a bulk operation were vetoed (validator or source); the rest applied.
+    /// One event per operation: the total count and the first [`REJECTION_SAMPLES`] reasons.
+    CellsRejected {
+        op: EditOp,
+        rejected: usize,
+        applied: usize,
+        first: Arc<[CellRejection]>,
+    },
+}
+
+/// What wrote cells (one undo transaction each).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EditOp {
+    /// A committed editor.
+    Edit,
+    Paste,
+    Cut,
+    /// Delete / Backspace.
+    Clear,
+    Undo,
+    Redo,
+}
+
+/// One vetoed cell. `row` is the source row, `column` the definition index.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellRejection {
+    pub row: usize,
+    pub column: usize,
+    pub reason: SharedString,
+}
+
+/// Most cells one paste, cut or clear writes; larger targets are truncated (paste, clear)
+/// or refused (cut, so a cut never copies more than it clears).
+pub const MAX_EDIT_CELLS: usize = 100_000;
+
+/// How many rejection reasons [`GridEvent::CellsRejected`] carries.
+pub const REJECTION_SAMPLES: usize = 5;
+
+/// Undo key: (source row, column definition).
+type CellKey = (usize, usize);
+
+/// One cell a bulk operation writes.
+struct CellWrite {
+    source_row: usize,
+    def: usize,
+    value: String,
+}
+
+/// Text that round-trips a cell through `GridSource::set_cell` for undo: the default display,
+/// but full precision for floats. `false` for custom cells, which can't be restored.
+fn raw_text(v: CellRef<'_>, out: &mut String) -> bool {
+    match v {
+        CellRef::Number(n) => {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{n}");
+            true
+        }
+        CellRef::Custom(_) => false,
+        v => {
+            v.write_display(out);
+            true
+        }
+    }
+}
+
+/// Pointer-drag autoscroll step: how far past (or into) an edge zone `pos` is, as a signed
+/// scroll delta. `lo..hi` is the scrollable band, `zone` the edge width that starts scrolling.
+fn edge_delta(pos: f32, lo: f32, hi: f32, zone: f32, max: f32) -> f32 {
+    if hi - lo <= 2. * zone {
+        return 0.;
+    }
+    if pos < lo + zone {
+        -(lo + zone - pos).min(max)
+    } else if pos > hi - zone {
+        (pos - (hi - zone)).min(max)
+    } else {
+        0.
+    }
 }
 
 /// Emits [`GridEvent`]s; subscribe with `cx.subscribe(handle.events(), ..)`.
@@ -366,6 +481,10 @@ struct Model {
     validator: Option<Validator>,
     pending: Option<PendingCommit>,
     copying: usize,
+    undo: UndoLog<CellKey, String, EditOp>,
+    /// Last pointer position (grid-relative) of a range drag, while it autoscrolls.
+    autoscroll: Option<(f32, f32)>,
+    autoscroll_task: bool,
     stats: GridStats,
     text: String,
 }
@@ -458,6 +577,91 @@ impl Model {
         }
     }
 
+    /// Write `value` to (source row, column definition) through `GridSource::set_cell`,
+    /// returning the undo diff (`None` when the old value can't be restored as text).
+    fn write_cell(
+        &mut self,
+        source_row: usize,
+        def: usize,
+        value: &str,
+    ) -> Result<Option<Change<CellKey, String>>, SharedString> {
+        let Some(src_col) = self.defs.get(def).map(|d| d.source) else {
+            return Err(EditError::ReadOnly.to_string().into());
+        };
+        let mut old = String::new();
+        let restorable = raw_text(self.source.cell(source_row, src_col), &mut old);
+        let Some(src) = Arc::get_mut(&mut self.source) else {
+            return Err(EditError::Busy.to_string().into());
+        };
+        src.set_cell(source_row, src_col, value)
+            .map_err(|e| SharedString::from(e.to_string()))?;
+        Ok(restorable.then(|| Change {
+            key: (source_row, def),
+            old,
+            new: value.to_string(),
+        }))
+    }
+
+    fn validate(&self, source_row: usize, def: usize, value: &str) -> Result<(), SharedString> {
+        match &self.validator {
+            Some(v) => v(&EditRequest {
+                row: source_row,
+                key: self.source.row_key(source_row),
+                column: def,
+                value,
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether display column `col` is an editable column.
+    fn editable_display(&self, col: usize) -> Option<usize> {
+        let (_, placed) = self.layout.display(col)?;
+        self.defs
+            .get(placed.def)
+            .filter(|d| d.editable)
+            .map(|_| placed.def)
+    }
+
+    /// The editable cells of the selection (or cursor) as writes of `""`, capped at
+    /// [`MAX_EDIT_CELLS`]; `(writes, cells covered, truncated)`.
+    fn selected_editable(&self) -> (Vec<CellWrite>, usize, bool) {
+        let Some(region) = self.sel.region() else {
+            return (Vec::new(), 0, false);
+        };
+        let (rows, cols): (Vec<Range<usize>>, Range<usize>) = match region {
+            Region::Rows(r) => (r, 0..self.cols()),
+            Region::Rect(r, c) => (vec![r], c),
+        };
+        let defs: Vec<usize> = cols.filter_map(|c| self.editable_display(c)).collect();
+        let covered = rows
+            .iter()
+            .map(|r| r.len())
+            .sum::<usize>()
+            .saturating_mul(defs.len());
+        let mut out = Vec::new();
+        if defs.is_empty() {
+            return (out, 0, false);
+        }
+        'rows: for r in rows.into_iter().flatten() {
+            let Some(src) = self.source_row(r) else {
+                continue;
+            };
+            for &def in &defs {
+                if out.len() >= MAX_EDIT_CELLS {
+                    break 'rows;
+                }
+                out.push(CellWrite {
+                    source_row: src,
+                    def,
+                    value: String::new(),
+                });
+            }
+        }
+        let truncated = covered > out.len();
+        (out, covered, truncated)
+    }
+
     fn view_row_of_slot(&self, slot: usize) -> Option<usize> {
         let pool = self.pool;
         if pool == 0 || slot >= pool {
@@ -527,6 +731,9 @@ impl GridHandle {
             validator: None,
             pending: None,
             copying: 0,
+            undo: UndoLog::default(),
+            autoscroll: None,
+            autoscroll_task: false,
             stats: GridStats::default(),
             text: String::with_capacity(64),
         };
@@ -645,6 +852,7 @@ impl GridHandle {
             let mut m = self.core.m.borrow_mut();
             m.order = (0..defs.len()).collect();
             m.defs = defs;
+            m.undo.clear();
             m.sort.clear();
             m.filters.clear();
         }
@@ -745,6 +953,7 @@ impl GridHandle {
         {
             let mut m = self.core.m.borrow_mut();
             m.source = source;
+            m.undo.clear();
         }
         self.core.refresh_order(cx);
     }
@@ -779,7 +988,8 @@ impl GridHandle {
 
     /// Open the editor on view row `row`, display column `col` (if editable).
     pub fn begin_edit(&self, row: usize, col: usize, window: &mut Window, cx: &mut App) -> bool {
-        self.core.begin_edit(CellPos::new(row, col), window, cx)
+        self.core
+            .begin_edit(CellPos::new(row, col), None, window, cx)
     }
 
     pub fn commit_edit(&self, window: &mut Window, cx: &mut App) -> bool {
@@ -810,6 +1020,57 @@ impl GridHandle {
     /// Copy the selection as TSV (also Ctrl+C). Returns the text.
     pub fn copy(&self, cx: &mut App) -> Option<String> {
         self.core.copy(cx)
+    }
+
+    /// Paste TSV or a plain value into the selection (Ctrl+V pastes the clipboard). Returns
+    /// the number of cells written.
+    ///
+    /// The block lands at the selection's top-left cell, or is tiled over the selected range
+    /// when the range is larger than one cell and the block divides it (see
+    /// [`crate::model::clipboard::paste_target`]). It is clipped to the existing rows and
+    /// columns; non-editable columns are skipped. Each cell goes through the validator and
+    /// [`GridSource::set_cell`]; vetoed cells are reported in one
+    /// [`GridEvent::CellsRejected`] and the rest still apply, as one undo step.
+    pub fn paste_text(&self, text: &str, cx: &mut App) -> usize {
+        self.core.paste_text(text, cx)
+    }
+
+    /// Paste the clipboard's text (Ctrl+V).
+    pub fn paste(&self, cx: &mut App) -> usize {
+        self.core.paste(cx)
+    }
+
+    /// Copy the selection, then clear its editable cells (Ctrl+X), as one undo step.
+    pub fn cut(&self, cx: &mut App) -> usize {
+        self.core.cut(cx)
+    }
+
+    /// Clear the selection's editable cells (Delete / Backspace), as one undo step.
+    pub fn clear_cells(&self, cx: &mut App) -> usize {
+        self.core.clear_cells(EditOp::Clear, cx)
+    }
+
+    /// Undo the last edit, paste, cut or clear (Ctrl+Z). Returns whether anything was undone.
+    pub fn undo(&self, cx: &mut App) -> bool {
+        self.core.undo(false, cx)
+    }
+
+    /// Redo (Ctrl+Shift+Z / Ctrl+Y).
+    pub fn redo(&self, cx: &mut App) -> bool {
+        self.core.undo(true, cx)
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.core.m.borrow().undo.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.core.m.borrow().undo.can_redo()
+    }
+
+    /// Forget undo history (call after changing the source behind the grid's back).
+    pub fn clear_history(&self) {
+        self.core.m.borrow_mut().undo.clear();
     }
 
     /// Row view entity currently showing view row `row`, if visible (for render tests).
@@ -1116,18 +1377,15 @@ impl Core {
                 return; // Still shared by a job; try again when it lands.
             }
             let Some(p) = m.pending.take() else { return };
-            let src_col = m.defs.get(p.def).map(|d| d.source).unwrap_or(usize::MAX);
-            let r = match Arc::get_mut(&mut m.source) {
-                Some(src) => src
-                    .set_cell(p.source_row, src_col, &p.value)
-                    .map_err(|e| SharedString::from(e.to_string())),
-                None => Err(SharedString::from(EditError::Busy.to_string())),
-            };
+            let r = m.write_cell(p.source_row, p.def, &p.value);
+            if let Ok(Some(change)) = &r {
+                m.undo.push(EditOp::Edit, vec![change.clone()]);
+            }
             (p, r)
         };
         let (p, r) = result;
         match r {
-            Ok(()) => {
+            Ok(_) => {
                 self.notify_source_row(p.source_row, cx);
                 self.emit(
                     GridEvent::CellEdited {
@@ -1277,7 +1535,7 @@ impl Core {
         let Some(c) = self.m.borrow().sel.cursor else {
             return;
         };
-        if !self.begin_edit(c, window, cx) {
+        if !self.begin_edit(c, None, window, cx) {
             self.emit_activated(c.row, cx);
         }
     }
@@ -1292,7 +1550,15 @@ impl Core {
         }
     }
 
-    fn begin_edit(self: &Rc<Self>, pos: CellPos, window: &mut Window, cx: &mut App) -> bool {
+    /// Open the editor on `pos`. `initial` replaces the content (type-to-edit); `None` edits
+    /// the current text in place. The caret is at the end either way.
+    fn begin_edit(
+        self: &Rc<Self>,
+        pos: CellPos,
+        initial: Option<String>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
         let prepared = {
             let m = self.m.borrow();
             let Some((_, placed)) = m.layout.display(pos.col) else {
@@ -1308,8 +1574,11 @@ impl Core {
             if !def.editable {
                 return false;
             }
-            let mut text = String::new();
-            def.format(m.source.cell(source_row, def.source), &mut text);
+            let text = initial.unwrap_or_else(|| {
+                let mut text = String::new();
+                def.format(m.source.cell(source_row, def.source), &mut text);
+                text
+            });
             (def_ix, source_row, text)
         };
         // Another open editor is cancelled first: its row re-renders and listeners hear it.
@@ -1400,26 +1669,21 @@ impl Core {
         let outcome = {
             let mut m = self.m.borrow_mut();
             let key = m.source.row_key(source_row);
-            let src_col = m.defs.get(def).map(|d| d.source).unwrap_or(usize::MAX);
-            let veto = m.validator.as_ref().and_then(|v| {
-                v(&EditRequest {
-                    row: source_row,
-                    key,
-                    column: def,
-                    value: &value,
-                })
-                .err()
-            });
+            let veto = m.validate(source_row, def, &value).err();
             let job_running = m.busy || m.copying > 0;
+            let exclusive = Arc::get_mut(&mut m.source).is_some();
             match veto {
                 Some(reason) => Outcome::Rejected(reason),
-                None => match Arc::get_mut(&mut m.source) {
-                    Some(src) => match src.set_cell(source_row, src_col, &value) {
-                        Ok(()) => Outcome::Done(key),
-                        Err(e) => Outcome::Rejected(e.to_string().into()),
+                None => match exclusive {
+                    true => match m.write_cell(source_row, def, &value) {
+                        Ok(change) => {
+                            m.undo.push(EditOp::Edit, change.into_iter().collect());
+                            Outcome::Done(key)
+                        }
+                        Err(reason) => Outcome::Rejected(reason),
                     },
                     // A background sort/copy holds the source: apply when it lands.
-                    None if job_running => {
+                    false if job_running => {
                         m.pending = Some(PendingCommit {
                             source_row,
                             def,
@@ -1428,7 +1692,7 @@ impl Core {
                         });
                         Outcome::Queued
                     }
-                    None => Outcome::Rejected(EditError::Busy.to_string().into()),
+                    false => Outcome::Rejected(EditError::Busy.to_string().into()),
                 },
             }
         };
@@ -1471,6 +1735,437 @@ impl Core {
     fn tab_stop(&self) -> bool {
         let m = self.m.borrow();
         m.opts.focusable.unwrap_or(m.context.keyboard_nav)
+    }
+
+    // ------------------------------------------------------------------ record editing
+
+    fn is_editing(&self) -> bool {
+        self.m.borrow().edit.is_some()
+    }
+
+    /// Cell and range modes: a visible cell cursor that typing and Tab act on.
+    fn cell_mode(&self) -> bool {
+        matches!(
+            self.m.borrow().sel.mode,
+            SelectionMode::Cell | SelectionMode::Range
+        )
+    }
+
+    /// Move the cursor one step (Enter/Tab rules); `false` at the grid's end.
+    fn advance(self: &Rc<Self>, adv: Advance, cx: &mut App) -> bool {
+        let to = {
+            let m = self.m.borrow();
+            let Some(from) = m.sel.cursor else {
+                return false;
+            };
+            adv.apply(from, m.count, m.cols())
+        };
+        let Some(to) = to else { return false };
+        self.change_selection(cx, |s, _| s.click(to, false, false));
+        self.scroll_cell_into_view(to, cx);
+        true
+    }
+
+    fn scroll_cell_into_view(self: &Rc<Self>, to: CellPos, cx: &mut App) {
+        let (x, y) = {
+            let m = self.m.borrow();
+            (
+                m.layout.scroll_into_view(to.col, m.scroll_x, m.grid_w()),
+                vw::scroll_into_view(m.scroll_y, to.row, f64::from(m.row_h), m.body_h(), m.count),
+            )
+        };
+        self.set_scroll(x, y, cx);
+    }
+
+    /// Enter / Shift+Enter / Tab / Shift+Tab / an arrow in the editor: commit, then move.
+    /// A vetoed commit keeps the editor open and does not move.
+    fn commit_and_move(self: &Rc<Self>, adv: Advance, window: &mut Window, cx: &mut App) {
+        if self.commit_edit(window, cx) {
+            self.advance(adv, cx);
+        }
+    }
+
+    /// Left/Right in the editor commit and move only with the caret at that edge of the text
+    /// and no text selected; otherwise the caret moves inside the text. Returns whether it
+    /// committed (so the caller stops the Input's own handling).
+    fn editor_edge(self: &Rc<Self>, adv: Advance, window: &mut Window, cx: &mut App) -> bool {
+        let at_edge = {
+            let m = self.m.borrow();
+            m.edit.as_ref().is_some_and(|e| {
+                let i = e.input.read(cx);
+                let sel = i.selected_range();
+                sel.is_empty()
+                    && match adv {
+                        Advance::Left => i.cursor() == 0,
+                        _ => i.cursor() >= i.value().len(),
+                    }
+            })
+        };
+        if at_edge {
+            self.commit_and_move(adv, window, cx);
+        }
+        at_edge
+    }
+
+    /// Tab / Shift+Tab / Shift+Enter on the grid (not editing): move the cell cursor in cell
+    /// and range modes. Returns `false` (let focus move on) in row modes, without editable
+    /// columns, or at the grid's first/last cell, so Tab never traps keyboard focus.
+    fn tab_move(self: &Rc<Self>, adv: Advance, cx: &mut App) -> bool {
+        let editable = {
+            let m = self.m.borrow();
+            (0..m.cols()).any(|c| m.editable_display(c).is_some())
+        };
+        if !self.cell_mode() || !editable {
+            return false;
+        }
+        if self.m.borrow().sel.cursor.is_none() {
+            self.change_selection(cx, |s, _| s.click(CellPos::new(0, 0), false, false));
+            return true;
+        }
+        self.advance(adv, cx)
+    }
+
+    /// Type-to-edit: a printable key on a focused grid (cell/range mode, not editing, no
+    /// Ctrl/Cmd) opens the cursor cell's editor with that text replacing the content.
+    fn type_to_edit(self: &Rc<Self>, ev: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+        let k = &ev.keystroke;
+        let m = k.modifiers;
+        if m.control || m.platform || m.function || self.is_editing() || !self.cell_mode() {
+            return;
+        }
+        let Some(text) = k.key_char.as_deref() else {
+            return;
+        };
+        if text.is_empty() || text.chars().any(char::is_control) {
+            return;
+        }
+        let Some(pos) = self.m.borrow().sel.cursor else {
+            return;
+        };
+        if self.begin_edit(pos, Some(text.to_string()), window, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    /// Ctrl+V: paste the clipboard's text.
+    fn paste(self: &Rc<Self>, cx: &mut App) -> usize {
+        let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) else {
+            return 0;
+        };
+        self.paste_text(&text, cx)
+    }
+
+    fn paste_text(self: &Rc<Self>, text: &str, cx: &mut App) -> usize {
+        if self.is_editing() {
+            return 0;
+        }
+        let block = parse_tsv(text);
+        let (writes, truncated, target) = {
+            let m = self.m.borrow();
+            let Some((rows, cols)) = paste_target(
+                block.rows(),
+                block.cols(),
+                m.sel.rect(),
+                m.sel.cursor,
+                m.count,
+                m.cols(),
+            ) else {
+                return 0;
+            };
+            let origin = CellPos::new(rows.start, cols.start);
+            let defs: Vec<(usize, Option<usize>)> =
+                cols.clone().map(|c| (c, m.editable_display(c))).collect();
+            let mut writes = Vec::new();
+            let mut truncated = false;
+            'rows: for r in rows.clone() {
+                let Some(src) = m.source_row(r) else { continue };
+                for &(c, def) in &defs {
+                    // Non-editable columns are skipped: the block is clipped to them.
+                    let Some(def) = def else { continue };
+                    if writes.len() >= MAX_EDIT_CELLS {
+                        truncated = true;
+                        break 'rows;
+                    }
+                    let value = block.tiled(origin, r, c).unwrap_or("").to_string();
+                    writes.push(CellWrite {
+                        source_row: src,
+                        def,
+                        value,
+                    });
+                }
+            }
+            (writes, truncated, (rows, cols))
+        };
+        let applied = self.apply_writes(EditOp::Paste, writes, truncated, true, cx);
+        // The pasted area becomes the selection (range mode), like a spreadsheet.
+        let (rows, cols) = target;
+        if self.m.borrow().sel.mode == SelectionMode::Range && rows.len() * cols.len() > 1 {
+            self.change_selection(cx, |s, _| {
+                s.anchor = Some(CellPos::new(rows.start, cols.start));
+                s.cursor = Some(CellPos::new(rows.end - 1, cols.end - 1));
+            });
+        }
+        applied
+    }
+
+    /// Ctrl+X: copy, then clear the editable cells. Refused (one rejection event) when the
+    /// selection is larger than [`MAX_EDIT_CELLS`], so a cut never copies more than it clears.
+    fn cut(self: &Rc<Self>, cx: &mut App) -> usize {
+        if self.is_editing() {
+            return 0;
+        }
+        let (writes, covered, truncated) = self.m.borrow().selected_editable();
+        if truncated {
+            self.emit(
+                GridEvent::CellsRejected {
+                    op: EditOp::Cut,
+                    rejected: covered,
+                    applied: 0,
+                    first: Arc::from([CellRejection {
+                        row: 0,
+                        column: 0,
+                        reason: format!("selection too large to cut (over {MAX_EDIT_CELLS} cells)")
+                            .into(),
+                    }]),
+                },
+                cx,
+            );
+            return 0;
+        }
+        self.copy(cx);
+        self.apply_writes(EditOp::Cut, writes, false, true, cx)
+    }
+
+    /// Delete / Backspace: clear the editable cells of the selection.
+    fn clear_cells(self: &Rc<Self>, op: EditOp, cx: &mut App) -> usize {
+        if self.is_editing() {
+            return 0;
+        }
+        let (writes, _, truncated) = self.m.borrow().selected_editable();
+        self.apply_writes(op, writes, truncated, true, cx)
+    }
+
+    /// Undo (or redo) one transaction. Restores bypass the validator (they put back values the
+    /// source held) but still go through `set_cell`.
+    fn undo(self: &Rc<Self>, redo: bool, cx: &mut App) -> bool {
+        if self.is_editing() {
+            return false;
+        }
+        let op = if redo { EditOp::Redo } else { EditOp::Undo };
+        let writes: Vec<CellWrite> = {
+            let mut m = self.m.borrow_mut();
+            let ready = if redo {
+                m.undo.can_redo()
+            } else {
+                m.undo.can_undo()
+            };
+            if !ready {
+                return false;
+            }
+            if Arc::get_mut(&mut m.source).is_none() {
+                drop(m);
+                self.emit(
+                    GridEvent::CellsRejected {
+                        op,
+                        rejected: 0,
+                        applied: 0,
+                        first: Arc::from([CellRejection {
+                            row: 0,
+                            column: 0,
+                            reason: EditError::Busy.to_string().into(),
+                        }]),
+                    },
+                    cx,
+                );
+                return false;
+            }
+            let t = if redo { m.undo.redo() } else { m.undo.undo() };
+            let Some(t) = t else { return false };
+            let steps: Vec<(&CellKey, &String)> = if redo {
+                t.redo_steps().collect()
+            } else {
+                t.undo_steps().collect()
+            };
+            steps
+                .into_iter()
+                .map(|(&(source_row, def), v)| CellWrite {
+                    source_row,
+                    def,
+                    value: v.clone(),
+                })
+                .collect()
+        };
+        self.apply_writes(op, writes, false, false, cx);
+        true
+    }
+
+    /// Write cells as one undo transaction (undo/redo themselves are not recorded). Vetoed
+    /// cells are collected into one [`GridEvent::CellsRejected`]; the rest apply.
+    fn apply_writes(
+        self: &Rc<Self>,
+        op: EditOp,
+        writes: Vec<CellWrite>,
+        truncated: bool,
+        validate: bool,
+        cx: &mut App,
+    ) -> usize {
+        if writes.is_empty() {
+            return 0;
+        }
+        let (applied, rejected, first) = {
+            let mut m = self.m.borrow_mut();
+            let mut changes = Vec::with_capacity(writes.len());
+            let mut applied = 0usize;
+            let mut rejected = 0usize;
+            let mut first = Vec::new();
+            for w in writes {
+                let r = if validate {
+                    m.validate(w.source_row, w.def, &w.value)
+                } else {
+                    Ok(())
+                }
+                .and_then(|()| m.write_cell(w.source_row, w.def, &w.value));
+                match r {
+                    Ok(change) => {
+                        applied += 1;
+                        changes.extend(change);
+                    }
+                    Err(reason) => {
+                        rejected += 1;
+                        if first.len() < REJECTION_SAMPLES {
+                            first.push(CellRejection {
+                                row: w.source_row,
+                                column: w.def,
+                                reason,
+                            });
+                        }
+                    }
+                }
+            }
+            if !matches!(op, EditOp::Undo | EditOp::Redo) {
+                m.undo.push(op, changes);
+            }
+            (applied, rejected, first)
+        };
+        // Bulk writes may touch any visible row: re-render them all (not a scroll path).
+        self.sync(true, cx);
+        if applied > 0 {
+            self.emit(
+                GridEvent::CellsChanged {
+                    op,
+                    cells: applied,
+                    truncated,
+                },
+                cx,
+            );
+        }
+        if rejected > 0 {
+            self.emit(
+                GridEvent::CellsRejected {
+                    op,
+                    rejected,
+                    applied,
+                    first: first.into(),
+                },
+                cx,
+            );
+        }
+        applied
+    }
+
+    // ------------------------------------------------------------------ drag autoscroll
+
+    /// Scroll delta for a range drag at grid-relative `(x, y)`: non-zero near or past the
+    /// body's edges (and the center band's, horizontally).
+    fn autoscroll_delta(&self, x: f32, y: f32) -> (f32, f32) {
+        let m = self.m.borrow();
+        let w = m.grid_w();
+        let top = m.row_h;
+        let bottom = top + m.body_h() as f32;
+        let zone = (m.row_h / 2.).max(4.);
+        let max = m.row_h * 2.;
+        let dy = edge_delta(y, top, bottom, zone, max);
+        let lo = m.layout.left_width;
+        let hi = lo + m.layout.center_viewport(w);
+        let dx = edge_delta(x, lo, hi, zone, max);
+        (dx, dy)
+    }
+
+    /// Extend the range to the cell under grid-relative `(x, y)` (clamped into the body).
+    fn drag_select_to(self: &Rc<Self>, x: f32, y: f32, cx: &mut App) {
+        let pos = {
+            let m = self.m.borrow();
+            let body = m.body_h() as f32;
+            let row = vw::row_at(
+                f64::from((y - m.row_h).clamp(0., (body - 1.).max(0.))),
+                m.scroll_y,
+                f64::from(m.row_h),
+                m.count,
+            );
+            let w = m.grid_w();
+            let col = m.layout.hit(x.clamp(0., w - 1.), m.scroll_x, w);
+            row.zip(col).map(|(r, c)| CellPos::new(r, c))
+        };
+        if let Some(pos) = pos {
+            self.change_selection(cx, |s, _| s.click(pos, true, false));
+        }
+    }
+
+    /// One autoscroll step at the last drag position; `false` when the drag ended or the
+    /// pointer left the edge zones.
+    fn autoscroll_step(self: &Rc<Self>, cx: &mut App) -> bool {
+        let Some((x, y)) = ({
+            let m = self.m.borrow();
+            (m.drag == Some(Drag::Select))
+                .then_some(m.autoscroll)
+                .flatten()
+        }) else {
+            return false;
+        };
+        let (dx, dy) = self.autoscroll_delta(x, y);
+        if dx == 0. && dy == 0. {
+            return false;
+        }
+        let (sx, sy) = {
+            let m = self.m.borrow();
+            (m.scroll_x + f64::from(dx), m.scroll_y + f64::from(dy))
+        };
+        self.set_scroll(sx, sy, cx);
+        self.drag_select_to(x, y, cx);
+        true
+    }
+
+    /// A range drag moved to grid-relative `(x, y)`: extend, scroll one step when near an
+    /// edge, and keep scrolling on a timer while the pointer stays there.
+    fn drag_select(self: &Rc<Self>, x: f32, y: f32, cx: &mut App) {
+        self.m.borrow_mut().autoscroll = Some((x, y));
+        self.drag_select_to(x, y, cx);
+        if !self.autoscroll_step(cx) || self.m.borrow().autoscroll_task {
+            return;
+        }
+        self.m.borrow_mut().autoscroll_task = true;
+        let core = Rc::downgrade(self);
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(30))
+                    .await;
+                let go = cx.update(|cx| {
+                    let Some(core) = core.upgrade() else {
+                        return false;
+                    };
+                    let go = core.autoscroll_step(cx);
+                    if !go {
+                        core.m.borrow_mut().autoscroll_task = false;
+                    }
+                    go
+                });
+                if !go {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     // ------------------------------------------------------------------ pointer
@@ -1596,8 +2291,12 @@ impl Core {
             m.drag = Some(Drag::Select);
         }
         drop(m);
+        if range_mode {
+            // Repaint so the window-level move listener (drags outside the grid) is armed.
+            self.notify_grid(cx);
+        }
         if ev.click_count >= 2 {
-            if !self.begin_edit(pos, window, cx) {
+            if !self.begin_edit(pos, None, window, cx) {
                 self.emit_activated(row, cx);
             }
             return;
@@ -1661,24 +2360,7 @@ impl Core {
                     self.notify_grid(cx);
                 }
             }
-            Drag::Select => {
-                let pos = {
-                    let m = self.m.borrow();
-                    let row = vw::row_at(
-                        f64::from(y - m.row_h).max(0.),
-                        m.scroll_y,
-                        f64::from(m.row_h),
-                        m.count,
-                    );
-                    let col = m
-                        .layout
-                        .hit(x.clamp(0., m.grid_w() - 1.), m.scroll_x, m.grid_w());
-                    row.zip(col).map(|(r, c)| CellPos::new(r, c))
-                };
-                if let Some(pos) = pos {
-                    self.change_selection(cx, |s, _| s.click(pos, true, false));
-                }
-            }
+            Drag::Select => self.drag_select(x, y, cx),
             Drag::VScroll {
                 start_y,
                 start_offset,
@@ -1716,6 +2398,7 @@ impl Core {
         let Some(drag) = self.m.borrow_mut().drag.take() else {
             return;
         };
+        self.m.borrow_mut().autoscroll = None;
         match drag {
             Drag::Resize { def, .. } => {
                 let width = self.m.borrow().defs.get(def).map(|d| d.width);
@@ -2065,6 +2748,16 @@ impl Render for GridView {
         drop(m);
 
         let c_record = core.clone();
+        let c_paint = core.clone();
+        let (c_paste, c_cut, c_clear, c_undo, c_redo) = (
+            core.clone(),
+            core.clone(),
+            core.clone(),
+            core.clone(),
+            core.clone(),
+        );
+        let (c_tab, c_btab, c_senter, c_type) =
+            (core.clone(), core.clone(), core.clone(), core.clone());
         let (c_down, c_move, c_up, c_up_out, c_wheel) = (
             core.clone(),
             core.clone(),
@@ -2102,10 +2795,41 @@ impl Render for GridView {
             .on_action(move |_: &EditCell, window, cx| {
                 let cur = c_edit.m.borrow().sel.cursor;
                 if let Some(c) = cur {
-                    c_edit.begin_edit(c, window, cx);
+                    c_edit.begin_edit(c, None, window, cx);
                 }
             })
             .on_action(move |_: &Activate, window, cx| c_act.activate(window, cx))
+            .on_action(move |_: &Paste, _, cx| {
+                c_paste.paste(cx);
+            })
+            .on_action(move |_: &Cut, _, cx| {
+                c_cut.cut(cx);
+            })
+            .on_action(move |_: &ClearCells, _, cx| {
+                c_clear.clear_cells(EditOp::Clear, cx);
+            })
+            .on_action(move |_: &Undo, _, cx| {
+                c_undo.undo(false, cx);
+            })
+            .on_action(move |_: &Redo, _, cx| {
+                c_redo.undo(true, cx);
+            })
+            .on_action(move |_: &TabNext, _, cx| {
+                if !c_tab.tab_move(Advance::Right, cx) {
+                    cx.propagate();
+                }
+            })
+            .on_action(move |_: &TabPrev, _, cx| {
+                if !c_btab.tab_move(Advance::Left, cx) {
+                    cx.propagate();
+                }
+            })
+            .on_action(move |_: &EnterPrev, _, cx| {
+                if !c_senter.tab_move(Advance::Up, cx) {
+                    cx.propagate();
+                }
+            })
+            .on_key_down(move |ev: &KeyDownEvent, window, cx| c_type.type_to_edit(ev, window, cx))
             .relative()
             .size_full()
             .overflow_hidden()
@@ -2128,7 +2852,20 @@ impl Render for GridView {
                             cx.defer(move |cx| c.sync(true, cx));
                         }
                     },
-                    |_, _, _, _| {},
+                    move |_, _, window, _| {
+                        // A range drag keeps extending (and autoscrolling) with the pointer
+                        // outside the grid; inside, the element's own listener handles it.
+                        if c_paint.m.borrow().drag != Some(Drag::Select) {
+                            return;
+                        }
+                        let c = c_paint.clone();
+                        window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
+                            let outside = !c.m.borrow().bounds.contains(&ev.position);
+                            if phase == DispatchPhase::Bubble && outside {
+                                c.mouse_move(ev, cx);
+                            }
+                        });
+                    },
                 )
                 .absolute()
                 .size_full(),
@@ -2295,12 +3032,73 @@ impl Render for RowView {
                             .size_full()
                             .flex()
                             .items_center()
-                            // Kit's Input propagates Enter/Escape after handling them.
+                            // Kit's Input propagates Enter/Escape after handling them:
+                            // Enter commits and moves down, Shift+Enter up.
                             .on_action({
                                 let core = core.clone();
-                                move |_: &InputEnter, window, cx| {
+                                move |a: &InputEnter, window, cx| {
                                     if let Some(core) = core.upgrade() {
-                                        core.commit_edit(window, cx);
+                                        let adv = if a.shift { Advance::Up } else { Advance::Down };
+                                        core.commit_and_move(adv, window, cx);
+                                    }
+                                }
+                            })
+                            // Tab/arrows are taken before the Input sees them (capture):
+                            // Tab/Shift+Tab and Up/Down always commit and move; Left/Right
+                            // only with the caret at that edge of the text.
+                            .capture_action({
+                                let core = core.clone();
+                                move |_: &InputTab, window, cx| {
+                                    if let Some(core) = core.upgrade() {
+                                        cx.stop_propagation();
+                                        core.commit_and_move(Advance::Right, window, cx);
+                                    }
+                                }
+                            })
+                            .capture_action({
+                                let core = core.clone();
+                                move |_: &InputShiftTab, window, cx| {
+                                    if let Some(core) = core.upgrade() {
+                                        cx.stop_propagation();
+                                        core.commit_and_move(Advance::Left, window, cx);
+                                    }
+                                }
+                            })
+                            .capture_action({
+                                let core = core.clone();
+                                move |_: &InputUp, window, cx| {
+                                    if let Some(core) = core.upgrade() {
+                                        cx.stop_propagation();
+                                        core.commit_and_move(Advance::Up, window, cx);
+                                    }
+                                }
+                            })
+                            .capture_action({
+                                let core = core.clone();
+                                move |_: &InputDown, window, cx| {
+                                    if let Some(core) = core.upgrade() {
+                                        cx.stop_propagation();
+                                        core.commit_and_move(Advance::Down, window, cx);
+                                    }
+                                }
+                            })
+                            .capture_action({
+                                let core = core.clone();
+                                move |_: &InputLeft, window, cx| {
+                                    if let Some(core) = core.upgrade()
+                                        && core.editor_edge(Advance::Left, window, cx)
+                                    {
+                                        cx.stop_propagation();
+                                    }
+                                }
+                            })
+                            .capture_action({
+                                let core = core.clone();
+                                move |_: &InputRight, window, cx| {
+                                    if let Some(core) = core.upgrade()
+                                        && core.editor_edge(Advance::Right, window, cx)
+                                    {
+                                        cx.stop_propagation();
                                     }
                                 }
                             })

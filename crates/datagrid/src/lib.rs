@@ -4,13 +4,14 @@
 //!   [`ArcSource`] and [`FnSource`] adapt common storage.
 //! - Rows *and* columns are virtualized: only visible cells are built. Offsets are `f64`.
 //! - Sorting/filtering produce a `u32` permutation on the background executor.
-//! - Pure logic lives in [`window`], [`columns`], [`order`], [`selection`] and [`tsv`].
+//! - Pure logic lives in [`window`], [`columns`], [`order`] and [`model`] (selection, clipboard
+//!   and undo, shared with the future Sheet); [`selection`] and [`tsv`] are aliases.
 
 pub mod columns;
+pub mod model;
 pub mod order;
-pub mod selection;
+pub use model::{clipboard as tsv, selection};
 pub mod source;
-pub mod tsv;
 pub mod window;
 
 pub use columns::{Align, ColumnDef, ColumnLayout, Pin};
@@ -20,8 +21,9 @@ pub use source::{ArcSource, CellRef, EditError, FnSource, GridSource, RowKey, Ve
 
 mod grid;
 pub use grid::{
-    Activate, CONTEXT, CopySelection, DataGrid, EditCell, EditRequest, GridEvent, GridEvents,
-    GridHandle, GridOptions, GridStats, INLINE_COPY_CELLS, SelectAll, Validator, aria_row_index,
+    Activate, CONTEXT, CellRejection, ClearCells, CopySelection, Cut, DataGrid, EditCell, EditOp,
+    EditRequest, GridEvent, GridEvents, GridHandle, GridOptions, GridStats, INLINE_COPY_CELLS,
+    MAX_EDIT_CELLS, Paste, REJECTION_SAMPLES, Redo, SelectAll, Undo, Validator, aria_row_index,
     init,
 };
 pub use selection::Selection;

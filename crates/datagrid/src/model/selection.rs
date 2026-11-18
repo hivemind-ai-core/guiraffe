@@ -74,6 +74,37 @@ impl Nav {
     }
 }
 
+/// Commit-and-move direction after an edit: Enter / Shift+Enter move down / up, Tab /
+/// Shift+Tab move right / left and wrap to the next / previous row at the row ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Advance {
+    Down,
+    Up,
+    Right,
+    Left,
+}
+
+impl Advance {
+    /// The cell after `from` in a `rows` × `cols` grid, or `None` when the move would leave
+    /// the grid (first/last cell for Tab, first/last row for Enter), so the caller can let
+    /// focus move on.
+    pub fn apply(self, from: CellPos, rows: usize, cols: usize) -> Option<CellPos> {
+        if rows == 0 || cols == 0 {
+            return None;
+        }
+        let r = from.row.min(rows - 1);
+        let c = from.col.min(cols - 1);
+        match self {
+            Advance::Down => (r + 1 < rows).then(|| CellPos::new(r + 1, c)),
+            Advance::Up => r.checked_sub(1).map(|r| CellPos::new(r, c)),
+            Advance::Right if c + 1 < cols => Some(CellPos::new(r, c + 1)),
+            Advance::Right => (r + 1 < rows).then(|| CellPos::new(r + 1, 0)),
+            Advance::Left if c > 0 => Some(CellPos::new(r, c - 1)),
+            Advance::Left => r.checked_sub(1).map(|r| CellPos::new(r, cols - 1)),
+        }
+    }
+}
+
 /// Sorted, disjoint, non-adjacent row ranges.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RowSet(Vec<Range<usize>>);
@@ -440,7 +471,29 @@ mod tests {
         assert_eq!(s.cursor, None);
     }
 
+    #[test]
+    fn advance_wraps_at_row_ends() {
+        let p = CellPos::new;
+        assert_eq!(Advance::Right.apply(p(0, 1), 3, 3), Some(p(0, 2)));
+        assert_eq!(Advance::Right.apply(p(0, 2), 3, 3), Some(p(1, 0)));
+        assert_eq!(Advance::Left.apply(p(1, 0), 3, 3), Some(p(0, 2)));
+        assert_eq!(Advance::Left.apply(p(0, 0), 3, 3), None);
+        assert_eq!(Advance::Right.apply(p(2, 2), 3, 3), None);
+        assert_eq!(Advance::Down.apply(p(2, 1), 3, 3), None);
+        assert_eq!(Advance::Up.apply(p(1, 1), 3, 3), Some(p(0, 1)));
+        assert_eq!(Advance::Down.apply(p(0, 0), 0, 3), None);
+    }
+
     proptest! {
+        #[test]
+        fn advance_right_then_left_returns(r in 0usize..20, c in 0usize..20, rows in 1usize..20, cols in 1usize..20) {
+            let from = CellPos::new(r.min(rows - 1), c.min(cols - 1));
+            if let Some(to) = Advance::Right.apply(from, rows, cols) {
+                prop_assert!(to.row < rows && to.col < cols);
+                prop_assert_eq!(Advance::Left.apply(to, rows, cols), Some(from));
+            }
+        }
+
         #[test]
         fn rowset_matches_model(ops in proptest::collection::vec((0usize..60, 0usize..8, 0u8..3), 0..80)) {
             let mut set = RowSet::default();
