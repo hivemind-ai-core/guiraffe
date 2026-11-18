@@ -271,8 +271,13 @@ impl<'a> Driver<'a> {
     }
 
     /// The nodes of the last frame.
-    fn nodes(&mut self) -> NodeIndex {
+    pub fn nodes(&mut self) -> NodeIndex {
         self.vcx.update(|window, _| NodeIndex::collect(window))
+    }
+
+    /// The accessibility facts of the last frame, with the Tab order.
+    pub fn a11y(&mut self) -> crate::inspect::A11yReport {
+        crate::inspect::a11y_report(self.vcx)
     }
 
     /// The node that has the keyboard focus now.

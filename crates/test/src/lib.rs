@@ -2,6 +2,8 @@
 #[cfg(all(feature = "e2e", target_os = "linux"))]
 pub mod e2e;
 
+#[cfg(feature = "inspect")]
+pub mod checks;
 pub mod diff;
 #[cfg(feature = "inspect")]
 pub mod drive;

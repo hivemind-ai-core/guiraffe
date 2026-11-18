@@ -657,6 +657,54 @@ fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, image::ImageError> {
     Ok(bytes)
 }
 
+/// The accessibility facts of every node, with the order the Tab key visits
+/// the focusable nodes in.
+///
+/// The order is measured: the Tab key is pressed and the focus is watched.
+pub fn a11y_report(vcx: &mut VisualTestContext) -> A11yReport {
+    let index = vcx.update(|window, _| NodeIndex::collect(window));
+    let nodes = index.nodes().to_vec();
+    let focus_order = focus_order(vcx, &nodes);
+    A11yReport { nodes, focus_order }
+}
+
+/// The order the Tab key visits the focusable nodes in.
+fn focus_order(vcx: &mut VisualTestContext, nodes: &[NodeFacts]) -> Vec<NodeId> {
+    let mut order: Vec<NodeId> = Vec::new();
+    let mut current = focused_node(vcx, nodes);
+    for _ in 0..nodes.len().saturating_add(2) {
+        vcx.update(|window, cx| {
+            window.focus_next(cx);
+        });
+        vcx.run_until_parked();
+        let Some(next) = focused_node(vcx, nodes) else {
+            break;
+        };
+        if Some(&next) == current.as_ref() || order.contains(&next) {
+            break;
+        }
+        order.push(next.clone());
+        current = Some(next);
+    }
+    order
+}
+
+/// The node that has the keyboard focus now.
+fn focused_node(vcx: &mut VisualTestContext, nodes: &[NodeFacts]) -> Option<NodeId> {
+    let index = vcx.update(|window, _| NodeIndex::collect(window));
+    index
+        .nodes()
+        .iter()
+        .find(|node| node.a11y.focused)
+        .map(|node| node.id.clone())
+        .or_else(|| {
+            nodes
+                .iter()
+                .find(|node| node.a11y.focused)
+                .map(|n| n.id.clone())
+        })
+}
+
 /// The hexadecimal colour of a colour.
 fn hex(color: Rgb) -> String {
     format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
