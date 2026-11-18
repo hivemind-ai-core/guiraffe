@@ -1,7 +1,7 @@
 use crate::catalog::Entry;
 use gpui_kit::{
     AnyView, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, Window,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, Window,
     component::dock::{BasePanel, DockLayout},
     div, px,
 };
@@ -38,7 +38,17 @@ impl Render for Workspace {
             .flex_col()
             .gap_3()
             .p_4()
-            .child(div().flex_1().min_h_0().child(self.content.clone()))
+            .child(
+                div().flex_1().min_h_0().w_full().relative().child(
+                    self.content.clone().cached(
+                        StyleRefinement::default()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .size_full(),
+                    ),
+                ),
+            )
             .child(
                 div()
                     .flex()
@@ -47,7 +57,11 @@ impl Render for Workspace {
                     .child("Event log")
                     .children(self.log.iter().cloned()),
             )
-            .children(self.drag_overlay.clone())
+            .children(
+                self.drag_overlay.clone().map(|overlay| {
+                    overlay.cached(StyleRefinement::default().absolute().size_full())
+                }),
+            )
     }
 }
 
