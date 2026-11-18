@@ -3368,6 +3368,7 @@ dependencies = [
  "ctrlc",
  "fs2",
  "gpui-kit",
+ "guiraffe-charts",
  "guiraffe-code",
  "guiraffe-components",
  "guiraffe-core",
@@ -3380,6 +3381,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "guiraffe-charts"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-timeline",
+ "proptest",
 ]
 
 [[package]]
@@ -3616,6 +3627,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "guiraffe-charts",
  "guiraffe-chat",
  "guiraffe-code",
  "guiraffe-commands",

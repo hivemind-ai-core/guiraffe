@@ -21,7 +21,7 @@ pub fn entries() -> Vec<Entry> {
     vec![Entry {
         krate: "datagrid",
         name: "Data grid",
-        summary: "Virtualized rows and columns over 1,000,000 computed rows: pinned, resizable, reorderable columns; multi-sort; row/cell/range selection; keyboard navigation; inline editing.",
+        summary: "Virtualized rows and columns over 1,000,000 computed rows: pinned, resizable, reorderable columns; multi-sort; row/cell/range selection; keyboard navigation; record editing (type-to-edit, commit-and-move, range paste with tiling and validation, cut, delete, undo/redo).",
         covers: &["DataGrid"],
         demo,
     }]
@@ -146,7 +146,68 @@ struct Demo {
     small: GridHandle,
     knobs: Vec<(&'static str, Entity<SegmentedControl>)>,
     log: Entity<EventLog>,
+    edits: Entity<EventLog>,
     _subs: Vec<Subscription>,
+}
+
+/// Key cheatsheet for the editable grid.
+const CHEATSHEET: &[&str] = &[
+    "Type: edit (replaces)",
+    "F2 / Enter / double-click: edit in place",
+    "Enter / Tab: commit and move (Shift reverses)",
+    "↑↓, or ←→ at the text edge: commit and move",
+    "Esc: cancel",
+    "Shift+arrows / Shift+click / drag: range",
+    "Ctrl+C / X / V: copy, cut, paste (tiles)",
+    "Delete: clear",
+    "Ctrl+Z / Ctrl+Shift+Z: undo / redo",
+];
+
+/// One line for the edit log, or `None` for non-edit events.
+fn edit_line(e: &GridEvent) -> Option<String> {
+    Some(match e {
+        GridEvent::CellEdited {
+            row, column, value, ..
+        } => {
+            format!("edited row {row} col {column} = {value:?}")
+        }
+        GridEvent::EditRejected {
+            row,
+            column,
+            reason,
+        } => {
+            format!("rejected row {row} col {column}: {reason}")
+        }
+        GridEvent::EditCancelled { row, column } => format!("cancelled row {row} col {column}"),
+        GridEvent::CellsChanged {
+            op,
+            cells,
+            truncated,
+        } => format!(
+            "{op:?}: {cells} cell(s){}",
+            if *truncated { " (truncated)" } else { "" }
+        ),
+        GridEvent::CellsRejected {
+            op,
+            rejected,
+            applied,
+            first,
+        } => {
+            let reasons: Vec<String> = first
+                .iter()
+                .map(|r| match (r.row, r.column) {
+                    (Some(row), Some(col)) => format!("row {row} col {col}: {}", r.reason),
+                    _ => r.reason.to_string(),
+                })
+                .collect();
+            format!(
+                "{op:?}: {rejected} rejected, {applied} applied [{}]",
+                reasons.join("; ")
+            )
+        }
+        GridEvent::Copied { cells, .. } => format!("copied {cells} cell(s)"),
+        _ => return None,
+    })
 }
 
 const KNOBS: &[(&str, &[&str], usize)] = &[
@@ -247,10 +308,27 @@ impl Render for Demo {
                 div().h(px(300.)).child(DataGrid::new(&self.big)),
             ),
             example(
-                "Editable: double-click or F2 to edit, Enter commits, Esc cancels (Age must be a number)",
-                div().h(px(250.)).child(DataGrid::new(&self.small)),
+                "Editable records (Age must be a whole number)",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_x(px(14.))
+                            .gap_y(px(2.))
+                            .children(
+                                CHEATSHEET
+                                    .iter()
+                                    .map(|k| Text::new(*k).size(Size::Xs).dimmed(true)),
+                            ),
+                    )
+                    .child(div().h(px(250.)).child(DataGrid::new(&self.small))),
             ),
-            example("Events from both grids", self.log.clone()),
+            example("Edits and rejections", self.edits.clone()),
+            example("Events from the large grid", self.log.clone()),
         ])
     }
 }
@@ -277,7 +355,7 @@ fn demo(_: &mut Window, cx: &mut App) -> AnyView {
     );
     small.set_options(
         GridOptions {
-            selection: SelectionMode::Cell,
+            selection: SelectionMode::Range,
             focusable: Some(true),
             label: "People".into(),
             ..Default::default()
@@ -296,40 +374,45 @@ fn demo(_: &mut Window, cx: &mut App) -> AnyView {
         })
         .collect();
     let log = EventLog::new(cx);
-    for (name, grid) in [("orders", &big), ("people", &small)] {
-        EventLog::watch_with(
-            &log,
-            grid.events(),
-            move |e: &GridEvent| match e {
-                GridEvent::SortChanged(keys) => {
-                    let k: Vec<_> = keys
-                        .iter()
-                        .map(|k| format!("{}:{:?}", k.column, k.dir))
-                        .collect();
-                    format!("{name}: SortChanged [{}]", k.join(", ")).into()
-                }
-                other => format!("{name}: {other:?}").into(),
-            },
-            cx,
-        );
-    }
+    EventLog::watch_with(
+        &log,
+        big.events(),
+        move |e: &GridEvent| match e {
+            GridEvent::SortChanged(keys) => {
+                let k: Vec<_> = keys
+                    .iter()
+                    .map(|k| format!("{}:{:?}", k.column, k.dir))
+                    .collect();
+                format!("SortChanged [{}]", k.join(", ")).into()
+            }
+            other => format!("{other:?}").into(),
+        },
+        cx,
+    );
+    let edits = EventLog::new(cx);
     cx.new(|cx| {
-        let subs = knobs
-            .iter()
-            .enumerate()
-            .map(|(i, (_, c))| {
-                let big = big.clone();
-                cx.subscribe(c, move |_, _, e: &SegmentedEvent, cx| {
-                    let SegmentedEvent::Changed(index) = e;
-                    Demo::apply(&big, i, *index, cx);
-                })
+        let edit_log = edits.clone();
+        let mut subs: Vec<Subscription> =
+            vec![
+                cx.subscribe(small.events(), move |_, _, e: &GridEvent, cx| {
+                    if let Some(line) = edit_line(e) {
+                        EventLog::log(&edit_log, line, cx);
+                    }
+                }),
+            ];
+        subs.extend(knobs.iter().enumerate().map(|(i, (_, c))| {
+            let big = big.clone();
+            cx.subscribe(c, move |_, _, e: &SegmentedEvent, cx| {
+                let SegmentedEvent::Changed(index) = e;
+                Demo::apply(&big, i, *index, cx);
             })
-            .collect();
+        }));
         Demo {
             big,
             small,
             knobs,
             log,
+            edits,
             _subs: subs,
         }
     })

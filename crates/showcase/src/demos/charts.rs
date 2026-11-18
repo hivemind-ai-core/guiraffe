@@ -22,7 +22,7 @@ fn entry(
     demo: fn(&mut Window, &mut App) -> AnyView,
 ) -> Entry {
     Entry {
-        krate: "charts",
+        krate: "kit-charts",
         name,
         summary,
         covers: &[],

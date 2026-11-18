@@ -21,6 +21,15 @@ clears editable cells; undo/redo with paste as one step. **Not in the grid:** fo
 handle/series, multiple ranges, Ctrl+D/R, insert/delete rows and columns by the user, frozen panes
 beyond pinned columns.
 
+Paste and clear details: a block lands at the selection's top-left cell, or tiles over the
+selected range when the range is larger and the block divides it; it is clipped to existing
+rows. Columns map positionally to *displayed* columns: hidden columns are not part of the
+grid, so they are skipped (Sheets-style, never written), and non-editable displayed columns
+drop their values. Rows map through the current sort/filter to source rows; undo restores
+those source rows regardless of later view changes, and only while each row keeps its
+`RowKey` (the history is cleared when the source's row count changes). Bulk operations are
+refused as a whole, with one Busy event, while a background sort or copy shares the source.
+
 ## Sheet editing (spreadsheet editing)
 Everything above, plus formulas (pluggable engine, A1 references, recalculation), fill handle and
 series, Ctrl+D/Ctrl+R, multiple ranges (Ctrl+drag), Ctrl+arrow jumps to data edges and

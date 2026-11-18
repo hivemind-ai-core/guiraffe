@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 /// Catalog sections that showcase third-party types (GPUI Controls and its charts), which the
 /// scanner cannot see; their entries are exempt from the covered/stale check.
-const EXTERNAL_SECTIONS: &[&str] = &["kit", "charts"];
+const EXTERNAL_SECTIONS: &[&str] = &["kit", "kit-charts"];
 
 /// Crates that are tools or harnesses, not component libraries.
 const NOT_COMPONENT_CRATES: &[&str] = &["showcase", "gallery", "test", "bench", "cli", "mocket"];

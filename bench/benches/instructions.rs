@@ -26,6 +26,18 @@ macro_rules! define_instruction {
             guiraffe_bench::suites::data_ui_structural_splice();
         }
     };
+    (chart_line_million) => {
+        #[library_benchmark(setup = guiraffe_bench::suites::prepare_chart_line)]
+        fn chart_line_million(_: ()) {
+            guiraffe_bench::suites::chart_line_million();
+        }
+    };
+    (chart_scatter_hundred_thousand) => {
+        #[library_benchmark(setup = guiraffe_bench::suites::prepare_chart_scatter)]
+        fn chart_scatter_hundred_thousand(_: ()) {
+            guiraffe_bench::suites::chart_scatter_hundred_thousand();
+        }
+    };
     ($function:ident) => {
         #[library_benchmark]
         fn $function() {

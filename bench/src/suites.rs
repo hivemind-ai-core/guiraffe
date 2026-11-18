@@ -297,6 +297,65 @@ pub fn data_ui_structural_splice() {
     crate::data_ui::structural_splice();
 }
 
+fn chart_model(
+    mark: guiraffe_charts::Mark,
+    count: usize,
+    value: impl Fn(usize) -> f64,
+) -> guiraffe_charts::PreparedChart {
+    use guiraffe_charts::{Channels, ChartSpec, Layer};
+    let rows: Vec<_> = (0..count).map(|i| (i as f64, value(i))).collect();
+    ChartSpec::new("Benchmark data")
+        .layer(Layer::new(
+            mark,
+            rows,
+            Channels::new(|r: &(f64, f64)| r.0, |r| r.1),
+        ))
+        .prepare()
+}
+
+fn million_line() -> &'static guiraffe_charts::PreparedChart {
+    static MODEL: std::sync::OnceLock<guiraffe_charts::PreparedChart> = std::sync::OnceLock::new();
+    MODEL.get_or_init(|| {
+        chart_model(guiraffe_charts::Mark::Line, 1_000_000, |i| {
+            let x = i as f64;
+            (x * 0.002).sin() + (x * 0.000_07).cos() * 2.
+        })
+    })
+}
+
+fn dense_scatter() -> &'static guiraffe_charts::PreparedChart {
+    static MODEL: std::sync::OnceLock<guiraffe_charts::PreparedChart> = std::sync::OnceLock::new();
+    MODEL.get_or_init(|| {
+        chart_model(guiraffe_charts::Mark::Point, 100_000, |i| {
+            (i as u32).wrapping_mul(2_654_435_761).rotate_left(11) as f64 / f64::from(u32::MAX)
+        })
+    })
+}
+
+pub fn prepare_chart_line() {
+    black_box(million_line());
+}
+
+pub fn prepare_chart_scatter() {
+    black_box(dense_scatter());
+}
+
+/// Compile a full and zoomed 1200px viewport over a prepared million-point series.
+pub fn chart_line_million() {
+    let chart = million_line();
+    let hidden = Default::default();
+    black_box(chart.scene(1200., 440., chart.x_domain(), &hidden));
+    if let Some(domain) = guiraffe_charts::Domain::new(482_500., 502_500.) {
+        black_box(chart.scene(1200., 440., domain, &hidden));
+    }
+}
+
+/// Compile a full 1200px viewport over 100k points and bin its visible geometry.
+pub fn chart_scatter_hundred_thousand() {
+    let chart = dense_scatter();
+    black_box(chart.scene(1200., 440., chart.x_domain(), &Default::default()));
+}
+
 /// Shared registration table consumed by the CLI, criterion and iai-callgrind.
 /// Add workloads here once; each tool expands its own registration from this list.
 #[macro_export]
@@ -304,6 +363,8 @@ macro_rules! with_suites {
     ($callback:ident) => {
         $callback! {
             (core_variants, "core-variants"),
+            (chart_line_million, "chart-line-1m"),
+            (chart_scatter_hundred_thousand, "chart-scatter-100k"),
             (code_scroll_million,"code-scroll-1m"),
             (code_snapshot_arc_clone,"code-snapshot-arc-clone"),
             (datagrid_scroll_million, "datagrid-scroll-1m"),
