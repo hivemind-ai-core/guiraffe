@@ -230,6 +230,9 @@ impl RenderOnce for Stepper {
                         None => el.child(number.clone()),
                     });
                 let label_el = div()
+                    // Room between neighbouring labels (the rail runs behind, unaffected).
+                    .px(gap / 2.0)
+                    .items_center()
                     .flex()
                     .flex_col()
                     .gap(px(size.spacing() / 4.0))
@@ -254,9 +257,10 @@ impl RenderOnce for Stepper {
                     .top(px(
                         bubble_size(size) * scale / 2.0 - rail_thickness(size) / 2.0
                     ))
-                    .left(bubble)
-                    // Reach into the inter-column gap, so the rail reads as one line.
-                    .right(px(-gap_v))
+                    // From this bubble's centre to the next one's: columns are equal width,
+                    // so that is exactly one column further on.
+                    .left(gpui_kit::relative(0.5))
+                    .w(gpui_kit::relative(1.0))
                     .h(rail)
                     .bg(hsla(if connector_complete(i, active) {
                         v_filled.background
@@ -274,12 +278,7 @@ impl RenderOnce for Stepper {
                     column = column.child(rail_el);
                 }
                 let column = column.child(bubble_el).child(label_el);
-                let column = div()
-                    .flex_1()
-                    .flex()
-                    .items_start()
-                    .child(column.flex_1())
-                    .when(i + 1 < count, |el| el.child(div().w(gap)));
+                let column = div().flex_1().flex().items_start().child(column.flex_1());
                 match click.clone() {
                     Some(f) => {
                         let id = SharedString::from(format!("gr-step:{i}"));
