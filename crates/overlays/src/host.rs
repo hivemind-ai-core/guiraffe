@@ -9,6 +9,7 @@ use crate::{
 use gpui_kit::StatefulInteractiveElement;
 use gpui_kit::base::{Root, RootPlugin, TestSupportExt};
 use gpui_kit::component::{WindowExt, notification::Notification, progress::Progress};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Anchor, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Render, Styled, Task, Window, div, px,
@@ -79,7 +80,12 @@ impl RootPlugin for OverlayHost {
         let escape = self.stack.top().is_none_or(|e| e.policy.escape);
         div()
             .when_some(self.root_scope.as_ref(), |root, focus| {
-                root.track_focus(focus)
+                let focus = focus.clone();
+                // Register the scope for containment checks without taking
+                // pointer focus from the application content.
+                root.on_children_prepainted(move |_, window, cx| {
+                    window.set_focus_handle(&focus, cx);
+                })
             })
             .size_full()
             .key_context(if escape {

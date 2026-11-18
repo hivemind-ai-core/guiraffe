@@ -1367,9 +1367,11 @@ fn removed_modal_opener_restores_focus_to_the_window(cx: &mut TestAppContext) {
     let (handle, content) = open_with_content(cx);
     cx.update_window(handle.into(), |_, window, cx| {
         let opener = cx.focus_handle();
-        content.update(cx, |view, cx| {
+        let background = content.update(cx, |view, cx| {
             view.opener = Some(opener.clone());
+            view.focus = view.focus.clone().tab_stop(true);
             cx.notify();
+            view.focus.clone()
         });
         window.focus(&opener, cx);
         window.render_frame(cx);
@@ -1386,6 +1388,8 @@ fn removed_modal_opener_restores_focus_to_the_window(cx: &mut TestAppContext) {
         let restored = window.focused(cx).expect("window fallback focus");
         assert_ne!(restored, opener);
         assert_ne!(restored, modal);
+        window.press("tab", cx);
+        assert!(background.is_focused(window));
     })
     .expect("window");
 }
