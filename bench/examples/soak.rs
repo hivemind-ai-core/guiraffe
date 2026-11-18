@@ -152,38 +152,44 @@ fn charts(
         gpui_kit::component::init(cx);
         guiraffe_core::apply(Default::default(), cx);
     });
+    let mount_started = Instant::now();
     let (_, window) = cx.add_window_view(|window, cx| {
         let (mark, count) = if scatter {
             (Mark::Point, 1_000_000)
         } else {
             (Mark::Line, 10_000_000)
         };
-        let model = if streaming {
-            streaming_spec(stream.clone()).prepare()
-        } else {
-            ChartSpec::new("Observations · عربي 日本語 🎵")
-                .layer(Layer::new(
-                    mark,
-                    (0..count).collect::<Vec<u32>>(),
-                    Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin())
-                        .group(move |i| if scatter { i % 100 } else { 0 }),
-                ))
-                .prepare()
+        let options = ChartOptions {
+            legend: false,
+            navigation: !streaming,
+            ..Default::default()
         };
-        let chart = ChartView::new(
-            model,
-            ChartOptions {
-                legend: false,
-                navigation: !streaming,
-                ..Default::default()
-            },
-            cx,
-        );
+        let chart = if streaming {
+            ChartView::new(streaming_spec(stream.clone()).prepare(), options, cx)
+        } else {
+            let spec = ChartSpec::new("Observations · عربي 日本語 🎵").layer(Layer::new(
+                mark,
+                (0..count).collect::<Vec<u32>>(),
+                Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin())
+                    .group(move |i| if scatter { i % 100 } else { 0 }),
+            ));
+            ChartView::from_spec(spec, options, cx)
+        };
         view = Some(chart.clone());
         gpui_kit::base::Root::new(chart, window, cx)
     });
     window.update(|window, cx| window.render_frame(cx));
+    println!(
+        "first_chart_frame_us={}",
+        mount_started.elapsed().as_micros()
+    );
     window.run_until_parked();
+    if !streaming {
+        let chart = view.as_ref().ok_or("missing mounted chart")?;
+        if window.update(|_, cx| chart.read(cx).scene_build_count()) < 2 {
+            return Err("full chart scene did not publish".into());
+        }
+    }
     let stream_started = Instant::now();
     let mut next = STREAM_RATE;
     run(&mut |i| {
