@@ -98,6 +98,17 @@ impl<K, V: PartialEq, L> UndoLog<K, V, L> {
         self.done.back()
     }
 
+    /// The transaction [`UndoLog::undo`] would return, without moving it (apply first, then
+    /// move, so a refused restore leaves the stacks untouched).
+    pub fn peek_undo(&self) -> Option<&Transaction<K, V, L>> {
+        self.done.back()
+    }
+
+    /// The transaction [`UndoLog::redo`] would return, without moving it.
+    pub fn peek_redo(&self) -> Option<&Transaction<K, V, L>> {
+        self.undone.last()
+    }
+
     pub fn clear(&mut self) {
         self.done.clear();
         self.undone.clear();

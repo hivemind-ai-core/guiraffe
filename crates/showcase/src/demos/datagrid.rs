@@ -195,7 +195,10 @@ fn edit_line(e: &GridEvent) -> Option<String> {
         } => {
             let reasons: Vec<String> = first
                 .iter()
-                .map(|r| format!("row {} col {}: {}", r.row, r.column, r.reason))
+                .map(|r| match (r.row, r.column) {
+                    (Some(row), Some(col)) => format!("row {row} col {col}: {}", r.reason),
+                    _ => r.reason.to_string(),
+                })
                 .collect();
             format!(
                 "{op:?}: {rejected} rejected, {applied} applied [{}]",

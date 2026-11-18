@@ -261,12 +261,25 @@ pub enum EditOp {
     Redo,
 }
 
-/// One vetoed cell. `row` is the source row, `column` the definition index.
+/// One vetoed cell, or the whole operation. `row` is the source row and `column` the
+/// definition index; both are `None` when the operation was refused as a whole (source busy,
+/// selection too large to cut).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellRejection {
-    pub row: usize,
-    pub column: usize,
+    pub row: Option<usize>,
+    pub column: Option<usize>,
     pub reason: SharedString,
+}
+
+impl CellRejection {
+    /// An operation-level rejection (no cell position).
+    pub fn whole(reason: impl Into<SharedString>) -> Self {
+        Self {
+            row: None,
+            column: None,
+            reason: reason.into(),
+        }
+    }
 }
 
 /// Most cells one paste, cut or clear writes; larger targets are truncated (paste, clear)
@@ -276,14 +289,17 @@ pub const MAX_EDIT_CELLS: usize = 100_000;
 /// How many rejection reasons [`GridEvent::CellsRejected`] carries.
 pub const REJECTION_SAMPLES: usize = 5;
 
-/// Undo key: (source row, column definition).
-type CellKey = (usize, usize);
+/// Undo key: (source row, its `RowKey` when recorded, column definition). The key guards
+/// against restoring into a different record after the source changed behind the grid.
+type CellKey = (usize, RowKey, usize);
 
 /// One cell a bulk operation writes.
 struct CellWrite {
     source_row: usize,
     def: usize,
     value: String,
+    /// Undo/redo only: the row must still have this key, or the write is rejected.
+    expect: Option<RowKey>,
 }
 
 /// Text that round-trips a cell through `GridSource::set_cell` for undo: the default display,
@@ -482,6 +498,10 @@ struct Model {
     pending: Option<PendingCommit>,
     copying: usize,
     undo: UndoLog<CellKey, String, EditOp>,
+    /// Source row count when undo history was last known valid.
+    src_rows: usize,
+    /// Whether any displayed column is editable (cached with the layout).
+    any_editable: bool,
     /// Last pointer position (grid-relative) of a range drag, while it autoscrolls.
     autoscroll: Option<(f32, f32)>,
     autoscroll_task: bool,
@@ -596,7 +616,7 @@ impl Model {
         src.set_cell(source_row, src_col, value)
             .map_err(|e| SharedString::from(e.to_string()))?;
         Ok(restorable.then(|| Change {
-            key: (source_row, def),
+            key: (source_row, self.source.row_key(source_row), def),
             old,
             new: value.to_string(),
         }))
@@ -612,6 +632,11 @@ impl Model {
             }),
             None => Ok(()),
         }
+    }
+
+    /// Recompute [`Model::any_editable`] (after the layout changed).
+    fn refresh_editable(&mut self) {
+        self.any_editable = (0..self.cols()).any(|c| self.editable_display(c).is_some());
     }
 
     /// Whether display column `col` is an editable column.
@@ -655,6 +680,7 @@ impl Model {
                     source_row: src,
                     def,
                     value: String::new(),
+                    expect: None,
                 });
             }
         }
@@ -732,12 +758,15 @@ impl GridHandle {
             pending: None,
             copying: 0,
             undo: UndoLog::default(),
+            src_rows: count,
+            any_editable: false,
             autoscroll: None,
             autoscroll_task: false,
             stats: GridStats::default(),
             text: String::with_capacity(64),
         };
         model.resolve_metrics();
+        model.refresh_editable();
         let core = Rc::new(Core {
             m: RefCell::new(model),
             focus: cx.focus_handle(),
@@ -953,6 +982,7 @@ impl GridHandle {
         {
             let mut m = self.core.m.borrow_mut();
             m.source = source;
+            m.src_rows = m.source.row_count();
             m.undo.clear();
         }
         self.core.refresh_order(cx);
@@ -961,6 +991,10 @@ impl GridHandle {
     /// Mutate the source in place (needs exclusive ownership: no background job and no
     /// outside `Arc` clone). Returns `None` when shared. Call
     /// [`GridHandle::rows_changed`] or [`GridHandle::data_changed`] afterwards.
+    ///
+    /// Undo history survives value changes. Undo entries remember each row's `RowKey`, so a
+    /// restore never lands in a different record: rows whose key changed are rejected. If
+    /// rows were inserted or removed, [`GridHandle::data_changed`] clears the history.
     pub fn update_source<R>(&self, f: impl FnOnce(&mut dyn GridSource) -> R) -> Option<R> {
         let mut m = self.core.m.borrow_mut();
         Arc::get_mut(&mut m.source).map(f)
@@ -982,7 +1016,19 @@ impl GridHandle {
     }
 
     /// Anything may have changed (row count, values): re-run sort/filter and re-render.
+    ///
+    /// When the source's row count changed since the grid last saw it, undo history is
+    /// cleared (row indices no longer identify the same records). Same-count changes keep
+    /// it; undo then skips rows whose `RowKey` differs from the one recorded.
     pub fn data_changed(&self, cx: &mut App) {
+        {
+            let mut m = self.core.m.borrow_mut();
+            let n = m.source.row_count();
+            if n != m.src_rows {
+                m.undo.clear();
+                m.src_rows = n;
+            }
+        }
         self.core.refresh_order(cx);
     }
 
@@ -1051,6 +1097,10 @@ impl GridHandle {
     }
 
     /// Undo the last edit, paste, cut or clear (Ctrl+Z). Returns whether anything was undone.
+    ///
+    /// Old values are restored as text through `GridSource::set_cell` (floats at full
+    /// precision). Cells that held a `CellRef::Custom` value have no text form, so they are
+    /// not recorded and an undo leaves them as written.
     pub fn undo(&self, cx: &mut App) -> bool {
         self.core.undo(false, cx)
     }
@@ -1177,6 +1227,7 @@ impl Core {
         let (sel_changed, hidden_edit) = {
             let mut m = self.m.borrow_mut();
             m.layout = ColumnLayout::compute(&m.defs, &m.order);
+            m.refresh_editable();
             let cols = m.cols();
             let count = m.count;
             let before = m.sel.clone();
@@ -1811,10 +1862,7 @@ impl Core {
     /// and range modes. Returns `false` (let focus move on) in row modes, without editable
     /// columns, or at the grid's first/last cell, so Tab never traps keyboard focus.
     fn tab_move(self: &Rc<Self>, adv: Advance, cx: &mut App) -> bool {
-        let editable = {
-            let m = self.m.borrow();
-            (0..m.cols()).any(|c| m.editable_display(c).is_some())
-        };
+        let editable = self.m.borrow().any_editable;
         if !self.cell_mode() || !editable {
             return false;
         }
@@ -1855,8 +1903,30 @@ impl Core {
         self.paste_text(&text, cx)
     }
 
+    /// Refuse a bulk operation up front, with one operation-level
+    /// [`GridEvent::CellsRejected`], while a background sort/copy shares the source.
+    fn refuse_if_busy(self: &Rc<Self>, op: EditOp, cx: &mut App) -> bool {
+        let busy = Arc::get_mut(&mut self.m.borrow_mut().source).is_none();
+        if busy {
+            self.reject_whole(op, 0, EditError::Busy.to_string(), cx);
+        }
+        busy
+    }
+
+    fn reject_whole(&self, op: EditOp, rejected: usize, reason: String, cx: &mut App) {
+        self.emit(
+            GridEvent::CellsRejected {
+                op,
+                rejected,
+                applied: 0,
+                first: Arc::from([CellRejection::whole(reason)]),
+            },
+            cx,
+        );
+    }
+
     fn paste_text(self: &Rc<Self>, text: &str, cx: &mut App) -> usize {
-        if self.is_editing() {
+        if self.is_editing() || self.refuse_if_busy(EditOp::Paste, cx) {
             return 0;
         }
         let block = parse_tsv(text);
@@ -1891,6 +1961,7 @@ impl Core {
                         source_row: src,
                         def,
                         value,
+                        expect: None,
                     });
                 }
             }
@@ -1911,25 +1982,13 @@ impl Core {
     /// Ctrl+X: copy, then clear the editable cells. Refused (one rejection event) when the
     /// selection is larger than [`MAX_EDIT_CELLS`], so a cut never copies more than it clears.
     fn cut(self: &Rc<Self>, cx: &mut App) -> usize {
-        if self.is_editing() {
+        if self.is_editing() || self.refuse_if_busy(EditOp::Cut, cx) {
             return 0;
         }
         let (writes, covered, truncated) = self.m.borrow().selected_editable();
         if truncated {
-            self.emit(
-                GridEvent::CellsRejected {
-                    op: EditOp::Cut,
-                    rejected: covered,
-                    applied: 0,
-                    first: Arc::from([CellRejection {
-                        row: 0,
-                        column: 0,
-                        reason: format!("selection too large to cut (over {MAX_EDIT_CELLS} cells)")
-                            .into(),
-                    }]),
-                },
-                cx,
-            );
+            let reason = format!("selection too large to cut (over {MAX_EDIT_CELLS} cells)");
+            self.reject_whole(EditOp::Cut, covered, reason, cx);
             return 0;
         }
         self.copy(cx);
@@ -1938,7 +1997,7 @@ impl Core {
 
     /// Delete / Backspace: clear the editable cells of the selection.
     fn clear_cells(self: &Rc<Self>, op: EditOp, cx: &mut App) -> usize {
-        if self.is_editing() {
+        if self.is_editing() || self.refuse_if_busy(op, cx) {
             return 0;
         }
         let (writes, _, truncated) = self.m.borrow().selected_editable();
@@ -1946,40 +2005,32 @@ impl Core {
     }
 
     /// Undo (or redo) one transaction. Restores bypass the validator (they put back values the
-    /// source held) but still go through `set_cell`.
+    /// source held) but still go through `set_cell`, and only into rows that still carry the
+    /// recorded `RowKey` (others are rejected, never written into another record).
+    ///
+    /// The transaction moves to the other stack only after its writes ran: when every write
+    /// is rejected it stays where it was. A partial restore (some cells rejected, reported in
+    /// one event) still moves it, so the stacks always reflect the source's last good state.
     fn undo(self: &Rc<Self>, redo: bool, cx: &mut App) -> bool {
-        if self.is_editing() {
-            return false;
-        }
         let op = if redo { EditOp::Redo } else { EditOp::Undo };
-        let writes: Vec<CellWrite> = {
-            let mut m = self.m.borrow_mut();
-            let ready = if redo {
+        let ready = {
+            let m = self.m.borrow();
+            if redo {
                 m.undo.can_redo()
             } else {
                 m.undo.can_undo()
+            }
+        };
+        if self.is_editing() || !ready || self.refuse_if_busy(op, cx) {
+            return false;
+        }
+        let writes: Vec<CellWrite> = {
+            let m = self.m.borrow();
+            let t = if redo {
+                m.undo.peek_redo()
+            } else {
+                m.undo.peek_undo()
             };
-            if !ready {
-                return false;
-            }
-            if Arc::get_mut(&mut m.source).is_none() {
-                drop(m);
-                self.emit(
-                    GridEvent::CellsRejected {
-                        op,
-                        rejected: 0,
-                        applied: 0,
-                        first: Arc::from([CellRejection {
-                            row: 0,
-                            column: 0,
-                            reason: EditError::Busy.to_string().into(),
-                        }]),
-                    },
-                    cx,
-                );
-                return false;
-            }
-            let t = if redo { m.undo.redo() } else { m.undo.undo() };
             let Some(t) = t else { return false };
             let steps: Vec<(&CellKey, &String)> = if redo {
                 t.redo_steps().collect()
@@ -1988,14 +2039,24 @@ impl Core {
             };
             steps
                 .into_iter()
-                .map(|(&(source_row, def), v)| CellWrite {
+                .map(|(&(source_row, key, def), v)| CellWrite {
                     source_row,
                     def,
                     value: v.clone(),
+                    expect: Some(key),
                 })
                 .collect()
         };
-        self.apply_writes(op, writes, false, false, cx);
+        let applied = self.apply_writes(op, writes, false, false, cx);
+        if applied == 0 {
+            return false;
+        }
+        let mut m = self.m.borrow_mut();
+        if redo {
+            m.undo.redo();
+        } else {
+            m.undo.undo();
+        }
         true
     }
 
@@ -2019,7 +2080,12 @@ impl Core {
             let mut rejected = 0usize;
             let mut first = Vec::new();
             for w in writes {
-                let r = if validate {
+                let moved = w.expect.is_some_and(|k| {
+                    w.source_row >= m.source.row_count() || m.source.row_key(w.source_row) != k
+                });
+                let r = if moved {
+                    Err(SharedString::from("the record changed since this edit"))
+                } else if validate {
                     m.validate(w.source_row, w.def, &w.value)
                 } else {
                     Ok(())
@@ -2034,8 +2100,8 @@ impl Core {
                         rejected += 1;
                         if first.len() < REJECTION_SAMPLES {
                             first.push(CellRejection {
-                                row: w.source_row,
-                                column: w.def,
+                                row: Some(w.source_row),
+                                column: Some(w.def),
                                 reason,
                             });
                         }

@@ -365,7 +365,7 @@ fn paste_tiles_rejects_one_and_undoes_as_one_step(cx: &mut TestAppContext) {
     assert_eq!(rejections.len(), 1, "one summary event");
     let (op, rejected, applied, first) = &rejections[0];
     assert_eq!((*op, *rejected, *applied), (EditOp::Paste, 1, 7));
-    assert_eq!((first[0].row, first[0].column), (3, 1));
+    assert_eq!((first[0].row, first[0].column), (Some(3), Some(1)));
     assert_eq!(first[0].reason.as_ref(), "row 3 age is locked");
     assert!(ev.contains(&GridEvent::CellsChanged {
         op: EditOp::Paste,
