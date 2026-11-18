@@ -194,7 +194,11 @@ impl Validation<'_> {
                     prop.name,
                     got.clone(),
                     accepted,
-                    suggestion(got.as_str().unwrap_or_default(), prop.accepted),
+                    if prop.accepted.is_empty() {
+                        "Use a value matching the property schema.".into()
+                    } else {
+                        format!("Use one of: {}.", prop.accepted.join(", "))
+                    },
                 );
             }
         }
@@ -266,6 +270,7 @@ mod tests {
             ["children", "colro", "text", "size", "id", "click"]
         );
         assert_eq!(issues[1].hint, "Did you mean \"color\"?");
+        assert_eq!(issues[3].hint, "Use one of: xs, sm, md, lg, xl.");
         assert_eq!(issues[5].node, "/root/children/1");
         assert_eq!(issues[5].got, json!("svae"));
         assert_eq!(issues[5].accepted, json!(["save"]));
