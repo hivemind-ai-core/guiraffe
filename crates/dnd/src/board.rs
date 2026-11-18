@@ -451,7 +451,7 @@ mod tests {
         window.simulate_mouse_move(start, Some(MouseButton::Left), Default::default());
         window.update(|window, cx| {
             assert!(cx.has_active_drag());
-            window.draw(cx);
+            let _ = window.draw(cx);
         });
         let before = renders.get();
         window.simulate_mouse_move(
@@ -460,7 +460,7 @@ mod tests {
             Default::default(),
         );
         window.update(|window, cx| {
-            window.draw(cx);
+            let _ = window.draw(cx);
         });
         assert_eq!(
             renders.get(),
