@@ -192,7 +192,7 @@ impl Render for Accordion {
                             .py_2()
                             .rounded(radius)
                             .when(self.options.chevron == ChevronPosition::Start, |el| {
-                                el.child(Icon::new(chevron))
+                                el.child(Icon::new(chevron.clone()))
                             })
                             .child(div().flex_1().child(item.title.clone()))
                             .when(self.options.chevron == ChevronPosition::End, |el| {
