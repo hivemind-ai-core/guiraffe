@@ -192,12 +192,13 @@ fn charts(
     }
     let stream_started = Instant::now();
     let mut next = STREAM_RATE;
+    let mut due = STREAM_RATE;
     run(&mut |i| {
         if streaming {
-            let target = STREAM_RATE
+            due = STREAM_RATE
                 + (stream_started.elapsed().as_secs_f64() * f64::from(STREAM_RATE)) as u32;
-            if target.saturating_sub(next) >= STREAM_BATCH {
-                let end = target - (target - next) % STREAM_BATCH;
+            if due.saturating_sub(next) >= STREAM_BATCH {
+                let end = due - (due - next) % STREAM_BATCH;
                 stream.append((next..end).collect());
                 stream.retain_last(STREAM_RATE as usize);
                 next = end;
@@ -234,8 +235,9 @@ fn charts(
     if streaming {
         let elapsed = stream_started.elapsed().as_secs_f64();
         let points = next - STREAM_RATE;
-        println!("stream_points={points} stream_seconds={elapsed:.3}");
-        if f64::from(points) + f64::from(STREAM_BATCH * 2) < elapsed * f64::from(STREAM_RATE) {
+        let pending = due.saturating_sub(next);
+        println!("stream_points={points} stream_seconds={elapsed:.3} stream_pending={pending}");
+        if pending >= STREAM_BATCH {
             return Err("stream failed to sustain 10,000 points per second".into());
         }
     }
