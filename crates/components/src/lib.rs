@@ -4,6 +4,7 @@
 //! uses Mantine prop names (`.size(Size::Md)`, `.variant(Variant::Light)`, `.color(..)`),
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
 
+pub mod accordion;
 pub mod focus;
 pub mod highlight;
 pub mod icons;
@@ -14,6 +15,9 @@ pub mod segmented;
 mod style;
 pub mod typography;
 
+pub use accordion::{
+    Accordion, AccordionChange, AccordionOptions, AccordionVariant, ChevronPosition, DisclosureItem,
+};
 pub use focus::ScopedButton;
 pub use highlight::{Highlight, Mark, highlight_ranges};
 pub use icons::{ActionIcon, ThemeIcon, close_button};
