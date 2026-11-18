@@ -4,7 +4,7 @@ use guiraffe_flow::{
     FlowCanvas, FlowOptions, FlowState,
     core::{
         AutoLayout, Edge, Editor, Graph, LayoutCancellation, LayoutDirection, LayoutEngine,
-        LayoutOptions, Node, Point,
+        LayoutOptions, Node, Point, Side,
     },
 };
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
@@ -25,7 +25,12 @@ fn layered_port_routes_in_both_schemes() -> anyhow::Result<()> {
         ]
         .into_iter()
         .enumerate()
-        .map(|(id, label)| Node::new(id as u64, label, Point::default())),
+        .map(|(id, label)| {
+            let mut node = Node::new(id as u64, label, Point::default());
+            node.handles[0].side = Side::Top;
+            node.handles[1].side = Side::Bottom;
+            node
+        }),
         [(0, 3), (1, 2), (2, 4), (3, 5), (2, 5)]
             .into_iter()
             .enumerate()
@@ -63,6 +68,8 @@ fn layered_port_routes_in_both_schemes() -> anyhow::Result<()> {
                 let state = cx.new(|cx| {
                     FlowState::from_editor(editor, cx).options(FlowOptions {
                         toolbar: false,
+                        minimap: false,
+                        controls: false,
                         ..FlowOptions::default()
                     })
                 });
