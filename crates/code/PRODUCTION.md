@@ -70,7 +70,7 @@ varied across repeated runs and exceeded the frame budget in this capture.
 
 ## Deterministic mounted frame checks
 
-The [instruction suite](../../bench/benches/instructions.rs) measures a
+The [instruction suite](../../bench/benches/production_frames.rs) measures a
 warmed scroll and draw in a 1,200 by 800 headless viewport. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
 100k and 10M lines. It caps each draw at 160 allocations and 192 KiB of

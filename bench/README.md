@@ -136,3 +136,18 @@ audit, fuzzing, mutation and flake jobs remain roadmap work.
 Instantiation creates/drops a host from an already compiled four-node template with no-op logic; lazy first rendering and list seeding are excluded. Patch changes a mounted text node's color. Splice updates one keyed item in the middle of the seeded list, alternating prebuilt shared records. Structural splice alternates that row's key to exercise creation/disposal and live order-statistics maintenance. The text template explicitly opts into a bounded single-line row, and native row views are allocated only when rendered. Patch/splice include slot processing, reconciliation, and targeted notifications, excluding the subsequent draw. These are operation costs, not frame times. The fixture initializes native GPUI once per thread, so `gpui-kit/test-support` is enabled for this benchmark harness.
 
 `tests/allocator.rs` warms these workloads then counts requested allocation traffic, with separate bounds for each operation. The original zero-allocation assertions remain unchanged for core variants and window placement. Run one workload with `cargo run --release -p guiraffe-bench -- run --suite data-ui-splice --samples 20 --iterations 1000`; use a quiet machine and a recorded profile for performance comparisons.
+
+### Mounted DataGrid and CodeViewer frames
+
+Run the dedicated instruction suite with Valgrind and
+`iai-callgrind-runner` 0.16.1 on PATH.
+
+```sh
+cargo bench -p guiraffe-bench --features instruction-counts --bench production_frames
+cargo test -p guiraffe-bench --test allocator mounted_frame_allocations_do_not_grow_with_source_size
+```
+
+Each case creates the document or computed source and warms the window
+before measuring one viewport switch and draw. The 100k and 10M cases
+use the same window dimensions and target rows. Instruction counts cover
+CPU-side drawing, including GPUI layout and painting work.

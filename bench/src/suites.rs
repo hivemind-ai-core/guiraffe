@@ -444,11 +444,6 @@ macro_rules! with_suites {
             (datagrid_scroll_million, "datagrid-scroll-1m"),
             (datagrid_scroll_ten_million, "datagrid-scroll-10m"),
             (datagrid_sort_million, "datagrid-sort-1m"),
-            // Mounted DataGrid and CodeViewer draws.
-            (datagrid_frame_100k, "datagrid-frame-100k"),
-            (datagrid_frame_10m, "datagrid-frame-10m"),
-            (code_frame_100k, "code-frame-100k"),
-            (code_frame_10m, "code-frame-10m"),
             (flow_build,"flow-build-5k"),
             (flow_query,"flow-query-5k"),
             (flow_move,"flow-move-5k"),
@@ -465,7 +460,14 @@ macro_rules! make_registry {
     ($(($function:ident, $name:literal),)*) => {
         /// Registered headless workloads. Names are stable baseline filenames.
         pub fn registered() -> Vec<Suite> {
-            vec![$(Suite { name: $name, run: $function }),*]
+            vec![
+                $(Suite { name: $name, run: $function },)*
+                // Mounted DataGrid and CodeViewer draws.
+                Suite { name: "datagrid-frame-100k", run: datagrid_frame_100k },
+                Suite { name: "datagrid-frame-10m", run: datagrid_frame_10m },
+                Suite { name: "code-frame-100k", run: code_frame_100k },
+                Suite { name: "code-frame-10m", run: code_frame_10m },
+            ]
         }
     };
 }

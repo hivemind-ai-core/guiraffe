@@ -47,3 +47,8 @@ required-features = ["instruction-counts"]
 [[example]]
 name = "production_soak"
 test = true
+
+[[bench]]
+name = "production_frames"
+harness = false
+required-features = ["instruction-counts"]

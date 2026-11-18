@@ -80,7 +80,7 @@ and verify the stable permutation against a reference.
 
 ## Deterministic mounted frame checks
 
-The [instruction suite](../../bench/benches/instructions.rs) warms a 1,200 by
+The [instruction suite](../../bench/benches/production_frames.rs) warms a 1,200 by
 800 headless viewport and measures one scroll and draw. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
 100k and 10M rows. It caps each draw at 15,000 allocations and 7 MiB of
