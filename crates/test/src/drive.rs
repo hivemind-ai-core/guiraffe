@@ -277,6 +277,11 @@ impl<'a, T: InspectTarget> Driver<'a, T> {
         self.target.with_window(f)
     }
 
+    /// Runs until the app has nothing left to do.
+    pub fn park(&mut self) {
+        self.target.park();
+    }
+
     /// The nodes of the last frame.
     pub fn nodes(&mut self) -> NodeIndex {
         self.with_window(|window, _| NodeIndex::collect(window))

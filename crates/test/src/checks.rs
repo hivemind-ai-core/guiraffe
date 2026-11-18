@@ -228,11 +228,7 @@ fn focus_reachable(index: &NodeIndex, a11y: &A11yReport) -> Vec<Finding> {
 /// A node that keeps the focus while other focusable nodes are still to be
 /// visited is a trap: the keyboard cannot get out of it.
 fn focus_traps(a11y: &A11yReport) -> Vec<Finding> {
-    let focusable = a11y
-        .nodes
-        .iter()
-        .filter(|node| node.a11y.focusable)
-        .count();
+    let focusable = a11y.nodes.iter().filter(|node| node.a11y.focusable).count();
     let mut visited: Vec<&NodeId> = Vec::new();
     let mut findings = Vec::new();
     for id in &a11y.tab_walk {

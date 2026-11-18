@@ -107,6 +107,11 @@ impl<'a, T: InspectTarget> Server<'a, T> {
         &mut self.driver
     }
 
+    /// Runs until the app has nothing left to do.
+    pub fn park(&mut self) {
+        self.driver.park();
+    }
+
     /// Answers a call.
     pub fn call(&mut self, call: Call) -> Answer {
         match call {
@@ -360,6 +365,118 @@ pub fn read_request(reader: &mut impl BufRead, line: &mut String) -> std::io::Re
         ));
     }
     Ok(bytes != 0)
+}
+
+/// The socket that carries the calls of the API to the app.
+///
+/// The socket runs in threads of its own: they read the calls and wait for
+/// the answers. The app, which owns the window, answers them, so the socket
+/// never touches the app itself.
+pub struct CallSocket {
+    incoming: std::sync::mpsc::Receiver<(u64, String)>,
+    replies: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<String>>>,
+    >,
+    next: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl CallSocket {
+    /// Starts the socket at the path.
+    ///
+    /// A socket left over from a run that died would keep the path busy.
+    #[cfg(unix)]
+    pub fn start(path: &Path) -> std::io::Result<Self> {
+        let _ = std::fs::remove_file(path);
+        let listener = std::os::unix::net::UnixListener::bind(path)?;
+        let (incoming_tx, incoming_rx) = std::sync::mpsc::channel();
+        let replies = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let next = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let thread_replies = replies.clone();
+        let thread_next = next.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { break };
+                let id = thread_next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let incoming = incoming_tx.clone();
+                let replies = thread_replies.clone();
+                std::thread::spawn(move || {
+                    let _ = serve_stream(stream, id, incoming, replies);
+                });
+            }
+        });
+        Ok(Self {
+            incoming: incoming_rx,
+            replies,
+            next,
+        })
+    }
+
+    /// The next call that came in, with the id of the client that sent it.
+    pub fn next_call(&self) -> Option<(u64, String)> {
+        self.incoming.recv().ok()
+    }
+
+    /// Sends the answer of a call back to the client that sent it.
+    pub fn answer(&self, id: u64, answer: &str) {
+        if let Ok(replies) = self.replies.lock()
+            && let Some(reply) = replies.get(&id)
+        {
+            let _ = reply.send(answer.to_string());
+        }
+    }
+
+    /// The id of the next call.
+    pub fn next_id(&self) -> u64 {
+        self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Reads the calls of one client and writes the answers back.
+#[cfg(unix)]
+fn serve_stream(
+    mut stream: std::os::unix::net::UnixStream,
+    id: u64,
+    incoming: std::sync::mpsc::Sender<(u64, String)>,
+    replies: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<String>>>,
+    >,
+) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(TIMEOUT))?;
+    stream.set_write_timeout(Some(TIMEOUT))?;
+    // The channel the answers of this client come back on.
+    let (answer_tx, answer_rx) = std::sync::mpsc::channel();
+    if let Ok(mut replies) = replies.lock() {
+        replies.insert(id, answer_tx);
+    }
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut line = String::new();
+    while read_request(&mut reader, &mut line)? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if incoming.send((id, line.clone())).is_err() {
+            break;
+        }
+        // The answer of the call, written back to the client that sent it.
+        let answer = loop {
+            match answer_rx.recv() {
+                Ok(text) => break text,
+                Err(_) => return Ok(()),
+            }
+        };
+        let answer = if answer.len() > LIMIT {
+            "{\"ok\":false,\"error\":\"the answer is too large\"}".to_string()
+        } else {
+            answer
+        };
+        writeln!(stream, "{answer}")?;
+        stream.flush()?;
+        line.clear();
+    }
+    if let Ok(mut replies) = replies.lock() {
+        replies.remove(&id);
+    }
+    Ok(())
 }
 
 /// Serves the API on a local socket, one JSON document per line.

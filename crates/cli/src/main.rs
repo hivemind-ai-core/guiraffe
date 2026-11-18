@@ -70,7 +70,9 @@ fn run() -> Result<()> {
             // on the socket, for an agent that wants to look at it.
             match &args[2..] {
                 [flag, socket] if flag == "--inspect" && !socket.starts_with("--") => {
-                    inspect::serve(Path::new(socket), Some(Path::new(file)))
+                    // The inspected preview is the live one: it runs headless
+                    // and reloads the document when the file changes.
+                    preview::run_inspect(PathBuf::from(file), None, Path::new(socket))
                 }
                 _ => preview::run(PathBuf::from(file), option(&args[2..], "--screen")?),
             }

@@ -80,7 +80,7 @@ impl Stamp {
     }
 }
 
-struct Preview {
+pub(crate) struct Preview {
     path: PathBuf,
     screen: Option<String>,
     ui: Option<Entity<DataUi>>,
@@ -90,7 +90,7 @@ struct Preview {
 }
 
 impl Preview {
-    fn apply(&mut self, loaded: Result<Document>, cx: &mut Context<Self>) {
+    pub(crate) fn apply(&mut self, loaded: Result<Document>, cx: &mut Context<Self>) {
         match loaded {
             Ok(doc) => {
                 self.error = validate(&doc, true).err().map(|error| error.to_string());
@@ -115,7 +115,7 @@ impl Preview {
         cx.notify();
     }
 
-    fn watch(&self, cx: &mut Context<Self>) {
+    pub(crate) fn watch(&self, cx: &mut Context<Self>) {
         let path = self.path.clone();
         let screen = self.screen.clone();
         let mut stamp = self.stamp;
@@ -176,6 +176,60 @@ impl Render for Preview {
 }
 
 use gpui_kit::prelude::FluentBuilder as _;
+
+/// Runs the preview and serves the API on the socket.
+///
+/// The preview runs headless (the renderer of the snapshots) and the API
+/// serves the live document: the preview reloads it when the file changes,
+/// and the inspection follows.
+pub fn run_inspect(path: PathBuf, screen: Option<String>, socket: &Path) -> Result<()> {
+    let stamp = Stamp::of(&path);
+    let doc = load(&path, screen.as_deref())?;
+    let mut cx = gpui_kit::HeadlessAppContext::with_platform(
+        gpui_kit::platform::current_platform(true).text_system(),
+        std::sync::Arc::new(guiraffe_icons::GuiraffeAssets),
+        gpui_kit::platform::current_headless_renderer,
+    );
+    let window = cx.open_window(
+        gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(800.)),
+        move |_, app| {
+            app.new(|cx| {
+                let mut preview = Preview {
+                    path,
+                    screen,
+                    ui: None,
+                    error: None,
+                    stamp,
+                    reloads: 0,
+                };
+                preview.apply(Ok(doc), cx);
+                preview.watch(cx);
+                preview
+            })
+        },
+    )?;
+    let calls = guiraffe_test::transport::CallSocket::start(socket)?;
+    let mut target = guiraffe_test::inspect::HeadlessTarget::new(&mut cx, window.into());
+    let events = guiraffe_test::inspect::EventSink::new();
+    let driver = guiraffe_test::drive::Driver::new(&mut target, events);
+    let mut server = guiraffe_test::transport::Server::new(driver);
+    loop {
+        server.park();
+        while let Some((id, call)) = calls.next_call() {
+            let answer = match serde_json::from_str::<guiraffe_test::transport::Call>(&call) {
+                Ok(call) => server.call(call),
+                Err(error) => guiraffe_test::transport::Answer {
+                    ok: false,
+                    error: Some(format!("the call does not parse: {error}")),
+                    ..Default::default()
+                },
+            };
+            let text = serde_json::to_string(&answer).unwrap_or_default();
+            calls.answer(id, &text);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
 
 pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
     // Fail fast on an unreadable file before opening a window.

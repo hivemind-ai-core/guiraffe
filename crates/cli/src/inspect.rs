@@ -59,13 +59,6 @@ pub fn script(path: &Path, document: Option<&Path>) -> Result<bool> {
     })
 }
 
-/// Serves the API on a local socket, one JSON document per line.
-pub fn serve(socket: &Path, document: Option<&Path>) -> Result<()> {
-    with_app(document, |server| {
-        guiraffe_test::transport::serve(socket, server).context("serve the socket")
-    })
-}
-
 /// Runs the app headless and hands the server to `f`.
 ///
 /// The app runs in the headless context, which has the renderer of the
