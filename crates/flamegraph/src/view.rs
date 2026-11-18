@@ -34,6 +34,8 @@ pub enum ColourScheme {
     Heat,
 }
 
+/// Flame and icicle plot. Tab into the plot, use the arrows to move among
+/// frames, Enter or Space to activate a frame, and Home or Escape to reset.
 pub struct FlameGraph {
     layout: Arc<FlameLayout>,
     domain: Range<f64>,
@@ -700,13 +702,19 @@ mod tests {
             .read_with(window, |graph, _| graph.keyboard_focus.clone())
             .expect("plot has a focus handle");
         window.update(|window, cx| {
-            assert!(window.try_find_by_label("Flame graph").is_some());
+            let plot = window.find_by_label("Flame graph");
+            assert_eq!(plot.role(), Some(Role::Canvas));
+            assert_eq!(plot.description(), Some(KEYBOARD_HELP));
             window.focus(&keyboard_focus, cx);
         });
         window.simulate_keystrokes("right up enter");
         window.run_until_parked();
         assert_eq!(graph.read_with(window, |graph, _| graph.focus), Some(1));
         assert_eq!(clicks.get(), 2);
+        window.update(|window, _| {
+            let plot = window.find_by_label("Flame graph");
+            assert!(plot.description().is_some_and(|text| text.contains("self")));
+        });
         window.simulate_keystrokes("right left down home");
         window.run_until_parked();
         assert_eq!(graph.read_with(window, |graph, _| graph.focus), None);

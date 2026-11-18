@@ -587,6 +587,8 @@ mod tests {
 
     #[gpui_kit::test]
     fn keyboard_expand_scroll_and_validation(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+
         cx.update(|cx| {
             gpui_kit::base::init(cx);
             gpui_kit::component::init(cx);
@@ -625,7 +627,20 @@ mod tests {
         window.simulate_keystrokes("home");
         window.run_until_parked();
         let initial = renders.get();
-        window.simulate_keystrokes("right down space end");
+        window.simulate_keystrokes("right down space");
+        window.run_until_parked();
+        window.update(|window, _| {
+            let rows = window.find_all_by_role(Role::TreeItem);
+            assert!(
+                rows.iter()
+                    .any(|row| { row.label() == Some("Settings") && row.expanded() == Some(true) })
+            );
+            assert!(
+                rows.iter()
+                    .any(|row| { row.label() == Some("Property") && row.selected() == Some(true) })
+            );
+        });
+        window.simulate_keystrokes("end");
         window.run_until_parked();
         assert_eq!(
             view.read_with(window, |view, _| view.model.rows().len()),
