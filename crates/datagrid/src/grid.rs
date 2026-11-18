@@ -363,6 +363,7 @@ pub struct GridStats {
     pub pool: usize,
     pub order_jobs: u64,
     pub stale_jobs: u64,
+    pub palette_resolutions: u64,
 }
 
 /// An open editor. Tracked by source row and column *definition*, so it survives sorting,
@@ -2580,6 +2581,7 @@ impl Core {
             return *palette;
         }
         let palette = Palette::resolve(theme);
+        self.m.borrow_mut().stats.palette_resolutions += 1;
         *cached = Some((theme.clone(), palette));
         palette
     }

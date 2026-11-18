@@ -150,6 +150,28 @@ fn scrolling_ten_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn palette_is_shared_across_row_recycling_and_refreshes_on_theme_change(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(12), cx));
+    vcx.update(|window, cx| {
+        guiraffe_core::set_scheme(guiraffe_core::Scheme::Light, cx);
+        grid.focus(window, cx);
+        for row in 500_000..500_100 {
+            grid.scroll_to_row(row, cx);
+            grid.select(CellPos::new(row, 0), false, false, cx);
+        }
+    });
+    vcx.run_until_parked();
+    let before = grid.stats();
+    assert_eq!(before.palette_resolutions, 1);
+    let selected = grid.selection();
+    vcx.update(|_, cx| guiraffe_core::set_scheme(guiraffe_core::Scheme::Dark, cx));
+    vcx.run_until_parked();
+    assert_eq!(grid.stats().palette_resolutions, 2);
+    assert_eq!(grid.selection(), selected);
+    vcx.update(|window, _| assert!(grid.focus_handle().is_focused(window)));
+}
+
+#[gpui_kit::test]
 fn materialised_million_rows_keep_viewport_sized_slots(cx: &mut TestAppContext) {
     let rows = (0..1_000_000_i64).collect();
     let source = VecSource::new(rows).column(|&value| CellRef::Int(value));
