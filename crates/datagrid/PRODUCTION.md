@@ -14,7 +14,7 @@ Audit and follow-up on `feat-prod-a` from `62b8de3`, against [spec/23](../../spe
 | §5 Soak, RSS and streaming | ⚠️ | The [headless soak](../../bench/examples/production_soak.rs) runs a structural smoke in the bench tests. Its nightly profile samples percentiles and RSS every 10 s and gates frame time and RSS growth. Inspect/drive replay of edits and full 30-minute evidence remain open. |
 | §6 Accessibility | ⚠️ | [Interaction tests](tests/interaction.rs) verify keyboard operation, focus continuity across the scheme switch and virtual row indices. Screen-reader announcements and sustained keyboard operation at scale remain open. |
 | §6 Visual snapshots | ✅ | [Visual tests](tests/visual.rs) cover the top, middle and end of the computed 10M-row grid in both themes and both backends. Existing snapshots cover selection and editing. |
-| §7 Review and baseline | ⚠️ | Independent review and quiet-host baselines pending. |
+| §7 Review and baseline | ⚠️ | Default test batch (component, Bench and Showcase), fast-backend component and Showcase tests, and all-target Clippy on both backends exited 0. The added scale goldens passed separate comparisons on both backends. Independent review and quiet-host baselines remain open. |
 
 ## Loaded-host measurements
 
@@ -37,8 +37,8 @@ After sharing the theme palette and timing mount inside an initialized headless
 window, `add4f7c` mounted in 85.846 ms. The first 10 s of nightly sampling
 reported 76.584 ms p99 and 105.473 ms maximum before the long-task gate
 failed. Starting load was 25.40 / 31.00 / 24.48. In adjacent 60-frame runs
-at load 32, palette reuse reduced the median from 36.258 to 20.798 ms
-and p99 from 55.115 to 41.118 ms. Desktop presentation latency remains
+at load 32, the observed median moved from 36.258 to 20.798 ms
+and p99 from 55.115 to 41.118 ms after palette reuse. Desktop presentation latency remains
 unmeasured.
 
 Run the headless smoke with
