@@ -14,6 +14,8 @@ guiraffe-core.workspace = true
 guiraffe-flow-core.workspace = true
 
 [dev-dependencies]
+anyhow.workspace = true
+guiraffe-test = { workspace = true, features = ["snapshot"] }
 gpui-kit = { workspace = true, features = ["test-support"] }
 
 [features]

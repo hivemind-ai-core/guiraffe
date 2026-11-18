@@ -188,6 +188,10 @@ impl Frame {
             phase,
         }
     }
+    pub(crate) fn with_scene(mut self, scene: Arc<Scene>) -> Self {
+        self.scene = scene;
+        self
+    }
     fn preview(&self, id: u64) -> Option<WorldPoint> {
         self.gesture
             .as_ref()

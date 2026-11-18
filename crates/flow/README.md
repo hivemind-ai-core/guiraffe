@@ -110,3 +110,14 @@ can redraw ancestors for a child change, whereas gpui-fast isolates these leaves
   for pan/zoom. This split is what keeps panning from re-rendering the host on gpui-fast.
 - `Changed` / `SelectionChanged` are currently emitted on both the model and the viewport entity:
   subscribe to one of them (follow-up: emit on the model only).
+
+### Auto-layout
+
+Call `FlowState::arrange(engine, options, duration, cx)` to compute geometry on
+the background executor. Repeated requests supersede earlier ones. Use
+`FlowState::cancel_layout(cx)` to cancel the active request explicitly.
+
+For small graphs the canvas shows interpolated positions before committing
+the final arrangement as one undoable edit. Pass a zero duration for an
+immediate transition. The canvas also skips preview frames under reduced motion
+or when the graph exceeds 150 nodes or 300 edges.

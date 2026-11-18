@@ -30,11 +30,17 @@ pub struct FlowState {
     config: Rc<RefCell<Option<Config>>>,
     meshes: Rc<RefCell<paint::MeshCache>>,
     counts: Rc<Cell<(usize, usize)>>,
+    layout_job: Option<core::LayoutCancellation>,
     pub(crate) last_error: Option<FlowError>,
     #[cfg(test)]
     renders: usize,
 }
 impl EventEmitter<FlowEvent> for FlowState {}
+impl Drop for FlowState {
+    fn drop(&mut self) {
+        self.abort_layout();
+    }
+}
 impl FlowState {
     pub fn new(graph: Graph, cx: &mut Context<Self>) -> Result<Self, FlowError> {
         Ok(Self::from_editor(core::Editor::new(graph)?, cx))
@@ -55,6 +61,7 @@ impl FlowState {
             config: leaf.config.clone(),
             meshes: leaf.meshes.clone(),
             counts: leaf.counts.clone(),
+            layout_job: None,
             last_error: None,
             canvas,
             #[cfg(test)]
@@ -134,6 +141,7 @@ impl FlowState {
         let editor = self.editor.clone();
         let error = self.last_error.clone();
         self.canvas.update(cx, |leaf, cx| {
+            leaf.layout_preview = None;
             leaf.interaction.cancel();
             leaf.interaction.editor = editor;
             leaf.last_error = error;
@@ -150,6 +158,147 @@ impl FlowState {
             cx.notify();
         });
     }
+    /// Run an engine on a background snapshot and publish one undoable edit.
+    /// A zero duration applies the final layout without a transition.
+    pub fn arrange(
+        &mut self,
+        engine: impl core::LayoutEngine + 'static,
+        options: core::LayoutOptions,
+        duration: std::time::Duration,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_layout(cx);
+        let cancel = core::LayoutCancellation::default();
+        self.layout_job = Some(cancel.clone());
+        let editor = self.editor.clone();
+        let base = editor.scene_shared();
+        let frames = if cx.reduce_motion()
+            || editor.graph().nodes.len() > 150
+            || editor.graph().edges.len() > 300
+        {
+            0
+        } else {
+            (duration.as_millis() / 16).min(20) as usize
+        };
+        cx.spawn(async move |this, cx| {
+            let worker_cancel = cancel.clone();
+            let computed = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut result = engine.layout(editor.graph(), &options, &worker_cancel)?;
+                    worker_cancel.check()?;
+                    let prepared = editor
+                        .prepare_layout(&result)
+                        .map_err(core::LayoutError::Document)?;
+                    let final_scene = prepared.scene();
+                    let mut previews = Vec::with_capacity(frames);
+                    for step in (1..frames).rev() {
+                        worker_cancel.check()?;
+                        let t = step as f32 / frames as f32;
+                        let progress = 1. - t * t * t;
+                        for (&id, position) in &mut result.positions {
+                            let from = editor
+                                .graph()
+                                .nodes
+                                .get(&id)
+                                .ok_or(FlowError::MissingNode(id))
+                                .map_err(core::LayoutError::Document)?
+                                .pos;
+                            let to = final_scene
+                                .graph()
+                                .nodes
+                                .get(&id)
+                                .ok_or(FlowError::MissingNode(id))
+                                .map_err(core::LayoutError::Document)?
+                                .pos;
+                            *position = from + (to - from) * progress;
+                        }
+                        previews.push(
+                            editor
+                                .prepare_layout(&result)
+                                .map_err(core::LayoutError::Document)?
+                                .scene(),
+                        );
+                    }
+                    Ok::<_, core::LayoutError>((prepared, previews))
+                })
+                .await;
+            let active = |state: &Self| {
+                cancel.check().is_ok()
+                    && std::sync::Arc::ptr_eq(&base, &state.editor.scene_shared())
+            };
+            let (prepared, previews) = match computed {
+                Ok(computed) => computed,
+                Err(error) => {
+                    let _ = this.update(cx, |state, cx| {
+                        if active(state) {
+                            state.layout_job = None;
+                            let error = FlowError::Rejected(error.to_string());
+                            state.last_error = Some(error.clone());
+                            state.sync(cx);
+                            cx.emit(FlowEvent::Error(error));
+                            cx.notify();
+                        }
+                    });
+                    return;
+                }
+            };
+            for scene in previews {
+                let shown = this.update(cx, |state, cx| {
+                    if !active(state) {
+                        return false;
+                    }
+                    state.canvas.update(cx, |leaf, cx| {
+                        if leaf.interaction.gesture.is_some() {
+                            cancel.cancel();
+                            return false;
+                        }
+                        leaf.layout_preview = Some(scene);
+                        cx.notify();
+                        true
+                    })
+                });
+                if !matches!(shown, Ok(true)) {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(duration / frames as u32)
+                    .await;
+            }
+            let _ = this.update(cx, |state, cx| {
+                if active(state) {
+                    state.layout_job = None;
+                    if state.canvas.read(cx).interaction.gesture.is_some() {
+                        return;
+                    }
+                    state.last_error = None;
+                    let changed = state.editor.install_prepared_layout(prepared);
+                    state.sync(cx);
+                    if changed {
+                        cx.emit(FlowEvent::Changed);
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub fn cancel_layout(&mut self, cx: &mut Context<Self>) {
+        self.abort_layout();
+        self.canvas.update(cx, |leaf, cx| {
+            if leaf.layout_preview.take().is_some() {
+                cx.notify();
+            }
+        });
+    }
+
+    pub(crate) fn abort_layout(&mut self) {
+        if let Some(cancel) = self.layout_job.take() {
+            cancel.cancel();
+        }
+    }
+
     pub fn edit(
         &mut self,
         operation: impl FnOnce(&mut Graph) -> Result<(), FlowError>,
@@ -157,6 +306,7 @@ impl FlowState {
     ) -> Result<bool, FlowError> {
         let changed = self.editor.edit(operation)?;
         if changed {
+            self.abort_layout();
             self.sync(cx);
             cx.emit(FlowEvent::Changed);
             cx.notify();
@@ -174,6 +324,7 @@ impl FlowState {
     fn history_result(&mut self, result: Result<bool, FlowError>, cx: &mut Context<Self>) {
         match result {
             Ok(true) => {
+                self.abort_layout();
                 self.last_error = None;
                 self.sync(cx);
                 cx.emit(FlowEvent::Changed);
