@@ -1,4 +1,5 @@
 use crate::{FrameLog, FrameSample, InspectStore};
+use gpui_kit::component::{Sizable, button::Button};
 use gpui_kit::profiler::{FrameEvent, FrameTimingCollector};
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, BorderStyle, Bounds, Context, Element, ElementId, Entity,
@@ -201,7 +202,7 @@ impl Devtools {
             async_cx
                 .spawn(async move |cx| {
                     pending.set(false);
-                    let _ = cx.update(|cx| {
+                    cx.update(|cx| {
                         if let Some(panel) = panel.upgrade() {
                             cx.notify(panel.entity_id());
                         }
@@ -647,23 +648,40 @@ impl Render for DevtoolsPanel {
                         ))
                         .child(
                             div()
-                                .id(("before", seq))
-                                .debug_selector(move || format!("devtools-before-{index}-{seq}"))
-                                .cursor_pointer()
-                                .child("Before")
-                                .on_click(move |_, _, cx| {
-                                    before.jump(seq, true, cx);
-                                }),
-                        )
-                        .child(
-                            div()
-                                .id(("after", seq))
-                                .debug_selector(move || format!("devtools-after-{index}-{seq}"))
-                                .cursor_pointer()
-                                .child("After")
-                                .on_click(move |_, _, cx| {
-                                    after.jump(seq, false, cx);
-                                }),
+                                .flex()
+                                .gap(px(Size::Xs.spacing()))
+                                .child(
+                                    div()
+                                        .debug_selector(move || {
+                                            format!("devtools-before-{index}-{seq}")
+                                        })
+                                        .child(
+                                            Button::new(SharedString::from(format!(
+                                                "before-{index}-{seq}"
+                                            )))
+                                            .label("Before")
+                                            .xsmall()
+                                            .on_click(move |_, _, cx| {
+                                                before.jump(seq, true, cx);
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .debug_selector(move || {
+                                            format!("devtools-after-{index}-{seq}")
+                                        })
+                                        .child(
+                                            Button::new(SharedString::from(format!(
+                                                "after-{index}-{seq}"
+                                            )))
+                                            .label("After")
+                                            .xsmall()
+                                            .on_click(move |_, _, cx| {
+                                                after.jump(seq, false, cx);
+                                            }),
+                                        ),
+                                ),
                         ),
                 );
                 for change in row.changes.iter().take(8) {
