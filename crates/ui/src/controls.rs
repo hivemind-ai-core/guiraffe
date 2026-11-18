@@ -269,7 +269,7 @@ impl Render for Control {
         let font_size = px(control_size.font_size() * theme.scale);
         let error_border = props.invalid.then(|| {
             theme
-                .state(StateKind::Rest, Variant::Outline, Some(ColorName::Red))
+                .state(StateKind::FocusRing, Variant::Outline, Some(ColorName::Red))
                 .border
                 .to_hsla()
         });
