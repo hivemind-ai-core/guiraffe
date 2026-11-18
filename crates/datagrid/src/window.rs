@@ -25,7 +25,7 @@ pub fn visible_rows(
     count: usize,
     overscan: usize,
 ) -> Range<usize> {
-    if count == 0 || row_h <= 0. || viewport_h <= 0. {
+    if count == 0 || !valid_extent(row_h) || !valid_extent(viewport_h) {
         return 0..0;
     }
     let first = (offset / row_h).floor().max(0.) as usize;
@@ -37,15 +37,21 @@ pub fn visible_rows(
 
 /// How many row slots a viewport ever needs (worst-case partial rows plus overscan).
 pub fn pool_size(row_h: f64, viewport_h: f64, overscan: usize) -> usize {
-    if row_h <= 0. || viewport_h <= 0. {
+    if !valid_extent(row_h) || !valid_extent(viewport_h) {
         return 0;
     }
-    (viewport_h / row_h).ceil() as usize + 1 + 2 * overscan
+    ((viewport_h / row_h).ceil() as usize)
+        .saturating_add(1)
+        .saturating_add(overscan.saturating_mul(2))
+}
+
+fn valid_extent(extent: f64) -> bool {
+    extent.is_finite() && extent > 0.
 }
 
 /// Row under viewport-relative `y`.
 pub fn row_at(y: f64, offset: f64, row_h: f64, count: usize) -> Option<usize> {
-    if y < 0. || row_h <= 0. {
+    if y < 0. || !valid_extent(row_h) {
         return None;
     }
     let r = ((offset + y) / row_h).floor();
@@ -114,6 +120,19 @@ mod tests {
         assert_eq!(visible_rows(0., 10., 100., 0, 1), 0..0);
         assert_eq!(clamp_offset(f64::NAN, 10, 10., 50.), 0.);
         assert_eq!(pool_size(10., 0., 2), 0);
+    }
+
+    #[test]
+    fn invalid_dimensions_have_no_visible_rows_or_slots() {
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.] {
+            assert_eq!(visible_rows(0., 10., invalid, 1, 2), 0..0);
+            assert_eq!(visible_rows(0., invalid, 100., 1, 2), 0..0);
+            assert_eq!(pool_size(10., invalid, 2), 0);
+            assert_eq!(pool_size(invalid, 100., 2), 0);
+            assert_eq!(row_at(0., 0., invalid, 1), None);
+        }
+        assert_eq!(pool_size(f64::MIN_POSITIVE, f64::MAX, 2), usize::MAX);
+        assert_eq!(pool_size(10., 100., usize::MAX), usize::MAX);
     }
 
     proptest! {
