@@ -25,20 +25,35 @@ pub fn parse(text: &str, screen: Option<&str>) -> Result<Document> {
     let probe: serde_json::Value = serde_json::from_str(text).context("not JSON")?;
     if probe.get("screens").is_some() && probe.get("nodes").is_some() {
         let document = guiraffe_mocket::import(text, screen)?.document;
-        validate(&document, true)?;
+        validate_structure(&document, true)?;
         return Ok(document);
     }
     let document = Document::from_json(text).map_err(anyhow::Error::msg)?;
-    validate(&document, true)?;
+    validate_structure(&document, true)?;
     Ok(document)
 }
 
 pub(crate) fn validate(document: &Document, mocket_placeholders: bool) -> Result<()> {
-    let issues = guiraffe_ui::validation::Validation {
-        mocket_placeholders,
-        ..Default::default()
-    }
-    .check(document);
+    require_valid(
+        guiraffe_ui::validation::Validation {
+            mocket_placeholders,
+            bound_events: Some(&std::collections::BTreeSet::new()),
+        }
+        .check(document),
+    )
+}
+
+pub(crate) fn validate_structure(document: &Document, mocket_placeholders: bool) -> Result<()> {
+    require_valid(
+        guiraffe_ui::validation::Validation {
+            mocket_placeholders,
+            ..Default::default()
+        }
+        .check(document),
+    )
+}
+
+pub(crate) fn require_valid(issues: Vec<guiraffe_ui::validation::Issue>) -> Result<()> {
     if !issues.is_empty() {
         anyhow::bail!(
             "document validation failed\n{}",
@@ -78,17 +93,7 @@ impl Preview {
     fn apply(&mut self, loaded: Result<Document>, cx: &mut Context<Self>) {
         match loaded {
             Ok(doc) => {
-                let handlers = std::collections::BTreeSet::new();
-                let issues = guiraffe_ui::validation::Validation {
-                    mocket_placeholders: true,
-                    bound_events: Some(&handlers),
-                }
-                .check(&doc);
-                self.error = if issues.is_empty() {
-                    None
-                } else {
-                    serde_json::to_string_pretty(&issues).ok()
-                };
+                self.error = validate(&doc, true).err().map(|error| error.to_string());
                 match &self.ui {
                     Some(ui) => {
                         if let Err(e) = ui.update(cx, |u, cx| u.set_document(&doc, cx)) {
@@ -228,6 +233,21 @@ mod tests {
         );
         assert!(parse("{", None).is_err());
         assert!(parse(r#"{"neither":1}"#, None).is_err());
+    }
+
+    #[test]
+    fn validation_reports_unbound_handlers() {
+        let doc = Document::new(
+            guiraffe_ui::Node::new("button")
+                .prop("label", "Save")
+                .on("click", "save"),
+        );
+        let error = validate(&doc, false).expect_err("preview has no save handler");
+        assert!(
+            error
+                .to_string()
+                .contains("Bind this event to a named host handler.")
+        );
     }
 
     #[test]

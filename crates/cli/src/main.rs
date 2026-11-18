@@ -71,7 +71,7 @@ fn run() -> Result<()> {
             };
             let text = std::fs::read_to_string(file)?;
             let imp = guiraffe_mocket::import(&text, option(&args[2..], "--screen")?.as_deref())?;
-            preview::validate(&imp.document, true)?;
+            preview::validate_structure(&imp.document, true)?;
             for r in imp
                 .report
                 .iter()
