@@ -239,11 +239,17 @@ pub(super) fn resolve(
         }
     }
 
+    let mut rightmost = cells
+        .values()
+        .flatten()
+        .map(|(_, rect)| rect.max().x)
+        .fold(f32::NEG_INFINITY, f32::max);
     for (id, pos) in positions
         .iter_mut()
         .enumerate()
         .filter(|(id, _)| !reserved[*id])
     {
+        let mut shifts = 0;
         loop {
             cancel.check()?;
             let rect = Rect {
@@ -261,8 +267,12 @@ pub(super) fn resolve(
                 .map(|(_, other)| other.max().x)
                 .max_by(f32::total_cmp);
             if let Some(x) = next {
-                pos.x = x;
+                shifts += 1;
+                // Dense coincident input can otherwise scan the whole packing
+                // for every node. Finish the search just beyond the occupied span.
+                pos.x = if shifts >= 32 { rightmost } else { x };
             } else {
+                rightmost = rightmost.max(rect.max().x);
                 cells.entry(key).or_default().push((id, rect));
                 break;
             }
