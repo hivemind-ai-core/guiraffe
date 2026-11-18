@@ -96,9 +96,15 @@ fn shift() -> Modifiers {
 }
 
 #[gpui_kit::test]
-fn scrolling_a_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
-    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(50), cx));
-    assert_eq!(grid.view_row_count(), 1_000_000);
+fn scrolling_ten_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| {
+        GridHandle::new(
+            FnSource::new(10_000_000, |r, c| CellRef::Int((r * 100 + c) as i64)),
+            columns(50),
+            cx,
+        )
+    });
+    assert_eq!(grid.view_row_count(), 10_000_000);
     let stats = grid.stats();
     assert!(stats.pool < 40, "pool is O(viewport): {}", stats.pool);
     assert!(
@@ -108,19 +114,19 @@ fn scrolling_a_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
     );
     vcx.update(|w, _| assert!(w.try_find_by_label("0").is_some()));
 
-    vcx.update(|_, cx| grid.scroll_to_row(999_999, cx));
+    vcx.update(|_, cx| grid.scroll_to_row(9_999_999, cx));
     vcx.run_until_parked();
     let vis = grid.visible_rows();
-    assert_eq!(vis.end, 1_000_000);
+    assert_eq!(vis.end, 10_000_000);
     vcx.update(|w, _| {
-        assert!(w.try_find_by_label("99999900").is_some(), "last row shown");
+        assert!(w.try_find_by_label("999999900").is_some(), "last row shown");
         assert!(w.try_find_by_label("0").is_none(), "first row recycled");
     });
 
-    // Wheel: three rows up, f64-precise near the end of a 36M px document.
+    // Wheel: three rows up, f64-precise near the end of a 360M px document.
     let (_, before) = grid.scroll_offset();
     let h = f64::from(grid.row_height());
-    let pos = at(&grid, Some(999_990), 1);
+    let pos = at(&grid, Some(9_999_990), 1);
     vcx.simulate_event(ScrollEvent {
         position: pos,
         delta: ScrollDelta::Pixels(point(px(0.), px((3. * h) as f32))),
@@ -141,6 +147,22 @@ fn scrolling_a_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
     let first = grid.visible_rows().start;
     let label = format!("{}", first * 100 + 40);
     vcx.update(|w, _| assert!(w.try_find_by_label(&label).is_some(), "{label} visible"));
+}
+
+#[gpui_kit::test]
+fn materialised_million_rows_keep_viewport_sized_slots(cx: &mut TestAppContext) {
+    let rows = (0..1_000_000_i64).collect();
+    let source = VecSource::new(rows).column(|&value| CellRef::Int(value));
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(source, columns(1), cx));
+    for row in [0, 500_000, 999_999] {
+        vcx.update(|_, cx| grid.scroll_to_row(row, cx));
+        vcx.run_until_parked();
+        assert!(grid.visible_rows().contains(&row));
+        assert!(grid.stats().pool < 40);
+        vcx.update(|window, _| {
+            assert!(window.try_find_by_label(&row.to_string()).is_some());
+        });
+    }
 }
 
 #[gpui_kit::test]
