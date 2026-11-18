@@ -487,13 +487,13 @@ pub fn chart_scatter_1m_100_series() {
     black_box(chart.scene(1200., 440., chart.x_domain(), &Default::default()));
 }
 
-/// Shared registration table consumed by the CLI, criterion and iai-callgrind.
-/// Add workloads here once; each tool expands its own registration from this list.
+/// The CLI and Criterion also include the large workloads. Callgrind uses the
+/// smaller suite list to bound setup time and the instrumented memory footprint.
 #[macro_export]
-macro_rules! with_suites {
+macro_rules! with_production_suites {
     ($callback:ident) => {
-        $callback! {
-            (core_variants, "core-variants"),
+        $crate::with_suites!(
+            $callback,
             (flow_build_50k, "flow-build-50k"),
             (flow_pan_hit_50k, "flow-pan-hit-50k"),
             (timeline_box_select_100k, "timeline-box-select-100k"),
@@ -502,6 +502,20 @@ macro_rules! with_suites {
             (chart_prepare_line_10m, "chart-prepare-line-10m"),
             (chart_line_10m, "chart-line-10m"),
             (chart_scatter_1m_100_series, "chart-scatter-1m-100-series"),
+        );
+    };
+}
+
+/// Shared workload list, extended by the wall-clock harnesses.
+#[macro_export]
+macro_rules! with_suites {
+    ($callback:ident) => {
+        $crate::with_suites!($callback,);
+    };
+    ($callback:ident, $(($function:ident, $name:literal),)*) => {
+        $callback! {
+            (core_variants, "core-variants"),
+            $(($function, $name),)*
             (chart_line_million, "chart-line-1m"),
             (chart_scatter_hundred_thousand, "chart-scatter-100k"),
             (code_scroll_million,"code-scroll-1m"),
@@ -528,4 +542,4 @@ macro_rules! make_registry {
         }
     };
 }
-crate::with_suites!(make_registry);
+crate::with_production_suites!(make_registry);

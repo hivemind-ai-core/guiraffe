@@ -28,3 +28,9 @@ The 10M-line headless short replay mounted in 3.25 s including data
 preparation. Its second sample had 33.0 ms p99, 41.8 ms maximum and
 1,905,300 KiB RSS, 336 KiB higher than the warmed sample. Short mode
 exercises the runner and supplies diagnostics without asserting absolute timing.
+
+At 31.66/33.23/24.54 load, the 1M-point, 100-series scatter replay
+took 79.8 s from fixture creation through first frame. Each short sampling
+window completed one interaction, taking 26.7 s and 33.3 s respectively.
+RSS rose from 495,784 KiB to 502,888 KiB. Those two windows are too short
+and too sparse for a live memory or percentile acceptance claim.
