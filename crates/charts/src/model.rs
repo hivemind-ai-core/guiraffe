@@ -320,6 +320,7 @@ impl ChartSpec {
         let mut legend = Vec::new();
         let mut facets = BTreeMap::new();
         let mut count = 0;
+        let mut nonpositive_log_rows = 0;
         let mut has_right_axis = false;
         for (index, layer) in self.layers.iter().enumerate() {
             let y_axis = if layer.secondary { 2 } else { 1 };
@@ -330,6 +331,21 @@ impl ChartSpec {
             };
             let mut groups: BTreeMap<(u32, u32), Vec<Sample>> = BTreeMap::new();
             (layer.visit)(index, &mut |mut sample| {
+                let invalid_log = |scale: &Scale, value: f64| {
+                    matches!(scale, Scale::Log) && value.is_finite() && value <= 0.
+                };
+                if invalid_log(&self.x.scale, sample.x)
+                    || invalid_log(y_scale, sample.y)
+                    || (matches!(layer.mark, Mark::Candlestick)
+                        && sample.ohlc.is_some_and(|o| {
+                            [o.open, o.high, o.low, o.close]
+                                .into_iter()
+                                .any(|value| invalid_log(y_scale, value))
+                        }))
+                {
+                    nonpositive_log_rows += 1;
+                    return;
+                }
                 if !self.x.scale.accepts(sample.x) || !y_scale.accepts(sample.y) {
                     return;
                 }
@@ -471,6 +487,7 @@ impl ChartSpec {
             facets: facets.into_iter().collect(),
             legend,
             count,
+            nonpositive_log_rows,
             has_right_axis,
             runs,
         }
@@ -484,11 +501,17 @@ pub struct PreparedChart {
     pub(crate) facets: Vec<(u32, String)>,
     pub(crate) legend: Vec<LegendEntry>,
     pub(crate) count: usize,
+    nonpositive_log_rows: usize,
     pub(crate) has_right_axis: bool,
     pub(crate) runs: Vec<Run>,
 }
 
 impl PreparedChart {
+    /// Number of source rows rejected for a nonpositive value on a log axis.
+    pub fn nonpositive_log_rows(&self) -> usize {
+        self.nonpositive_log_rows
+    }
+
     pub fn x_domain(&self) -> Domain {
         self.domains[0]
     }
@@ -579,6 +602,19 @@ mod tests {
 
     proptest! {
         #[test]
+    fn reports_nonpositive_log_rows() {
+        let mut spec = ChartSpec::new("log").layer(Layer::new(
+            Mark::Line,
+            vec![(1., 0.), (2., -1.), (3., 5.)],
+            Channels::new(|p: &(f64, f64)| p.0, |p| p.1),
+        ));
+        spec.y.scale = Scale::Log;
+        let chart = spec.prepare();
+        assert_eq!(chart.nonpositive_log_rows(), 2);
+        assert_eq!(chart.len(), 1);
+    }
+
+    #[test]
         fn stacks_diverge_and_normalize(values in proptest::collection::vec(-100f64..100., 1..25)) {
             for arrangement in [Arrangement::Stack, Arrangement::Normalize] {
                 let source: Vec<_> = values.iter().copied().enumerate().collect();

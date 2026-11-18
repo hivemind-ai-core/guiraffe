@@ -34,6 +34,10 @@ are local to one layer and facet, aligned by exact category/x key, with
 independent positive and negative totals. Duplicate x values in one stack
 group contribute in source order. Facets share the x domain and primary and
 secondary y domains. Secondary layers opt into the right axis.
+Logarithmic axes exclude rows with nonpositive positions.
+`PreparedChart::nonpositive_log_rows` reports their count. Stacks accumulate
+in data units and project the cumulative edges onto the log axis. A zero
+baseline draws at the positive lower bound of the axis.
 
 Axis titles, ticks and grids explain the shared domains. Continuous time uses
 the timeline ruler's tick ladder and date formatter. Text and rule layers
