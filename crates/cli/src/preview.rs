@@ -24,9 +24,9 @@ pub fn load(path: &Path, screen: Option<&str>) -> Result<Document> {
 pub fn parse(text: &str, screen: Option<&str>) -> Result<Document> {
     let probe: serde_json::Value = serde_json::from_str(text).context("not JSON")?;
     if probe.get("screens").is_some() && probe.get("nodes").is_some() {
-        let document = guiraffe_mocket::import(text, screen)?.document;
-        validate_structure(&document, true)?;
-        return Ok(document);
+        let imported = guiraffe_mocket::import(text, screen)?;
+        require_valid(imported.validation_issues())?;
+        return Ok(imported.document);
     }
     let document = Document::from_json(text).map_err(anyhow::Error::msg)?;
     validate_structure(&document, true)?;
@@ -247,6 +247,18 @@ mod tests {
             error
                 .to_string()
                 .contains("Bind this event to a named host handler.")
+        );
+    }
+
+    #[test]
+    fn imported_validation_uses_source_screen_and_node_ids() {
+        let mocket = r#"{"screens":[{"id":"settings","root":"r"}],"nodes":{"r":{"type":"stack","id":"save-btn","children":["b"]},"b":{"type":"button","id":"save-btn"}}}"#;
+        let error = parse(mocket, None).expect_err("duplicate Mocket id");
+        assert!(
+            error
+                .to_string()
+                .contains("/screens/settings/nodes/save-btn"),
+            "{error}"
         );
     }
 
