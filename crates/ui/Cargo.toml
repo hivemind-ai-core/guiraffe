@@ -25,3 +25,6 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 gpui-fast = ["gpui-kit/gpui-fast"]
 # Exposes document ids as debug selectors for interaction/e2e tests.
 test-support = ["gpui-kit/test-support"]
+
+[build-dependencies]
+serde_json.workspace = true

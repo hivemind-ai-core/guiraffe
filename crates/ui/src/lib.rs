@@ -38,3 +38,10 @@ mod position;
 
 mod viewport;
 pub use viewport::{RepeatViewport, RepeatViewportError};
+
+/// Build-generated resources for screen authoring tools.
+pub mod catalogue_artifacts {
+    pub const CATALOGUE_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.json"));
+    pub const SCREEN_SCHEMA: &str = include_str!(concat!(env!("OUT_DIR"), "/screen.schema.json"));
+    pub const REFERENCE_MARKDOWN: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.md"));
+}

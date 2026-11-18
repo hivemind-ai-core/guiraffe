@@ -15,9 +15,9 @@ mod doctor;
 mod preview;
 mod scaffold;
 
-const CATALOGUE: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.json"));
-const CATALOGUE_REFERENCE: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.md"));
-const SCREEN_SCHEMA: &str = include_str!(concat!(env!("OUT_DIR"), "/screen.schema.json"));
+use guiraffe_ui::catalogue_artifacts::{
+    CATALOGUE_JSON as CATALOGUE, REFERENCE_MARKDOWN as CATALOGUE_REFERENCE, SCREEN_SCHEMA,
+};
 
 use std::path::PathBuf;
 
