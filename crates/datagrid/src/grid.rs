@@ -708,6 +708,7 @@ pub(crate) struct Core {
     events: Entity<GridEvents>,
     view: RefCell<Option<gpui_kit::EntityId>>,
     rows: RefCell<Vec<Entity<RowView>>>,
+    palette: RefCell<Option<(GuiraffeTheme, Palette)>>,
 }
 
 impl Drop for Core {
@@ -782,6 +783,7 @@ impl GridHandle {
             events: cx.new(|_| GridEvents),
             view: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
+            palette: RefCell::new(None),
         });
         let view = cx.new(|_| GridView { core: core.clone() });
         *core.view.borrow_mut() = Some(view.entity_id());
@@ -2552,7 +2554,7 @@ fn hsla(c: Rgb) -> Hsla {
     c.to_hsla()
 }
 
-/// Colors resolved once per render from theme tokens.
+/// Colors shared by the grid and its recycled rows.
 #[derive(Clone, Copy)]
 struct Palette {
     body: Rgb,
@@ -2568,28 +2570,44 @@ struct Palette {
     error: Rgb,
 }
 
-fn palette(cx: &App) -> Palette {
-    let t = GuiraffeTheme::global(cx);
-    let s = t.surfaces();
-    let light = t.variant(None, Variant::Light);
-    Palette {
-        body: s.body,
-        zebra: s.surface,
-        header: s.surface,
-        hover: s.hover,
-        border: s.border,
-        text: s.text,
-        dimmed: t
-            .state(StateKind::Dimmed, Variant::Default, None)
-            .foreground,
-        selected: light.background.over(s.body),
-        accent: t
-            .state(StateKind::Selected, Variant::Filled, None)
-            .background,
-        ring: t.state(StateKind::FocusRing, Variant::Default, None).border,
-        error: t
-            .state(StateKind::Rest, Variant::Outline, Some(ColorName::Red))
-            .border,
+impl Core {
+    fn palette(&self, cx: &App) -> Palette {
+        let theme = GuiraffeTheme::global(cx);
+        let mut cached = self.palette.borrow_mut();
+        if let Some((key, palette)) = cached.as_ref()
+            && key == theme
+        {
+            return *palette;
+        }
+        let palette = Palette::resolve(theme);
+        *cached = Some((theme.clone(), palette));
+        palette
+    }
+}
+
+impl Palette {
+    fn resolve(t: &GuiraffeTheme) -> Self {
+        let s = t.surfaces();
+        let light = t.variant(None, Variant::Light);
+        Self {
+            body: s.body,
+            zebra: s.surface,
+            header: s.surface,
+            hover: s.hover,
+            border: s.border,
+            text: s.text,
+            dimmed: t
+                .state(StateKind::Dimmed, Variant::Default, None)
+                .foreground,
+            selected: light.background.over(s.body),
+            accent: t
+                .state(StateKind::Selected, Variant::Filled, None)
+                .background,
+            ring: t.state(StateKind::FocusRing, Variant::Default, None).border,
+            error: t
+                .state(StateKind::Rest, Variant::Outline, Some(ColorName::Red))
+                .border,
+        }
     }
 }
 
@@ -2627,7 +2645,7 @@ impl Render for GridView {
             let c = core.clone();
             cx.defer(move |cx| c.sync(true, cx));
         }
-        let pal = palette(cx);
+        let pal = core.palette(cx);
         let tab = core.tab_stop();
         let focused = core.focus.is_focused(window);
         let m = core.m.borrow();
@@ -3010,7 +3028,7 @@ impl Render for RowView {
         let Some(core) = self.core.upgrade() else {
             return div().into_any_element();
         };
-        let pal = palette(cx);
+        let pal = core.palette(cx);
         let mut m = core.m.borrow_mut();
         m.stats.row_renders += 1;
         let Some(row) = m.view_row_of_slot(self.slot) else {
@@ -3065,7 +3083,7 @@ impl Render for RowView {
             let center = def.is_some_and(|d| d.align == Align::Center);
             let in_rect = rect_cols.as_ref().is_some_and(|c| c.contains(&p.display));
             let is_cursor = cursor == Some(p.display);
-            let label = SharedString::from(text.clone());
+            let label = SharedString::from(text.as_str());
             // The cell cursor (selected or editing): a 2px outline over the gridlines. It
             // extends 1px sideways over the column separators; vertically it stays inside the
             // row (rows clip) and covers the row's own bottom gridline, so all four edges are
