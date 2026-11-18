@@ -174,11 +174,18 @@ impl Render for Accordion {
                     .px_3()
                     .py_2()
                     .rounded(radius)
-                    .when(self.options.chevron == ChevronPosition::Start, |el| el.child(Icon::new(chevron.clone())))
+                    .when(self.options.chevron == ChevronPosition::Start, |el| {
+                        el.child(Icon::new(chevron.clone()))
+                    })
                     .child(div().flex_1().child(item.title.clone()))
-                    .when(self.options.chevron == ChevronPosition::End, |el| el.child(Icon::new(chevron)))
+                    .when(self.options.chevron == ChevronPosition::End, |el| {
+                        el.child(Icon::new(chevron))
+                    })
                     .press(&press, &focus, window)
-                    .on_press(item.disabled, cx.listener(move |this, _, _, cx| this.toggle(index, cx)));
+                    .on_press(
+                        item.disabled,
+                        cx.listener(move |this, _, _, cx| this.toggle(index, cx)),
+                    );
                 div()
                     .flex()
                     .flex_col()
@@ -195,8 +202,14 @@ impl Render for Accordion {
                     })
                     .child(trigger)
                     .when(open, |el| {
-                        el.child(AccordionPanel::new().id(("accordion-panel", index))
-                            .open(true).px_3().pb_3().child((item.body)()))
+                        el.child(
+                            AccordionPanel::new()
+                                .id(("accordion-panel", index))
+                                .open(true)
+                                .px_3()
+                                .pb_3()
+                                .child((item.body)()),
+                        )
                     })
             }))
     }

@@ -109,7 +109,7 @@ impl Render for ExpandingList {
                             .child(
                                 div()
                                     .id(trigger)
-                            .debug_selector(move || format!("expanding-trigger-{index}"))
+                                    .debug_selector(move || format!("expanding-trigger-{index}"))
                                     .a11y_disabled(item.disabled)
                                     .test_support()
                                     .aria_expanded(open)

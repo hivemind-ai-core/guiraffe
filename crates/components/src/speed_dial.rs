@@ -1,11 +1,7 @@
 use std::{f32::consts::PI, time::Duration};
 
-use gpui_kit::{
-    component::tooltip::Tooltip,
-    prelude::*,
-    *,
-};
 use gpui_kit::assets::IconName;
+use gpui_kit::{component::tooltip::Tooltip, prelude::*, *};
 use guiraffe_core::{A11yDisabledExt, GuiraffeTheme, Press, PressableExt, Variant, keyed_focus};
 use guiraffe_motion::{Animated, MotionPrefs, Spring, Timing};
 
@@ -230,11 +226,7 @@ impl Render for SpeedDial {
             .justify_center()
             .rounded(corner)
             .border_1()
-            .child(if self.open {
-                IconName::X
-            } else {
-                self.primary
-            })
+            .child(if self.open { IconName::X } else { self.primary })
             .press(&press, &primary_focus, window)
             .on_press(
                 false,
@@ -288,7 +280,7 @@ impl Render for SpeedDial {
                     return;
                 }
                 cx.stop_propagation();
-            })
+            }))
     }
 }
 
