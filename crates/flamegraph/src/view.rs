@@ -2,7 +2,7 @@ use crate::{FlameLayout, FrameClicked, FrameId, Search};
 use gpui_kit::{
     App, AppContext, Bounds, ContentMask, Context, DispatchPhase, Entity, EventEmitter,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, Render, Role,
-    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, WeakEntity, Window,
+    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Task, WeakEntity, Window,
     base::{Root, RootPlugin},
     canvas,
     component::button::Button,
@@ -41,6 +41,7 @@ pub struct FlameGraph {
     window_tooltip: bool,
     drag: Option<(Point<Pixels>, bool)>,
     search: Option<Arc<Search>>,
+    search_task: Option<Task<()>>,
     orientation: Orientation,
     colour: ColourScheme,
     bounds: Bounds<Pixels>,
@@ -60,6 +61,7 @@ impl FlameGraph {
             window_tooltip: false,
             drag: None,
             search: None,
+            search_task: None,
             orientation: Orientation::Flame,
             colour: ColourScheme::Name,
             bounds: Bounds::default(),
@@ -68,8 +70,25 @@ impl FlameGraph {
     }
 
     pub fn set_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        self.search = self.layout.search(query).map(Arc::new);
-        cx.notify();
+        self.search_task = None;
+        if self.search.take().is_some() {
+            cx.notify();
+        }
+        if query.is_empty() {
+            return;
+        }
+        let query = query.to_owned();
+        let layout = self.layout.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { layout.search(&query).map(Arc::new) });
+        self.search_task = Some(cx.spawn(async move |graph, cx| {
+            let search = task.await;
+            let _ = graph.update(cx, |graph, cx| {
+                graph.search = search;
+                cx.notify();
+            });
+        }));
     }
 
     pub fn set_orientation(&mut self, orientation: Orientation, cx: &mut Context<Self>) {
@@ -168,14 +187,24 @@ impl Render for FlameGraph {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
         let surface = theme.surfaces();
-        let colors = [
-            ColorName::Blue,
-            ColorName::Cyan,
-            ColorName::Teal,
-            ColorName::Orange,
-            ColorName::Grape,
-            ColorName::Pink,
-        ]
+        let colors = match self.colour {
+            ColourScheme::Heat => [
+                ColorName::Blue,
+                ColorName::Cyan,
+                ColorName::Teal,
+                ColorName::Yellow,
+                ColorName::Orange,
+                ColorName::Red,
+            ],
+            _ => [
+                ColorName::Blue,
+                ColorName::Cyan,
+                ColorName::Teal,
+                ColorName::Orange,
+                ColorName::Grape,
+                ColorName::Pink,
+            ],
+        }
         .map(|name| theme.variant(Some(name), Variant::Filled));
         let highlight = theme.variant(Some(theme.primary), Variant::Light);
         let breadcrumb = self.focus.and_then(|id| self.layout.click(id));
@@ -254,6 +283,7 @@ impl Render for FlameGraph {
                     .relative()
                     .flex_1()
                     .overflow_hidden()
+                    .cursor_grab()
                     .role(Role::Canvas)
                     .aria_label("Flame graph")
                     .bg(surface.body.to_hsla())

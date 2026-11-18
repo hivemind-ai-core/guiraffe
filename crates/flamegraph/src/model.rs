@@ -87,9 +87,11 @@ impl FlameLayout {
             let (left, right) = if let Some((_, cursor, limit)) = stack.last_mut() {
                 let left = *cursor;
                 let right = left + frame.total;
-                if right > *limit {
+                let tolerance = right.abs().max(limit.abs()) * (4. * f64::EPSILON);
+                if !right.is_finite() || right - *limit > tolerance {
                     return Err(LayoutError::InvalidValue(frame.id));
                 }
+                let right = right.min(*limit);
                 *cursor = right;
                 (left, right)
             } else {
@@ -113,7 +115,7 @@ impl FlameLayout {
                 return Err(LayoutError::DuplicateId(frame.id));
             }
             row.push(Span { index, left, right });
-            stack.push((frame.id, left, right - frame.self_value));
+            stack.push((frame.id, left, (right - frame.self_value).max(left)));
         }
         Ok(result)
     }
@@ -217,6 +219,7 @@ impl FlameLayout {
             return None;
         }
         let query = query.to_lowercase();
+        let mut label = String::new();
         Some(Search {
             rows: self
                 .rows
@@ -225,11 +228,15 @@ impl FlameLayout {
                     row.iter()
                         .enumerate()
                         .filter(|(_, span)| {
-                            self.source
-                                .frame(span.index)
-                                .label
-                                .to_lowercase()
-                                .contains(&query)
+                            label.clear();
+                            label.extend(
+                                self.source
+                                    .frame(span.index)
+                                    .label
+                                    .chars()
+                                    .flat_map(char::to_lowercase),
+                            );
+                            label.contains(&query)
                         })
                         .map(|(offset, _)| offset)
                         .collect()

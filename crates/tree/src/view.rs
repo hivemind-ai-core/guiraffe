@@ -289,6 +289,7 @@ impl<const P: bool> TreeView<P> {
         let value = match property.value {
             _ if property.read_only => div().child(property.value.text()).into_any_element(),
             Value::Bool(value) => Checkbox::new(("property-bool", id as usize))
+                .accessibility_label(self.source.label(id).to_owned())
                 .tab_stop(self.tab_stop)
                 .checked(*value)
                 .on_change(cx.listener(move |this, value: &bool, _, cx| {
@@ -415,6 +416,10 @@ impl<const P: bool> Render for TreeView<P> {
                     Button::new(("tree-expand", id as usize))
                         .tab_stop(false)
                         .label(if open { "▾" } else { "▸" })
+                        .accessibility_label(format!(
+                            "{} {label}",
+                            if open { "Collapse" } else { "Expand" }
+                        ))
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.set_expanded(id, !open, cx)),
                         )
@@ -448,6 +453,7 @@ impl<const P: bool> Render for TreeView<P> {
                         .flatten()
                         .map(|checked| {
                             Checkbox::new(("tree-check", id as usize))
+                                .accessibility_label(format!("Check {}", self.source.label(id)))
                                 .tab_stop(false)
                                 .checked(checked)
                                 .on_change(cx.listener(move |_, value: &bool, _, cx| {
@@ -487,7 +493,7 @@ impl<const P: bool> Render for TreeView<P> {
         div()
             .w_full()
             .child(focus_ring(
-                tree,
+                div().w_full().child(tree),
                 self.tab_stop && ring_visible(&self.focus, window),
                 px(0.),
                 colours.ring,
@@ -517,6 +523,9 @@ mod tests {
         }
     }
     impl TreeData for Data {
+        fn checked(&self, id: NodeId) -> Option<bool> {
+            (id > 0).then_some(false)
+        }
         fn property(&self, id: NodeId) -> Option<Property<'_>> {
             (id > 0).then_some(Property {
                 value: &self.1,
@@ -608,6 +617,7 @@ mod tests {
             Some(49)
         );
         assert!(events.borrow().contains(&TreeEvent::Selected(1)));
+        // Upstream GPUI marks the ancestor path dirty for descendant updates.
         if gpui_kit::GPUI_FAST {
             assert_eq!(
                 renders.get(),
@@ -659,5 +669,66 @@ mod tests {
             e,
             TreeEvent::Edited(2, _) | TreeEvent::Edited(1, Value::Number(-1.))
         )));
+    }
+    #[gpui_kit::test]
+    fn tree_pointer_selection_check_and_reorder(cx: &mut TestAppContext) {
+        use gpui_kit::test::{TestQueryExt, TestWindowExt};
+        cx.update(|cx| {
+            gpui_kit::base::init(cx);
+            gpui_kit::component::init(cx);
+            guiraffe_core::apply(Default::default(), cx);
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let view = cx.new(|cx| {
+            TreeList::new(
+                Rc::new(Data(vec![1, 2], Value::Bool(false), Value::Bool(false))),
+                cx,
+            )
+        });
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let events = events.clone();
+            cx.subscribe(&view, move |_, _, event: &TreeEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach();
+            gpui_kit::base::Root::new(view.clone(), window, cx)
+        });
+        window.run_until_parked();
+        let expand =
+            window.update(|window, _| window.find_by_label("Expand Settings").bounds().center());
+        window.simulate_click(expand, Modifiers::default());
+        window.run_until_parked();
+        assert!(view.read_with(window, |view, _| view.model.expanded(0)));
+
+        let from = expand + point(px(75.), px(ROW as f32));
+        let to = from + point(px(0.), px(ROW as f32));
+        window.simulate_click(from, Modifiers::default());
+        window.simulate_click(
+            to,
+            Modifiers {
+                control: true,
+                ..Default::default()
+            },
+        );
+        window.run_until_parked();
+        assert!(view.read_with(window, |view, _| view.model.selected(1)
+            && view.model.selected(2)));
+        window.update(|window, cx| assert!(window.focused(cx).is_none()));
+
+        window.simulate_mouse_down(from, MouseButton::Left, Modifiers::default());
+        window.simulate_mouse_move(to, Some(MouseButton::Left), Modifiers::default());
+        window.simulate_mouse_up(to, MouseButton::Left, Modifiers::default());
+        window.run_until_parked();
+        assert!(
+            events
+                .borrow()
+                .contains(&TreeEvent::Reorder { node: 1, before: 2 })
+        );
+
+        let check =
+            window.update(|window, _| window.find(("tree-check", 1usize)).bounds().center());
+        window.simulate_click(check, Modifiers::default());
+        window.run_until_parked();
+        assert!(events.borrow().contains(&TreeEvent::Checked(1, true)));
     }
 }
