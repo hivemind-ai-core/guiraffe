@@ -14,7 +14,7 @@ Audit and follow-up on `feat-prod-a` from `62b8de3`, against [spec/23](../../spe
 | §5 Soak, RSS and streaming | ⚠️ | The [headless soak](../../bench/examples/production_soak.rs) runs a structural smoke in the bench tests. Its nightly profile samples percentiles and RSS every 10 s and gates frame time and RSS growth. Inspect/drive replay of source updates and full 30-minute evidence remain open. |
 | §6 Accessibility | ⚠️ | [Interaction tests](tests/interaction.rs) cover keyboard navigation, selection and copy. The 10M-line test drives repeated page movement in both directions. The [virtual-node test](src/surface.rs) queries a bounded window of source lines with absolute positions. Native screen-reader announcements remain open. |
 | §6 Visual snapshots | ✅ | [Snapshots](tests/snapshots.rs) cover the top, middle and end of the 10M-line viewer in both themes and both backends. |
-| §7 Review and baseline | ⚠️ | Default test batch (component, Bench and Showcase), fast-backend component and Showcase tests, and all-target Clippy on both backends exited 0. The added scale goldens passed separate comparisons on both backends. Independent review and quiet-host baselines remain open. Historical timings are qualified in [VALIDATION.md](VALIDATION.md). |
+| §7 Review and baseline | ⚠️ | Scoped Cargo tests and all-target Clippy passed on the upstream backend. The [interaction checks](tests/interaction.rs) also passed with cached GPUI-fast dependencies. The full release gate and independent review remain open. |
 
 ## Loaded-host measurements
 
@@ -90,3 +90,6 @@ buffer reuse. The warmed captures revisit the same two ranges in both datasets.
 |---|---:|---:|---:|
 | 100k lines | 8,270,193 → 8,247,657 | 219 → 137 | 175,132 → 174,476 |
 | 10M lines | 8,350,548 → 8,316,344 | 301 → 137 | 176,444 → 174,476 |
+
+The same fixture linked against cached GPUI-fast dependencies requested
+154 allocations and 21,088 bytes at each source size.
