@@ -63,3 +63,17 @@ fn every_entry_renders_in_both_themes() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn recipes_match_the_generated_screen_schema() {
+    let validator = jsonschema::validator_for(&guiraffe_ui::catalog::screen_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    for (name, raw) in guiraffe_showcase::recipes::DOCUMENTS {
+        let document = serde_json::from_str(raw).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let issues: Vec<_> = validator
+            .iter_errors(&document)
+            .map(|error| error.to_string())
+            .collect();
+        assert!(issues.is_empty(), "{name}: {issues:?}");
+    }
+}

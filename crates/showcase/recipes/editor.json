@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Markdown editor"
+            }
+          },
+          {
+            "kind": "group",
+            "children": [
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Bold"
+                }
+              },
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Heading"
+                }
+              },
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Insert link"
+                }
+              },
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Preview"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "card",
+            "children": [
+              {
+                "kind": "stack",
+                "children": [
+                  {
+                    "kind": "text",
+                    "props": {
+                      "text": "notes.md",
+                      "dimmed": true
+                    }
+                  },
+                  {
+                    "kind": "text-input",
+                    "props": {
+                      "placeholder": "Markdown source",
+                      "value": "## Sprint notes"
+                    }
+                  },
+                  {
+                    "kind": "text",
+                    "props": {
+                      "text": "Markdown source line",
+                      "dimmed": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "card",
+            "children": [
+              {
+                "kind": "stack",
+                "children": [
+                  {
+                    "kind": "title",
+                    "props": {
+                      "text": "Sprint notes"
+                    }
+                  },
+                  {
+                    "kind": "text",
+                    "props": {
+                      "text": "Preview"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

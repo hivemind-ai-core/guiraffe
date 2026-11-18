@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Project navigator and inspector"
+            }
+          },
+          {
+            "kind": "grid",
+            "props": {
+              "columns": 2
+            },
+            "children": [
+              {
+                "kind": "card",
+                "children": [
+                  {
+                    "kind": "stack",
+                    "children": [
+                      {
+                        "kind": "title",
+                        "props": {
+                          "text": "Navigator"
+                        }
+                      },
+                      {
+                        "kind": "button",
+                        "props": {
+                          "label": "Project"
+                        }
+                      },
+                      {
+                        "kind": "button",
+                        "props": {
+                          "label": "Screens"
+                        }
+                      },
+                      {
+                        "kind": "button",
+                        "props": {
+                          "label": "Settings"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "card",
+                "children": [
+                  {
+                    "kind": "stack",
+                    "children": [
+                      {
+                        "kind": "title",
+                        "props": {
+                          "text": "Inspector"
+                        }
+                      },
+                      {
+                        "kind": "text",
+                        "props": {
+                          "text": "Selected screen",
+                          "dimmed": true
+                        }
+                      },
+                      {
+                        "kind": "text-input",
+                        "props": {
+                          "placeholder": "Screen name",
+                          "value": "Settings"
+                        }
+                      },
+                      {
+                        "kind": "switch",
+                        "props": {
+                          "label": "Visible",
+                          "value": true
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

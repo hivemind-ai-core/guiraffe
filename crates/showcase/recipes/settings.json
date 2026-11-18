@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Workspace settings"
+            }
+          },
+          {
+            "kind": "text",
+            "props": {
+              "text": "Preferences apply to this workspace.",
+              "dimmed": true
+            }
+          },
+          {
+            "kind": "switch",
+            "props": {
+              "label": "Desktop alerts",
+              "value": true
+            }
+          },
+          {
+            "kind": "select",
+            "props": {
+              "label": "Appearance",
+              "value": "System",
+              "options": [
+                "System",
+                "Light",
+                "Dark"
+              ]
+            }
+          },
+          {
+            "kind": "checkbox",
+            "props": {
+              "label": "Start at login"
+            }
+          },
+          {
+            "kind": "button",
+            "props": {
+              "label": "Save preferences"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

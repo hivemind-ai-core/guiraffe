@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Team chat"
+            }
+          },
+          {
+            "kind": "card",
+            "children": [
+              {
+                "kind": "stack",
+                "children": [
+                  {
+                    "kind": "text",
+                    "props": {
+                      "text": "Riley",
+                      "color": "blue"
+                    }
+                  },
+                  {
+                    "kind": "text",
+                    "props": {
+                      "text": "Can you review the draft today?"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "card",
+            "children": [
+              {
+                "kind": "stack",
+                "children": [
+                  {
+                    "kind": "text",
+                    "props": {
+                      "text": "Morgan",
+                      "color": "teal"
+                    }
+                  },
+                  {
+                    "kind": "text",
+                    "props": {
+                      "text": "Yes, I will send feedback before lunch."
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "group",
+            "children": [
+              {
+                "kind": "text-input",
+                "props": {
+                  "placeholder": "Write a reply"
+                }
+              },
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Send"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

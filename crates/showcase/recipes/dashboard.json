@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Operations dashboard"
+            }
+          },
+          {
+            "kind": "text",
+            "props": {
+              "text": "Current usage and service status",
+              "dimmed": true
+            }
+          },
+          {
+            "kind": "grid",
+            "props": {
+              "columns": 2
+            },
+            "children": [
+              {
+                "kind": "card",
+                "children": [
+                  {
+                    "kind": "stack",
+                    "children": [
+                      {
+                        "kind": "title",
+                        "props": {
+                          "text": "API capacity"
+                        }
+                      },
+                      {
+                        "kind": "ring",
+                        "props": {
+                          "value": 68,
+                          "label": "68%",
+                          "color": "teal"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "card",
+                "children": [
+                  {
+                    "kind": "stack",
+                    "children": [
+                      {
+                        "kind": "title",
+                        "props": {
+                          "text": "Build queue"
+                        }
+                      },
+                      {
+                        "kind": "ring",
+                        "props": {
+                          "value": 24,
+                          "label": "24%",
+                          "color": "blue"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
