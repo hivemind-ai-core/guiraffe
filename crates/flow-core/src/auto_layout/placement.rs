@@ -39,6 +39,9 @@ pub(super) fn force(
         .map(|u| u.bounds.size.x.max(u.bounds.size.y))
         .fold(1., f32::max)
         + options.spacing.x.max(options.spacing.y);
+    if !distance.is_finite() {
+        return Err(LayoutError::Infeasible);
+    }
     let next = |seed: &mut u64| {
         *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         (*seed >> 40) as f32 / 16777216. - 0.5

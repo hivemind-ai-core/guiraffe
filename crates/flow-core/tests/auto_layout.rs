@@ -238,3 +238,21 @@ fn generated_feasible_relative_constraints_are_satisfied() {
         }
     }
 }
+
+#[test]
+fn force_layout_rejects_overflowing_spacing() {
+    let mut graph = graph(1, &[]);
+    graph.nodes.get_mut(&0).expect("node").size.x = f32::MAX;
+    let options = LayoutOptions {
+        spacing: Point::new(f32::MAX, 0.),
+        ..LayoutOptions::default()
+    };
+    assert_eq!(
+        AutoLayout::Force {
+            seed: 1,
+            iterations: 1
+        }
+        .layout(&graph, &options, &LayoutCancellation::default()),
+        Err(LayoutError::Infeasible)
+    );
+}
