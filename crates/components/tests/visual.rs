@@ -81,7 +81,17 @@ impl Render for KitchenSink {
                     .items_center()
                     .child(KbdGroup::new(["Ctrl", "K"]))
                     .child(KbdGroup::new(["g", "d"]).separator(KbdSeparator::Then))
-                    .child(KbdGroup::new(["Shift", "Enter"]).color(ColorName::Teal)),
+                    .child(KbdGroup::new(["Shift", "Enter"]).color(ColorName::Teal))
+                    .child(ColorSwatch::new("sw-blue", ColorName::Blue.shade(6)))
+                    .child(
+                        ColorSwatch::new("sw-grape", ColorName::Grape.shade(6))
+                            .selected(SwatchSelected::Check),
+                    )
+                    .child(
+                        ColorSwatch::new("sw-teal", ColorName::Teal.shade(6))
+                            .selected(SwatchSelected::Ring)
+                            .label("Teal"),
+                    ),
             )
             .child(self.spoiler.clone())
             .child(

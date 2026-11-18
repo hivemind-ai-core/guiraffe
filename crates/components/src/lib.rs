@@ -5,6 +5,7 @@
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
 
 pub mod burger;
+pub mod color_swatch;
 pub mod copy_button;
 pub mod highlight;
 pub mod icons;
@@ -20,6 +21,7 @@ pub mod timeline;
 pub mod typography;
 
 pub use burger::Burger;
+pub use color_swatch::{ColorSwatch, SwatchSelected, check_color};
 pub use copy_button::CopyButton;
 pub use highlight::{Highlight, Mark, highlight_ranges};
 pub use icons::{ActionIcon, ThemeIcon, close_button};
