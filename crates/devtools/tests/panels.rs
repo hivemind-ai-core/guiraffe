@@ -217,6 +217,37 @@ fn keyboard_toggle_polling_and_controls_preserve_app_renders(cx: &mut TestAppCon
     vcx.run_until_parked();
     let callbacks = vcx.update(|window, cx| window.simulate_next_frame(cx));
     assert_eq!(callbacks, 0, "closed tools stop requesting frames");
+    // Regression (user report): the Close button needed two clicks after a keyboard open.
+    vcx.simulate_keystrokes("ctrl-shift-i");
+    vcx.run_until_parked();
+    assert!(tools.is_open());
+    click(vcx, "devtools-close");
+    assert!(!tools.is_open(), "one click on Close closes the tools");
+    // A sampling re-render between press and release must not swallow the click.
+    vcx.simulate_keystrokes("ctrl-shift-i");
+    vcx.run_until_parked();
+    assert!(tools.is_open());
+    let center = vcx
+        .debug_bounds("devtools-close")
+        .unwrap_or_else(|| panic!("missing close"))
+        .center();
+    vcx.simulate_mouse_down(
+        center,
+        gpui_kit::MouseButton::Left,
+        gpui_kit::Modifiers::default(),
+    );
+    vcx.executor().advance_clock(SAMPLE_INTERVAL * 2);
+    vcx.run_until_parked();
+    vcx.simulate_mouse_up(
+        center,
+        gpui_kit::MouseButton::Left,
+        gpui_kit::Modifiers::default(),
+    );
+    vcx.run_until_parked();
+    assert!(
+        !tools.is_open(),
+        "Close survives a sampling re-render mid-click"
+    );
 }
 
 #[gpui_kit::test]
