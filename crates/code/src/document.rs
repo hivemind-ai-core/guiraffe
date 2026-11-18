@@ -97,6 +97,7 @@ impl CodeDocument {
         let byte = line.start.checked_add(position.column)?;
         (byte <= line.end && self.source.is_char_boundary(byte)).then_some(byte)
     }
+    /// Offsets inside a line terminator map to the preceding line end.
     pub fn position(&self, offset: usize) -> Option<Position> {
         if offset > self.source.len() || !self.source.is_char_boundary(offset) {
             return None;
@@ -105,10 +106,8 @@ impl CodeDocument {
             .starts
             .partition_point(|start| *start <= offset)
             .saturating_sub(1);
-        Some(Position::new(
-            line,
-            offset.saturating_sub(*self.starts.get(line)?),
-        ))
+        let bytes = self.line_range(line)?;
+        Some(Position::new(line, offset.min(bytes.end) - bytes.start))
     }
     pub fn range(&self, range: SourceRange) -> Option<Range<usize>> {
         let start = self.offset(range.start)?;
@@ -139,6 +138,43 @@ impl CodeDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    proptest::proptest! {
+        #[test]
+        fn positions_match_split_lines(lines in proptest::collection::vec("[a-zאב界🙂]{0,16}", 1..40)) {
+            let source = lines.join("\r\n");
+            let doc = CodeDocument::new(source.as_str());
+            proptest::prop_assert_eq!(doc.line_count(), lines.len());
+            let mut start = 0;
+            for (line, text) in lines.iter().enumerate() {
+                proptest::prop_assert_eq!(doc.line(line), Some(text.as_str()));
+                for column in 0..=text.len() {
+                    let pos = Position::new(line, column);
+                    let offset = start + column;
+                    if text.is_char_boundary(column) {
+                        proptest::prop_assert_eq!(doc.offset(pos), Some(offset));
+                        proptest::prop_assert_eq!(doc.position(offset), Some(pos));
+                    } else {
+                        proptest::prop_assert_eq!(doc.offset(pos), None);
+                        proptest::prop_assert_eq!(doc.position(offset), None);
+                    }
+                }
+                if line + 1 < lines.len() {
+                    proptest::prop_assert_eq!(
+                        doc.position(start + text.len() + 1),
+                        Some(Position::new(line, text.len()))
+                    );
+                }
+                start += text.len() + 2;
+            }
+        }
+    }
+    #[test]
+    fn positions_at_crlf_and_terminal_cr_are_selectable() {
+        let doc = CodeDocument::new("界\r\n🙂\r");
+        assert_eq!(doc.position(4), Some(Position::new(0, 3)));
+        assert_eq!(doc.position(10), Some(Position::new(1, 4)));
+        assert_eq!(doc.position(10).and_then(|p| doc.offset(p)), Some(9));
+    }
     #[test]
     fn copy_with_line_numbers_aligns_numbers() {
         let doc = CodeDocument::new(Arc::<str>::from("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n"));
