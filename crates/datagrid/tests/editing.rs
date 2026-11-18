@@ -6,9 +6,8 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui_kit::{
-    ClipboardItem, Context, InteractiveElement, IntoElement, Modifiers, MouseButton,
-    ParentElement, Point, Render, Styled, TestAppContext, VisualTestContext, Window, div, point,
-    px, size,
+    ClipboardItem, Context, InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement,
+    Point, Render, Styled, TestAppContext, VisualTestContext, Window, div, point, px, size,
 };
 use guiraffe_datagrid::{
     CellPos, CellRef, ColumnDef, DataGrid, EditError, EditOp, FnSource, GridEvent, GridHandle,
@@ -148,7 +147,11 @@ fn type_to_edit_and_enter_moves(cx: &mut TestAppContext) {
     vcx.simulate_keystrokes("enter");
     assert!(!grid.is_editing());
     assert_eq!(cell(&grid, 0, 0), "Zed");
-    assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 0)), "moved down");
+    assert_eq!(
+        grid.selection().cursor,
+        Some(CellPos::new(1, 0)),
+        "moved down"
+    );
     assert!(events.borrow().iter().any(|e| matches!(
         e,
         GridEvent::CellEdited { row: 0, column: 0, value, .. } if value.as_ref() == "Zed"
@@ -182,7 +185,11 @@ fn tab_wraps_and_escape_restores(cx: &mut TestAppContext) {
     vcx.simulate_keystrokes("tab");
     assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 0)), "wrapped");
     vcx.simulate_keystrokes("shift-tab");
-    assert_eq!(grid.selection().cursor, Some(CellPos::new(0, 2)), "wrapped back");
+    assert_eq!(
+        grid.selection().cursor,
+        Some(CellPos::new(0, 2)),
+        "wrapped back"
+    );
     vcx.simulate_keystrokes("shift-tab");
     // Editing: Tab commits and moves right.
     vcx.simulate_keystrokes("5 tab");
@@ -224,12 +231,20 @@ fn arrows_commit_at_the_text_edge(cx: &mut TestAppContext) {
     assert_eq!(grid.selection().cursor, Some(CellPos::new(0, 1)));
     vcx.simulate_keystrokes("9 down");
     assert_eq!(cell(&grid, 0, 1), "9");
-    assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 1)), "Down commits");
+    assert_eq!(
+        grid.selection().cursor,
+        Some(CellPos::new(1, 1)),
+        "Down commits"
+    );
     vcx.simulate_keystrokes("f2 home left");
     assert!(!grid.is_editing(), "Left at the start commits");
     assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 0)));
     vcx.simulate_keystrokes("f2 up");
-    assert_eq!(grid.selection().cursor, Some(CellPos::new(0, 0)), "Up commits");
+    assert_eq!(
+        grid.selection().cursor,
+        Some(CellPos::new(0, 0)),
+        "Up commits"
+    );
 }
 
 fn million(cx: &mut gpui_kit::App) -> GridHandle {
@@ -290,7 +305,10 @@ fn shift_arrows_shift_click_and_drag_autoscroll(cx: &mut TestAppContext) {
     let (rows, cols) = grid.selection().rect().unwrap_or((0..0, 0..0));
     assert_eq!((rows.start, cols), (2, 0..1));
     let last = grid.visible_rows().end;
-    assert!(rows.end > 20 && rows.end + 5 >= last, "range follows: {rows:?} {last}");
+    assert!(
+        rows.end > 20 && rows.end + 5 >= last,
+        "range follows: {rows:?} {last}"
+    );
     vcx.executor().advance_clock(Duration::from_millis(300));
     vcx.run_until_parked();
     assert_eq!(grid.scroll_offset().1, y3, "released: autoscroll stops");
@@ -325,7 +343,11 @@ fn paste_tiles_rejects_one_and_undoes_as_one_step(cx: &mut TestAppContext) {
     set_clipboard(vcx, "A\t1\nB\t2\n");
     vcx.simulate_keystrokes("ctrl-v");
     assert_eq!(column_text(&grid, 0)[..4], ["A", "B", "A", "B"]);
-    assert_eq!(column_text(&grid, 1)[..4], ["1", "2", "1", "23"], "row 3 vetoed");
+    assert_eq!(
+        column_text(&grid, 1)[..4],
+        ["1", "2", "1", "23"],
+        "row 3 vetoed"
+    );
     assert_eq!(column_text(&grid, 0)[4..], names[4..], "outside untouched");
     let ev = events.borrow().clone();
     let rejections: Vec<_> = ev
@@ -367,8 +389,16 @@ fn paste_tiles_rejects_one_and_undoes_as_one_step(cx: &mut TestAppContext) {
     set_clipboard(vcx, "X\t7\t99\nY\t8\t99\nZ\t9\t99\nW\t1\t1");
     vcx.simulate_keystrokes("ctrl-v");
     assert_eq!(column_text(&grid, 0)[4..], ["X", "Y"], "clipped to rows");
-    assert_eq!(column_text(&grid, 1)[4..], ["7", "8"], "read-only col skipped");
-    assert_eq!(grid.selection().rect(), Some((4..6, 0..3)), "pasted area selected");
+    assert_eq!(
+        column_text(&grid, 1)[4..],
+        ["7", "8"],
+        "read-only col skipped"
+    );
+    assert_eq!(
+        grid.selection().rect(),
+        Some((4..6, 0..3)),
+        "pasted area selected"
+    );
     // A single value fills the whole range.
     select(&grid, vcx, (0, 1), (2, 1));
     set_clipboard(vcx, "50");
@@ -398,7 +428,12 @@ fn cut_and_delete_clear_editable_cells(cx: &mut TestAppContext) {
     assert_eq!(column_text(&grid, 1)[2..4], ["22", "23"]);
     assert!(events.borrow().iter().any(|e| matches!(
         e,
-        GridEvent::CellsRejected { op: EditOp::Clear, rejected: 2, applied: 2, .. }
+        GridEvent::CellsRejected {
+            op: EditOp::Clear,
+            rejected: 2,
+            applied: 2,
+            ..
+        }
     )));
     vcx.simulate_keystrokes("backspace");
     // Undo the clear, then the cut: each is one step.
