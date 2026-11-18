@@ -4,6 +4,17 @@ use gpui_kit::{prelude::*, *};
 use guiraffe_core::GuiraffeTheme;
 use guiraffe_flow_core::{Node, Point as WorldPoint, Rect};
 use std::rc::Rc;
+pub(crate) fn handle_bounds(centre: WorldPoint, zoom: f32) -> Rect {
+    let radius = crate::HANDLE_RADIUS * zoom;
+    let centre = centre * zoom;
+    Rect::new(
+        centre.x - radius,
+        centre.y - radius,
+        2. * radius,
+        2. * radius,
+    )
+}
+
 pub(crate) struct NodeCard {
     pub node: Node,
     pub revision: u64,
@@ -37,19 +48,22 @@ impl Render for NodeCard {
                     .child(self.renderer.render(&self.node, self.zoom, window, cx)),
             );
         for handle in &self.node.handles {
-            let p = handle.position(Rect {
-                origin: WorldPoint::default(),
-                size: self.node.size,
-            }) * self.zoom;
+            let bounds = handle_bounds(
+                handle.position(Rect {
+                    origin: WorldPoint::default(),
+                    size: self.node.size,
+                }),
+                self.zoom,
+            );
             frame = frame.child(
                 div()
                     .id(SharedString::from(format!("handle-{}", handle.id)))
                     .test_support()
                     .absolute()
                     // The dot is centred on the border of the node.
-                    .left(px(p.x - crate::HANDLE_RADIUS))
-                    .top(px(p.y - crate::HANDLE_RADIUS))
-                    .size(px(crate::HANDLE_RADIUS * 2.))
+                    .left(px(bounds.origin.x))
+                    .top(px(bounds.origin.y))
+                    .size(px(bounds.size.x))
                     .rounded_full()
                     .bg(accent.to_hsla()),
             );

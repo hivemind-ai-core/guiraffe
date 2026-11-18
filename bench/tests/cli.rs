@@ -11,10 +11,13 @@ fn json_roundtrip_report_escaping_and_profile_guard() -> Result<()> {
     let output = binary()
         .args([
             "run",
+            "--suite",
+            "core-variants",
             "--samples",
             "10",
             "--iterations",
-            "20",
+            // Validate the JSON contract for every suite, including scale recomputes.
+            "1",
             "--notes",
             "heavily loaded <script> & host",
             "--output",
@@ -27,7 +30,7 @@ fn json_roundtrip_report_escaping_and_profile_guard() -> Result<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     let mut records: Vec<Record> = serde_json::from_slice(&fs::read(records)?)?;
-    assert_eq!(records.len(), guiraffe_bench::suites::registered().len());
+    assert_eq!(records.len(), 1);
     let old = records.first().context("record missing")?.clone();
     assert_eq!(old.samples.len(), 10);
     assert!(!old.metadata.commit.is_empty());

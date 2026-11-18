@@ -1,5 +1,5 @@
 //! spec/00 §12: Gantt and tracks views are keyboard-operable when focused (opt-in), a pointer
-//! press never takes focus, items expose roles / labels / selected state, locked items use
+//! press preserves focus by default, items expose roles / labels / selected state, locked items use
 //! disabled tokens, and focus / selection never move layout.
 use gpui_kit::{
     AppContext, Context, Entity, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
@@ -150,10 +150,10 @@ fn tracks_keyboard_moves_and_trims_the_selected_clip(cx: &mut TestAppContext) {
         })
     };
     vcx.update(|w, cx| {
-        let h = tracks.read(cx).focus_handle(cx);
-        w.focus(&h, cx);
+        w.render_frame(cx);
+        w.click(tracks_view::clip_element_id(0, 1), cx);
+        assert!(tracks.read(cx).focus_handle(cx).is_focused(w));
     });
-    vcx.simulate_keystrokes("down");
     assert_eq!(tracks.read_with(vcx, |t, _| t.selected()), Some((0, 1)));
     vcx.simulate_keystrokes("right");
     assert_eq!(clip(vcx), (1.5, 3.5));

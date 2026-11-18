@@ -17,6 +17,7 @@ guiraffe-motion.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 guiraffe-test = { path = "../test", features = ["snapshot", "render", "layout"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+proptest = "1"
 
 [features]
 gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-motion/gpui-fast"]

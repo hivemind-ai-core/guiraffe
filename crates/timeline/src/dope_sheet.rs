@@ -515,6 +515,7 @@ impl Render for DopeSheet {
                     .child(
                         div()
                             .id("dope-body")
+                            .test_support()
                             .debug_selector(|| "dope-body".into())
                             .relative()
                             .flex_1()
