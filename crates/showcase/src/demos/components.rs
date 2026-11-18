@@ -251,7 +251,14 @@ fn blockquote(_: &mut Window, cx: &mut App) -> AnyView {
 fn icons(window: &mut Window, cx: &mut App) -> AnyView {
     playground_with(
         "Live ThemeIcon & ActionIcon",
-        &[Knob::variant(), Knob::color(), Knob::size(), Knob::radius()],
+        &[
+            Knob::variant(),
+            Knob::color(),
+            Knob::size(),
+            Knob::radius(),
+            Knob::toggle("Disabled"),
+            Knob::toggle("Loading"),
+        ],
         |_, cx| EventLog::new(cx),
         |log, v, window, cx| {
             column([
@@ -315,6 +322,8 @@ fn icons_live(v: &KnobValues, log: &Entity<EventLog>, _: &mut Window, _: &mut Ap
                 .color(color)
                 .size(v.size(2))
                 .label("Like")
+                .disabled(v.on(4))
+                .loading(v.on(5))
                 .on_click(move |_, _, cx| EventLog::log(&l1, "Like · on_click", cx)),
         )
         .child(

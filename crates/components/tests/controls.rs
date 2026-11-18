@@ -194,3 +194,33 @@ fn indicator_mark_stays_inside_its_wrapper(cx: &mut TestAppContext) {
         "badge overflows its wrapper: {wrap:?} {child:?}"
     );
 }
+
+#[gpui_kit::test]
+fn loading_ignores_presses_and_announces_progress(cx: &mut TestAppContext) {
+    struct V(Rc<Cell<u32>>);
+    impl Render for V {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let hits = self.0.clone();
+            div().child(
+                ActionIcon::new("save", IconName::Check)
+                    .label("Save")
+                    .loading(true)
+                    .on_click(move |_, _, _| hits.set(hits.get() + 1)),
+            )
+        }
+    }
+    cx.update(guiraffe_components::init);
+    let hits: Rc<Cell<u32>> = Rc::default();
+    let h = hits.clone();
+    let (_, vcx) = cx.add_window_view(|_, _| V(h));
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        window.render_frame(cx);
+        window.click("save", cx);
+        let node = window.find_by_label("Save (loading)");
+        assert_eq!(node.role(), Some(Role::Button));
+        // Loading is not disabled: it keeps its colours and stays reachable, it just ignores presses.
+        assert_eq!(node.disabled(), None);
+    });
+    assert_eq!(hits.get(), 0, "a loading ActionIcon ignores clicks");
+}

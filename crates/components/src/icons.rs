@@ -95,6 +95,8 @@ pub struct ActionIcon {
     /// `None`: quiet regions (toolbars, tables) get Subtle, others Light.
     variant: Option<Variant>,
     disabled: bool,
+    /// Shows a spinner instead of the icon and ignores presses, keeping its colours (Mantine).
+    loading: bool,
     focusable: Option<bool>,
     label: Option<SharedString>,
     on_click: Option<OnClick>,
@@ -110,6 +112,7 @@ impl ActionIcon {
             color: None,
             variant: None,
             disabled: false,
+            loading: false,
             focusable: None,
             label: None,
             on_click: None,
@@ -136,7 +139,7 @@ impl ActionIcon {
     }
 }
 
-crate::props!(ActionIcon { size: Size => size, variant: Variant => variant, disabled: bool => disabled });
+crate::props!(ActionIcon { size: Size => size, variant: Variant => variant, disabled: bool => disabled, loading: bool => loading });
 
 impl RenderOnce for ActionIcon {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -152,6 +155,13 @@ impl RenderOnce for ActionIcon {
         let label = self
             .label
             .unwrap_or_else(|| SharedString::from(format!("{:?}", self.icon)));
+        let loading = self.loading;
+        // Screen readers hear that the action is in progress.
+        let label = if loading {
+            SharedString::from(format!("{label} (loading)"))
+        } else {
+            label
+        };
         let r = radius(None, cx);
         let press = Press::new(colors)
             .radius(r)
@@ -159,6 +169,8 @@ impl RenderOnce for ActionIcon {
             .focusable(self.focusable)
             .label(label);
         let disabled = self.disabled;
+        // Loading ignores presses without looking disabled.
+        let inert = disabled || loading;
         let on_click = self.on_click;
         let el = div()
             .id(self.id)
@@ -171,9 +183,15 @@ impl RenderOnce for ActionIcon {
             .rounded(r)
             .border_1()
             .text_size(px(size.icon_size()))
-            .child(self.icon)
+            .when(loading, |el| {
+                el.child(gpui_kit::component::Sizable::with_size(
+                    gpui_kit::component::spinner::Spinner::new(),
+                    gpui_kit::component::Size::Small,
+                ))
+            })
+            .when(!loading, |el| el.child(self.icon))
             .press(&press, &focus, window)
-            .when_some(on_click, |el, f| el.on_press(disabled, f));
+            .when_some(on_click, |el, f| el.on_press(inert, f));
         crate::style::refine(el, &self.style)
     }
 }
