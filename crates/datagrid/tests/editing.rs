@@ -11,7 +11,7 @@ use gpui_kit::{
 };
 use guiraffe_datagrid::{
     CellPos, CellRef, ColumnDef, DataGrid, EditError, EditOp, FnSource, GridEvent, GridHandle,
-    GridOptions, GridSource, SelectionMode, VecSource,
+    GridOptions, SelectionMode, VecSource,
 };
 
 struct Host {
