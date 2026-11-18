@@ -78,6 +78,7 @@ pub struct SpeedDial {
     springs: Vec<Animated<f32>>,
     open: bool,
     focusable: Option<bool>,
+    show_labels: bool,
     primary: IconName,
     label: SharedString,
 }
@@ -100,6 +101,7 @@ impl SpeedDial {
             actions,
             open: false,
             focusable: None,
+            show_labels: false,
         })
     }
 
@@ -110,6 +112,15 @@ impl SpeedDial {
     pub fn set_layout(&mut self, layout: DialLayout, cx: &mut Context<Self>) {
         self.positions = layout.offsets(self.actions.len());
         cx.notify();
+    }
+
+    /// Display the action labels beside the bubbles. Accessible names and tooltips
+    /// remain available with either setting.
+    pub fn set_show_labels(&mut self, show: bool, cx: &mut Context<Self>) {
+        if self.show_labels != show {
+            self.show_labels = show;
+            cx.notify();
+        }
     }
 
     pub fn set_focusable(&mut self, focusable: Option<bool>, cx: &mut Context<Self>) {
@@ -174,7 +185,7 @@ impl Render for SpeedDial {
             let label = action.label.clone();
             let tooltip = label.clone();
             let press = Press::new(action_colors)
-                .label(label)
+                .label(label.clone())
                 .radius(corner)
                 .disabled(!self.open)
                 .focusable(Some(self.open && keyboard));
@@ -194,6 +205,17 @@ impl Render for SpeedDial {
                 .rounded(corner)
                 .border_1()
                 .child(action.icon)
+                .when(self.show_labels, |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .left(px(40.))
+                            .pl_2()
+                            .whitespace_nowrap()
+                            .text_sm()
+                            .child(label),
+                    )
+                })
                 .press(&press, &focus, window)
                 .when(self.open, |el| {
                     el.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
@@ -286,8 +308,9 @@ impl Render for SpeedDial {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{DialArc, DialLayout, PI, stagger_delay};
     use proptest::prelude::*;
+    use std::time::Duration;
 
     proptest! {
         #[test]

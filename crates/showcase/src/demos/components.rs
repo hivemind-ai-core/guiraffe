@@ -591,6 +591,7 @@ fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
                 &["Vertical", "Horizontal", "Quarter circle", "Half circle"],
             ),
             Knob::new("Radius", &["80 px", "120 px"]),
+            Knob::toggle("Show labels"),
         ],
         |_, cx| {
             let actions = [
@@ -637,6 +638,7 @@ fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
                 control.update(cx, |control, cx| {
                     control.set_focusable(Some(true), cx);
                     control.set_layout(layout, cx);
+                    control.set_show_labels(v.on(2), cx);
                 });
             }
             column([

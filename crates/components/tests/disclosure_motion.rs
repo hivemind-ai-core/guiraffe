@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui_kit::{
     Context, Entity, IntoElement, Modifiers, ParentElement, Render, Styled, TestAppContext,
-    TestSupportExt, VisualTestContext, Window, assets::IconName, div, point, px,
+    VisualTestContext, Window, assets::IconName, div, point, px,
 };
 use guiraffe_components::*;
 use guiraffe_test::render::RenderCounter;
