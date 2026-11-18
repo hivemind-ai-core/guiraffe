@@ -1232,14 +1232,8 @@ fn spotlight_rows_expose_listbox_semantics(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let rows = window.find_all_by_role(gpui_kit::Role::ListBoxOption);
         assert_eq!(rows.len(), 2);
-        assert_eq!(
-            window.find_by_label("One").role(),
-            Some(gpui_kit::Role::ListBoxOption)
-        );
-        assert_eq!(
-            window.find_by_label("Two").role(),
-            Some(gpui_kit::Role::ListBoxOption)
-        );
+        assert_eq!(window.find(("spotlight-row", 0_usize)).label(), Some("One"));
+        assert_eq!(window.find(("spotlight-row", 1_usize)).label(), Some("Two"));
         assert_eq!(
             window.find(("spotlight-row", 0_usize)).selected(),
             Some(true)
