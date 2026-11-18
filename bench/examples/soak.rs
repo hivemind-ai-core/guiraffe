@@ -1,7 +1,8 @@
 //! Headless CPU interaction timing. Samples include GPUI event dispatch and render/paint.
 use gpui_kit::{
-    AppContext, MouseButton, ScrollDelta, ScrollEvent, ScrollSource, TestAppContext,
-    TestDispatcher, TouchPhase, WindowOptions, point, px, test::TestWindowExt,
+    AppContext, Bounds, MouseButton, ScrollDelta, ScrollEvent, ScrollSource, TestAppContext,
+    TestDispatcher, TouchPhase, VisualTestContext, WindowBounds, WindowOptions, point, px,
+    test::TestWindowExt,
 };
 use guiraffe_charts::{Channels, ChartOptions, ChartSpec, ChartView, Layer, Mark, Stream};
 use guiraffe_flow::{
@@ -136,7 +137,7 @@ fn streaming_spec(stream: Stream<u32>) -> ChartSpec {
 fn charts(
     scatter: bool,
     streaming: bool,
-    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>),
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
 ) -> Result<()> {
     const STREAM_RATE: u32 = 10_000;
     const STREAM_BATCH: u32 = 500;
@@ -144,7 +145,7 @@ fn charts(
     if streaming {
         stream.append((0..STREAM_RATE).collect());
     }
-    let mut view = None;
+    let mount_started = Instant::now();
     let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("charts_soak"));
     cx.update(|cx| {
         gpui_kit::base::init(cx);
@@ -152,86 +153,94 @@ fn charts(
         gpui_kit::component::init(cx);
         guiraffe_core::apply(Default::default(), cx);
     });
-    let mount_started = Instant::now();
-    let (_, window) = cx.add_window_view(|window, cx| {
-        let (mark, count) = if scatter {
-            (Mark::Point, 1_000_000)
-        } else {
-            (Mark::Line, 10_000_000)
-        };
-        let options = ChartOptions {
-            legend: false,
-            navigation: !streaming,
+    let (handle, view) = cx.update(|cx| {
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::maximized(None, cx))),
             ..Default::default()
         };
-        let chart = if streaming {
-            ChartView::new(streaming_spec(stream.clone()).prepare(), options, cx)
-        } else {
-            let spec = ChartSpec::new("Observations · عربي 日本語 🎵").layer(Layer::new(
-                mark,
-                (0..count).collect::<Vec<u32>>(),
-                Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin())
-                    .group(move |i| if scatter { i % 100 } else { 0 }),
-            ));
-            ChartView::from_spec(spec, options, cx)
-        };
-        view = Some(chart.clone());
-        gpui_kit::base::Root::new(chart, window, cx)
-    });
+        gpui_kit::open_window(options, cx, |_, cx| {
+            let (mark, count) = if scatter {
+                (Mark::Point, 1_000_000)
+            } else {
+                (Mark::Line, 10_000_000)
+            };
+            let options = ChartOptions {
+                legend: false,
+                navigation: !streaming,
+                ..Default::default()
+            };
+            if streaming {
+                ChartView::new(streaming_spec(stream.clone()).prepare(), options, cx)
+            } else {
+                let spec = ChartSpec::new("Observations · عربي 日本語 🎵").layer(Layer::new(
+                    mark,
+                    (0..count).collect::<Vec<u32>>(),
+                    Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin())
+                        .group(move |i| if scatter { i % 100 } else { 0 }),
+                ));
+                ChartView::from_spec(spec, options, cx)
+            }
+        })
+    })?;
+    // TestAppContext::add_window_view drains the background work before returning.
+    let mut window = VisualTestContext::from_window(handle, &cx);
     window.update(|window, cx| window.render_frame(cx));
-    println!(
-        "first_chart_frame_us={}",
-        mount_started.elapsed().as_micros()
-    );
+    let first_frame = mount_started.elapsed();
+    println!("first_chart_frame_us={}", first_frame.as_micros());
     window.run_until_parked();
     if !streaming {
-        let chart = view.as_ref().ok_or("missing mounted chart")?;
-        if window.update(|_, cx| chart.read(cx).scene_build_count()) < 2 {
+        if window.update(|_, cx| view.read(cx).scene_build_count()) < 2 {
             return Err("full chart scene did not publish".into());
         }
+        println!(
+            "full_chart_scene_us={}",
+            mount_started.elapsed().as_micros()
+        );
     }
     let stream_started = Instant::now();
     let mut next = STREAM_RATE;
     let mut due = STREAM_RATE;
-    run(&mut |i| {
-        if streaming {
-            due = STREAM_RATE
-                + (stream_started.elapsed().as_secs_f64() * f64::from(STREAM_RATE)) as u32;
-            if due.saturating_sub(next) >= STREAM_BATCH {
-                let end = due - (due - next) % STREAM_BATCH;
-                stream.append((next..end).collect());
-                stream.retain_last(STREAM_RATE as usize);
-                next = end;
-                let model = streaming_spec(stream.clone()).prepare();
-                let chart = view.as_ref().ok_or("missing streaming chart")?;
-                window.update(|_, cx| chart.update(cx, |chart, cx| chart.replace(model, cx)));
+    run(
+        &mut |i| {
+            if streaming {
+                due = STREAM_RATE
+                    + (stream_started.elapsed().as_secs_f64() * f64::from(STREAM_RATE)) as u32;
+                if due.saturating_sub(next) >= STREAM_BATCH {
+                    let end = due - (due - next) % STREAM_BATCH;
+                    stream.append((next..end).collect());
+                    stream.retain_last(STREAM_RATE as usize);
+                    next = end;
+                    let model = streaming_spec(stream.clone()).prepare();
+                    window.update(|_, cx| view.update(cx, |chart, cx| chart.replace(model, cx)));
+                }
             }
-        }
-        let bounds = window
-            .update(|window, _| window.try_find("chart-canvas").map(|item| item.bounds()))
-            .ok_or("missing chart canvas")?;
-        let at = bounds.origin
-            + point(
-                bounds.size.width * (0.35 + 0.05 * (i % 7) as f32),
-                bounds.size.height * 0.5,
-            );
-        match i % 4 {
-            0 => window.simulate_mouse_move(at, None, Default::default()),
-            1 => window.simulate_click(at, Default::default()),
-            _ => {
-                let delta = if i % 2 == 0 { 12. } else { -12. };
-                window.simulate_event(ScrollEvent {
-                    position: at,
-                    delta: ScrollDelta::Pixels(point(px(delta), px(delta))),
-                    modifiers: Default::default(),
-                    touch_phase: TouchPhase::Moved,
-                    source: ScrollSource::Pointer,
-                });
+            let bounds = window
+                .update(|window, _| window.try_find("chart-canvas").map(|item| item.bounds()))
+                .ok_or("missing chart canvas")?;
+            let at = bounds.origin
+                + point(
+                    bounds.size.width * (0.35 + 0.05 * (i % 7) as f32),
+                    bounds.size.height * 0.5,
+                );
+            match i % 4 {
+                0 => window.simulate_mouse_move(at, None, Default::default()),
+                1 => window.simulate_click(at, Default::default()),
+                _ => {
+                    let delta = if i % 2 == 0 { 12. } else { -12. };
+                    window.simulate_event(ScrollEvent {
+                        position: at,
+                        delta: ScrollDelta::Pixels(point(px(delta), px(delta))),
+                        modifiers: Default::default(),
+                        touch_phase: TouchPhase::Moved,
+                        source: ScrollSource::Pointer,
+                    });
+                }
             }
-        }
-        window.run_until_parked();
-        Ok(())
-    });
+            window.run_until_parked();
+            Ok(())
+        },
+        first_frame,
+    );
     if streaming {
         let elapsed = stream_started.elapsed().as_secs_f64();
         let points = next - STREAM_RATE;
@@ -253,15 +262,20 @@ fn main() -> Result<()> {
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
-    let run = |frame: &mut dyn FnMut(usize) -> Result<()>| {
-        result = sample(frame, mount_started.elapsed(), short);
-    };
     match component {
-        "flow" => flow(args.iter().any(|arg| arg == "--no-minimap"), run)?,
-        "timeline" => timeline(run),
-        "chart-line" => charts(false, false, run)?,
-        "chart-scatter" => charts(true, false, run)?,
-        "chart-stream" => charts(false, true, run)?,
+        "flow" => flow(args.iter().any(|arg| arg == "--no-minimap"), |frame| {
+            result = sample(frame, mount_started.elapsed(), short);
+        })?,
+        "timeline" => timeline(|frame| result = sample(frame, mount_started.elapsed(), short)),
+        "chart-line" => charts(false, false, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
+        "chart-scatter" => charts(true, false, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
+        "chart-stream" => charts(false, true, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         _ => return Err("unknown soak component".into()),
     }
     result
