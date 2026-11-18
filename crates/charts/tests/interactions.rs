@@ -19,7 +19,11 @@ struct Host {
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.renders.set(self.renders.get() + 1);
-        div().size_full().child(self.chart.clone())
+        div().size_full().child(
+            self.chart
+                .clone()
+                .cached(StyleRefinement::default().w_full()),
+        )
     }
 }
 
@@ -173,6 +177,26 @@ fn native_hover_tooltip_selection_and_render_counts(cx: &mut TestAppContext) {
             .iter()
             .any(|e| matches!(e, ChartEvent::Selected(id) if id.key == 1))
     );
+}
+
+#[gpui_kit::test]
+#[ignore = "pinned GPUI invalidates cached ancestors on overlay notification"]
+fn native_hover_across_points_keeps_host_cached(cx: &mut TestAppContext) {
+    let (chart, window) = mount(cx);
+    let before = chart.host_renders.get();
+    for (x, y, key) in [(0.5, 0.5, 1), (0.01, 0.99, 0)] {
+        let point = mouse_at(window, x, y);
+        window.simulate_mouse_move(point, None, Default::default());
+        window.run_until_parked();
+        assert_eq!(
+            chart
+                .view
+                .read_with(window, |view, cx| view.hovered(cx))
+                .map(|id| id.key),
+            Some(key),
+        );
+    }
+    assert_eq!(chart.host_renders.get(), before);
 }
 
 #[gpui_kit::test]
