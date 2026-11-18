@@ -170,10 +170,10 @@ fn auto_layout(window: &mut Window, cx: &mut App) -> AnyView {
             Knob::new(
                 "Direction",
                 &[
-                    "Left to right",
-                    "Top to bottom",
-                    "Right to left",
-                    "Bottom to top",
+                    "Left → right",
+                    "Top → bottom",
+                    "Right → left",
+                    "Bottom → top",
                 ],
             ),
             Knob::new("Spacing", &["Compact", "Comfortable", "Spacious"]).default(1),
@@ -183,11 +183,7 @@ fn auto_layout(window: &mut Window, cx: &mut App) -> AnyView {
         ],
         |_, cx| LayoutDemo {
             state: initial_layout(cx),
-            applied: {
-                let applied = Applied::default();
-                applied.changed(&KnobValues(vec![0, 0, 1, 0, 0, 1]));
-                applied
-            },
+            applied: Applied::default(),
         },
         |demo, values, _, cx| {
             let Some(state) = &demo.state else {
