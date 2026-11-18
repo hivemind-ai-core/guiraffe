@@ -9,7 +9,7 @@ use gpui_kit::{
 use guiraffe_core::{ColorName, Contrast, GuiraffeTheme, Variant, color::Rgb};
 
 /// Series inks contrast at least 3:1 with the plot body in standard mode and 4.5:1 in high contrast.
-pub fn categorical_palette(theme: &GuiraffeTheme) -> [Rgb; 8] {
+pub fn categorical_palette(theme: &GuiraffeTheme) -> [Rgb; 12] {
     let mut colors = [
         theme.primary,
         ColorName::Teal,
@@ -19,9 +19,17 @@ pub fn categorical_palette(theme: &GuiraffeTheme) -> [Rgb; 8] {
         ColorName::Cyan,
         ColorName::Lime,
         ColorName::Red,
+        ColorName::Indigo,
+        ColorName::Green,
+        ColorName::Yellow,
+        ColorName::Violet,
     ];
     if let Some(duplicate) = colors[1..].iter().position(|&name| name == theme.primary) {
-        colors[duplicate + 1] = ColorName::Indigo;
+        colors[duplicate + 1] = if theme.primary == ColorName::Blue {
+            ColorName::Gray
+        } else {
+            ColorName::Blue
+        };
     }
     let surfaces = theme.surfaces();
     let floor = if theme.contrast == Contrast::High {
@@ -339,6 +347,12 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
 mod tests {
     use super::*;
     use guiraffe_core::Scheme;
+
+    #[test]
+    fn palette_extends_past_eight_series() {
+        let colors = categorical_palette(&GuiraffeTheme::default());
+        assert!(colors.len() > 8 && !colors[..8].contains(&colors[8]));
+    }
 
     #[test]
     fn categorical_colors_meet_surface_contrast() {
