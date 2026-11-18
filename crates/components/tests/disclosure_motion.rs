@@ -19,14 +19,18 @@ impl<T: Render> Render for Host<T> {
     }
 }
 
+fn redraw(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        window.simulate_next_frame(cx);
+        window.draw(cx).clear(cx);
+    });
+    cx.run_until_parked();
+}
+
 fn frames(cx: &mut VisualTestContext, n: usize) {
     for _ in 0..n {
         cx.executor().advance_clock(Duration::from_millis(16));
-        cx.update(|window, cx| {
-            window.simulate_next_frame(cx);
-            window.draw(cx).clear(cx);
-        });
-        cx.run_until_parked();
+        redraw(cx);
     }
 }
 
@@ -71,8 +75,11 @@ fn expanding_list_opens_and_returns_siblings_to_their_original_bounds(cx: &mut T
     let second = window
         .debug_bounds("expanding-trigger-1")
         .expect("second trigger");
-    let renders = counter.get();
     window.simulate_click(first.center(), Modifiers::none());
+    // Process pointer feedback and the open event before advancing the spring clock.
+    redraw(window);
+    assert_eq!(window.debug_bounds("expanding-trigger-1"), Some(second));
+    let renders = counter.get();
     frames(window, 2);
     let in_flight = window
         .debug_bounds("expanding-trigger-1")
@@ -128,8 +135,10 @@ fn dial_keeps_anchor_stable_and_closes_on_action_or_outside_press(cx: &mut TestA
     });
     frames(window, 2);
     let primary = window.debug_bounds("speed-dial-primary").expect("primary");
-    let renders = counter.get();
     window.simulate_click(primary.center(), Modifiers::none());
+    redraw(window);
+    assert_eq!(window.debug_bounds("speed-dial-primary"), Some(primary));
+    let renders = counter.get();
     frames(window, 45);
     assert_eq!(window.debug_bounds("speed-dial-primary"), Some(primary));
     if gpui_kit::GPUI_FAST {
