@@ -40,6 +40,12 @@ load was 26.88 / 30.91 / 24.59. RSS fell from 273,212 KiB at 10 s to
 65,092 KiB at failure under host memory pressure. A full steady-state
 30-minute drift result remains open.
 
+An instrumented release headless run used the bench counting allocator on
+the calling thread for each of 60 warmed scroll, selection and draw
+iterations. Median traffic was 302 allocation operations and 194,468
+requested bytes per iteration. The measurement includes GPUI work and
+measures allocation traffic. It leaves the zero-allocation UI criterion open.
+
 Run the headless smoke with
 `cargo run --release -p guiraffe-bench --example production_soak -- code`.
 Append `--nightly` for the 30-minute threshold run on a quiet Linux host.

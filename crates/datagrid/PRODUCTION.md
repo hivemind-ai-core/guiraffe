@@ -41,6 +41,12 @@ at load 32, the observed median moved from 36.258 to 20.798 ms
 and p99 from 55.115 to 41.118 ms after palette reuse. Desktop presentation latency remains
 unmeasured.
 
+An instrumented release headless run used the bench counting allocator on
+the calling thread for each of 60 warmed scroll, selection and draw
+iterations. Median traffic was 23,520 allocation operations and 14,674,820
+requested bytes per iteration. The measurement includes GPUI work and
+measures allocation traffic. It leaves the zero-allocation UI criterion open.
+
 Run the headless smoke with
 `cargo run --release -p guiraffe-bench --example production_soak -- grid`.
 Append `--nightly` for the 30-minute threshold run on a quiet Linux host.
