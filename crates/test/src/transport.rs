@@ -378,6 +378,7 @@ pub struct CallSocket {
         std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<String>>>,
     >,
     next: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    clients: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl CallSocket {
@@ -391,16 +392,26 @@ impl CallSocket {
         let (incoming_tx, incoming_rx) = std::sync::mpsc::channel();
         let replies = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let next = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let clients = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let thread_replies = replies.clone();
         let thread_next = next.clone();
+        let thread_clients = clients.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { break };
+                // Too many clients: the connection is closed again right away.
+                if thread_clients.load(std::sync::atomic::Ordering::Relaxed) >= MAX_CLIENTS {
+                    drop(stream);
+                    continue;
+                }
+                thread_clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let id = thread_next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let incoming = incoming_tx.clone();
                 let replies = thread_replies.clone();
+                let clients = thread_clients.clone();
                 std::thread::spawn(move || {
                     let _ = serve_stream(stream, id, incoming, replies);
+                    clients.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 });
             }
         });
@@ -408,6 +419,7 @@ impl CallSocket {
             incoming: incoming_rx,
             replies,
             next,
+            clients,
         })
     }
 
@@ -428,6 +440,11 @@ impl CallSocket {
     /// The id of the next call.
     pub fn next_id(&self) -> u64 {
         self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many clients the socket serves right now.
+    pub fn clients(&self) -> usize {
+        self.clients.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -458,11 +475,9 @@ fn serve_stream(
             break;
         }
         // The answer of the call, written back to the client that sent it.
-        let answer = loop {
-            match answer_rx.recv() {
-                Ok(text) => break text,
-                Err(_) => return Ok(()),
-            }
+        let answer = match answer_rx.recv() {
+            Ok(text) => text,
+            Err(_) => return Ok(()),
         };
         let answer = if answer.len() > LIMIT {
             "{\"ok\":false,\"error\":\"the answer is too large\"}".to_string()

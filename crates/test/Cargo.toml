@@ -88,3 +88,7 @@ required-features = ["inspect"]
 [[test]]
 name = "focus_trap"
 required-features = ["inspect"]
+
+[[test]]
+name = "socket"
+required-features = ["inspect"]
