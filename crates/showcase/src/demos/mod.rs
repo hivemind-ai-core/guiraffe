@@ -7,6 +7,7 @@ use guiraffe_core::Size;
 pub mod charts;
 pub mod chat;
 pub mod code;
+pub mod commands;
 pub mod components;
 pub mod datagrid;
 pub mod flow;

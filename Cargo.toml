@@ -12,6 +12,7 @@ rust-version = "1.90"
 guiraffe-test = { path = "crates/test" }
 guiraffe-code = { path = "crates/code" }
 guiraffe-chat = { path = "crates/chat" }
+guiraffe-commands = { path = "crates/commands" }
 guiraffe-core = { path = "crates/core" }
 guiraffe-layout = { path = "crates/layout" }
 guiraffe-components = { path = "crates/components" }

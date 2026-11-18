@@ -3366,6 +3366,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-commands"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-overlays",
+ "guiraffe-test",
+ "schemars",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "guiraffe-components"
 version = "0.1.0"
 dependencies = [
@@ -3529,6 +3542,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-chat",
  "guiraffe-code",
+ "guiraffe-commands",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",

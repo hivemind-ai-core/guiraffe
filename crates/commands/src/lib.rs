@@ -1,0 +1,38 @@
+//! One command catalog, independent pure resolution, native keyboard routing and menus.
+//!
+//! Pure metadata and resolution work without creating a GPUI application:
+//! ```
+//! use guiraffe_commands::{Command, CommandId, ContextStack, Keybinding, Registry};
+//!
+//! let mut catalog = Registry::default();
+//! let id = CommandId::parse("file.save")?;
+//! let binding = Keybinding::parse("Control+S")?;
+//! catalog.register(Command::new(id.clone(), "Save", ())
+//!     .category("File").keybinding(binding.clone()))?;
+//! assert_eq!(catalog.resolve_binding(&binding, &ContextStack::default())
+//!     .map(|command| &command.id), Some(&id));
+//! # Ok::<(), guiraffe_commands::Error>(())
+//! ```
+//!
+//! For native applications, create a [`Commands`] service per window, register
+//! handlers, and place [`CommandScope`] around focused content. [`Menu`] consumes
+//! the same registry; Ctrl+Shift+P opens the existing overlays Spotlight adapter.
+//! See the crate README and `examples/commands.rs` for host context management.
+pub mod context;
+mod error;
+pub mod keybinding;
+pub mod model;
+pub use context::{Context as WhenContext, ContextStack, When};
+pub use error::Error;
+pub use keybinding::{Keybinding, Platform};
+pub use model::{Bindings, Command, CommandId, Conflict, PrefixConflict, Registry};
+
+mod menu;
+mod service;
+pub use menu::{CommandScope, Menu, MenuProps};
+pub use service::{
+    Commands, ConflictReport, Handler, InvocationSource, PALETTE_SHORTCUT, Payload, RegistryState,
+    execute, init, register, registry, unregister,
+};
+#[cfg(test)]
+mod gpui_tests;
