@@ -68,9 +68,11 @@ fn run() -> Result<()> {
             };
             // With --inspect the preview runs headless and the API is served
             // on the socket, for an agent that wants to look at it.
-            match option(&args[2..], "--inspect")?.map(PathBuf::from) {
-                Some(socket) => inspect::serve(&socket, Some(Path::new(file))),
-                None => preview::run(PathBuf::from(file), option(&args[2..], "--screen")?),
+            match &args[2..] {
+                [flag, socket] if flag == "--inspect" && !socket.starts_with("--") => {
+                    inspect::serve(Path::new(socket), Some(Path::new(file)))
+                }
+                _ => preview::run(PathBuf::from(file), option(&args[2..], "--screen")?),
             }
         }
         Some("mcp") => {
@@ -78,10 +80,13 @@ fn run() -> Result<()> {
             inspect::mcp(document.as_deref())
         }
         Some("test") => {
-            let Some(script) = args.get(1) else {
+            let [_, flag, script, rest @ ..] = args.as_slice() else {
                 bail!("usage: guiraffe test --script <file> [--document <file>]")
             };
-            let document = option(&args[2..], "--document")?.map(PathBuf::from);
+            if flag != "--script" || script.starts_with("--") {
+                bail!("usage: guiraffe test --script <file> [--document <file>]");
+            }
+            let document = option(rest, "--document")?.map(PathBuf::from);
             if !inspect::script(Path::new(script), document.as_deref())? {
                 bail!("the script failed")
             }
