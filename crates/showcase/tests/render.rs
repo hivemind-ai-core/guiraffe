@@ -66,8 +66,9 @@ fn every_entry_renders_in_both_themes() {
 
 #[test]
 fn recipes_match_the_generated_screen_schema() {
-    let validator = jsonschema::validator_for(&guiraffe_ui::catalog::screen_schema())
+    let schema = serde_json::from_str(guiraffe_ui::catalogue_artifacts::SCREEN_SCHEMA)
         .unwrap_or_else(|error| panic!("{error}"));
+    let validator = jsonschema::validator_for(&schema).unwrap_or_else(|error| panic!("{error}"));
     for (name, raw) in guiraffe_showcase::recipes::DOCUMENTS {
         let document = serde_json::from_str(raw).unwrap_or_else(|error| panic!("{name}: {error}"));
         let issues: Vec<_> = validator
