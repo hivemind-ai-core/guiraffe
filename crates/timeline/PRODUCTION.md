@@ -33,3 +33,9 @@ iteration dispatches several events and can paint more than once.
 Box-select median fell from 0.309 ms to 0.014 ms after `65d401a`.
 The second run had 33.92/33.73/24.56 load and modified report Markdown only.
 The runs were sequential on a shared host and were not a controlled A/B.
+
+The showcase opts Gantt and Tracks into focus on item clicks and displays
+keyboard instructions. Its native Gantt regression clicks a bar, verifies
+a one-day move at the default knob setting, clicks the live week option
+and verifies a seven-day move on the same view. The keyboard tests also
+check that views without an explicit opt-in preserve pointer focus.

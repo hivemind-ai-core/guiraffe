@@ -154,7 +154,8 @@ impl GanttView {
         }
     }
 
-    /// Opt into (or out of) Tab focus regardless of the enclosing focus scope.
+    /// `Some(true)` enables Tab and focus on item clicks. `None` follows the
+    /// enclosing Tab scope and preserves focus on clicks. `Some(false)` opts out.
     pub fn set_focusable(&mut self, v: Option<bool>, cx: &mut Context<Self>) {
         self.focusable = v;
         cx.notify();
@@ -301,7 +302,12 @@ impl GanttView {
 
     /// Begin a drag at body-local pixel `x` on `row`; only a press on an editable bar grabs.
     pub fn press(&mut self, row: usize, x: f64) -> bool {
-        // Any press on a bar selects it (locked bars too); only editable bars drag.
+        self.press_item(row, x);
+        self.drag.is_some()
+    }
+
+    fn press_item(&mut self, row: usize, x: f64) -> bool {
+        let mut hit = false;
         if let Some(task) = self.tasks.get(row)
             && let Some(sc) = self.schedule.as_ref().ok().and_then(|m| m.get(&task.id))
         {
@@ -311,10 +317,11 @@ impl GanttView {
             );
             if x >= x0 && x <= x1.max(x0 + 2.0) {
                 self.selected = Some(task.id);
+                hit = true;
             }
         }
         self.drag = self.grab(row, x).map(|(id, grab)| Drag { id, grab });
-        self.drag.is_some()
+        hit
     }
 
     /// Continue the active drag to body-local pixel `x`.
@@ -615,14 +622,17 @@ impl Render for GanttView {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, e: &MouseDownEvent, window, cx| {
-                                    // Pointer edits never take keyboard focus (§12.3).
+                                    // Claim focus only for a clicked item in an explicitly opted-in editor.
                                     window.prevent_default();
                                     cx.notify();
                                     let b = this.body.get();
                                     let y = f32::from(e.position.y - b.origin.y);
                                     if y >= 0.0 {
                                         let x = f64::from(f32::from(e.position.x - b.origin.x));
-                                        this.press((y / ROW_H) as usize, x);
+                                        let hit = this.press_item((y / ROW_H) as usize, x);
+                                        if hit && this.focusable == Some(true) {
+                                            this.focus.focus(window, cx);
+                                        }
                                     }
                                 }),
                             )

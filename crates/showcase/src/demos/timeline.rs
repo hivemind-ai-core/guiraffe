@@ -170,11 +170,12 @@ fn with_options<V: Editable>(
     height: f32,
     note: &'static str,
     cx: &mut App,
-) -> AnyView {
+) -> Entity<EditOptions<V>> {
     let edges = SegmentedControl::new(["Resize: both", "Start", "End", "None"], cx);
     let lock = SegmentedControl::new(["Editable", "Locked"], cx);
     let style = SegmentedControl::new(["Lock: badge", "Dimmed", "Hatched", "None"], cx);
     let grid = SegmentedControl::new(V::GRID, cx);
+    view.update(cx, |view, cx| view.set_grid(0, cx));
     for c in [&edges, &lock, &style, &grid] {
         c.update(cx, |c, cx| c.set_size(Some(Size::Xs), cx));
     }
@@ -216,7 +217,6 @@ fn with_options<V: Editable>(
             _subs: [s1, s2, s3, s4],
         }
     })
-    .into()
 }
 
 impl<V: Editable> Render for EditOptions<V> {
@@ -248,6 +248,10 @@ impl<V: Editable> Render for EditOptions<V> {
 }
 
 fn gantt(_: &mut Window, cx: &mut App) -> AnyView {
+    gantt_options(cx).into()
+}
+
+fn gantt_options(cx: &mut App) -> Entity<EditOptions<GanttView>> {
     let start = 20_400.0 * DAY;
     let t = |id, name: &str, d: f64, after: &[u32]| Task {
         id,
@@ -269,12 +273,15 @@ fn gantt(_: &mut Window, cx: &mut App) -> AnyView {
         cx,
     );
     // Item locks keep their own small badge; global lock does not change styling.
-    v.update(cx, |v, cx| v.set_locked(6, true, cx));
+    v.update(cx, |v, cx| {
+        v.set_focusable(Some(true), cx);
+        v.set_locked(6, true, cx);
+    });
     with_options(
         v,
         "Project plan (critical path in red; Launch is locked)",
         280.,
-        "Click a row lock icon; drag bar ends to resize; the cursor shows what a drag will do.",
+        "Select a bar. ←/→ move by the Arrow step, Shift+←/→ resize the end, and Alt+←/→ resize the start.",
         cx,
     )
 }
@@ -298,9 +305,10 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
         10.0,
         cx,
     );
-    v.update(cx, |v, _| v.set_snap(Some(0.25)));
+
     // Lock the vocal take.
     v.update(cx, |v, cx| {
+        v.set_focusable(Some(true), cx);
         if let Some(id) = v
             .tracks()
             .get(3)
@@ -314,9 +322,10 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
         v,
         "Four tracks, 0.25s snap (vocals locked)",
         220.,
-        "Trim either edge; clips can't overlap or extend past their media.",
+        "Select a clip. ←/→ move, Shift+←/→ trim the end, and Alt+←/→ trim the start.",
         cx,
     )
+    .into()
 }
 
 fn dope(_: &mut Window, cx: &mut App) -> AnyView {
@@ -584,4 +593,54 @@ fn bars(_: &mut Window, cx: &mut App) -> AnyView {
         log,
         cx,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{
+        Focusable, TestAppContext,
+        test::{TestQueryExt, TestWindowExt},
+    };
+
+    struct GanttDemo(Entity<EditOptions<GanttView>>);
+
+    impl Render for GanttDemo {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+
+    #[gpui_kit::test]
+    fn gantt_bar_click_and_live_grid_knob_control_arrow_step(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let options = cx.update(gantt_options);
+        let (_, window) = cx.add_window_view(|_, _| GanttDemo(options.clone()));
+        window.update(|w, cx| w.render_frame(cx));
+        let gantt = options.read_with(window, |opts, _| opts.view.clone());
+        let start = |window: &mut gpui_kit::VisualTestContext| {
+            gantt.read_with(window, |view, _| {
+                view.schedule().as_ref().expect("schedule")[&1].early_start
+            })
+        };
+        let before = start(window);
+        window.update(|w, cx| {
+            w.click(("gantt-bar", 0usize), cx);
+            assert!(gantt.read(cx).focus_handle(cx).is_focused(w));
+            w.press("right", cx);
+        });
+        assert_eq!(start(window), before + DAY);
+        let week = window.update(|w, _| w.find_by_label("1 week").bounds().center());
+        window.simulate_click(week, Default::default());
+        assert_eq!(
+            options.read_with(window, |opts, cx| opts.grid.read(cx).selected()),
+            1
+        );
+        window.update(|w, cx| {
+            w.render_frame(cx);
+            w.click(("gantt-bar", 0usize), cx);
+            w.press("right", cx);
+        });
+        assert_eq!(start(window), before + 8. * DAY);
+    }
 }
