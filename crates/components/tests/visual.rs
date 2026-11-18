@@ -11,6 +11,10 @@ use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 
 struct KitchenSink {
     segmented: gpui_kit::Entity<SegmentedControl>,
+    loaders: [gpui_kit::Entity<Loader>; 3],
+    spoiler: gpui_kit::Entity<Spoiler>,
+    burgers: [gpui_kit::Entity<Burger>; 2],
+    copy: gpui_kit::Entity<CopyButton>,
 }
 
 impl Render for KitchenSink {
@@ -53,6 +57,83 @@ impl Render for KitchenSink {
                     ),
             )
             .child(
+                div()
+                    .flex()
+                    .gap(px(20.0))
+                    .items_center()
+                    .child(self.loaders[0].clone())
+                    .child(self.loaders[1].clone())
+                    .child(self.loaders[2].clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .items_center()
+                    .child(self.burgers[0].clone())
+                    .child(self.burgers[1].clone())
+                    .child(self.copy.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .items_center()
+                    .child(KbdGroup::new(["Ctrl", "K"]))
+                    .child(KbdGroup::new(["g", "d"]).separator(KbdSeparator::Then))
+                    .child(KbdGroup::new(["Shift", "Enter"]).color(ColorName::Teal))
+                    .child(ColorSwatch::new("sw-blue", ColorName::Blue.shade(6)))
+                    .child(
+                        ColorSwatch::new("sw-grape", ColorName::Grape.shade(6))
+                            .selected(SwatchSelected::Check),
+                    )
+                    .child(
+                        ColorSwatch::new("sw-teal", ColorName::Teal.shade(6))
+                            .selected(SwatchSelected::Ring)
+                            .label("Teal"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(16.0))
+                    .items_center()
+                    .child(AvatarGroup::new([
+                        Person::new("Ada Lovelace"),
+                        Person::new("Grace Hopper"),
+                        Person::new("Alan Turing"),
+                    ]))
+                    .child(
+                        AvatarGroup::new([
+                            Person::new("Katherine Johnson"),
+                            Person::new("Edsger Dijkstra"),
+                            Person::new("Barbara Liskov"),
+                            Person::new("Linus Torvalds"),
+                            Person::new("Margaret Hamilton"),
+                        ])
+                        .limit(3)
+                        .color(ColorName::Violet),
+                    ),
+            )
+            .child(
+                Stepper::new([
+                    Step::new("Account").description("Your details"),
+                    Step::new("Verify").description("Confirm email"),
+                    Step::new("Done"),
+                ])
+                .active(1)
+                .color(ColorName::Teal),
+            )
+            .child(self.spoiler.clone())
+            .child(
+                Timeline::new([
+                    TimelineItem::new("Created").description("2 hours ago"),
+                    TimelineItem::new("Deployed").color(ColorName::Teal),
+                    TimelineItem::new("Verified"),
+                ])
+                .active(1),
+            )
+            .child(
                 Card::new()
                     .section(
                         CardSection::new().child(
@@ -91,10 +172,52 @@ fn render(scheme: Scheme) -> image::RgbaImage {
                 cx,
             );
         });
-    snap.render(size(px(560.), px(500.)), |_, cx| {
+    snap.render(size(px(560.), px(980.)), |_, cx| {
         let segmented = SegmentedControl::new(["Preview", "Code", "Export"], cx);
         segmented.update(cx, |s, cx| s.select(1, cx));
-        cx.new(|_| KitchenSink { segmented })
+        let loaders = [Loader::new(cx), Loader::new(cx), Loader::new(cx)];
+        loaders[1].update(cx, |l, cx| {
+            l.set_kind(LoaderType::Bars, cx);
+            l.set_count(4, cx);
+            l.set_color(Some(ColorName::Teal), cx);
+        });
+        loaders[2].update(cx, |l, cx| {
+            l.set_kind(LoaderType::Dots, cx);
+            l.set_color(Some(ColorName::Grape), cx);
+        });
+        let spoiler = Spoiler::new(cx);
+        spoiler.update(cx, |s, cx| {
+            s.set_content(
+                |_, _| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .children((0..8).map(|i| {
+                            div().child(format!(
+                                "Line {i}: a spoiler clips this body until it is expanded."
+                            ))
+                        }))
+                        .into_any_element()
+                },
+                cx,
+            );
+            s.set_collapsed_lines(2, cx);
+        });
+        let burgers = [Burger::new(cx), Burger::new(cx)];
+        burgers[1].update(cx, |b, cx| b.set_open_instant(true, cx));
+        let copy = CopyButton::new(cx);
+        copy.update(cx, |b, cx| {
+            b.set_value("npm install guiraffe", cx);
+            b.set_label(Some("Copy".into()), cx);
+        });
+        cx.new(|_| KitchenSink {
+            segmented,
+            loaders,
+            spoiler,
+            burgers,
+            copy,
+        })
     })
     .unwrap_or_else(|e| panic!("{e:#}"))
 }

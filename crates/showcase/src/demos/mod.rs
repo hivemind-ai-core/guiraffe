@@ -9,6 +9,7 @@ pub mod chat;
 pub mod code;
 pub mod commands;
 pub mod components;
+pub mod components_more;
 pub mod composed_charts;
 pub mod datagrid;
 pub mod dnd;

@@ -60,6 +60,7 @@ pub fn entries() -> Vec<Entry> {
     let mut v = Vec::new();
     v.extend(crate::demos::layout::entries());
     v.extend(crate::demos::components::entries());
+    v.extend(crate::demos::components_more::entries());
     v.extend(crate::demos::inputs::entries());
     v.extend(crate::demos::overlays::entries());
     v.extend(crate::demos::commands::entries());
