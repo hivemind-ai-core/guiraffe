@@ -33,6 +33,7 @@ pub struct SortableBoard {
     headings: Vec<SharedString>,
     scroll: Vec<ScrollHandle>,
     drag: Entity<BoardDragOverlay>,
+    external_drag_overlay: Cell<bool>,
     targets: Targets,
     cards_per_row: u16,
     cards: Sortable<Card>,
@@ -74,6 +75,7 @@ impl SortableBoard {
             headings,
             scroll,
             drag,
+            external_drag_overlay: Cell::new(false),
             targets,
             cards_per_row: 1,
             cards: Sortable::new(cards),
@@ -85,8 +87,12 @@ impl SortableBoard {
         }
     }
 
-    /// Mount once in the board's window, as a sibling of any cached host.
+    /// Take responsibility for mounting the drag overlay before the first render.
+    ///
+    /// Mount it once in the board's window, as a sibling of any cached host.
+    /// Otherwise the board renders its own overlay.
     pub fn drag_overlay(&self) -> Entity<BoardDragOverlay> {
+        self.external_drag_overlay.set(true);
         self.drag.clone()
     }
 
@@ -632,6 +638,7 @@ impl Render for SortableBoard {
                     .child(self.status.clone()),
                 self.status.clone(),
             ))
+            .children((!self.external_drag_overlay.get()).then(|| self.drag.clone()))
     }
 }
 
@@ -807,11 +814,8 @@ mod tests {
     struct TestHost(gpui_kit::Entity<SortableBoard>);
 
     impl Render for TestHost {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div()
-                .size_full()
-                .child(div().w(px(800.)).child(self.0.clone()))
-                .child(self.0.read(cx).drag_overlay())
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(800.)).child(self.0.clone())
         }
     }
 }
