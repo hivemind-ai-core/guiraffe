@@ -212,15 +212,19 @@ impl Scale {
             let low = domain.min.log10();
             let high = domain.max.log10();
             if low.is_finite() && high.is_finite() {
-                let step = if high - low < 1. {
-                    nice_step((high - low) / target as f64)
+                if high - low < 1. {
+                    multiples(
+                        domain.min,
+                        domain.max,
+                        nice_step(domain.span() / target as f64),
+                    )
                 } else {
-                    ((high - low) / target as f64).ceil().max(1.)
-                };
-                multiples(low, high, step)
-                    .into_iter()
-                    .map(|power| 10f64.powf(power))
-                    .collect()
+                    let step = ((high - low) / target as f64).ceil().max(1.);
+                    multiples(low, high, step)
+                        .into_iter()
+                        .map(|power| 10f64.powf(power))
+                        .collect()
+                }
             } else {
                 Vec::new()
             }
@@ -282,6 +286,12 @@ mod tests {
 
     proptest! {
         #[test]
+    fn narrow_log_domains_use_round_ticks() {
+        let ticks = Scale::Log.ticks(Domain::new(21., 46.).unwrap(), 5);
+        assert_eq!(ticks.into_iter().map(|tick| tick.value).collect::<Vec<_>>(), [25., 30., 35., 40., 45.]);
+    }
+
+    #[test]
         fn continuous_scales_round_trip_and_bound_ticks(
             base in -12f64..12.,
             span in 0.01f64..12.,
