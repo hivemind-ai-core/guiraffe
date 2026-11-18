@@ -59,6 +59,34 @@ jobs:
           fi
       - name: Instruction gate (2 percent)
         run: cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --baseline=pr-base --save-summary=json
+      - name: Mounted frame instruction scaling
+        env:
+          IAI_CALLGRIND_HOME: ${{ github.workspace }}/target/iai/frame-scale
+        shell: bash
+        run: |
+          mkdir -p "$IAI_CALLGRIND_HOME"
+          cargo bench --locked -p guiraffe-bench --features instruction-counts --bench production_frames -- --save-summary=json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["IAI_CALLGRIND_HOME"]) / "guiraffe-bench/production_frames/frames"
+
+          def instructions(case):
+              report = json.loads((root / case / "summary.json").read_text())
+              summary = report["profiles"][0]["summaries"]["total"]["summary"]
+              metrics = summary["Callgrind"]["Ir"]["metrics"]
+              current = metrics["Left"] if "Left" in metrics else metrics["Both"][0]
+              return current["Int"]
+
+          for component in ("datagrid", "code"):
+              small = instructions(f"{component}_frame_100k")
+              large = instructions(f"{component}_frame_10m")
+              print(f"{component} instructions: 100k={small}, 10M={large}")
+              if small <= 0 or large <= 0 or large * 100 > small * 102:
+                  raise SystemExit(f"{component}: invalid instruction counts or growth exceeds 2%")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -70,6 +70,11 @@ varied across repeated runs and exceeded the frame budget in this capture.
 
 ## Deterministic mounted frame checks
 
+The [CI instruction check](../../.github/workflows/ci.yml) caps the growth in
+instructions from 100k to 10M items at 2%.
+The release iai-callgrind gate measured 6,393,770 instructions at 100k
+lines and 6,460,295 instructions at 10M lines.
+
 The [instruction suite](../../bench/benches/production_frames.rs) measures a
 warmed scroll and draw in a 1,200 by 800 headless viewport. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
