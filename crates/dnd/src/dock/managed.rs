@@ -937,6 +937,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resolves_every_split_edge_and_the_center() {
+        let bounds = Bounds::new(point(px(10.), px(20.)), size(px(200.), px(100.)));
+        for (x, y, expected) in [
+            (20., 70., Some(Placement::Left)),
+            (200., 70., Some(Placement::Right)),
+            (110., 24., Some(Placement::Top)),
+            (110., 116., Some(Placement::Bottom)),
+            (110., 70., None),
+        ] {
+            assert_eq!(split_edge(bounds, point(px(x), px(y))), expected);
+        }
+    }
+
     #[gpui_kit::test]
     fn tabs_split_resize_merge_and_keep_the_cached_host(cx: &mut TestAppContext) {
         let renders = Rc::new(Cell::new(0));
