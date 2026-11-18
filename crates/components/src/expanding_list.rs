@@ -17,7 +17,8 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExpandingListChange(pub Option<usize>);
 
-/// A list whose open item reserves space as its card rises out of the column.
+/// A list whose open item rises out of the column. The list reserves room for
+/// one expanded card so animation moves the list items without moving its host's siblings.
 pub struct ExpandingList {
     items: Vec<DisclosureItem>,
     open: Option<usize>,
@@ -74,9 +75,17 @@ impl Render for ExpandingList {
         let surface = surfaces(cx);
         let corner = radius(None, cx);
         let id = cx.entity_id().as_u64();
+        let row_height = px(40.);
+        let vertical_gap = px(8.);
+        let reserved = if self.items.is_empty() {
+            px(0.)
+        } else {
+            (row_height + px(2.)) * self.items.len() as f32 + self.body_height + vertical_gap * 2.
+        };
         let element = div()
             .id(("expanding-list", id as usize))
             .w_full()
+            .h(reserved)
             .flex()
             .flex_col()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -98,8 +107,8 @@ impl Render for ExpandingList {
                         .focusable(self.focusable)
                         .disabled(item.disabled)
                         .radius(corner);
-                    let gap = px(8. * p);
-                    div().flex().flex_col().py(gap).child(
+                    let gap = vertical_gap * p;
+                    div().flex().flex_col().flex_shrink_0().py(gap).child(
                         div()
                             .relative()
                             .flex()
@@ -120,7 +129,7 @@ impl Render for ExpandingList {
                                     .items_center()
                                     .justify_between()
                                     .px_3()
-                                    .h(px(40.))
+                                    .h(row_height)
                                     .rounded(corner)
                                     .child(item.title.clone())
                                     .child(Icon::new(if open {
