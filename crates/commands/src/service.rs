@@ -516,8 +516,9 @@ impl Commands {
         result.extend(&native_contexts(window));
         result
     }
-    /// Snapshot projection for the existing overlays API; its id/label/keywords/
-    /// disabled Command type is unchanged. Refresh via Spotlight::set_commands.
+    /// Projection for the existing overlays API; its id/label/keywords/disabled Command
+    /// type is unchanged. A palette opened by `open_spotlight` re-projects on every
+    /// registry change.
     pub fn spotlight_commands(
         &self,
         contexts: &ContextStack,
@@ -545,7 +546,21 @@ impl Commands {
         contexts.extend(&origin);
         let commands = self.spotlight_commands(&contexts, cx);
         let weak = self.state.downgrade();
+        let observed = self.state.clone();
+        let live_origin = origin.clone();
         let palette = cx.new(|cx| {
+            // Keep an open palette in sync with the registry (add/remove/enable/rebind).
+            cx.observe(
+                &observed,
+                move |palette: &mut guiraffe_overlays::Spotlight, state, cx| {
+                    let service = Commands { state };
+                    let mut contexts = service.state.read(cx).contexts.clone();
+                    contexts.extend(&live_origin);
+                    let commands = service.spotlight_commands(&contexts, cx);
+                    palette.set_commands(commands, cx);
+                },
+            )
+            .detach();
             guiraffe_overlays::Spotlight::new(commands, window, cx, move |value, window, cx| {
                 let (Some(state), Ok(id)) = (weak.upgrade(), CommandId::parse(value)) else {
                     return;

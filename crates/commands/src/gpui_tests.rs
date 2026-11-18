@@ -800,3 +800,22 @@ fn menu_rows_are_built_lazily_once_per_revision(cx: &mut TestAppContext) {
         assert_eq!(state.rows(false).len(), 2, "rebuilt after the change");
     });
 }
+#[gpui_kit::test]
+fn open_spotlight_follows_registry_changes(cx: &mut TestAppContext) {
+    let (handle, commands) = open(cx, "Editor");
+    let count = Rc::new(Cell::new(0));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press("ctrl-shift-p", cx);
+    })
+    .expect("open palette");
+    cx.update(|cx| commands.register(counted("zap", "Zap everything", count.clone()), cx))
+        .expect("register while open");
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.input("zap", cx);
+        window.press("enter", cx);
+    })
+    .expect("run from palette");
+    cx.run_until_parked();
+    assert_eq!(count.get(), 1, "a command added after opening is listed");
+}
