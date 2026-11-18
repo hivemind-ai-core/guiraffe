@@ -3419,6 +3419,7 @@ dependencies = [
  "guiraffe-core",
  "guiraffe-icons",
  "guiraffe-mocket",
+ "guiraffe-test",
  "guiraffe-ui",
  "serde_json",
  "tempfile",
@@ -3660,7 +3661,9 @@ name = "guiraffe-test"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "gpui-base",
  "gpui-kit",
+ "guiraffe-core",
  "guiraffe-icons",
  "image",
  "serde",
