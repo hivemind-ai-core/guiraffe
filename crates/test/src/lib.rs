@@ -13,5 +13,7 @@ pub mod inspect;
 pub mod layout;
 #[cfg(feature = "render")]
 pub mod render;
+#[cfg(feature = "inspect")]
+pub mod replay;
 #[cfg(feature = "snapshot")]
 pub mod snapshot;

@@ -72,3 +72,7 @@ required-features = ["inspect"]
 [[test]]
 name = "checks"
 required-features = ["inspect"]
+
+[[test]]
+name = "replay"
+required-features = ["inspect"]
