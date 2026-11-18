@@ -507,6 +507,7 @@ impl Render for Tooltip {
 mod tests {
     use super::*;
     use crate::{Frame, FrameSource};
+    use gpui_kit::test::TestQueryExt;
     use gpui_kit::{
         Modifiers, ScrollDelta, ScrollEvent, ScrollSource, StyleRefinement, TestAppContext,
         TouchPhase,
@@ -618,6 +619,10 @@ mod tests {
         window.run_until_parked();
         assert_eq!(clicks.get(), 1);
         assert_eq!(graph.read_with(window, |graph, _| graph.focus), Some(1));
+        let root = window.update(|window, _| window.find_by_label("root").bounds().center());
+        window.simulate_click(root, Modifiers::default());
+        window.run_until_parked();
+        assert_eq!(graph.read_with(window, |graph, _| graph.focus), Some(0));
         let reset = point(bounds.left() + px(15.), bounds.top() - px(12.));
         window.simulate_click(reset, Modifiers::default());
         window.run_until_parked();

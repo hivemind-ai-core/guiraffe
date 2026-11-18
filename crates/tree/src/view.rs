@@ -731,4 +731,102 @@ mod tests {
         window.run_until_parked();
         assert!(events.borrow().contains(&TreeEvent::Checked(1, true)));
     }
+    struct Editors {
+        rows: [(Value, Value); 4],
+        choices: [String; 2],
+    }
+
+    impl TreeSource for Editors {
+        fn roots(&self) -> &[NodeId] {
+            &[0, 1, 2, 3]
+        }
+        fn children(&self, _: NodeId) -> Children<'_> {
+            Children::Ready(&[])
+        }
+        fn label(&self, id: NodeId) -> &str {
+            ["Name", "Enabled", "Mode", "Accent"][id as usize]
+        }
+    }
+
+    impl TreeData for Editors {
+        fn property(&self, id: NodeId) -> Option<Property<'_>> {
+            let (value, default) = self.rows.get(id as usize)?;
+            Some(Property {
+                value,
+                default,
+                choices: &self.choices,
+                read_only: false,
+            })
+        }
+    }
+
+    #[gpui_kit::test]
+    fn property_controls_emit_typed_edits_and_reset(cx: &mut TestAppContext) {
+        use gpui_kit::test::{TestQueryExt, TestWindowExt};
+        cx.update(|cx| {
+            gpui_kit::base::init(cx);
+            gpui_kit::component::init(cx);
+            guiraffe_core::apply(Default::default(), cx);
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let source = Editors {
+            rows: [
+                (Value::Text("Current".into()), Value::Text("Default".into())),
+                (Value::Bool(false), Value::Bool(false)),
+                (Value::Enum("Auto".into()), Value::Enum("Auto".into())),
+                (Value::Colour(0x123456), Value::Colour(0x123456)),
+            ],
+            choices: ["Auto".into(), "Manual".into()],
+        };
+        let view = cx.new(|cx| PropertyGrid::new(Rc::new(source), cx));
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let events = events.clone();
+            cx.subscribe(&view, move |_, _, event: &TreeEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach();
+            gpui_kit::base::Root::new(view.clone(), window, cx)
+        });
+        window.run_until_parked();
+
+        let checkbox =
+            window.update(|window, _| window.find(("property-bool", 1usize)).bounds().center());
+        window.simulate_click(checkbox, Modifiers::default());
+        window.run_until_parked();
+        assert!(
+            events
+                .borrow()
+                .contains(&TreeEvent::Edited(1, Value::Bool(true)))
+        );
+
+        for (label, id, value) in [
+            ("Manual", 2, Value::Enum("Manual".into())),
+            ("Reset", 0, Value::Text("Default".into())),
+        ] {
+            let position = window.update(|window, _| window.find_by_label(label).bounds().center());
+            window.simulate_click(position, Modifiers::default());
+            window.run_until_parked();
+            assert!(events.borrow().contains(&TreeEvent::Edited(id, value)));
+        }
+
+        for (label, text, id, value) in [
+            ("Current", "Updated", 0, Value::Text("Updated".into())),
+            ("#123456", "#abcdef", 3, Value::Colour(0xabcdef)),
+        ] {
+            let position = window.update(|window, _| window.find_by_label(label).bounds().center());
+            window.simulate_click(position, Modifiers::default());
+            window.run_until_parked();
+            let input = view
+                .read_with(window, |view, _| {
+                    view.edit.as_ref().map(|edit| edit.input.clone())
+                })
+                .expect("value click opens the editor");
+            window.update(|window, cx| {
+                input.update(cx, |input, cx| input.set_value(text, window, cx))
+            });
+            window.simulate_keystrokes("enter");
+            window.run_until_parked();
+            assert!(events.borrow().contains(&TreeEvent::Edited(id, value)));
+        }
+    }
 }
