@@ -113,6 +113,7 @@ pub struct FlowViewport {
     config: Rc<RefCell<Option<state::Config>>>,
     theme_cache: Option<Rc<GuiraffeTheme>>,
     ordered_ids: Vec<core::NodeId>,
+    layout_preview: Option<std::sync::Arc<core::Scene>>,
     order_scene: Option<std::sync::Arc<core::Scene>>,
     order_selection: Option<std::sync::Arc<std::collections::BTreeSet<core::NodeId>>>,
     last_query_ids: Vec<core::NodeId>,
@@ -166,6 +167,7 @@ impl FlowViewport {
             config: Rc::new(RefCell::new(None)),
             theme_cache: None,
             ordered_ids: Vec::new(),
+            layout_preview: None,
             order_scene: None,
             order_selection: None,
             last_query_ids: Vec::new(),
@@ -258,6 +260,7 @@ impl FlowViewport {
         let error = before.error != self.last_error;
         self.camera.set(self.viewport());
         if document {
+            self.layout_preview = None;
             self.meshes
                 .borrow_mut()
                 .sync(self.interaction.editor.scene());
@@ -283,6 +286,7 @@ impl FlowViewport {
                     cx.emit(FlowEvent::Error(error.clone()));
                 }
                 if document {
+                    model.abort_layout();
                     cx.emit(FlowEvent::Changed);
                 }
                 if selection {
@@ -422,6 +426,12 @@ impl FlowViewport {
         }
         match key {
             "escape" => {
+                if let Some(model) = &self.model {
+                    let _ = model.update(cx, |model, _| model.abort_layout());
+                }
+                if self.layout_preview.take().is_some() {
+                    cx.notify();
+                }
                 self.interaction.cancel();
                 self.publish(before, cx);
             }
@@ -495,7 +505,11 @@ impl Render for FlowViewport {
         if self.visible.edges.is_empty() {
             self.visible.edges = std::mem::take(&mut self.meshes.borrow_mut().edge_buffer);
         }
-        self.interaction.editor.scene().visible(
+        let display = self
+            .layout_preview
+            .clone()
+            .unwrap_or_else(|| self.interaction.editor.scene_shared());
+        display.visible(
             viewport.visible(size).expand(12. / viewport.zoom),
             &mut self.visible,
         );
@@ -544,7 +558,13 @@ impl Render for FlowViewport {
             };
             let revision = self.interaction.editor.scene().node_revision(*id);
             let selected = self.interaction.editor.is_selected(*id);
-            let position = viewport.screen(self.interaction.preview(*id).unwrap_or(node.pos));
+            let position = viewport.screen(self.interaction.preview(*id).unwrap_or_else(|| {
+                display
+                    .graph()
+                    .nodes
+                    .get(id)
+                    .map_or(node.pos, |preview| preview.pos)
+            }));
             let card = self.nodes.entry(*id).or_insert_with(|| {
                 cx.new(|_| node::NodeCard {
                     node: {
@@ -581,7 +601,7 @@ impl Render for FlowViewport {
                 if edge.label.is_empty() || viewport.zoom < 0.4 {
                     return None;
                 }
-                let path = self.interaction.editor.scene().paths().get(id)?;
+                let path = display.paths().get(id)?;
                 let source = self.interaction.preview(edge.source.node);
                 let target = self.interaction.preview(edge.target.node);
                 let label = if source.is_some() || target.is_some() {
@@ -625,7 +645,7 @@ impl Render for FlowViewport {
             &theme,
             phase,
         );
-        let frame = Rc::new(RefCell::new(frame));
+        let frame = Rc::new(RefCell::new(frame.with_scene(display)));
         let base_frame = frame.clone();
         let map_meshes = self.meshes.clone();
         let mut root = div()
@@ -732,6 +752,14 @@ impl Render for FlowViewport {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    let was_animating = this.layout_preview.take().is_some();
+                    if let Some(model) = &this.model {
+                        let _ = model.update(cx, |model, _| model.abort_layout());
+                    }
+                    if was_animating {
+                        cx.notify();
+                        return;
+                    }
                     let before = this.stamp();
                     this.focus.focus(window, cx);
                     let p = this.local(event.position);

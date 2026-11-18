@@ -17,6 +17,17 @@ pub struct Editor {
     elevated: Arc<BTreeSet<NodeId>>,
     pub policy: ConnectionPolicy,
 }
+pub struct PreparedLayout {
+    base: Arc<Scene>,
+    scene: Arc<Scene>,
+}
+
+impl PreparedLayout {
+    pub fn scene(&self) -> Arc<Scene> {
+        self.scene.clone()
+    }
+}
+
 fn changed_keys<V: Clone + PartialEq>(
     before: &im::OrdMap<u64, V>,
     after: &im::OrdMap<u64, V>,
@@ -125,17 +136,39 @@ impl Editor {
         let Some(scene) = self.next_scene(graph, validate)? else {
             return Ok(false);
         };
+        self.install_scene(Arc::new(scene));
+        Ok(true)
+    }
+    /// Install a layout prepared on a clone of this editor, retaining current selection.
+    pub fn install_prepared_layout(&mut self, prepared: PreparedLayout) -> bool {
+        if !Arc::ptr_eq(&self.scene, &prepared.base) || Arc::ptr_eq(&self.scene, &prepared.scene) {
+            return false;
+        }
+        self.install_scene(prepared.scene);
+        true
+    }
+    pub fn prepare_layout(
+        &self,
+        layout: &crate::LayoutResult,
+    ) -> Result<PreparedLayout, FlowError> {
+        let mut prepared = self.clone();
+        prepared.apply_layout(layout)?;
+        Ok(PreparedLayout {
+            base: self.scene.clone(),
+            scene: prepared.scene,
+        })
+    }
+    fn install_scene(&mut self, scene: Arc<Scene>) {
         if self.limit > 0 {
             self.undo.push_back(self.graph().clone());
             if self.undo.len() > self.limit {
                 self.undo.pop_front();
             }
         }
-        self.scene = Arc::new(scene);
+        self.scene = scene;
         self.redo.clear();
         self.prune_selection();
         self.refresh_order();
-        Ok(true)
     }
     fn prune_selection(&mut self) {
         let graph = self.scene.graph();

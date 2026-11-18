@@ -277,30 +277,30 @@ impl EdgePath {
     ) -> Result<Self, FlowError> {
         let sh = Graph::node_handle(source, &edge.source)?;
         let th = Graph::node_handle(target, &edge.target)?;
-        let from = sh.position(Rect {
+        let source = Rect {
             origin: source_override.unwrap_or(source.pos),
             size: source.size,
-        });
-        let to = th.position(Rect {
+        };
+        let target = Rect {
             origin: target_override.unwrap_or(target.pos),
             size: target.size,
-        });
-        let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
-        let c1 = from + sh.side.direction() * distance;
-        let c2 = to + th.side.direction() * distance;
+        };
+        let from = sh.position(source);
+        let to = th.position(target);
         let points = match edge.edge_type {
+            EdgeType::OrthogonalHorizontal | EdgeType::OrthogonalVertical => {
+                crate::auto_layout::orthogonal(
+                    (source, sh),
+                    (target, th),
+                    edge.edge_type == EdgeType::OrthogonalHorizontal,
+                )
+            }
             EdgeType::Straight => vec![from, to],
-            EdgeType::Bezier => (0..=32)
-                .map(|i| {
-                    let t = i as f32 / 32.;
-                    let u = 1. - t;
-                    from * (u * u * u)
-                        + c1 * (3. * u * u * t)
-                        + c2 * (3. * u * t * t)
-                        + to * (t * t * t)
-                })
-                .collect(),
+            EdgeType::Bezier => bezier(from, sh.side.direction(), to, th.side.direction()),
             EdgeType::Step | EdgeType::SmoothStep => {
+                let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
+                let c1 = from + sh.side.direction() * distance;
+                let c2 = to + th.side.direction() * distance;
                 let horizontal = sh.side.direction().x != 0.;
                 let (a, b) = if horizontal {
                     let x = (c1.x + c2.x) * 0.5;
@@ -391,6 +391,19 @@ fn rounded(corners: &[Point], radius: f32) -> Vec<Point> {
     }
     points
 }
+pub(crate) fn bezier(from: Point, outward: Point, to: Point, inward: Point) -> Vec<Point> {
+    let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
+    let c1 = from + outward * distance;
+    let c2 = to + inward * distance;
+    (0..=32)
+        .map(|i| {
+            let t = i as f32 / 32.;
+            let u = 1. - t;
+            from * (u * u * u) + c1 * (3. * u * u * t) + c2 * (3. * u * t * t) + to * (t * t * t)
+        })
+        .collect()
+}
+
 fn midpoint(points: &[Point]) -> Point {
     let length: f32 = points
         .iter()

@@ -1,0 +1,506 @@
+//! Deterministic, cancellable graph layout in world coordinates.
+mod layered;
+mod placement;
+
+use crate::{EdgeId, EdgeType, Editor, FlowError, Graph, NodeId, Point, Rect};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct LayoutCancellation(Arc<AtomicBool>);
+
+impl LayoutCancellation {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub fn check(&self) -> Result<(), LayoutError> {
+        if self.0.load(Ordering::Relaxed) {
+            return Err(LayoutError::Cancelled);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutError {
+    Cancelled,
+    Document(FlowError),
+    InvalidOptions,
+    Infeasible,
+}
+
+impl std::fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl std::error::Error for LayoutError {}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayoutDirection {
+    #[default]
+    LeftToRight,
+    RightToLeft,
+    TopToBottom,
+    BottomToTop,
+}
+
+impl LayoutDirection {
+    fn horizontal(self) -> bool {
+        matches!(self, Self::LeftToRight | Self::RightToLeft)
+    }
+
+    fn reversed(self) -> bool {
+        matches!(self, Self::RightToLeft | Self::BottomToTop)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutConstraint {
+    LeftOf(NodeId, NodeId),
+    Above(NodeId, NodeId),
+    AlignX(NodeId, NodeId),
+    AlignY(NodeId, NodeId),
+    SameRank(NodeId, NodeId),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayoutRouting {
+    #[default]
+    Orthogonal,
+    Spline,
+}
+
+#[derive(Clone, Debug)]
+pub struct LayoutOptions {
+    pub direction: LayoutDirection,
+    pub routing: LayoutRouting,
+    pub spacing: Point,
+    pub pinned: BTreeSet<NodeId>,
+    pub constraints: Vec<LayoutConstraint>,
+    /// Lower values sort first within a layer or packing sequence.
+    pub order: BTreeMap<NodeId, i32>,
+    /// Controls the number of crossing-reduction sweeps. Zero preserves initial order.
+    pub crossing_weight: f32,
+    /// When provided, groups outside this set retain their current positions.
+    /// Edges whose two endpoints stay outside the affected region keep their existing routes.
+    pub affected: Option<BTreeSet<NodeId>>,
+}
+
+impl Default for LayoutOptions {
+    fn default() -> Self {
+        Self {
+            direction: LayoutDirection::default(),
+            routing: LayoutRouting::default(),
+            spacing: Point::new(80., 40.),
+            pinned: BTreeSet::new(),
+            constraints: Vec::new(),
+            order: BTreeMap::new(),
+            crossing_weight: 1.,
+            affected: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LayoutResult {
+    pub positions: BTreeMap<NodeId, Point>,
+    /// Route previews. Applying the result selects the corresponding live
+    /// route style for each listed edge, so subsequent drags reroute it.
+    pub routes: BTreeMap<EdgeId, Vec<Point>>,
+    pub direction: LayoutDirection,
+    pub routing: LayoutRouting,
+}
+
+pub trait LayoutEngine: Send + Sync {
+    fn layout(
+        &self,
+        graph: &Graph,
+        options: &LayoutOptions,
+        cancel: &LayoutCancellation,
+    ) -> Result<LayoutResult, LayoutError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum AutoLayout {
+    #[default]
+    Layered,
+    Tree,
+    Radial,
+    Grid {
+        columns: usize,
+    },
+    Force {
+        seed: u64,
+        iterations: usize,
+    },
+}
+
+struct Unit {
+    bounds: Rect,
+    fixed: bool,
+    order: i32,
+}
+
+struct Link {
+    source: usize,
+    target: usize,
+    source_port: f32,
+    target_port: f32,
+}
+
+impl LayoutEngine for AutoLayout {
+    fn layout(
+        &self,
+        graph: &Graph,
+        options: &LayoutOptions,
+        cancel: &LayoutCancellation,
+    ) -> Result<LayoutResult, LayoutError> {
+        cancel.check()?;
+        graph.validate().map_err(LayoutError::Document)?;
+        if !options.spacing.finite()
+            || options.spacing.x < 0.
+            || options.spacing.y < 0.
+            || !options.crossing_weight.is_finite()
+            || options.crossing_weight < 0.
+        {
+            return Err(LayoutError::InvalidOptions);
+        }
+
+        let mut roots = BTreeMap::new();
+        for id in graph.nodes.keys().copied() {
+            cancel.check()?;
+            let mut root = id;
+            let mut chain = Vec::new();
+            while let Some(parent) = graph.nodes[&root].parent {
+                if let Some(cached) = roots.get(&root) {
+                    root = *cached;
+                    break;
+                }
+                chain.push(root);
+                root = parent;
+            }
+            roots.insert(id, root);
+            for member in chain {
+                roots.insert(member, root);
+            }
+        }
+
+        let mut units = Vec::new();
+        let mut indices = BTreeMap::new();
+        for node in graph.nodes.values() {
+            let root = roots[&node.id];
+            let index = *indices.entry(root).or_insert_with(|| {
+                let index = units.len();
+                units.push(Unit {
+                    bounds: node.rect(),
+                    fixed: true,
+                    order: options.order.get(&root).copied().unwrap_or_default(),
+                });
+                index
+            });
+            units[index].bounds = units[index].bounds.union(node.rect());
+            // A group moves as soon as any member belongs to the affected set.
+            units[index].fixed &= options
+                .affected
+                .as_ref()
+                .is_some_and(|affected| !affected.contains(&node.id));
+        }
+        for id in &options.pinned {
+            let root = roots
+                .get(id)
+                .ok_or(LayoutError::Document(FlowError::MissingNode(*id)))?;
+            units[indices[root]].fixed = true;
+        }
+
+        let mut links = Vec::new();
+        for edge in graph.edges.values() {
+            cancel.check()?;
+            let source = indices[&roots[&edge.source.node]];
+            let target = indices[&roots[&edge.target.node]];
+            if source == target {
+                continue;
+            }
+            let port = |endpoint| {
+                let (node, handle) = graph.handle(endpoint).map_err(LayoutError::Document)?;
+                Ok(handle.position(node.rect()))
+            };
+            let cross = |p: Point| {
+                if options.direction.horizontal() {
+                    p.y
+                } else {
+                    p.x
+                }
+            };
+            links.push(Link {
+                source,
+                target,
+                source_port: cross(port(&edge.source)? - units[source].bounds.origin),
+                target_port: cross(port(&edge.target)? - units[target].bounds.origin),
+            });
+        }
+
+        let mut positions = match *self {
+            Self::Layered | Self::Tree | Self::Radial => {
+                layered::positions(&units, &links, options, *self, cancel)?
+            }
+            Self::Grid { columns } => placement::grid(&units, columns, options.spacing),
+            Self::Force { seed, iterations } => {
+                placement::force(&units, &links, options, seed, iterations, cancel)?
+            }
+        };
+        if options.affected.is_some() && !matches!(self, Self::Force { .. }) {
+            placement::anchor_affected(&units, &links, &mut positions, cancel)?;
+        }
+        let index = |id| {
+            roots
+                .get(&id)
+                .map(|root| indices[root])
+                .ok_or(LayoutError::Document(FlowError::MissingNode(id)))
+        };
+        let mut constraints = Vec::new();
+        for &constraint in &options.constraints {
+            use LayoutConstraint::*;
+            let (a, b, axis, aligned) = match constraint {
+                LeftOf(a, b) => (a, b, 0, false),
+                Above(a, b) => (a, b, 1, false),
+                AlignX(a, b) => (a, b, 0, true),
+                AlignY(a, b) => (a, b, 1, true),
+                SameRank(a, b) => (a, b, usize::from(!options.direction.horizontal()), true),
+            };
+            constraints.push((
+                index(a)?,
+                index(b)?,
+                axis,
+                aligned,
+                graph.nodes[&a].pos - units[index(a)?].bounds.origin,
+                graph.nodes[&b].pos - units[index(b)?].bounds.origin,
+                graph.nodes[&a].size,
+            ));
+        }
+        placement::resolve(
+            &units,
+            &mut positions,
+            &constraints,
+            options.spacing,
+            cancel,
+        )?;
+
+        let mut result = LayoutResult {
+            direction: options.direction,
+            routing: options.routing,
+            ..LayoutResult::default()
+        };
+        for node in graph.nodes.values() {
+            cancel.check()?;
+            let unit = indices[&roots[&node.id]];
+            let group = &units[unit];
+            let pos = if group.fixed {
+                node.pos
+            } else {
+                positions[unit] + (node.pos - group.bounds.origin)
+            };
+            if !(Rect {
+                origin: pos,
+                size: node.size,
+            })
+            .valid()
+            {
+                return Err(LayoutError::Infeasible);
+            }
+            result.positions.insert(node.id, pos);
+        }
+        for (constraint, &(_, _, axis, aligned, _, _, _)) in
+            options.constraints.iter().zip(&constraints)
+        {
+            use LayoutConstraint::*;
+            let (a, b) = match *constraint {
+                LeftOf(a, b) | Above(a, b) | AlignX(a, b) | AlignY(a, b) | SameRank(a, b) => (a, b),
+            };
+            let coordinate = |p: Point| if axis == 0 { p.x } else { p.y };
+            let from = coordinate(result.positions[&a]);
+            let to = coordinate(result.positions[&b]);
+            let satisfied = if aligned {
+                from == to
+            } else {
+                to >= from + coordinate(graph.nodes[&a].size + options.spacing)
+            };
+            if !satisfied {
+                return Err(LayoutError::Infeasible);
+            }
+        }
+        for edge in graph.edges.values() {
+            cancel.check()?;
+            if options.affected.is_some()
+                && units[index(edge.source.node)?].fixed
+                && units[index(edge.target.node)?].fixed
+            {
+                continue;
+            }
+            let endpoint = |end| {
+                let (node, handle) = graph.handle(end).map_err(LayoutError::Document)?;
+                Ok((
+                    Rect {
+                        origin: result.positions[&node.id],
+                        size: node.size,
+                    },
+                    handle,
+                ))
+            };
+            let (source, source_handle) = endpoint(&edge.source)?;
+            let (target, target_handle) = endpoint(&edge.target)?;
+            let route = match options.routing {
+                LayoutRouting::Orthogonal => orthogonal(
+                    (source, source_handle),
+                    (target, target_handle),
+                    options.direction.horizontal(),
+                ),
+                LayoutRouting::Spline => crate::scene::bezier(
+                    source_handle.position(source),
+                    source_handle.side.direction(),
+                    target_handle.position(target),
+                    target_handle.side.direction(),
+                ),
+            };
+            if route.iter().any(|p| !p.finite()) {
+                return Err(LayoutError::Infeasible);
+            }
+            result.routes.insert(edge.id, route);
+        }
+        Ok(result)
+    }
+}
+
+impl Editor {
+    pub fn apply_layout(&mut self, result: &LayoutResult) -> Result<bool, FlowError> {
+        self.edit(|graph| {
+            for (&id, &position) in &result.positions {
+                graph
+                    .nodes
+                    .get_mut(&id)
+                    .ok_or(FlowError::MissingNode(id))?
+                    .pos = position;
+            }
+            let kind = match result.routing {
+                LayoutRouting::Spline => EdgeType::Bezier,
+                LayoutRouting::Orthogonal if result.direction.horizontal() => {
+                    EdgeType::OrthogonalHorizontal
+                }
+                LayoutRouting::Orthogonal => EdgeType::OrthogonalVertical,
+            };
+            for id in result.routes.keys() {
+                if let Some(edge) = graph.edges.get_mut(id) {
+                    edge.edge_type = kind;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+pub(crate) fn orthogonal(
+    source: (Rect, &crate::Handle),
+    target: (Rect, &crate::Handle),
+    horizontal: bool,
+) -> Vec<Point> {
+    let start = source.1.position(source.0);
+    let end = target.1.position(target.0);
+    let stub = (start.distance(end) * 0.125).clamp(2., 8.);
+    let a = start + source.1.side.direction() * stub;
+    let b = end + target.1.side.direction() * stub;
+    let bounds = source.0.union(target.0).expand(stub);
+    let mid = a * 0.5 + b * 0.5;
+    let clear = |route: &[Point]| {
+        route.windows(2).all(|pair| {
+            let segment = Rect::between(pair[0], pair[1]);
+            [source.0, target.0].iter().all(|node| {
+                !(segment.origin.x < node.max().x
+                    && segment.max().x > node.origin.x
+                    && segment.origin.y < node.max().y
+                    && segment.max().y > node.origin.y)
+            })
+        })
+    };
+    let candidate = |x, y, vertical| {
+        if vertical {
+            [a, Point::new(x, a.y), Point::new(x, b.y), b]
+        } else {
+            [a, Point::new(a.x, y), Point::new(b.x, y), b]
+        }
+    };
+    let direct = candidate(mid.x, mid.y, horizontal);
+    let mut result = Vec::with_capacity(8);
+    result.push(start);
+    if clear(&direct) {
+        result.extend(direct);
+    } else {
+        // For ports facing away from each other, use exterior channels.
+        let mut best = None;
+        for vertical in [horizontal, !horizontal] {
+            let (lo, hi) = if vertical {
+                (bounds.origin.x, bounds.max().x)
+            } else {
+                (bounds.origin.y, bounds.max().y)
+            };
+            for channel in [lo, hi] {
+                let route = candidate(channel, channel, vertical);
+                if clear(&route) {
+                    let length = route
+                        .windows(2)
+                        .map(|pair| pair[0].distance(pair[1]))
+                        .sum::<f32>();
+                    if best.as_ref().is_none_or(|(cost, _)| length < *cost) {
+                        best = Some((length, route));
+                    }
+                }
+            }
+        }
+        if let Some((_, route)) = best {
+            result.extend(route);
+        } else {
+            // Start and end via the outward stubs, then follow the outside of
+            // both nodes. Overlapping endpoint bounds may obstruct even this.
+            let outside = |point: Point, side: crate::Side| match side {
+                crate::Side::Left => Point::new(bounds.origin.x, point.y),
+                crate::Side::Right => Point::new(bounds.max().x, point.y),
+                crate::Side::Top => Point::new(point.x, bounds.origin.y),
+                crate::Side::Bottom => Point::new(point.x, bounds.max().y),
+            };
+            let s = outside(a, source.1.side);
+            let t = outside(b, target.1.side);
+            let mut best = None;
+            for y in [bounds.origin.y, bounds.max().y] {
+                let route = [a, s, Point::new(s.x, y), Point::new(t.x, y), t, b];
+                let length = route
+                    .windows(2)
+                    .map(|pair| pair[0].distance(pair[1]))
+                    .sum::<f32>();
+                if clear(&route) && best.as_ref().is_none_or(|(cost, _)| length < *cost) {
+                    best = Some((length, route));
+                }
+            }
+            for x in [bounds.origin.x, bounds.max().x] {
+                let route = [a, s, Point::new(x, s.y), Point::new(x, t.y), t, b];
+                let length = route
+                    .windows(2)
+                    .map(|pair| pair[0].distance(pair[1]))
+                    .sum::<f32>();
+                if clear(&route) && best.as_ref().is_none_or(|(cost, _)| length < *cost) {
+                    best = Some((length, route));
+                }
+            }
+            if let Some((_, route)) = best {
+                result.extend(route);
+            } else {
+                result.extend(direct);
+            }
+        }
+    }
+    result.push(end);
+    result.dedup();
+    result
+}

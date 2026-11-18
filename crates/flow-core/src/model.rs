@@ -100,6 +100,8 @@ pub enum EdgeType {
     SmoothStep,
     Step,
     Straight,
+    OrthogonalHorizontal,
+    OrthogonalVertical,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Marker {

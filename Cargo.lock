@@ -3520,9 +3520,11 @@ dependencies = [
 name = "guiraffe-flow"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-flow-core",
+ "guiraffe-test",
 ]
 
 [[package]]

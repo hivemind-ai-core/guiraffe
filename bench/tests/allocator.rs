@@ -323,3 +323,20 @@ fn production_scatter_recompute_bounds_allocation_traffic() -> anyhow::Result<()
     assert!(counts.bytes <= 128 * 1024 * 1024, "{counts:?}");
     Ok(())
 }
+
+#[test]
+fn flow_layout_allocation_traffic_scales_linearly() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{flow_layout_5k, flow_layout_50k};
+
+    for (nodes, workload) in [(5_000, flow_layout_5k as fn()), (50_000, flow_layout_50k)] {
+        workload();
+        let (_, counts) = count_allocations(workload)?;
+        eprintln!("flow layout {nodes}: {counts:?}");
+        assert!(
+            counts.allocations <= 15 * nodes,
+            "allocation count: {counts:?}"
+        );
+        assert!(counts.bytes <= 2_500 * nodes, "requested bytes: {counts:?}");
+    }
+    Ok(())
+}

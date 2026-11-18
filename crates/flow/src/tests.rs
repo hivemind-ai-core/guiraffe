@@ -787,3 +787,72 @@ fn toolbar_and_canvas_accessibility(cx: &mut TestAppContext) {
         })
         .expect("update");
 }
+
+#[gpui_kit::test]
+fn background_layout_previews_then_commits_one_undoable_edit(cx: &mut TestAppContext) {
+    use crate::core::{AutoLayout, LayoutOptions};
+    use std::time::Duration;
+
+    let state = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        cx.set_reduce_motion(false);
+        cx.new(|cx| crate::FlowState::new(fixture(), cx).expect("state"))
+    });
+    let original = state.read_with(cx, |state, _| state.graph().nodes[&1].pos);
+    cx.update(|cx| {
+        state.update(cx, |state, cx| {
+            state.arrange(
+                AutoLayout::Grid { columns: 1 },
+                LayoutOptions::default(),
+                Duration::from_millis(64),
+                cx,
+            );
+        })
+    });
+    cx.run_until_parked();
+    state.read_with(cx, |state, cx| {
+        assert!(state.viewport_entity().read(cx).layout_preview.is_some());
+        assert_eq!(state.graph().nodes[&1].pos, original);
+    });
+    for _ in 0..4 {
+        cx.executor().advance_clock(Duration::from_millis(16));
+        cx.run_until_parked();
+    }
+    cx.update(|cx| {
+        state.update(cx, |state, cx| {
+            assert_eq!(state.graph().nodes[&1].pos, WorldPoint::default());
+            assert!(state.viewport_entity().read(cx).layout_preview.is_none());
+            state.undo(cx);
+            assert_eq!(state.graph().nodes[&1].pos, original);
+            assert!(!state.editor.can_undo());
+        })
+    });
+}
+
+#[gpui_kit::test]
+fn cancelling_background_layout_keeps_the_document(cx: &mut TestAppContext) {
+    use crate::core::{AutoLayout, LayoutOptions};
+    use std::time::Duration;
+
+    let original = fixture();
+    let state = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        cx.new(|cx| crate::FlowState::new(original.clone(), cx).expect("state"))
+    });
+    cx.update(|cx| {
+        state.update(cx, |state, cx| {
+            state.arrange(
+                AutoLayout::Grid { columns: 1 },
+                LayoutOptions::default(),
+                Duration::ZERO,
+                cx,
+            );
+            state.cancel_layout(cx);
+        })
+    });
+    cx.run_until_parked();
+    state.read_with(cx, |state, _| {
+        assert_eq!(state.graph(), &original);
+        assert!(!state.editor.can_undo());
+    });
+}
