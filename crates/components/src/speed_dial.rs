@@ -185,6 +185,7 @@ impl Render for SpeedDial {
             let return_focus = primary_focus.clone();
             let bubble = div()
                 .id(action_id)
+                .debug_selector(move || format!("speed-dial-action-{index}"))
                 .a11y_disabled(!self.open)
                 .absolute()
                 .size(px(40.))
@@ -221,6 +222,7 @@ impl Render for SpeedDial {
         let entity = cx.entity();
         let primary = div()
             .id(id(0))
+            .debug_selector(|| "speed-dial-primary".into())
             .aria_expanded(self.open)
             .size_full()
             .flex()
@@ -287,5 +289,53 @@ impl Render for SpeedDial {
                 }
                 cx.stop_propagation();
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn radial_positions_stay_at_radius(
+            radius in 1.0f32..500.0,
+            start_degrees in -360.0f32..360.0,
+            count in 1usize..100,
+            clockwise in any::<bool>(),
+            half in any::<bool>(),
+        ) {
+            let layout = DialLayout::Radial {
+                radius,
+                start_degrees,
+                arc: if half { DialArc::Half } else { DialArc::Quarter },
+                clockwise,
+            };
+            let offsets = layout.offsets(count);
+            prop_assert_eq!(offsets.len(), count);
+            for (x, y) in &offsets {
+                prop_assert!((x.hypot(*y) - radius).abs() < 0.001);
+            }
+            if count > 1 {
+                let (x, y) = offsets[0];
+                let (next_x, next_y) = offsets[1];
+                let cross = (x * next_y - y * next_x) / radius.powi(2);
+                let step = if half { PI } else { PI / 2. } / (count - 1) as f32;
+                let expected = step.sin() * if clockwise { 1. } else { -1. };
+                prop_assert!((cross - expected).abs() < 0.001);
+            }
+        }
+
+        #[test]
+        fn stagger_is_monotonic_and_bounded(index in any::<usize>()) {
+            let delay = stagger_delay(index);
+            prop_assert_eq!(stagger_delay(0), Duration::ZERO);
+            prop_assert!(delay <= Duration::from_millis(192));
+            prop_assert!(delay <= stagger_delay(index.saturating_add(1)));
+            if index < 8 {
+                prop_assert_eq!(stagger_delay(index + 1) - delay, Duration::from_millis(24));
+            }
+        }
     }
 }

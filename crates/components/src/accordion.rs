@@ -1,12 +1,12 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    base::Accordion as KitAccordion,
+    base::{Accordion as KitAccordion, AccordionPanel, AccordionTrigger},
     component::{Icon, IconName},
     prelude::*,
     *,
 };
-use guiraffe_core::{A11yDisabledExt, GuiraffeTheme, Press, PressableExt, Variant, keyed_focus};
+use guiraffe_core::{GuiraffeTheme, Press, PressableExt, Variant, keyed_focus};
 
 use crate::style::{hsla, radius, surfaces};
 
@@ -165,6 +165,20 @@ impl Render for Accordion {
                 } else {
                     IconName::ChevronDown
                 };
+                let trigger = AccordionTrigger::new(trigger_id)
+                    .open(open)
+                    .disabled(item.disabled)
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .rounded(radius)
+                    .when(self.options.chevron == ChevronPosition::Start, |el| el.child(Icon::new(chevron.clone())))
+                    .child(div().flex_1().child(item.title.clone()))
+                    .when(self.options.chevron == ChevronPosition::End, |el| el.child(Icon::new(chevron)))
+                    .press(&press, &focus, window)
+                    .on_press(item.disabled, cx.listener(move |this, _, _, cx| this.toggle(index, cx)));
                 div()
                     .flex()
                     .flex_col()
@@ -179,33 +193,10 @@ impl Render for Accordion {
                     .when(self.options.variant == AccordionVariant::Filled, |el| {
                         el.bg(hsla(surface.track))
                     })
-                    .child(
-                        div()
-                            .id(trigger_id)
-                            .a11y_disabled(item.disabled)
-                            .test_support()
-                            .aria_expanded(open)
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py_2()
-                            .rounded(radius)
-                            .when(self.options.chevron == ChevronPosition::Start, |el| {
-                                el.child(Icon::new(chevron.clone()))
-                            })
-                            .child(div().flex_1().child(item.title.clone()))
-                            .when(self.options.chevron == ChevronPosition::End, |el| {
-                                el.child(Icon::new(chevron))
-                            })
-                            .press(&press, &focus, window)
-                            .on_press(
-                                item.disabled,
-                                cx.listener(move |this, _, _, cx| this.toggle(index, cx)),
-                            ),
-                    )
+                    .child(trigger)
                     .when(open, |el| {
-                        el.child(div().px_3().pb_3().child((item.body)()))
+                        el.child(AccordionPanel::new().id(("accordion-panel", index))
+                            .open(true).px_3().pb_3().child((item.body)()))
                     })
             }))
     }
