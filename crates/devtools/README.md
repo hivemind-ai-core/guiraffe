@@ -24,6 +24,9 @@ records inherited `StyleContext` during layout, and records screen bounds during
 Use `tools.untrack(id)` on unmount. No application entity or frequently changing Global
 is read or written to collect telemetry. Uninstrumented GPUI/Controls internals aren't
 included. Reused ids conflate counters, so ids must be unique per mounted view.
+While the tools are closed `track` is a single relaxed atomic load and records nothing;
+opening them refreshes the windows once so every tracked view registers immediately.
+Render counters therefore count renders while the tools are open.
 
 The Highlights control flashes each tracked view's bounds for 180 ms after render;
 its counter is listed in the panel. Inspect selects the smallest tracked rectangle beneath
@@ -34,23 +37,30 @@ Frame times come from GPUI's `profiler::FrameTimingCollector`, filtered by windo
 actual `Window::draw` CPU duration and GPUI's request-layout/prepaint/paint splits.
 The histogram and nearest-rank p50/p99 use the latest 240 draws while tools are open.
 Measurements include the tools' own drawing cost; they exclude waiting for vsync and GPU
-presentation. The tools leaf schedules frames while open to collect telemetry and update
-hover/flashes, and stops when closed or paused. Upstream GPUI's collector uses its own
+presentation. The panel never polls every frame: while open and unpaused it refreshes on a
+250 ms timer (`SAMPLE_INTERVAL`) and on Store events, collecting every draw the app made in
+between; the timer is cancelled when closed or paused. On upstream GPUI any refresh
+redraws the whole window, so there the samples include the tools' own 4 Hz refreshes (the
+panel says so); gpui-fast redraws only the tools leaf. Upstream GPUI's collector uses its own
 internal synchronization. No synchronization is added to application rendering. A cold-path tracing lease uses a mutex
 only when opening, pausing or closing the tools, preserving external profilers' prior setting.
 
 Connect any `Store<S>` using `inspect_store(name, &store, capacity, describe, cx)` and
 `tools.add_store(adapter, cx)`. The `describe` callback returns JSON for a diagnostic view;
 it can omit secrets and expensive state. Snapshots are retained as Arc clones in a bounded
-log. Diffs are computed only for the current page (eight events), with Older/Latest controls
-for navigation. Objects use JSON pointer paths; arrays are atomic. Missing values differ
+log. Diffs are computed only for the current page (eight events) and cached per
+(latest event, page), so re-rendering an unchanged page does no serialization or diffing.
+Older/Latest page through history; "Older" stops at the longest store's last page and each
+store clamps the offset to its own last page. While the panel is open, every recorded event
+refreshes it (also when paused), coalesced into one deferred notify of the tools leaf. Objects use JSON pointer paths; arrays are atomic. Missing values differ
 from JSON null. Before/After queue a normal non-undoable restore event, so store selections
 update normally; effects are not replayed. Existing queued events retain FIFO ordering.
 Store's public `Fx::set` takes an owned `S`, so restoring clones `S`; use Arc/persistent
 fields to keep this cheap. Dropping the Store is safe (the adapter holds a weak handle).
 
 Motion 0.1× multiplies `MotionPrefs.time_scale` by ten (that field is a duration multiplier),
-and toggling back restores its previous value. Reduced-motion settings remain respected.
+and toggling back restores its previous value, unless something else changed the scale in
+the meantime, in which case that newer value is kept. Reduced-motion settings remain respected.
 Changing this configuration intentionally refreshes animation consumers; profiling,
 inspection, toggling and state-log browsing only notify the independent tools leaf.
 
@@ -73,3 +83,21 @@ cargo test -p guiraffe-devtools --features devtools,gpui-kit/gpui-fast
 cargo clippy -p guiraffe-devtools --all-targets --features devtools -- -D warnings
 cargo clippy -p guiraffe-devtools --all-targets --features devtools,gpui-kit/gpui-fast -- -D warnings
 ```
+
+## Gallery
+
+`cargo run -p guiraffe-gallery --features devtools` adds a Devtools toolbar button, tracks the
+gallery shell and inspects the router's navigation Store; `tests/devtools.rs` in the gallery
+covers the toolbar and shortcut toggles.
+
+## Known limits
+
+- Native pointer input in gpui-fast 0.1.15 updates the typed window root (and so re-renders
+  the app) even for a background click; the interaction test measures that baseline and
+  asserts tools controls add nothing beyond it. Absolute zero-render input needs a backend
+  change.
+- Inspection is explicit: only `track`ed views are listed; hit testing picks the smallest
+  containing tracked rectangle, not GPUI's clip/occlusion-aware tree.
+- Restoring a snapshot clones `S` (Store's `Fx::set` takes an owned value); effects are not
+  replayed; arrays diff atomically.
+- The view list shows the first twelve registrations.
