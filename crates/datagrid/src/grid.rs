@@ -44,7 +44,10 @@ use crate::{
         selection::{Advance, CellPos, Nav, Region, Selection, SelectionMode},
         undo::{Change, UndoLog},
     },
-    order::{Filter, FilterSpec, RowOrder, SortDir, SortKey, SortSpec, compute_order, toggle_sort},
+    order::{
+        Filter, FilterSpec, Inverse, RowOrder, SortDir, SortKey, SortSpec, compute_order,
+        toggle_sort,
+    },
     source::{CellRef, EditError, GridSource, RowKey},
     window as vw,
 };
@@ -707,6 +710,12 @@ pub(crate) struct Core {
     rows: RefCell<Vec<Entity<RowView>>>,
 }
 
+impl Drop for Core {
+    fn drop(&mut self) {
+        self.m.get_mut().cancel.store(true, AtomicOrdering::Relaxed);
+    }
+}
+
 /// The grid control handle: cheap to clone; owns the shared state and the retained views.
 /// Keep it outside your host's render state and render it with [`DataGrid::new`].
 #[derive(Clone)]
@@ -1341,24 +1350,31 @@ impl Core {
             )
         };
         if inline {
-            let r = compute_order(&*src, &filters, &sort, &cancel);
+            let r = compute_order(&*src, &filters, &sort, &cancel).map(|order| {
+                let inverse = order.inverse(src.row_count());
+                (order, inverse)
+            });
             drop(src);
             self.apply_order(job, r, cx);
             return;
         }
         self.m.borrow_mut().busy = true;
         self.notify_grid(cx);
-        let core = self.clone();
+        let core = Rc::downgrade(self);
         cx.spawn(async move |cx| {
             let r = cx
                 .background_executor()
                 .spawn(async move {
-                    // `src` is dropped here, before the result reaches the UI thread, so a
-                    // queued commit can take the source back.
-                    compute_order(&*src, &filters, &sort, &cancel)
+                    let order = compute_order(&*src, &filters, &sort, &cancel)?;
+                    // Publication needs only lookups even when a selection was made
+                    // while this job was running.
+                    let inverse = order.inverse(src.row_count());
+                    Ok((order, inverse))
                 })
                 .await;
-            cx.update(|cx| core.apply_order(job, r, cx));
+            if let Some(core) = core.upgrade() {
+                cx.update(|cx| core.apply_order(job, r, cx));
+            }
         })
         .detach();
     }
@@ -1368,12 +1384,12 @@ impl Core {
     fn apply_order(
         self: &Rc<Self>,
         job: u64,
-        r: Result<RowOrder, crate::order::Cancelled>,
+        r: Result<(RowOrder, Inverse), crate::order::Cancelled>,
         cx: &mut App,
     ) {
         let (sel_changed, edit_gone) = {
             let mut m = self.m.borrow_mut();
-            let Ok(order) = r else {
+            let Ok((order, inv)) = r else {
                 m.stats.stale_jobs += 1;
                 return;
             };
@@ -1389,7 +1405,6 @@ impl Core {
             let before = m.sel.clone();
             let mut edit_gone = false;
             if needs_map {
-                let inv = m.rows.inverse(n);
                 let map = |v: usize| old.source_row(v, n).and_then(|s| inv.view_row(s));
                 m.sel = m.sel.remap(map);
                 if let Some(e) = m.edit.as_ref().map(|e| e.source_row) {
