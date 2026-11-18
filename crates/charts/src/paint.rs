@@ -222,7 +222,20 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
             label(
                 window,
                 cx,
-                at(origin, (r.left, r.top - 26.)),
+                at(
+                    origin,
+                    (
+                        r.left,
+                        r.top
+                            - if !chart.axes[1].title.is_empty()
+                                || (chart.has_right_axis && !chart.axes[2].title.is_empty())
+                            {
+                                44.
+                            } else {
+                                26.
+                            },
+                    ),
+                ),
                 panel.label.as_str(),
                 surfaces.text.to_hsla(),
                 Align::Left,

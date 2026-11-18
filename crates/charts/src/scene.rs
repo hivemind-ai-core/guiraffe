@@ -115,21 +115,53 @@ impl PreparedChart {
         let rows = count.div_ceil(columns).max(1);
         let cell_width = width / columns as f32;
         let cell_height = height / rows as f32;
-        let left = 75.;
-        let right = if self.has_right_axis { 75. } else { 20. };
         let has_y_title = !self.axes[1].title.is_empty()
             || (self.has_right_axis && !self.axes[2].title.is_empty());
-        let top = if count > 1 || has_y_title { 30. } else { 12. };
+        let top = match (count > 1, has_y_title) {
+            (true, true) => 48.,
+            (false, false) => 12.,
+            _ => 30.,
+        };
         let bottom = if self.axes[0].title.is_empty() {
             25.
         } else {
             44.
         };
-        if cell_width <= left + right || cell_height <= top + bottom {
+        if cell_height <= top + bottom {
+            return Scene { panels: Vec::new() };
+        }
+        let domains = [domain, self.domains[1], self.domains[2]];
+        let y_ticks = |axis: usize| {
+            self.axes[axis]
+                .scale
+                .ticks(domains[axis], ((cell_height - top - bottom) / 46.) as usize)
+        };
+        let left_ticks = y_ticks(1);
+        let right_ticks = if self.has_right_axis {
+            y_ticks(2)
+        } else {
+            Vec::new()
+        };
+        // Conservative 11 px text widths keep the pure scene independent of GPUI fonts.
+        let margin = |axis: usize, ticks: &[crate::Tick]| {
+            let characters = ticks
+                .iter()
+                .map(|tick| tick.label.chars().count())
+                .chain(std::iter::once(self.axes[axis].title.chars().count()))
+                .max()
+                .unwrap_or_default();
+            (12. + 11. * characters as f32).max(75.)
+        };
+        let left = margin(1, &left_ticks);
+        let right = if self.has_right_axis {
+            margin(2, &right_ticks)
+        } else {
+            20.
+        };
+        if cell_width <= left + right {
             return Scene { panels: Vec::new() };
         }
 
-        let domains = [domain, self.domains[1], self.domains[2]];
         let mut scratch = Vec::new();
         let mut panels = Vec::with_capacity(count);
         for (index, (facet, label)) in self.facets.iter().enumerate() {
@@ -141,17 +173,13 @@ impl PreparedChart {
                 right: x + cell_width - right,
                 bottom: y + cell_height - bottom,
             };
-            let ticks = std::array::from_fn(|axis| {
-                if axis == 2 && !self.has_right_axis {
-                    return Vec::new();
-                }
-                let budget = if axis == 0 {
-                    rect.width() / 85.
-                } else {
-                    rect.height() / 46.
-                };
-                self.axes[axis].scale.ticks(domains[axis], budget as usize)
-            });
+            let ticks = [
+                self.axes[0]
+                    .scale
+                    .ticks(domain, (rect.width() / 85.) as usize),
+                left_ticks.clone(),
+                right_ticks.clone(),
+            ];
             let mut panel = Panel {
                 rect,
                 facet: *facet,
@@ -563,6 +591,15 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn left_margin_grows_for_long_axis_title() {
+        let mut spec = ChartSpec::new("load");
+        spec.y.title = "CPU load (%)".into();
+        let model = spec.prepare();
+        let scene = model.scene(600., 300., model.x_domain(), &BTreeSet::new());
+        assert!(scene.panels[0].rect.left > 75.);
+    }
 
     #[test]
     fn nearest_hit_prefers_closer_candidate_within_radius() {
