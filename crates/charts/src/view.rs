@@ -61,7 +61,7 @@ impl Default for ChartOptions {
 #[derive(Default)]
 struct Frame {
     bounds: Bounds<Pixels>,
-    scene: Option<Scene>,
+    scene: Option<(Domain, Scene)>,
     pending: Option<SceneRequest>,
     builds: usize,
     paints: usize,
@@ -94,13 +94,22 @@ impl PlotState {
             self.invalidate();
         }
         self.frame.bounds = bounds;
-        if self.frame.scene.is_some() || self.frame.pending.is_some() {
+        if self
+            .frame
+            .scene
+            .as_ref()
+            .is_some_and(|(domain, _)| *domain == self.domain)
+            || self.frame.pending.is_some()
+        {
             return;
         }
         let width = f32::from(bounds.size.width);
         let height = f32::from(bounds.size.height);
         if self.chart.len() < 100_000 {
-            self.frame.scene = Some(self.chart.scene(width, height, self.domain, &self.hidden));
+            self.frame.scene = Some((
+                self.domain,
+                self.chart.scene(width, height, self.domain, &self.hidden),
+            ));
             self.frame.builds += 1;
             return;
         }
@@ -129,7 +138,7 @@ impl PlotState {
                     .is_some_and(|request| Arc::ptr_eq(&request.0, &cancelled))
                 {
                     state.frame.pending = None;
-                    state.frame.scene = Some(scene);
+                    state.frame.scene = Some((domain, scene));
                     state.frame.builds += 1;
                     cx.notify();
                 }
@@ -345,7 +354,7 @@ impl ChartView {
             return;
         }
         plot.domain = domain;
-        plot.invalidate();
+        plot.frame.pending = None;
         drop(plot);
         App::notify(cx, self.ink.entity_id());
         // Gesture callbacks already hold the overlay entity through Context::listener.
@@ -693,12 +702,12 @@ impl Render for PlotInk {
             move |bounds, _, window, cx| {
                 let mut state = paint.borrow_mut();
                 state.frame.paints += 1;
-                if let Some(scene) = &state.frame.scene {
+                if let Some((domain, scene)) = &state.frame.scene {
                     paint::paint_scene(
                         paint::PaintScene {
                             scene,
                             chart: &state.chart,
-                            domain: state.domain,
+                            domain: *domain,
                             theme: &theme,
                             origin: bounds.origin,
                             focused: state.focused,
@@ -734,7 +743,10 @@ impl Overlay {
     fn locate(&self, point: Point<Pixels>) -> Option<Hover> {
         let state = self.plot.borrow();
         let pos = state.local(point);
-        let scene = state.frame.scene.as_ref()?;
+        let (domain, scene) = state.frame.scene.as_ref()?;
+        if *domain != state.domain {
+            return None;
+        }
         let panel = scene.panel(pos)?;
         let hit = state
             .chart
@@ -777,7 +789,8 @@ impl Overlay {
             .frame
             .scene
             .as_ref()
-            .and_then(|scene| scene.panel(pos))
+            .filter(|(domain, _)| *domain == state.domain)
+            .and_then(|(_, scene)| scene.panel(pos))
             .map(|panel| (panel.facet, pos.0));
     }
 
@@ -797,7 +810,9 @@ impl Overlay {
                 let panel = state
                     .frame
                     .scene
-                    .as_ref()?
+                    .as_ref()
+                    .filter(|(rendered, _)| *rendered == domain)?
+                    .1
                     .panels
                     .iter()
                     .find(|p| p.facet == facet)?;
@@ -837,7 +852,7 @@ impl Overlay {
             .frame
             .scene
             .as_ref()
-            .and_then(|scene| scene.panel(pos))
+            .and_then(|(_, scene)| scene.panel(pos))
         else {
             return;
         };
