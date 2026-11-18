@@ -1,0 +1,18 @@
+//! Composable charts with borrowed sources and canvas geometry.
+
+mod data;
+mod model;
+mod paint;
+mod sample;
+mod scale;
+mod scene;
+mod view;
+
+pub use data::*;
+pub use guiraffe_timeline::TimeFormat;
+pub use model::*;
+pub use paint::categorical_palette;
+pub use sample::lttb;
+pub use scale::*;
+pub use scene::Scene;
+pub use view::{ChartEvent, ChartOptions, ChartView, init};

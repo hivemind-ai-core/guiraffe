@@ -73,6 +73,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::ui::entries());
     v.extend(crate::demos::kit::entries());
     v.extend(crate::demos::charts::entries());
+    v.extend(crate::demos::composed_charts::entries());
     v
 }
 
