@@ -389,6 +389,101 @@ pub fn flamegraph_million() {
     }
 }
 
+/// Traverse a 720px viewport in each orientation-independent depth slice of a
+/// ten-million-frame profile (20,000 independent stacks of depth 500).
+pub fn flamegraph_ten_million() {
+    use guiraffe_flamegraph::{FlameLayout, Frame, FrameSource};
+    use std::sync::{Arc, OnceLock};
+
+    struct Profile;
+    impl FrameSource for Profile {
+        fn len(&self) -> usize {
+            10_000_000
+        }
+
+        fn frame(&self, index: usize) -> Frame<'_> {
+            let depth = index % 500;
+            Frame {
+                id: index as u64,
+                parent: (depth > 0).then(|| index as u64 - 1),
+                self_value: if depth == 499 { 1. } else { 0. },
+                total: 1.,
+                label: "frame",
+                package: "bench",
+            }
+        }
+    }
+
+    static LAYOUT: OnceLock<FlameLayout> = OnceLock::new();
+    let layout = LAYOUT.get_or_init(|| {
+        FlameLayout::new(Arc::new(Profile)).unwrap_or_else(|error| panic!("{error:?}"))
+    });
+    for depth in 200..235 {
+        for domain in [layout.domain(), 9_000.0..9_100.0] {
+            layout.visit_row(depth, domain, 1200., None, |segment| {
+                black_box(segment);
+            });
+        }
+    }
+}
+
+/// Walk two warmed, fractional viewport ranges in the model shared by
+/// TreeList and PropertyGrid. The fully visible snapshot has 100,000 open
+/// nodes and 1,000,000 total rows.
+pub fn tree_scroll_million() {
+    use guiraffe_tree::{Children, TreeModel, TreeSource};
+
+    struct Forest {
+        branches: Vec<u64>,
+        leaves: Vec<u64>,
+    }
+    impl TreeSource for Forest {
+        fn roots(&self) -> &[u64] {
+            &[0]
+        }
+
+        fn children(&self, id: u64) -> Children<'_> {
+            Children::Ready(match id as usize {
+                0 => &self.branches,
+                branch @ 1..=99_999 => {
+                    let begin = (branch - 1) * 9;
+                    let end = if branch == 99_999 {
+                        self.leaves.len()
+                    } else {
+                        begin + 9
+                    };
+                    &self.leaves[begin..end]
+                }
+                _ => &[],
+            })
+        }
+
+        fn label(&self, _: u64) -> &str {
+            "node"
+        }
+    }
+
+    static MODEL: std::sync::OnceLock<TreeModel> = std::sync::OnceLock::new();
+    let model = MODEL.get_or_init(|| {
+        let source = Forest {
+            branches: (1..100_000).collect(),
+            leaves: (100_000..1_000_000).collect(),
+        };
+        let mut model = TreeModel::new(&source);
+        for id in 1..100_000 {
+            model.set_expanded(id, true, &source);
+        }
+        model.set_expanded(0, true, &source);
+        assert_eq!(model.rows().len(), 1_000_000);
+        model
+    });
+    for scroll in [12_000_000.5, 30_000_123.5] {
+        for row in &model.rows()[model.window(black_box(scroll), 720., 36.)] {
+            black_box(row);
+        }
+    }
+}
+
 /// Shared registration table consumed by the CLI, criterion and iai-callgrind.
 /// Add workloads here once; each tool expands its own registration from this list.
 #[macro_export]
@@ -398,6 +493,8 @@ macro_rules! with_suites {
             (core_variants, "core-variants"),
             (chart_line_million, "chart-line-1m"),
             (flamegraph_million, "flamegraph-1m"),
+            (flamegraph_ten_million, "flamegraph-10m"),
+            (tree_scroll_million, "tree-scroll-1m"),
             (chart_scatter_hundred_thousand, "chart-scatter-100k"),
             (code_scroll_million,"code-scroll-1m"),
             (code_snapshot_arc_clone,"code-snapshot-arc-clone"),

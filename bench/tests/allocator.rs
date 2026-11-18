@@ -197,3 +197,16 @@ fn warmed_flamegraph_million_frame_traversal_allocates_nothing() -> anyhow::Resu
     assert_eq!(counts.allocations, 0);
     Ok(())
 }
+#[test]
+fn production_flame_and_tree_model_traversals_allocate_nothing() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{flamegraph_ten_million, tree_scroll_million};
+
+    for suite in [flamegraph_ten_million as fn(), tree_scroll_million] {
+        // Construct the immutable index/visible rows before entering the
+        // allocator scope. This only counts the warmed model traversal.
+        suite();
+        let (_, counts) = count_allocations(suite)?;
+        assert_eq!(counts.allocations, 0, "{counts:?}");
+    }
+    Ok(())
+}
