@@ -4,13 +4,14 @@
 //! frame re-renders only the burger. Reduced motion jumps to the end state.
 
 use gpui_kit::{
-    App, AppContext, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Window, canvas, div, prelude::*, px,
+    App, AppContext, ClickEvent, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, Styled, TestSupportExt, Window, canvas, div,
+    prelude::*, px,
 };
-use guiraffe_core::{ColorName, Size, Variant};
+use guiraffe_core::{ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant};
 use guiraffe_motion::{Animated, Easing, MotionPrefs, Timing};
 
-use crate::style::{hsla, radius, theme, variant};
+use crate::style::{hsla, radius, theme};
 
 /// The geometry of the three bars at open amount `t` (0 = ☰, 1 = ×), in px.
 ///
@@ -51,11 +52,19 @@ pub struct Burger {
     timing: Option<Timing>,
     /// Called with the new state after a click.
     on_change: Option<OnChange>,
+    focus: FocusHandle,
+    /// `None`: a tab stop only inside a focus scope (spec/00 §12.3).
+    focusable: Option<bool>,
+    /// Accessible names for the closed / open states.
+    labels: (SharedString, SharedString),
 }
 
 impl Burger {
     pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
+            focus: cx.focus_handle(),
+            focusable: None,
+            labels: ("Open navigation".into(), "Close navigation".into()),
             id: "gr-burger".into(),
             open: false,
             amount: Animated::new(
@@ -91,6 +100,25 @@ impl Burger {
             self.size = size;
             cx.notify();
         }
+    }
+
+    /// Opt in or out of the Tab order (`None`: only inside a focus scope).
+    pub fn set_focusable(&mut self, focusable: Option<bool>, cx: &mut Context<Self>) {
+        if self.focusable != focusable {
+            self.focusable = focusable;
+            cx.notify();
+        }
+    }
+
+    /// Accessible names announced while closed and while open.
+    pub fn set_labels(
+        &mut self,
+        closed: impl Into<SharedString>,
+        open: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.labels = (closed.into(), open.into());
+        cx.notify();
     }
 
     pub fn on_change(&mut self, f: impl Fn(bool, &mut Window, &mut App) + 'static) {
@@ -139,19 +167,31 @@ impl Render for Burger {
         let scale = theme(cx).scale;
         let side = size.control_height() * scale;
         let t = self.amount.sample(window, cx).clamp(0.0, 1.0);
-        let color = hsla(variant(cx, self.color, Variant::Subtle).foreground);
+        let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, self.color);
+        let color = hsla(colors.rest.foreground);
         let (thickness, half_gap) = bar_metrics(side);
         let geometry = bars(t);
-        let hover = hsla(crate::style::surfaces(cx).hover);
         let id = self.id.clone();
+        let r = radius(None, cx);
+        let label = if self.open {
+            self.labels.1.clone()
+        } else {
+            self.labels.0.clone()
+        };
+        let press = Press::new(colors)
+            .radius(r)
+            .focusable(self.focusable)
+            .label(label);
         div()
             .id(SharedString::from(format!("gr-burger:{id}")))
+            .test_support()
             .debug_selector(move || format!("gr-burger:{id}"))
             .relative()
             .size(px(side))
-            .rounded(radius(None, cx))
-            .cursor_pointer()
-            .hover(move |el| el.bg(hover))
+            .rounded(r)
+            .border_1()
+            .aria_expanded(self.open)
+            .press(&press, &self.focus, window)
             .on_click(cx.listener(|this: &mut Self, _: &ClickEvent, window, cx| {
                 this.toggle(cx);
                 if let Some(f) = this.on_change.take() {
@@ -184,6 +224,12 @@ impl Render for Burger {
                 )
                 .size_full(),
             )
+    }
+}
+
+impl Focusable for Burger {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

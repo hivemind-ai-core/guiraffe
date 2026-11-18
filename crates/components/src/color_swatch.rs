@@ -6,9 +6,12 @@
 
 use gpui_kit::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StyleRefinement, Styled, Window, div, prelude::*, px,
+    StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px,
 };
-use guiraffe_core::{ColorName, Rgb, Shade, Size};
+use guiraffe_core::{
+    A11yDisabledExt, ColorName, GuiraffeTheme, Press, PressableExt, Rgb, Shade, Size, Variant,
+    keyed_focus,
+};
 
 use crate::style::{hsla, radius, surfaces, theme};
 
@@ -59,6 +62,8 @@ pub struct ColorSwatch {
     /// `None`: inherit the context's control size.
     size: Option<Size>,
     disabled: bool,
+    /// `None`: a clickable swatch is a tab stop only inside a focus scope (spec/00 §12.3).
+    focusable: Option<bool>,
     on_click: Option<OnClick>,
     style: StyleRefinement,
 }
@@ -72,6 +77,7 @@ impl ColorSwatch {
             selected: SwatchSelected::None,
             size: None,
             disabled: false,
+            focusable: None,
             on_click: None,
             style: StyleRefinement::default(),
         }
@@ -93,6 +99,12 @@ impl ColorSwatch {
         self
     }
 
+    /// Opt a clickable swatch in or out of the Tab order.
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = Some(focusable);
+        self
+    }
+
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(f));
         self
@@ -110,7 +122,7 @@ impl ColorSwatch {
 }
 
 impl RenderOnce for ColorSwatch {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let ctx = guiraffe_core::StyleContext::current();
         let size = self.size.unwrap_or(ctx.control_size);
         let scale = theme(cx).scale;
@@ -120,13 +132,19 @@ impl RenderOnce for ColorSwatch {
         let check = hsla(check_color(self.color));
         let selected = self.selected;
         let disabled = self.disabled;
-        let gap = (swatch_size(size) * scale * 0.16).round().max(2.0);
+        let gap = px(ring_gap(size, scale));
+        let r = radius(Some(Size::Xs), cx);
+        let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, None);
         let chip = div()
             .size(side)
-            .rounded(radius(Some(Size::Xs), cx))
+            .rounded(r)
             .bg(hsla(self.color))
             .border_1()
-            .border_color(hsla(s.border))
+            .border_color(hsla(if disabled {
+                colors.disabled.border
+            } else {
+                s.border
+            }))
             .flex()
             .items_center()
             .justify_center()
@@ -138,35 +156,66 @@ impl RenderOnce for ColorSwatch {
                         .child("✓"),
                 )
             });
-        // The selected ring sits outside the colour with a gap, so it reads on any colour.
-        let chip = if selected == SwatchSelected::Ring {
-            div()
-                .rounded(radius(Some(Size::Xs), cx))
-                .border_2()
-                .border_color(ring)
-                .p(px(gap))
-                .child(chip)
+        // The selection ring sits outside the colour with a gap, so it reads on any colour.
+        // Its room is always reserved (transparent when unselected): selecting never moves
+        // layout (spec/00 §12.2).
+        let chip = div()
+            .rounded(r)
+            .border_2()
+            .border_color(if selected == SwatchSelected::Ring {
+                ring
+            } else {
+                gpui_kit::transparent_black()
+            })
+            .p(gap)
+            .child(chip);
+        let name: SharedString = self.label.clone().unwrap_or_else(|| {
+            {
+                let c = self.color;
+                format!("Colour #{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+            }
+            .into()
+        });
+        let text = if disabled {
+            colors.disabled.foreground
         } else {
-            chip
+            s.text
         };
-        let mut el = div()
-            .id(self.id)
+        let el = div()
+            .id(self.id.clone())
+            .a11y_disabled(disabled)
+            .test_support()
             .flex()
             .items_center()
             .gap(px(size.spacing() / 3.0))
             .text_size(px(size.font_size() * scale))
-            .text_color(hsla(s.text))
+            .text_color(hsla(text))
+            .rounded(r)
             .child(chip)
-            .when_some(self.label, |el, label| el.child(label));
-        if disabled {
-            el = el.opacity(0.5);
-        } else if let Some(f) = self.on_click {
-            el = el
-                .cursor_pointer()
-                .on_click(move |event, window, cx| f(event, window, cx));
-        }
+            .when_some(self.label, |el, label| el.child(label))
+            .aria_label(name.clone());
+        let el = match self.on_click {
+            Some(f) => {
+                let focus = keyed_focus(self.id, window, cx);
+                let press = Press::new(colors)
+                    .radius(r)
+                    .paint(false)
+                    .disabled(disabled)
+                    .focusable(self.focusable)
+                    .selected(selected != SwatchSelected::None)
+                    .label(name);
+                el.press(&press, &focus, window)
+                    .on_press(disabled, move |event, window, cx| f(event, window, cx))
+            }
+            None => el,
+        };
         crate::style::refine(el, &self.style)
     }
+}
+
+/// Space between a swatch and its selection ring.
+fn ring_gap(size: Size, scale: f32) -> f32 {
+    (swatch_size(size) * scale * 0.16).round().max(2.0)
 }
 
 /// The palette shade a swatch uses in `scheme` (the one `Variant::Filled` uses).

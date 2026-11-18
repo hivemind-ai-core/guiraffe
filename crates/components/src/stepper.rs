@@ -6,9 +6,9 @@
 
 use gpui_kit::{
     AnyElement, App, ClickEvent, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StyleRefinement, Styled, Window, div, prelude::*, px,
+    SharedString, StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px,
 };
-use guiraffe_core::{ColorName, Size, Variant};
+use guiraffe_core::{ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant, keyed_focus};
 
 use crate::color_swatch::check_color;
 use crate::style::{hsla, surfaces, theme, variant};
@@ -114,6 +114,8 @@ pub struct Stepper {
     size: Option<Size>,
     color: Option<ColorName>,
     on_step_click: Option<OnStepClick>,
+    /// `None`: clickable steps are tab stops only inside a focus scope (spec/00 §12.3).
+    focusable: Option<bool>,
     style: StyleRefinement,
 }
 
@@ -125,6 +127,7 @@ impl Stepper {
             size: None,
             color: None,
             on_step_click: None,
+            focusable: None,
             style: StyleRefinement::default(),
         }
     }
@@ -137,6 +140,12 @@ impl Stepper {
 
     pub fn color(mut self, color: ColorName) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// Opt clickable steps in or out of the Tab order (`None`: only inside a focus scope).
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = Some(focusable);
         self
     }
 
@@ -154,9 +163,12 @@ crate::props!(Stepper { size: Size => size });
 crate::styled!(Stepper);
 
 impl RenderOnce for Stepper {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let ctx = guiraffe_core::StyleContext::current();
         let size = self.size.unwrap_or(ctx.control_size);
+        let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, self.color);
+        let r = crate::style::radius(None, cx);
+        let focusable = self.focusable;
         let scale = theme(cx).scale;
         let s = surfaces(cx);
         let bubble = px(bubble_size(size) * scale);
@@ -178,106 +190,123 @@ impl RenderOnce for Stepper {
         let click: Option<std::rc::Rc<OnStepClick>> = self.on_step_click.map(std::rc::Rc::from);
         let gap_v = size.spacing() * 0.75;
         let gap = px(gap_v);
-        let rows = self.steps.into_iter().enumerate().map(move |(i, step)| {
-            let state = step_state(i, active);
-            let number = match state {
-                StepState::Completed => "✓".to_string(),
-                _ => format!("{}", i + 1),
-            };
-            let content = step.icon.map(|icon| (icon, number.clone()));
-            let bubble_el = div()
-                .debug_selector(move || format!("gr-step-bubble:{i}"))
-                .size(bubble)
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .text_size(px(size.font_size() * scale * 0.85))
-                .map(|el| match state {
-                    StepState::Completed => el.bg(done_bg).text_color(done_fg),
-                    StepState::Active => el
-                        .bg(hsla(s.body))
-                        .border_2()
-                        .border_color(active_border)
-                        .text_color(active_fg),
-                    StepState::Upcoming => el
-                        .bg(hsla(s.track))
-                        .border_1()
-                        .border_color(hsla(s.border))
-                        .text_color(upcoming),
-                })
-                .map(|el| match content {
-                    // A custom icon replaces the number (a completed step's ✓ included).
-                    Some((icon, _)) => el.child(icon),
-                    None => el.child(number.clone()),
-                });
-            let label_el = div()
-                .flex()
-                .flex_col()
-                .gap(px(size.spacing() / 4.0))
-                .text_size(label_text)
-                .map(|el| match state {
-                    StepState::Upcoming => el.text_color(upcoming),
-                    StepState::Completed => el.text_color(hsla(s.text)),
-                    StepState::Active => el.text_color(active_fg),
-                })
-                .child(step.label)
-                .when_some(step.description, |el, d| {
-                    el.child(
-                        div()
-                            .text_size(px(Size::Sm.font_size() * scale))
-                            .text_color(hsla(s.dimmed))
-                            .child(d),
-                    )
-                });
-            // The rail runs from this bubble to the next one, behind the label column.
-            let rail_el = div()
-                .absolute()
-                .top(px(
-                    bubble_size(size) * scale / 2.0 - rail_thickness(size) / 2.0
-                ))
-                .left(bubble)
-                // Reach into the inter-column gap, so the rail reads as one line.
-                .right(px(-gap_v))
-                .h(rail)
-                .bg(hsla(if connector_complete(i, active) {
-                    v_filled.background
-                } else {
-                    s.border
-                }));
-            // The rail is a child *before* the bubble, so it paints underneath it.
-            let mut column = div()
-                .relative()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(size.spacing() / 2.0));
-            if i + 1 < count {
-                column = column.child(rail_el);
-            }
-            let column = column.child(bubble_el).child(label_el);
-            let column = div()
-                .flex_1()
-                .flex()
-                .items_start()
-                .child(column.flex_1())
-                .when(i + 1 < count, |el| el.child(div().w(gap)));
-            match click.clone() {
-                Some(f) => {
-                    let f = f.clone();
-                    column
-                        .id(SharedString::from(format!("gr-step:{i}")))
-                        .debug_selector(move || format!("gr-step:{i}"))
-                        .cursor_pointer()
-                        .on_click(move |event, window: &mut Window, cx: &mut App| {
-                            f(i, event, window, cx)
-                        })
-                        .into_any_element()
+        let rows: Vec<AnyElement> = self
+            .steps
+            .into_iter()
+            .enumerate()
+            .map(|(i, step)| {
+                let state = step_state(i, active);
+                let number = match state {
+                    StepState::Completed => "✓".to_string(),
+                    _ => format!("{}", i + 1),
+                };
+                let content = step.icon.map(|icon| (icon, number.clone()));
+                let name = step.label.clone();
+                let bubble_el = div()
+                    .debug_selector(move || format!("gr-step-bubble:{i}"))
+                    .size(bubble)
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .text_size(px(size.font_size() * scale * 0.85))
+                    .map(|el| match state {
+                        StepState::Completed => el.bg(done_bg).text_color(done_fg),
+                        StepState::Active => el
+                            .bg(hsla(s.body))
+                            .border_2()
+                            .border_color(active_border)
+                            .text_color(active_fg),
+                        StepState::Upcoming => el
+                            .bg(hsla(s.track))
+                            .border_1()
+                            .border_color(hsla(s.border))
+                            .text_color(upcoming),
+                    })
+                    .map(|el| match content {
+                        // A custom icon replaces the number (a completed step's ✓ included).
+                        Some((icon, _)) => el.child(icon),
+                        None => el.child(number.clone()),
+                    });
+                let label_el = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(size.spacing() / 4.0))
+                    .text_size(label_text)
+                    .map(|el| match state {
+                        StepState::Upcoming => el.text_color(upcoming),
+                        StepState::Completed => el.text_color(hsla(s.text)),
+                        StepState::Active => el.text_color(active_fg),
+                    })
+                    .child(step.label)
+                    .when_some(step.description, |el, d| {
+                        el.child(
+                            div()
+                                .text_size(px(Size::Sm.font_size() * scale))
+                                .text_color(hsla(s.dimmed))
+                                .child(d),
+                        )
+                    });
+                // The rail runs from this bubble to the next one, behind the label column.
+                let rail_el = div()
+                    .absolute()
+                    .top(px(
+                        bubble_size(size) * scale / 2.0 - rail_thickness(size) / 2.0
+                    ))
+                    .left(bubble)
+                    // Reach into the inter-column gap, so the rail reads as one line.
+                    .right(px(-gap_v))
+                    .h(rail)
+                    .bg(hsla(if connector_complete(i, active) {
+                        v_filled.background
+                    } else {
+                        s.border
+                    }));
+                // The rail is a child *before* the bubble, so it paints underneath it.
+                let mut column = div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(size.spacing() / 2.0));
+                if i + 1 < count {
+                    column = column.child(rail_el);
                 }
-                None => column.into_any_element(),
-            }
-        });
+                let column = column.child(bubble_el).child(label_el);
+                let column = div()
+                    .flex_1()
+                    .flex()
+                    .items_start()
+                    .child(column.flex_1())
+                    .when(i + 1 < count, |el| el.child(div().w(gap)));
+                match click.clone() {
+                    Some(f) => {
+                        let id = SharedString::from(format!("gr-step:{i}"));
+                        let focus = keyed_focus(id.clone(), window, cx);
+                        let press = Press::new(colors)
+                            .radius(r)
+                            .paint(false)
+                            .focusable(focusable)
+                            .selected(state == StepState::Active)
+                            .label(name);
+                        let hover = colors.hover.background.to_hsla();
+                        column
+                            .id(id)
+                            .test_support()
+                            .debug_selector(move || format!("gr-step:{i}"))
+                            .rounded(r)
+                            .hover(move |el| el.bg(hover))
+                            .press(&press, &focus, window)
+                            .on_click(move |event, window: &mut Window, cx: &mut App| {
+                                f(i, event, window, cx)
+                            })
+                            .into_any_element()
+                    }
+                    None => column.into_any_element(),
+                }
+            })
+            .collect();
         crate::style::refine(div().flex().items_start(), &self.style).children(rows)
     }
 }

@@ -7,12 +7,15 @@ use std::time::Duration;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    App, AppContext, ClickEvent, ClipboardItem, Context, Entity, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, Styled, Window, div, prelude::*, px,
+    App, AppContext, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, TestSupportExt,
+    Window, div, prelude::*, px,
 };
-use guiraffe_core::{ColorName, Size, Variant};
+use guiraffe_core::{
+    A11yDisabledExt, ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant,
+};
 
-use crate::style::{hsla, metrics, radius, theme, variant};
+use crate::style::{metrics, radius, theme};
 
 /// How long "copied" is shown, in milliseconds (Mantine: 2000).
 pub const COPIED_MS: u64 = 2000;
@@ -40,11 +43,16 @@ pub struct CopyButton {
     color: Option<ColorName>,
     disabled: bool,
     on_copy: Option<OnCopy>,
+    focus: FocusHandle,
+    /// `None`: a tab stop only inside a focus scope (spec/00 §12.3).
+    focusable: Option<bool>,
 }
 
 impl CopyButton {
     pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
+            focus: cx.focus_handle(),
+            focusable: None,
             value: SharedString::default(),
             label: None,
             copied: false,
@@ -101,6 +109,14 @@ impl CopyButton {
         }
     }
 
+    /// Opt in or out of the Tab order (`None`: only inside a focus scope).
+    pub fn set_focusable(&mut self, focusable: Option<bool>, cx: &mut Context<Self>) {
+        if self.focusable != focusable {
+            self.focusable = focusable;
+            cx.notify();
+        }
+    }
+
     pub fn on_copy(&mut self, f: impl Fn(&SharedString, &mut Window, &mut App) + 'static) {
         self.on_copy = Some(Box::new(f));
     }
@@ -140,7 +156,7 @@ impl CopyButton {
 }
 
 impl Render for CopyButton {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ctx = guiraffe_core::StyleContext::current();
         let size = self.size.unwrap_or(ctx.control_size);
         let scale = theme(cx).scale;
@@ -150,16 +166,31 @@ impl Render for CopyButton {
         } else {
             Variant::Light
         };
-        let v = variant(cx, self.color, kind);
+        let colors = GuiraffeTheme::global(cx).press_colors(kind, self.color);
         let id = format!(
             "gr-copy-button:{}",
             self.value.chars().take(24).collect::<String>()
         );
         let label = self.label.clone();
+        // Icon-only buttons still need a name; the state is part of it.
+        let name: SharedString = match (&label, copied) {
+            (Some(l), false) => l.clone(),
+            (Some(l), true) => format!("{l} (copied)").into(),
+            (None, false) => "Copy".into(),
+            (None, true) => "Copied".into(),
+        };
         let disabled = self.disabled;
+        let r = radius(None, cx);
+        let press = Press::new(colors)
+            .radius(r)
+            .disabled(disabled)
+            .focusable(self.focusable)
+            .label(name);
         let side = px(size.control_height());
-        let mut el = div()
+        div()
             .id(SharedString::from(id.clone()))
+            .a11y_disabled(disabled)
+            .test_support()
             .debug_selector(move || id)
             .flex()
             .items_center()
@@ -168,11 +199,8 @@ impl Render for CopyButton {
             .h(side)
             .when(label.is_none(), |el| el.w(side))
             .when(label.is_some(), |el| el.px(px(size.spacing() * 0.75)))
-            .rounded(radius(None, cx))
-            .bg(hsla(v.background))
+            .rounded(r)
             .border_1()
-            .border_color(hsla(v.border))
-            .text_color(hsla(v.foreground))
             .text_size(px(size.font_size()
                 * scale
                 * if label.is_some() { 1.0 } else { 0.9 }))
@@ -181,19 +209,20 @@ impl Render for CopyButton {
             } else {
                 IconName::Copy
             }))
-            .when_some(label, |el, label| el.child(label));
-        if disabled {
-            el = el.opacity(0.5);
-        } else {
-            let hover = hsla(v.hover);
-            el = el
-                .cursor_pointer()
-                .hover(move |el| el.bg(hover))
-                .on_click(cx.listener(|this: &mut Self, _: &ClickEvent, window, cx| {
+            .when_some(label, |el, label| el.child(label))
+            .press(&press, &self.focus, window)
+            .on_press(
+                disabled,
+                cx.listener(|this: &mut Self, _: &ClickEvent, window, cx| {
                     this.copy(window, cx);
-                }));
-        }
-        el
+                }),
+            )
+    }
+}
+
+impl Focusable for CopyButton {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

@@ -7,13 +7,14 @@
 //! state, because the timing comes from guiraffe-motion's prefs.
 
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Window, canvas, div, prelude::*, px,
+    AnyElement, App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, Styled, TestSupportExt, Window, canvas, div,
+    prelude::*, px,
 };
-use guiraffe_core::{ColorName, Size, Variant};
+use guiraffe_core::{ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant};
 use guiraffe_motion::{Animated, Easing, MotionPrefs, Timing};
 
-use crate::style::{hsla, radius, surfaces, theme, variant};
+use crate::style::{radius, theme};
 
 /// Height of the collapsed preview: `lines` lines of text at `size`.
 pub fn collapsed_height(size: Size, lines: usize, scale: f32) -> f32 {
@@ -63,6 +64,9 @@ pub struct Spoiler {
     timing: Option<Timing>,
     /// Natural height of the body, as last measured by the recorder canvas.
     measured: std::rc::Rc<std::cell::Cell<f32>>,
+    focus: FocusHandle,
+    /// `None`: the toggle is a tab stop only inside a focus scope (spec/00 §12.3).
+    focusable: Option<bool>,
 }
 
 /// Builds the spoiler body. A closure rather than an element, because an `AnyElement` is
@@ -71,7 +75,9 @@ type Build = std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>;
 
 impl Spoiler {
     pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
+            focus: cx.focus_handle(),
+            focusable: None,
             id: "gr-spoiler".into(),
             content: std::rc::Rc::new(|_, _| div().into_any_element()),
             expanded: false,
@@ -108,6 +114,14 @@ impl Spoiler {
     ) {
         self.content = std::rc::Rc::new(build);
         cx.notify();
+    }
+
+    /// Opt the toggle in or out of the Tab order (`None`: only inside a focus scope).
+    pub fn set_focusable(&mut self, focusable: Option<bool>, cx: &mut Context<Self>) {
+        if self.focusable != focusable {
+            self.focusable = focusable;
+            cx.notify();
+        }
     }
 
     pub fn set_collapsed_lines(&mut self, lines: usize, cx: &mut Context<Self>) {
@@ -161,12 +175,12 @@ impl Spoiler {
 
 impl Render for Spoiler {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let s = surfaces(cx);
         let size = self
             .size
             .unwrap_or(guiraffe_core::StyleContext::current().control_size);
         let scale = theme(cx).scale;
-        let accent = hsla(variant(cx, self.color, Variant::Subtle).foreground);
+        let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, self.color);
+        let r = radius(None, cx);
         let cell = self.measured.clone();
         let owner = cx.entity();
         let progress = self.progress.sample(window, cx).clamp(0.0, 1.0);
@@ -176,6 +190,11 @@ impl Render for Spoiler {
         let measured = self.measured.get();
         let height = reveal_height((measured > 0.0).then_some(measured), peek, progress);
         let label = label(self.expanded, &self.more, &self.less).to_owned();
+        let press = Press::new(colors)
+            .radius(r)
+            .focusable(self.focusable)
+            .label(label.clone());
+        let expanded = self.expanded;
         div()
             .id(SharedString::from(format!("gr-spoiler:{}", self.id)))
             .debug_selector({
@@ -222,6 +241,7 @@ impl Render for Spoiler {
             .child(
                 div()
                     .id(SharedString::from(format!("gr-spoiler-toggle:{}", self.id)))
+                    .test_support()
                     .debug_selector({
                         let id = self.id.clone();
                         move || format!("gr-spoiler-toggle:{id}")
@@ -230,11 +250,11 @@ impl Render for Spoiler {
                     .items_center()
                     .h(px(size.control_height()))
                     .px(px(size.spacing() / 2.0))
-                    .rounded(radius(None, cx))
+                    .rounded(r)
+                    .border_1()
                     .text_size(px(size.font_size() * scale))
-                    .text_color(accent)
-                    .cursor_pointer()
-                    .hover(|el| el.bg(hsla(s.hover)))
+                    .aria_expanded(expanded)
+                    .press(&press, &self.focus, window)
                     .on_click(
                         cx.listener(|this: &mut Self, _: &gpui_kit::ClickEvent, _, cx| {
                             this.toggle(cx)
@@ -242,6 +262,12 @@ impl Render for Spoiler {
                     )
                     .child(label),
             )
+    }
+}
+
+impl Focusable for Spoiler {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

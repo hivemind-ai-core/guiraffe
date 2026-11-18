@@ -7,13 +7,14 @@
 use std::time::Duration;
 
 use gpui_kit::{
-    AnyElement, App, AppContext, Bounds, Context, Entity, Hsla, IntoElement, ParentElement,
-    PathBuilder, Pixels, Render, Styled, Window, canvas, div, point, px,
+    AnyElement, App, AppContext, Bounds, Context, Entity, Hsla, InteractiveElement, IntoElement,
+    ParentElement, PathBuilder, Pixels, Render, Role, SharedString, Styled, TestSupportExt, Window,
+    canvas, div, point, prelude::*, px,
 };
 use guiraffe_core::{ColorName, Size, Variant};
 use guiraffe_motion::MotionPrefs;
 
-use crate::style::{hsla, surfaces, theme, variant};
+use crate::style::{hsla, theme, variant};
 
 /// Which indicator the loader draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -43,6 +44,11 @@ pub fn bar_scale(index: usize, count: usize, phase: f32) -> f32 {
     0.5 + 0.5 * (p * std::f32::consts::TAU).sin()
 }
 
+/// Height of bar `index` as a fraction of the loader side, in 0.35..=0.9.
+pub fn bar_height(index: usize, count: usize, phase: f32) -> f32 {
+    0.35 + 0.55 * bar_scale(index, count, phase)
+}
+
 /// Opacity in 0.25..=1 for dot `index` of `count` at `phase`; the dimmest dot stays visible.
 pub fn dot_alpha(index: usize, count: usize, phase: f32) -> f32 {
     0.25 + 0.75 * bar_scale(index, count, phase)
@@ -54,7 +60,6 @@ struct Config {
     kind: LoaderType,
     count: usize,
     color: Hsla,
-    track: Hsla,
     side: Pixels,
     thickness: Pixels,
     period: Duration,
@@ -98,12 +103,12 @@ fn indicator(config: Config, elapsed: Duration) -> AnyElement {
                             .opacity(dot_alpha(i, c.count, phase))
                             .into_any_element()
                     } else {
+                        // Bars swell in height (never vanish), so the group always reads.
                         div()
                             .w(px(bar_w))
-                            .h(px(side * 0.5))
+                            .h(px(side * bar_height(i, c.count, phase)))
                             .rounded_full()
-                            .bg(if i % 2 == 0 { c.color } else { c.track })
-                            .opacity(bar_scale(i, c.count, phase))
+                            .bg(c.color)
                             .into_any_element()
                     }
                 }))
@@ -169,6 +174,8 @@ pub struct Loader {
     elapsed: Duration,
     /// When the previous frame was drawn; `None` before the first one.
     last_drawn: Option<std::time::Instant>,
+    /// Accessible name (default "Loading").
+    label: SharedString,
 }
 
 impl Loader {
@@ -181,11 +188,21 @@ impl Loader {
             color: None,
             elapsed: Duration::ZERO,
             last_drawn: None,
+            label: "Loading".into(),
         })
     }
 
     pub fn kind(&self) -> LoaderType {
         self.kind
+    }
+
+    /// The accessible name announced for the indicator (default "Loading").
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if self.label != label {
+            self.label = label;
+            cx.notify();
+        }
     }
 
     pub fn set_kind(&mut self, kind: LoaderType, cx: &mut Context<Self>) {
@@ -235,7 +252,6 @@ impl Loader {
             kind: self.kind,
             count: self.count,
             color: hsla(variant(cx, self.color, Variant::Filled).background),
-            track: hsla(surfaces(cx).track),
             side: px(size.control_height() * scale),
             thickness: px((size.icon_size() * 0.25 * scale).max(2.0)),
             period: self.period,
@@ -253,7 +269,13 @@ impl Render for Loader {
             self.last_drawn = Some(now);
             window.request_animation_frame();
         }
-        indicator(self.config(cx), self.elapsed)
+        // A busy indicator for assistive technology; the drawing itself is decorative.
+        div()
+            .id("gr-loader")
+            .test_support()
+            .role(Role::ProgressIndicator)
+            .aria_label(self.label.clone())
+            .child(indicator(self.config(cx), self.elapsed))
     }
 }
 
@@ -261,7 +283,17 @@ impl Render for Loader {
 mod tests {
     use std::time::Duration;
 
-    use super::{bar_scale, dot_alpha, oval_angle};
+    use super::{bar_height, bar_scale, dot_alpha, oval_angle};
+
+    #[test]
+    fn bars_never_vanish() {
+        for phase in [0.0, 0.25, 0.5, 0.75, 0.99] {
+            for i in 0..4 {
+                let h = bar_height(i, 4, phase);
+                assert!((0.35..=0.9).contains(&h), "{i}@{phase}: {h}");
+            }
+        }
+    }
 
     #[test]
     fn oval_wraps_once_per_period() {
