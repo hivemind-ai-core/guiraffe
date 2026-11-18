@@ -95,4 +95,4 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
 See KNOWN_ISSUES.md. Notably: gpui-fast pinned to 0.1.15; no OS high-contrast/forced-colours
 signal yet; Kit has four size steps; Kit charts lack legends.
 
-Catalogue 1.1.0 snapshot `8a349c450c24fb6d` adds invalid text-input and select states.
+Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select states.

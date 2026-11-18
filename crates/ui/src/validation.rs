@@ -115,6 +115,20 @@ impl Validation<'_> {
                 "Move these children into a stack, group, grid or card.".into(),
             );
         }
+        for token in &node.theme_tokens {
+            if !spec.theme_tokens.contains(&token.as_str()) {
+                issue(
+                    "themeTokens",
+                    json!(token),
+                    json!(spec.theme_tokens),
+                    if spec.theme_tokens.is_empty() {
+                        "This widget declares no theme tokens.".into()
+                    } else {
+                        format!("Use one of: {}.", spec.theme_tokens.join(", "))
+                    },
+                );
+            }
+        }
         let prop_names = spec.props.iter().map(|p| p.name).collect::<Vec<_>>();
         for name in node.props.keys().chain(node.bind.keys()) {
             if !prop_names.contains(&name.as_str()) {
@@ -256,6 +270,20 @@ mod tests {
         assert_eq!(issues[5].got, json!("svae"));
         assert_eq!(issues[5].accepted, json!(["save"]));
         assert_eq!(issues[5].hint, "Did you mean \"save\"?");
+    }
+
+    #[test]
+    fn checks_theme_token_names_against_the_widget_descriptor() {
+        let document = Document::from_json(r#"{"version":1,"root":{"kind":"text","props":{"text":"Example"},"themeTokens":["surfaces.text","surfaces.typo"]}}"#)
+            .expect("theme token assertions");
+        let issues = Validation::default().check(&document);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].property, "themeTokens");
+        assert_eq!(issues[0].got, json!("surfaces.typo"));
+        assert_eq!(
+            issues[0].accepted,
+            json!(lookup("text").expect("text descriptor").theme_tokens)
+        );
     }
 
     #[test]

@@ -36,6 +36,9 @@ pub struct Node {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub props: BTreeMap<String, serde_json::Value>,
+    /// Optional authoring assertions about which theme tokens this widget consumes.
+    #[serde(default, rename = "themeTokens", skip_serializing_if = "Vec::is_empty")]
+    pub theme_tokens: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bind: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -53,6 +56,7 @@ impl Node {
             key: None,
             id: None,
             props: BTreeMap::new(),
+            theme_tokens: Vec::new(),
             bind: BTreeMap::new(),
             on: BTreeMap::new(),
             children: Vec::new(),

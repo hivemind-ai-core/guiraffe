@@ -249,6 +249,7 @@ impl WidgetSpec {
                 "each":{"type":["string","null"]},
                 "when":{"type":["string","null"]},
                 "key":{"type":["string","null"]},
+                "themeTokens":{"type":"array","items": if self.theme_tokens.is_empty() { json!(false) } else { json!({"enum":self.theme_tokens}) }},
                 "props":{"type":"object","properties":props,"additionalProperties":false},
                 "bind":{"type":"object","properties":bind,"additionalProperties":false},
                 "on":{"type":"object","properties":events,"additionalProperties":false},
