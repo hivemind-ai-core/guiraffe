@@ -1181,7 +1181,7 @@ impl Core {
     /// Recompute the visible window and pool; notify the grid and every row view whose row
     /// changed (all of them when `all`).
     fn sync(self: &Rc<Self>, all: bool, cx: &mut App) {
-        let (dirty, pool): (Vec<usize>, usize) = {
+        let (old, visible, pool, all) = {
             let mut m = self.m.borrow_mut();
             m.clamp_scroll();
             let row_h = f64::from(m.row_h);
@@ -1193,14 +1193,7 @@ impl Core {
             m.pool = pool;
             m.stats.pool = pool;
             m.stats.visible_rows = vis.len();
-            let dirty = if all {
-                (0..pool).collect()
-            } else {
-                vw::entering(old, vis)
-                    .map(|r| vw::slot_of(r, pool))
-                    .collect()
-            };
-            (dirty, pool)
+            (old, vis, pool, all)
         };
         {
             let mut rows = self.rows.borrow_mut();
@@ -1215,8 +1208,14 @@ impl Core {
             }
         }
         self.notify_grid(cx);
-        for s in dirty {
-            self.notify_slot(s, cx);
+        if all {
+            for slot in 0..pool {
+                self.notify_slot(slot, cx);
+            }
+        } else {
+            for row in vw::entering(old, visible) {
+                self.notify_slot(vw::slot_of(row, pool), cx);
+            }
         }
     }
 
