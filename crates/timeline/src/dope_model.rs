@@ -163,12 +163,12 @@ impl DopeModel {
         // Reject collisions with unselected keys, and selected keys snapping together.
         let mut destinations = BTreeSet::new();
         for (r, _, to) in &edits {
-            if !destinations.insert((*r, to.to_bits()))
-                || self.channels[*r]
-                    .keys()
-                    .iter()
-                    .any(|t| *t == *to && !self.selected.contains(&(*r, t.to_bits())))
-            {
+            let keys = self.channels[*r].keys();
+            let index = keys.partition_point(|time| time < to);
+            let occupied = keys
+                .get(index)
+                .is_some_and(|time| *time == *to && !self.selected.contains(&(*r, time.to_bits())));
+            if !destinations.insert((*r, to.to_bits())) || occupied {
                 return false;
             }
         }
@@ -183,8 +183,8 @@ impl DopeModel {
                 .push((f64::from_bits(*from), *to));
             self.selected.remove(&(*r, *from));
         }
-        for (r, edits) in by_channel {
-            self.channels[r].replace_times(&edits);
+        for (r, mut edits) in by_channel {
+            self.channels[r].replace_times(&mut edits);
         }
         for (r, _, to) in edits {
             self.selected.insert((r, to.to_bits()));
@@ -328,6 +328,33 @@ mod tests {
     }
 
     proptest::proptest! {
+        #[test]
+        fn retime_preserves_sorted_unique_keys_and_rejects_collisions_atomically(
+            raw in proptest::collection::vec((0_i16..100, proptest::bool::ANY), 0..100),
+            delta in -10_i16..10,
+        ) {
+            let times: BTreeSet<_> = raw.iter().map(|(time, _)| *time).collect();
+            let selected: BTreeSet<_> = raw.iter().filter_map(|(time, on)| on.then_some(*time)).collect();
+            let fixed: BTreeSet<_> = times.difference(&selected).copied().collect();
+            let moved: BTreeSet<_> = selected.iter().map(|time| time + delta).collect();
+            let valid = delta != 0 && !moved.is_empty() && moved.is_disjoint(&fixed)
+                && moved.iter().all(|time| *time >= 0);
+            let mut model = DopeModel::new(vec![Channel::new(
+                "Track", times.iter().copied().map(f64::from).collect(),
+            )]);
+            for time in &selected {
+                model.select(0, f64::from(*time), true);
+            }
+            proptest::prop_assert_eq!(model.translate(f64::from(delta), TimeFormat::Frames(1.)), valid);
+            let expected: Vec<_> = if valid { fixed.union(&moved).copied().collect() }
+                else { times.into_iter().collect() };
+            let expected: Vec<_> = expected.into_iter().map(f64::from).collect();
+            proptest::prop_assert_eq!(model.channels[0].keys(), expected.as_slice());
+            let active = if valid { moved } else { selected };
+            let active: BTreeSet<_> = active.into_iter().map(|time| (0, f64::from(time).to_bits())).collect();
+            proptest::prop_assert_eq!(model.selected, active);
+        }
+
         #[test]
         fn box_selection_matches_naive_scan(
             keys in proptest::collection::vec(-100_i16..100, 0..100),

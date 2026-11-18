@@ -89,10 +89,11 @@ impl Channel {
         if !t.is_finite() || from == t || self.keys.contains(&t) {
             return None;
         }
-        self.replace_times(&[(from, t)]);
+        self.replace_times(&mut [(from, t)]);
         self.keys.iter().position(|k| *k == t)
     }
-    pub(crate) fn replace_times(&mut self, edits: &[(f64, f64)]) {
+    pub(crate) fn replace_times(&mut self, edits: &mut [(f64, f64)]) {
+        edits.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut keys: Vec<_> = self
             .keys
             .iter()
@@ -101,9 +102,9 @@ impl Channel {
             .map(|(t, d)| {
                 (
                     edits
-                        .iter()
-                        .find(|(from, _)| *from == t)
-                        .map(|(_, to)| *to)
+                        .binary_search_by(|(from, _)| from.total_cmp(&t))
+                        .ok()
+                        .map(|i| edits[i].1)
                         .unwrap_or(t),
                     d,
                 )
