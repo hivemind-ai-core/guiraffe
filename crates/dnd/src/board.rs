@@ -670,7 +670,11 @@ mod tests {
                             .clone()
                             .cached(StyleRefinement::default().w(px(800.)).h(px(320.))),
                     )
-                    .child(self.1.clone())
+                    .child(
+                        self.1
+                            .clone()
+                            .cached(StyleRefinement::default().absolute().size_full()),
+                    )
             }
         }
 
@@ -725,7 +729,8 @@ mod tests {
             window.update(|window, _| window.find(("end", 1_usize)).bounds().center());
         let before = renders.get();
         window.simulate_mouse_move(destination, Some(MouseButton::Left), Default::default());
-        window.update(|window, cx| {
+        window.run_until_parked();
+        window.update(|_, cx| {
             let root = root.read(cx);
             assert_eq!(
                 root.1
@@ -736,7 +741,6 @@ mod tests {
                     .map(|(list, gap, _)| (list, gap)),
                 Some((1, 0)),
             );
-            let _ = window.draw(cx);
         });
         assert_eq!(
             renders.get(),
