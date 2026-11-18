@@ -17,6 +17,7 @@ impl Schema {
 }
 
 pub const VERSION: &str = "1.0.0";
+pub const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug)]
 pub struct PropSpec {
@@ -83,54 +84,59 @@ widgets! {
     GRID: "grid", "ui", "Equal-width grid rows.", true, "stateless", "group", ["density.space"],
         ["gap": "string" = "\"sm\"", SIZE, None, false;
          "columns": "number" = "2", &[] as &[&str], Some((1.0, 12.0)), false], [];
-    TITLE: "title", "components", "Section heading.", false, "stateless", "heading", ["font_size"],
+    TITLE: "title", "components", "Section heading.", false, "stateless", "heading", ["scale", "surfaces.text"],
         ["text": "string" = "\"\"", &[] as &[&str], None, true;
          "order": "number" = "3", &[] as &[&str], Some((1.0, 6.0)), false], [];
-    TEXT: "text", "components", "Body text with optional truncation.", false, "stateless", "text", ["font_size", "foreground", "muted", "palette"],
+    TEXT: "text", "components", "Body text with optional truncation.", false, "stateless", "text", ["scale", "surfaces.text", "surfaces.dimmed", "variant.foreground"],
         ["text": "string" = "\"\"", &[] as &[&str], None, true;
          "dimmed": "boolean" = "false", &[] as &[&str], None, false;
          "size": "string" = "null", SIZE, None, false;
          "color": "string" = "null", COLOR, None, false;
          "single-line": "boolean" = "false", &[] as &[&str], None, false], [];
-    HIGHLIGHT: "highlight", "components", "Text with matching terms highlighted.", false, "stateless", "text", ["primary", "foreground"],
+    HIGHLIGHT: "highlight", "components", "Text with matching terms highlighted.", false, "stateless", "text", ["surfaces.mark", "surfaces.text"],
         ["text": "string" = "\"\"", &[] as &[&str], None, true;
          "term": "string" = "\"\"", &[] as &[&str], None, false], [];
-    PILL: "pill", "components", "Compact label.", false, "stateless", "text", ["palette", "radius"],
+    PILL: "pill", "components", "Compact label.", false, "stateless", "text", ["control_size", "surfaces.track", "surfaces.text"],
         ["label": "string" = "\"\"", &[] as &[&str], None, true], [];
-    CARD: "card", "components", "Surface for grouped content.", true, "stateless", "group", ["surface", "border", "radius"], [], [];
-    RING: "ring", "components", "Circular progress indicator.", false, "stateless", "progressbar", ["palette"],
+    CARD: "card", "components", "Surface for grouped content.", true, "stateless", "group", ["density.space", "default_radius", "recipes.card", "surfaces.body", "surfaces.text", "surfaces.border"], [], [];
+    RING: "ring", "components", "Circular progress indicator.", false, "stateless", "progressbar", ["surfaces.track", "surfaces.text", "variant.background"],
         ["value": "number" = "0", &[] as &[&str], Some((0.0, 100.0)), false;
          "color": "string" = "\"blue\"", COLOR, None, false;
          "diameter": "number" = "64", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
          "label": "string" = "\"\"", &[] as &[&str], None, false], [];
-    BUTTON: "button", "gpui-kit", "Clickable action.", false, "stateless", "button", ["button"],
+    BUTTON: "button", "gpui-kit", "Clickable action.", false, "stateless", "button", ["kit.primary", "kit.primary_foreground"],
         ["label": "string" = "\"\"", &[] as &[&str], None, true], ["click": "null"];
     HUG: "hug", "ui", "Content-width container.", true, "stateless", "group", [], [], [];
     SPACER: "spacer", "ui", "Flexible empty space.", false, "stateless", "presentation", [], [], [];
-    TEXT_INPUT: "text-input", "gpui-kit", "Single-line text editor.", false, "controlled or uncontrolled value", "textbox", ["input"],
+    TEXT_INPUT: "text-input", "gpui-kit", "Single-line text editor.", false, "controlled or uncontrolled value", "textbox", ["control_size", "kit.input", "kit.foreground"],
         ["value": "string" = "\"\"", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "string"];
-    CHECKBOX: "checkbox", "gpui-kit", "Boolean checkbox.", false, "controlled or uncontrolled value", "checkbox", ["checkbox"],
+    CHECKBOX: "checkbox", "gpui-kit", "Boolean checkbox.", false, "controlled or uncontrolled value", "checkbox", ["control_size", "kit.primary", "kit.primary_foreground"],
         ["value": "boolean" = "false", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "boolean"];
-    SWITCH: "switch", "gpui-kit", "Boolean switch.", false, "controlled or uncontrolled value", "switch", ["switch"],
+    SWITCH: "switch", "gpui-kit", "Boolean switch.", false, "controlled or uncontrolled value", "switch", ["control_size", "kit.primary", "kit.switch"],
         ["value": "boolean" = "false", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "boolean"];
-    SELECT: "select", "gpui-kit", "Select one of a list of labels.", false, "controlled or uncontrolled value", "combobox", ["select"],
+    SELECT: "select", "gpui-kit", "Select one of a list of labels.", false, "controlled or uncontrolled value", "combobox", ["control_size", "kit.input", "kit.foreground"],
         ["value": "string" = "null", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "selection"];
+}
+
+/// Look up an authoring descriptor by its document kind.
+pub fn lookup(kind: &str) -> Option<&'static WidgetSpec> {
+    WIDGETS.iter().copied().find(|widget| widget.id == kind)
 }
 
 impl PropSpec {
@@ -171,7 +177,7 @@ impl WidgetSpec {
             .filter(|p| p.required)
             .map(|p| (p.name.into(), p.default_value()))
             .collect();
-        json!({"version": 1, "root": {"kind": self.id, "props": props}})
+        json!({"version": FORMAT_VERSION, "root": {"kind": self.id, "props": props}})
     }
 
     fn description(&self) -> Value {
@@ -259,7 +265,7 @@ pub fn catalogue() -> Value {
 pub fn screen_schema() -> Value {
     json!({"$schema":"https://json-schema.org/draft/2020-12/schema",
         "type":"object","required":["version","root"],"additionalProperties":false,
-        "properties":{"version":{"const":1},"root":{"$ref":"#/$defs/node"}},
+        "properties":{"version":{"const":FORMAT_VERSION},"root":{"$ref":"#/$defs/node"}},
         "$defs":{"node":{"oneOf":WIDGETS.iter().map(|w| w.node_schema()).collect::<Vec<_>>()}}})
 }
 

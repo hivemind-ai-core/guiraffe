@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Document, Node,
-    catalog::{KINDS, WIDGETS},
+    catalog::{KINDS, lookup},
 };
 
 #[derive(Debug, Serialize)]
@@ -96,7 +96,7 @@ impl Validation<'_> {
                 "Assign a unique id to this node.".into(),
             );
         }
-        let Some(spec) = WIDGETS.iter().find(|w| w.id == node.kind) else {
+        let Some(spec) = lookup(&node.kind) else {
             if !(self.mocket_placeholders && node.kind.starts_with("mocket:")) {
                 issue(
                     "kind",
@@ -225,6 +225,7 @@ impl Validation<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::WIDGETS;
 
     #[test]
     fn emits_structured_issues_for_authoring_mistakes() {

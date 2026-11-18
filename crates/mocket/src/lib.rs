@@ -199,7 +199,8 @@ impl<'a> Cx<'a> {
             })
         };
         let layout = &n["layout"];
-        if matches!(kind, "stack" | "group" | "grid")
+        if guiraffe_ui::catalog::lookup(kind)
+            .is_some_and(|spec| spec.props.iter().any(|property| property.name == "gap"))
             && let Some(g) = layout["gap"].as_f64().filter(|g| *g > 0.0)
         {
             out = out.prop("gap", gap_token(g));

@@ -5,7 +5,7 @@
 First release of GUIraffe 🦒: a Mantine-inspired framework and component library for rich,
 fast desktop apps on GPUI (gpui-kit 0.9.1), aiming to be as convenient as React and lighter than Electron.
 
-Catalogue 1.0.0 snapshot `c134af7e71f55228` introduces descriptors and a schema for the built-in DataUi vocabulary.
+Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema for the built-in DataUi vocabulary.
 
 ### Framework
 - **core:** theme (light/dark, Mantine palette, radius/spacing/type scales), inherited
