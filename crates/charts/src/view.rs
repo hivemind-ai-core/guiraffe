@@ -45,7 +45,7 @@ impl Default for ChartOptions {
             crosshair: true,
             tooltip: true,
             navigation: true,
-            keyboard: false,
+            keyboard: true,
         }
     }
 }
@@ -222,7 +222,9 @@ impl ChartView {
 
     fn navigate(&mut self, domain: Domain, brush: bool, cx: &mut Context<Self>) {
         let mut plot = self.plot.borrow_mut();
-        let Some(domain) = constrained_domain(&plot.chart.axes[0].scale, plot.chart.x_domain(), domain) else {
+        let Some(domain) =
+            constrained_domain(&plot.chart.axes[0].scale, plot.chart.x_domain(), domain)
+        else {
             return;
         };
         if plot.domain == domain {

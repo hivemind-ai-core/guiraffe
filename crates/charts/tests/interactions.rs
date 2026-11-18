@@ -81,14 +81,7 @@ fn mount(cx: &mut TestAppContext) -> (TestChart, &mut VisualTestContext) {
         );
         spec.x.domain = Domain::new(0., 10.);
         spec.y.domain = Domain::new(0., 10.);
-        let chart = ChartView::new(
-            spec.prepare(),
-            ChartOptions {
-                keyboard: true,
-                ..Default::default()
-            },
-            cx,
-        );
+        let chart = ChartView::new(spec.prepare(), ChartOptions::default(), cx);
         let log = events.clone();
         cx.subscribe(&chart, move |_, _, event, _| log.borrow_mut().push(*event))
             .detach();
@@ -221,8 +214,11 @@ fn legend_and_data_table_buttons_are_operable(cx: &mut TestAppContext) {
             .view
             .read_with(window, |view, _| view.series_visible(series))
     );
-    let table = window.update(|window, _| window.find_by_label("View data").bounds().center());
-    window.simulate_click(table, Default::default());
+    window.update(|window, cx| {
+        window.focus_next(cx);
+        window.render_frame(cx);
+        window.press("space", cx);
+    });
     window.run_until_parked();
     window
         .update(|window, _| assert_eq!(window.find("chart-data-table").role(), Some(Role::Table)));
