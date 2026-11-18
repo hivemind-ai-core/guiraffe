@@ -3,7 +3,7 @@ use gpui_kit::{
     AppContext, MouseButton, ScrollDelta, ScrollEvent, ScrollSource, TestAppContext,
     TestDispatcher, TouchPhase, WindowOptions, point, px, test::TestWindowExt,
 };
-use guiraffe_charts::{Channels, ChartOptions, ChartSpec, ChartView, Layer, Mark};
+use guiraffe_charts::{Channels, ChartOptions, ChartSpec, ChartView, Layer, Mark, Stream};
 use guiraffe_flow::{
     Flow, FlowOptions,
     core::{Edge, Graph, Node, Point, Viewport},
@@ -125,7 +125,26 @@ fn timeline(run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
     });
 }
 
-fn charts(scatter: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
+fn streaming_spec(stream: Stream<u32>) -> ChartSpec {
+    ChartSpec::new("Streaming observations").layer(Layer::new(
+        Mark::Line,
+        stream,
+        Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin()),
+    ))
+}
+
+fn charts(
+    scatter: bool,
+    streaming: bool,
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>),
+) -> Result<()> {
+    const STREAM_RATE: u32 = 10_000;
+    const STREAM_BATCH: u32 = 500;
+    let mut stream = Stream::default();
+    if streaming {
+        stream.append((0..STREAM_RATE).collect());
+    }
+    let mut view = None;
     let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("charts_soak"));
     cx.update(|cx| {
         gpui_kit::base::init(cx);
@@ -139,27 +158,48 @@ fn charts(scatter: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) 
         } else {
             (Mark::Line, 10_000_000)
         };
-        let model = ChartSpec::new("Observations · عربي 日本語 🎵")
-            .layer(Layer::new(
-                mark,
-                (0..count).collect::<Vec<u32>>(),
-                Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin())
-                    .group(move |i| if scatter { i % 100 } else { 0 }),
-            ))
-            .prepare();
-        let view = ChartView::new(
+        let model = if streaming {
+            streaming_spec(stream.clone()).prepare()
+        } else {
+            ChartSpec::new("Observations · عربي 日本語 🎵")
+                .layer(Layer::new(
+                    mark,
+                    (0..count).collect::<Vec<u32>>(),
+                    Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin())
+                        .group(move |i| if scatter { i % 100 } else { 0 }),
+                ))
+                .prepare()
+        };
+        let chart = ChartView::new(
             model,
             ChartOptions {
                 legend: false,
+                navigation: !streaming,
                 ..Default::default()
             },
             cx,
         );
-        gpui_kit::base::Root::new(view, window, cx)
+        view = Some(chart.clone());
+        gpui_kit::base::Root::new(chart, window, cx)
     });
     window.update(|window, cx| window.render_frame(cx));
     window.run_until_parked();
+    let stream_started = Instant::now();
+    let mut next = STREAM_RATE;
     run(&mut |i| {
+        if streaming {
+            let target = STREAM_RATE
+                + (stream_started.elapsed().as_secs_f64() * f64::from(STREAM_RATE)) as u32;
+            if target.saturating_sub(next) >= STREAM_BATCH {
+                let end = target - (target - next) % STREAM_BATCH;
+                stream.append((next..end).collect());
+                stream.retain_last(STREAM_RATE as usize);
+                next = end;
+                let model = streaming_spec(stream.clone()).prepare();
+                let chart = view.as_ref().ok_or("missing streaming chart")?;
+                window.update(|_, cx| chart.update(cx, |chart, cx| chart.replace(model, cx)));
+            }
+        }
         let bounds = window
             .update(|window, _| window.try_find("chart-canvas").map(|item| item.bounds()))
             .ok_or("missing chart canvas")?;
@@ -185,6 +225,15 @@ fn charts(scatter: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) 
         window.run_until_parked();
         Ok(())
     });
+    if streaming {
+        let elapsed = stream_started.elapsed().as_secs_f64();
+        let points = next - STREAM_RATE;
+        println!("stream_points={points} stream_seconds={elapsed:.3}");
+        if f64::from(points) + f64::from(STREAM_BATCH * 2) < elapsed * f64::from(STREAM_RATE) {
+            return Err("stream failed to sustain 10,000 points per second".into());
+        }
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -192,7 +241,7 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter|chart-stream> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
@@ -202,8 +251,9 @@ fn main() -> Result<()> {
     match component {
         "flow" => flow(args.iter().any(|arg| arg == "--no-minimap"), run)?,
         "timeline" => timeline(run),
-        "chart-line" => charts(false, run),
-        "chart-scatter" => charts(true, run),
+        "chart-line" => charts(false, false, run)?,
+        "chart-scatter" => charts(true, false, run)?,
+        "chart-stream" => charts(false, true, run)?,
         _ => return Err("unknown soak component".into()),
     }
     result
