@@ -130,8 +130,8 @@ fn main() -> Result<()> {
     let mut step = 0;
     let mut frame = || -> Result<f64> {
         let start = Instant::now();
+        app.update(|cx| control.interact(step, cx));
         app.update_window(window.into(), |_, window, cx| {
-            control.interact(step, cx);
             let _ = window.draw(cx);
         })?;
         app.run_until_parked();
