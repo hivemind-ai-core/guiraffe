@@ -1,4 +1,4 @@
-//! In-window docking using Kit's tab groups, split panes and drag overlays.
+//! In-window docking with managed gestures over Kit's versioned layout model.
 
 mod managed;
 pub use managed::DockDragOverlay;
@@ -25,7 +25,6 @@ pub fn new_dock(
 }
 
 /// Opt in to Kit's native drag and dock chrome.
-
 pub fn new_native_dock(
     id: impl Into<SharedString>,
     version: usize,

@@ -104,6 +104,7 @@ pub struct DockDragOverlay {
     outline: Entity<DropOutline>,
     origin: Rc<Cell<Point<Pixels>>>,
     escape: Option<Subscription>,
+    keyboard_panel: Option<PanelId>,
 }
 
 impl DockDragOverlay {
@@ -129,6 +130,7 @@ impl DockDragOverlay {
                 cx.stop_propagation();
             }
         }));
+        self.keyboard_panel = None;
         self.gesture = Some(gesture);
     }
 
@@ -256,12 +258,12 @@ impl DockDragOverlay {
             .find_map(|(index, child)| {
                 let handle = match axis {
                     Axis::Horizontal => Bounds::new(
-                        point(child.right() - px(2.), frame.top()),
-                        size(px(4.), frame.size.height),
+                        point(child.right() - px(5.), frame.top()),
+                        size(px(10.), frame.size.height),
                     ),
                     Axis::Vertical => Bounds::new(
-                        point(frame.left(), child.bottom() - px(2.)),
-                        size(frame.size.width, px(4.)),
+                        point(frame.left(), child.bottom() - px(5.)),
+                        size(frame.size.width, px(10.)),
                     ),
                 };
                 handle.contains(&pointer).then_some((index, handle))
@@ -632,6 +634,24 @@ impl TabGroupRenderer for Renderer {
         let theme = GuiraffeTheme::global(cx);
         let fill = theme.surfaces().surface.to_hsla();
         let border = theme.surfaces().border.to_hsla();
+        let area = self.area.upgrade();
+        let bottom_collapsed = area.as_ref().is_some_and(|area| {
+            let area = area.read(cx);
+            !area.is_dock_open(DockPlacement::Bottom)
+                && area
+                    .layout(DockPlacement::Bottom)
+                    .is_some_and(|tree| tree.find_node(group.node()).is_some())
+        });
+        let center_controls = area.as_ref().is_some_and(|area| {
+            area.read(cx)
+                .layout(DockPlacement::Center)
+                .is_some_and(|tree| {
+                    tree.panels()
+                        .next()
+                        .and_then(|panel| tree.find_panel_node(panel))
+                        == Some(group.node())
+                })
+        });
         let tabs = group
             .panels()
             .iter()
@@ -656,8 +676,8 @@ impl TabGroupRenderer for Renderer {
                 .is_some_and(|panel| panel.panel_id(cx) == id);
             let node = group.node();
             let mut tab = div().id(("dock-tab", id.as_u64())).test_support().role(Role::Tab)
-                .aria_label(label.clone()).aria_selected(active).tab_stop(true)
-                .aria_keyshortcuts("Alt+ArrowLeft Alt+ArrowRight Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Alt+Shift+ArrowUp Alt+Shift+ArrowDown")
+                .aria_label(label.clone()).aria_selected(active).focusable().tab_stop(true)
+                .aria_keyshortcuts("Control+Space Escape Alt+ArrowLeft Alt+ArrowRight Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Alt+Shift+ArrowUp Alt+Shift+ArrowDown")
                 .h_full().px_3().flex().items_center().border_r_1().border_color(border)
                 .when(active, |el| el.bg(theme.surfaces().raised.to_hsla()))
                 .child(label.clone());
@@ -666,6 +686,7 @@ impl TabGroupRenderer for Renderer {
             }
             if group.is_draggable() {
                 let overlay = self.overlay.clone();
+                let keyboard = overlay.clone();
                 let area = self.area.clone();
                 let count = group.panels().len();
                 tab = tab
@@ -692,6 +713,43 @@ impl TabGroupRenderer for Renderer {
                         });
                     })
                     .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "escape" {
+                            if keyboard
+                                .update(cx, |overlay, _| overlay.keyboard_panel.take().is_some())
+                                .unwrap_or(false)
+                            {
+                                cx.stop_propagation();
+                            }
+                            return;
+                        }
+                        if event.keystroke.key == "space" && event.keystroke.modifiers.control {
+                            let picked = keyboard
+                                .update(cx, |overlay, _| match overlay.keyboard_panel.take() {
+                                    Some(picked) => (picked != id).then_some(picked),
+                                    None => {
+                                        overlay.keyboard_panel = Some(id);
+                                        None
+                                    }
+                                })
+                                .ok()
+                                .flatten();
+                            if let Some(picked) = picked {
+                                let _ = area.update(cx, |area, cx| {
+                                    area.move_panel(
+                                        picked,
+                                        InsertTarget::Tabs {
+                                            node,
+                                            ix: None,
+                                            activate: true,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                            cx.stop_propagation();
+                            return;
+                        }
                         if !event.keystroke.modifiers.alt {
                             return;
                         }
@@ -725,10 +783,42 @@ impl TabGroupRenderer for Renderer {
                     });
             }
             let group = group.clone();
-            bar =
-                bar.child(tab.on_click(move |_: &ClickEvent, window, cx| {
-                    group.select_tab(index, window, cx)
-                }));
+            let weak_area = self.area.clone();
+            bar = bar.child(tab.on_click(move |_: &ClickEvent, window, cx| {
+                if bottom_collapsed {
+                    let _ = weak_area.update(cx, |area, cx| {
+                        area.toggle_dock(DockPlacement::Bottom, window, cx)
+                    });
+                }
+                group.select_tab(index, window, cx);
+            }));
+        }
+        if center_controls && let Some(area) = area {
+            let active = area.read(cx);
+            let controls = [
+                (DockPlacement::Left, "Left"),
+                (DockPlacement::Bottom, "Bottom"),
+                (DockPlacement::Right, "Right"),
+            ]
+            .into_iter()
+            .filter(|(side, _)| active.has_dock(*side) && active.is_dock_collapsible(*side))
+            .map(|(side, label)| {
+                let area = area.downgrade();
+                div()
+                    .id(("dock-toggle", side as usize))
+                    .test_support()
+                    .role(Role::Button)
+                    .aria_label(format!("Toggle {label} dock"))
+                    .focusable()
+                    .tab_stop(true)
+                    .px_2()
+                    .cursor(CursorStyle::PointingHand)
+                    .child(label)
+                    .on_click(move |_, window, cx| {
+                        let _ = area.update(cx, |area, cx| area.toggle_dock(side, window, cx));
+                    })
+            });
+            bar = bar.child(div().flex_1()).children(controls);
         }
         bar.into_any_element()
     }
@@ -753,6 +843,7 @@ pub(super) fn new(
         outline,
         origin,
         escape: None,
+        keyboard_panel: None,
     });
     let area = cx.new(|cx| {
         let renderer = Rc::new(Renderer {
@@ -979,6 +1070,33 @@ mod tests {
             assert_eq!(
                 tree.find_panel_node(root.panels[0]),
                 tree.find_panel_node(root.panels[1])
+            );
+        });
+    }
+
+    #[gpui_kit::test]
+    fn focused_tab_reorders_from_the_keyboard(cx: &mut TestAppContext) {
+        let (root, window) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
+        let first = window.update(|window, cx| {
+            window.render_frame(cx);
+            window
+                .find(("dock-tab", root.read(cx).panels[0].as_u64()))
+                .bounds()
+                .center()
+        });
+        window.simulate_click(first, Default::default());
+        window.simulate_keystrokes("alt-right");
+        window.run_until_parked();
+        window.update(|_, cx| {
+            let root = root.read(cx);
+            let tree = root
+                .area
+                .read(cx)
+                .layout(DockPlacement::Center)
+                .expect("center");
+            assert_eq!(
+                tree.panels().collect::<Vec<_>>(),
+                [root.panels[1], root.panels[0], root.panels[2]]
             );
         });
     }

@@ -220,7 +220,7 @@ pub fn entries() -> [Entry; 2] {
         Entry {
             krate: "dnd",
             name: "IDE layout",
-            summary: "Drag a tab to reorder it or split a group. Layout changes are saved through LayoutStore.",
+            summary: "Drag tabs to reorder, merge, or split. Use Alt+arrows to reorder, Alt+Shift+arrows to split, or Ctrl+Space on two tabs to move between groups.",
             covers: &[],
             demo: |window, cx| cx.new(|cx| ide(window, cx)).into(),
         },
