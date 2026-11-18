@@ -4,8 +4,9 @@ pub mod dock;
 pub mod sortable;
 
 use gpui_kit::{
-    App, Bounds, CursorStyle, Entity, FocusHandle, InteractiveElement, Pixels, Point, Render,
-    StatefulInteractiveElement, StyleRefinement, Styled, Window, px,
+    AnyView, App, AppContext, Bounds, Context, CursorStyle, Entity, FocusHandle,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Point, Render,
+    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Window, div, px,
 };
 use std::{cell::Cell, rc::Rc};
 
@@ -52,6 +53,25 @@ impl<T> Drag<T> {
     }
 }
 
+struct Preview {
+    view: AnyView,
+    constraints: Constraints,
+    origin: Point<Pixels>,
+    _cancel: Subscription,
+}
+
+impl Render for Preview {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let pointer = window.mouse_position();
+        let delta = self.constraints.position(self.origin, pointer) - pointer;
+        div()
+            .relative()
+            .left(delta.x)
+            .top(delta.y)
+            .child(self.view.clone())
+    }
+}
+
 pub struct DragSource<T> {
     pub payload: T,
     pub constraints: Constraints,
@@ -81,17 +101,27 @@ impl<T: 'static> DragSource<T> {
             element
                 .cursor(CursorStyle::OpenHand)
                 .on_drag(drag, move |drag, _, window, cx| {
-                    drag.origin.set(window.mouse_position());
-                    preview(&drag.payload, window, cx)
+                    let origin = window.mouse_position();
+                    drag.origin.set(origin);
+                    let view = preview(&drag.payload, window, cx).into();
+                    let window_id = window.window_handle().window_id();
+                    let cancel = cx.intercept_keystrokes(move |event, window, cx| {
+                        if window.window_handle().window_id() == window_id
+                            && event.keystroke.key == "escape"
+                            && cx.stop_active_drag(window)
+                        {
+                            cx.stop_propagation();
+                        }
+                    });
+                    cx.new(|_| Preview {
+                        view,
+                        origin,
+                        constraints: drag.constraints,
+                        _cancel: cancel,
+                    })
                 });
         if let Some(focus) = self.focus {
-            element
-                .track_focus(&focus)
-                .on_key_down(|event, window, cx| {
-                    if event.keystroke.key == "escape" && cx.stop_active_drag(window) {
-                        cx.stop_propagation();
-                    }
-                })
+            element.track_focus(&focus)
         } else {
             element
         }
@@ -221,8 +251,8 @@ pub fn auto_scroll_vertical<T: 'static, E: InteractiveElement>(
     edge: Pixels,
     speed: Pixels,
 ) -> E {
-    element.on_drag_move::<Drag<T>>(move |event, window, _| {
-        let pointer = event.event.position;
+    element.on_drag_move::<Drag<T>>(move |event, window, cx| {
+        let pointer = event.drag(cx).position(event.event.position);
         if !event.bounds.contains(&pointer) {
             return;
         }
@@ -234,8 +264,9 @@ pub fn auto_scroll_vertical<T: 'static, E: InteractiveElement>(
             edge,
             speed,
         );
-        if amount != px(0.) {
-            offset.y -= amount;
+        let next = (offset.y - amount).max(-scroll.max_offset().y).min(px(0.));
+        if next != offset.y {
+            offset.y = next;
             scroll.set_offset(offset);
             window.refresh();
         }
