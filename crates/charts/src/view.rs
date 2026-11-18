@@ -33,7 +33,7 @@ pub struct ChartOptions {
     pub crosshair: bool,
     pub tooltip: bool,
     pub navigation: bool,
-    /// Opt-in tab stops for legend and data table buttons.
+    /// Enable tab stops for legend and data table buttons.
     pub keyboard: bool,
 }
 

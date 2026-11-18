@@ -203,7 +203,6 @@ impl PreparedChart {
                 run,
             };
             let range = match run.mark {
-                Mark::Bar(_, Orientation::Horizontal) => 0..run.rows.len(),
                 Mark::Bar(_, Orientation::Vertical) => {
                     let reach = radius + projection.thickness(0) / 2.;
                     let left = x_scale.invert(domain, panel.rect.fraction(cursor.0 - reach));
@@ -564,6 +563,42 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn nearest_hit_prefers_closer_candidate_within_radius() {
+        let mut spec = ChartSpec::new("points").layer(Layer::new(
+            Mark::Point,
+            vec![(5., 5.), (5.15, 5.)],
+            Channels::new(|p: &(f64, f64)| p.0, |p| p.1),
+        ));
+        spec.x.domain = Domain::new(0., 10.);
+        spec.y.domain = Domain::new(0., 10.);
+        let model = spec.prepare();
+        let domain = model.x_domain();
+        let hidden = BTreeSet::new();
+        let scene = model.scene(600., 300., domain, &hidden);
+        let panel = &scene.panels[0];
+        let center = (
+            (panel.rect.left + panel.rect.right) / 2.,
+            (panel.rect.top + panel.rect.bottom) / 2.,
+        );
+        assert_eq!(
+            model
+                .nearest(panel, domain, &hidden, center, 20.)
+                .unwrap()
+                .id
+                .key,
+            0
+        );
+        assert_eq!(
+            model
+                .nearest(panel, domain, &hidden, (center.0 + 7., center.1), 20.)
+                .unwrap()
+                .id
+                .key,
+            1
+        );
+    }
 
     #[test]
     fn bar_hit_uses_its_interior() {
