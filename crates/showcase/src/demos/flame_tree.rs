@@ -23,14 +23,14 @@ pub fn entries() -> [Entry; 3] {
             krate: "tree",
             name: "Tree list",
             summary: "Expand a branch, select rows, or drag a row to reorder siblings.",
-            covers: &["TreeList"],
+            covers: &["TreeView"],
             demo: tree::<false>,
         },
         Entry {
             krate: "tree",
             name: "Property grid",
             summary: "Edit settings inline. Press Enter to commit text, numbers, and hex colours.",
-            covers: &["PropertyGrid"],
+            covers: &["TreeView"],
             demo: tree::<true>,
         },
     ]

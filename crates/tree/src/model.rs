@@ -1,4 +1,8 @@
-use std::{collections::HashSet, ops::Range, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    time::Instant,
+};
 
 pub type NodeId = u64;
 
@@ -35,6 +39,7 @@ pub enum Navigation {
 #[derive(Default)]
 pub struct TreeModel {
     rows: Vec<Row>,
+    indices: HashMap<NodeId, usize>,
     expanded: HashSet<NodeId>,
     pending: HashSet<NodeId>,
     selected: HashSet<NodeId>,
@@ -53,6 +58,7 @@ impl TreeModel {
     /// Apply a new source snapshot, including results delivered by async loaders.
     pub fn refresh(&mut self, source: &dyn TreeSource) {
         self.rows.clear();
+        self.indices.clear();
         self.pending
             .retain(|&id| source.children(id) == Children::Unloaded);
         let mut stack = vec![(source.roots().iter(), None)];
@@ -62,6 +68,7 @@ impl TreeModel {
                 stack.pop();
                 continue;
             };
+            self.indices.insert(id, self.rows.len());
             self.rows.push(Row {
                 id,
                 depth: stack.len() - 1,
@@ -95,7 +102,7 @@ impl TreeModel {
     }
 
     pub fn row_index(&self, id: NodeId) -> Option<usize> {
-        self.rows.iter().position(|row| row.id == id)
+        self.indices.get(&id).copied()
     }
 
     /// Returns the ID to request once if an expanded branch is unloaded.
