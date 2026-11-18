@@ -330,17 +330,13 @@ impl Render for Control {
         wrapper
     }
 }
-static CONTROL: Schema = Schema {
-    props: &["value", "label", "options", "disabled", "placeholder"],
-    events: &["change"],
-};
 struct ControlWidget(Kind);
 impl Widget for ControlWidget {
     fn uniform_row(&self, _: &[crate::Prop]) -> bool {
         matches!(self.0, Kind::Text | Kind::Select)
     }
     fn schema(&self) -> &'static Schema {
-        &CONTROL
+        &self.0.spec().1
     }
     fn render(
         &self,
@@ -397,13 +393,20 @@ impl Widget for ControlWidget {
         entry.view.clone().into_any_element()
     }
 }
+impl Kind {
+    fn spec(self) -> &'static (crate::catalog::WidgetSpec, Schema) {
+        use crate::catalog::{CHECKBOX, SELECT, SWITCH, TEXT_INPUT};
+        match self {
+            Self::Text => &TEXT_INPUT,
+            Self::Checkbox => &CHECKBOX,
+            Self::Switch => &SWITCH,
+            Self::Select => &SELECT,
+        }
+    }
+}
+
 pub(crate) fn register(registry: &mut Registry) {
-    for (name, kind) in [
-        ("text-input", Kind::Text),
-        ("checkbox", Kind::Checkbox),
-        ("switch", Kind::Switch),
-        ("select", Kind::Select),
-    ] {
-        registry.register(name, ControlWidget(kind));
+    for kind in [Kind::Text, Kind::Checkbox, Kind::Switch, Kind::Select] {
+        registry.register(kind.spec().0.id, ControlWidget(kind));
     }
 }

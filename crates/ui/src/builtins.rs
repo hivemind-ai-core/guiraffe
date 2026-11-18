@@ -7,7 +7,7 @@ use gpui_kit::{
 use guiraffe_components::{Card, Highlight, Pill, RingProgress, Text, Title};
 use guiraffe_core::{Size, StyleContext};
 
-use crate::widget::{NodeView, Registry, Schema, widget};
+use crate::widget::{NodeView, Registry, widget};
 
 fn gap(n: &NodeView<'_>, i: usize) -> f32 {
     StyleContext::current()
@@ -31,44 +31,13 @@ fn chunk_rows(kids: Vec<AnyElement>, cols: usize) -> Vec<Vec<AnyElement>> {
     rows
 }
 
-static GAP: Schema = Schema {
-    props: &["gap"],
-    events: &[],
-};
-static GRID: Schema = Schema {
-    props: &["gap", "columns"],
-    events: &[],
-};
-static TITLE: Schema = Schema {
-    props: &["text", "order"],
-    events: &[],
-};
-static TEXT: Schema = Schema {
-    props: &["text", "dimmed", "size", "color", "single-line"],
-    events: &[],
-};
-static HIGHLIGHT: Schema = Schema {
-    props: &["text", "term"],
-    events: &[],
-};
-static PILL: Schema = Schema {
-    props: &["label"],
-    events: &[],
-};
-static RING: Schema = Schema {
-    props: &["value", "color", "diameter", "label"],
-    events: &[],
-};
-static BUTTON: Schema = Schema {
-    props: &["label"],
-    events: &["click"],
-};
+use crate::catalog::*;
 
 pub fn register(r: &mut Registry) {
     crate::controls::register(r);
     r.register(
-        "stack",
-        widget(&GAP, |n, kids, _, _| {
+        STACK.0.id,
+        widget(&STACK.1, |n, kids, _, _| {
             div()
                 .flex()
                 .flex_col()
@@ -78,8 +47,8 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "group",
-        widget(&GAP, |n, kids, _, _| {
+        GROUP.0.id,
+        widget(&GROUP.1, |n, kids, _, _| {
             div()
                 .flex()
                 .flex_row()
@@ -91,8 +60,8 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "grid",
-        widget(&GRID, |n, kids, _, _| {
+        GRID.0.id,
+        widget(&GRID.1, |n, kids, _, _| {
             let cols = n.num(1).unwrap_or(2.0).clamp(1.0, 12.0) as usize;
             let g = gap(n, 0);
             div()
@@ -109,16 +78,16 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "title",
-        widget(&TITLE, |n, _, _, _| {
+        TITLE.0.id,
+        widget(&TITLE.1, |n, _, _, _| {
             Title::new(n.text(0))
                 .order(n.num(1).map(|o| o.clamp(1.0, 6.0) as u8).unwrap_or(3))
                 .into_any_element()
         }),
     );
     r.register(
-        "text",
-        widget(&TEXT, |n, _, _, _| {
+        TEXT.0.id,
+        widget(&TEXT.1, |n, _, _, _| {
             let mut t = Text::new(n.text(0)).dimmed(n.bool(1));
             if let Some(s) = n.size(2) {
                 t = t.size(s);
@@ -142,26 +111,26 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "highlight",
-        widget(&HIGHLIGHT, |n, _, _, _| {
+        HIGHLIGHT.0.id,
+        widget(&HIGHLIGHT.1, |n, _, _, _| {
             Highlight::new(n.text(0)).term(n.text(1)).into_any_element()
         }),
     );
     r.register(
-        "pill",
-        widget(&PILL, |n, _, _, _| {
+        PILL.0.id,
+        widget(&PILL.1, |n, _, _, _| {
             Pill::new(n.element_id(), n.text(0)).into_any_element()
         }),
     );
     r.register(
-        "card",
-        widget(&Schema::EMPTY, |_, kids, _, _| {
+        CARD.0.id,
+        widget(&CARD.1, |_, kids, _, _| {
             Card::new().children(kids).into_any_element()
         }),
     );
     r.register(
-        "ring",
-        widget(&RING, |n, _, _, _| {
+        RING.0.id,
+        widget(&RING.1, |n, _, _, _| {
             RingProgress::new()
                 .diameter(n.num(2).unwrap_or(64.0) as f32)
                 .section(
@@ -173,8 +142,8 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "button",
-        widget(&BUTTON, |n, _, _, _| {
+        BUTTON.0.id,
+        widget(&BUTTON.1, |n, _, _, _| {
             let b = Button::new(n.element_id()).label(n.text(0));
             let b = match n.handler(0) {
                 Some(h) => b
@@ -196,8 +165,8 @@ pub fn register(r: &mut Registry) {
     );
     // Content-sized child (Mocket `width: "hug"`): opts out of the parent's cross-axis stretch.
     r.register(
-        "hug",
-        widget(&Schema::EMPTY, |_, kids, _, _| {
+        HUG.0.id,
+        widget(&HUG.1, |_, kids, _, _| {
             div()
                 .flex()
                 .flex_col()
@@ -207,29 +176,9 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "spacer",
-        widget(&Schema::EMPTY, |_, _, _, _| {
-            div().flex_1().into_any_element()
-        }),
+        SPACER.0.id,
+        widget(&SPACER.1, |_, _, _, _| div().flex_1().into_any_element()),
     );
 }
 
-/// Mocket component types → builtin kinds (used by the Mocket importer; one table, one truth).
-pub const KINDS: &[&str] = &[
-    "stack",
-    "group",
-    "grid",
-    "title",
-    "text",
-    "highlight",
-    "pill",
-    "card",
-    "ring",
-    "button",
-    "hug",
-    "spacer",
-    "text-input",
-    "checkbox",
-    "switch",
-    "select",
-];
+pub use crate::catalog::KINDS;

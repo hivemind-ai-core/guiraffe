@@ -9,6 +9,7 @@
 //!   no-ops and don't re-render. The boundary is message-shaped (future wasm logic).
 
 pub mod builtins;
+pub mod catalog;
 mod host;
 pub mod ir;
 pub mod slots;
