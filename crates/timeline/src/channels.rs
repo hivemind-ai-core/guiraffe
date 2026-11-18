@@ -65,7 +65,10 @@ impl Channel {
     pub fn with_keyframes(name: impl Into<String>, keys: Vec<crate::Key>) -> Self {
         let mut c = Self::new(name, keys.iter().map(|k| k.t).collect());
         for k in keys {
-            if let Some(i) = c.keys.iter().position(|t| *t == k.t) {
+            if let Ok(i) = c
+                .keys
+                .binary_search_by(|t| t.total_cmp(&if k.t == 0. { 0. } else { k.t }))
+            {
                 c.decor[i] = (
                     Some(k.v),
                     match k.interp {

@@ -156,15 +156,22 @@ impl DopeSheet {
             .get(channel)
             .filter(|c| c.visible)
             .and_then(|c| {
-                if c.group {
+                let keys = if c.group {
                     self.model.summary_keys(channel)
                 } else {
                     c.keys()
-                }
-                .iter()
+                };
+                let axis = self.surface.axis;
+                let index = keys.partition_point(|time| axis.x(*time) < x);
+                [
+                    index.checked_sub(1).and_then(|i| keys.get(i)),
+                    keys.get(index),
+                ]
+                .into_iter()
+                .flatten()
                 .copied()
-                .map(|t| (t, (self.surface.axis.x(t) - x).abs()))
-                .filter(|(_, d)| *d <= KEY_GRAB)
+                .map(|t| (t, (axis.x(t) - x).abs()))
+                .filter(|(_, distance)| *distance <= KEY_GRAB)
                 .min_by(|a, b| a.1.total_cmp(&b.1))
             });
         if let Some((t, _)) = nearest {
