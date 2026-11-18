@@ -71,7 +71,9 @@ draw stages took 62.051 ms and 75.435 ms after the change. These stages
 include backend work. The scripted viewport jumps recycle most row slots.
 
 A separate 15-sample optimized model run measured 1M-row sorting at
-1,572.133 ms median before and 1,586.404 ms after adding cancellation
-checkpoints. Starting one-minute loads were 102.52 and 98.13 respectively.
+822.076 ms median before and 1,090.147 ms after adding cancellation
+checkpoints. Starting one-minute loads were 90.58 and 90.32 respectively.
+Counting allocations for the same input yielded four allocations and
+56,000,016 requested bytes in both builds.
 The [model checks](src/order.rs) exercise cancellation during a merge pass
 and verify the stable permutation against a reference.

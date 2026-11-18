@@ -209,7 +209,7 @@ pub fn compute_order(
 }
 
 fn sort_runs<T: Copy>(
-    rows: &mut Vec<T>,
+    rows: &mut [T],
     compare: impl Fn(&T, &T) -> Ordering,
     check: &impl Fn() -> Result<(), Cancelled>,
 ) -> Result<(), Cancelled> {
@@ -222,28 +222,38 @@ fn sort_runs<T: Copy>(
         return Ok(());
     }
 
-    let mut merged = Vec::with_capacity(rows.len());
+    // Merge backwards with only the shorter right run in scratch. The
+    // unread left items stay ahead of the write cursor.
+    let mut scratch = Vec::with_capacity(rows.len() / 2);
     let mut run_size = RUN;
     while run_size < rows.len() {
         let pair_size = run_size.saturating_mul(2);
-        merged.clear();
-        for pair in rows.chunks(pair_size) {
-            let (left, right) = pair.split_at(pair.len().min(run_size));
-            let mut left = left.iter().peekable();
-            let mut right = right.iter().peekable();
-            for index in 0..pair.len() {
-                if index % RUN == 0 {
+        for pair in rows.chunks_mut(pair_size) {
+            if pair.len() <= run_size {
+                continue;
+            }
+            scratch.clear();
+            for chunk in pair[run_size..].chunks(RUN) {
+                check()?;
+                scratch.extend_from_slice(chunk);
+            }
+            let mut left = run_size;
+            let mut right = scratch.len();
+            let mut write = pair.len();
+            while right > 0 {
+                if write % RUN == 0 {
                     check()?;
                 }
-                let next = match (left.peek(), right.peek()) {
-                    (Some(a), Some(b)) if compare(a, b).is_gt() => right.next(),
-                    (Some(_), _) => left.next(),
-                    _ => right.next(),
-                };
-                merged.extend(next.copied());
+                write -= 1;
+                if left > 0 && compare(&pair[left - 1], &scratch[right - 1]).is_gt() {
+                    left -= 1;
+                    pair[write] = pair[left];
+                } else {
+                    right -= 1;
+                    pair[write] = scratch[right];
+                }
             }
         }
-        std::mem::swap(rows, &mut merged);
         run_size = pair_size;
     }
     Ok(())

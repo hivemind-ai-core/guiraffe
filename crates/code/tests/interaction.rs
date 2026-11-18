@@ -216,6 +216,7 @@ fn annotation_updates_preserve_source_and_plain_hover_does_not_shape(cx: &mut Te
 #[gpui_kit::test]
 fn latest_source_wins_and_queued_analysis_is_coalesced(cx: &mut TestAppContext) {
     let (code, _, vcx) = mount(cx, Arc::from("initial"));
+    assert!(!code.is_analyzing());
     vcx.update(|_, cx| {
         for i in 0..100 {
             code.set_source(
@@ -224,8 +225,10 @@ fn latest_source_wins_and_queued_analysis_is_coalesced(cx: &mut TestAppContext) 
                 cx,
             );
         }
+        assert!(code.is_analyzing());
     });
     vcx.run_until_parked();
+    assert!(!code.is_analyzing());
     assert_eq!(code.document().source().as_ref(), "source 99");
     assert_eq!(
         code.stats().analyses_started,

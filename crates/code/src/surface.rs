@@ -195,6 +195,10 @@ impl CodeHandle {
     pub fn id(&self) -> u64 {
         self.shared.id
     }
+    /// Whether indexing or syntax highlighting is queued or running.
+    pub fn is_analyzing(&self) -> bool {
+        self.shared.analyzing.get()
+    }
     pub fn highlight_error(&self) -> Option<Arc<str>> {
         self.shared.highlighted.borrow().error.clone()
     }
