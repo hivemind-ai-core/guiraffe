@@ -116,3 +116,31 @@ fn review2_10_rejected_arbitrary_edit_preserves_history_and_routes() {
             .expect("move")
     );
 }
+
+proptest::proptest! {
+    #[test]
+    fn spatial_updates_match_linear_scan(
+        changes in proptest::collection::vec((0_u64..32, proptest::option::of(-50_i16..50), -50_i16..50), 0..100),
+    ) {
+        let mut index = SpatialIndex::new([]);
+        let mut reference = BTreeMap::new();
+        let mut actual = Vec::new();
+        for (id, x, y) in changes {
+            let area = Rect::new(-10., f32::from(y), 20., 15.);
+            let rect = x.map(|x| Rect::new(f32::from(x), f32::from(y), 5., 5.));
+            index.update(&BTreeMap::from([(id, rect)]));
+            if let Some(rect) = rect {
+                reference.insert(id, rect);
+            } else {
+                reference.remove(&id);
+            }
+            actual.clear();
+            index.query(area, &mut actual);
+            actual.sort_unstable();
+            let expected: Vec<_> = reference.iter()
+                .filter_map(|(id, bounds)| bounds.intersects(area).then_some(*id))
+                .collect();
+            proptest::prop_assert_eq!(&actual, &expected);
+        }
+    }
+}

@@ -164,6 +164,28 @@ impl Track {
 mod tests {
     use super::*;
 
+    proptest::proptest! {
+        #[test]
+        fn insertion_matches_linear_overlap_check(
+            inserts in proptest::collection::vec((-100_i16..100, 1_i16..25), 0..100),
+        ) {
+            let mut track = Track::default();
+            let mut reference = Vec::<(i16, i16)>::new();
+            for (start, len) in inserts {
+                let end = start + len;
+                let fits = reference.iter().all(|&(a, b)| end <= a || start >= b);
+                let actual = track.insert(f64::from(start), f64::from(len));
+                proptest::prop_assert_eq!(actual.is_some(), fits);
+                if fits {
+                    reference.push((start, end));
+                    reference.sort_unstable();
+                }
+                let spans: Vec<_> = track.clips().iter().map(|c| (c.start as i16, c.end() as i16)).collect();
+                proptest::prop_assert_eq!(&spans, &reference);
+            }
+        }
+    }
+
     #[test]
     fn insert_rejects_overlaps() {
         let mut t = Track::default();

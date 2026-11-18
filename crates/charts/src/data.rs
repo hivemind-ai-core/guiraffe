@@ -110,6 +110,30 @@ impl<T: Send + Sync + 'static> ChartSource for Stream<T> {
 mod tests {
     use super::*;
 
+    proptest::proptest! {
+        #[test]
+        fn stream_matches_flat_rows_and_keeps_snapshots(
+            batches in proptest::collection::vec(proptest::collection::vec(proptest::num::i32::ANY, 0..16), 0..32),
+        ) {
+            let mut stream = Stream::default();
+            let mut reference = Vec::new();
+            let mut snapshots = Vec::new();
+            for batch in batches {
+                snapshots.push((stream.clone(), reference.len()));
+                reference.extend_from_slice(&batch);
+                stream.append(batch);
+            }
+            snapshots.push((stream, reference.len()));
+            for (snapshot, len) in snapshots {
+                proptest::prop_assert_eq!(snapshot.len(), len);
+                for (index, expected) in reference[..len].iter().enumerate() {
+                    proptest::prop_assert_eq!(snapshot.row(index), Some(expected));
+                }
+                proptest::prop_assert_eq!(snapshot.row(len), None);
+            }
+        }
+    }
+
     #[test]
     fn appends_preserve_snapshot_and_borrow_existing_rows() {
         let mut stream = Stream::default();
