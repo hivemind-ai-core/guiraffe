@@ -1,3 +1,5 @@
+pub mod sortable;
+
 use gpui_kit::{
     App, Bounds, CursorStyle, Entity, FocusHandle, InteractiveElement, Pixels, Point, Render,
     StatefulInteractiveElement, StyleRefinement, Styled, Window, px,
