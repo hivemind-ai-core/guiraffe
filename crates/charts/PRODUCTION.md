@@ -4,12 +4,22 @@ Audited against [spec/23](../../spec/23-production-readiness.md) at source revis
 
 | Criterion | Status | Evidence and remaining checks |
 | --- | --- | --- |
-| §1 Scale | ⚠️ Open | 10M line points, 1M scatter points, 100 series. Existing [benchmarks](../../bench/src/suites.rs) cover 1M line and 100k scatter. |
-| §2 Latency | ⚠️ Open | Prepared scenes and cached hover exist. [Historical measurements](VALIDATION.md) cover CPU compilation only. Verify native frame tails and cold mount. Streaming prepares accumulated data again and requires cancellation and sustained-throughput evidence. |
-| §3 Memory | ⚠️ Open | Existing [allocator checks](../../bench/tests/allocator.rs) limit scene allocation calls. Measure retained bytes per encoded row, index and hierarchy, and verify warm native paint/navigation allocations. |
-| §4 Correctness and robustness | ⚠️ Open | Scale, LTTB and stacking properties exist. Add a naive interaction/stream reference and native DPI/theme/input-burst scenarios. Audit malformed inputs and background cancellation on supersede/drop. |
-| §5 Long-session and stress | ⚠️ Open | Replay pan, zoom, hover and selection with sustained ingestion at 10k points/s for 30 minutes. |
+| §1 Scale | ⚠️ Open | Generated one line with 10M points and one scatter plot with 1M points across 100 series. CPU line scene compilation is fast once prepared. Dense scatter and cold preparation remain outside their budgets. |
+| §2 Latency | ⚠️ Open | 10M line preparation median 1.98 s. Full scene plus three zoomed widths took 0.360 ms. Full 1M-point/100-series scatter scene compilation took 47.45 ms. Prepared geometry is currently compiled synchronously in the view. Cancellable off-thread generation, progress and tail budgets remain open. |
+| §3 Memory | ⚠️ Open | Prepared line buffers have a 256 B/point structural gate for sample, LTTB and line-break buffers at 100k. Existing allocator gates cover lower-scale scene compilation. Chart row strings, other retained storage, native paint and 30-minute memory validation remain open. |
+| §4 Correctness and robustness | ⚠️ Open | Randomized stream chunk append/snapshot behavior matches a flat vector, in addition to existing scale, sampling and stack properties. A red/green test covers non-drawable dense bubble representatives. The complete rendering/interaction edge matrix, cancellation and fuzz verification remain open. |
+| §5 Long-session and stress | ⚠️ Open | The shared headless soak runner has line/scatter interaction modes and samples frames and memory. Native inspect/drive and 10k points/s sustained streaming remain open, as does the full 30-minute run. |
 | §6 Accessibility and UX | ⚠️ Open | [Native interactions](tests/interactions.rs) cover chart controls and retention. Verify focus and screen-reader state under data updates, and capture scale snapshots across both themes/backends. |
 | §7 Process | ⚠️ Open | Initial audit recorded. New release measurements, automated acceptance and independent review remain open. |
 
 Latency acceptance requires p99 ≤8 ms, maximum ≤16 ms, UI tasks ≤50 ms and cold mount ≤200 ms. Nightly replay must sample frame percentiles and RSS/PSS every 10 seconds and enforce the 2% warmed drift limit. Review the [baseline policy](../../bench/baselines/README.md) before recording reference results.
+
+Scale workloads and checks are registered in [suites.rs](../../bench/src/suites.rs),
+[allocator.rs](../../bench/tests/allocator.rs) and the [headless soak runner](../../bench/examples/soak.rs).
+
+Exploratory release runs used rustc 1.98.0 on the AMD Ryzen 7 8745HS with
+Radeon 780M graphics and the powersave governor. Ten samples used a minimum
+one invocation per batch. Machine load was 17.37/16.14/13.28 before and
+16.32/15.95/13.31 afterward. CPU workloads above were measured at `a6e7ede`,
+except timeline clip navigation at `5ae9382`. The host was shared and loaded,
+so these measurements do not qualify as reference baselines.
