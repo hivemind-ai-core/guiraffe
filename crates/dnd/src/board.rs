@@ -18,6 +18,7 @@ pub struct Card {
 /// A sortable board with one column per list. Focus and selection follow card IDs.
 pub struct SortableBoard {
     headings: Vec<SharedString>,
+    cards_per_row: u16,
     cards: Sortable<Card>,
     focus: HashMap<usize, FocusHandle>,
     selected: HashSet<usize>,
@@ -38,6 +39,7 @@ impl SortableBoard {
             .collect();
         Self {
             headings,
+            cards_per_row: 1,
             cards: Sortable::new(cards),
             focus,
             selected: HashSet::new(),
@@ -45,6 +47,12 @@ impl SortableBoard {
             keyboard_source: None,
             status: "Ready".into(),
         }
+    }
+
+    /// Arrange cards in each list in a grid with the given number of columns.
+    pub fn with_grid(mut self, cards_per_row: u16) -> Self {
+        self.cards_per_row = cards_per_row.max(1);
+        self
     }
 
     pub fn lists(&self) -> &[Vec<Card>] {
@@ -111,14 +119,32 @@ impl SortableBoard {
             .iter()
             .position(|&location| location == (list, original_gap))
             .unwrap_or_default();
+        let stride = usize::from(self.cards_per_row);
         let event = self.keyboard.key(
             key,
             source,
             |slot, key| {
                 let (list, gap) = *gaps.get(slot)?;
                 let next = match key {
-                    "up" => return (0..slot).rev().find(|&i| gaps[i].0 == list),
-                    "down" => return (slot + 1..gaps.len()).find(|&i| gaps[i].0 == list),
+                    "up" => {
+                        return (0..slot)
+                            .rev()
+                            .take_while(|&i| gaps[i].0 == list)
+                            .nth(stride - 1);
+                    }
+                    "down" => {
+                        return (slot + 1..gaps.len())
+                            .take_while(|&i| gaps[i].0 == list)
+                            .nth(stride - 1);
+                    }
+                    "left" if stride > 1 && slot > 0 && gaps[slot - 1].0 == list => {
+                        return Some(slot - 1);
+                    }
+                    "right"
+                        if stride > 1 && gaps.get(slot + 1).is_some_and(|next| next.0 == list) =>
+                    {
+                        return Some(slot + 1);
+                    }
                     "left" => list.checked_sub(1)?,
                     "right" => list + 1,
                     _ => return None,
@@ -258,7 +284,13 @@ impl Render for SortableBoard {
                 .flex_col()
                 .gap_2()
                 .child(self.headings[list].clone())
-                .children(rows)
+                .child(
+                    div()
+                        .grid()
+                        .grid_cols(self.cards_per_row)
+                        .gap_2()
+                        .children(rows),
+                )
                 .child(target(
                     div()
                         .id(("end", list))
@@ -342,7 +374,8 @@ mod tests {
         assert_eq!(events.borrow()[0].destination, 1);
 
         window.update(|window, cx| {
-            board.read(cx).focus[&1].focus(window, cx);
+            let focus = board.read(cx).focus[&1].clone();
+            focus.focus(window, cx);
             window.render_frame(cx);
         });
         window.simulate_keystrokes("space left escape space left space");
