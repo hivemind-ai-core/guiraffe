@@ -288,7 +288,7 @@ impl Render for SortableBoard {
                 );
                 let y =
                     px((index / usize::from(self.cards_per_row)) as f32 * (CARD_HEIGHT + CARD_GAP));
-                let position = spring(("sortable-card-position", id), y, motion, window, cx);
+                let position = spring((("card", id), "sortable-position"), y, motion, window, cx);
                 Some(row.top(position - y))
             });
             div()
