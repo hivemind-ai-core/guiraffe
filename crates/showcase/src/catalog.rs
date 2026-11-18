@@ -52,6 +52,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::components::entries());
     v.extend(crate::demos::inputs::entries());
     v.extend(crate::demos::overlays::entries());
+    v.extend(crate::demos::commands::entries());
     v.extend(crate::demos::code::entries());
     v.extend(crate::demos::markdown::entries());
     v.extend(crate::demos::mermaid::entries());

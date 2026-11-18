@@ -3542,6 +3542,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-chat",
  "guiraffe-code",
+ "guiraffe-commands",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
