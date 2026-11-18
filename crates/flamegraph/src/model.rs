@@ -292,3 +292,26 @@ fn skip_bucket(spans: &[Span], right: f64) -> usize {
     let high = high.min(spans.len());
     low + spans[low..high].partition_point(|span| span.right <= right)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn bucket_search_matches_full_binary_search(mut ends in prop::collection::vec(0u16..512, 0..512), edge in 0u16..512) {
+            ends.sort_unstable();
+            let spans = ends
+                .into_iter()
+                .enumerate()
+                .map(|(index, end)| Span { index, left: 0., right: f64::from(end) })
+                .collect::<Vec<_>>();
+            let edge = f64::from(edge);
+            prop_assert_eq!(
+                skip_bucket(&spans, edge),
+                spans.partition_point(|span| span.right <= edge),
+            );
+        }
+    }
+}

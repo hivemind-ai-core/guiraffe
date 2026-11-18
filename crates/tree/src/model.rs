@@ -122,7 +122,9 @@ impl TreeModel {
             let depth = self.rows[index].depth;
             let start = index + 1;
             if open {
-                if let Children::Ready(children) = source.children(id) {
+                if let Children::Ready(children) = source.children(id)
+                    && !children.is_empty()
+                {
                     let mut descendants = Vec::new();
                     let mut positions = Vec::new();
                     walk_visible(
@@ -136,11 +138,9 @@ impl TreeModel {
                             positions.push(siblings);
                         },
                     );
-                    if !descendants.is_empty() {
-                        self.rows.splice(start..start, descendants);
-                        self.sibling_positions.splice(start..start, positions);
-                        self.reindex(start);
-                    }
+                    self.rows.splice(start..start, descendants);
+                    self.sibling_positions.splice(start..start, positions);
+                    self.reindex(start);
                 }
             } else {
                 let end = start
