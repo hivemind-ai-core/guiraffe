@@ -3,7 +3,7 @@ use gpui_kit::base::Selectable;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
-    ScrollEvent, StatefulInteractiveElement, Styled, Window,
+    ScrollEvent, StatefulInteractiveElement, Styled, TestSupportExt, Window,
     component::{
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
@@ -369,6 +369,7 @@ impl<const P: bool> Render for TreeView<P> {
             });
             let mut element = div()
                 .id(("tree-row", id as usize))
+                .test_support()
                 .role(Role::TreeItem)
                 .aria_label(label.clone())
                 .aria_selected(selected)
@@ -516,6 +517,7 @@ impl<const P: bool> Render for TreeView<P> {
             .children(self.error.clone().map(|error| {
                 div()
                     .id("tree-edit-error")
+                    .test_support()
                     .role(Role::Alert)
                     .aria_label(error.clone())
                     .child(error)

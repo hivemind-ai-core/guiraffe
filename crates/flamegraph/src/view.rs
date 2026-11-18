@@ -3,7 +3,7 @@ use gpui_kit::{
     App, AppContext, Bounds, ContentMask, Context, DispatchPhase, Entity, EventEmitter,
     FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
     Point, Render, Role, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Task,
-    WeakEntity, Window,
+    TestSupportExt, WeakEntity, Window,
     base::{Root, RootPlugin},
     canvas,
     component::button::Button,
@@ -343,6 +343,7 @@ impl Render for FlameGraph {
             .child(
                 div()
                     .id("flame-plot")
+                    .test_support()
                     .relative()
                     .flex_1()
                     .overflow_hidden()
