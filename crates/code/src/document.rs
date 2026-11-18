@@ -40,7 +40,9 @@ pub fn content_hash(bytes: &[u8]) -> u64 {
 impl CodeDocument {
     pub fn new(source: impl Into<Arc<str>>) -> Self {
         let source = source.into();
-        let mut starts = vec![0];
+        let line_count = 1 + source.bytes().filter(|&b| b == b'\n').count();
+        let mut starts = Vec::with_capacity(line_count);
+        starts.push(0);
         starts.extend(
             source
                 .bytes()
@@ -167,6 +169,12 @@ mod tests {
                 start += text.len() + 2;
             }
         }
+    }
+    #[test]
+    fn retained_line_index_has_no_spare_slots() {
+        let doc = CodeDocument::new("x\n".repeat(20_000) + "x");
+        assert_eq!(doc.starts.capacity(), doc.line_count());
+        assert_eq!(doc.hashes.capacity(), doc.line_count());
     }
     #[test]
     fn positions_at_crlf_and_terminal_cr_are_selectable() {

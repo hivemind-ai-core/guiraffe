@@ -133,14 +133,9 @@ fn code_document_index_allocations_are_bounded() -> anyhow::Result<()> {
     guiraffe_bench::suites::code_index_ten_million();
     let (_, counts) = count_allocations(guiraffe_bench::suites::code_index_ten_million)?;
     let lines = 10_000_000;
-    let hash_bytes = lines * size_of::<u64>();
-    // Geometric growth of line starts allocates less than four index entries per line
-    // cumulatively. Source bytes are already shared and excluded.
-    assert!(
-        counts.bytes <= (hash_bytes + 4 * lines * size_of::<usize>()) as u64,
-        "{counts:?}"
-    );
-    assert!(counts.allocations <= 30, "{counts:?}");
+    let index_bytes = lines * (size_of::<u64>() + size_of::<usize>());
+    assert_eq!(counts.allocations, 2, "{counts:?}");
+    assert_eq!(counts.bytes, index_bytes as u64, "{counts:?}");
     Ok(())
 }
 
