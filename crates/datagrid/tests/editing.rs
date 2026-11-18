@@ -3,15 +3,20 @@
 //! Esc, range extension (keys and drag autoscroll), paste tiling with rejections, cut, delete
 //! and undo/redo. Run on both backends (`--features gpui-fast`).
 
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use gpui_kit::{
     ClipboardItem, Context, InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement,
     Point, Render, Styled, TestAppContext, VisualTestContext, Window, div, point, px, size,
 };
 use guiraffe_datagrid::{
-    CellPos, CellRef, ColumnDef, DataGrid, EditError, EditOp, FnSource, GridEvent, GridHandle,
-    GridOptions, SelectionMode, VecSource,
+    CellPos, CellRef, ColumnDef, DataGrid, EditError, EditOp, Filter, FnSource, GridEvent,
+    GridHandle, GridOptions, GridSource, RowKey, SelectionMode, SortDir, SortKey, VecSource,
 };
 
 struct Host {
@@ -319,7 +324,8 @@ fn set_clipboard(vcx: &mut VisualTestContext, text: &str) {
 }
 
 fn select(grid: &GridHandle, vcx: &mut VisualTestContext, a: (usize, usize), b: (usize, usize)) {
-    vcx.update(|_, cx| {
+    vcx.update(|w, cx| {
+        grid.focus(w, cx);
         grid.select(CellPos::new(a.0, a.1), false, false, cx);
         grid.select(CellPos::new(b.0, b.1), true, false, cx);
     });
@@ -460,4 +466,208 @@ fn keys_need_focus_opt_in(cx: &mut TestAppContext) {
     vcx.simulate_keystrokes("Z delete");
     assert!(!grid.is_editing(), "an unfocused grid ignores keys");
     assert_eq!(cell(&grid, 0, 0), "Carol");
+}
+
+fn sort_and_filter(grid: &GridHandle, vcx: &mut VisualTestContext) {
+    // Age descending, age 22 (source row 2, "Bob") filtered out:
+    // view rows 0..5 show source rows 5, 4, 3, 1, 0.
+    vcx.update(|_, cx| {
+        grid.set_sort(
+            vec![SortKey {
+                column: 1,
+                dir: SortDir::Desc,
+            }],
+            cx,
+        );
+        let f: Filter = Arc::new(|v| v != CellRef::Int(22));
+        grid.set_filter(1, Some(f), cx);
+    });
+    vcx.run_until_parked();
+    let order: Vec<_> = (0..grid.view_row_count())
+        .filter_map(|r| grid.source_row(r))
+        .collect();
+    assert_eq!(order, [5, 4, 3, 1, 0]);
+}
+
+#[gpui_kit::test]
+fn paste_and_undo_in_a_sorted_filtered_view_write_source_rows(cx: &mut TestAppContext) {
+    let (grid, _, vcx) = mount(cx, editable_grid);
+    let names = column_text(&grid, 0);
+    sort_and_filter(&grid, vcx);
+    select(&grid, vcx, (1, 0), (1, 0));
+    set_clipboard(vcx, "P\nQ\nR");
+    vcx.simulate_keystrokes("ctrl-v");
+    let mut want = names.clone();
+    want[4] = "P".into();
+    want[3] = "Q".into();
+    want[1] = "R".into();
+    assert_eq!(
+        column_text(&grid, 0),
+        want,
+        "view rows 1..4 = source rows 4, 3, 1"
+    );
+
+    // Change the view, then undo/redo: the same source rows are restored.
+    vcx.update(|_, cx| {
+        grid.set_sort(vec![], cx);
+        grid.set_filter(1, None, cx);
+    });
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("ctrl-z");
+    assert_eq!(column_text(&grid, 0), names);
+    sort_and_filter(&grid, vcx);
+    vcx.simulate_keystrokes("ctrl-y");
+    assert_eq!(column_text(&grid, 0), want);
+}
+
+#[gpui_kit::test]
+fn delete_and_cut_over_a_filtered_range(cx: &mut TestAppContext) {
+    let (grid, _, vcx) = mount(cx, editable_grid);
+    sort_and_filter(&grid, vcx);
+    select(&grid, vcx, (0, 0), (1, 0));
+    vcx.simulate_keystrokes("delete");
+    assert_eq!(
+        column_text(&grid, 0),
+        ["Carol", "alice", "Bob", "Dave", "", ""]
+    );
+    // View rows 2..4 are source rows 3 and 1; the filtered-out "Bob" (source 2) between
+    // them is neither copied nor cleared.
+    select(&grid, vcx, (2, 0), (3, 0));
+    vcx.simulate_keystrokes("ctrl-x");
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+            Some("Dave\nalice")
+        );
+    });
+    assert_eq!(column_text(&grid, 0), ["Carol", "", "Bob", "", "", ""]);
+    vcx.simulate_keystrokes("ctrl-z ctrl-z");
+    assert_eq!(
+        column_text(&grid, 0),
+        ["Carol", "alice", "Bob", "Dave", "Eve", "Finn"]
+    );
+}
+
+/// Records with stable ids, shared with the test so it can change them behind the grid.
+#[derive(Clone)]
+struct Shared(Arc<Mutex<Vec<(u64, String)>>>);
+
+impl GridSource for Shared {
+    fn row_count(&self) -> usize {
+        self.0.lock().map(|v| v.len()).unwrap_or(0)
+    }
+    fn cell(&self, _: usize, _: usize) -> CellRef<'_> {
+        CellRef::Empty // Values are read through `Shared::names` in this test.
+    }
+    fn row_key(&self, row: usize) -> RowKey {
+        RowKey(
+            self.0
+                .lock()
+                .ok()
+                .and_then(|v| v.get(row).map(|r| r.0))
+                .unwrap_or(u64::MAX),
+        )
+    }
+    fn set_cell(&mut self, row: usize, _: usize, text: &str) -> Result<(), EditError> {
+        let mut v = self.0.lock().map_err(|_| EditError::Busy)?;
+        let r = v.get_mut(row).ok_or(EditError::ReadOnly)?;
+        r.1 = text.to_string();
+        Ok(())
+    }
+}
+
+impl Shared {
+    fn names(&self) -> Vec<(u64, String)> {
+        self.0.lock().map(|v| v.clone()).unwrap_or_default()
+    }
+}
+
+#[gpui_kit::test]
+fn undo_never_writes_into_another_record(cx: &mut TestAppContext) {
+    let data = Shared(Arc::new(Mutex::new(
+        (0..3).map(|i| (100 + i, format!("r{i}"))).collect(),
+    )));
+    let d = data.clone();
+    let (grid, events, vcx) = mount(cx, move |cx| {
+        let g = GridHandle::new(d, vec![ColumnDef::new("n", "N", 0).editable(true)], cx);
+        g.set_options(
+            GridOptions {
+                selection: SelectionMode::Range,
+                focusable: Some(true),
+                ..Default::default()
+            },
+            cx,
+        );
+        g
+    });
+    click(vcx, at(&grid, 1, 0));
+    vcx.update(|_, cx| assert_eq!(grid.paste_text("X", cx), 1));
+    assert_eq!(data.names()[1], (101, "X".to_string()));
+
+    // Same row count, rows swapped behind the grid: undo refuses the moved record.
+    if let Ok(mut v) = data.0.lock() {
+        v.swap(0, 1);
+    }
+    vcx.update(|_, cx| grid.data_changed(cx));
+    vcx.run_until_parked();
+    let before = data.names();
+    vcx.simulate_keystrokes("ctrl-z");
+    assert_eq!(data.names(), before, "row 1 is now id 100: nothing written");
+    assert!(grid.can_undo(), "a fully refused undo stays on the stack");
+    assert!(events.borrow().iter().any(|e| matches!(
+        e,
+        GridEvent::CellsRejected {
+            op: EditOp::Undo,
+            rejected: 1,
+            applied: 0,
+            ..
+        }
+    )));
+
+    // A row removed: history is cleared, undo does nothing.
+    if let Ok(mut v) = data.0.lock() {
+        v.remove(0);
+    }
+    vcx.update(|_, cx| grid.data_changed(cx));
+    vcx.run_until_parked();
+    assert!(!grid.can_undo());
+    let before = data.names();
+    vcx.simulate_keystrokes("ctrl-z");
+    assert_eq!(data.names(), before);
+}
+
+#[gpui_kit::test]
+fn bulk_edits_refuse_up_front_while_the_source_is_shared(cx: &mut TestAppContext) {
+    let (grid, events, vcx) = mount(cx, editable_grid);
+    // An outside clone shares the source, as a background sort/copy does.
+    let shared: Arc<dyn GridSource> = Arc::new(people());
+    vcx.update(|_, cx| grid.set_source(shared.clone(), cx));
+    vcx.run_until_parked();
+    select(&grid, vcx, (0, 0), (1, 0));
+    set_clipboard(vcx, "A");
+    events.borrow_mut().clear();
+    vcx.simulate_keystrokes("ctrl-v delete ctrl-x");
+    let ev = events.borrow().clone();
+    let refused: Vec<_> = ev
+        .iter()
+        .filter_map(|e| match e {
+            GridEvent::CellsRejected { op, first, .. } => Some((*op, first[0].row, first.len())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (EditOp::Paste, None, 1),
+            (EditOp::Clear, None, 1),
+            (EditOp::Cut, None, 1)
+        ],
+        "one operation-level Busy event each"
+    );
+    assert!(
+        !ev.iter().any(|e| matches!(e, GridEvent::Copied { .. })),
+        "a refused cut doesn't copy"
+    );
+    drop(shared);
 }
