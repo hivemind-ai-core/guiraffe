@@ -108,8 +108,7 @@ fn ide(window: &mut Window, cx: &mut Context<Workspace>) -> Workspace {
             dock::panel_handle(ide_panel(name, cx))
         });
     }
-    let (area, skin) = dock::new_dock("ide", VERSION, window, cx);
-    skin.set_toggle_button_visible(true, cx);
+    let (area, overlay) = dock::new_dock("ide", VERSION, window, cx);
     let saved = cx
         .try_global::<LayoutStore>()
         .and_then(|store| dock::load(store, KEY, VERSION).ok().flatten());
@@ -142,7 +141,7 @@ fn ide(window: &mut Window, cx: &mut Context<Workspace>) -> Workspace {
     });
     Workspace {
         content: area.into(),
-        drag_overlay: None,
+        drag_overlay: Some(overlay.into()),
         log: vec![
             if restored {
                 "Layout restored"

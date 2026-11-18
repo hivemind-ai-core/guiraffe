@@ -234,10 +234,10 @@ impl SortableBoard {
     }
 }
 
-struct Preview {
-    label: SharedString,
-    position: Point<Pixels>,
-    origin: Rc<Cell<Point<Pixels>>>,
+pub(crate) struct Preview {
+    pub(crate) label: SharedString,
+    pub(crate) position: Point<Pixels>,
+    pub(crate) origin: Rc<Cell<Point<Pixels>>>,
 }
 
 impl Render for Preview {
@@ -257,9 +257,9 @@ impl Render for Preview {
     }
 }
 
-struct DropOutline {
-    bounds: Option<Bounds<Pixels>>,
-    origin: Rc<Cell<Point<Pixels>>>,
+pub(crate) struct DropOutline {
+    pub(crate) bounds: Option<Bounds<Pixels>>,
+    pub(crate) origin: Rc<Cell<Point<Pixels>>>,
 }
 
 impl Render for DropOutline {

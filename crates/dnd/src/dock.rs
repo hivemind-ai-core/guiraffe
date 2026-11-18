@@ -1,5 +1,8 @@
 //! In-window docking using Kit's tab groups, split panes and drag overlays.
 
+mod managed;
+pub use managed::DockDragOverlay;
+
 use gpui_kit::{App, Entity, SharedString, Subscription, Window};
 use guiraffe_layout::LayoutStore;
 
@@ -8,20 +11,38 @@ pub use gpui_kit::component::dock::{
     PanelEvent, PanelRegistry, PanelState, panel_handle, register_panel,
 };
 
-/// Construct a dock with the Kit skin and GUIraffe's shared theme bridge.
+/// Construct a dock and its managed pointer-gesture overlay.
+///
+/// Mount the overlay beside the cached dock host in the same window.
 pub fn new_dock(
     id: impl Into<SharedString>,
     version: usize,
     window: &mut Window,
     cx: &mut App,
+) -> (Entity<DockArea>, Entity<DockDragOverlay>) {
+    init(cx);
+    managed::new(id.into(), version, window, cx)
+}
+
+/// Opt in to Kit's native drag and dock chrome.
+
+pub fn new_native_dock(
+    id: impl Into<SharedString>,
+    version: usize,
+    window: &mut Window,
+    cx: &mut App,
 ) -> (Entity<DockArea>, std::rc::Rc<DockSkin>) {
+    init(cx);
+    DockSkin::dock_area(id, Some(version), window, cx)
+}
+
+fn init(cx: &mut App) {
     if !cx.has_global::<guiraffe_core::GuiraffeTheme>() {
         guiraffe_core::init(cx);
     }
     if !cx.has_global::<LayoutStore>() {
         cx.set_global(LayoutStore::in_memory());
     }
-    DockSkin::dock_area(id, Some(version), window, cx)
 }
 
 /// Store a snapshot under an application-owned layout key.
