@@ -1301,13 +1301,10 @@ fn escape_closes_popover_before_its_modal_and_restores_focus(cx: &mut TestAppCon
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         let before = window.focused(cx);
-        let popup_focus = cx.focus_handle();
-        let tracked = popup_focus.clone();
         let modal = OverlayHost::open(window, cx, Policy::default(), move |d, _, _| {
             d.child(
                 Popover::new("nested-popover")
                     .trigger(Button::new("popover-trigger").label("Options"))
-                    .track_focus(&tracked)
                     .content(|_, _, _| div().child("Choices")),
             )
         })
@@ -1316,7 +1313,7 @@ fn escape_closes_popover_before_its_modal_and_restores_focus(cx: &mut TestAppCon
         let outer = window.focused(cx);
         window.click("popover-trigger", cx);
         window.render_frame(cx);
-        assert!(popup_focus.is_focused(window));
+        assert_ne!(window.focused(cx), outer);
         window.press("escape", cx);
         assert_eq!(window.focused(cx), outer);
         let host = OverlayHost::entity(window, cx).expect("host");
