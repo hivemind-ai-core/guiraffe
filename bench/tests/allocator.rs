@@ -79,13 +79,21 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
     use guiraffe_bench::suites::{
         code_frame_10m, code_frame_100k, datagrid_frame_10m, datagrid_frame_100k,
     };
-    for (name, small, large) in [
+    for (name, small, large, allocation_budget, byte_budget) in [
         (
             "datagrid",
             datagrid_frame_100k as fn(),
             datagrid_frame_10m as fn(),
+            15_000,
+            7 * 1024 * 1024,
         ),
-        ("code", code_frame_100k as fn(), code_frame_10m as fn()),
+        (
+            "code",
+            code_frame_100k as fn(),
+            code_frame_10m as fn(),
+            160,
+            192 * 1024,
+        ),
     ] {
         small();
         large();
@@ -97,6 +105,12 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
             large_counts.bytes <= small_counts.bytes + 4096,
             "{name} requested bytes grew with source size"
         );
+        for counts in [small_counts, large_counts] {
+            assert!(
+                counts.allocations <= allocation_budget && counts.bytes <= byte_budget,
+                "{name} mounted frame allocation budget exceeded: {counts:?}"
+            );
+        }
     }
     Ok(())
 }
