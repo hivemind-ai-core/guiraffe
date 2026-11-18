@@ -130,6 +130,50 @@ fn flow_graph() -> &'static guiraffe_flow_core::Graph {
         }
     })
 }
+fn flow_layout_fixture(nodes: u64) -> guiraffe_flow_core::Graph {
+    use guiraffe_flow_core::{Edge, Graph, Node, Point};
+    const WIDTH: u64 = 100;
+    let graph = Graph::from_parts(
+        (0..nodes).map(|id| Node::new(id, "node", Point::default())),
+        (0..nodes - WIDTH).flat_map(|id| {
+            let rank = id / WIDTH + 1;
+            let slot = id % WIDTH;
+            [
+                Edge::new(id * 2 + 1, id, rank * WIDTH + (WIDTH - 1 - slot)),
+                Edge::new(id * 2 + 2, id, rank * WIDTH + (slot + 1) % WIDTH),
+            ]
+        }),
+    );
+    match graph {
+        Ok(graph) => graph,
+        Err(error) => panic!("flow layout fixture rejected: {error}"),
+    }
+}
+
+fn flow_layout(graph: &guiraffe_flow_core::Graph) {
+    use guiraffe_flow_core::{AutoLayout, LayoutCancellation, LayoutEngine, LayoutOptions};
+    match AutoLayout::Layered.layout(
+        black_box(graph),
+        &LayoutOptions::default(),
+        &LayoutCancellation::default(),
+    ) {
+        Ok(result) => {
+            black_box(result);
+        }
+        Err(error) => panic!("flow layout regression: {error}"),
+    }
+}
+
+pub fn flow_layout_5k() {
+    static GRAPH: std::sync::OnceLock<guiraffe_flow_core::Graph> = std::sync::OnceLock::new();
+    flow_layout(GRAPH.get_or_init(|| flow_layout_fixture(5_000)));
+}
+
+pub fn flow_layout_50k() {
+    static GRAPH: std::sync::OnceLock<guiraffe_flow_core::Graph> = std::sync::OnceLock::new();
+    flow_layout(GRAPH.get_or_init(|| flow_layout_fixture(50_000)));
+}
+
 fn flow_editor(f: impl FnOnce(&mut guiraffe_flow_core::Editor)) {
     thread_local! {static EDITOR:std::cell::RefCell<Option<guiraffe_flow_core::Editor>>=const {std::cell::RefCell::new(None)};}
     EDITOR.with(|cell| {
@@ -370,6 +414,8 @@ macro_rules! with_suites {
             (datagrid_scroll_million, "datagrid-scroll-1m"),
             (datagrid_sort_million, "datagrid-sort-1m"),
             (flow_build,"flow-build-5k"),
+            (flow_layout_5k,"flow-layout-5k"),
+            (flow_layout_50k,"flow-layout-50k"),
             (flow_query,"flow-query-5k"),
             (flow_move,"flow-move-5k"),
             (flow_delete_child,"flow-delete-child-5k"),
