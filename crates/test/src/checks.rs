@@ -94,6 +94,7 @@ pub fn run<T: crate::inspect::InspectTarget>(
     findings.extend(contrast(theme));
     findings.extend(unlabeled(&index));
     findings.extend(focus_reachable(&index, &a11y));
+    findings.extend(focus_traps(&a11y));
     findings.extend(tab_order(&a11y));
     findings.extend(layout_jumps(driver));
     CheckReport { findings }
@@ -205,13 +206,12 @@ fn focus_reachable(index: &NodeIndex, a11y: &A11yReport) -> Vec<Finding> {
             });
         }
     }
-    // A trap is a node the Tab order visits twice, or a focusable node that
-    // the order skips over and comes back to.
+    // A cycle is a node the Tab order visits twice.
     let mut seen = Vec::new();
     for id in &a11y.focus_order {
         if seen.contains(id) {
             findings.push(Finding {
-                check: "focus-trap".into(),
+                check: "focus-cycle".into(),
                 node: Some(id.clone()),
                 severity: Severity::Error,
                 message: "the Tab order visits the node twice".into(),
@@ -219,6 +219,39 @@ fn focus_reachable(index: &NodeIndex, a11y: &A11yReport) -> Vec<Finding> {
         } else {
             seen.push(id.clone());
         }
+    }
+    findings
+}
+
+/// The nodes the Tab key cannot leave.
+///
+/// A node that keeps the focus while other focusable nodes are still to be
+/// visited is a trap: the keyboard cannot get out of it.
+fn focus_traps(a11y: &A11yReport) -> Vec<Finding> {
+    let focusable = a11y
+        .nodes
+        .iter()
+        .filter(|node| node.a11y.focusable)
+        .count();
+    let mut visited: Vec<&NodeId> = Vec::new();
+    let mut findings = Vec::new();
+    for id in &a11y.tab_walk {
+        if visited.contains(&id) {
+            if visited.len() < focusable
+                && !findings
+                    .iter()
+                    .any(|finding: &Finding| finding.node.as_ref() == Some(id))
+            {
+                findings.push(Finding {
+                    check: "focus-trap".into(),
+                    node: Some(id.clone()),
+                    severity: Severity::Error,
+                    message: "the Tab key cannot leave the node".into(),
+                });
+            }
+            continue;
+        }
+        visited.push(id);
     }
     findings
 }

@@ -355,6 +355,11 @@ pub struct A11yReport {
     pub nodes: Vec<NodeFacts>,
     /// The ids of the focusable nodes, in the order the Tab key visits them.
     pub focus_order: Vec<NodeId>,
+    /// The nodes the Tab key visited, with the repeats.
+    ///
+    /// A Tab key that stays on a node is a focus trap: the focus cannot
+    /// leave it.
+    pub tab_walk: Vec<NodeId>,
 }
 
 impl A11yReport {
@@ -568,8 +573,12 @@ impl<'a, T: InspectTarget> Inspector<'a, T> {
     pub fn a11y(&mut self) -> A11yReport {
         let index = self.nodes();
         let nodes = index.nodes().to_vec();
-        let focus_order = focus_order(self.target, &nodes);
-        A11yReport { nodes, focus_order }
+        let (focus_order, tab_walk) = tab_walk(self.target, &nodes);
+        A11yReport {
+            nodes,
+            focus_order,
+            tab_walk,
+        }
     }
 
     /// The resolved tokens of the app and the context they came from.
@@ -691,15 +700,22 @@ pub fn a11y_report<T: InspectTarget>(target: &mut T) -> A11yReport {
         .with_window(|window, _| NodeIndex::collect(window))
         .unwrap_or_default();
     let nodes = index.nodes().to_vec();
-    let focus_order = focus_order(target, &nodes);
-    A11yReport { nodes, focus_order }
+    let (focus_order, tab_walk) = tab_walk(target, &nodes);
+    A11yReport {
+        nodes,
+        focus_order,
+        tab_walk,
+    }
 }
 
-/// The order the Tab key visits the focusable nodes in.
-fn focus_order<T: InspectTarget>(target: &mut T, nodes: &[NodeFacts]) -> Vec<NodeId> {
+/// The order the Tab key visits the focusable nodes in, and the walk itself.
+///
+/// The walk keeps the repeats: a Tab key that stays on a node is a focus
+/// trap, and the order alone would not show it.
+fn tab_walk<T: InspectTarget>(target: &mut T, nodes: &[NodeFacts]) -> (Vec<NodeId>, Vec<NodeId>) {
     let mut order: Vec<NodeId> = Vec::new();
-    let mut current = focused_node(target, nodes);
-    for _ in 0..nodes.len().saturating_add(2) {
+    let mut walk: Vec<NodeId> = Vec::new();
+    for _ in 0..nodes.len().saturating_add(3) {
         target.with_window(|window, cx| {
             window.focus_next(cx);
         });
@@ -707,13 +723,12 @@ fn focus_order<T: InspectTarget>(target: &mut T, nodes: &[NodeFacts]) -> Vec<Nod
         let Some(next) = focused_node(target, nodes) else {
             break;
         };
-        if Some(&next) == current.as_ref() || order.contains(&next) {
-            break;
+        walk.push(next.clone());
+        if !order.contains(&next) {
+            order.push(next);
         }
-        order.push(next.clone());
-        current = Some(next);
     }
-    order
+    (order, walk)
 }
 
 /// The node that has the keyboard focus now.
