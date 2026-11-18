@@ -107,3 +107,90 @@ mod tests {
         assert_eq!(destination, [5, 2, 4, 6]);
     }
 }
+
+// A scope disambiguates collections in the same window and stale indices are
+// rejected using the source collection's revision.
+#[derive(Clone)]
+pub struct Selection {
+    pub scope: gpui_kit::EntityId,
+    pub list: usize,
+    pub revision: u64,
+    pub indices: Vec<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SortEvent {
+    pub source: usize,
+    pub destination: usize,
+    pub reorder: Reorder,
+}
+
+/// State shared by list, grid, and tab presentations.
+pub struct Sortable<T> {
+    lists: Vec<Vec<T>>,
+    revision: u64,
+}
+
+impl<T> Sortable<T> {
+    pub fn new(lists: Vec<Vec<T>>) -> Self {
+        Self { lists, revision: 0 }
+    }
+
+    pub fn lists(&self) -> &[Vec<T>] {
+        &self.lists
+    }
+
+    pub fn selection(
+        &self,
+        scope: gpui_kit::EntityId,
+        list: usize,
+        indices: &[usize],
+    ) -> Option<Selection> {
+        Some(Selection {
+            scope,
+            list,
+            revision: self.revision,
+            indices: selection(indices, self.lists.get(list)?.len())?,
+        })
+    }
+
+    pub fn accepts(
+        &self,
+        scope: gpui_kit::EntityId,
+        drag: &Selection,
+        destination: usize,
+        gap: usize,
+    ) -> bool {
+        drag.scope == scope
+            && drag.revision == self.revision
+            && self
+                .lists
+                .get(destination)
+                .is_some_and(|items| gap <= items.len())
+    }
+
+    pub fn drop(
+        &mut self,
+        scope: gpui_kit::EntityId,
+        drag: &Selection,
+        destination: usize,
+        gap: usize,
+    ) -> Option<SortEvent> {
+        if !self.accepts(scope, drag, destination, gap) {
+            return None;
+        }
+        let source = drag.list;
+        let reorder = if source == destination {
+            reorder(self.lists.get_mut(source)?, &drag.indices, gap)
+        } else {
+            let [source, destination] = self.lists.get_disjoint_mut([source, destination]).ok()?;
+            transfer(source, destination, &drag.indices, gap)
+        }?;
+        self.revision = self.revision.wrapping_add(1);
+        Some(SortEvent {
+            source,
+            destination,
+            reorder,
+        })
+    }
+}

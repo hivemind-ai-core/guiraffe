@@ -1,3 +1,6 @@
+mod board;
+pub use board::{Card, SortableBoard};
+pub mod dock;
 pub mod sortable;
 
 use gpui_kit::{
@@ -198,4 +201,43 @@ impl Default for KeyboardDrag {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Exposes a status message as a polite live region. Keep the element ID
+/// stable as the text changes and give the element an accessibility role.
+pub fn announce<E: StatefulInteractiveElement>(element: E, message: gpui_kit::SharedString) -> E {
+    element.a11y_synthetic_children(move |tree| {
+        let node = tree.parent_node();
+        node.set_live(accesskit::Live::Polite);
+        node.set_label(message.to_string());
+    })
+}
+
+/// Scroll a vertical viewport during a matching drag. Put this on the
+/// scrollable element itself, with the same handle passed to track_scroll.
+pub fn auto_scroll_vertical<T: 'static, E: InteractiveElement>(
+    element: E,
+    scroll: gpui_kit::ScrollHandle,
+    edge: Pixels,
+    speed: Pixels,
+) -> E {
+    element.on_drag_move::<Drag<T>>(move |event, window, _| {
+        let pointer = event.event.position;
+        if !event.bounds.contains(&pointer) {
+            return;
+        }
+        let mut offset = scroll.offset();
+        let amount = edge_scroll(
+            pointer.y,
+            event.bounds.origin.y,
+            event.bounds.bottom_right().y,
+            edge,
+            speed,
+        );
+        if amount != px(0.) {
+            offset.y -= amount;
+            scroll.set_offset(offset);
+            window.refresh();
+        }
+    })
 }

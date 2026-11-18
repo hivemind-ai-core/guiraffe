@@ -3496,10 +3496,10 @@ dependencies = [
 name = "guiraffe-dnd"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-layout",
- "serde",
  "serde_json",
 ]
 
