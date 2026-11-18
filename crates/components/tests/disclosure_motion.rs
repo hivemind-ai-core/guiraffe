@@ -103,6 +103,27 @@ fn expanding_list_opens_and_returns_siblings_to_their_original_bounds(cx: &mut T
         *events.borrow(),
         [ExpandingListChange(Some(0)), ExpandingListChange(None)]
     );
+
+    window.update(|_, cx| {
+        guiraffe_motion::MotionPrefs::set(
+            guiraffe_motion::MotionPrefs {
+                reduced: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        control.update(cx, |control, cx| control.set_focusable(Some(true), cx));
+    });
+    redraw(window);
+    window.update(|window, cx| window.focus_next(cx));
+    tap_enter(window);
+    redraw(window);
+    assert_eq!(window.update(|_, cx| control.read(cx).open()), Some(0));
+    assert_eq!(window.debug_bounds("expanding-trigger-1"), Some(expanded));
+    window.simulate_keystrokes("escape");
+    redraw(window);
+    assert_eq!(window.update(|_, cx| control.read(cx).open()), None);
+    assert_eq!(window.debug_bounds("expanding-trigger-1"), Some(second));
 }
 
 #[gpui_kit::test]
