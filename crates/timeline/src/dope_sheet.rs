@@ -342,6 +342,8 @@ impl Render for DopeSheet {
                 }
             }
         }
+        // Small scenes retain per-key rasterization and its original coverage.
+        let batch_diamonds = keys.len() > 512;
         let body = self.body.clone();
         let owner = cx.entity_id();
         let key_theme = theme.clone();
@@ -673,7 +675,8 @@ impl Render for DopeSheet {
                                             let cy = *y + f64::from(ROW_H) / 2.;
                                             let radius =
                                                 if *selected || *summary { 6. } else { 4. };
-                                            if *shape == KeyShape::Diamond
+                                            if batch_diamonds
+                                                && *shape == KeyShape::Diamond
                                                 && hold.is_none()
                                                 && !(*locked && lock_style == LockStyle::Hatched)
                                             {
