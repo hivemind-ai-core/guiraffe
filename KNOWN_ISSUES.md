@@ -24,7 +24,9 @@ dirty ancestor. The tree handlers do not call `Window::refresh()`.
 
 A child control notified with `App::notify(child.entity_id())` takes the same
 path. The `notifying_only_a_cached_child` test strips away widget state,
-focus changes, and input dispatch to exercise that path directly. DataGrid
+focus changes, and input dispatch to exercise that path directly. Running the
+repro against upstream GPUI increased both the child and host render counts
+from one to two. DataGrid
 uses shared state with targeted row/view notifications, and CodeViewer uses
 targeted text/overlay notifications. Their strict render-count assertions
 also apply on gpui-fast. TreeList and PropertyGrid retain a strict
