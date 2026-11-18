@@ -191,7 +191,17 @@ pub(super) fn positions(
         depth += thickness + rank_gap;
         radius += diameter / 2.;
     }
-    if options.direction.reversed() && !matches!(engine, AutoLayout::Radial) {
+    if matches!(engine, AutoLayout::Radial) {
+        let origin = positions
+            .iter()
+            .copied()
+            .fold(Point::default(), |min, pos| {
+                Point::new(min.x.min(pos.x), min.y.min(pos.y))
+            });
+        for position in &mut positions {
+            *position = *position - origin;
+        }
+    } else if options.direction.reversed() {
         let shift = (depth - rank_gap).max(0.);
         let offset = if horizontal {
             Point::new(shift, 0.)
