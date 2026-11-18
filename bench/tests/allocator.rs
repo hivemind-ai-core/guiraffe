@@ -185,3 +185,15 @@ fn chart_scene_compile_allocations_are_bounded_by_the_viewport_not_the_data() ->
     );
     Ok(())
 }
+
+// The budget is zero allocations for warmed CPU layout traversal at overview and
+// detail zoom. Native painting shapes at most one label per visible segment wider
+// than 32 px. GPU scene storage and the text shaper are outside this counter.
+#[test]
+fn warmed_flamegraph_million_frame_traversal_allocates_nothing() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::flamegraph_million;
+    flamegraph_million();
+    let (_, counts) = count_allocations(flamegraph_million)?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}
