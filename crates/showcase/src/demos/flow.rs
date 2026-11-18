@@ -34,7 +34,7 @@ pub fn entries() -> Vec<Entry> {
             krate: "flow",
             name: "Flow auto-layout",
             summary: "Arrange a graph with layered, tree, radial, grid or force-directed layout.",
-            covers: &[],
+            covers: &["FlowState", "FlowCanvas"],
             demo: auto_layout,
         },
     ]
@@ -164,7 +164,7 @@ struct LayoutDemo {
 
 fn auto_layout(window: &mut Window, cx: &mut App) -> AnyView {
     playground_with(
-        "Flow auto-layout",
+        "Preview",
         &[
             Knob::new("Engine", &["Layered", "Tree", "Radial", "Grid", "Force"]),
             Knob::new(
@@ -183,7 +183,11 @@ fn auto_layout(window: &mut Window, cx: &mut App) -> AnyView {
         ],
         |_, cx| LayoutDemo {
             state: initial_layout(cx),
-            applied: Applied::default(),
+            applied: {
+                let applied = Applied::default();
+                applied.changed(&KnobValues(vec![0, 0, 1, 0, 0, 1]));
+                applied
+            },
         },
         |demo, values, _, cx| {
             let Some(state) = &demo.state else {
@@ -243,7 +247,7 @@ fn auto_layout(window: &mut Window, cx: &mut App) -> AnyView {
                 state.update(cx, |state, cx| state.arrange(engine, options, duration, cx));
             }
             div()
-                .h(px(420.))
+                .h(px(300.))
                 .overflow_hidden()
                 .child(FlowCanvas::new(state))
                 .into_any_element()
@@ -254,7 +258,14 @@ fn auto_layout(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn initial_layout(cx: &mut App) -> Option<Entity<FlowState>> {
-    let graph = graph().ok()?;
+    let mut graph = graph().ok()?;
+    let ids: Vec<_> = graph.edges.keys().copied().collect();
+    for id in ids {
+        if let Some(edge) = graph.edges.get_mut(&id) {
+            edge.label.clear();
+            edge.animated = false;
+        }
+    }
     let result = AutoLayout::Layered
         .layout(
             &graph,
@@ -264,5 +275,10 @@ fn initial_layout(cx: &mut App) -> Option<Entity<FlowState>> {
         .ok()?;
     let mut editor = guiraffe_flow::core::Editor::new(graph).ok()?;
     editor.apply_layout(&result).ok()?;
-    Some(cx.new(|cx| FlowState::from_editor(editor, cx)))
+    Some(cx.new(|cx| {
+        FlowState::from_editor(editor, cx).options(FlowOptions {
+            minimap: false,
+            ..FlowOptions::default()
+        })
+    }))
 }
