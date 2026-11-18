@@ -63,12 +63,40 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
                 // budgeted below (bounded by the viewport, independent of data size). Repaints
                 // reuse the cached scene.
                 && !s.name.starts_with("chart-")
+                && !s.name.contains("-frame-")
         })
     {
         // Immutable code fixtures, like flow fixtures, are initialized during warmup.
         (suite.run)();
         let (_, counts) = count_allocations(suite.run)?;
         assert_eq!(counts.allocations, 0, "{} allocates", suite.name);
+    }
+    Ok(())
+}
+
+#[test]
+fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{
+        code_frame_10m, code_frame_100k, datagrid_frame_10m, datagrid_frame_100k,
+    };
+    for (name, small, large) in [
+        (
+            "datagrid",
+            datagrid_frame_100k as fn(),
+            datagrid_frame_10m as fn(),
+        ),
+        ("code", code_frame_100k as fn(), code_frame_10m as fn()),
+    ] {
+        small();
+        large();
+        let (_, small_counts) = count_allocations(small)?;
+        let (_, large_counts) = count_allocations(large)?;
+        eprintln!("{name}: 100k {small_counts:?}, 10M {large_counts:?}");
+        assert_eq!(small_counts.allocations, large_counts.allocations, "{name}");
+        assert!(
+            large_counts.bytes <= small_counts.bytes + 4096,
+            "{name} requested bytes grew with source size"
+        );
     }
     Ok(())
 }

@@ -401,6 +401,33 @@ pub fn chart_scatter_hundred_thousand() {
     black_box(chart.scene(1200., 440., chart.x_domain(), &Default::default()));
 }
 
+// Mounted DataGrid and CodeViewer scroll-and-draw workloads.
+macro_rules! production_frame_suite {
+    ($name:ident, $component:ident, $rows:literal) => {
+        pub fn $name() {
+            use crate::production_frame::{Component, Frame};
+            thread_local! {
+                static FRAME: std::cell::RefCell<anyhow::Result<Frame>> =
+                    std::cell::RefCell::new(Frame::new(Component::$component, $rows));
+            }
+            FRAME.with_borrow_mut(|frame| {
+                let result = match frame {
+                    Ok(frame) => frame.draw(),
+                    Err(error) => panic!("production frame setup failed: {error:#}"),
+                };
+                if let Err(error) = result {
+                    panic!("production frame draw failed: {error:#}");
+                }
+            });
+        }
+    };
+}
+
+production_frame_suite!(datagrid_frame_100k, Grid, 100_000);
+production_frame_suite!(datagrid_frame_10m, Grid, 10_000_000);
+production_frame_suite!(code_frame_100k, Code, 100_000);
+production_frame_suite!(code_frame_10m, Code, 10_000_000);
+
 /// Shared registration table consumed by the CLI, criterion and iai-callgrind.
 /// Add workloads here once; each tool expands its own registration from this list.
 #[macro_export]
@@ -417,6 +444,11 @@ macro_rules! with_suites {
             (datagrid_scroll_million, "datagrid-scroll-1m"),
             (datagrid_scroll_ten_million, "datagrid-scroll-10m"),
             (datagrid_sort_million, "datagrid-sort-1m"),
+            // Mounted DataGrid and CodeViewer draws.
+            (datagrid_frame_100k, "datagrid-frame-100k"),
+            (datagrid_frame_10m, "datagrid-frame-10m"),
+            (code_frame_100k, "code-frame-100k"),
+            (code_frame_10m, "code-frame-10m"),
             (flow_build,"flow-build-5k"),
             (flow_query,"flow-query-5k"),
             (flow_move,"flow-move-5k"),

@@ -129,6 +129,33 @@ fn real_keyboard_selection_copy_and_folding(cx: &mut TestAppContext) {
     assert_eq!(code.stats().last_visible_rows, before.last_visible_rows);
 }
 #[gpui_kit::test]
+fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt;
+
+    let mut measure = |line_count: usize| {
+        let (code, _, vcx) = mount(cx, Arc::from("x\n".repeat(line_count - 1) + "x"));
+        let before = code.stats();
+        vcx.update(|window, cx| {
+            code.scroll_to_line(42_000, cx);
+            window.render_frame(cx);
+        });
+        let after = code.stats();
+        assert!(code.anchor_in_window(Position::new(42_000, 0)).is_some());
+        (
+            after.shaped_lines - before.shaped_lines,
+            after.cache_hits - before.cache_hits,
+            after.last_visible_rows,
+        )
+    };
+
+    let smaller = measure(100_000);
+    let larger = measure(10_000_000);
+    assert!(smaller.0 > 0);
+    assert_eq!(smaller, larger);
+    assert!(larger.2 < 100);
+}
+
+#[gpui_kit::test]
 fn ten_million_line_document_shapes_only_a_viewport_and_reuses_cache(cx: &mut TestAppContext) {
     use std::fmt::Write;
     let mut source = String::with_capacity(20_000_000);

@@ -96,6 +96,47 @@ fn shift() -> Modifiers {
 }
 
 #[gpui_kit::test]
+fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut measure = |row_count| {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let source_reads = reads.clone();
+        let (grid, _, _, vcx) = mount(cx, |cx| {
+            let columns = columns(50);
+            GridHandle::new(
+                FnSource::new(row_count, move |row, column| {
+                    source_reads.fetch_add(1, Ordering::Relaxed);
+                    CellRef::Int((row * 100 + column) as i64)
+                }),
+                columns,
+                cx,
+            )
+        });
+        let before = grid.stats();
+        reads.store(0, Ordering::Relaxed);
+        vcx.update(|window, cx| {
+            grid.scroll_to_row(42_000, cx);
+            window.render_frame(cx);
+        });
+        let after = grid.stats();
+        assert!(grid.visible_rows().contains(&42_000));
+        (
+            reads.load(Ordering::Relaxed),
+            after.row_renders - before.row_renders,
+            after.cells_built - before.cells_built,
+            after.pool,
+        )
+    };
+
+    let smaller = measure(100_000);
+    let larger = measure(10_000_000);
+    assert!(smaller.0 > 0);
+    assert_eq!(smaller, larger);
+    assert!(larger.3 < 100);
+}
+
+#[gpui_kit::test]
 fn scrolling_ten_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
     let (grid, _, _, vcx) = mount(cx, |cx| {
         GridHandle::new(

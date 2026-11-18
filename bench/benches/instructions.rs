@@ -38,6 +38,16 @@ macro_rules! define_instruction {
             guiraffe_bench::suites::chart_scatter_hundred_thousand();
         }
     };
+    (datagrid_frame_100k) => { define_instruction!(mounted datagrid_frame_100k); };
+    (datagrid_frame_10m) => { define_instruction!(mounted datagrid_frame_10m); };
+    (code_frame_100k) => { define_instruction!(mounted code_frame_100k); };
+    (code_frame_10m) => { define_instruction!(mounted code_frame_10m); };
+    (mounted $function:ident) => {
+        #[library_benchmark(setup = guiraffe_bench::suites::$function)]
+        fn $function(_: ()) {
+            guiraffe_bench::suites::$function();
+        }
+    };
     ($function:ident) => {
         #[library_benchmark]
         fn $function() {
