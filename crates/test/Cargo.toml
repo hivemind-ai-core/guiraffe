@@ -19,12 +19,25 @@ snapshot = ["dep:gpui-kit", "dep:anyhow", "dep:image", "dep:guiraffe-icons", "gp
 render = []
 # Layout-stability assertions (focus / hover / selected never move anything).
 layout = ["dep:gpui-kit", "gpui-kit/test-support"]
+# The in-process inspect and drive API (spec/21 §2): node ids, layout and
+# accessibility facts, the drive API, the checks and the replay.
+inspect = [
+    "dep:serde",
+    "dep:serde_json",
+    "dep:gpui-kit",
+    "dep:gpui-base",
+    "dep:guiraffe-core",
+    "gpui-kit/test-support",
+    "snapshot",
+]
 
 [dependencies]
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 gpui-kit = { workspace = true, optional = true }
+gpui-base = { workspace = true, optional = true }
+guiraffe-core = { workspace = true, optional = true }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 guiraffe-icons = { workspace = true, optional = true }
 
@@ -47,3 +60,7 @@ required-features = ["offscreen"]
 [[test]]
 name = "snapshot"
 required-features = ["snapshot"]
+
+[[test]]
+name = "inspect"
+required-features = ["inspect"]
