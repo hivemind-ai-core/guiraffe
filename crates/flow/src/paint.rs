@@ -455,6 +455,7 @@ impl Frame {
             .last()
             .zip(route.points.get(route.points.len().saturating_sub(2)))
             .map(|(tip, neighbor)| (end, *tip, *neighbor));
+        let canvas = Rect::new(0., 0., b.size.width.as_f32(), b.size.height.as_f32());
         for (marker, tip, neighbor) in start_points.into_iter().chain(end_points) {
             if marker == Marker::None {
                 continue;
@@ -462,6 +463,12 @@ impl Frame {
             let Some([left, tip, right]) = marker_triangle(tip, neighbor, self.viewport) else {
                 continue;
             };
+            let marker_bounds = Rect::between(left, tip)
+                .union(Rect::between(tip, right))
+                .expand(2. + EDGE_STROKE * self.viewport.zoom);
+            if !marker_bounds.intersects(canvas) {
+                continue;
+            }
             let mut builder = if marker == Marker::ArrowClosed {
                 PathBuilder::fill()
             } else {
