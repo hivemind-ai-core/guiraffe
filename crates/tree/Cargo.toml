@@ -1,0 +1,20 @@
+[package]
+name = "guiraffe-tree"
+description = "Virtualized tree lists and property grids for GUIraffe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+proptest = "1"
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]

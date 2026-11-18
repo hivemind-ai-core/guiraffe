@@ -33,6 +33,7 @@ guiraffe-icons = { path = "crates/icons" }
 guiraffe-timeline = { path = "crates/timeline" }
 guiraffe-charts = { path = "crates/charts" }
 guiraffe-flamegraph = { path = "crates/flamegraph" }
+guiraffe-tree = { path = "crates/tree" }
 guiraffe-datagrid = { path = "crates/datagrid" }
 guiraffe-devtools = { path = "crates/devtools" }
 gpui-kit = { version = "=0.9.1", features = ["component", "assets"] }
