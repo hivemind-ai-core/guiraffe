@@ -67,14 +67,23 @@ fn code_document() -> &'static guiraffe_code::CodeDocument {
 }
 /// 32 viewport jumps in a million-line file, reading only the visible lines and hashes.
 pub fn code_scroll_million() {
-    use guiraffe_code::{Row, RowMap, Viewport};
+    use guiraffe_code::RowMap;
     let document = code_document();
     static ROWS: std::sync::OnceLock<RowMap> = std::sync::OnceLock::new();
     let rows = ROWS.get_or_init(|| RowMap::new(document.line_count(), &[], &[]));
+    code_scroll(document, rows, 29_000);
+}
+
+fn code_scroll(
+    document: &guiraffe_code::CodeDocument,
+    rows: &guiraffe_code::RowMap,
+    stride: usize,
+) {
+    use guiraffe_code::{Row, Viewport};
     for step in 0..32 {
         let viewport = Viewport {
             x: 0.,
-            y: (step * 29_000 * 20) as f64,
+            y: (step * stride * 20) as f64,
         };
         for row in viewport.visible(rows.len(), 20., 800.) {
             if let Some(Row::Source(line)) = rows.row(row) {
@@ -83,6 +92,27 @@ pub fn code_scroll_million() {
             }
         }
     }
+}
+fn production_code_source() -> std::sync::Arc<str> {
+    static SOURCE: std::sync::OnceLock<std::sync::Arc<str>> = std::sync::OnceLock::new();
+    SOURCE
+        .get_or_init(|| "x\n".repeat(9_999_999).into())
+        .clone()
+}
+
+pub fn code_index_ten_million() {
+    black_box(guiraffe_code::CodeDocument::new(production_code_source()));
+}
+
+pub fn code_scroll_ten_million() {
+    use guiraffe_code::{CodeDocument, RowMap};
+    static FIXTURE: std::sync::OnceLock<(CodeDocument, RowMap)> = std::sync::OnceLock::new();
+    let (document, rows) = FIXTURE.get_or_init(|| {
+        let document = CodeDocument::new(production_code_source());
+        let rows = RowMap::new(document.line_count(), &[], &[]);
+        (document, rows)
+    });
+    code_scroll(document, rows, (rows.len() - 1) / 31);
 }
 /// 1,024 Arc clone/drop pairs. This does not measure worker publication or UI admission.
 pub fn code_snapshot_arc_clone() {
@@ -240,13 +270,28 @@ fn grid_fixture() -> &'static GridFixture {
 /// 32 viewport jumps (vertical and horizontal) over 1M x 50: window math, visible-column
 /// search and formatting every visible cell into a reused buffer (what a frame reads).
 pub fn datagrid_scroll_million() {
-    use guiraffe_datagrid::{GridSource, window};
     let (source, cols, layout) = grid_fixture();
+    grid_scroll(source, cols, layout, 31_250);
+}
+
+pub fn datagrid_scroll_ten_million() {
+    let (_, cols, layout) = grid_fixture();
+    let source = guiraffe_datagrid::FnSource::new(10_000_000, grid_cell as GridCellFn);
+    grid_scroll(&source, cols, layout, 322_580);
+}
+
+fn grid_scroll(
+    source: &impl guiraffe_datagrid::GridSource,
+    cols: &[guiraffe_datagrid::ColumnDef],
+    layout: &guiraffe_datagrid::ColumnLayout,
+    stride: usize,
+) {
+    use guiraffe_datagrid::window;
     thread_local! {static TEXT: std::cell::RefCell<String> = std::cell::RefCell::new(String::with_capacity(64));}
     TEXT.with(|text| {
         let mut text = text.borrow_mut();
         for step in 0..32usize {
-            let y = (step * 31_250) as f64 * 36.;
+            let y = (step * stride) as f64 * 36.;
             let x = (step * 157) as f64;
             let rows = window::visible_rows(y, 36., 720., source.row_count(), 3);
             let visible = layout.visible_center(x, 1280.);
@@ -357,6 +402,39 @@ pub fn chart_line_million() {
 pub fn chart_scatter_hundred_thousand() {
     let chart = dense_scatter();
     black_box(chart.scene(1200., 440., chart.x_domain(), &Default::default()));
+}
+
+/// Warm visible-row traversal over one million frames at overview and detail zoom.
+pub fn flamegraph_million() {
+    use guiraffe_flamegraph::{FlameLayout, Frame, FrameSource};
+    use std::sync::{Arc, OnceLock};
+
+    struct Profile;
+    impl FrameSource for Profile {
+        fn len(&self) -> usize {
+            1_000_000
+        }
+        fn frame(&self, index: usize) -> Frame<'_> {
+            Frame {
+                id: index as u64,
+                parent: None,
+                self_value: 1.,
+                total: 1.,
+                label: "frame",
+                package: "bench",
+            }
+        }
+    }
+    static LAYOUT: OnceLock<FlameLayout> = OnceLock::new();
+    let layout = LAYOUT.get_or_init(|| {
+        FlameLayout::new(Arc::new(Profile))
+            .unwrap_or_else(|error| panic!("invalid flame benchmark: {error:?}"))
+    });
+    for domain in [layout.domain(), 490_000.0..510_000.0] {
+        layout.visit_row(0, domain, 1200., None, |segment| {
+            black_box(segment);
+        });
+    }
 }
 
 fn production_flow_graph() -> &'static guiraffe_flow_core::Graph {
@@ -517,10 +595,14 @@ macro_rules! with_suites {
             (core_variants, "core-variants"),
             $(($function, $name),)*
             (chart_line_million, "chart-line-1m"),
+            (flamegraph_million, "flamegraph-1m"),
             (chart_scatter_hundred_thousand, "chart-scatter-100k"),
             (code_scroll_million,"code-scroll-1m"),
+            (code_scroll_ten_million, "code-scroll-10m"),
+            (code_index_ten_million, "code-index-10m"),
             (code_snapshot_arc_clone,"code-snapshot-arc-clone"),
             (datagrid_scroll_million, "datagrid-scroll-1m"),
+            (datagrid_scroll_ten_million, "datagrid-scroll-10m"),
             (datagrid_sort_million, "datagrid-sort-1m"),
             (flow_build,"flow-build-5k"),
             (flow_query,"flow-query-5k"),

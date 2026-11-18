@@ -221,3 +221,71 @@ fn shared_code_viewer_inside_markdown() -> Result<(), Box<dyn std::error::Error>
     }
     Ok(())
 }
+
+struct ScaleScene {
+    code: CodeHandle,
+    initial_line: Option<usize>,
+}
+
+impl Render for ScaleScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let initial_scroll = self.initial_line.take().map(|line| {
+            let code = self.code.clone();
+            gpui_kit::canvas(
+                move |_, _, cx| cx.defer(move |cx| code.scroll_to_line(line, cx)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .w(px(0.))
+            .h(px(0.))
+        });
+        div()
+            .relative()
+            .size_full()
+            .child(CodeViewer::new(&self.code))
+            .children(initial_scroll)
+    }
+}
+
+#[test]
+fn code_at_production_scale() -> Result<(), Box<dyn std::error::Error>> {
+    const LINES: usize = 10_000_000;
+    let document = Arc::new(CodeDocument::new(Arc::<str>::from(
+        "x\n".repeat(LINES - 1) + "x",
+    )));
+    let config = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for (scheme, theme) in [(Scheme::Light, "light"), (Scheme::Dark, "dark")] {
+        let mut snapshot = Snapshotter::new()?.with_setup(move |cx| {
+            apply(
+                GuiraffeTheme {
+                    scheme,
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        for (line, position) in [(0, "top"), (LINES / 2, "middle"), (LINES - 1, "end")] {
+            let document = document.clone();
+            let captured = Rc::new(RefCell::new(None));
+            let control = captured.clone();
+            let image = snapshot.render(size(px(384.), px(204.)), move |_, cx| {
+                let code = CodeHandle::new(1, document, cx);
+                *control.borrow_mut() = Some(code.clone());
+                cx.new(|_| ScaleScene {
+                    code,
+                    initial_line: Some(line),
+                })
+            })?;
+            assert!(
+                captured
+                    .borrow()
+                    .as_ref()
+                    .and_then(|code| code.anchor_in_window(Position::new(line, 0)))
+                    .is_some()
+            );
+            assert_snapshot(&format!("scale/{position}-{theme}"), &image, &config)?;
+        }
+    }
+    Ok(())
+}

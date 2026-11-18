@@ -49,6 +49,37 @@
 ## B. Mocket → GUIraffe (0.2)
 Status audit of `guiraffe import` vs Mocket's JSON; write **spec/19-mocket-interop.md** (hand-off for Mocket devs): event annotations (`on:<event> → <event-id>` with payload schema), data bindings (`bind:<prop> → <path>` incl. lists/keys, two-way for inputs, formatters), slots/components, style tokens (map to GUIraffe theme/StyleContext, not raw px), versioned schema + validation, round-trip guarantees.
 
+- **Flow auto-layout** (crates/flow-core + flow): pluggable layout engines with beautiful defaults
+  — layered/Sugiyama (directions TB/LR/BT/RL, crossing minimisation, orthogonal/spline edge
+  routing, port-aware), force-directed (stable, incremental), tree/radial, grid/compact packing;
+  **constraints**: pinned nodes (fixed position, others lay out around them), relative constraints
+  (left-of/above/aligned/same-layer/same-rank), groups/subflows laid out as units, min spacing,
+  adjacency/ordering hints, edge-crossing minimisation weight, minimal-movement relayout
+  (incremental: only affected region moves, existing layout preserved); animated transitions;
+  layout runs off the UI thread, cancellable; deterministic for tests. Evaluate ELK-style options
+  and existing crates (e.g. a Rust Sugiyama/`layout-rs`, force engines) before writing our own.
+
+- **Drag & drop framework (0.2)**, on GPUI's typed `on_drag`/`on_drag_move`/`on_drop`:
+  a `DragSource`/`DropTarget` API with typed payloads, drag previews (ghost), drop indicators,
+  auto-scroll near edges, keyboard alternative (pick up with Space, move with arrows, drop with
+  Space, Esc cancels — accessible DnD), cancel on Esc, constraints (axis lock, containment, accept
+  predicate); OS file drops (exists in Dropzone) and dragging data out to other apps where the
+  platform allows. Built on it: **Sortable** lists/grids (reorder with animated displacement,
+  multi-select drag, cross-list transfer), DataGrid row/column reordering, TreeList drag-to-reparent,
+  Kanban board, Flow node palette → canvas, timeline/curve drags already use their own; tab
+  reordering. Render isolation: dragging must not re-render unrelated views.
+- **Docking within a window (0.2)**: theme and integrate gpui-kit's `DockArea` (panels, tabbed
+  panels, splits, toggleable left/right/bottom docks) with the GUIraffe theme and §12 rules; layout
+  persistence (serialize/restore, versioned) via LayoutStore; drag tabs/panels to split or re-dock
+  inside the window with drop-zone overlays; panel registry so apps declare panels once; showcase
+  "IDE layout" example.
+
+## 0.3 candidates
+- **Multi-window docking**: pop a panel out into its own OS window, drag panels between windows,
+  dock a floating window's panel back into another window; cross-window drag sessions, window
+  layout persistence and restore across monitors/DPI; depends on the 0.2 DnD framework and
+  in-window docking, and on GPUI cross-window drag support (investigate first; may need upstream work).
+
 ## C2. Production-readiness pass (0.2; spec/23)
 Audit and harden DataGrid, Sheet, FlameGraph, Tree views, Flow, Timeline, CodeViewer, Charts,
 Markdown/Mermaid and Chat against spec/23: scale targets, ≤8 ms p99 frame work, O(viewport)

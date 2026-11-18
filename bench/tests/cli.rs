@@ -16,7 +16,8 @@ fn json_roundtrip_report_escaping_and_profile_guard() -> Result<()> {
             "--samples",
             "10",
             "--iterations",
-            "20",
+            // Validate the JSON contract for every suite, including scale recomputes.
+            "1",
             "--notes",
             "heavily loaded <script> & host",
             "--output",

@@ -59,6 +59,7 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
                 && !matches!(s.name, "timeline-box-select-100k" | "timeline-draw-bars-100k")
                 && !s.name.starts_with("data-ui-")
                 && s.name != "datagrid-sort-1m"
+                && s.name != "code-index-10m"
                 // Compiling a chart scene for a new viewport builds its output geometry; it is
                 // budgeted below (bounded by the viewport, independent of data size). Repaints
                 // reuse the cached scene.
@@ -150,6 +151,42 @@ fn datagrid_sort_allocates_only_the_permutation() -> anyhow::Result<()> {
 }
 
 #[test]
+fn code_document_index_allocations_are_bounded() -> anyhow::Result<()> {
+    // Warm the shared source before measuring only index construction.
+    guiraffe_bench::suites::code_index_ten_million();
+    let (_, counts) = count_allocations(guiraffe_bench::suites::code_index_ten_million)?;
+    let lines = 10_000_000;
+    let index_bytes = lines * (size_of::<u64>() + size_of::<usize>());
+    assert_eq!(counts.allocations, 2, "{counts:?}");
+    assert_eq!(counts.bytes, index_bytes as u64, "{counts:?}");
+    Ok(())
+}
+
+#[test]
+fn grid_permutation_and_inverse_stay_within_row_budget() -> anyhow::Result<()> {
+    use guiraffe_datagrid::{
+        CellRef, FnSource,
+        order::{FilterSpec, RowOrder, compute_order},
+    };
+    use std::sync::{Arc, atomic::AtomicBool};
+    let rows = 1_000_000;
+    let source = FnSource::new(rows, |row, _| CellRef::Int(row as i64));
+    let filter = FilterSpec {
+        source_col: 0,
+        pred: Arc::new(|_| true),
+    };
+    let order = compute_order(&source, &[filter], &[], &AtomicBool::new(false))
+        .map_err(|_| anyhow::anyhow!("unexpected cancellation"))?;
+    let RowOrder::Indices(indices) = &order else {
+        anyhow::bail!("filtered row order must store a permutation");
+    };
+    let (inverse, counts) = count_allocations(|| order.inverse(rows))?;
+    assert_eq!(inverse.view_row(rows - 1), Some(rows - 1));
+    assert!(std::mem::size_of_val(indices.as_ref()) as u64 + counts.bytes <= 16 * rows as u64);
+    Ok(())
+}
+
+#[test]
 fn one_item_splice_shares_an_immutable_large_list_snapshot() -> anyhow::Result<()> {
     use guiraffe_ui::{PatchBuf, SlotId, SlotTable, Value};
     use std::sync::Arc;
@@ -206,6 +243,18 @@ fn chart_scene_compile_allocations_are_bounded_by_the_viewport_not_the_data() ->
         "chart-scatter-100k allocates {} (> {BUDGET})",
         scatter.allocations
     );
+    Ok(())
+}
+
+// The budget is zero allocations for warmed CPU layout traversal at overview and
+// detail zoom. Native painting shapes at most one label per visible segment wider
+// than 32 px. GPU scene storage and the text shaper are outside this counter.
+#[test]
+fn warmed_flamegraph_million_frame_traversal_allocates_nothing() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::flamegraph_million;
+    flamegraph_million();
+    let (_, counts) = count_allocations(flamegraph_million)?;
+    assert_eq!(counts.allocations, 0);
     Ok(())
 }
 

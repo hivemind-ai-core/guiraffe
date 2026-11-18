@@ -3373,6 +3373,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
+ "guiraffe-flamegraph",
  "guiraffe-flow",
  "guiraffe-flow-core",
  "guiraffe-timeline",
@@ -3463,6 +3464,7 @@ dependencies = [
  "guiraffe-motion",
  "guiraffe-test",
  "image",
+ "proptest",
 ]
 
 [[package]]
@@ -3492,6 +3494,15 @@ dependencies = [
  "guiraffe-state",
  "guiraffe-test",
  "serde_json",
+]
+
+[[package]]
+name = "guiraffe-flamegraph"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "proptest",
 ]
 
 [[package]]
@@ -3637,6 +3648,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
+ "guiraffe-flamegraph",
  "guiraffe-flow",
  "guiraffe-icons",
  "guiraffe-inputs",
@@ -3646,6 +3658,7 @@ dependencies = [
  "guiraffe-overlays",
  "guiraffe-test",
  "guiraffe-timeline",
+ "guiraffe-tree",
  "guiraffe-ui",
  "jsonschema",
  "serde_json",
@@ -3679,6 +3692,15 @@ dependencies = [
  "guiraffe-core",
  "guiraffe-test",
  "image",
+ "proptest",
+]
+
+[[package]]
+name = "guiraffe-tree"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
  "proptest",
 ]
 
