@@ -12,6 +12,7 @@ use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 struct KitchenSink {
     segmented: gpui_kit::Entity<SegmentedControl>,
     loaders: [gpui_kit::Entity<Loader>; 3],
+    spoiler: gpui_kit::Entity<Spoiler>,
 }
 
 impl Render for KitchenSink {
@@ -62,6 +63,7 @@ impl Render for KitchenSink {
                     .child(self.loaders[1].clone())
                     .child(self.loaders[2].clone()),
             )
+            .child(self.spoiler.clone())
             .child(
                 Timeline::new([
                     TimelineItem::new("Created").description("2 hours ago"),
@@ -109,7 +111,7 @@ fn render(scheme: Scheme) -> image::RgbaImage {
                 cx,
             );
         });
-    snap.render(size(px(560.), px(820.)), |_, cx| {
+    snap.render(size(px(560.), px(980.)), |_, cx| {
         let segmented = SegmentedControl::new(["Preview", "Code", "Export"], cx);
         segmented.update(cx, |s, cx| s.select(1, cx));
         let loaders = [Loader::new(cx), Loader::new(cx), Loader::new(cx)];
@@ -122,7 +124,30 @@ fn render(scheme: Scheme) -> image::RgbaImage {
             l.set_kind(LoaderType::Dots, cx);
             l.set_color(Some(ColorName::Grape), cx);
         });
-        cx.new(|_| KitchenSink { segmented, loaders })
+        let spoiler = Spoiler::new(cx);
+        spoiler.update(cx, |s, cx| {
+            s.set_content(
+                |_, _| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .children((0..8).map(|i| {
+                            div().child(format!(
+                                "Line {i}: a spoiler clips this body until it is expanded."
+                            ))
+                        }))
+                        .into_any_element()
+                },
+                cx,
+            );
+            s.set_collapsed_lines(2, cx);
+        });
+        cx.new(|_| KitchenSink {
+            segmented,
+            loaders,
+            spoiler,
+        })
     })
     .unwrap_or_else(|e| panic!("{e:#}"))
 }

@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui_kit::{
-    Context, Entity, Focusable, IntoElement, ParentElement, Render, Styled, TestAppContext,
-    VisualTestContext, Window, div, px,
+    AppContext, Context, Entity, Focusable, IntoElement, Modifiers, ParentElement, Render, Styled,
+    TestAppContext, VisualTestContext, Window, div, px,
 };
-use guiraffe_components::{Loader, SegmentedControl, SegmentedEvent};
+use guiraffe_components::{Loader, SegmentedControl, SegmentedEvent, Spoiler};
 use guiraffe_motion::MotionPrefs;
 use guiraffe_test::render::RenderCounter;
 
@@ -238,4 +238,173 @@ fn loader_settings_are_idsempotent_and_clamped(cx: &mut TestAppContext) {
     vcx.run_until_parked();
     let kind = vcx.update(|_, cx| loader.read(cx).kind());
     assert_eq!(kind, guiraffe_components::LoaderType::Bars);
+}
+
+// --- Spoiler: the reveal animates in its own view; reduced motion jumps. ---
+
+struct SpoilerScene {
+    renders: RenderCounter,
+    spoiler: Entity<Spoiler>,
+}
+
+impl Render for SpoilerScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div().w(px(240.)).child(self.spoiler.clone())
+    }
+}
+
+fn spoiler_scene(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Spoiler>,
+    Entity<SpoilerScene>,
+    &mut VisualTestContext,
+) {
+    cx.update(guiraffe_components::init);
+    let renders = RenderCounter::new();
+    let counter = renders.clone();
+    let mut out = None;
+    let (scene, vcx) = cx.add_window_view(|_, cx| {
+        let spoiler = Spoiler::new(cx);
+        // Twelve lines of body against a three-line preview.
+        spoiler.update(cx, |s, cx| {
+            s.set_content(
+                |_, _| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children((0..12).map(|i| div().h(px(20.0)).child(format!("line {i}"))))
+                        .into_any_element()
+                },
+                cx,
+            );
+            s.set_collapsed_lines(3, cx);
+        });
+        out = Some(spoiler.clone());
+        SpoilerScene {
+            renders: counter,
+            spoiler,
+        }
+    });
+    (out.unwrap_or_else(|| unreachable!()), scene, vcx)
+}
+
+#[gpui_kit::test]
+fn spoiler_toggles_on_click_and_animates_its_height(cx: &mut TestAppContext) {
+    let (spoiler, _scene, vcx) = spoiler_scene(cx);
+    vcx.run_until_parked();
+    frames(vcx, 2);
+    let toggle = vcx.debug_bounds("gr-spoiler-toggle:gr-spoiler");
+    let before = vcx
+        .debug_bounds("gr-spoiler:gr-spoiler")
+        .map(|b| f32::from(b.size.height))
+        .unwrap_or_default();
+    let toggle = toggle.expect("the spoiler's label is laid out");
+    vcx.simulate_click(toggle.center(), Modifiers::default());
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| spoiler.read(cx).is_expanded()),
+        "clicking the label expands"
+    );
+    let mut heights = Vec::new();
+    for _ in 0..12 {
+        frames(vcx, 1);
+        heights.push(
+            vcx.debug_bounds("gr-spoiler:gr-spoiler")
+                .map(|b| f32::from(b.size.height))
+                .unwrap_or_default(),
+        );
+    }
+    let after = heights.last().copied().unwrap_or_default();
+    assert!(
+        after > before + 50.0,
+        "the reveal grew: {before} -> {after}"
+    );
+    assert!(
+        heights.iter().any(|h| *h > before && *h < after),
+        "it grew over several frames, not in one jump: {heights:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn spoiler_reduced_motion_expands_immediately(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        guiraffe_components::init(cx);
+        MotionPrefs::set(
+            MotionPrefs {
+                reduced: true,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+    let (spoiler, _scene, vcx) = spoiler_scene(cx);
+    vcx.run_until_parked();
+    frames(vcx, 2);
+    let before = vcx
+        .debug_bounds("gr-spoiler:gr-spoiler")
+        .map(|b| f32::from(b.size.height))
+        .unwrap_or_default();
+    vcx.update(|_, cx| spoiler.update(cx, |s, cx| s.set_expanded(true, cx)));
+    vcx.run_until_parked();
+    next_frame(vcx);
+    let after = vcx
+        .debug_bounds("gr-spoiler:gr-spoiler")
+        .map(|b| f32::from(b.size.height))
+        .unwrap_or_default();
+    assert!(
+        after > before + 50.0,
+        "one frame is enough under reduced motion: {before} -> {after}"
+    );
+}
+
+#[gpui_kit::test]
+fn spoiler_animates_only_itself_and_settles(cx: &mut TestAppContext) {
+    let (spoiler, _scene, vcx) = spoiler_scene(cx);
+    vcx.run_until_parked();
+    frames(vcx, 2);
+    let sibling = vcx.update(|_, cx| cx.new(|_| SideEffect::new()));
+    let counter = vcx.update(|_, cx| {
+        let renders = RenderCounter::new();
+        sibling.update(cx, |s, cx| {
+            s.renders = renders.clone();
+            cx.notify();
+        });
+        renders
+    });
+    vcx.run_until_parked();
+    let before = counter.get();
+    vcx.update(|_, cx| spoiler.update(cx, |s, cx| s.set_expanded(true, cx)));
+    frames(vcx, 40);
+    assert_eq!(
+        counter.get(),
+        before,
+        "a sibling view never re-renders while the spoiler animates"
+    );
+    assert_eq!(
+        next_frame(vcx),
+        0,
+        "the animation stops and requests nothing at rest"
+    );
+}
+
+/// A view with no relationship to the spoiler, used to prove isolation.
+struct SideEffect {
+    renders: RenderCounter,
+}
+
+impl SideEffect {
+    fn new() -> Self {
+        Self {
+            renders: RenderCounter::new(),
+        }
+    }
+}
+
+impl Render for SideEffect {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div()
+    }
 }

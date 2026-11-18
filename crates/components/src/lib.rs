@@ -11,6 +11,7 @@ pub mod misc;
 pub mod paper;
 pub mod ring;
 pub mod segmented;
+pub mod spoiler;
 mod style;
 pub mod timeline;
 pub mod typography;
@@ -22,6 +23,7 @@ pub use misc::{Blockquote, Indicator, IndicatorPosition, Pill};
 pub use paper::{Card, CardSection, Paper};
 pub use ring::{RingProgress, arc_spans};
 pub use segmented::{SegmentedControl, SegmentedEvent};
+pub use spoiler::Spoiler;
 pub use timeline::{ItemState, Timeline, TimelineItem};
 pub use typography::{Text, Title};
 
