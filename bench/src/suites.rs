@@ -408,6 +408,25 @@ pub fn timeline_box_select_100k() {
     });
 }
 
+pub fn timeline_navigation_hit_100k() {
+    use guiraffe_timeline::{Axis, ResizeEdges, Track, tracks_view::hit};
+    static TRACK: std::sync::OnceLock<Track> = std::sync::OnceLock::new();
+    let track = TRACK.get_or_init(|| {
+        let mut track = Track::default();
+        for i in 0..100_000 {
+            assert!(track.insert(f64::from(i) * 2., 1.).is_some());
+        }
+        track
+    });
+    for start in [0., 100_000., 199_800.] {
+        let mut axis = Axis::new(start, start + 100., 1200.);
+        axis.pan_px(black_box(-24.));
+        assert!(axis.zoom_at(black_box(600.), 2.));
+        let x = axis.x(start + 50.5);
+        assert!(black_box(hit(track, &axis, x, ResizeEdges::Both)).is_some());
+    }
+}
+
 pub fn timeline_draw_bars_100k() {
     use guiraffe_timeline::BarCurve;
     thread_local! {
@@ -479,6 +498,7 @@ macro_rules! with_suites {
             (flow_pan_hit_50k, "flow-pan-hit-50k"),
             (timeline_box_select_100k, "timeline-box-select-100k"),
             (timeline_draw_bars_100k, "timeline-draw-bars-100k"),
+            (timeline_navigation_hit_100k, "timeline-navigation-hit-100k"),
             (chart_prepare_line_10m, "chart-prepare-line-10m"),
             (chart_line_10m, "chart-line-10m"),
             (chart_scatter_1m_100_series, "chart-scatter-1m-100-series"),

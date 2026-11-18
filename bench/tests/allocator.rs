@@ -56,7 +56,7 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
         .into_iter()
         .filter(|s| {
             !s.name.starts_with("flow-")
-                && !s.name.starts_with("timeline-")
+                && !matches!(s.name, "timeline-box-select-100k" | "timeline-draw-bars-100k")
                 && !s.name.starts_with("data-ui-")
                 && s.name != "datagrid-sort-1m"
                 // Compiling a chart scene for a new viewport builds its output geometry; it is
