@@ -21,3 +21,30 @@ checks. Live GPUI repaint allocation, app-level cancellation, native replay,
 scale accessibility and snapshots, streaming throughput, and the full soak
 remain open. The shared headless harness measures script cycles. A cycle can
 dispatch multiple events, and the harness excludes GPU presentation.
+
+## Follow-up regressions
+
+- Flow scales painted handles, marker geometry, open-marker strokes, animated
+  beads and connection previews with the viewport (`3ef6419`). The arrow
+  proportion and tip-contact test failed before the fix. Both backends have
+  inspected detail and overview snapshots.
+- Gantt and Tracks claim item-click focus after explicit opt-in (`9a4004b`).
+  The actual showcase Gantt test failed at focus before the fix and passes
+  with a one-day move followed by a seven-day move using the live option.
+  Both backends have inspected Gantt and Tracks changes in both themes.
+
+## Validation at code revision 9a4004b
+
+The final test command covered Flow, Flow Core, Timeline, Charts, Bench and
+Showcase with the workspace lockfile. Full showcase comparisons used the
+committed goldens with update mode disabled.
+
+| Gate | Upstream | gpui-fast |
+| --- | --- | --- |
+| Package tests, including full Showcase | Exit 0, 257 passed | Exit 0, 258 passed |
+| All-target Clippy with `-D warnings` | Exit 0 | Exit 0 |
+
+Workspace formatting and Git whitespace checks exited 0. The release
+benchmark crate suite passed 39 tests, and the Callgrind target compiled.
+Callgrind execution and production acceptance remain open. Both short
+chart modes, Flow and Timeline completed as headless diagnostics.
