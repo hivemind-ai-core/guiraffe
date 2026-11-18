@@ -63,6 +63,10 @@ impl BasePanel for IdePanel {
 }
 
 impl Panel for IdePanel {
+    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.name
+    }
+
     fn tab_name(&self, _: &App) -> Option<SharedString> {
         Some(self.name.into())
     }
