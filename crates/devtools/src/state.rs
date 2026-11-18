@@ -250,4 +250,53 @@ mod tests {
         engine.process(&Coeffects::default());
         assert_eq!(**engine.state(), 2);
     }
+    #[test]
+    fn offsets_clamp_to_each_stores_last_page() {
+        assert_eq!(clamp_offset(0, 0, 8), 0);
+        assert_eq!(
+            clamp_offset(16, 5, 8),
+            0,
+            "short store stays on its only page"
+        );
+        assert_eq!(clamp_offset(16, 20, 8), 16);
+        assert_eq!(clamp_offset(24, 20, 8), 16);
+        assert_eq!(clamp_offset(8, 8, 8), 0);
+    }
+    #[gpui_kit::test]
+    fn rows_are_cached_until_a_new_event_and_hook_fires(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            let store = Store::new(0u32, cx);
+            let describes = Rc::new(std::cell::Cell::new(0));
+            let count = describes.clone();
+            let (inspect, _) = inspect_store(
+                "counter",
+                &store,
+                32,
+                move |n| {
+                    count.set(count.get() + 1);
+                    serde_json::json!({ "n": n })
+                },
+                cx,
+            );
+            let recorded = Rc::new(std::cell::Cell::new(0));
+            let hits = recorded.clone();
+            inspect.set_on_record(Some(Rc::new(move || hits.set(hits.get() + 1))));
+            store.dispatch(Add, cx);
+            store.flush(cx);
+            assert_eq!(recorded.get(), 1, "recorder runs the hook per event");
+            let first = inspect.rows(0, 8);
+            let after_first = describes.get();
+            assert_eq!(after_first, 2, "one before/after pair described");
+            let again = inspect.rows(0, 8);
+            assert!(Rc::ptr_eq(&first, &again), "unchanged page is cached");
+            assert_eq!(describes.get(), after_first, "no re-diff on re-render");
+            // An out-of-range offset clamps to the same (only) page: still cached.
+            assert!(Rc::ptr_eq(&first, &inspect.rows(40, 8)));
+            store.dispatch(Add, cx);
+            store.flush(cx);
+            let fresh = inspect.rows(0, 8);
+            assert_eq!(fresh.len(), 2);
+            assert!(describes.get() > after_first, "new event recomputes");
+        });
+    }
 }

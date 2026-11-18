@@ -829,4 +829,97 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e:#}"));
         }
     }
+
+    #[test]
+    fn slow_motion_restore_keeps_a_newer_time_scale() {
+        assert_eq!(restore_time_scale(1., 10., 10.), 1., "untouched: restore");
+        assert_eq!(
+            restore_time_scale(1., 10., 2.),
+            2.,
+            "changed meanwhile: keep the newer value"
+        );
+    }
+
+    #[test]
+    fn older_offset_stops_at_the_longest_history() {
+        assert_eq!(older_offset(0, 0), 0);
+        assert_eq!(older_offset(0, 8), 0, "one page: nothing older");
+        assert_eq!(older_offset(0, 9), 8);
+        assert_eq!(older_offset(8, 9), 8);
+    }
+
+    #[gpui_kit::test]
+    fn closed_tools_skip_tracking_and_opening_registers_views(cx: &mut gpui_kit::TestAppContext) {
+        struct App2 {
+            tools: Devtools,
+        }
+        impl Render for App2 {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.tools.track("tracked", div().size_full().child("x"))
+            }
+        }
+        let mut handle = None;
+        let (_, vcx) = cx.add_window_view(|_, cx| {
+            guiraffe_core::init(cx);
+            let tools = Devtools::new(cx);
+            handle = Some(tools.clone());
+            let app = cx.new(|_| App2 {
+                tools: tools.clone(),
+            });
+            DevtoolsRoot {
+                content: app.into(),
+                tools,
+            }
+        });
+        vcx.run_until_parked();
+        let tools = handle.unwrap_or_else(|| panic!("tools"));
+        assert!(tools.views().is_empty(), "closed: no bookkeeping");
+        vcx.update(|_, cx| tools.set_open(true, cx));
+        vcx.run_until_parked();
+        let views = tools.views();
+        assert_eq!(views.len(), 1, "opening registers tracked views");
+        assert!(views[0].bounds.size.width > px(0.));
+    }
+
+    #[gpui_kit::test]
+    fn paused_panel_refreshes_when_a_store_records(cx: &mut gpui_kit::TestAppContext) {
+        #[derive(Debug)]
+        struct Add;
+        impl guiraffe_state::Event<u32> for Add {
+            fn handle(self, fx: &mut guiraffe_state::Fx<'_, u32>) {
+                fx.update(|n| *n += 1);
+            }
+        }
+        struct Empty;
+        impl Render for Empty {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full()
+            }
+        }
+        let mut handle = None;
+        let (_, vcx) = cx.add_window_view(|window, cx| {
+            window.resize(gpui_kit::size(px(1000.), px(900.)));
+            guiraffe_core::init(cx);
+            let tools = Devtools::new(cx);
+            let store = guiraffe_state::Store::new(0u32, cx);
+            let (adapter, _) = crate::inspect_store("s", &store, 16, |n| serde_json::json!(n), cx);
+            tools.add_store(adapter, cx);
+            tools.set_open(true, cx);
+            tools.set_paused(true, cx);
+            handle = Some((tools.clone(), store));
+            DevtoolsRoot {
+                content: cx.new(|_| Empty).into(),
+                tools,
+            }
+        });
+        vcx.run_until_parked();
+        let (_tools, store) = handle.unwrap_or_else(|| panic!("tools"));
+        assert!(vcx.debug_bounds("devtools-after-0-1").is_none());
+        vcx.update(|_, cx| store.dispatch(Add, cx));
+        vcx.run_until_parked();
+        assert!(
+            vcx.debug_bounds("devtools-after-0-1").is_some(),
+            "a paused panel still shows new events"
+        );
+    }
 }
