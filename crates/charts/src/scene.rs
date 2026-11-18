@@ -188,11 +188,16 @@ impl PreparedChart {
                 ticks,
             };
             let mut stack_indices = std::collections::BTreeMap::new();
-            for run in self
+            let visible_runs = self
                 .runs
                 .iter()
-                .filter(|r| r.facet == *facet && !hidden.contains(&r.id))
-            {
+                .filter(|r| r.facet == *facet && !hidden.contains(&r.id));
+            let scatter_runs = visible_runs
+                .clone()
+                .filter(|run| matches!(run.mark, Mark::Point | Mark::Bubble))
+                .count()
+                .max(1);
+            for run in visible_runs {
                 let projection = Projection {
                     chart: self,
                     domains,
@@ -244,7 +249,7 @@ impl PreparedChart {
                     }
                     continue;
                 }
-                projection.generate(&mut panel.draws, &mut scratch);
+                projection.generate(&mut panel.draws, &mut scratch, scatter_runs);
             }
             panels.push(panel);
         }
@@ -387,7 +392,7 @@ impl Projection<'_> {
         row.color.unwrap_or(Color::Category(self.run.palette))
     }
 
-    fn generate(&self, out: &mut Vec<Draw>, scratch: &mut Vec<usize>) {
+    fn generate(&self, out: &mut Vec<Draw>, scratch: &mut Vec<usize>, scatter_runs: usize) {
         let domain = self.domains[0];
         let visible = if self.run.mark == Mark::Rule(Orientation::Horizontal) {
             0..self.run.rows.len()
@@ -413,9 +418,14 @@ impl Projection<'_> {
             }
             return;
         }
-        if matches!(self.run.mark, Mark::Point | Mark::Bubble) && visible.len() > 8_192 {
-            self.scatter(visible, out);
-            return;
+        if matches!(self.run.mark, Mark::Point | Mark::Bubble) {
+            let cell_size = 6. * (scatter_runs as f32).sqrt();
+            let columns = (self.rect.width() / cell_size).clamp(1., 128.) as usize;
+            let rows = (self.rect.height() / cell_size).clamp(1., 64.) as usize;
+            if visible.len() > 8_192 / scatter_runs.max(1) {
+                self.scatter(visible, columns, rows, out);
+                return;
+            }
         }
         for row in &self.run.rows[visible] {
             self.individual(row, out);
@@ -501,10 +511,9 @@ impl Projection<'_> {
         }
     }
 
-    fn scatter(&self, visible: Range<usize>, out: &mut Vec<Draw>) {
-        // One representative per screen cell. The source-backed hit index retains all points.
-        let columns = (self.rect.width() / 6.).clamp(1., 128.) as usize;
-        let rows = (self.rect.height() / 6.).clamp(1., 64.) as usize;
+    fn scatter(&self, visible: Range<usize>, columns: usize, rows: usize, out: &mut Vec<Draw>) {
+        // Share the viewport draw budget across visible series. Hit testing uses source points.
+        let mut free_cells = columns * rows;
         let mut occupied = vec![false; columns * rows];
         for row in &self.run.rows[visible] {
             let Some(point) = self.anchor(row).filter(|&p| self.rect.contains(p)) else {
@@ -522,6 +531,10 @@ impl Projection<'_> {
                     series: self.run.id,
                     color: self.color(row),
                 });
+                free_cells -= 1;
+                if free_cells == 0 {
+                    break;
+                }
             }
         }
     }
@@ -672,6 +685,29 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn dense_scatter_shares_screen_cells_across_series_budgets() {
+        let chart = ChartSpec::new("dense scatter")
+            .layer(Layer::new(
+                Mark::Point,
+                (0..10_000).collect::<Vec<_>>(),
+                Channels::new(|i| f64::from(i % 10), |i| f64::from((i / 10) % 10))
+                    .group(|i| (i / 100) as u32),
+            ))
+            .prepare();
+        let scene = chart.scene(480., 300., chart.x_domain(), &Default::default());
+        let draws = &scene.panels[0].draws;
+        assert!(draws.len() < 2_500);
+        assert_eq!(
+            draws
+                .iter()
+                .map(|draw| draw.series.group)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            100,
+        );
+    }
 
     #[test]
     fn dense_bubble_keeps_drawable_representative_after_nan_radius() {
