@@ -342,11 +342,28 @@ impl Render for ChartView {
                 } else {
                     swatch.border_1().border_color(ink)
                 };
+                let label = if plot.chart.has_right_axis {
+                    let axis = if entry.secondary {
+                        "right axis"
+                    } else {
+                        "left axis"
+                    };
+                    format!("{} · {axis}", entry.label)
+                } else {
+                    entry.label.clone()
+                };
                 controls = controls.child(
                     Button::new(("chart-series", entry.palette as usize))
                         .accessibility_id(format!("chart-series-{}", entry.palette))
-                        .label(entry.label.clone())
-                        .child(swatch)
+                        .accessibility_label(label.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(5.))
+                                .child(swatch)
+                                .child(label),
+                        )
                         .toggled(visible)
                         .small()
                         .tab_stop(self.options.keyboard)

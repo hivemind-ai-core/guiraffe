@@ -290,6 +290,7 @@ pub struct LegendEntry {
     pub id: SeriesId,
     pub label: String,
     pub palette: u32,
+    pub secondary: bool,
 }
 
 #[derive(Default)]
@@ -391,7 +392,7 @@ impl ChartSpec {
                         } else if group == 0 {
                             layer.title.clone()
                         } else {
-                            format!("{} · {}", layer.title, group)
+                            format!("{} · Series {}", layer.title, u64::from(group) + 1)
                         }
                     });
                     legend.push(LegendEntry {
@@ -401,6 +402,7 @@ impl ChartSpec {
                         },
                         label,
                         palette: color,
+                        secondary: layer.secondary,
                     });
                     color
                 });
