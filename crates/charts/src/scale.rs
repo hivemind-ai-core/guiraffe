@@ -284,14 +284,17 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    proptest! {
-        #[test]
+    #[test]
     fn narrow_log_domains_use_round_ticks() {
         let ticks = Scale::Log.ticks(Domain::new(21., 46.).unwrap(), 5);
-        assert_eq!(ticks.into_iter().map(|tick| tick.value).collect::<Vec<_>>(), [25., 30., 35., 40., 45.]);
+        assert_eq!(
+            ticks.into_iter().map(|tick| tick.value).collect::<Vec<_>>(),
+            [25., 30., 35., 40., 45.]
+        );
     }
 
-    #[test]
+    proptest! {
+        #[test]
         fn continuous_scales_round_trip_and_bound_ticks(
             base in -12f64..12.,
             span in 0.01f64..12.,
