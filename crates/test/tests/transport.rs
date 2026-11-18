@@ -102,8 +102,13 @@ fn the_mcp_server_answers_the_handshake_and_lists_its_tools(cx: &mut TestAppCont
         &mut server,
     )
     .expect("the tools are listed");
-    for tool in tools() {
-        assert!(list.contains(&tool.name), "{tool:?} is missing: {list}");
+    let list: serde_json::Value = serde_json::from_str(&list).expect("valid JSON");
+    let listed = list["result"]["tools"].as_array().expect("tool array");
+    assert_eq!(listed.len(), tools().len());
+    for (entry, tool) in listed.iter().zip(tools()) {
+        assert_eq!(entry["name"], tool.name);
+        assert_eq!(entry["inputSchema"], tool.input_schema);
+        assert_eq!(entry["inputSchema"]["type"], "object");
     }
 }
 
@@ -162,4 +167,15 @@ fn the_tools_cover_the_api() {
             "{expected:?} is missing"
         );
     }
+}
+
+#[test]
+fn request_reader_bounds_an_unterminated_line() {
+    let mut oversized = std::io::repeat(b'x');
+    let mut reader = std::io::BufReader::new(&mut oversized);
+    let mut line = String::new();
+    let error = guiraffe_test::transport::read_request(&mut reader, &mut line)
+        .expect_err("oversized request");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(line.len(), 1024 * 1024 + 1);
 }

@@ -4,7 +4,7 @@
 //! The app runs headless (the snapshot renderer), so the tools work without a
 //! display server.
 
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -24,8 +24,11 @@ pub fn mcp(document: Option<&Path>) -> Result<()> {
     with_app(document, |server| {
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout();
-        for line in stdin.lock().lines() {
-            let line = line.context("read a request")?;
+        let mut reader = stdin.lock();
+        let mut line = String::new();
+        while guiraffe_test::transport::read_request(&mut reader, &mut line)
+            .context("read a request")?
+        {
             if line.trim().is_empty() {
                 continue;
             }

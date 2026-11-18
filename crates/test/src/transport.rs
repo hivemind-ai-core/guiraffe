@@ -5,7 +5,9 @@
 //! The MCP server speaks JSON-RPC 2.0 over stdio and serves the same calls
 //! as tools.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, Read};
+#[cfg(unix)]
+use std::io::{BufReader, Write};
 use std::path::Path;
 
 use guiraffe_core::GuiraffeTheme;
@@ -189,6 +191,7 @@ pub struct Tool {
     /// What the tool does.
     pub description: String,
     /// The JSON schema of the arguments.
+    #[serde(rename = "inputSchema")]
     pub input_schema: serde_json::Value,
 }
 
@@ -343,30 +346,60 @@ fn call_of(name: &str, arguments: serde_json::Value) -> Option<Call> {
     Some(call)
 }
 
+/// Reads one request, with a one-MiB limit including the line delimiter.
+pub fn read_request(reader: &mut impl BufRead, line: &mut String) -> std::io::Result<bool> {
+    const LIMIT: usize = 1024 * 1024;
+    line.clear();
+    let bytes = reader.take((LIMIT + 1) as u64).read_line(line)?;
+    if bytes > LIMIT {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "request exceeds one MiB",
+        ));
+    }
+    Ok(bytes != 0)
+}
+
 /// Serves the API on a local socket, one JSON document per line.
+#[cfg(unix)]
 pub fn serve(path: &Path, server: &mut Server) -> std::io::Result<()> {
-    let _ = std::fs::remove_file(path);
     let listener = std::os::unix::net::UnixListener::bind(path)?;
     for stream in listener.incoming() {
-        let mut stream = stream?;
-        let reader = BufReader::new(stream.try_clone()?);
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let answer = match serde_json::from_str::<Call>(&line) {
-                Ok(call) => server.call(call),
-                Err(error) => Answer {
-                    ok: false,
-                    error: Some(format!("the call does not parse: {error}")),
-                    ..Default::default()
-                },
-            };
-            let text = serde_json::to_string(&answer).unwrap_or_default();
-            writeln!(stream, "{text}")?;
-            stream.flush()?;
-        }
+        let _ = serve_client(stream?, server);
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn serve_client(
+    mut stream: std::os::unix::net::UnixStream,
+    server: &mut Server,
+) -> std::io::Result<()> {
+    let timeout = Some(std::time::Duration::from_secs(30));
+    stream.set_read_timeout(timeout)?;
+    stream.set_write_timeout(timeout)?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut line = String::new();
+    while read_request(&mut reader, &mut line)? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let answer = match serde_json::from_str::<Call>(&line) {
+            Ok(call) => server.call(call),
+            Err(error) => Answer {
+                ok: false,
+                error: Some(format!("the call does not parse: {error}")),
+                ..Default::default()
+            },
+        };
+        serde_json::to_writer(&mut stream, &answer)?;
+        writeln!(stream)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+/// Reports that the local socket transport requires Unix sockets.
+pub fn serve(_: &Path, _: &mut Server) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
