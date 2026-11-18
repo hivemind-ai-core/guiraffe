@@ -16,7 +16,7 @@ impl Schema {
     };
 }
 
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.1.0";
 pub const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug)]
@@ -108,12 +108,13 @@ widgets! {
         ["label": "string" = "\"\"", &[] as &[&str], None, true], ["click": "null"];
     HUG: "hug", "ui", "Content-width container.", true, "stateless", "group", [], [], [];
     SPACER: "spacer", "ui", "Flexible empty space.", false, "stateless", "presentation", [], [], [];
-    TEXT_INPUT: "text-input", "gpui-kit", "Single-line text editor.", false, "controlled or uncontrolled value", "textbox", ["control_size", "kit.input", "kit.foreground"],
+    TEXT_INPUT: "text-input", "gpui-kit", "Single-line text editor.", false, "controlled or uncontrolled value", "textbox", ["control_size", "kit.input", "kit.foreground", "scale", "state.rest"],
         ["value": "string" = "\"\"", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
-         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "string"];
+         "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
+         "invalid": "boolean" = "false", &[] as &[&str], None, false], ["change": "string"];
     CHECKBOX: "checkbox", "gpui-kit", "Boolean checkbox.", false, "controlled or uncontrolled value", "checkbox", ["control_size", "kit.primary", "kit.primary_foreground"],
         ["value": "boolean" = "false", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
@@ -126,12 +127,13 @@ widgets! {
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "boolean"];
-    SELECT: "select", "gpui-kit", "Select one of a list of labels.", false, "controlled or uncontrolled value", "combobox", ["control_size", "kit.input", "kit.foreground"],
+    SELECT: "select", "gpui-kit", "Select one of a list of labels.", false, "controlled or uncontrolled value", "combobox", ["control_size", "kit.input", "kit.foreground", "scale", "state.rest"],
         ["value": "string" = "null", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
-         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "selection"];
+         "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
+         "invalid": "boolean" = "false", &[] as &[&str], None, false], ["change": "selection"];
 }
 
 /// Look up an authoring descriptor by its document kind.

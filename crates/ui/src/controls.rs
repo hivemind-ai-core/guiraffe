@@ -15,7 +15,7 @@ use gpui_kit::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, ParentElement, Render,
     SharedString, Styled, Subscription, Window, div, px,
 };
-use guiraffe_core::{Size, StyleContext};
+use guiraffe_core::{ColorName, GuiraffeTheme, Size, StateKind, StyleContext, Variant};
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
@@ -86,6 +86,7 @@ pub(crate) struct Props {
     label: SharedString,
     options: Value,
     disabled: bool,
+    invalid: bool,
     placeholder: SharedString,
 }
 impl Props {
@@ -95,6 +96,14 @@ impl Props {
             label: n.text(1),
             options: n.prop(2).clone(),
             disabled: n.bool(3),
+            invalid: n
+                .spec
+                .widget
+                .schema()
+                .props
+                .iter()
+                .position(|name| *name == "invalid")
+                .is_some_and(|index| n.bool(index)),
             placeholder: n.text(4),
         }
     }
@@ -258,10 +267,19 @@ struct Control {
     state: Rc<State>,
 }
 impl Render for Control {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.state;
         let props = state.props.borrow().clone();
-        let size = px(StyleContext::current().control_size.control_height());
+        let control_size = StyleContext::current().control_size;
+        let size = px(control_size.control_height());
+        let theme = GuiraffeTheme::global(cx);
+        let font_size = px(control_size.font_size() * theme.scale);
+        let error_border = props.invalid.then(|| {
+            theme
+                .state(StateKind::Rest, Variant::Outline, Some(ColorName::Red))
+                .border
+                .to_hsla()
+        });
         let change = state.change.clone();
         let disabled = props.disabled;
         let element = match state.kind {
@@ -291,22 +309,30 @@ impl Render for Control {
                 .input
                 .as_ref()
                 .map(|input| {
-                    Input::new(input)
+                    let mut input = Input::new(input)
                         .disabled(disabled)
                         .with_size(size)
-                        .into_any_element()
+                        .text_size(font_size);
+                    if let Some(border) = error_border {
+                        input = input.border_color(border);
+                    }
+                    input.into_any_element()
                 })
                 .unwrap_or_else(|| div().into_any_element()),
             Kind::Select => state
                 .select
                 .as_ref()
                 .map(|select| {
-                    Select::new(select)
+                    let mut select = Select::new(select)
                         .id(state.id.clone())
                         .placeholder(props.placeholder)
                         .disabled(disabled)
                         .with_size(size)
-                        .into_any_element()
+                        .text_size(font_size);
+                    if let Some(border) = error_border {
+                        select = select.border_color(border);
+                    }
+                    select.into_any_element()
                 })
                 .unwrap_or_else(|| div().into_any_element()),
         };

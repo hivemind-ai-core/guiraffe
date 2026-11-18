@@ -23,7 +23,8 @@
             "kind": "text-input",
             "props": {
               "placeholder": "name@example.com",
-              "value": "alex@"
+              "value": "alex@",
+              "invalid": true
             }
           },
           {
