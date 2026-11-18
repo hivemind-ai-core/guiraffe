@@ -94,7 +94,7 @@ fn selected(name: Option<&str>) -> Result<Vec<guiraffe_bench::Suite>> {
     Ok(list)
 }
 fn iterations_for(suite: &guiraffe_bench::Suite, requested: Option<usize>) -> usize {
-    requested.unwrap_or_else(|| match suite.name {
+    requested.unwrap_or(match suite.name {
         "flow-build-50k"
         | "flow-pan-hit-50k"
         | "timeline-box-select-100k"

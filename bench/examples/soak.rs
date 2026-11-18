@@ -1,0 +1,253 @@
+//! Headless CPU interaction timing. Samples include GPUI event dispatch and render/paint.
+use gpui_kit::{
+    AppContext, MouseButton, ScrollDelta, ScrollEvent, ScrollSource, TestAppContext,
+    TestDispatcher, TouchPhase, WindowOptions, point, px, test::TestWindowExt,
+};
+use guiraffe_charts::{Channels, ChartOptions, ChartSpec, ChartView, Layer, Mark};
+use guiraffe_flow::{
+    Flow, FlowOptions,
+    core::{Edge, Graph, Node, Point, Viewport},
+};
+use guiraffe_timeline::{Channel, DopeSheet, TimeFormat};
+use std::time::{Duration, Instant};
+
+fn memory_kib() -> Result<[u64; 2]> {
+    let rollup = std::fs::read_to_string("/proc/self/smaps_rollup")?;
+    let read = |field: &str| -> Result<u64> {
+        Ok(rollup
+            .lines()
+            .find_map(|line| line.strip_prefix(field))
+            .and_then(|value| value.split_whitespace().next())
+            .ok_or_else(|| format!("missing {field} in smaps_rollup"))?
+            .parse()?)
+    };
+    Ok([read("Rss:")?, read("Pss:")?])
+}
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) -> Result<()> {
+    let nodes = 50_000;
+    let graph = Graph::from_parts(
+        (0..nodes).map(|i| {
+            Node::new(
+                i,
+                format!("Node {i}"),
+                Point::new((i % 100) as f32 * 240., (i / 100) as f32 * 150.),
+            )
+        }),
+        (0..nodes * 2).map(|i| {
+            Edge::new(
+                i,
+                i % nodes,
+                ((i % nodes) + if i < nodes { 1 } else { 100 }) % nodes,
+            )
+        }),
+    )?;
+    let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_stress"));
+    let (window, view) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| {
+                Flow::new(graph, cx)
+                    .expect("validated stress graph")
+                    .options(FlowOptions {
+                        minimap: !no_minimap,
+                        ..Default::default()
+                    })
+            })
+        })
+        .expect("window")
+    });
+    window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
+    run(&mut |i| {
+        let zoom = if i % 31 < 15 { 1.25 } else { 1. };
+        view.update(&mut cx, |v, cx| {
+            v.set_viewport(
+                Viewport {
+                    pan: Point::new(
+                        -((i % 97) as f32) * 240. * zoom,
+                        -((i % 490) as f32) * 150. * zoom,
+                    ),
+                    zoom,
+                },
+                cx,
+            )
+        })?;
+        window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
+        Ok(())
+    });
+    Ok(())
+}
+
+fn timeline(run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
+    let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("timeline_soak"));
+    cx.update(|cx| {
+        guiraffe_core::init(cx);
+        guiraffe_timeline::init(cx);
+    });
+    let (_, window) = cx.add_window_view(|window, cx| {
+        let channels = (0..100)
+            .map(|i| {
+                Channel::new(
+                    format!("Lane {i} · عربي 日本語 🎵"),
+                    (0..1_000).map(f64::from).collect(),
+                )
+            })
+            .collect();
+        let sheet = DopeSheet::new(channels, TimeFormat::Frames(24.), 1_000., cx);
+        gpui_kit::base::Root::new(sheet, window, cx)
+    });
+    window.update(|window, cx| window.render_frame(cx));
+    window.run_until_parked();
+    run(&mut |i| {
+        let b = window
+            .update(|window, _| window.try_find("dope-body").map(|item| item.bounds()))
+            .ok_or("missing dope sheet body")?;
+        let at = b.origin + point(b.size.width * 0.45, px(50.));
+        if i % 4 == 0 {
+            let target = at + point(px(8.), px(0.));
+            window.simulate_mouse_down(at, MouseButton::Left, Default::default());
+            window.simulate_mouse_move(target, Some(MouseButton::Left), Default::default());
+            window.simulate_mouse_up(target, MouseButton::Left, Default::default());
+        } else {
+            let delta = if i % 2 == 0 { -20. } else { 20. };
+            window.simulate_event(ScrollEvent {
+                position: at,
+                delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
+                modifiers: Default::default(),
+                touch_phase: TouchPhase::Moved,
+                source: ScrollSource::Pointer,
+            });
+        }
+        window.run_until_parked();
+        Ok(())
+    });
+}
+
+fn charts(scatter: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
+    let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("charts_soak"));
+    cx.update(|cx| {
+        gpui_kit::base::init(cx);
+        guiraffe_charts::init(cx);
+        gpui_kit::component::init(cx);
+        guiraffe_core::apply(Default::default(), cx);
+    });
+    let (_, window) = cx.add_window_view(|window, cx| {
+        let (mark, count) = if scatter {
+            (Mark::Point, 1_000_000)
+        } else {
+            (Mark::Line, 10_000_000)
+        };
+        let model = ChartSpec::new("Observations · عربي 日本語 🎵")
+            .layer(Layer::new(
+                mark,
+                (0..count).collect::<Vec<u32>>(),
+                Channels::new(|i: &u32| f64::from(*i), |i| (f64::from(*i) * 0.002).sin())
+                    .group(move |i| if scatter { i % 100 } else { 0 }),
+            ))
+            .prepare();
+        let view = ChartView::new(
+            model,
+            ChartOptions {
+                legend: false,
+                ..Default::default()
+            },
+            cx,
+        );
+        gpui_kit::base::Root::new(view, window, cx)
+    });
+    window.update(|window, cx| window.render_frame(cx));
+    window.run_until_parked();
+    run(&mut |i| {
+        let bounds = window
+            .update(|window, _| window.try_find("chart-canvas").map(|item| item.bounds()))
+            .ok_or("missing chart canvas")?;
+        let at = bounds.origin
+            + point(
+                bounds.size.width * (0.35 + 0.05 * (i % 7) as f32),
+                bounds.size.height * 0.5,
+            );
+        match i % 4 {
+            0 => window.simulate_mouse_move(at, None, Default::default()),
+            1 => window.simulate_click(at, Default::default()),
+            _ => {
+                let delta = if i % 2 == 0 { 12. } else { -12. };
+                window.simulate_event(ScrollEvent {
+                    position: at,
+                    delta: ScrollDelta::Pixels(point(px(delta), px(delta))),
+                    modifiers: Default::default(),
+                    touch_phase: TouchPhase::Moved,
+                    source: ScrollSource::Pointer,
+                });
+            }
+        }
+        window.run_until_parked();
+        Ok(())
+    });
+}
+
+fn main() -> Result<()> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let component = args
+        .first()
+        .map(String::as_str)
+        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter> [--short] [--no-minimap]")?;
+    let short = args.iter().any(|arg| arg == "--short");
+    let mount_started = Instant::now();
+    let mut result = Ok(());
+    let run = |frame: &mut dyn FnMut(usize) -> Result<()>| {
+        result = sample(frame, mount_started.elapsed(), short);
+    };
+    match component {
+        "flow" => flow(args.iter().any(|arg| arg == "--no-minimap"), run)?,
+        "timeline" => timeline(run),
+        "chart-line" => charts(false, run),
+        "chart-scatter" => charts(true, run),
+        _ => return Err("unknown soak component".into()),
+    }
+    result
+}
+
+fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bool) -> Result<()> {
+    println!("setup_and_first_frame_us={}", mount.as_micros());
+    let interval = Duration::from_secs(10);
+    let mut index = 0;
+    let mut times = Vec::with_capacity(1_200);
+    let mut warmed_memory = None;
+    let mut failed = !short && mount > Duration::from_millis(200);
+    // The first interval warms caches. The following 180 intervals measure drift.
+    for sample in 0..if short { 2 } else { 181 } {
+        times.clear();
+        let start = Instant::now();
+        while start.elapsed() < interval {
+            let started = Instant::now();
+            frame(index)?;
+            let elapsed = started.elapsed();
+            index += 1;
+            times.push(elapsed.as_micros());
+            std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
+        }
+        times.sort_unstable();
+        let percentile = |p: usize| times[(times.len() * p).div_ceil(100) - 1];
+        let (p50, p95, p99, max) = (
+            percentile(50),
+            percentile(95),
+            percentile(99),
+            percentile(100),
+        );
+        let [rss, pss] = memory_kib()?;
+        let [base_rss, base_pss] = *warmed_memory.get_or_insert([rss, pss]);
+        let drifted = rss * 100 > base_rss * 102 || pss * 100 > base_pss * 102;
+        println!(
+            "sample={sample} frames={} p50_us={p50} p95_us={p95} p99_us={p99} max_us={max} rss_kib={rss} pss_kib={pss} drifted={drifted}",
+            times.len()
+        );
+        // A 16 ms frame maximum also enforces the 50 ms long-task limit inside measured frames.
+        failed |= !short && sample > 0 && (drifted || p99 > 8_000 || max > 16_000);
+    }
+    if failed {
+        return Err("Headless soak exceeded a timing or memory budget".into());
+    }
+    Ok(())
+}

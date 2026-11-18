@@ -34,6 +34,7 @@ nix = { version = "0.31", features = ["signal", "process"] }
 iai-callgrind = { version = "=0.16.1", optional = true }
 
 [dev-dependencies]
+guiraffe-flow.workspace = true
 criterion = "0.8"
 
 [[bench]]
