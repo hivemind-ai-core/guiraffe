@@ -37,7 +37,6 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .children(self.drag_overlay.clone())
             .p_4()
             .child(div().flex_1().min_h_0().child(self.content.clone()))
             .child(
@@ -48,6 +47,7 @@ impl Render for Workspace {
                     .child("Event log")
                     .children(self.log.iter().cloned()),
             )
+            .children(self.drag_overlay.clone())
     }
 }
 
