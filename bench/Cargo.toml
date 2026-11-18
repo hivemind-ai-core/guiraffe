@@ -43,3 +43,7 @@ harness = false
 name = "instructions"
 harness = false
 required-features = ["instruction-counts"]
+
+[[example]]
+name = "production_soak"
+test = true

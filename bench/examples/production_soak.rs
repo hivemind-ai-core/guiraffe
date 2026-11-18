@@ -98,7 +98,11 @@ fn main() -> Result<()> {
         !nightly || !cfg!(debug_assertions),
         "nightly needs a release build"
     );
-    let document = match component.as_str() {
+    run(&component, nightly)
+}
+
+fn run(component: &str, nightly: bool) -> Result<()> {
+    let document = match component {
         "grid" => None,
         "code" => Some(Arc::new(CodeDocument::new(Arc::<str>::from(
             "x\n".repeat(ROWS - 1) + "x",
@@ -111,6 +115,7 @@ fn main() -> Result<()> {
         Arc::new(gpui_kit::assets::Assets),
         gpui_kit::platform::current_headless_renderer,
     );
+    let mount_start = Instant::now();
     let mut control = None;
     let window = app.open_window(size(px(1200.), px(800.)), |_, cx| {
         let host = match document {
@@ -128,7 +133,7 @@ fn main() -> Result<()> {
     })?;
     let control = control.context("missing mounted component")?;
     let mut step = 0;
-    let mut frame = || -> Result<f64> {
+    let mut frame = |pace: bool| -> Result<f64> {
         let start = Instant::now();
         app.update(|cx| control.interact(step, cx));
         app.update_window(window.into(), |_, window, cx| {
@@ -143,20 +148,26 @@ fn main() -> Result<()> {
         }
         step += 1;
         let elapsed = start.elapsed();
-        if nightly {
+        if pace {
             thread::sleep(INTERVAL.saturating_sub(elapsed));
         }
         Ok(elapsed.as_secs_f64() * 1000.)
     };
-    for _ in 0..if nightly { 600 } else { 120 } {
-        frame()?;
+    frame(false)?;
+    let mount_ms = mount_start.elapsed().as_secs_f64() * 1000.;
+    println!("mount_to_first_draw_ms={mount_ms:.3}");
+    if nightly {
+        ensure!(mount_ms <= 200., "headless mount budget exceeded");
+    }
+    for _ in 1..if nightly { 600 } else { 120 } {
+        frame(nightly)?;
     }
     let baseline = rss_kib()?;
     let start = Instant::now();
     let mut deadline = REPORT_INTERVAL;
     let mut samples = Vec::with_capacity(1_024);
     loop {
-        samples.push(frame()?);
+        samples.push(frame(nightly)?);
         if (!nightly && samples.len() == 60) || start.elapsed() >= deadline {
             let (p99, max, rss) = report(&mut samples, start.elapsed())?;
             if !nightly {
@@ -176,4 +187,19 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_production_smoke() -> Result<()> {
+        run("grid", false)
+    }
+
+    #[test]
+    fn code_production_smoke() -> Result<()> {
+        run("code", false)
+    }
 }
