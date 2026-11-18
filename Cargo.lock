@@ -3497,6 +3497,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-dnd"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-layout",
+ "serde_json",
+]
+
+[[package]]
 name = "guiraffe-flamegraph"
 version = "0.1.0"
 dependencies = [
@@ -3648,6 +3659,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
+ "guiraffe-dnd",
  "guiraffe-flamegraph",
  "guiraffe-flow",
  "guiraffe-icons",

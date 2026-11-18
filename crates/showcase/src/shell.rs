@@ -40,6 +40,7 @@ pub fn init(cx: &mut App) {
 pub struct Showcase {
     entries: Vec<Entry>,
     selected: usize,
+    static_header: bool,
     search: Entity<InputState>,
     query: SharedString,
     demos: HashMap<usize, AnyView>,
@@ -50,6 +51,11 @@ pub struct Showcase {
 }
 
 impl Showcase {
+    pub(crate) fn with_static_header(mut self) -> Self {
+        self.static_header = true;
+        self
+    }
+
     /// `start`: optional entry name (case-insensitive) to open first.
     pub fn new(start: Option<&str>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let entries = entries();
@@ -67,6 +73,7 @@ impl Showcase {
         Self {
             entries,
             selected,
+            static_header: false,
             search,
             query: SharedString::default(),
             demos: HashMap::new(),
@@ -245,9 +252,13 @@ impl Render for Showcase {
                     .border_color(s.border.to_hsla())
                     .child(Title::new("GUIraffe 🦒").order(4))
                     .child(
-                        Text::new(format!("showcase · {total} entries"))
-                            .dimmed(true)
-                            .size(Size::Sm),
+                        Text::new(if self.static_header {
+                            "showcase".to_owned()
+                        } else {
+                            format!("showcase · {total} entries")
+                        })
+                        .dimmed(true)
+                        .size(Size::Sm),
                     )
                     .child(div().flex_1())
                     .child(div().w(px(260.)).child(Input::new(&self.search)))

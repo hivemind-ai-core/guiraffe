@@ -1,0 +1,18 @@
+[package]
+name = "guiraffe-dnd"
+description = "Typed drag and drop, sortable collections, and window docking"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-layout.workspace = true
+serde_json.workspace = true
+accesskit = "0.24"
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
