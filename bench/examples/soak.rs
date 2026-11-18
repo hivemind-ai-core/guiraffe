@@ -146,7 +146,7 @@ fn charts(
         stream.append((0..STREAM_RATE).collect());
     }
     let mount_started = Instant::now();
-    let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("charts_soak"));
+    let cx = TestAppContext::build(TestDispatcher::new(0), Some("charts_soak"));
     cx.update(|cx| {
         gpui_kit::base::init(cx);
         guiraffe_charts::init(cx);
