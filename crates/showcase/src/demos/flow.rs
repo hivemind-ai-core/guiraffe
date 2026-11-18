@@ -10,7 +10,10 @@ use guiraffe_components::Text;
 use guiraffe_core::ColorName;
 use guiraffe_flow::{
     Background, FlowCanvas, FlowEvent, FlowOptions, FlowState,
-    core::{ConnectionPolicy, Edge, EdgeType, Graph, Node, Point},
+    core::{
+        AutoLayout, ConnectionPolicy, Edge, EdgeType, Graph, LayoutCancellation, LayoutDirection,
+        LayoutEngine, LayoutOptions, LayoutRouting, Node, Point,
+    },
 };
 
 use super::column;
@@ -19,13 +22,22 @@ use crate::events::EventLog;
 use crate::knobs::{Applied, Knob, KnobValues, Preview, playground_with};
 
 pub fn entries() -> Vec<Entry> {
-    vec![Entry {
-        krate: "flow",
-        name: "Node graph",
-        summary: "Drag nodes, connect handles, box-select, zoom and pan; undo/redo, minimap and controls. FlowState owns the document; FlowCanvas renders its viewport.",
-        covers: &["FlowCanvas", "FlowState", "FlowViewport", "FlowGesture"],
-        demo: flow,
-    }]
+    vec![
+        Entry {
+            krate: "flow",
+            name: "Node graph",
+            summary: "Drag nodes, connect handles, box-select, zoom and pan; undo/redo, minimap and controls. FlowState owns the document; FlowCanvas renders its viewport.",
+            covers: &["FlowCanvas", "FlowState", "FlowViewport", "FlowGesture"],
+            demo: flow,
+        },
+        Entry {
+            krate: "flow",
+            name: "Flow auto-layout",
+            summary: "Arrange a graph with layered, tree, radial, grid or force-directed layout.",
+            covers: &[],
+            demo: auto_layout,
+        },
+    ]
 }
 
 fn graph() -> Result<Graph, guiraffe_flow::core::FlowError> {
@@ -143,4 +155,114 @@ fn flow_preview(
         (None, None) => body.child(Text::new("Graph failed to build").color(ColorName::Red)),
     };
     column([body.into_any_element(), d.log.clone().into_any_element()])
+}
+
+struct LayoutDemo {
+    state: Option<Entity<FlowState>>,
+    applied: Applied,
+}
+
+fn auto_layout(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "Flow auto-layout",
+        &[
+            Knob::new("Engine", &["Layered", "Tree", "Radial", "Grid", "Force"]),
+            Knob::new(
+                "Direction",
+                &[
+                    "Left to right",
+                    "Top to bottom",
+                    "Right to left",
+                    "Bottom to top",
+                ],
+            ),
+            Knob::new("Spacing", &["Compact", "Comfortable", "Spacious"]).default(1),
+            Knob::new("Routing", &["Orthogonal", "Spline"]),
+            Knob::toggle("Pin Webhook"),
+            Knob::toggle("Animate").default(1),
+        ],
+        |_, cx| LayoutDemo {
+            state: initial_layout(cx),
+            applied: Applied::default(),
+        },
+        |demo, values, _, cx| {
+            let Some(state) = &demo.state else {
+                return Text::new("Graph failed to build")
+                    .color(ColorName::Red)
+                    .into_any_element();
+            };
+            if demo.applied.changed(values) {
+                let engine = values
+                    .pick(
+                        0,
+                        &[
+                            AutoLayout::Layered,
+                            AutoLayout::Tree,
+                            AutoLayout::Radial,
+                            AutoLayout::Grid { columns: 3 },
+                            AutoLayout::Force {
+                                seed: 7,
+                                iterations: 50,
+                            },
+                        ],
+                    )
+                    .unwrap_or_default();
+                let options = LayoutOptions {
+                    direction: values
+                        .pick(
+                            1,
+                            &[
+                                LayoutDirection::LeftToRight,
+                                LayoutDirection::TopToBottom,
+                                LayoutDirection::RightToLeft,
+                                LayoutDirection::BottomToTop,
+                            ],
+                        )
+                        .unwrap_or_default(),
+                    spacing: values
+                        .pick(
+                            2,
+                            &[
+                                Point::new(40., 24.),
+                                Point::new(80., 40.),
+                                Point::new(128., 80.),
+                            ],
+                        )
+                        .unwrap_or_else(|| LayoutOptions::default().spacing),
+                    routing: values
+                        .pick(3, &[LayoutRouting::Orthogonal, LayoutRouting::Spline])
+                        .unwrap_or_default(),
+                    pinned: if values.on(4) {
+                        [1].into()
+                    } else {
+                        Default::default()
+                    },
+                    ..LayoutOptions::default()
+                };
+                let duration = std::time::Duration::from_millis(if values.on(5) { 240 } else { 0 });
+                state.update(cx, |state, cx| state.arrange(engine, options, duration, cx));
+            }
+            div()
+                .h(px(420.))
+                .overflow_hidden()
+                .child(FlowCanvas::new(state))
+                .into_any_element()
+        },
+        window,
+        cx,
+    )
+}
+
+fn initial_layout(cx: &mut App) -> Option<Entity<FlowState>> {
+    let graph = graph().ok()?;
+    let result = AutoLayout::Layered
+        .layout(
+            &graph,
+            &LayoutOptions::default(),
+            &LayoutCancellation::default(),
+        )
+        .ok()?;
+    let mut editor = guiraffe_flow::core::Editor::new(graph).ok()?;
+    editor.apply_layout(&result).ok()?;
+    Some(cx.new(|cx| FlowState::from_editor(editor, cx)))
 }
