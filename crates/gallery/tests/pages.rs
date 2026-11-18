@@ -1,5 +1,8 @@
 //! Every gallery page renders, in light and dark, through the real shell + router.
 //! Goldens double as a visual regression suite for the whole toolkit.
+//! They capture the default build; the `devtools` feature adds a toolbar button (covered by
+//! `tests/devtools.rs`), so this suite is skipped there instead of keeping a second golden set.
+#![cfg(not(feature = "devtools"))]
 
 use gpui_kit::{AppContext, px, size};
 use guiraffe_core::{GuiraffeTheme, Scheme, apply};

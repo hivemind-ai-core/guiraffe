@@ -39,6 +39,16 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
         "popup host of the shared text context menu; shown via CodeViewer/Markdown/Chat right-click",
     ),
     (
+        "devtools",
+        "DevtoolsRoot",
+        "feature-gated developer overlay host, not an app component; shown in the gallery (`--features devtools`)",
+    ),
+    (
+        "devtools",
+        "DevtoolsPanel",
+        "the devtools overlay's own panel leaf; snapshot-tested in guiraffe-devtools",
+    ),
+    (
         "mermaid",
         "Host",
         "private test host in a non-public module (`mermaid::host`)",
