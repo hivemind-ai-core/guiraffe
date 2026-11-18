@@ -4,6 +4,8 @@ pub mod e2e;
 
 pub mod diff;
 #[cfg(feature = "inspect")]
+pub mod drive;
+#[cfg(feature = "inspect")]
 pub mod inspect;
 #[cfg(feature = "layout")]
 pub mod layout;
