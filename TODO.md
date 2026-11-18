@@ -7,7 +7,7 @@
 - [ ] layout: Stack/Group/Flex/Grid/SimpleGrid/Container/Center/AspectRatio/AppShell (kilo)
 - [x] windows: registry, lifecycle, bus, persistence (foreman, wave 2)
 - [ ] overlays: stack, modals, drawer, toasts, spotlight, desktop notify (wave 2)
-- [ ] components: see spec/03 (wave 2)
+- [ ] components: see spec/03 (wave 2) — shipped: Timeline, Loader, Spoiler, Burger, CopyButton, KbdGroup, ColorSwatch, AvatarGroup, Stepper
 - [ ] gallery app (wave 2)
 - [ ] agent chat UI (wave 2)
 
