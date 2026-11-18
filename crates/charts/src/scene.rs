@@ -1,7 +1,7 @@
 use crate::{
     Arrangement, Color, DatumId, Domain, Mark, Orientation, PreparedChart, SeriesId, Tick,
     model::{Run, Sample},
-    sample::lttb,
+    sample::lttb_with_cancel,
 };
 use std::{collections::BTreeSet, ops::Range, sync::Arc};
 
@@ -239,7 +239,7 @@ impl PreparedChart {
                         }
                         let mut indices = Vec::new();
                         let budget = (rect.width().ceil() as usize).clamp(3, 4096);
-                        lttb(
+                        lttb_with_cancel(
                             visible.len(),
                             budget,
                             |i| {
@@ -247,6 +247,7 @@ impl PreparedChart {
                                 (row.x, row.top)
                             },
                             &mut indices,
+                            cancelled,
                         );
                         Some(
                             indices
@@ -347,7 +348,7 @@ impl Run {
         start.saturating_sub(adjacent)..end.saturating_add(adjacent).min(self.rows.len())
     }
 
-    pub(crate) fn build_levels(&mut self) {
+    pub(crate) fn build_levels(&mut self, cancelled: &impl Fn() -> bool) {
         if !self.mark.connected() || !self.line_breaks.is_empty() {
             return;
         }
@@ -355,7 +356,7 @@ impl Run {
         let mut scratch = Vec::new();
         while len > 16_384 {
             let previous = self.levels.last();
-            lttb(
+            lttb_with_cancel(
                 len,
                 len.div_ceil(8),
                 |i| {
@@ -363,7 +364,11 @@ impl Run {
                     (row.x, row.top)
                 },
                 &mut scratch,
+                cancelled,
             );
+            if scratch.is_empty() {
+                break;
+            }
             let level = scratch
                 .iter()
                 .map(|&i| previous.map_or(i, |level| level[i]))
@@ -433,7 +438,10 @@ impl Projection<'_> {
                 .filter(|&i| visible.start < i && i < visible.end)
                 .chain(std::iter::once(visible.end))
             {
-                self.connected(start..end, out, scratch);
+                if cancelled() {
+                    return;
+                }
+                self.connected(start..end, out, scratch, cancelled);
                 start = end;
             }
             return;
@@ -452,7 +460,13 @@ impl Projection<'_> {
         }
     }
 
-    fn connected(&self, visible: Range<usize>, out: &mut Vec<Draw>, scratch: &mut Vec<usize>) {
+    fn connected(
+        &self,
+        visible: Range<usize>,
+        out: &mut Vec<Draw>,
+        scratch: &mut Vec<usize>,
+        cancelled: &impl Fn() -> bool,
+    ) {
         let budget = (self.rect.width().ceil() as usize).clamp(3, 4096);
         let mut source = None;
         let mut range = visible.clone();
@@ -475,7 +489,7 @@ impl Projection<'_> {
         }
         let row =
             |i| &self.run.rows[source.map_or(range.start + i, |level| level[range.start + i])];
-        lttb(
+        lttb_with_cancel(
             range.len(),
             budget,
             |i| {
@@ -483,6 +497,7 @@ impl Projection<'_> {
                 (f64::from(x), f64::from(y))
             },
             scratch,
+            cancelled,
         );
         self.connected_path(
             scratch

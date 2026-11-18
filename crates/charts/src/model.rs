@@ -507,7 +507,7 @@ impl ChartSpec {
                     levels: Vec::new(),
                     line_breaks,
                 };
-                run.build_levels();
+                run.build_levels(cancelled);
                 runs.push(run);
                 *slot += 1;
             }
