@@ -3,7 +3,7 @@ use crate::{Background, Gesture, Interaction};
 use gpui_kit::{Bounds, Path, PathBuilder, Pixels, Window, fill, point, px};
 use guiraffe_core::{GuiraffeTheme, Rgb, Surfaces};
 use guiraffe_flow_core::{
-    EdgeId, EdgePath, Marker, Point as WorldPoint, Rect, Scene, Viewport, Visible,
+    EdgeId, EdgePath, Marker, Node, Point as WorldPoint, Rect, Scene, Viewport, Visible,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -79,6 +79,62 @@ struct MinimapMeshes {
     normal: Path<Pixels>,
     selection: Option<(Arc<BTreeSet<u64>>, Path<Pixels>)>,
 }
+/// Rasterize dense minimaps in four-pixel cells so the submitted triangle count
+/// depends on the minimap dimensions even when all graph nodes are selected.
+fn minimap_mesh<'a>(
+    map: Rect,
+    camera: Viewport,
+    count: usize,
+    nodes: impl Iterator<Item = &'a Node>,
+) -> Path<Pixels> {
+    const CELL: f32 = 4.;
+    const COLUMNS: usize = 45;
+    const ROWS: usize = 30;
+    let mut path = Path::new(pixel(map.origin));
+    let rects = nodes.map(|node| {
+        let size = node.size * camera.zoom;
+        Rect {
+            origin: camera.screen(node.pos),
+            size: WorldPoint::new(size.x.max(1.), size.y.max(1.)),
+        }
+    });
+    if count <= COLUMNS * ROWS {
+        for rect in rects {
+            rectangle(&mut path, rect);
+        }
+        return path;
+    }
+
+    let mut occupied = [[false; COLUMNS]; ROWS];
+    for rect in rects {
+        let min = (rect.origin - map.origin) * (1. / CELL);
+        let max = (rect.max() - map.origin) * (1. / CELL);
+        let left = (min.x as usize).min(COLUMNS);
+        let right = (max.x.ceil() as usize).min(COLUMNS);
+        let top = (min.y as usize).min(ROWS);
+        let bottom = (max.y.ceil() as usize).min(ROWS);
+        for row in &mut occupied[top..bottom] {
+            row[left..right].fill(true);
+        }
+    }
+    for (y, row) in occupied.iter().enumerate() {
+        for (x, &filled) in row.iter().enumerate() {
+            if filled {
+                rectangle(
+                    &mut path,
+                    Rect::new(
+                        map.origin.x + x as f32 * CELL,
+                        map.origin.y + y as f32 * CELL,
+                        CELL,
+                        CELL,
+                    ),
+                );
+            }
+        }
+    }
+    path
+}
+
 fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
     let mut builder = PathBuilder::stroke(px(1.5));
     for (i, p) in route.points.iter().enumerate() {
@@ -406,22 +462,8 @@ impl Frame {
             .as_ref()
             .is_none_or(|m| !Arc::ptr_eq(&m.scene, &self.scene) || m.size != size)
         {
-            let mut normal = Path::new(pixel(map.origin));
-
-            for node in self.scene.graph().nodes.values() {
-                let p = camera.screen(node.pos);
-                let s = node.size * camera.zoom;
-                let right = p.x + s.x.max(1.);
-                let bottom = p.y + s.y.max(1.);
-                let a = pixel(p);
-                let b = pixel(WorldPoint::new(right, p.y));
-                let c = pixel(WorldPoint::new(right, bottom));
-                let d = pixel(WorldPoint::new(p.x, bottom));
-                let path = &mut normal;
-                let uv = (point(0., 1.), point(0., 1.), point(0., 1.));
-                path.push_triangle((a, b, c), uv);
-                path.push_triangle((a, c, d), uv);
-            }
+            let nodes = &self.scene.graph().nodes;
+            let normal = minimap_mesh(map, camera, nodes.len(), nodes.values());
             cache.minimap = Some(MinimapMeshes {
                 scene: self.scene.clone(),
                 size,
@@ -442,21 +484,13 @@ impl Frame {
                 .as_ref()
                 .is_none_or(|(selected, _)| !Arc::ptr_eq(selected, &self.selected))
             {
-                let mut path = Path::new(pixel(map.origin));
-                for id in self.selected.iter() {
-                    if let Some(n) = self.scene.graph().nodes.get(id) {
-                        rectangle(
-                            &mut path,
-                            Rect {
-                                origin: camera.screen(n.pos),
-                                size: WorldPoint::new(
-                                    (n.size.x * camera.zoom).max(1.),
-                                    (n.size.y * camera.zoom).max(1.),
-                                ),
-                            },
-                        );
-                    }
-                }
+                let nodes = &self.scene.graph().nodes;
+                let path = minimap_mesh(
+                    map,
+                    camera,
+                    self.selected.len(),
+                    self.selected.iter().filter_map(|id| nodes.get(id)),
+                );
                 meshes.selection = Some((self.selected.clone(), path));
             }
             if let Some((_, path)) = &meshes.selection
@@ -564,7 +598,7 @@ pub(crate) fn minimap_world(at: WorldPoint, size: WorldPoint, bounds: Rect) -> W
 #[cfg(test)]
 mod tests {
     use super::*;
-    use guiraffe_flow_core::{Edge, Graph, Node};
+    use guiraffe_flow_core::{Edge, Graph};
     #[test]
     fn arrow_tip_touches_the_outer_edge_of_the_handle_at_all_zooms() {
         for zoom in [0.5, 0.6, 1., 2., 3.] {
@@ -684,6 +718,48 @@ mod tests {
         let world = minimap_world(map.center(), size, bounds);
         assert!(world.distance(bounds.center()) < 0.001);
     }
+    #[gpui_kit::test]
+    fn dense_minimap_bounds_submitted_vertices(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::{AppContext, WindowOptions, test::TestWindowExt};
+        let graph = Graph::from_parts(
+            (0..10_000).map(|id| {
+                Node::new(
+                    id,
+                    "",
+                    WorldPoint::new((id % 100) as f32 * 240., (id / 100) as f32 * 150.),
+                )
+            }),
+            [],
+        )
+        .expect("graph");
+        let (window, view) = cx.update(|cx| {
+            guiraffe_core::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| {
+                    crate::FlowViewport::new(graph, cx)
+                        .expect("flow")
+                        .options(crate::FlowOptions {
+                            fit_on_init: false,
+                            ..Default::default()
+                        })
+                })
+            })
+            .expect("window")
+        });
+        window
+            .update(cx, |_, w, cx| {
+                w.render_frame(cx);
+                w.render_frame(cx);
+            })
+            .expect("frames");
+        view.read_with(cx, |view, _| {
+            let meshes = view.meshes.borrow();
+            let vertices = &meshes.minimap.as_ref().expect("minimap").normal.vertices;
+            assert!(!vertices.is_empty());
+            assert!(vertices.len() <= 45 * 30 * 6, "{} vertices", vertices.len());
+        });
+    }
+
     #[test]
     fn review_10_second_frame_over_2048_edges_has_no_misses() {
         let graph = Graph::from_parts(
