@@ -387,6 +387,88 @@ mod tests {
         board.read_with(window, |board, _| assert_eq!(board.lists()[0][0].id, 1));
     }
 
+    #[gpui_kit::test]
+    #[ignore = "pinned GPUI refreshes all cached views on native drag movement"]
+    fn native_drag_move_preserves_cached_host(cx: &mut TestAppContext) {
+        use gpui_kit::{MouseButton, StyleRefinement, point};
+        use std::cell::Cell;
+
+        struct CachedHost {
+            board: gpui_kit::Entity<SortableBoard>,
+            renders: Rc<Cell<usize>>,
+        }
+
+        impl Render for CachedHost {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div().size_full().child(self.board.clone())
+            }
+        }
+
+        struct Root(gpui_kit::Entity<CachedHost>);
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    self.0
+                        .clone()
+                        .cached(StyleRefinement::default().w(px(800.)).h(px(320.))),
+                )
+            }
+        }
+
+        let renders = Rc::new(Cell::new(0));
+        let counter = renders.clone();
+        let (_, window) = cx.add_window_view(move |_, cx| {
+            guiraffe_core::init(cx);
+            let board = cx.new(|cx| {
+                SortableBoard::new(
+                    vec![
+                        (
+                            "Backlog".into(),
+                            vec![Card {
+                                id: 1,
+                                label: "Card one".into(),
+                            }],
+                        ),
+                        ("Done".into(), vec![]),
+                    ],
+                    cx,
+                )
+            });
+            Root(cx.new(|_| CachedHost {
+                board,
+                renders: counter,
+            }))
+        });
+        let from = window.update(|window, cx| {
+            window.render_frame(cx);
+            window.find(("card", 1_usize)).bounds().center()
+        });
+        window.simulate_mouse_move(from, None, Default::default());
+        window.simulate_mouse_down(from, MouseButton::Left, Default::default());
+        let start = from + point(px(18.), px(0.));
+        window.simulate_mouse_move(start, Some(MouseButton::Left), Default::default());
+        window.update(|window, cx| {
+            assert!(cx.has_active_drag());
+            window.draw(cx);
+        });
+        let before = renders.get();
+        window.simulate_mouse_move(
+            start + point(px(3.), px(0.)),
+            Some(MouseButton::Left),
+            Default::default(),
+        );
+        window.update(|window, cx| {
+            window.draw(cx);
+        });
+        assert_eq!(
+            renders.get(),
+            before,
+            "mouse movement during a drag rendered its host"
+        );
+    }
+
     struct TestHost(gpui_kit::Entity<SortableBoard>);
 
     impl Render for TestHost {
