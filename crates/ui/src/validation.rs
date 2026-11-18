@@ -216,3 +216,55 @@ impl Validation<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emits_structured_issues_for_authoring_mistakes() {
+        let mut first = Node::new("text")
+            .prop("colro", "blue")
+            .prop("size", "med")
+            .child(Node::new("spacer"));
+        first.id = Some("same".into());
+        let mut second = Node::new("button")
+            .prop("label", "Save")
+            .on("click", "svae");
+        second.id = first.id.clone();
+        let handlers = BTreeSet::from(["save".to_string()]);
+        let issues = Validation {
+            bound_events: Some(&handlers),
+            ..Default::default()
+        }
+        .check(&Document::new(
+            Node::new("stack").child(first).child(second),
+        ));
+        let properties: Vec<_> = issues.iter().map(|issue| issue.property.as_str()).collect();
+        assert_eq!(
+            properties,
+            ["children", "colro", "text", "size", "id", "click"]
+        );
+        assert_eq!(issues[1].hint, "Did you mean \"color\"?");
+        assert_eq!(issues[5].node, "/root/children/1");
+        assert_eq!(issues[5].got, json!("svae"));
+        assert_eq!(issues[5].accepted, json!(["save"]));
+        assert_eq!(issues[5].hint, "Did you mean \"save\"?");
+    }
+
+    #[test]
+    fn each_descriptor_example_is_renderable_by_the_registry() {
+        let registry = crate::Registry::with_builtins();
+        assert_eq!(registry.kinds().count(), WIDGETS.len());
+        for spec in WIDGETS {
+            let document: Document = serde_json::from_value(spec.example())
+                .unwrap_or_else(|error| panic!("{}: {error}", spec.id));
+            assert!(Validation::default().check(&document).is_empty());
+            assert!(
+                crate::Template::compile(&document, &registry).is_ok(),
+                "{}",
+                spec.id
+            );
+        }
+    }
+}
