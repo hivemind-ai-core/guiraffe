@@ -1001,14 +1001,37 @@ fn header_drop_across_bands_is_ignored(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn rows_expose_their_aria_row_index(cx: &mut TestAppContext) {
-    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(2), cx));
+    let (grid, _, _, vcx) = mount(cx, |cx| {
+        let grid = GridHandle::new(
+            FnSource::new(10_000_000, |row, col| {
+                CellRef::Int((row * 100 + col) as i64)
+            }),
+            columns(2),
+            cx,
+        );
+        grid.set_options(
+            GridOptions {
+                selection: SelectionMode::Range,
+                focusable: Some(true),
+                ..Default::default()
+            },
+            cx,
+        );
+        grid
+    });
     assert_eq!(
         guiraffe_datagrid::aria_row_index(0),
         2,
         "row 1 is the header"
     );
-    vcx.update(|_, cx| grid.scroll_to_row(500_000, cx));
+    click(vcx, at(&grid, Some(0), 0), Modifiers::default());
+    vcx.simulate_keystrokes("ctrl-end");
+    for _ in 0..32 {
+        vcx.simulate_keystrokes("up down");
+    }
     vcx.run_until_parked();
+    assert_eq!(grid.selection().cursor, Some(CellPos::new(9_999_999, 1)));
+    assert_eq!(grid.visible_rows().end, 10_000_000);
     vcx.update(|w, cx| {
         w.render_frame(cx);
         let rows = w.find_all_by_role(Role::Row);

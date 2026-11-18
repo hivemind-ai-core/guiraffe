@@ -39,33 +39,65 @@ pub fn content_hash(bytes: &[u8]) -> u64 {
 }
 impl CodeDocument {
     pub fn new(source: impl Into<Arc<str>>) -> Self {
-        let source = source.into();
-        let line_count = 1 + source.bytes().filter(|&b| b == b'\n').count();
-        let mut starts = Vec::with_capacity(line_count);
-        starts.push(0);
-        starts.extend(
-            source
-                .bytes()
-                .enumerate()
-                .filter_map(|(i, b)| (b == b'\n').then_some(i + 1)),
-        );
-        let mut this = Self {
-            source,
-            hashes: Vec::with_capacity(starts.len()),
-            starts,
+        let mut document = Self {
+            source: source.into(),
+            starts: Vec::new(),
+            hashes: Vec::new(),
             minimap: [0.; 256],
         };
-        for line in 0..this.line_count() {
-            let text = this.line(line).unwrap_or_default();
+        document.build_index(|| false);
+        document
+    }
+
+    pub(crate) fn build(source: Arc<str>, cancelled: impl Fn() -> bool) -> Option<Self> {
+        let mut document = Self {
+            source,
+            starts: Vec::new(),
+            hashes: Vec::new(),
+            minimap: [0.; 256],
+        };
+        document.build_index(cancelled).then_some(document)
+    }
+
+    fn build_index(&mut self, cancelled: impl Fn() -> bool) -> bool {
+        const CHUNK: usize = 16 * 1024;
+        let mut line_count = 1;
+        for chunk in self.source.as_bytes().chunks(CHUNK) {
+            if cancelled() {
+                return false;
+            }
+            line_count += chunk.iter().filter(|&&b| b == b'\n').count();
+        }
+        let mut starts = Vec::with_capacity(line_count);
+        starts.push(0);
+        for (chunk_index, chunk) in self.source.as_bytes().chunks(CHUNK).enumerate() {
+            if cancelled() {
+                return false;
+            }
+            let base = chunk_index * CHUNK;
+            starts.extend(
+                chunk
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &b)| (b == b'\n').then_some(base + i + 1)),
+            );
+        }
+        self.starts = starts;
+        self.hashes = Vec::with_capacity(line_count);
+        for line in 0..self.line_count() {
+            if line % 256 == 0 && cancelled() {
+                return false;
+            }
+            let text = self.line(line).unwrap_or_default();
             let hash = content_hash(text.as_bytes());
             let density = text.trim().len().min(120) as f32 / 120.;
-            this.hashes.push(hash);
-            let bucket = line.saturating_mul(256) / this.line_count();
-            if let Some(bin) = this.minimap.get_mut(bucket) {
+            self.hashes.push(hash);
+            let bucket = line.saturating_mul(256) / self.line_count();
+            if let Some(bin) = self.minimap.get_mut(bucket) {
                 *bin = bin.max(density);
             }
         }
-        this
+        true
     }
     pub fn source(&self) -> &Arc<str> {
         &self.source
@@ -142,6 +174,18 @@ mod tests {
     use super::*;
     proptest::proptest! {
         #[test]
+    fn index_build_stops_after_supersession_during_line_scan() {
+        let source: Arc<str> = "a\n".repeat(600).into();
+        let calls = std::cell::Cell::new(0);
+        let document = CodeDocument::build(source, || {
+            calls.set(calls.get() + 1);
+            calls.get() >= 4
+        });
+        assert!(document.is_none());
+        assert_eq!(calls.get(), 4);
+    }
+
+    #[test]
         fn positions_match_split_lines(lines in proptest::collection::vec("[a-zאב界🙂]{0,16}", 1..40)) {
             let source = lines.join("\r\n");
             let doc = CodeDocument::new(source.as_str());

@@ -8,7 +8,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 enum AnalysisRequest {
@@ -16,15 +19,16 @@ enum AnalysisRequest {
     Document(Arc<CodeDocument>, Arc<str>, bool),
 }
 impl AnalysisRequest {
-    fn compute(self) -> Highlighted {
-        match self {
-            Self::Source(source, language, dark) => {
-                Highlighted::compute(Arc::new(CodeDocument::new(source)), &language, dark)
-            }
-            Self::Document(document, language, dark) => {
-                Highlighted::compute(document, &language, dark)
-            }
-        }
+    fn compute(self, cancelled: impl Fn() -> bool) -> Option<Highlighted> {
+        let (document, language, dark) = match self {
+            Self::Source(source, language, dark) => (
+                Arc::new(CodeDocument::build(source, &cancelled)?),
+                language,
+                dark,
+            ),
+            Self::Document(document, language, dark) => (document, language, dark),
+        };
+        Highlighted::compute_cancellable(document, &language, dark, cancelled)
     }
 }
 
@@ -116,6 +120,7 @@ pub(crate) struct Shared {
     pub dependents: RefCell<Vec<WeakEntity<TraceView>>>,
     pub revision: Cell<u64>,
     pending: RefCell<Option<AnalysisRequest>>,
+    analysis_generation: Arc<AtomicU64>,
     analyzing: Cell<bool>,
     presentation: RefCell<Option<PendingPresentation>>,
     pub text_epoch: Cell<u64>,
@@ -164,6 +169,7 @@ impl CodeHandle {
             dependents: RefCell::default(),
             revision: Cell::default(),
             pending: RefCell::default(),
+            analysis_generation: Arc::default(),
             analyzing: Cell::default(),
             presentation: RefCell::default(),
             text_epoch: Cell::default(),
@@ -557,6 +563,9 @@ impl CodeHandle {
     fn queue(&self, request: AnalysisRequest, preserve: bool, cx: &mut App) {
         let revision = self.shared.revision.get().wrapping_add(1);
         self.shared.revision.set(revision);
+        self.shared
+            .analysis_generation
+            .store(revision, Ordering::Relaxed);
         if let AnalysisRequest::Source(source, _, _) = &request {
             let mut presentation = self.shared.presentation.borrow_mut();
             if preserve && let Some(pending) = presentation.as_mut() {
@@ -576,38 +585,55 @@ impl CodeHandle {
         if self.shared.analyzing.replace(true) {
             return;
         }
-        let this = self.clone();
+        let weak = Rc::downgrade(&self.shared);
+        let text = self.text.downgrade();
+        let overlay = self.overlay.downgrade();
         cx.spawn(async move |cx| {
             loop {
-                let next = cx.update(|_| {
-                    let request = this.shared.pending.borrow_mut().take();
-                    let revision = this.shared.revision.get();
-                    if request.is_some() {
-                        let mut stats = this.stats();
-                        stats.analyses_started += 1;
-                        this.shared.stats.set(stats);
-                    }
-                    request.map(|request| (revision, request))
-                });
-                let Some((revision, request)) = next else {
-                    this.shared.analyzing.set(false);
+                let Some(shared) = weak.upgrade() else {
                     break;
                 };
+                let Some(request) = shared.pending.borrow_mut().take() else {
+                    shared.analyzing.set(false);
+                    break;
+                };
+                let revision = shared.revision.get();
+                let mut stats = shared.stats.get();
+                stats.analyses_started += 1;
+                shared.stats.set(stats);
+                let generation = Arc::downgrade(&shared.analysis_generation);
+                drop(shared);
                 let result = cx
                     .background_executor()
-                    .spawn(async move { request.compute() })
+                    .spawn(async move {
+                        request.compute(|| {
+                            generation
+                                .upgrade()
+                                .is_none_or(|current| current.load(Ordering::Relaxed) != revision)
+                        })
+                    })
                     .await;
                 let keep_going = cx.update(|cx| {
-                    if this.shared.revision.get() == revision {
-                        this.publish(result, cx);
+                    let Some(shared) = weak.upgrade() else {
+                        return false;
+                    };
+                    if let Some(result) = result.filter(|_| shared.revision.get() == revision)
+                        && let (Some(text), Some(overlay)) = (text.upgrade(), overlay.upgrade())
+                    {
+                        CodeHandle {
+                            shared: shared.clone(),
+                            text,
+                            overlay,
+                        }
+                        .publish(result, cx);
                     } else {
-                        let mut stats = this.stats();
+                        let mut stats = shared.stats.get();
                         stats.stale_analyses += 1;
-                        this.shared.stats.set(stats);
+                        shared.stats.set(stats);
                     }
-                    let more = this.shared.pending.borrow().is_some();
+                    let more = shared.pending.borrow().is_some();
                     if !more {
-                        this.shared.analyzing.set(false);
+                        shared.analyzing.set(false);
                     }
                     more
                 });
@@ -625,6 +651,9 @@ impl CodeHandle {
         self.shared
             .revision
             .set(self.shared.revision.get().wrapping_add(1));
+        self.shared
+            .analysis_generation
+            .store(self.shared.revision.get(), Ordering::Relaxed);
         self.publish(snapshot, cx);
     }
     /// Visible source anchor in window coordinates; folded/offscreen positions return None.

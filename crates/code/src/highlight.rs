@@ -31,9 +31,25 @@ impl Highlighted {
     /// panic is reported without discarding source. Rust, JSON and JavaScript ship by default;
     /// hosts can register further Controls grammars.
     pub fn compute(document: Arc<CodeDocument>, language: &str, dark: bool) -> Self {
+        Self::compute_cancellable(document.clone(), language, dark, || false)
+            .unwrap_or_else(|| Self::plain(document))
+    }
+
+    pub(crate) fn compute_cancellable(
+        document: Arc<CodeDocument>,
+        language: &str,
+        dark: bool,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<Self> {
+        if cancelled() {
+            return None;
+        }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut parser = SyntaxHighlighter::new(language);
             let rope = ropey::Rope::from_str(document.source());
+            if cancelled() {
+                return Ok(None);
+            }
             if !parser.update(None, &rope, Some(Duration::from_secs(2))) {
                 return Err("Syntax analysis exceeded its time budget");
             }
@@ -53,13 +69,22 @@ impl Highlighted {
                     .filter(|(_, s)| s != &HighlightStyle::default())
                     .collect::<Vec<_>>()
             };
-            Ok((
-                clean(parser.styles(&(0..document.source().len()), theme.as_ref())),
-                clean(parser.styles(&(0..document.source().len()), alternate.as_ref())),
-            ))
+            if cancelled() {
+                return Ok(None);
+            }
+            let spans = clean(parser.styles(&(0..document.source().len()), theme.as_ref()));
+            if cancelled() {
+                return Ok(None);
+            }
+            let alternate = clean(parser.styles(&(0..document.source().len()), alternate.as_ref()));
+            Ok(Some((spans, alternate)))
         }));
-        match result {
-            Ok(Ok((spans, alternate))) => Self {
+        if cancelled() {
+            return None;
+        }
+        Some(match result {
+            Ok(Ok(None)) => return None,
+            Ok(Ok(Some((spans, alternate)))) => Self {
                 document,
                 spans: spans.into(),
                 alternate: alternate.into(),
@@ -74,7 +99,7 @@ impl Highlighted {
                 error: Some("Syntax analysis failed; showing plain source".into()),
                 ..Self::plain(document)
             },
-        }
+        })
     }
     pub fn styles_for(
         &self,

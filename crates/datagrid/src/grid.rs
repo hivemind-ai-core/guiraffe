@@ -1370,7 +1370,8 @@ impl Core {
                     let order = compute_order(&*src, &filters, &sort, &cancel)?;
                     // Publication needs only lookups even when a selection was made
                     // while this job was running.
-                    let inverse = order.inverse(src.row_count());
+                    let inverse = order
+                        .build_inverse(src.row_count(), || cancel.load(AtomicOrdering::Relaxed))?;
                     Ok((order, inverse))
                 })
                 .await;
@@ -1490,7 +1491,7 @@ impl Core {
     }
 
     fn change_selection(self: &Rc<Self>, cx: &mut App, f: impl FnOnce(&mut Selection, &Model)) {
-        let dirty = {
+        {
             let mut m = self.m.borrow_mut();
             let before = m.sel.clone();
             let mut sel = std::mem::take(&mut m.sel);
@@ -1499,16 +1500,11 @@ impl Core {
             if m.sel == before {
                 return;
             }
-            let dirty: Vec<usize> = m
-                .visible
-                .clone()
-                .filter(|&r| Model::row_sig(&before, r) != Model::row_sig(&m.sel, r))
-                .map(|r| vw::slot_of(r, m.pool))
-                .collect();
-            dirty
-        };
-        for s in dirty {
-            self.notify_slot(s, cx);
+            for row in m.visible.clone() {
+                if Model::row_sig(&before, row) != Model::row_sig(&m.sel, row) {
+                    self.notify_slot(vw::slot_of(row, m.pool), cx);
+                }
+            }
         }
         self.emit_selection(cx);
     }

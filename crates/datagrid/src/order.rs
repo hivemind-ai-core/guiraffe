@@ -82,18 +82,33 @@ impl RowOrder {
     /// `source row -> view row` lookup, for remapping selection and edits after the order
     /// changes. Identity needs no table; a permutation costs one `u32` per source row.
     pub fn inverse(&self, source_rows: usize) -> Inverse {
-        match self {
+        self.build_inverse(source_rows, || false)
+            .unwrap_or(Inverse::Identity(source_rows))
+    }
+
+    pub(crate) fn build_inverse(
+        &self,
+        source_rows: usize,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Inverse, Cancelled> {
+        if cancelled() {
+            return Err(Cancelled);
+        }
+        Ok(match self {
             Self::Identity => Inverse::Identity(source_rows),
             Self::Indices(v) => {
                 let mut inv = vec![u32::MAX; source_rows.min(MAX_ROWS)];
                 for (view, &src) in v.iter().enumerate() {
+                    if view % 4096 == 0 && cancelled() {
+                        return Err(Cancelled);
+                    }
                     if let Some(slot) = inv.get_mut(src as usize) {
                         *slot = view as u32;
                     }
                 }
                 Inverse::Table(inv)
             }
-        }
+        })
     }
 }
 
@@ -257,6 +272,21 @@ mod tests {
         assert_eq!(o, Ok(RowOrder::Identity));
         assert_eq!(RowOrder::Identity.source_row(5, 10), Some(5));
         assert_eq!(RowOrder::Identity.source_row(10, 10), None);
+    }
+
+    #[test]
+    fn cancelled_inverse_does_not_publish_a_partial_permutation() {
+        let order = RowOrder::Indices((0..10_000).rev().collect());
+        let checks = std::cell::Cell::new(0);
+        assert_eq!(
+            order.build_inverse(10_000, || {
+                checks.set(checks.get() + 1);
+                checks.get() >= 3
+            }),
+            Err(Cancelled)
+        );
+        assert_eq!(checks.get(), 3);
+        assert_eq!(order.inverse(10_000).view_row(0), Some(9_999));
     }
 
     #[test]
