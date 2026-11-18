@@ -230,10 +230,10 @@ impl ChartView {
         })
     }
 
-    /// Mount an empty chart with a progress indicator, then publish the prepared
+    /// Mount a bounded preview of supported marks while preparing the complete
     /// source. Use `new` when a prepared chart is already available.
     pub fn from_spec(spec: ChartSpec, options: ChartOptions, cx: &mut App) -> Entity<Self> {
-        let view = Self::new(ChartSpec::new(spec.summary.clone()).prepare(), options, cx);
+        let view = Self::new(spec.preview(), options, cx);
         view.update(cx, |view, cx| {
             let cancelled = Arc::new(AtomicBool::new(false));
             view.preparing = Some(SceneRequest(cancelled.clone()));
@@ -635,7 +635,7 @@ impl Render for ChartView {
             .children(
                 self.preparing
                     .as_ref()
-                    .map(|_| div().child("Preparing chart…")),
+                    .map(|_| div().child("Preparing full chart…")),
             )
             .child(body)
     }
