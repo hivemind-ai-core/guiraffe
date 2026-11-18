@@ -37,3 +37,30 @@ Curve and Bar editors, DataGrid.
 - chat: `ChatProps` only has title/subtitle (no avatar, density, read-only/disabled composer).
 - timeline: Gantt has no snap-to-grid for drag (only keyboard `set_key_step`).
 - datagrid: no built-in filter UI (filters are programmatic only).
+
+## Authoring catalogue coverage
+
+The DataUi catalogue covers all registered document kinds. The static Rust showcase and
+the DataUi catalogue describe different APIs where the same component has both a builder
+and a document representation. The table tracks public GUIraffe renderable types that
+still need Rust API descriptors, including public helper types that render within a parent.
+
+| Crate | Static Rust descriptors pending |
+|---|---|
+| chat | `Chat`, `ChatState`, `Composer`, `MessageView` |
+| code | `CodeViewer` |
+| commands | `CommandScope`, `Menu` |
+| components | `ActionIcon`, `Blockquote`, `CardSection`, `Indicator`, `Mark`, `Paper`, `ScopedButton`, `SegmentedControl`, `ThemeIcon` |
+| core | `TextMenuLayer` |
+| datagrid | `DataGrid` |
+| devtools | `DevtoolsPanel`, `DevtoolsRoot` |
+| flow | `FlowCanvas`, `FlowGesture`, `FlowState`, `FlowViewport` |
+| inputs | `ChipGroup`, `Dropzone`, `PasswordStrength`, `RangeSlider`, `TagsInput` |
+| layout | `AppShell`, `AspectRatio`, `Center`, `Col`, `Container`, `Divider`, `Flex`, `Grid`, `Group`, `ScrollArea`, `SimpleGrid`, `Space`, `Splitter`, `Stack` |
+| markdown | `MarkdownState`, `MarkdownView` |
+| mermaid | `Host`, `MermaidView`, `MermaidViewState` |
+| overlays | `Affix`, `FloatingTooltip`, `LoadingOverlay`, `OverlayHost`, `Spotlight` |
+| timeline | `BarCurveView`, `CurveView`, `DopeSheet`, `GanttView`, `TracksView` |
+| ui | `BoundNode`, `DataUi` |
+
+The catalogue entries for Card, Highlight, Pill, RingProgress, Text and Title currently describe their DataUi-facing properties.

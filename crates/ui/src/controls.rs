@@ -15,7 +15,7 @@ use gpui_kit::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, ParentElement, Render,
     SharedString, Styled, Subscription, Window, div, px,
 };
-use guiraffe_core::{Size, StyleContext};
+use guiraffe_core::{ColorName, GuiraffeTheme, Size, StateKind, StyleContext, Variant};
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
@@ -86,16 +86,18 @@ pub(crate) struct Props {
     label: SharedString,
     options: Value,
     disabled: bool,
+    invalid: bool,
     placeholder: SharedString,
 }
 impl Props {
     pub(crate) fn from_node(n: &NodeView<'_>) -> Self {
         Self {
-            value: n.prop(0).clone(),
-            label: n.text(1),
-            options: n.prop(2).clone(),
-            disabled: n.bool(3),
-            placeholder: n.text(4),
+            value: n.prop(n.prop_index("value")).clone(),
+            label: n.text(n.prop_index("label")),
+            options: n.prop(n.prop_index("options")).clone(),
+            disabled: n.bool(n.prop_index("disabled")),
+            invalid: n.bool(n.prop_index("invalid")),
+            placeholder: n.text(n.prop_index("placeholder")),
         }
     }
 }
@@ -258,10 +260,19 @@ struct Control {
     state: Rc<State>,
 }
 impl Render for Control {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.state;
         let props = state.props.borrow().clone();
-        let size = px(StyleContext::current().control_size.control_height());
+        let control_size = StyleContext::current().control_size;
+        let size = px(control_size.control_height());
+        let theme = GuiraffeTheme::global(cx);
+        let font_size = px(control_size.font_size() * theme.scale);
+        let error_border = props.invalid.then(|| {
+            theme
+                .state(StateKind::FocusRing, Variant::Outline, Some(ColorName::Red))
+                .border
+                .to_hsla()
+        });
         let change = state.change.clone();
         let disabled = props.disabled;
         let element = match state.kind {
@@ -291,22 +302,30 @@ impl Render for Control {
                 .input
                 .as_ref()
                 .map(|input| {
-                    Input::new(input)
+                    let mut input = Input::new(input)
                         .disabled(disabled)
                         .with_size(size)
-                        .into_any_element()
+                        .text_size(font_size);
+                    if let Some(border) = error_border {
+                        input = input.border_color(border);
+                    }
+                    input.into_any_element()
                 })
                 .unwrap_or_else(|| div().into_any_element()),
             Kind::Select => state
                 .select
                 .as_ref()
                 .map(|select| {
-                    Select::new(select)
+                    let mut select = Select::new(select)
                         .id(state.id.clone())
                         .placeholder(props.placeholder)
                         .disabled(disabled)
                         .with_size(size)
-                        .into_any_element()
+                        .text_size(font_size);
+                    if let Some(border) = error_border {
+                        select = select.border_color(border);
+                    }
+                    select.into_any_element()
                 })
                 .unwrap_or_else(|| div().into_any_element()),
         };
@@ -330,17 +349,13 @@ impl Render for Control {
         wrapper
     }
 }
-static CONTROL: Schema = Schema {
-    props: &["value", "label", "options", "disabled", "placeholder"],
-    events: &["change"],
-};
 struct ControlWidget(Kind);
 impl Widget for ControlWidget {
     fn uniform_row(&self, _: &[crate::Prop]) -> bool {
         matches!(self.0, Kind::Text | Kind::Select)
     }
     fn schema(&self) -> &'static Schema {
-        &CONTROL
+        &self.0.spec().1
     }
     fn render(
         &self,
@@ -397,13 +412,20 @@ impl Widget for ControlWidget {
         entry.view.clone().into_any_element()
     }
 }
+impl Kind {
+    fn spec(self) -> &'static (crate::catalog::WidgetSpec, Schema) {
+        use crate::catalog::{CHECKBOX, SELECT, SWITCH, TEXT_INPUT};
+        match self {
+            Self::Text => &TEXT_INPUT,
+            Self::Checkbox => &CHECKBOX,
+            Self::Switch => &SWITCH,
+            Self::Select => &SELECT,
+        }
+    }
+}
+
 pub(crate) fn register(registry: &mut Registry) {
-    for (name, kind) in [
-        ("text-input", Kind::Text),
-        ("checkbox", Kind::Checkbox),
-        ("switch", Kind::Switch),
-        ("select", Kind::Select),
-    ] {
-        registry.register(name, ControlWidget(kind));
+    for kind in [Kind::Text, Kind::Checkbox, Kind::Switch, Kind::Select] {
+        registry.register(kind.spec().0.id, ControlWidget(kind));
     }
 }

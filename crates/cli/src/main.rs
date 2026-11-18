@@ -15,6 +15,10 @@ mod doctor;
 mod preview;
 mod scaffold;
 
+use guiraffe_ui::catalogue_artifacts::{
+    CATALOGUE_JSON as CATALOGUE, REFERENCE_MARKDOWN as CATALOGUE_REFERENCE, SCREEN_SCHEMA,
+};
+
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
@@ -46,6 +50,15 @@ fn run() -> Result<()> {
             println!("Created {}\n  cd {name} && cargo run", dir.display());
             Ok(())
         }
+        Some("catalog") => {
+            match args.get(1..).unwrap_or_default() {
+                [flag] if flag == "--json" => print!("{CATALOGUE}"),
+                [flag] if flag == "--schema" => print!("{SCREEN_SCHEMA}"),
+                [flag] if flag == "--markdown" => print!("{CATALOGUE_REFERENCE}"),
+                _ => bail!("usage: guiraffe catalog --json | --schema | --markdown"),
+            }
+            Ok(())
+        }
         Some("preview") => {
             let Some(file) = args.get(1) else {
                 bail!("usage: guiraffe preview <file> [--screen <id>]")
@@ -58,6 +71,7 @@ fn run() -> Result<()> {
             };
             let text = std::fs::read_to_string(file)?;
             let imp = guiraffe_mocket::import(&text, option(&args[2..], "--screen")?.as_deref())?;
+            preview::require_valid(imp.validation_issues())?;
             for r in imp
                 .report
                 .iter()
@@ -94,7 +108,7 @@ fn run() -> Result<()> {
         }
         Some("--help" | "-h") | None => {
             println!(
-                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe add [<crate>…]\nguiraffe doctor"
+                "guiraffe new <name> [--path <checkout>]\nguiraffe preview <file> [--screen <id|name>]\nguiraffe import <design.mocket.json> [--screen <id|name>]\nguiraffe add [<crate>…]\nguiraffe catalog --json | --schema | --markdown\nguiraffe doctor"
             );
             Ok(())
         }
@@ -137,3 +151,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod catalogue_tests;

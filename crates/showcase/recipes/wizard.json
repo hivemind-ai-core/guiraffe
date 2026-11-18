@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Workspace setup wizard"
+            }
+          },
+          {
+            "kind": "group",
+            "children": [
+              {
+                "kind": "pill",
+                "props": {
+                  "label": "1. Details"
+                }
+              },
+              {
+                "kind": "pill",
+                "props": {
+                  "label": "2. Members"
+                }
+              },
+              {
+                "kind": "pill",
+                "props": {
+                  "label": "3. Review"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "text",
+            "props": {
+              "text": "Step 2 of 3",
+              "dimmed": true
+            }
+          },
+          {
+            "kind": "title",
+            "props": {
+              "text": "Invite members"
+            }
+          },
+          {
+            "kind": "text-input",
+            "props": {
+              "placeholder": "Email address"
+            }
+          },
+          {
+            "kind": "group",
+            "children": [
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Back"
+                }
+              },
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Continue"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

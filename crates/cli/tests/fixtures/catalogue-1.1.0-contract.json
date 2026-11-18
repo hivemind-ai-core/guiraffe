@@ -1,0 +1,503 @@
+{
+  "version": "1.1.0",
+  "widgets": [
+    {
+      "id": "stack",
+      "props": [
+        {
+          "name": "gap",
+          "schema": {
+            "enum": [
+              "xs",
+              "sm",
+              "md",
+              "lg",
+              "xl"
+            ],
+            "type": "string"
+          },
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "group",
+      "props": [
+        {
+          "name": "gap",
+          "schema": {
+            "enum": [
+              "xs",
+              "sm",
+              "md",
+              "lg",
+              "xl"
+            ],
+            "type": "string"
+          },
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "grid",
+      "props": [
+        {
+          "name": "gap",
+          "schema": {
+            "enum": [
+              "xs",
+              "sm",
+              "md",
+              "lg",
+              "xl"
+            ],
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "columns",
+          "schema": {
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "title",
+      "props": [
+        {
+          "name": "text",
+          "schema": {
+            "type": "string"
+          },
+          "required": true
+        },
+        {
+          "name": "order",
+          "schema": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "text",
+      "props": [
+        {
+          "name": "text",
+          "schema": {
+            "type": "string"
+          },
+          "required": true
+        },
+        {
+          "name": "dimmed",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        {
+          "name": "size",
+          "schema": {
+            "enum": [
+              "xs",
+              "sm",
+              "md",
+              "lg",
+              "xl"
+            ],
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "color",
+          "schema": {
+            "enum": [
+              "dark",
+              "gray",
+              "red",
+              "pink",
+              "grape",
+              "violet",
+              "indigo",
+              "blue",
+              "cyan",
+              "teal",
+              "green",
+              "lime",
+              "yellow",
+              "orange"
+            ],
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "single-line",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "highlight",
+      "props": [
+        {
+          "name": "text",
+          "schema": {
+            "type": "string"
+          },
+          "required": true
+        },
+        {
+          "name": "term",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "pill",
+      "props": [
+        {
+          "name": "label",
+          "schema": {
+            "type": "string"
+          },
+          "required": true
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "card",
+      "props": [],
+      "events": []
+    },
+    {
+      "id": "ring",
+      "props": [
+        {
+          "name": "value",
+          "schema": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "required": false
+        },
+        {
+          "name": "color",
+          "schema": {
+            "enum": [
+              "dark",
+              "gray",
+              "red",
+              "pink",
+              "grape",
+              "violet",
+              "indigo",
+              "blue",
+              "cyan",
+              "teal",
+              "green",
+              "lime",
+              "yellow",
+              "orange"
+            ],
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "diameter",
+          "schema": {
+            "maximum": 3.4028234663852886e+38,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "required": false
+        },
+        {
+          "name": "label",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "button",
+      "props": [
+        {
+          "name": "label",
+          "schema": {
+            "type": "string"
+          },
+          "required": true
+        }
+      ],
+      "events": [
+        {
+          "id": "click",
+          "payloadSchema": {
+            "type": "null"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hug",
+      "props": [],
+      "events": []
+    },
+    {
+      "id": "spacer",
+      "props": [],
+      "events": []
+    },
+    {
+      "id": "text-input",
+      "props": [
+        {
+          "name": "value",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "label",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "options",
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "required": false
+        },
+        {
+          "name": "disabled",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        {
+          "name": "placeholder",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "invalid",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        }
+      ],
+      "events": [
+        {
+          "id": "change",
+          "payloadSchema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "id": "checkbox",
+      "props": [
+        {
+          "name": "value",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        {
+          "name": "label",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "options",
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "required": false
+        },
+        {
+          "name": "disabled",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        {
+          "name": "placeholder",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        }
+      ],
+      "events": [
+        {
+          "id": "change",
+          "payloadSchema": {
+            "type": "boolean"
+          }
+        }
+      ]
+    },
+    {
+      "id": "switch",
+      "props": [
+        {
+          "name": "value",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        {
+          "name": "label",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "options",
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "required": false
+        },
+        {
+          "name": "disabled",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        {
+          "name": "placeholder",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        }
+      ],
+      "events": [
+        {
+          "id": "change",
+          "payloadSchema": {
+            "type": "boolean"
+          }
+        }
+      ]
+    },
+    {
+      "id": "select",
+      "props": [
+        {
+          "name": "value",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "label",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "options",
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "required": false
+        },
+        {
+          "name": "disabled",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        {
+          "name": "placeholder",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
+          "name": "invalid",
+          "schema": {
+            "type": "boolean"
+          },
+          "required": false
+        }
+      ],
+      "events": [
+        {
+          "id": "change",
+          "payloadSchema": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

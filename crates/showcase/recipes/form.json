@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Create account"
+            }
+          },
+          {
+            "kind": "text",
+            "props": {
+              "text": "Email address",
+              "dimmed": true
+            }
+          },
+          {
+            "kind": "text-input",
+            "props": {
+              "placeholder": "name@example.com",
+              "value": "alex@",
+              "invalid": true
+            }
+          },
+          {
+            "kind": "text",
+            "props": {
+              "text": "Enter a complete email address.",
+              "color": "red"
+            }
+          },
+          {
+            "kind": "text",
+            "props": {
+              "text": "Display name",
+              "dimmed": true
+            }
+          },
+          {
+            "kind": "text-input",
+            "props": {
+              "placeholder": "Display name",
+              "value": "Alex"
+            }
+          },
+          {
+            "kind": "text",
+            "props": {
+              "text": "Display name is available.",
+              "color": "green"
+            }
+          },
+          {
+            "kind": "checkbox",
+            "props": {
+              "label": "I accept the terms"
+            }
+          },
+          {
+            "kind": "group",
+            "children": [
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Create account"
+                }
+              },
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Cancel"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

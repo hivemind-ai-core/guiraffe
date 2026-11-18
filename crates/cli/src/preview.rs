@@ -24,9 +24,43 @@ pub fn load(path: &Path, screen: Option<&str>) -> Result<Document> {
 pub fn parse(text: &str, screen: Option<&str>) -> Result<Document> {
     let probe: serde_json::Value = serde_json::from_str(text).context("not JSON")?;
     if probe.get("screens").is_some() && probe.get("nodes").is_some() {
-        return Ok(guiraffe_mocket::import(text, screen)?.document);
+        let imported = guiraffe_mocket::import(text, screen)?;
+        require_valid(imported.validation_issues())?;
+        return Ok(imported.document);
     }
-    Document::from_json(text).map_err(anyhow::Error::msg)
+    let document = Document::from_json(text).map_err(anyhow::Error::msg)?;
+    validate_structure(&document, true)?;
+    Ok(document)
+}
+
+pub(crate) fn validate(document: &Document, mocket_placeholders: bool) -> Result<()> {
+    require_valid(
+        guiraffe_ui::validation::Validation {
+            mocket_placeholders,
+            bound_events: Some(&std::collections::BTreeSet::new()),
+        }
+        .check(document),
+    )
+}
+
+pub(crate) fn validate_structure(document: &Document, mocket_placeholders: bool) -> Result<()> {
+    require_valid(
+        guiraffe_ui::validation::Validation {
+            mocket_placeholders,
+            ..Default::default()
+        }
+        .check(document),
+    )
+}
+
+pub(crate) fn require_valid(issues: Vec<guiraffe_ui::validation::Issue>) -> Result<()> {
+    if !issues.is_empty() {
+        anyhow::bail!(
+            "document validation failed\n{}",
+            serde_json::to_string_pretty(&issues)?
+        );
+    }
+    Ok(())
 }
 
 /// Change detection by modification time + length (cheap; no extra dependencies).
@@ -59,7 +93,7 @@ impl Preview {
     fn apply(&mut self, loaded: Result<Document>, cx: &mut Context<Self>) {
         match loaded {
             Ok(doc) => {
-                self.error = None;
+                self.error = validate(&doc, true).err().map(|error| error.to_string());
                 match &self.ui {
                     Some(ui) => {
                         if let Err(e) = ui.update(cx, |u, cx| u.set_document(&doc, cx)) {
@@ -199,6 +233,33 @@ mod tests {
         );
         assert!(parse("{", None).is_err());
         assert!(parse(r#"{"neither":1}"#, None).is_err());
+    }
+
+    #[test]
+    fn validation_reports_unbound_handlers() {
+        let doc = Document::new(
+            guiraffe_ui::Node::new("button")
+                .prop("label", "Save")
+                .on("click", "save"),
+        );
+        let error = validate(&doc, false).expect_err("preview has no save handler");
+        assert!(
+            error
+                .to_string()
+                .contains("Bind this event to a named host handler.")
+        );
+    }
+
+    #[test]
+    fn imported_validation_uses_source_screen_and_node_ids() {
+        let mocket = r#"{"screens":[{"id":"settings","root":"r"}],"nodes":{"r":{"type":"stack","id":"save-btn","children":["b"]},"b":{"type":"button","id":"save-btn"}}}"#;
+        let error = parse(mocket, None).expect_err("duplicate Mocket id");
+        assert!(
+            error
+                .to_string()
+                .contains("/screens/settings/nodes/save-btn"),
+            "{error}"
+        );
     }
 
     #[test]

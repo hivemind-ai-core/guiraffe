@@ -53,11 +53,44 @@ pub struct NodeReport {
 #[derive(Debug, Clone)]
 pub struct Import {
     pub screen: String,
+    screen_id: String,
     pub document: Document,
     pub report: Vec<NodeReport>,
 }
 
 impl Import {
+    /// Validate an imported document with diagnostics located in the source screen.
+    pub fn validation_issues(&self) -> Vec<guiraffe_ui::validation::Issue> {
+        fn path_segment(value: &str) -> String {
+            value.replace('~', "~0").replace('/', "~1")
+        }
+
+        let mut issues = guiraffe_ui::validation::Validation {
+            mocket_placeholders: true,
+            ..Default::default()
+        }
+        .check(&self.document);
+        for issue in &mut issues {
+            let Some(suffix) = issue.node.strip_prefix("/root") else {
+                continue;
+            };
+            let source = suffix
+                .split("/children/")
+                .skip(1)
+                .try_fold(&self.document.root, |node, index| {
+                    node.children.get(index.parse::<usize>().ok()?)
+                });
+            if let Some(id) = source.and_then(|node| node.id.as_deref()) {
+                issue.node = format!(
+                    "/screens/{}/nodes/{}",
+                    path_segment(&self.screen_id),
+                    path_segment(id)
+                );
+            }
+        }
+        issues
+    }
+
     pub fn count(&self, c: Coverage) -> usize {
         self.report.iter().filter(|r| r.coverage == c).count()
     }
@@ -150,6 +183,12 @@ pub fn import(mocket_json: &str, screen: Option<&str>) -> Result<Import, ImportE
     let root = cx.node(root_uid)?;
     Ok(Import {
         screen: s["name"].as_str().unwrap_or_default().to_owned(),
+        screen_id: s["id"]
+            .as_str()
+            .or_else(|| s["uid"].as_str())
+            .or_else(|| s["name"].as_str())
+            .unwrap_or(root_uid)
+            .to_owned(),
         document: Document::new(root),
         report: cx.report,
     })
@@ -199,7 +238,10 @@ impl<'a> Cx<'a> {
             })
         };
         let layout = &n["layout"];
-        if let Some(g) = layout["gap"].as_f64().filter(|g| *g > 0.0) {
+        if guiraffe_ui::catalog::lookup(kind)
+            .is_some_and(|spec| spec.props.iter().any(|property| property.name == "gap"))
+            && let Some(g) = layout["gap"].as_f64().filter(|g| *g > 0.0)
+        {
             out = out.prop("gap", gap_token(g));
         }
         let text_slot = |out: Node, prop: &str, text: Option<String>, slot: String| match text {
@@ -212,12 +254,17 @@ impl<'a> Cx<'a> {
                 text_slot(
                     out.prop("order", level),
                     "text",
-                    str_prop(n, "text"),
+                    Some(str_prop(n, "text").unwrap_or_default()),
                     format!("{id}.text"),
                 )
             }
             "text" | "last-updated" => {
-                let o = text_slot(out, "text", str_prop(n, "text"), format!("{id}.text"));
+                let o = text_slot(
+                    out,
+                    "text",
+                    Some(str_prop(n, "text").unwrap_or_default()),
+                    format!("{id}.text"),
+                );
                 if ty == "last-updated" || n["props"]["tone"].as_str() == Some("muted") {
                     o.prop("dimmed", true)
                 } else {
@@ -236,7 +283,7 @@ impl<'a> Cx<'a> {
                     .map(|c| c.split_whitespace().count())
                     .filter(|c| *c > 0)
                     .unwrap_or(2);
-                out.prop("columns", cols as f64)
+                out.prop("columns", cols.min(12) as f64)
             }
             _ => out,
         };

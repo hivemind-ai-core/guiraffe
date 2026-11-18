@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod demos;
 pub mod events;
 pub mod knobs;
+pub mod recipes;
 pub mod shell;
 
 /// The showcase window's root view: the shell inside an overlay root, so toasts, modals

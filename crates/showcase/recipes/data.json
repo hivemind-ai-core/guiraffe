@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "root": {
+    "kind": "card",
+    "children": [
+      {
+        "kind": "stack",
+        "children": [
+          {
+            "kind": "title",
+            "props": {
+              "text": "Issue grid"
+            }
+          },
+          {
+            "kind": "group",
+            "children": [
+              {
+                "kind": "text-input",
+                "props": {
+                  "placeholder": "Find an issue"
+                }
+              },
+              {
+                "kind": "select",
+                "props": {
+                  "options": [
+                    "All",
+                    "Open",
+                    "Closed"
+                  ],
+                  "value": "All"
+                }
+              },
+              {
+                "kind": "button",
+                "props": {
+                  "label": "Apply filters"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "grid",
+            "props": {
+              "columns": 3
+            },
+            "children": [
+              {
+                "kind": "text",
+                "props": {
+                  "text": "Ticket",
+                  "dimmed": true
+                }
+              },
+              {
+                "kind": "text",
+                "props": {
+                  "text": "Owner",
+                  "dimmed": true
+                }
+              },
+              {
+                "kind": "text",
+                "props": {
+                  "text": "Status",
+                  "dimmed": true
+                }
+              },
+              {
+                "kind": "text",
+                "props": {
+                  "text": "Export audit log"
+                }
+              },
+              {
+                "kind": "text",
+                "props": {
+                  "text": "Riley"
+                }
+              },
+              {
+                "kind": "pill",
+                "props": {
+                  "label": "Open"
+                }
+              },
+              {
+                "kind": "text",
+                "props": {
+                  "text": "Update access rules"
+                }
+              },
+              {
+                "kind": "text",
+                "props": {
+                  "text": "Morgan"
+                }
+              },
+              {
+                "kind": "pill",
+                "props": {
+                  "label": "Closed"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

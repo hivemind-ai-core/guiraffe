@@ -7,12 +7,12 @@ use gpui_kit::{
 use guiraffe_components::{Card, Highlight, Pill, RingProgress, Text, Title};
 use guiraffe_core::{Size, StyleContext};
 
-use crate::widget::{NodeView, Registry, Schema, widget};
+use crate::widget::{NodeView, Registry, widget};
 
-fn gap(n: &NodeView<'_>, i: usize) -> f32 {
+fn gap(n: &NodeView<'_>) -> f32 {
     StyleContext::current()
         .density
-        .space(n.size(i).unwrap_or(Size::Sm))
+        .space(n.size(n.prop_index("gap")).unwrap_or(Size::Sm))
 }
 
 /// Split children into rows of `cols` (the last row may be shorter).
@@ -31,70 +31,42 @@ fn chunk_rows(kids: Vec<AnyElement>, cols: usize) -> Vec<Vec<AnyElement>> {
     rows
 }
 
-static GAP: Schema = Schema {
-    props: &["gap"],
-    events: &[],
-};
-static GRID: Schema = Schema {
-    props: &["gap", "columns"],
-    events: &[],
-};
-static TITLE: Schema = Schema {
-    props: &["text", "order"],
-    events: &[],
-};
-static TEXT: Schema = Schema {
-    props: &["text", "dimmed", "size", "color", "single-line"],
-    events: &[],
-};
-static HIGHLIGHT: Schema = Schema {
-    props: &["text", "term"],
-    events: &[],
-};
-static PILL: Schema = Schema {
-    props: &["label"],
-    events: &[],
-};
-static RING: Schema = Schema {
-    props: &["value", "color", "diameter", "label"],
-    events: &[],
-};
-static BUTTON: Schema = Schema {
-    props: &["label"],
-    events: &["click"],
-};
+use crate::catalog::*;
 
 pub fn register(r: &mut Registry) {
     crate::controls::register(r);
     r.register(
-        "stack",
-        widget(&GAP, |n, kids, _, _| {
+        STACK.0.id,
+        widget(&STACK.1, |n, kids, _, _| {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(gap(n, 0)))
+                .gap(px(gap(n)))
                 .children(kids)
                 .into_any_element()
         }),
     );
     r.register(
-        "group",
-        widget(&GAP, |n, kids, _, _| {
+        GROUP.0.id,
+        widget(&GROUP.1, |n, kids, _, _| {
             div()
                 .flex()
                 .flex_row()
                 .flex_wrap()
                 .items_center()
-                .gap(px(gap(n, 0)))
+                .gap(px(gap(n)))
                 .children(kids)
                 .into_any_element()
         }),
     );
     r.register(
-        "grid",
-        widget(&GRID, |n, kids, _, _| {
-            let cols = n.num(1).unwrap_or(2.0).clamp(1.0, 12.0) as usize;
-            let g = gap(n, 0);
+        GRID.0.id,
+        widget(&GRID.1, |n, kids, _, _| {
+            let cols = n
+                .num(n.prop_index("columns"))
+                .unwrap_or(2.0)
+                .clamp(1.0, 12.0) as usize;
+            let g = gap(n);
             div()
                 .flex()
                 .flex_col()
@@ -109,24 +81,29 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "title",
-        widget(&TITLE, |n, _, _, _| {
-            Title::new(n.text(0))
-                .order(n.num(1).map(|o| o.clamp(1.0, 6.0) as u8).unwrap_or(3))
+        TITLE.0.id,
+        widget(&TITLE.1, |n, _, _, _| {
+            Title::new(n.text(n.prop_index("text")))
+                .order(
+                    n.num(n.prop_index("order"))
+                        .map(|o| o.clamp(1.0, 6.0) as u8)
+                        .unwrap_or(3),
+                )
                 .into_any_element()
         }),
     );
     r.register(
-        "text",
-        widget(&TEXT, |n, _, _, _| {
-            let mut t = Text::new(n.text(0)).dimmed(n.bool(1));
-            if let Some(s) = n.size(2) {
+        TEXT.0.id,
+        widget(&TEXT.1, |n, _, _, _| {
+            let mut t =
+                Text::new(n.text(n.prop_index("text"))).dimmed(n.bool(n.prop_index("dimmed")));
+            if let Some(s) = n.size(n.prop_index("size")) {
                 t = t.size(s);
             }
-            if let Some(c) = n.color(3) {
+            if let Some(c) = n.color(n.prop_index("color")) {
                 t = t.color(c);
             }
-            if n.bool(4) {
+            if n.bool(n.prop_index("single-line")) {
                 t = t
                     .truncate(true)
                     .h(px(Size::Xl.control_height()))
@@ -136,47 +113,51 @@ pub fn register(r: &mut Registry) {
         })
         .uniform_rows_if(|props| {
             matches!(
-                props.get(4),
+                TEXT.1
+                    .prop_index("single-line")
+                    .and_then(|index| props.get(index)),
                 Some(crate::Prop::Lit(crate::Value::Bool(true)))
             )
         }),
     );
     r.register(
-        "highlight",
-        widget(&HIGHLIGHT, |n, _, _, _| {
-            Highlight::new(n.text(0)).term(n.text(1)).into_any_element()
-        }),
-    );
-    r.register(
-        "pill",
-        widget(&PILL, |n, _, _, _| {
-            Pill::new(n.element_id(), n.text(0)).into_any_element()
-        }),
-    );
-    r.register(
-        "card",
-        widget(&Schema::EMPTY, |_, kids, _, _| {
-            Card::new().children(kids).into_any_element()
-        }),
-    );
-    r.register(
-        "ring",
-        widget(&RING, |n, _, _, _| {
-            RingProgress::new()
-                .diameter(n.num(2).unwrap_or(64.0) as f32)
-                .section(
-                    n.num(0).unwrap_or(0.0) as f32,
-                    n.color(1).unwrap_or_default(),
-                )
-                .label(n.text(3))
+        HIGHLIGHT.0.id,
+        widget(&HIGHLIGHT.1, |n, _, _, _| {
+            Highlight::new(n.text(n.prop_index("text")))
+                .term(n.text(n.prop_index("term")))
                 .into_any_element()
         }),
     );
     r.register(
-        "button",
-        widget(&BUTTON, |n, _, _, _| {
-            let b = Button::new(n.element_id()).label(n.text(0));
-            let b = match n.handler(0) {
+        PILL.0.id,
+        widget(&PILL.1, |n, _, _, _| {
+            Pill::new(n.element_id(), n.text(n.prop_index("label"))).into_any_element()
+        }),
+    );
+    r.register(
+        CARD.0.id,
+        widget(&CARD.1, |_, kids, _, _| {
+            Card::new().children(kids).into_any_element()
+        }),
+    );
+    r.register(
+        RING.0.id,
+        widget(&RING.1, |n, _, _, _| {
+            RingProgress::new()
+                .diameter(n.num(n.prop_index("diameter")).unwrap_or(64.0) as f32)
+                .section(
+                    n.num(n.prop_index("value")).unwrap_or(0.0) as f32,
+                    n.color(n.prop_index("color")).unwrap_or_default(),
+                )
+                .label(n.text(n.prop_index("label")))
+                .into_any_element()
+        }),
+    );
+    r.register(
+        BUTTON.0.id,
+        widget(&BUTTON.1, |n, _, _, _| {
+            let b = Button::new(n.element_id()).label(n.text(n.prop_index("label")));
+            let b = match n.handler(n.event_index("click")) {
                 Some(h) => b
                     .on_click(move |_, w, cx| h(crate::Value::Null, w, cx))
                     .into_any_element(),
@@ -196,8 +177,8 @@ pub fn register(r: &mut Registry) {
     );
     // Content-sized child (Mocket `width: "hug"`): opts out of the parent's cross-axis stretch.
     r.register(
-        "hug",
-        widget(&Schema::EMPTY, |_, kids, _, _| {
+        HUG.0.id,
+        widget(&HUG.1, |_, kids, _, _| {
             div()
                 .flex()
                 .flex_col()
@@ -207,29 +188,9 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
-        "spacer",
-        widget(&Schema::EMPTY, |_, _, _, _| {
-            div().flex_1().into_any_element()
-        }),
+        SPACER.0.id,
+        widget(&SPACER.1, |_, _, _, _| div().flex_1().into_any_element()),
     );
 }
 
-/// Mocket component types → builtin kinds (used by the Mocket importer; one table, one truth).
-pub const KINDS: &[&str] = &[
-    "stack",
-    "group",
-    "grid",
-    "title",
-    "text",
-    "highlight",
-    "pill",
-    "card",
-    "ring",
-    "button",
-    "hug",
-    "spacer",
-    "text-input",
-    "checkbox",
-    "switch",
-    "select",
-];
+pub use crate::catalog::KINDS;

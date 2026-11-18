@@ -318,6 +318,7 @@ impl Render for Showcase {
                                         Text::new(match e.krate {
                                             "kit" => "gpui-kit · GPUI Controls, themed by GUIraffe"
                                                 .to_string(),
+                                            "recipes" => "DataUi screen document".to_string(),
                                             "kit-charts" => {
                                                 "gpui-kit · component::chart".to_string()
                                             }
