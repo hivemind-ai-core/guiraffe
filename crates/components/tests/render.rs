@@ -8,7 +8,8 @@ use gpui_kit::{
     Window, div, px,
 };
 use guiraffe_components::{
-    ColorSwatch, KbdGroup, KbdSeparator, SwatchSelected, Timeline, TimelineItem,
+    AvatarGroup, ColorSwatch, KbdGroup, KbdSeparator, Person, SwatchSelected, Timeline,
+    TimelineItem,
 };
 use guiraffe_core::{ColorName, Size};
 
@@ -153,4 +154,88 @@ fn color_swatch_click_reports_once_per_press(cx: &mut TestAppContext) {
     vcx.simulate_click(target.center(), Modifiers::default());
     assert_eq!(clicks.get(), 1, "the handler ran exactly once");
     let _ = MouseButton::Left;
+}
+
+struct AvatarsScene;
+
+impl Render for AvatarsScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .gap(px(16.0))
+            .items_center()
+            .child(
+                div()
+                    .debug_selector(|| "unlimited".into())
+                    .child(AvatarGroup::new([
+                        Person::new("Ada Lovelace"),
+                        Person::new("Grace Hopper"),
+                    ])),
+            )
+            .child(
+                div().debug_selector(|| "limited".into()).child(
+                    AvatarGroup::new([
+                        Person::new("Ada Lovelace"),
+                        Person::new("Grace Hopper"),
+                        Person::new("Alan Turing"),
+                        Person::new("Katherine Johnson"),
+                        Person::new("Edsger Dijkstra"),
+                    ])
+                    .limit(3),
+                ),
+            )
+    }
+}
+
+#[gpui_kit::test]
+fn avatar_group_overlaps_and_hides_the_overflow(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let (_view, vcx) = cx.add_window_view(|_, _| AvatarsScene);
+    vcx.run_until_parked();
+    let two = vcx.debug_bounds("unlimited").expect("two avatars");
+    let three = vcx.debug_bounds("limited").expect("three avatars plus +2");
+    let one = f32::from(two.size.height);
+    assert!(one > 0.0, "an avatar has a height");
+    assert!(
+        f32::from(two.size.width) < one * 2.0,
+        "adjacent avatars overlap: {} vs {one}",
+        f32::from(two.size.width)
+    );
+    assert!(
+        f32::from(three.size.width) < f32::from(two.size.width) * 2.0,
+        "the limit replaces two avatars with one +N chip"
+    );
+}
+
+#[gpui_kit::test]
+fn avatar_group_limit_of_zero_and_empty_render_without_panicking(cx: &mut TestAppContext) {
+    struct Edge;
+    impl Render for Edge {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .gap(px(16.0))
+                .items_center()
+                .child(
+                    div()
+                        .debug_selector(|| "empty".into())
+                        .child(AvatarGroup::new(Vec::<Person>::new())),
+                )
+                .child(
+                    div().debug_selector(|| "zero-limit".into()).child(
+                        AvatarGroup::new([Person::new("Ada Lovelace")])
+                            .limit(0)
+                            .more(div().child("nobody")),
+                    ),
+                )
+        }
+    }
+    cx.update(guiraffe_components::init);
+    let (_view, vcx) = cx.add_window_view(|_, _| Edge);
+    vcx.run_until_parked();
+    let empty = vcx
+        .debug_bounds("empty")
+        .expect("an empty group is laid out");
+    assert_eq!(f32::from(empty.size.width), 0.0, "nothing to draw");
+    assert!(vcx.debug_bounds("zero-limit").is_some());
 }

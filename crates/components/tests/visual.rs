@@ -93,6 +93,28 @@ impl Render for KitchenSink {
                             .label("Teal"),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(16.0))
+                    .items_center()
+                    .child(AvatarGroup::new([
+                        Person::new("Ada Lovelace"),
+                        Person::new("Grace Hopper"),
+                        Person::new("Alan Turing"),
+                    ]))
+                    .child(
+                        AvatarGroup::new([
+                            Person::new("Katherine Johnson"),
+                            Person::new("Edsger Dijkstra"),
+                            Person::new("Barbara Liskov"),
+                            Person::new("Linus Torvalds"),
+                            Person::new("Margaret Hamilton"),
+                        ])
+                        .limit(3)
+                        .color(ColorName::Violet),
+                    ),
+            )
             .child(self.spoiler.clone())
             .child(
                 Timeline::new([

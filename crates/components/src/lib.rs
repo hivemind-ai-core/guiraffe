@@ -4,6 +4,7 @@
 //! uses Mantine prop names (`.size(Size::Md)`, `.variant(Variant::Light)`, `.color(..)`),
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
 
+pub mod avatar_group;
 pub mod burger;
 pub mod color_swatch;
 pub mod copy_button;
@@ -20,6 +21,7 @@ mod style;
 pub mod timeline;
 pub mod typography;
 
+pub use avatar_group::{AvatarGroup, Person};
 pub use burger::Burger;
 pub use color_swatch::{ColorSwatch, SwatchSelected, check_color};
 pub use copy_button::CopyButton;
