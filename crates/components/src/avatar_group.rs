@@ -5,8 +5,8 @@
 //! safe handling of limits, empty groups and fewer avatars than the limit.
 
 use gpui_kit::{
-    AnyElement, App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StyleRefinement, Styled, Window, div, prelude::*, px,
+    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Role,
+    SharedString, StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px,
 };
 use guiraffe_core::{ColorName, Rgb, Size, Variant};
 
@@ -79,6 +79,7 @@ pub fn overlap(size: Size) -> f32 {
 /// ```
 #[derive(IntoElement)]
 pub struct AvatarGroup {
+    id: SharedString,
     people: Vec<Person>,
     limit: usize,
     /// `None`: inherit the context's control size.
@@ -92,6 +93,7 @@ pub struct AvatarGroup {
 impl AvatarGroup {
     pub fn new(people: impl IntoIterator<Item = Person>) -> Self {
         Self {
+            id: "gr-avatar-group".into(),
             people: people.into_iter().collect(),
             limit: usize::MAX,
             size: None,
@@ -102,6 +104,12 @@ impl AvatarGroup {
     }
 
     /// Show at most `limit` avatars, with a `+N` chip for the rest.
+    /// Element id; distinct groups in one parent need distinct ids.
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = id.into();
+        self
+    }
+
     pub fn limit(mut self, limit: usize) -> Self {
         self.limit = limit;
         self
@@ -121,6 +129,17 @@ impl AvatarGroup {
 
 crate::props!(AvatarGroup { size: Size => size });
 crate::styled!(AvatarGroup);
+
+/// The group's accessible name: the visible people, then how many more there are.
+pub fn group_label(names: &[SharedString], hidden: usize) -> String {
+    let shown = names.join(", ");
+    match (names.is_empty(), hidden) {
+        (true, 0) => "Nobody".into(),
+        (true, n) => format!("{n} people"),
+        (false, 0) => shown,
+        (false, n) => format!("{shown} and {n} more"),
+    }
+}
 
 /// The text of the overflow chip.
 pub fn more_label(hidden: usize) -> String {
@@ -149,12 +168,23 @@ impl RenderOnce for AvatarGroup {
             }
             None => (hsla(s.track), hsla(s.text)),
         };
+        let names: Vec<SharedString> = self
+            .people
+            .iter()
+            .take(shown)
+            .map(|p| p.name.clone())
+            .collect();
+        let name = group_label(&names, hidden);
         let people = self.people.into_iter().take(shown);
+        let id = self.id.clone();
         let more = self.more;
         let label = more_label(hidden);
         crate::style::refine(
             div()
-                .id("gr-avatar-group")
+                .id(ElementId::Name(self.id))
+                .test_support()
+                .role(Role::Group)
+                .aria_label(name)
                 .flex()
                 .items_center()
                 .children(people.enumerate().map(move |(i, person)| {
@@ -188,8 +218,14 @@ impl RenderOnce for AvatarGroup {
                             .text_size(text)
                             .border_2()
                             .border_color(ring)
-                            .when_some(more, |el, more| el.child(more))
-                            .child(label),
+                            .map(|el| match more {
+                                Some(more) => el.child(more),
+                                None => el.child(
+                                    div()
+                                        .debug_selector(move || format!("gr-avatar-more:{id}"))
+                                        .child(label),
+                                ),
+                            }),
                     )
                 }),
             &self.style,
@@ -233,6 +269,15 @@ pub fn hue_for(name: &str) -> ColorName {
 #[cfg(test)]
 mod tests {
     use guiraffe_core::Size;
+
+    #[test]
+    fn group_label_names_the_visible_people_and_counts_the_rest() {
+        let n: Vec<gpui_kit::SharedString> = vec!["Ada".into(), "Alan".into()];
+        assert_eq!(super::group_label(&n, 0), "Ada, Alan");
+        assert_eq!(super::group_label(&n, 3), "Ada, Alan and 3 more");
+        assert_eq!(super::group_label(&[], 2), "2 people");
+        assert_eq!(super::group_label(&[], 0), "Nobody");
+    }
 
     use super::{Person, avatar_size, hue_for, more_label, overlap, visible};
 

@@ -250,3 +250,37 @@ fn focus_rings_never_move_layout(cx: &mut TestAppContext) {
     );
     assert_same_bounds(vcx, &sels, &base, "focused via Tab");
 }
+
+#[gpui_kit::test]
+fn avatar_group_more_replaces_the_count_and_names_everyone(cx: &mut TestAppContext) {
+    use guiraffe_components::{AvatarGroup, Person};
+    struct V;
+    impl Render for V {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let people = || ["Ada Lovelace", "Grace Hopper", "Alan Turing"].map(Person::new);
+            div()
+                .child(AvatarGroup::new(people()).limit(2).id("plain"))
+                .child(
+                    AvatarGroup::new(people())
+                        .limit(2)
+                        .id("custom")
+                        .more(div().debug_selector(|| "custom-more".into()).child("…")),
+                )
+        }
+    }
+    cx.update(guiraffe_components::init);
+    let (_, vcx) = cx.add_window_view(|_, _| V);
+    vcx.run_until_parked();
+    assert!(vcx.debug_bounds("custom-more").is_some());
+    assert_eq!(
+        vcx.debug_bounds("gr-avatar-more:custom"),
+        None,
+        "a custom chip replaces the +N text"
+    );
+    assert!(vcx.debug_bounds("gr-avatar-more:plain").is_some());
+    vcx.update(|window, cx| {
+        window.render_frame(cx);
+        let g = window.find("plain");
+        assert_eq!(g.label(), Some("Ada Lovelace, Grace Hopper and 1 more"));
+    });
+}
