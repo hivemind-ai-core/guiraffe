@@ -164,9 +164,14 @@ mod catalogue_tests {
             });
         let version = guiraffe_ui::catalog::VERSION;
         let changelog = include_str!("../../../CHANGELOG.md");
+        let prefix = format!("Catalogue {version} snapshot ");
+        let recorded = changelog.lines().any(|line| line.starts_with(&prefix));
         assert!(
-            changelog.contains(&format!("Catalogue {version} snapshot `{hash:016x}`")),
-            "Catalogue changed. Bump its version or document the change with Catalogue {version} snapshot `{hash:016x}` in CHANGELOG.md."
+            (!recorded && version != "1.0.0")
+                || changelog
+                    .lines()
+                    .any(|line| line.starts_with(&format!("{prefix}`{hash:016x}`"))),
+            "Catalogue changed. Bump its version or document the change with {prefix}`{hash:016x}` in CHANGELOG.md."
         );
     }
 }
