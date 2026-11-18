@@ -13,6 +13,7 @@ pub mod misc;
 pub mod paper;
 pub mod ring;
 pub mod segmented;
+pub mod speed_dial;
 mod style;
 pub mod typography;
 
@@ -27,6 +28,7 @@ pub use misc::{Blockquote, Indicator, IndicatorPosition, Pill};
 pub use paper::{Card, CardSection, Paper};
 pub use ring::{RingProgress, arc_spans};
 pub use segmented::{SegmentedControl, SegmentedEvent};
+pub use speed_dial::{DialAction, DialArc, DialLayout, SpeedDial, SpeedDialEvent};
 pub use typography::{Text, Title};
 
 /// Initialize dependencies (theme, motion). Idempotent.
