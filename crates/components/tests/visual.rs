@@ -14,6 +14,7 @@ struct KitchenSink {
     loaders: [gpui_kit::Entity<Loader>; 3],
     spoiler: gpui_kit::Entity<Spoiler>,
     burgers: [gpui_kit::Entity<Burger>; 2],
+    copy: gpui_kit::Entity<CopyButton>,
 }
 
 impl Render for KitchenSink {
@@ -70,7 +71,8 @@ impl Render for KitchenSink {
                     .gap(px(12.0))
                     .items_center()
                     .child(self.burgers[0].clone())
-                    .child(self.burgers[1].clone()),
+                    .child(self.burgers[1].clone())
+                    .child(self.copy.clone()),
             )
             .child(self.spoiler.clone())
             .child(
@@ -154,11 +156,17 @@ fn render(scheme: Scheme) -> image::RgbaImage {
         });
         let burgers = [Burger::new(cx), Burger::new(cx)];
         burgers[1].update(cx, |b, cx| b.set_open_instant(true, cx));
+        let copy = CopyButton::new(cx);
+        copy.update(cx, |b, cx| {
+            b.set_value("npm install guiraffe", cx);
+            b.set_label(Some("Copy".into()), cx);
+        });
         cx.new(|_| KitchenSink {
             segmented,
             loaders,
             spoiler,
             burgers,
+            copy,
         })
     })
     .unwrap_or_else(|e| panic!("{e:#}"))

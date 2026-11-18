@@ -4,7 +4,7 @@ use gpui_kit::{
     AppContext, Context, Entity, Focusable, IntoElement, Modifiers, ParentElement, Render, Styled,
     TestAppContext, VisualTestContext, Window, div, px,
 };
-use guiraffe_components::{Burger, Loader, SegmentedControl, SegmentedEvent, Spoiler};
+use guiraffe_components::{Burger, CopyButton, Loader, SegmentedControl, SegmentedEvent, Spoiler};
 use guiraffe_motion::MotionPrefs;
 use guiraffe_test::render::RenderCounter;
 
@@ -498,4 +498,120 @@ fn burger_set_open_is_idempotent(cx: &mut TestAppContext) {
     assert!(vcx.update(|_, cx| burger.read(cx).is_open()));
     vcx.update(|_, cx| burger.update(cx, |b, cx| b.toggle(cx)));
     assert!(!vcx.update(|_, cx| burger.read(cx).is_open()));
+}
+
+// --- CopyButton: writes to the clipboard and confirms for two seconds. ---
+
+struct CopyScene {
+    renders: RenderCounter,
+    copy: Entity<CopyButton>,
+}
+
+impl Render for CopyScene {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.hit();
+        div().p(px(8.0)).child(self.copy.clone())
+    }
+}
+
+fn copy_scene(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<CopyButton>,
+    Entity<CopyScene>,
+    &mut VisualTestContext,
+) {
+    cx.update(guiraffe_components::init);
+    let renders = RenderCounter::new();
+    let counter = renders.clone();
+    let mut out = None;
+    let (scene, vcx) = cx.add_window_view(|_, cx| {
+        let copy = CopyButton::new(cx);
+        copy.update(cx, |b, cx| b.set_value("npm install guiraffe", cx));
+        out = Some(copy.clone());
+        CopyScene {
+            renders: counter,
+            copy,
+        }
+    });
+    (out.unwrap_or_else(|| unreachable!()), scene, vcx)
+}
+
+#[gpui_kit::test]
+fn copy_button_writes_the_value_and_confirms_for_two_seconds(cx: &mut TestAppContext) {
+    let (copy, _scene, vcx) = copy_scene(cx);
+    vcx.run_until_parked();
+    let bounds = vcx
+        .debug_bounds("gr-copy-button:npm install guiraffe")
+        .expect("the button is laid out");
+    vcx.simulate_click(bounds.center(), Modifiers::default());
+    vcx.run_until_parked();
+    assert!(vcx.update(|_, cx| copy.read(cx).copied()), "shows copied");
+    let clip = vcx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert_eq!(
+        clip, "npm install guiraffe",
+        "the value reached the clipboard"
+    );
+    // 1 s later it is still confirming; after 2 s it is back to "copy".
+    vcx.executor().advance_clock(Duration::from_millis(1000));
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| copy.read(cx).copied()),
+        "still copied at 1 s"
+    );
+    vcx.executor().advance_clock(Duration::from_millis(1100));
+    vcx.run_until_parked();
+    assert!(
+        !vcx.update(|_, cx| copy.read(cx).copied()),
+        "the confirmation clears after two seconds"
+    );
+}
+
+#[gpui_kit::test]
+fn copy_button_a_second_copy_restarts_the_timer(cx: &mut TestAppContext) {
+    let (copy, _scene, vcx) = copy_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        copy.update(cx, |b, cx| {
+            b.copy(window, cx);
+        })
+    });
+    vcx.executor().advance_clock(Duration::from_millis(1500));
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        copy.update(cx, |b, cx| {
+            b.copy(window, cx);
+        })
+    });
+    vcx.executor().advance_clock(Duration::from_millis(1500));
+    vcx.run_until_parked();
+    assert!(
+        vcx.update(|_, cx| copy.read(cx).copied()),
+        "the second copy restarts the two seconds"
+    );
+    vcx.executor().advance_clock(Duration::from_millis(700));
+    vcx.run_until_parked();
+    assert!(!vcx.update(|_, cx| copy.read(cx).copied()));
+}
+
+#[gpui_kit::test]
+fn copy_button_disabled_copies_nothing_and_rerenders_only_itself(cx: &mut TestAppContext) {
+    let (copy, scene, vcx) = copy_scene(cx);
+    vcx.run_until_parked();
+    vcx.update(|_, cx| copy.update(cx, |b, cx| b.set_disabled(true, cx)));
+    let copied = vcx.update(|window, cx| copy.update(cx, |b, cx| b.copy(window, cx)));
+    assert!(!copied, "a disabled button copies nothing");
+    assert!(!vcx.update(|_, cx| copy.read(cx).copied()));
+    let before = vcx.update(|_, cx| scene.read(cx).renders.get());
+    vcx.update(|_, cx| copy.update(cx, |b, cx| b.set_disabled(false, cx)));
+    vcx.run_until_parked();
+    let after = vcx.update(|_, cx| scene.read(cx).renders.get());
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(after, before, "only the button re-renders");
+    } else {
+        assert!(after >= before, "upstream re-renders ancestors (recorded)");
+    }
 }
