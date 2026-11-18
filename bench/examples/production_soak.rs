@@ -1,7 +1,7 @@
 //! Headless draw and process RSS check for the two scale fixtures.
 use anyhow::{Context as _, Result, bail, ensure};
 use gpui_kit::{
-    App, AppContext, Context, HeadlessAppContext, IntoElement, Render, Window, px, size,
+    App, AppContext, Context, HeadlessAppContext, IntoElement, Render, Window, div, px, size,
 };
 use guiraffe_code::{CodeDocument, CodeHandle, CodeViewer, Position, SourceRange};
 use guiraffe_datagrid::{CellPos, CellRef, ColumnDef, DataGrid, FnSource, GridHandle};
@@ -14,6 +14,14 @@ use std::{
 const ROWS: usize = 10_000_000;
 const INTERVAL: Duration = Duration::from_millis(16);
 const REPORT_INTERVAL: Duration = Duration::from_secs(10);
+
+struct Empty;
+
+impl Render for Empty {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 
 #[derive(Clone)]
 enum Host {
@@ -115,21 +123,30 @@ fn run(component: &str, nightly: bool) -> Result<()> {
         Arc::new(gpui_kit::assets::Assets),
         gpui_kit::platform::current_headless_renderer,
     );
+    let window = app.open_window(size(px(1200.), px(800.)), |_, cx| cx.new(|_| Empty))?;
+    app.update_window(window.into(), |_, window, cx| {
+        let _ = window.draw(cx);
+    })?;
+    app.run_until_parked();
+
     let mount_start = Instant::now();
     let mut control = None;
-    let window = app.open_window(size(px(1200.), px(800.)), |_, cx| {
-        let host = match document {
-            Some(document) => Host::Code(CodeHandle::new(1, document, cx)),
-            None => {
-                let source = FnSource::new(ROWS, |row, col| CellRef::Int((row * 100 + col) as i64));
-                let columns = (0..50)
-                    .map(|col| ColumnDef::new(format!("c{col}"), format!("Col {col}"), col))
-                    .collect();
-                Host::Grid(GridHandle::new(source, columns, cx))
-            }
-        };
-        control = Some(host.clone());
-        cx.new(|_| host)
+    app.update_window(window.into(), |_, window, cx| {
+        window.replace_root(cx, |_, cx| {
+            let host = match document {
+                Some(document) => Host::Code(CodeHandle::new(1, document, cx)),
+                None => {
+                    let source =
+                        FnSource::new(ROWS, |row, col| CellRef::Int((row * 100 + col) as i64));
+                    let columns = (0..50)
+                        .map(|col| ColumnDef::new(format!("c{col}"), format!("Col {col}"), col))
+                        .collect();
+                    Host::Grid(GridHandle::new(source, columns, cx))
+                }
+            };
+            control = Some(host.clone());
+            host
+        });
     })?;
     let control = control.context("missing mounted component")?;
     let mut step = 0;
