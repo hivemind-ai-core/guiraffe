@@ -5,6 +5,7 @@
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
 
 pub mod accordion;
+pub mod expanding_list;
 pub mod focus;
 pub mod highlight;
 pub mod icons;
@@ -18,6 +19,7 @@ pub mod typography;
 pub use accordion::{
     Accordion, AccordionChange, AccordionOptions, AccordionVariant, ChevronPosition, DisclosureItem,
 };
+pub use expanding_list::{ExpandingList, ExpandingListChange};
 pub use focus::ScopedButton;
 pub use highlight::{Highlight, Mark, highlight_ranges};
 pub use icons::{ActionIcon, ThemeIcon, close_button};
