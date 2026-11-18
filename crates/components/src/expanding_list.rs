@@ -4,9 +4,7 @@ use gpui_kit::{
     prelude::*,
     *,
 };
-use guiraffe_core::{
-    A11yDisabledExt, GuiraffeTheme, Press, PressableExt, Size, Variant, keyed_focus,
-};
+use guiraffe_core::{A11yDisabledExt, GuiraffeTheme, Press, PressableExt, Size, keyed_focus};
 use guiraffe_motion::{Animated, Spring, Timing};
 
 use crate::{
@@ -71,7 +69,7 @@ impl ExpandingList {
 impl Render for ExpandingList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut needs_frame = false;
-        let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, None);
+        let colors = disclosure_motion::trigger_colors(GuiraffeTheme::global(cx));
         let surface = surfaces(cx);
         let corner = radius(None, cx);
         let id = cx.entity_id().as_u64();

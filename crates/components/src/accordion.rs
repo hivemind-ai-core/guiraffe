@@ -10,7 +10,7 @@ use gpui_kit::{
     prelude::*,
     *,
 };
-use guiraffe_core::{A11yDisabledExt, GuiraffeTheme, Press, PressableExt, Variant, keyed_focus};
+use guiraffe_core::{A11yDisabledExt, GuiraffeTheme, Press, PressableExt, keyed_focus};
 
 use guiraffe_motion::{Animated, Spring, Timing};
 
@@ -155,7 +155,7 @@ impl Render for Accordion {
         let surface = surfaces(cx);
         let radius = radius(None, cx);
         let separated = self.options.variant == AccordionVariant::Separated;
-        let colors = GuiraffeTheme::global(cx).press_colors(Variant::Subtle, None);
+        let colors = disclosure_motion::trigger_colors(GuiraffeTheme::global(cx));
         let id = cx.entity_id();
         let element =
             KitAccordion::new(("accordion", id.as_u64() as usize))

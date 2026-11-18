@@ -1,4 +1,5 @@
 use gpui_kit::{App, EntityId, Window};
+use guiraffe_core::{GuiraffeTheme, PressColors, Variant};
 use guiraffe_motion::{Animated, MotionPrefs};
 
 /// Frames must explicitly invalidate the control that owns the spring. The backend's
@@ -15,5 +16,31 @@ pub(crate) fn progress(spring: &mut Animated<f32>, needs_frame: &mut bool, cx: &
 pub(crate) fn schedule(needs_frame: bool, entity: EntityId, window: &Window) {
     if needs_frame {
         window.on_next_frame(move |_, cx| cx.notify(entity));
+    }
+}
+
+pub(crate) fn trigger_colors(theme: &GuiraffeTheme) -> PressColors {
+    let mut colors = theme.press_colors(Variant::Subtle, None);
+    colors.rest.foreground = theme.surfaces().text;
+    colors
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use guiraffe_core::Scheme;
+
+    #[test]
+    fn idle_title_uses_theme_foreground() {
+        for scheme in [Scheme::Dark, Scheme::Light] {
+            let theme = GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            };
+            assert_eq!(
+                trigger_colors(&theme).rest.foreground,
+                theme.surfaces().text
+            );
+        }
     }
 }
