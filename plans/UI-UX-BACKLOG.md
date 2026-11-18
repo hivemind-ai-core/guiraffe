@@ -18,7 +18,7 @@ Lead: Claude (ui-ux-implementation). Never merged by the implementer; foreman in
 |---|---|---|---|
 | S1 semantic contrast: surface×state pairings, focus on selection, neutral vs destructive, tinted bgs | core | **review-ready** c577308 | ui-ux-contrast-pairings / Claude |
 | S2 spec/18 refresh + toolbar focus policy doc (pointer keeps editor focus; when a control must take focus) | spec | todo | Claude |
-| S3 overlay dismissal + focus-restoration contract & interaction checks | overlays | in progress | ui-ux-overlay-focus / Codex |
+| S3 overlay dismissal + focus-restoration contract & interaction checks | overlays | **review-ready** 89a3130 (gates re-run by Claude) | ui-ux-overlay-focus / Codex |
 | S4 inactive-window presentation (theme state + window-activation signal) | core + windows/ui | **needs foreman decision** (new cross-crate API) | — |
 | S5 contrast captures: settings screen + dense toolbar, light/dark/high | showcase | todo (after S1) | — |
 | S6 layout defaults pilot: settings/toolbar/inspector via Recipes+Density; overflow at narrow widths; overrides win; nested providers | layout + core | todo | — |
