@@ -534,3 +534,269 @@ fn native_predicate_precedence_and_ancestor_matching_exhaustive(cx: &mut TestApp
         assert!(gpui_kit::KeyBindingContextPredicate::parse(invalid).is_err());
     }
 }
+
+gpui_kit::actions!(commands_test, [AppAction]);
+/// A host with an application-owned action, to prove command routes never break app keys.
+struct AppHost {
+    commands: Commands,
+    focus: FocusHandle,
+    app: Rc<Cell<usize>>,
+}
+impl Render for AppHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let app = self.app.clone();
+        div()
+            .size_full()
+            .key_context("Workspace")
+            .on_action(move |_: &AppAction, _, _| app.set(app.get() + 1))
+            .child(
+                CommandScope::new(&self.commands).size_full().child(
+                    div()
+                        .size_full()
+                        .key_context("Editor")
+                        .track_focus(&self.focus),
+                ),
+            )
+    }
+}
+fn open_app(cx: &mut TestAppContext, app: Rc<Cell<usize>>) -> (WindowHandle<AppHost>, Commands) {
+    cx.update(init);
+    cx.update(|cx| {
+        // A workspace-level application binding: shallower than the command scope, so a
+        // command route is tried first and must propagate when it does not handle the key.
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "ctrl-d",
+            AppAction,
+            Some("Workspace"),
+        )]);
+        let commands = Commands::new(cx);
+        let service = commands.clone();
+        let handle = cx
+            .open_window(WindowOptions::default(), |window, cx| {
+                cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    focus.focus(window, cx);
+                    AppHost {
+                        commands: service,
+                        focus,
+                        app,
+                    }
+                })
+            })
+            .expect("window");
+        (handle, commands)
+    })
+}
+fn routes(cx: &App, binding: &str) -> usize {
+    cx.key_bindings()
+        .borrow()
+        .bindings()
+        .filter(|b| {
+            b.action()
+                .as_any()
+                .downcast_ref::<crate::service::InvokeBinding>()
+                .is_some_and(|r| r.binding == binding)
+        })
+        .count()
+}
+#[gpui_kit::test]
+fn most_specific_context_wins_and_disabled_winner_falls_through(cx: &mut TestAppContext) {
+    let (handle, commands) = open(cx, "Editor");
+    let global = Rc::new(Cell::new(0));
+    let editor = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        // "a-global" is first in catalog order; the Editor-scoped command is deeper.
+        commands
+            .register(
+                counted("a-global", "A global", global.clone())
+                    .keybinding(Keybinding::parse("ctrl+s").expect("binding")),
+                cx,
+            )
+            .expect("global");
+        commands
+            .register(
+                counted("b-editor", "B editor", editor.clone())
+                    .keybinding(Keybinding::parse("ctrl+s").expect("binding"))
+                    .when(When::parse("Editor").expect("when")),
+                cx,
+            )
+            .expect("editor");
+    });
+    cx.update_window(handle.into(), |_, window, cx| window.press("ctrl-s", cx))
+        .expect("specific");
+    assert_eq!((global.get(), editor.get()), (0, 1), "Editor binding wins");
+    cx.update(|cx| {
+        commands
+            .set_enabled(&id("b-editor"), false, cx)
+            .expect("disable");
+    });
+    cx.update_window(handle.into(), |_, window, cx| window.press("ctrl-s", cx))
+        .expect("fallthrough");
+    assert_eq!(
+        (global.get(), editor.get()),
+        (1, 1),
+        "the disabled winner does not swallow the key"
+    );
+}
+#[gpui_kit::test]
+fn disabled_command_lets_application_bindings_fire(cx: &mut TestAppContext) {
+    let app = Rc::new(Cell::new(0));
+    let (handle, commands) = open_app(cx, app.clone());
+    let cmd = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        commands
+            .register(
+                counted("dup", "Duplicate", cmd.clone())
+                    .keybinding(Keybinding::parse("ctrl+d").expect("binding"))
+                    .enabled(false),
+                cx,
+            )
+            .expect("register");
+    });
+    cx.update_window(handle.into(), |_, window, cx| window.press("ctrl-d", cx))
+        .expect("press");
+    assert_eq!((cmd.get(), app.get()), (0, 1));
+    cx.update(|cx| commands.set_enabled(&id("dup"), true, cx))
+        .expect("enable");
+    cx.update_window(handle.into(), |_, window, cx| window.press("ctrl-d", cx))
+        .expect("press");
+    assert_eq!(
+        (cmd.get(), app.get()),
+        (1, 1),
+        "enabled command consumes it"
+    );
+}
+#[gpui_kit::test]
+fn routes_are_refcounted_and_removed_without_touching_app_bindings(cx: &mut TestAppContext) {
+    let app = Rc::new(Cell::new(0));
+    let (handle, commands) = open_app(cx, app.clone());
+    let cmd = Rc::new(Cell::new(0));
+    let other = cx.update(Commands::new);
+    cx.update(|cx| {
+        for service in [&commands, &other] {
+            service
+                .register(
+                    counted("dup", "Duplicate", cmd.clone())
+                        .keybinding(Keybinding::parse("ctrl+d").expect("binding")),
+                    cx,
+                )
+                .expect("register");
+        }
+        assert_eq!(routes(cx, "ctrl+d"), 1, "one native route per binding");
+        assert!(commands.unregister(&id("dup"), cx));
+        assert_eq!(routes(cx, "ctrl+d"), 1, "still held by the other service");
+    });
+    // Dropping the last handle on a service (an unmounted view) releases its routes.
+    drop(other);
+    // Entity release runs when the next update flushes effects.
+    cx.update(|_| {});
+    cx.update(|cx| assert_eq!(routes(cx, "ctrl+d"), 0, "last reference removes it"));
+    cx.update_window(handle.into(), |_, window, cx| window.press("ctrl-d", cx))
+        .expect("press");
+    assert_eq!((cmd.get(), app.get()), (0, 1), "app binding still fires");
+    cx.update(|cx| {
+        commands
+            .register(
+                counted("dup", "Duplicate", cmd.clone())
+                    .keybinding(Keybinding::parse("ctrl+d").expect("binding")),
+                cx,
+            )
+            .expect("register again");
+        commands
+            .set_keybinding(
+                &id("dup"),
+                Some(Keybinding::parse("ctrl+e").expect("e")),
+                cx,
+            )
+            .expect("rebind");
+        assert_eq!(routes(cx, "ctrl+d"), 0, "rebinding releases the old route");
+        assert_eq!(routes(cx, "ctrl+e"), 1);
+        // The palette shortcut is an application binding too and survives removals.
+        assert!(cx.key_bindings().borrow().bindings().any(|b| {
+            b.action()
+                .as_any()
+                .downcast_ref::<service::ShowCommands>()
+                .is_some()
+        }));
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press("ctrl-d", cx);
+        window.press("ctrl-e", cx);
+    })
+    .expect("press");
+    assert_eq!((cmd.get(), app.get()), (1, 2));
+}
+#[gpui_kit::test]
+fn secondary_binding_routes_through_the_host_platform(cx: &mut TestAppContext) {
+    let (handle, commands) = open(cx, "Editor");
+    let hits = Rc::new(Cell::new(0));
+    let platform = cx.update(|cx| service::platform(cx));
+    let (press, label) = match platform {
+        Platform::Mac => ("cmd-s", "⌘S"),
+        Platform::Other => ("ctrl-s", "Ctrl+S"),
+    };
+    cx.update(|cx| {
+        commands
+            .register(
+                counted("save", "Save", hits.clone())
+                    .keybinding(Keybinding::parse("secondary+s").expect("binding")),
+                cx,
+            )
+            .expect("register");
+        let resolved = Keybinding::parse("secondary+s")
+            .expect("binding")
+            .resolve(platform);
+        assert_eq!(routes(cx, resolved.as_str()), 1);
+        let rows = commands.entity().read(cx).rows(false);
+        assert!(rows.iter().any(|row| matches!(
+            row,
+            service::MenuRow::Item { hint, .. } if hint.as_ref() == label
+        )));
+    });
+    cx.update_window(handle.into(), |_, window, cx| window.press(press, cx))
+        .expect("press");
+    assert_eq!(hits.get(), 1);
+}
+#[gpui_kit::test]
+fn conflict_report_lists_exact_and_prefix_conflicts(cx: &mut TestAppContext) {
+    let (_handle, commands) = open(cx, "Editor");
+    let n = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        for (name, keys) in [("a", "ctrl+k"), ("b", "ctrl+k ctrl+s"), ("c", "ctrl+k")] {
+            commands
+                .register(
+                    counted(name, name, n.clone()).keybinding(Keybinding::parse(keys).expect("k")),
+                    cx,
+                )
+                .expect("register");
+        }
+        let report = commands.conflict_report(&ContextStack::default(), cx);
+        assert_eq!(report.exact.len(), 1);
+        assert_eq!(report.exact[0].winner, id("a"));
+        assert_eq!(report.exact[0].shadowed, vec![id("c")]);
+        assert_eq!(report.prefixes.len(), 1);
+        assert_eq!(report.prefixes[0].prefix_command, id("a"));
+        assert_eq!(report.prefixes[0].chord_command, id("b"));
+    });
+}
+#[gpui_kit::test]
+fn menu_rows_are_built_lazily_once_per_revision(cx: &mut TestAppContext) {
+    let (_handle, commands) = open(cx, "Editor");
+    let n = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        commands
+            .register(counted("a", "Alpha", n.clone()), cx)
+            .expect("register");
+        let state = commands.entity().read(cx);
+        let first = state.rows(true);
+        assert!(
+            Rc::ptr_eq(&first, &state.rows(true)),
+            "cached until a change"
+        );
+        commands
+            .register(counted("b", "Beta", n.clone()), cx)
+            .expect("register");
+        let state = commands.entity().read(cx);
+        assert_eq!(state.rows(false).len(), 2, "rebuilt after the change");
+    });
+}

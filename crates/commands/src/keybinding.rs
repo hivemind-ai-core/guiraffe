@@ -328,4 +328,34 @@ mod tests {
         assert!(!long.is_prefix_of(&short));
         assert_eq!(long.chord_count(), 2);
     }
+    #[test]
+    fn secondary_modifier_is_platform_neutral() {
+        for source in ["secondary+shift+p", "mod+shift+p", "Shift+Mod+P"] {
+            let b = Keybinding::parse(source).expect("valid");
+            assert_eq!(b.as_str(), "secondary+shift+p");
+            assert_eq!(b.gpui_keystrokes(), "secondary-shift-p");
+            assert!(b.is_platform_neutral());
+            assert_eq!(b.resolve(Platform::Mac).as_str(), "shift+cmd+p");
+            assert_eq!(b.resolve(Platform::Other).as_str(), "ctrl+shift+p");
+            assert_eq!(b.label(Platform::Mac), "⇧⌘P");
+            assert_eq!(b.label(Platform::Other), "Ctrl+Shift+P");
+        }
+        let chord = Keybinding::parse("mod+k mod+s").expect("chord");
+        assert_eq!(chord.resolve(Platform::Mac).as_str(), "cmd+k cmd+s");
+        assert_eq!(chord.label(Platform::Other), "Ctrl+K Ctrl+S");
+        let physical = Keybinding::parse("ctrl+s").expect("physical");
+        assert!(!physical.is_platform_neutral());
+        assert_eq!(physical.resolve(Platform::Mac), physical);
+        assert_eq!(physical.label(Platform::Mac), "⌃S");
+        assert!(
+            Keybinding::parse("mod+secondary+s").is_err(),
+            "aliases collide"
+        );
+        assert_eq!(
+            Keybinding::parse("alt+enter")
+                .expect("enter")
+                .label(Platform::Other),
+            "Alt+Enter"
+        );
+    }
 }

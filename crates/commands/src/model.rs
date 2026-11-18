@@ -533,4 +533,150 @@ mod tests {
         assert_eq!(r.replace(command("a", "", "")), Err(Error::EmptyTitle));
         assert_eq!(r.lookup(&id("a")).map(|c| c.title.as_str()), Some("Valid"));
     }
+    fn bound(value: &str, binding: &str, when: Option<&str>) -> Command {
+        let c = command(value, value, "").keybinding(Keybinding::parse(binding).expect("binding"));
+        match when {
+            Some(w) => c.when(When::parse(w).expect("when")),
+            None => c,
+        }
+    }
+    fn stack(frames: &[&str]) -> ContextStack {
+        let mut s = ContextStack::default();
+        for f in frames {
+            s.push(crate::context::Context::new(f).expect("frame"));
+        }
+        s
+    }
+    #[test]
+    fn deepest_matching_context_wins_over_catalog_order() {
+        // "a-global" and "b-workspace" sort before "c-editor" in the catalog, but the
+        // focused Editor frame is deeper, so its binding is the most specific.
+        let mut r = Registry::with_platform(Platform::Other);
+        r.register(bound("a-global", "ctrl+s", None)).expect("a");
+        r.register(bound("b-workspace", "ctrl+s", Some("Workspace")))
+            .expect("b");
+        r.register(bound("c-editor", "ctrl+s", Some("Editor")))
+            .expect("c");
+        let s = stack(&["Workspace", "Editor"]);
+        let key = Keybinding::parse("ctrl+s").expect("binding");
+        assert_eq!(
+            r.resolve_binding(&key, &s).map(|c| c.id.as_str()),
+            Some("c-editor")
+        );
+        let bindings = r.bindings(&s);
+        let conflict = bindings.conflicts.first().expect("conflict");
+        assert_eq!(conflict.winner, id("c-editor"));
+        assert_eq!(conflict.shadowed, vec![id("b-workspace"), id("a-global")]);
+        // Outside the editor the workspace binding is the most specific.
+        let s = stack(&["Workspace"]);
+        assert_eq!(
+            r.resolve_binding(&key, &s).map(|c| c.id.as_str()),
+            Some("b-workspace")
+        );
+        // Equal depth: catalog order breaks the tie.
+        let s = stack(&["Workspace Editor"]);
+        assert_eq!(
+            r.resolve_binding(&key, &s).map(|c| c.id.as_str()),
+            Some("b-workspace")
+        );
+    }
+    #[test]
+    fn disabled_most_specific_command_falls_through() {
+        let mut r = Registry::with_platform(Platform::Other);
+        r.register(bound("a-global", "ctrl+s", None)).expect("a");
+        r.register(bound("b-editor", "ctrl+s", Some("Editor")).enabled(false))
+            .expect("b");
+        let s = stack(&["Editor"]);
+        let key = Keybinding::parse("ctrl+s").expect("binding");
+        assert_eq!(
+            r.resolve_binding(&key, &s).map(|c| c.id.as_str()),
+            Some("a-global"),
+            "a disabled winner must not swallow the key"
+        );
+        assert_eq!(
+            r.candidates_native("ctrl+s", &s)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a-global"]
+        );
+        r.set_enabled(&id("a-global"), false).expect("disable");
+        assert!(r.resolve_binding(&key, &s).is_none());
+    }
+    #[test]
+    fn secondary_resolves_per_platform_and_conflicts_with_the_physical_key() {
+        for (platform, physical, other) in [
+            (Platform::Mac, "cmd+s", "ctrl+s"),
+            (Platform::Other, "ctrl+s", "cmd+s"),
+        ] {
+            let mut r = Registry::with_platform(platform);
+            r.register(bound("a-neutral", "secondary+s", None))
+                .expect("a");
+            r.register(bound("b-physical", physical, None)).expect("b");
+            r.register(bound("c-other", other, None)).expect("c");
+            let s = ContextStack::default();
+            let bindings = r.bindings(&s);
+            assert_eq!(bindings.conflicts.len(), 1, "{platform:?}");
+            assert_eq!(bindings.conflicts[0].binding.as_str(), physical);
+            assert_eq!(bindings.conflicts[0].shadowed, vec![id("b-physical")]);
+            let key = Keybinding::parse("mod+s").expect("alias");
+            assert_eq!(
+                r.resolve_binding(&key, &s).map(|c| c.id.as_str()),
+                Some("a-neutral")
+            );
+        }
+    }
+    #[test]
+    fn chord_prefixes_are_reported_for_active_bindings_only() {
+        let mut r = Registry::with_platform(Platform::Other);
+        r.register(bound("a-palette", "ctrl+k", None)).expect("a");
+        r.register(bound("b-settings", "ctrl+k ctrl+s", None))
+            .expect("b");
+        r.register(bound("c-term", "ctrl+t", Some("Terminal")))
+            .expect("c");
+        r.register(bound("d-term-chord", "ctrl+t ctrl+n", None))
+            .expect("d");
+        let s = stack(&["Editor"]);
+        let prefixes = r.bindings(&s).prefixes;
+        assert_eq!(
+            prefixes,
+            vec![PrefixConflict {
+                prefix: Keybinding::parse("ctrl+k").expect("k"),
+                prefix_command: id("a-palette"),
+                chord: Keybinding::parse("ctrl+k ctrl+s").expect("chord"),
+                chord_command: id("b-settings"),
+            }],
+            "the Terminal-only prefix is inactive in the editor"
+        );
+        assert_eq!(r.bindings(&stack(&["Terminal"])).prefixes.len(), 2);
+    }
+    #[test]
+    fn binding_index_follows_every_mutation() {
+        let mut r = Registry::with_platform(Platform::Other);
+        let s = ContextStack::default();
+        let save = Keybinding::parse("ctrl+s").expect("s");
+        let open = Keybinding::parse("ctrl+o").expect("o");
+        r.register(bound("a", "ctrl+s", None)).expect("a");
+        assert_eq!(r.bound_to(&save).count(), 1);
+        r.set_keybinding(&id("a"), Some(open.clone()))
+            .expect("rebind");
+        assert_eq!(r.bound_to(&save).count(), 0, "old key no longer indexed");
+        assert!(r.resolve_binding(&save, &s).is_none());
+        assert_eq!(
+            r.resolve_binding(&open, &s).map(|c| c.id.as_str()),
+            Some("a")
+        );
+        let mut changed = r.lookup(&id("a")).cloned().expect("a");
+        changed.keybinding = Some(save.clone());
+        r.replace(changed).expect("replace");
+        assert_eq!(r.bound_to(&open).count(), 0);
+        assert_eq!(r.bound_to(&save).count(), 1);
+        r.set_keybinding(&id("a"), None).expect("clear");
+        assert_eq!(r.bound_to(&save).count(), 0);
+        r.set_keybinding(&id("a"), Some(save.clone()))
+            .expect("again");
+        r.unregister(&id("a"));
+        assert_eq!(r.bound_to(&save).count(), 0);
+        assert!(r.index.is_empty(), "empty buckets are dropped");
+    }
 }
