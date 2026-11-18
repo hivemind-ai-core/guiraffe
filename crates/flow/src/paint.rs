@@ -304,6 +304,12 @@ impl Frame {
             let Some(edge) = graph.edges.get(id) else {
                 continue;
             };
+            if edge.marker_start == Marker::None
+                && edge.marker_end == Marker::None
+                && !(edge.animated && self.phase.is_some())
+            {
+                continue;
+            }
             let from = self.preview(edge.source.node);
             let to = self.preview(edge.target.node);
             let route = if from.is_some() || to.is_some() {
