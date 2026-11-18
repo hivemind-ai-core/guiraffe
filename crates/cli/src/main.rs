@@ -153,27 +153,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod catalogue_tests {
-    use super::*;
-
-    #[test]
-    fn catalogue_changes_require_a_version_bump_or_changelog_entry() {
-        let hash = CATALOGUE
-            .bytes()
-            .chain(SCREEN_SCHEMA.bytes())
-            .fold(0xcbf29ce484222325_u64, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-            });
-        let version = guiraffe_ui::catalog::VERSION;
-        let changelog = include_str!("../../../CHANGELOG.md");
-        let prefix = format!("Catalogue {version} snapshot ");
-        let recorded = changelog.lines().any(|line| line.starts_with(&prefix));
-        assert!(
-            (!recorded && version != "1.0.0")
-                || changelog
-                    .lines()
-                    .any(|line| line.starts_with(&format!("{prefix}`{hash:016x}`"))),
-            "Catalogue changed. Bump its version or document the change with {prefix}`{hash:016x}` in CHANGELOG.md."
-        );
-    }
-}
+mod catalogue_tests;
