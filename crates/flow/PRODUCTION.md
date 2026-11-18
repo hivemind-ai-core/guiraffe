@@ -34,3 +34,8 @@ After the minimap density fix at `7312e37`, a loaded short run mounted in
 29.9 s. Its second window had 51.7 ms p99, 69.1 ms maximum and
 2,479,884 KiB RSS, 216 KiB above the warmed sample. The structural
 vertex gate reproduces the minimap regression independently of timing.
+
+The zoom regression measures arrow proportions and handle contact at 0.25×,
+0.5×, 1×, 2× and 4×. The showcase includes inspected 0.5× and 2× Flow
+snapshots on both GPUI backends. Arrowheads, handles, open-marker strokes,
+animated markers and connection previews share the camera scale.

@@ -10,6 +10,8 @@ use std::{
     sync::Arc,
 };
 
+const EDGE_STROKE: f32 = 1.5;
+
 #[derive(Default)]
 pub(crate) struct MeshCache {
     entries: BTreeMap<EdgeId, (Arc<EdgePath>, Path<Pixels>)>,
@@ -136,7 +138,7 @@ fn minimap_mesh<'a>(
 }
 
 fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
-    let mut builder = PathBuilder::stroke(px(1.5));
+    let mut builder = PathBuilder::stroke(px(EDGE_STROKE));
     for (i, p) in route.points.iter().enumerate() {
         if i == 0 {
             builder.move_to(pixel(*p));
@@ -322,8 +324,12 @@ impl Frame {
                 let i = (t * (route.points.len().saturating_sub(1)) as f32) as usize;
                 if let Some(p) = route.points.get(i) {
                     let p = pixel(self.viewport.screen(*p)) + bounds.origin;
+                    let radius = px(2. * self.viewport.zoom);
                     window.paint_quad(fill(
-                        Bounds::new(p - point(px(2.), px(2.)), gpui_kit::size(px(4.), px(4.))),
+                        Bounds::new(
+                            p - point(radius, radius),
+                            gpui_kit::size(radius * 2., radius * 2.),
+                        ),
                         self.accent.to_hsla(),
                     ));
                 }
@@ -424,7 +430,7 @@ impl Frame {
             let mut builder = if marker == Marker::ArrowClosed {
                 PathBuilder::fill()
             } else {
-                PathBuilder::stroke(px(1.5))
+                PathBuilder::stroke(px(EDGE_STROKE * self.viewport.zoom))
             };
             builder.move_to(b.origin + pixel(left));
             builder.line_to(b.origin + pixel(tip));
@@ -543,7 +549,7 @@ pub(crate) fn paint_gesture(
         && let Ok((node, handle)) = scene.graph().handle(source)
     {
         let from = handle.position(node.rect());
-        let mut builder = PathBuilder::stroke(px(2.));
+        let mut builder = PathBuilder::stroke(px(2. * viewport.zoom));
         builder.move_to(bounds.origin + pixel(viewport.screen(from)));
         builder.line_to(bounds.origin + pixel(viewport.screen(*at)));
         if let Ok(path) = builder.build() {
@@ -561,7 +567,6 @@ pub(crate) fn paint_gesture(
         ));
     }
 }
-// Marker geometry is screen-sized, like the 10px handle dots.
 fn marker_triangle(
     tip: WorldPoint,
     neighbor: WorldPoint,
@@ -577,8 +582,11 @@ fn marker_triangle(
     // The tip of the arrow is the outer edge of the handle, so the arrow
     // touches the handle instead of pointing into it. The dot is painted
     // above the edge, so the edge itself is seen to end there as well.
-    let tip = viewport.screen(tip) - d * crate::HANDLE_RADIUS;
-    Some([tip - d * 10. + side * 4., tip, tip - d * 10. - side * 4.])
+    let tip = tip - d * crate::HANDLE_RADIUS;
+    Some(
+        [tip - d * 10. + side * 4., tip, tip - d * 10. - side * 4.]
+            .map(|point| viewport.screen(point)),
+    )
 }
 pub(crate) fn minimap_rect(size: WorldPoint) -> Rect {
     Rect::new((size.x - 196.).max(0.), (size.y - 136.).max(0.), 180., 120.)
@@ -601,7 +609,7 @@ mod tests {
     use guiraffe_flow_core::{Edge, Graph};
     #[test]
     fn arrow_tip_touches_the_outer_edge_of_the_handle_at_all_zooms() {
-        for zoom in [0.5, 0.6, 1., 2., 3.] {
+        for zoom in [0.25, 0.5, 1., 2., 4.] {
             let viewport = Viewport {
                 zoom,
                 pan: WorldPoint::new(15., -20.),
@@ -615,14 +623,18 @@ mod tests {
                 let triangle =
                     marker_triangle(center, center - direction * 20., viewport).expect("marker");
                 let screen = viewport.screen(center);
+                let radius = crate::HANDLE_RADIUS * zoom;
+                let base = (triangle[0] + triangle[2]) * 0.5;
+                assert!((base.distance(triangle[1]) / radius - 2.).abs() < 0.001);
+                assert!((triangle[0].distance(triangle[2]) / radius - 1.6).abs() < 0.001);
                 assert!(
-                    (triangle[1].distance(screen) - crate::HANDLE_RADIUS).abs() < 0.001,
+                    (triangle[1].distance(screen) - radius).abs() < 0.001,
                     "the tip of the arrow is the outer edge of the handle at zoom {zoom}"
                 );
                 for point in triangle {
                     assert!(
                         (point.x - screen.x) * direction.x + (point.y - screen.y) * direction.y
-                            <= -crate::HANDLE_RADIUS + 0.001,
+                            <= -radius + 0.001,
                         "the arrow stays outside the handle at zoom {zoom}"
                     );
                 }
@@ -631,7 +643,7 @@ mod tests {
     }
     #[test]
     fn the_handle_dot_is_centred_on_the_border_of_the_node() {
-        for zoom in [0.5, 1., 2., 3.] {
+        for zoom in [0.25, 0.5, 1., 2., 4.] {
             let node = Node::new(1, "", WorldPoint::new(40., 60.));
             let handle = node.handles.first().expect("handle");
             // The dot is a circle of the radius of a handle, centred on the
@@ -646,14 +658,9 @@ mod tests {
                 (centre.y - node.rect().origin.y - node.rect().size.y * handle.offset).abs()
                     < 0.001
             );
-            // The dot is drawn around that point, so its box is the point
-            // minus the radius, and its size is twice the radius.
-            let origin = WorldPoint::new(
-                centre.x * zoom - crate::HANDLE_RADIUS,
-                centre.y * zoom - crate::HANDLE_RADIUS,
-            );
-            assert_eq!(origin.x + crate::HANDLE_RADIUS, centre.x * zoom);
-            assert_eq!(origin.y + crate::HANDLE_RADIUS, centre.y * zoom);
+            let bounds = crate::node::handle_bounds(centre, zoom);
+            assert!(bounds.center().distance(centre * zoom) < 0.001);
+            assert!((bounds.size.x - 2. * crate::HANDLE_RADIUS * zoom).abs() < 0.001);
         }
     }
     #[test]

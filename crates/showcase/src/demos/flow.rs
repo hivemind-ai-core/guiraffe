@@ -144,3 +144,44 @@ fn flow_preview(
     };
     column([body.into_any_element(), d.log.clone().into_any_element()])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use guiraffe_flow::core::Viewport;
+    use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
+
+    #[test]
+    fn zoomed_node_graph_keeps_markers_in_scale() -> anyhow::Result<()> {
+        let config = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+            .update_from_env();
+        let mut snapshotter = Snapshotter::new()?.with_setup(crate::init);
+        for (zoom, pan, name) in [
+            (0.5, Point::new(30., 42.), "overview"),
+            (2., Point::new(-120., -60.), "detail"),
+        ] {
+            let graph = graph()?;
+            let image = snapshotter.render(gpui_kit::size(px(560.), px(360.)), move |_, cx| {
+                let state = cx.new(|cx| {
+                    FlowState::new(graph, cx)
+                        .expect("valid node graph")
+                        .options(FlowOptions {
+                            controls: false,
+                            toolbar: false,
+                            minimap: false,
+                            fit_on_init: false,
+                            ..Default::default()
+                        })
+                });
+                state.update(cx, |state, cx| {
+                    state
+                        .set_viewport(Viewport { zoom, pan }, cx)
+                        .expect("valid camera");
+                });
+                state
+            })?;
+            assert_snapshot(&format!("node-graph/zoom-{name}"), &image, &config)?;
+        }
+        Ok(())
+    }
+}
