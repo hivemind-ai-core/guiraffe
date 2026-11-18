@@ -4,9 +4,9 @@ use crate::{
 };
 use gpui_kit::{
     App, AppContext, Bounds, Context, DispatchPhase, Entity, EntityId, EventEmitter, FocusHandle,
-    Hsla, InteractiveElement, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, Role, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
+    InteractiveElement, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, WeakEntity, Window,
     base::{TestSupportExt, spring},
     canvas,
     component::ActiveTheme,
@@ -56,12 +56,18 @@ impl SortableBoard {
         let scroll = headings.iter().map(|_| ScrollHandle::new()).collect();
         let board = cx.weak_entity();
         let targets = Targets::default();
+        let origin = Rc::new(Cell::new(Point::default()));
+        let outline = cx.new(|_| DropOutline {
+            bounds: None,
+            origin: origin.clone(),
+        });
         let drag = cx.new(|_| BoardDragOverlay {
             board,
             gesture: None,
             cancel: None,
             targets: targets.clone(),
-            origin: Rc::default(),
+            origin,
+            outline,
             scroll_pending: false,
         });
         Self {
@@ -222,18 +228,48 @@ impl SortableBoard {
     }
 }
 
-struct Preview(SharedString);
+struct Preview {
+    label: SharedString,
+    position: Point<Pixels>,
+    origin: Rc<Cell<Point<Pixels>>>,
+}
 
 impl Render for Preview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
+        let offset = self.position - self.origin.get();
         div()
+            .absolute()
+            .left(offset.x + px(8.))
+            .top(offset.y + px(8.))
             .px_3()
             .py_2()
             .border_1()
             .border_color(theme.surfaces().border.to_hsla())
             .bg(theme.surfaces().surface.to_hsla())
-            .child(self.0.clone())
+            .child(self.label.clone())
+    }
+}
+
+struct DropOutline {
+    bounds: Option<Bounds<Pixels>>,
+    origin: Rc<Cell<Point<Pixels>>>,
+}
+
+impl Render for DropOutline {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut outline = div().absolute();
+        if let Some(bounds) = self.bounds {
+            let offset = bounds.origin - self.origin.get();
+            outline = outline
+                .left(offset.x)
+                .top(offset.y)
+                .w(bounds.size.width)
+                .h(bounds.size.height)
+                .border_1()
+                .border_color(GuiraffeTheme::global(cx).primary_color().to_hsla());
+        }
+        outline
     }
 }
 
@@ -254,10 +290,20 @@ pub struct BoardDragOverlay {
     cancel: Option<Subscription>,
     targets: Targets,
     origin: Rc<Cell<Point<Pixels>>>,
+    outline: Entity<DropOutline>,
     scroll_pending: bool,
 }
 
 impl BoardDragOverlay {
+    fn outline(&self, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
+        if self.outline.read(cx).bounds != bounds {
+            self.outline.update(cx, |outline, cx| {
+                outline.bounds = bounds;
+                cx.notify();
+            });
+        }
+    }
+
     fn target_at(
         &self,
         selection: &Selection,
@@ -284,14 +330,22 @@ impl BoardDragOverlay {
         };
         if event.pressed_button != Some(MouseButton::Left) {
             self.cancel = None;
+            self.outline(None, cx);
             cx.notify();
             return;
         }
         let delta = event.position - drag.origin;
         if drag.position.is_some() || delta.x.abs().max(delta.y.abs()) >= px(5.) {
-            drag.position = Some(event.position);
+            let started = drag.position.replace(event.position).is_none();
             drag.target = self.target_at(&drag.selection, event.position, cx);
-            cx.notify();
+            self.outline(drag.target.map(|(_, _, bounds)| bounds), cx);
+            drag.preview.update(cx, |preview, cx| {
+                preview.position = event.position;
+                cx.notify();
+            });
+            if started {
+                cx.notify();
+            }
         }
         let active = drag.position.is_some();
         self.gesture = Some(drag);
@@ -314,7 +368,7 @@ impl BoardDragOverlay {
             && let Some(drag) = &mut self.gesture
         {
             drag.target = next_target;
-            cx.notify();
+            self.outline(next_target.map(|(_, _, bounds)| bounds), cx);
         }
         let mut scrolled = false;
         for handle in &board.read(cx).scroll {
@@ -352,6 +406,7 @@ impl BoardDragOverlay {
             return;
         };
         self.cancel = None;
+        self.outline(None, cx);
         cx.notify();
         if drag.position.is_some()
             && let Some((list, gap, _)) = self.target_at(&drag.selection, event.position, cx)
@@ -366,51 +421,39 @@ impl Render for BoardDragOverlay {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let movement = cx.weak_entity();
         let release = movement.clone();
-        let color: Hsla = GuiraffeTheme::global(cx).primary_color().to_hsla();
         let origin = self.origin.clone();
-        let mut layer = div().absolute().top_0().left_0().size_full().child(
-            canvas(
-                move |bounds, _, _| origin.set(bounds.origin),
-                move |_, _, window, _| {
-                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                        if phase == DispatchPhase::Capture {
-                            let _ = movement.update(cx, |drag, cx| drag.moved(event, window, cx));
-                        }
-                    });
-                    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                        if phase == DispatchPhase::Capture {
-                            let _ = release.update(cx, |drag, cx| drag.released(event, cx));
-                        }
-                    });
-                },
-            )
+        div()
             .absolute()
-            .size_full(),
-        );
-        if let Some(drag) = &self.gesture
-            && let Some(position) = drag.position
-        {
-            if let Some((_, _, bounds)) = drag.target {
-                layer = layer.child(
-                    div()
-                        .absolute()
-                        .left(bounds.left() - self.origin.get().x)
-                        .top(bounds.top() - self.origin.get().y)
-                        .w(bounds.size.width)
-                        .h(bounds.size.height)
-                        .border_1()
-                        .border_color(color),
-                );
-            }
-            layer = layer.child(
-                div()
-                    .absolute()
-                    .left(position.x - self.origin.get().x + px(8.))
-                    .top(position.y - self.origin.get().y + px(8.))
-                    .child(drag.preview.clone()),
-            );
-        }
-        layer
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(
+                canvas(
+                    move |bounds, _, _| origin.set(bounds.origin),
+                    move |_, _, window, _| {
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Capture {
+                                let _ =
+                                    movement.update(cx, |drag, cx| drag.moved(event, window, cx));
+                            }
+                        });
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Capture {
+                                let _ = release.update(cx, |drag, cx| drag.released(event, cx));
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(self.outline.clone())
+            .children(
+                self.gesture
+                    .as_ref()
+                    .filter(|drag| drag.position.is_some())
+                    .map(|drag| drag.preview.clone()),
+            )
     }
 }
 
@@ -511,6 +554,7 @@ impl Render for SortableBoard {
                                             overlay.cancel = None;
                                             let cleared = overlay.gesture.take().is_some();
                                             if cleared {
+                                                overlay.outline(None, cx);
                                                 cx.notify();
                                             }
                                             cleared
@@ -520,8 +564,12 @@ impl Render for SortableBoard {
                                     cx.stop_propagation();
                                 }
                             });
-                            let preview = cx.new(|_| Preview(label.clone()));
-                            source.update(cx, |drag, _| {
+                            source.update(cx, |drag, cx| {
+                                let preview = cx.new(|_| Preview {
+                                    label: label.clone(),
+                                    position: event.position,
+                                    origin: drag.origin.clone(),
+                                });
                                 drag.cancel = Some(cancel);
                                 drag.gesture = Some(PointerGesture {
                                     selection: selection.clone(),
