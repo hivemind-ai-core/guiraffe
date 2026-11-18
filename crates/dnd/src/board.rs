@@ -6,7 +6,7 @@ use gpui_kit::{
     AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
-use guiraffe_core::{GuiraffeTheme, StateKind, Variant, focus_ring};
+use guiraffe_core::{GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 use std::collections::{HashMap, HashSet};
 
 /// A card's ID must be unique within its board and stable across transfers.
@@ -266,7 +266,7 @@ impl Render for SortableBoard {
                     ));
                 let row = focus_ring(
                     row,
-                    focus.is_focused(window),
+                    ring_visible(focus, window),
                     px(0.),
                     theme
                         .state(StateKind::FocusRing, Variant::Default, None)
