@@ -208,6 +208,7 @@ fn paint_mesh(
     window.paint_path(transformed_mesh(path, viewport, origin), color.to_hsla());
 }
 pub(crate) struct Frame {
+    pub overview: bool,
     scene: Arc<Scene>,
     viewport: Viewport,
     edges: Vec<EdgeId>,
@@ -232,6 +233,7 @@ impl Frame {
         phase: Option<f32>,
     ) -> Self {
         Self {
+            overview: false,
             scene: i.editor.scene_shared(),
             viewport: i.viewport(),
             edges: std::mem::take(&mut visible.edges),
@@ -257,6 +259,33 @@ impl Frame {
         self.grid(bounds, cache, window);
         let grid_us = started.elapsed().as_micros();
         let edge_started = std::time::Instant::now();
+        if self.overview {
+            let size = WorldPoint::new(bounds.size.width.as_f32(), bounds.size.height.as_f32());
+            let area = self.viewport.visible(size);
+            let mut path = Path::new(pixel(WorldPoint::default()));
+            self.scene
+                .visit_node_regions(area, 32. / self.viewport.zoom, |region| {
+                    rectangle(
+                        &mut path,
+                        Rect {
+                            origin: self.viewport.screen(region.origin),
+                            size: region.size * self.viewport.zoom,
+                        },
+                    );
+                });
+            if !path.vertices.is_empty() {
+                paint_mesh(
+                    &path,
+                    Viewport::default(),
+                    bounds.origin,
+                    window,
+                    self.surfaces.dimmed,
+                );
+            }
+            cache.timings = (grid_us, edge_started.elapsed().as_micros(), 0);
+            cache.edge_buffer = std::mem::take(&mut self.edges);
+            return;
+        }
         let graph = self.scene.graph();
         // GPUI takes ownership of submitted vertices. Batch by colour, so its
         // ownership boundary requires one allocation per batch, not per edge.
