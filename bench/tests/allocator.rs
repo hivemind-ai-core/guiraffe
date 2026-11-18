@@ -56,6 +56,7 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
         .into_iter()
         .filter(|s| {
             !s.name.starts_with("flow-")
+                && !matches!(s.name, "timeline-box-select-100k" | "timeline-draw-bars-100k")
                 && !s.name.starts_with("data-ui-")
                 && s.name != "datagrid-sort-1m"
                 && s.name != "code-index-10m"
@@ -78,6 +79,28 @@ fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     guiraffe_bench::suites::flow_query();
     let (_, counts) = count_allocations(guiraffe_bench::suites::flow_query)?;
     assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn production_flow_pan_and_hit_reuse_storage() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::flow_pan_hit_50k;
+    flow_pan_hit_50k();
+    let (_, counts) = count_allocations(flow_pan_hit_50k)?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn production_timeline_edits_have_bounded_allocation_traffic() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{timeline_box_select_100k, timeline_draw_bars_100k};
+    timeline_box_select_100k();
+    timeline_draw_bars_100k();
+    let (_, selection) = count_allocations(timeline_box_select_100k)?;
+    let (_, bars) = count_allocations(timeline_draw_bars_100k)?;
+    assert!(selection.allocations <= 64, "{selection:?}");
+    assert!(selection.bytes <= 16 * 1024, "{selection:?}");
+    assert_eq!(bars.allocations, 0);
     Ok(())
 }
 
@@ -232,5 +255,29 @@ fn warmed_flamegraph_million_frame_traversal_allocates_nothing() -> anyhow::Resu
     flamegraph_million();
     let (_, counts) = count_allocations(flamegraph_million)?;
     assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn large_timeline_bar_storage_is_one_value_per_bar() -> anyhow::Result<()> {
+    const BARS: usize = 100_000;
+    let (bars, storage) = count_allocations(|| guiraffe_timeline::BarCurve::new(BARS, -1., 1.))?;
+    assert_eq!(bars.values().len(), BARS);
+    // One shared allocation containing the vector header, plus the value buffer.
+    assert!(storage.allocations <= 2, "{storage:?}");
+    assert!(
+        storage.bytes <= (BARS * size_of::<f64>() + 64) as u64,
+        "{storage:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn production_scatter_recompute_bounds_allocation_traffic() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::chart_scatter_1m_100_series;
+    chart_scatter_1m_100_series();
+    let (_, counts) = count_allocations(chart_scatter_1m_100_series)?;
+    assert!(counts.allocations <= 1_024, "{counts:?}");
+    assert!(counts.bytes <= 128 * 1024 * 1024, "{counts:?}");
     Ok(())
 }
