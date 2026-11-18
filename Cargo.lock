@@ -3347,6 +3347,7 @@ dependencies = [
  "guiraffe-core",
  "guiraffe-icons",
  "guiraffe-mocket",
+ "guiraffe-test",
  "guiraffe-ui",
  "serde_json",
  "tempfile",

@@ -7,15 +7,18 @@
 //! guiraffe add [<crate>…] [--path <checkout>]       add GUIraffe crates to this app (no args: list)
 //! guiraffe dev [--release]                         watch, rebuild and relaunch the app in this directory
 //! guiraffe doctor                                    check toolchain, system libraries and app pins
+//! guiraffe mcp [--document <file>]                    serve the inspect and drive API as MCP tools
+//! guiraffe test --script <file> [--document <file>]  run a recorded interaction script again
 //! ```
 
 mod add;
 mod dev;
 mod doctor;
+mod inspect;
 mod preview;
 mod scaffold;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
@@ -48,9 +51,28 @@ fn run() -> Result<()> {
         }
         Some("preview") => {
             let Some(file) = args.get(1) else {
-                bail!("usage: guiraffe preview <file> [--screen <id>]")
+                bail!("usage: guiraffe preview <file> [--screen <id>] [--inspect <socket>]")
             };
-            preview::run(PathBuf::from(file), option(&args[2..], "--screen")?)
+            // With --inspect the preview runs headless and the API is served
+            // on the socket, for an agent that wants to look at it.
+            match option(&args[2..], "--inspect")?.map(PathBuf::from) {
+                Some(socket) => inspect::serve(&socket, Some(Path::new(file))),
+                None => preview::run(PathBuf::from(file), option(&args[2..], "--screen")?),
+            }
+        }
+        Some("mcp") => {
+            let document = option(&args[1..], "--document")?.map(PathBuf::from);
+            inspect::mcp(document.as_deref())
+        }
+        Some("test") => {
+            let Some(script) = args.get(1) else {
+                bail!("usage: guiraffe test --script <file> [--document <file>]")
+            };
+            let document = option(&args[2..], "--document")?.map(PathBuf::from);
+            if !inspect::script(Path::new(script), document.as_deref())? {
+                bail!("the script failed")
+            }
+            Ok(())
         }
         Some("import") => {
             let Some(file) = args.get(1) else {

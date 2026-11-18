@@ -500,17 +500,7 @@ impl<'a> Inspector<'a> {
 
     /// The layout of one node, or of every node.
     pub fn layout(&mut self, node: Option<&NodeId>) -> LayoutReport {
-        let index = self.nodes();
-        let nodes = match node {
-            Some(id) => index
-                .nodes()
-                .iter()
-                .filter(|node| node.id == *id)
-                .cloned()
-                .collect(),
-            None => index.nodes().to_vec(),
-        };
-        LayoutReport { nodes }
+        layout_report(self.vcx, node)
     }
 
     /// The accessibility facts of every node.
@@ -563,65 +553,77 @@ impl<'a> Inspector<'a> {
 
     /// The resolved tokens of the app and the context they came from.
     pub fn style(&mut self) -> StyleReport {
-        let context = StyleContext::current();
-        let theme = GuiraffeTheme::default();
-        let mut colors = BTreeMap::new();
-        let surfaces = theme.surfaces();
-        colors.insert("body".into(), hex(surfaces.body));
-        colors.insert("raised".into(), hex(surfaces.raised));
-        colors.insert("border".into(), hex(surfaces.border));
-        colors.insert("primary".into(), hex(theme.primary_color()));
-        colors.insert(
-            "danger".into(),
-            hex(theme
-                .variant(Some(ColorName::Red), Variant::Filled)
-                .background),
-        );
-        colors.insert(
-            "success".into(),
-            hex(theme
-                .variant(Some(ColorName::Green), Variant::Filled)
-                .background),
-        );
-        colors.insert(
-            "warning".into(),
-            hex(theme
-                .variant(Some(ColorName::Yellow), Variant::Filled)
-                .background),
-        );
-        colors.insert(
-            "info".into(),
-            hex(theme
-                .variant(Some(ColorName::Blue), Variant::Filled)
-                .background),
-        );
-        StyleReport {
-            density: format!("{:?}", context.density),
-            control_size: format!("{:?}", context.control_size),
-            surface: format!("{:?}", context.surface),
-            emphasis: format!("{:?}", context.emphasis),
-            keyboard_nav: context.keyboard_nav,
-            radius: theme.default_radius.radius(),
-            colors,
-        }
+        style_report()
+    }
+
+    /// A PNG of the window, or of the bounds of a node.
+    pub fn screenshot(&mut self, node: Option<&NodeId>) -> Option<Vec<u8>> {
+        screenshot_of(self.vcx, node)
     }
 
     /// The events the app emitted, oldest first.
     pub fn event_log(&mut self) -> Vec<RecordedEvent> {
         self.events.events()
     }
+}
 
-    /// A PNG of the window, or of the bounds of a node.
-    pub fn screenshot(&mut self, node: Option<&NodeId>) -> Option<Vec<u8>> {
-        let image = self.vcx.update(|window, _| window.render_to_image().ok())?;
-        let image = match node {
-            Some(id) => {
-                let bounds = self.layout(Some(id)).nodes.first()?.layout.bounds;
-                crop(&image, bounds)?
-            }
-            None => image,
-        };
-        encode_png(&image).ok()
+/// The layout of one node, or of every node.
+pub fn layout_report(vcx: &mut VisualTestContext, node: Option<&NodeId>) -> LayoutReport {
+    let index = vcx.update(|window, _| NodeIndex::collect(window));
+    let nodes = match node {
+        Some(id) => index
+            .nodes()
+            .iter()
+            .filter(|node| node.id == *id)
+            .cloned()
+            .collect(),
+        None => index.nodes().to_vec(),
+    };
+    LayoutReport { nodes }
+}
+
+/// The resolved tokens of the app and the context they came from.
+pub fn style_report() -> StyleReport {
+    let context = StyleContext::current();
+    let theme = GuiraffeTheme::default();
+    let mut colors = BTreeMap::new();
+    let surfaces = theme.surfaces();
+    colors.insert("body".into(), hex(surfaces.body));
+    colors.insert("raised".into(), hex(surfaces.raised));
+    colors.insert("border".into(), hex(surfaces.border));
+    colors.insert("primary".into(), hex(theme.primary_color()));
+    colors.insert(
+        "danger".into(),
+        hex(theme
+            .variant(Some(ColorName::Red), Variant::Filled)
+            .background),
+    );
+    colors.insert(
+        "success".into(),
+        hex(theme
+            .variant(Some(ColorName::Green), Variant::Filled)
+            .background),
+    );
+    colors.insert(
+        "warning".into(),
+        hex(theme
+            .variant(Some(ColorName::Yellow), Variant::Filled)
+            .background),
+    );
+    colors.insert(
+        "info".into(),
+        hex(theme
+            .variant(Some(ColorName::Blue), Variant::Filled)
+            .background),
+    );
+    StyleReport {
+        density: format!("{:?}", context.density),
+        control_size: format!("{:?}", context.control_size),
+        surface: format!("{:?}", context.surface),
+        emphasis: format!("{:?}", context.emphasis),
+        keyboard_nav: context.keyboard_nav,
+        radius: theme.default_radius.radius(),
+        colors,
     }
 }
 
@@ -703,6 +705,19 @@ fn focused_node(vcx: &mut VisualTestContext, nodes: &[NodeFacts]) -> Option<Node
                 .find(|node| node.a11y.focused)
                 .map(|n| n.id.clone())
         })
+}
+
+/// The layout of one node, or of every node.
+pub fn screenshot_of(vcx: &mut VisualTestContext, node: Option<&NodeId>) -> Option<Vec<u8>> {
+    let image = vcx.update(|window, _| window.render_to_image().ok())?;
+    let image = match node {
+        Some(id) => {
+            let bounds = layout_report(vcx, Some(id)).nodes.first()?.layout.bounds;
+            crop(&image, bounds)?
+        }
+        None => image,
+    };
+    encode_png(&image).ok()
 }
 
 /// The hexadecimal colour of a colour.

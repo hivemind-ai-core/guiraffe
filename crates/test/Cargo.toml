@@ -76,3 +76,7 @@ required-features = ["inspect"]
 [[test]]
 name = "replay"
 required-features = ["inspect"]
+
+[[test]]
+name = "transport"
+required-features = ["inspect"]

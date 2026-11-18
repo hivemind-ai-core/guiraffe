@@ -17,3 +17,5 @@ pub mod render;
 pub mod replay;
 #[cfg(feature = "snapshot")]
 pub mod snapshot;
+#[cfg(feature = "inspect")]
+pub mod transport;

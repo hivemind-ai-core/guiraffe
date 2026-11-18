@@ -280,6 +280,26 @@ impl<'a> Driver<'a> {
         crate::inspect::a11y_report(self.vcx)
     }
 
+    /// The layout of one node, or of every node.
+    pub fn layout(&mut self, node: Option<&NodeId>) -> crate::inspect::LayoutReport {
+        crate::inspect::layout_report(self.vcx, node)
+    }
+
+    /// The resolved tokens of the app and the context they came from.
+    pub fn style(&mut self) -> crate::inspect::StyleReport {
+        crate::inspect::style_report()
+    }
+
+    /// A PNG of the window, or of the bounds of a node.
+    pub fn screenshot(&mut self, node: Option<&NodeId>) -> Option<Vec<u8>> {
+        crate::inspect::screenshot_of(self.vcx, node)
+    }
+
+    /// The events the app emitted, oldest first.
+    pub fn event_log(&mut self) -> Vec<RecordedEvent> {
+        self.events.events()
+    }
+
     /// The node that has the keyboard focus now.
     fn focused(&mut self, index: &NodeIndex) -> Option<NodeId> {
         index
