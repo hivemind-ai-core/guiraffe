@@ -17,25 +17,29 @@ pub(super) fn positions(
         incoming[link.target].push((link.source, link.source_port, link.target_port));
         outgoing[link.source].push((link.target, link.target_port, link.source_port));
     }
-    let mut pending: Vec<_> = incoming.iter().map(Vec::len).collect();
-    let mut unplaced: BTreeSet<_> = (0..units.len()).collect();
-    let mut ready: BTreeSet<_> = unplaced
+    let back_edges = find_back_edges(&outgoing, cancel)?;
+    let mut pending: Vec<_> = incoming
         .iter()
-        .copied()
-        .filter(|&i| pending[i] == 0)
+        .enumerate()
+        .map(|(id, incoming)| {
+            incoming
+                .iter()
+                .filter(|&&(source, _, _)| !back_edges.contains(&(source, id)))
+                .count()
+        })
         .collect();
+    let mut ready: BTreeSet<_> = (0..units.len()).filter(|&id| pending[id] == 0).collect();
     let mut ranks = vec![0; units.len()];
     let mut layers = Vec::<Vec<usize>>::new();
-    while let Some(id) = ready.pop_first().or_else(|| unplaced.first().copied()) {
+    while let Some(id) = ready.pop_first() {
         cancel.check()?;
-        unplaced.remove(&id);
         let rank = ranks[id];
         if layers.len() <= rank {
             layers.resize_with(rank + 1, Vec::new);
         }
         layers[rank].push(id);
         for &(next, _, _) in &outgoing[id] {
-            if unplaced.contains(&next) {
+            if !back_edges.contains(&(id, next)) {
                 ranks[next] = ranks[next].max(rank + 1);
                 pending[next] -= 1;
                 if pending[next] == 0 {
@@ -199,6 +203,49 @@ pub(super) fn positions(
         }
     }
     Ok(positions)
+}
+
+fn find_back_edges(
+    outgoing: &Adjacency,
+    cancel: &LayoutCancellation,
+) -> Result<BTreeSet<(usize, usize)>, LayoutError> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Visit {
+        New,
+        Visiting,
+        Complete,
+    }
+    let mut visits = vec![Visit::New; outgoing.len()];
+    let mut stack = Vec::new();
+    let mut back_edges = BTreeSet::new();
+    for start in 0..outgoing.len() {
+        cancel.check()?;
+        if visits[start] != Visit::New {
+            continue;
+        }
+        stack.push((start, 0));
+        visits[start] = Visit::Visiting;
+        while let Some((id, next)) = stack.last_mut() {
+            cancel.check()?;
+            if let Some(&(target, _, _)) = outgoing[*id].get(*next) {
+                *next += 1;
+                match visits[target] {
+                    Visit::New => {
+                        visits[target] = Visit::Visiting;
+                        stack.push((target, 0));
+                    }
+                    Visit::Visiting => {
+                        back_edges.insert((*id, target));
+                    }
+                    Visit::Complete => {}
+                }
+            } else {
+                visits[*id] = Visit::Complete;
+                stack.pop();
+            }
+        }
+    }
+    Ok(back_edges)
 }
 
 fn record_order(layer: &[usize], order: &mut [usize]) {

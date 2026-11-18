@@ -1,6 +1,6 @@
 use super::{LayoutCancellation, LayoutError, LayoutOptions, Link, Unit};
 use crate::{Point, Rect};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 pub(super) fn grid(units: &[Unit], columns: usize, spacing: Point) -> Vec<Point> {
     let columns = if columns == 0 {
@@ -236,36 +236,32 @@ pub(super) fn resolve(
         }
     }
 
-    let mut cells = BTreeMap::<_, Vec<Rect>>::new();
-    for fixed in [true, false] {
-        for (id, pos) in positions.iter_mut().enumerate() {
-            if reserved[id] != fixed {
-                continue;
+    for (id, pos) in positions
+        .iter_mut()
+        .enumerate()
+        .filter(|(id, _)| !reserved[*id])
+    {
+        loop {
+            cancel.check()?;
+            let rect = Rect {
+                origin: *pos,
+                size: units[id].bounds.size + spacing,
+            };
+            if !rect.valid() {
+                return Err(LayoutError::Infeasible);
             }
-            loop {
-                cancel.check()?;
-                let rect = Rect {
-                    origin: *pos,
-                    size: units[id].bounds.size + spacing,
-                };
-                if !rect.valid() {
-                    return Err(LayoutError::Infeasible);
-                }
-                let (x, y) = cell(*pos, cell_size);
-                let next = neighbors(x, y)
-                    .filter_map(|key| cells.get(&key))
-                    .flatten()
-                    .filter(|other| overlaps(rect, **other))
-                    .map(|other| other.max().x)
-                    .max_by(f32::total_cmp);
-                match next {
-                    None => {
-                        cells.entry((x, y)).or_default().push(rect);
-                        break;
-                    }
-                    Some(_) if fixed => return Err(LayoutError::Infeasible),
-                    Some(x) => pos.x = x,
-                }
+            let key = cell(*pos, cell_size);
+            let next = neighbors(key.0, key.1)
+                .filter_map(|key| cells.get(&key))
+                .flatten()
+                .filter(|(_, other)| overlaps(rect, *other))
+                .map(|(_, other)| other.max().x)
+                .max_by(f32::total_cmp);
+            if let Some(x) = next {
+                pos.x = x;
+            } else {
+                cells.entry(key).or_default().push((id, rect));
+                break;
             }
         }
     }
@@ -279,72 +275,55 @@ fn solve(
     spacing: Point,
     cancel: &LayoutCancellation,
 ) -> Result<(), LayoutError> {
+    for (pos, unit) in positions.iter_mut().zip(units) {
+        if unit.fixed {
+            *pos = unit.bounds.origin;
+        }
+    }
+    if constraints.is_empty() {
+        return Ok(());
+    }
     for axis in 0..2 {
         let component = |p: Point| if axis == 0 { p.x } else { p.y };
         let mut values: Vec<_> = positions
             .iter()
-            .zip(units)
-            .map(|(&pos, u)| f64::from(component(if u.fixed { u.bounds.origin } else { pos })))
+            .map(|&pos| f64::from(component(pos)))
             .collect();
-        let mut upper: Vec<_> = values
-            .iter()
-            .zip(units)
-            .map(|(&value, u)| if u.fixed { value } else { f64::INFINITY })
-            .collect();
-        let mut edges = Vec::new();
+        let mut ordered = vec![Vec::new(); units.len()];
+        let mut reversed = vec![Vec::new(); units.len()];
+        let mut add = |a: usize, b: usize, gap| {
+            ordered[a].push((b, gap));
+            reversed[b].push((a, gap));
+        };
         for &(a, b, dim, aligned, offset_a, offset_b, size) in constraints {
+            cancel.check()?;
             if dim != axis {
                 continue;
             }
             let offset = f64::from(component(offset_a)) - f64::from(component(offset_b));
             if aligned {
-                edges.push((a, b, offset));
-                edges.push((b, a, -offset));
+                add(a, b, offset);
+                add(b, a, -offset);
             } else {
-                edges.push((a, b, offset + f64::from(component(size + spacing))));
+                add(a, b, offset + f64::from(component(size + spacing)));
             }
         }
-        for round in 0..=units.len() {
-            cancel.check()?;
-            let mut changed = false;
-            for &(a, b, gap) in &edges {
-                if upper[b] - gap < upper[a] {
-                    if units[a].fixed {
-                        return Err(LayoutError::Infeasible);
-                    }
-                    upper[a] = upper[b] - gap;
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-            if round == units.len() {
-                return Err(LayoutError::Infeasible);
-            }
+        // A fixed coordinate bounds every predecessor from above. Propagate
+        // the negated bounds backwards, then propagate the lower bounds forwards.
+        let mut negated_upper: Vec<_> = values
+            .iter()
+            .zip(units)
+            .map(
+                |(&value, u)| {
+                    if u.fixed { -value } else { f64::NEG_INFINITY }
+                },
+            )
+            .collect();
+        propagate(&mut negated_upper, &reversed, units, cancel)?;
+        for (value, bound) in values.iter_mut().zip(negated_upper) {
+            *value = value.min(-bound);
         }
-        for (value, upper) in values.iter_mut().zip(upper) {
-            *value = value.min(upper);
-        }
-        for round in 0..=units.len() {
-            cancel.check()?;
-            let mut changed = false;
-            for &(a, b, gap) in &edges {
-                if values[a] + gap > values[b] {
-                    if units[b].fixed {
-                        return Err(LayoutError::Infeasible);
-                    }
-                    values[b] = values[a] + gap;
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-            if round == units.len() {
-                return Err(LayoutError::Infeasible);
-            }
-        }
+        propagate(&mut values, &ordered, units, cancel)?;
         for (pos, value) in positions.iter_mut().zip(values) {
             if axis == 0 {
                 pos.x = value as f32;
@@ -354,6 +333,43 @@ fn solve(
         }
     }
 
+    Ok(())
+}
+
+fn propagate(
+    positions: &mut [f64],
+    edges: &[Vec<(usize, f64)>],
+    units: &[Unit],
+    cancel: &LayoutCancellation,
+) -> Result<(), LayoutError> {
+    let mut queue = VecDeque::new();
+    let mut queued = vec![false; units.len()];
+    let mut distance = vec![0; units.len()];
+    for (id, (&value, targets)) in positions.iter().zip(edges).enumerate() {
+        if value.is_finite() && !targets.is_empty() {
+            queue.push_back(id);
+            queued[id] = true;
+        }
+    }
+    while let Some(a) = queue.pop_front() {
+        queued[a] = false;
+        for &(b, gap) in &edges[a] {
+            cancel.check()?;
+            let minimum = positions[a] + gap;
+            if minimum <= positions[b] {
+                continue;
+            }
+            distance[b] = distance[a] + 1;
+            if units[b].fixed || distance[b] >= units.len() {
+                return Err(LayoutError::Infeasible);
+            }
+            positions[b] = minimum;
+            if !queued[b] && !edges[b].is_empty() {
+                queued[b] = true;
+                queue.push_back(b);
+            }
+        }
+    }
     Ok(())
 }
 
