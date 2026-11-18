@@ -4,7 +4,8 @@ use crate::{
 };
 use gpui_kit::{
     AppContext, Context, EntityId, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Window,
+    base::TestSupportExt, div, px,
 };
 use guiraffe_core::{GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 use std::collections::{HashMap, HashSet};
@@ -235,6 +236,7 @@ impl Render for SortableBoard {
                 let selected = self.selected.contains(&id);
                 let row = div()
                     .id(("card", id))
+                    .test_support()
                     .role(Role::ListItem)
                     .aria_label(label.clone())
                     .aria_selected(selected)
@@ -294,6 +296,7 @@ impl Render for SortableBoard {
                 .child(target(
                     div()
                         .id(("end", list))
+                        .test_support()
                         .border_1()
                         .border_color(theme.surfaces().border.to_hsla())
                         .px_3()
@@ -320,7 +323,7 @@ impl Render for SortableBoard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{MouseButton, TestAppContext, point, test::TestWindowExt};
+    use gpui_kit::{TestAppContext, test::TestWindowExt};
     use std::{cell::RefCell, rc::Rc};
 
     #[gpui_kit::test]
@@ -353,22 +356,9 @@ mod tests {
         let view = board.clone();
         let (_, window) = cx.add_window_view(move |_, _| TestHost(view));
         window.run_until_parked();
-        let (from, to) = window.update(|window, cx| {
-            window.render_frame(cx);
-            (
-                window.find(("card", 1_usize)).bounds().center(),
-                window.find(("end", 1_usize)).bounds().center(),
-            )
+        window.update(|window, cx| {
+            window.drag_to(("card", 1_usize), ("end", 1_usize), cx);
         });
-        window.simulate_mouse_move(from, None, Default::default());
-        window.simulate_mouse_down(from, MouseButton::Left, Default::default());
-        window.simulate_mouse_move(
-            from + point(px(15.), px(0.)),
-            Some(MouseButton::Left),
-            Default::default(),
-        );
-        window.simulate_mouse_move(to, Some(MouseButton::Left), Default::default());
-        window.simulate_mouse_up(to, MouseButton::Left, Default::default());
         window.run_until_parked();
         assert_eq!(events.borrow().len(), 1);
         assert_eq!(events.borrow()[0].destination, 1);

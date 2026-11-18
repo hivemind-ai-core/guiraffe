@@ -206,14 +206,16 @@ fn kanban(cx: &mut Context<Workspace>) -> Workspace {
 
 fn main() {
     let use_ide = std::env::args().nth(1).as_deref() == Some("ide");
-    gpui_kit::application().run(move |cx| {
-        guiraffe_layout::init(cx);
-        if let Err(error) = cx.open_window(WindowOptions::default(), move |window, cx| {
-            let view = cx.new(|cx| if use_ide { ide(window, cx) } else { kanban(cx) });
-            cx.new(|cx| Root::new(view, window, cx))
-        }) {
-            eprintln!("{error}");
-            cx.quit();
-        }
-    });
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx| {
+            guiraffe_layout::init(cx);
+            if let Err(error) = cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| if use_ide { ide(window, cx) } else { kanban(cx) });
+                cx.new(|cx| Root::new(view, window, cx))
+            }) {
+                eprintln!("{error}");
+                cx.quit();
+            }
+        });
 }
