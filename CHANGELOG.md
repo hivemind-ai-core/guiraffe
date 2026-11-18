@@ -57,6 +57,9 @@ fast desktop apps on GPUI (gpui-kit 0.9.1), aiming to be as convenient as React 
 
 - **text menu:** shared right-click menu for selectable text (Copy, Select all, extras;
   Shift+F10) in code, markdown and chat.
+- **keys:** `guiraffe_core::keys::{binding, bind_keys}`: OS-aware (`secondary-` → ⌘/Ctrl),
+  fallible key bindings that report bad specs instead of panicking.
+- **components:** `ActionIcon::loading` (spinner, ignores presses, announced to screen readers).
 
 ### Tooling
 - **cli:** `guiraffe new` (standalone app), `dev` (watch, rebuild, relaunch; failed builds keep
@@ -69,6 +72,22 @@ fast desktop apps on GPUI (gpui-kit 0.9.1), aiming to be as convenient as React 
 - **test:** headless snapshot harness with per-backend goldens, image diff, render counters,
   layout-bounds assertions.
 - **bench:** reproducible benchmarks, baselines, commit-to-commit compare.
+
+### Fixes since the first showcase review
+- Layout: ScrollArea scrolls and supports `track_scroll`; Flex/Grid `grow` work (Mantine
+  semantics); vertical `Divider` is drawn inside rows.
+- Controls: no focus on click, working Tab order, focus rings that never move layout, AccessKit
+  roles; SegmentedControl selects on first click; tooltips and overlays dismiss correctly.
+- Theme: every state colour meets WCAG contrast in both schemes and all primaries; Kit primary,
+  pressed and semantic (danger/success/warning/info) colours follow the GUIraffe theme.
+- Mermaid renders and re-rasterises sharply on zoom; Markdown scrollable mode keeps its height.
+- Data grid: even cell cursor, editor matches the cell, horizontal scrollbar drag and paging.
+- Icons: build script no longer embeds zero icons from a stale build cache.
+
+### Measurement
+- `examples/compare`: the same app in GUIraffe and in Electron + React (Mantine, TanStack
+  Table/Virtual, Recharts, react-markdown/Shiki), and `bench/electron/run.sh`, which refuses to
+  publish numbers from a loaded or software-rendered machine.
 
 ### Known limitations
 See KNOWN_ISSUES.md. Notably: gpui-fast pinned to 0.1.15; no OS high-contrast/forced-colours
