@@ -328,7 +328,8 @@ impl Frame {
         if !selected.vertices.is_empty() {
             window.paint_path(selected, self.accent.to_hsla());
         }
-        // Markers and animated beads retain their order above the edge strokes.
+        // The default filled arrowheads share ink, so submit them as one triangle mesh.
+        let mut arrowheads = Path::new(bounds.origin);
         for id in &self.edges {
             let Some(edge) = graph.edges.get(id) else {
                 continue;
@@ -352,7 +353,14 @@ impl Frame {
                 };
                 std::borrow::Cow::Borrowed(route.as_ref())
             };
-            self.markers(&route, edge.marker_start, edge.marker_end, bounds, window);
+            self.markers(
+                &route,
+                edge.marker_start,
+                edge.marker_end,
+                bounds,
+                &mut arrowheads,
+                window,
+            );
             if edge.animated
                 && let Some(t) = self.phase
             {
@@ -370,6 +378,9 @@ impl Frame {
                 }
                 window.request_animation_frame();
             }
+        }
+        if !arrowheads.vertices.is_empty() {
+            window.paint_path(arrowheads, self.accent.to_hsla());
         }
         let edge_us = edge_started.elapsed().as_micros();
         cache.timings = (grid_us, edge_us, 0);
@@ -440,6 +451,7 @@ impl Frame {
         start: Marker,
         end: Marker,
         b: Bounds<Pixels>,
+        arrowheads: &mut Path<Pixels>,
         window: &mut Window,
     ) {
         if route.points.len() < 2 {
@@ -462,17 +474,20 @@ impl Frame {
             let Some([left, tip, right]) = marker_triangle(tip, neighbor, self.viewport) else {
                 continue;
             };
-            let mut builder = if marker == Marker::ArrowClosed {
-                PathBuilder::fill()
-            } else {
-                PathBuilder::stroke(px(EDGE_STROKE * self.viewport.zoom))
-            };
-            builder.move_to(b.origin + pixel(left));
-            builder.line_to(b.origin + pixel(tip));
-            builder.line_to(b.origin + pixel(right));
+            let triangle = (
+                b.origin + pixel(left),
+                b.origin + pixel(tip),
+                b.origin + pixel(right),
+            );
             if marker == Marker::ArrowClosed {
-                builder.close();
+                let uv = point(0., 1.);
+                arrowheads.push_triangle(triangle, (uv, uv, uv));
+                continue;
             }
+            let mut builder = PathBuilder::stroke(px(EDGE_STROKE * self.viewport.zoom));
+            builder.move_to(triangle.0);
+            builder.line_to(triangle.1);
+            builder.line_to(triangle.2);
             if let Ok(path) = builder.build() {
                 window.paint_path(path, self.accent.to_hsla());
             }
