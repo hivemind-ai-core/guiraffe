@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use gpui_kit::{
     App, AppContext, Context, Entity, IntoElement, SharedString, StyleRefinement, Window,
     WindowOptions,
@@ -58,8 +60,8 @@ const TASKS: [Task; 4] = [
 
 #[component]
 fn TaskLabel(
-    title: &'static str,
-    owner: &'static str,
+    title: SharedString,
+    owner: SharedString,
     #[prop(default)] done: bool,
 ) -> impl IntoElement {
     ui! {
@@ -80,6 +82,7 @@ struct TeamTasks {
     assignee: Entity<InputState>,
     scheme: Scheme,
     saved: Option<SharedString>,
+    edits: HashMap<usize, (SharedString, SharedString)>,
 }
 
 impl TeamTasks {
@@ -93,6 +96,7 @@ impl TeamTasks {
             assignee: cx.new(|cx| InputState::new(window, cx).default_value(selected.owner)),
             scheme,
             saved: None,
+            edits: HashMap::new(),
         }
     }
 }
@@ -106,7 +110,17 @@ impl Render for TeamTasks {
         let empty = title.trim().is_empty();
         let selected = self.selected;
         let saved = self.saved.clone();
-        let tasks = TASKS.into_iter().filter(|task| !open_only || !task.done);
+        let edits = &self.edits;
+        let tasks = TASKS
+            .into_iter()
+            .filter(|task| !open_only || !task.done)
+            .map(|task| {
+                let (title, owner) = edits
+                    .get(&task.id)
+                    .cloned()
+                    .unwrap_or_else(|| (task.title.into(), task.owner.into()));
+                (task, title, owner)
+            });
         let title_input = self.title.clone();
         let assignee_input = self.assignee.clone();
         ui! {
@@ -151,17 +165,17 @@ impl Render for TeamTasks {
                                 selected: open_only
                                 on_click: cx.listener(|this, _, _, cx| { this.open_only = !this.open_only; cx.notify(); })
                             }
-                            for task in tasks key task.id {
+                            for (task, title, owner) in tasks key task.id {
                                 Card {
                                     div {
                                         flex justify_between items_center gap_4
-                                        TaskLabel(task.title, task.owner) { done: task.done }
+                                        TaskLabel(title.clone(), owner.clone()) { done: task.done }
                                         Button("open") {
                                             label: "Open"
                                             on_click: cx.listener(move |this, _, window, cx| {
                                                 this.selected = task;
-                                                this.title.update(cx, |input, cx| input.set_value(task.title, window, cx));
-                                                this.assignee.update(cx, |input, cx| input.set_value(task.owner, window, cx));
+                                                this.title.update(cx, |input, cx| input.set_value(title.clone(), window, cx));
+                                                this.assignee.update(cx, |input, cx| input.set_value(owner.clone(), window, cx));
                                                 this.saved = None;
                                                 this.page = Page::Detail;
                                                 cx.notify();
@@ -184,8 +198,13 @@ impl Render for TeamTasks {
                                 label: "Save"
                                 disabled: empty
                                 on_click: cx.listener(|this, _, _, cx| {
-                                    this.saved = Some(this.title.read(cx).value());
-                                    cx.notify();
+                                    let title = this.title.read(cx).value();
+                                    if !title.trim().is_empty() {
+                                        let owner = this.assignee.read(cx).value();
+                                        this.edits.insert(this.selected.id, (title.clone(), owner));
+                                        this.saved = Some(title);
+                                        cx.notify();
+                                    }
                                 })
                             }
                             if let Some(saved) = saved { Text(format!("Saved {saved}")) { color: ColorName::Teal } }
