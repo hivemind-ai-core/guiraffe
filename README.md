@@ -2,6 +2,11 @@
 
 Rich, beautiful and FAST desktop UI for Rust, built on GPUI Kit + GPUI Controls (gpui-component), heavily inspired by Mantine.
 
+## Build a small desktop tool
+
+Start with the [GUIraffe quickstart](docs/ui-macro.md#start-a-small-desktop-tool) for a runnable
+counter, dependencies for your own Rust binary, and examples of `ui!` and `#[component]`.
+
 ## Authoring DataUi screens
 
 Run the catalogue commands from a checkout, or use an installed `guiraffe` binary.

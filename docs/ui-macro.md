@@ -1,5 +1,42 @@
 # Writing GPUI views with `ui!`
 
+## Start a small desktop tool
+
+From the GUIraffe checkout, run the [counter example](../examples/ui-macro-demo/examples/quickstart.rs).
+
+```sh
+cargo run -p ui-macro-demo --example quickstart --features gpui-fast
+```
+
+For your own app, create a Rust binary in a sibling directory and point it at your GUIraffe
+checkout. Adjust the dependency path to match your layout.
+
+```sh
+cargo new my-tool
+cd my-tool
+```
+
+Add the dependencies to `Cargo.toml`.
+
+```toml
+[dependencies]
+gpui-kit = { version = "=0.9.1", features = ["component", "assets", "gpui-fast"] }
+guiraffe-ui = { path = "../anteater/crates/ui" }
+```
+
+Copy the counter example into `src/main.rs` and run `cargo run`. The `Counter` struct
+owns the app's state. Its `Render` implementation reads that state and builds the view.
+`cx.listener` gives a click handler mutable access to the struct, and `cx.notify()` schedules
+a redraw after the state changes. Use `#[component]` for reusable pieces that only need props.
+
+For a tool with editable input, filtering and more than one page, run the team tasks demo.
+
+```sh
+cargo run -p ui-macro-demo --features gpui-fast
+```
+
+## Macro syntax
+
 Import `guiraffe_ui::{component, ui}` and the builders and traits you'd normally use with
 GPUI. Set a property with `name: value`, invoke a no-argument method with a flag, or call
 any builder method with `.method(args)`. Text literals and expressions in braces are children.
@@ -51,5 +88,3 @@ changes order. `view(entity)` embeds an existing entity. The backend controls ho
 tree draws on a notification. `cached(style)` uses a retained GPUI view with a repeatable
 `move` closure. Give it definite dimensions and put changing inputs in their own child entity,
 since a parent notification can reuse the cached paint.
-
-Run the team tasks demo with `cargo run -p ui-macro-demo --features gpui-fast`.
