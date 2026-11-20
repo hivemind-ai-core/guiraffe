@@ -1,0 +1,5 @@
+error: unexpected end of input, expected curly braces
+ --> tests/ui/missing-block.rs:4:36
+  |
+4 |     let _ = ui! { div { if visible } };
+  |                                    ^

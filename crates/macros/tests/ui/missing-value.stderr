@@ -1,0 +1,5 @@
+error: expected a Rust expression for prop `label`: unexpected end of input, expected an expression
+ --> tests/ui/missing-value.rs:4:32
+  |
+4 |     let _ = ui! { div { label: } };
+  |                                ^

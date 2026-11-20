@@ -1,0 +1,5 @@
+error: `else` needs a preceding `if`
+ --> tests/ui/stray-else.rs:4:25
+  |
+4 |     let _ = ui! { div { else {} } };
+  |                         ^^^^

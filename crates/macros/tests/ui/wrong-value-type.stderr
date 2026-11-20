@@ -1,0 +1,21 @@
+error[E0277]: the trait bound `String: From<{integer}>` is not satisfied
+  --> tests/ui/wrong-value-type.rs:10:43
+   |
+10 |     let _ = ui! { Button("save") { label: 3 } };
+   |                                    -----  ^ the trait `From<{integer}>` is not implemented for `String`
+   |                                    |
+   |                                    required by a bound introduced by this call
+   |
+   = help: `String` implements trait `From<T>`:
+             From<&String>
+             From<&mut str>
+             From<&str>
+             From<Box<str>>
+             From<Cow<'_, str>>
+             From<char>
+   = note: required for `{integer}` to implement `Into<String>`
+note: required by a bound in `Button::label`
+  --> tests/ui/wrong-value-type.rs:6:28
+   |
+ 6 |     fn label(self, _: impl Into<String>) -> Self { self }
+   |                            ^^^^^^^^^^^^ required by this bound in `Button::label`

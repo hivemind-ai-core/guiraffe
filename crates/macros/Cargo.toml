@@ -1,0 +1,21 @@
+[package]
+name = "guiraffe-macros"
+description = "Declarative GPUI view syntax for GUIraffe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+prettyplease = "0.2"
+trybuild = "1"
+
+[lints]
+workspace = true

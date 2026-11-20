@@ -1,0 +1,8 @@
+error[E0599]: no method named `lable` found for struct `Button` in the current scope
+ --> tests/ui/unknown-prop.rs:9:28
+  |
+3 | struct Button;
+  | ------------- method `lable` not found for this struct
+...
+9 |     let _ = ui! { Button { lable: "Save" } };
+  |                            ^^^^^ method not found in `Button`

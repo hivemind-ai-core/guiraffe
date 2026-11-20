@@ -1,0 +1,5 @@
+error: `key` is only allowed after a `for` iterator
+ --> tests/ui/stray-key.rs:4:25
+  |
+4 |     let _ = ui! { div { key 1 } };
+  |                         ^^^

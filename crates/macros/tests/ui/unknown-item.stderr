@@ -1,0 +1,5 @@
+error: unknown UI item; expected an element, text, { expression }, if, match, or for
+ --> tests/ui/unknown-item.rs:4:25
+  |
+4 |     let _ = ui! { div { @ } };
+  |                         ^
