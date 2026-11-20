@@ -13,7 +13,7 @@ use guiraffe_ui::{component, ui};
 fn TaskLabel(title: &'static str, #[prop(default)] done: bool) -> impl IntoElement {
     ui! {
         div {
-            flex gap_2
+            flex gap_2;
             {title}
             if done { "Complete" }
         }

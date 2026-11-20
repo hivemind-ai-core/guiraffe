@@ -109,6 +109,7 @@ Hot reload of `ui!` bodies, catalogue-validated prop hints, `#[component(statefu
 
 The final segment of a qualified path determines whether to call `::new`. A bare lowercase
 name is a flag inside a builder body. Use `name()` or `name { … }` for a lowercase constructor.
+Separate a flag from a following braced expression child with a comma or semicolon.
 Place a comma or semicolon before a raw builder call after a prop if Rust could parse the call as
 a postfix expression on the prop value. Parenthesize struct literals in prop values and control
 headers. Matching Rust delimiters are checked by the compiler before the macro can parse a body.

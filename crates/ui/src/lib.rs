@@ -58,7 +58,7 @@ pub use guiraffe_macros::component;
 ///
 /// #[component]
 /// fn Greeting(name: &'static str, #[prop(default)] loud: bool) -> impl IntoElement {
-///     ui! { div { flex {name} if loud { "!" } } }
+///     ui! { div { flex; {name} if loud { "!" } } }
 /// }
 ///
 /// let element = ui! { Greeting("Ada") { loud: true } };
