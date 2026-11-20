@@ -9,6 +9,25 @@ mod component;
 mod tree;
 
 /// Build an element tree with Rust expressions and builder methods.
+///
+/// ```
+/// use guiraffe_macros::ui;
+///
+/// struct Label(&'static str);
+///
+/// impl Label {
+///     fn new(text: &'static str) -> Self {
+///         Self(text)
+///     }
+///
+///     fn text(self, text: &'static str) -> Self {
+///         Self(text)
+///     }
+/// }
+///
+/// let label = ui! { Label("Initial") { text: "Updated" } };
+/// assert_eq!(label.0, "Updated");
+/// ```
 #[proc_macro]
 pub fn ui(input: TokenStream) -> TokenStream {
     parse_macro_input!(input as tree::Root).expand().into()
@@ -17,8 +36,7 @@ pub fn ui(input: TokenStream) -> TokenStream {
 /// Generate a stateless GPUI component from a function.
 #[proc_macro_attribute]
 pub fn component(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as syn::parse::Nothing);
-    let _ = args;
+    parse_macro_input!(args as syn::parse::Nothing);
     let function = parse_macro_input!(input as syn::ItemFn);
     component::expand(function)
         .unwrap_or_else(syn::Error::into_compile_error)
