@@ -816,16 +816,16 @@ pub fn ui_builder_tree() {
 }
 
 fn build_ui_tree<const DECLARATIVE: bool>() -> gpui_kit::Div {
-    use gpui_kit::{div, prelude::*};
+    use gpui_kit::{div, prelude::*, px};
     use guiraffe_ui::ui;
 
     if DECLARATIVE {
-        ui! { div { flex flex_col for _row in 0..1000 { div { "Task" } } } }
+        ui! { div { flex flex_col for _row in 0..999 { div { h: px(12.) } } } }
     } else {
         div()
             .flex()
             .flex_col()
-            .children((0..1000).map(|_row| div().child("Task")))
+            .children((0..999).map(|_row| div().h(px(12.))))
     }
 }
 
