@@ -7,13 +7,13 @@ use gpui_kit::{
 };
 
 /// A layout-transparent scope for the global IDs of the row's children.
-pub struct Keyed {
+struct Keyed {
     key: ElementId,
     child: AnyElement,
     location: Option<&'static Location<'static>>,
 }
 
-pub fn keyed<E: IntoElement>(key: impl Into<ElementId>, child: E) -> Keyed {
+pub fn keyed<E: IntoElement>(key: impl Into<ElementId>, child: E) -> impl IntoElement {
     let child = child.into_element();
     Keyed {
         key: key.into(),
@@ -100,14 +100,14 @@ where
     }
 }
 
-pub struct Cached<F> {
+struct Cached<F> {
     id: ElementId,
     style: StyleRefinement,
     body: F,
 }
 
 #[track_caller]
-pub fn cached<F, E>(style: StyleRefinement, body: F) -> Cached<F>
+pub fn cached<F, E>(style: StyleRefinement, body: F) -> impl IntoElement
 where
     F: Fn() -> E + 'static,
     E: IntoElement,

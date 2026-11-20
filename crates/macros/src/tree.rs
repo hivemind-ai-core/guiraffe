@@ -524,7 +524,7 @@ mod tests {
         let expansion = root.expand();
         let rust: syn::File = syn::parse2(quote!(fn snapshot() { let _ = #expansion; }))?;
         let actual = prettyplease::unparse(&rust);
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/goldens/grammar.rs");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/goldens/grammar.rs");
         if std::env::var_os("GUIRAFFE_UPDATE_MACRO_GOLDENS").is_some() {
             std::fs::write(path, &actual)
                 .map_err(|error| Error::new(proc_macro2::Span::call_site(), error))?;

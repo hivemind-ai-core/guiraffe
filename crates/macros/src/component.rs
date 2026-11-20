@@ -157,7 +157,7 @@ mod tests {
             }
         };
         let actual = prettyplease::unparse(&syn::parse2(expand(function)?)?);
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/goldens/component.rs");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/goldens/component.rs");
         if std::env::var_os("GUIRAFFE_UPDATE_MACRO_GOLDENS").is_some() {
             std::fs::write(path, &actual)
                 .map_err(|error| Error::new(proc_macro2::Span::call_site(), error))?;
