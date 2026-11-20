@@ -85,7 +85,11 @@ fn keyed_rows_retain_state_after_reorder(cx: &mut TestAppContext) {
     let seen = Seen::default();
     let (rows, window) = cx.add_window_view(|_, _| Rows([1, 2], seen.clone()));
     let draw = |window: &mut gpui_kit::VisualTestContext| {
-        window.update(|window, cx| window.draw(cx).clear(cx));
+        window.update(|window, cx| {
+            // The fast backend can reuse a whole frame if no view is dirty.
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
         std::mem::take(&mut *seen.borrow_mut())
     };
     seen.borrow_mut().clear();
