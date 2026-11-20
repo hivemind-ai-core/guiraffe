@@ -102,7 +102,9 @@ fn iterations_for(suite: &guiraffe_bench::Suite, requested: Option<usize>) -> us
         | "timeline-navigation-hit-100k"
         | "chart-prepare-line-10m"
         | "chart-line-10m"
-        | "chart-scatter-1m-100-series" => 1,
+        | "chart-scatter-1m-100-series"
+        | "ui-macro-frame-1k"
+        | "ui-builder-frame-1k" => 1,
         _ => 10_000,
     })
 }
