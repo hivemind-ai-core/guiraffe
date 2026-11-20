@@ -860,7 +860,6 @@ impl<const DECLARATIVE: bool> UiTreeFrame<DECLARATIVE> {
     }
 
     fn draw(&mut self) -> anyhow::Result<()> {
-        use gpui_kit::AppContext;
         self.app.update_window(self.root.into(), |_, window, cx| {
             window.refresh();
             window.draw(cx).clear(cx);
