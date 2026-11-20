@@ -45,3 +45,32 @@ pub mod catalogue_artifacts {
     pub const SCREEN_SCHEMA: &str = include_str!(concat!(env!("OUT_DIR"), "/screen.schema.json"));
     pub const REFERENCE_MARKDOWN: &str = include_str!(concat!(env!("OUT_DIR"), "/catalogue.md"));
 }
+
+extern crate self as guiraffe_ui;
+
+pub use guiraffe_macros::component;
+
+/// Build a GPUI element with ordinary Rust builders and declarative children.
+///
+/// ```
+/// use gpui_kit::{div, prelude::*};
+/// use guiraffe_ui::{component, ui};
+///
+/// #[component]
+/// fn Greeting(name: &'static str, #[prop(default)] loud: bool) -> impl IntoElement {
+///     ui! { div { flex {name} if loud { "!" } } }
+/// }
+///
+/// let element = ui! { Greeting("Ada") { loud: true } };
+/// # let _ = element.into_element();
+/// ```
+pub use guiraffe_macros::ui;
+
+/// Declarative UI authoring imports.
+pub mod prelude {
+    pub use crate::{component, ui};
+}
+
+#[doc(hidden)]
+#[path = "macro_support.rs"]
+pub mod __macro;

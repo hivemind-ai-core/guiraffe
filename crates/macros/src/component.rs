@@ -143,3 +143,28 @@ pub(crate) fn expand(function: ItemFn) -> Result<TokenStream> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_expansion() -> Result<()> {
+        let function = syn::parse_quote! {
+            /// Compact user card.
+            pub fn UserCard(name: SharedString, #[prop(default)] compact: bool) -> impl IntoElement {
+                ui! { div { {name} if compact { "Compact" } } }
+            }
+        };
+        let actual = prettyplease::unparse(&syn::parse2(expand(function)?)?);
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/goldens/component.rs");
+        if std::env::var_os("GUIRAFFE_UPDATE_MACRO_GOLDENS").is_some() {
+            std::fs::write(path, &actual)
+                .map_err(|error| Error::new(proc_macro2::Span::call_site(), error))?;
+        }
+        let expected = std::fs::read_to_string(path)
+            .map_err(|error| Error::new(proc_macro2::Span::call_site(), error))?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+}

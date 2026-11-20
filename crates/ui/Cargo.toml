@@ -11,12 +11,14 @@ workspace = true
 [dependencies]
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
+guiraffe-macros.workspace = true
 guiraffe-components.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 im = "15.1"
 
 [dev-dependencies]
+guiraffe-test = { workspace = true, features = ["render"] }
 guiraffe-ui = { path = ".", features = ["test-support"] }
 serde_json.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }

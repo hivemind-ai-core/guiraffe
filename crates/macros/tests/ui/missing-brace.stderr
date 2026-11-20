@@ -1,0 +1,8 @@
+error: mismatched closing delimiter: `)`
+ --> tests/ui/missing-brace.rs:4:21
+  |
+4 |     let _ = ui!(div { "unfinished");
+  |                -    ^             ^ mismatched closing delimiter
+  |                |    |
+  |                |    unclosed delimiter
+  |                closing delimiter possibly meant for this

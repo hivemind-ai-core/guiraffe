@@ -22,7 +22,7 @@ struct Element {
 
 enum Item {
     Builder(TokenStream),
-    Child(Node),
+    Child(Box<Node>),
 }
 
 enum Node {
@@ -32,7 +32,7 @@ enum Node {
     Cached(Expr, Vec<Node>),
     If(Expr, Vec<Node>, Option<Vec<Node>>),
     Match(Expr, Vec<(Pat, Option<Expr>, Node)>),
-    For(Pat, Expr, Option<Expr>, Vec<Node>),
+    For(Box<Pat>, Expr, Option<Box<Expr>>, Vec<Node>),
 }
 
 impl Parse for Root {
@@ -127,7 +127,7 @@ impl Parse for Item {
                 return Ok(Self::Builder(quote_spanned!(name.span()=> .#name())));
             }
         }
-        input.parse().map(Self::Child)
+        input.parse().map(|node| Self::Child(Box::new(node)))
     }
 }
 
@@ -177,20 +177,20 @@ impl Parse for Node {
             let iter = Expr::parse_without_eager_brace(input)?;
             let key = if input.peek(kw::key) {
                 input.parse::<kw::key>()?;
-                Some(Expr::parse_without_eager_brace(input)?)
+                Some(Box::new(Expr::parse_without_eager_brace(input)?))
             } else {
                 None
             };
             let body = block(input)?;
-            if key.is_none() {
-                if let Some(path) = body.iter().find_map(Node::interactive) {
-                    return Err(Error::new_spanned(
-                        path,
-                        "an interactive element with an id in `for` requires `key <expr>`",
-                    ));
-                }
+            if key.is_none()
+                && let Some(path) = body.iter().find_map(Node::interactive)
+            {
+                return Err(Error::new_spanned(
+                    path,
+                    "an interactive element with an id in `for` requires `key <expr>`",
+                ));
             }
-            return Ok(Self::For(pattern, iter, key, body));
+            return Ok(Self::For(Box::new(pattern), iter, key, body));
         }
         if input.peek(LitStr) {
             return Ok(Self::Value(input.parse::<LitStr>()?.into_token_stream()));
@@ -203,7 +203,13 @@ impl Parse for Node {
             }
             return Ok(Self::Value(value.into_token_stream()));
         }
-        if !input.peek(Ident) && !input.peek(Token![::]) {
+        if !(input.peek(Ident)
+            || input.peek(Token![::])
+            || input.peek(Token![crate])
+            || input.peek(Token![super])
+            || input.peek(Token![self])
+            || input.peek(Token![Self]))
+        {
             return Err(input.error(
                 "unknown UI item; expected an element, text, { expression }, if, match, or for",
             ));
@@ -260,10 +266,8 @@ impl Parse for Node {
 
 impl Root {
     pub(crate) fn expand(self) -> TokenStream {
-        if let [node] = self.0.as_slice() {
-            if !node.spreads() {
-                return node.expand();
-            }
+        if let Some(node) = direct(&self.0) {
+            return node.expand();
         }
         collect(&self.0)
     }
@@ -413,7 +417,7 @@ impl Node {
                     },
                     Self::expand,
                 );
-                quote!(::guiraffe_ui::__macro::cached(#style, move || #body))
+                quote_spanned!(style.span()=> ::guiraffe_ui::__macro::cached(#style, move || #body))
             }
             Self::If(condition, yes, no) => {
                 if let Some(no) = no {
@@ -487,9 +491,9 @@ mod tests {
             element.items.as_slice(),
             [
                 Item::Builder(_),
-                Item::Child(Node::Value(_)),
+                Item::Child(_),
                 Item::Builder(_),
-                Item::Child(Node::Value(_)),
+                Item::Child(_),
                 Item::Builder(_),
             ]
         ));
@@ -522,9 +526,12 @@ mod tests {
         let actual = prettyplease::unparse(&rust);
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/goldens/grammar.rs");
         if std::env::var_os("GUIRAFFE_UPDATE_MACRO_GOLDENS").is_some() {
-            std::fs::write(path, &actual).unwrap();
+            std::fs::write(path, &actual)
+                .map_err(|error| Error::new(proc_macro2::Span::call_site(), error))?;
         }
-        assert_eq!(actual, std::fs::read_to_string(path).unwrap());
+        let expected = std::fs::read_to_string(path)
+            .map_err(|error| Error::new(proc_macro2::Span::call_site(), error))?;
+        assert_eq!(actual, expected);
         Ok(())
     }
 }

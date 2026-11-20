@@ -23,7 +23,7 @@ ui! {
         div { flex  gap_2  p: px(8.)  .when(dense, |d| d.p(px(2.)))  "raw div" }
         {already_built_element}
         view(self.chart.clone())
-        cached(Size::Lg) { HeavyTable(&data) }
+        cached(StyleRefinement::default().w(px(480.)).h(px(240.))) { HeavyTable(&data) }
     }
 }
 ```
@@ -104,3 +104,23 @@ These make the spec/00 §6 performance rules easy to follow in the DSL:
 
 ## 6. Out of scope for v1 (note in ROADMAP)
 Hot reload of `ui!` bodies, catalogue-validated prop hints, `#[component(stateful)]`, IDE plugin.
+
+### Grammar decisions
+
+The final segment of a qualified path determines whether to call `::new`. A bare lowercase
+name is a flag inside a builder body. Use `name()` or `name { … }` for a lowercase constructor.
+Place a comma or semicolon before a raw builder call after a prop if Rust could parse the call as
+a postfix expression on the prop value. Parenthesize struct literals in prop values and control
+headers. Matching Rust delimiters are checked by the compiler before the macro can parse a body.
+
+Multiple roots and root-level spliced control flow return `Vec<AnyElement>` for use with
+`.children(…)`. A multi-child keyed row or cached body has an implicit `div()` layout root.
+A single-child keyed row retains the child's layout and scopes its element IDs under the key.
+The unkeyed-loop lint checks explicit IDs and constructors of known interactive controls.
+Rust expressions, custom constructors and entities can hide state that this syntax check cannot
+see. Supply a key for those rows as well.
+
+`cached` takes a GPUI `StyleRefinement` with definite dimensions. Its body is an owned
+repeatable closure. Capture stable inputs and let an entity inside the boundary own changing data.
+Parent notifications can reuse a cached paint, so a change to a captured value alone does not
+invalidate the previous paint. Place repeated caches under their keyed rows.
