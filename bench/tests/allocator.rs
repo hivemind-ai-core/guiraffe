@@ -354,3 +354,17 @@ fn production_flame_and_tree_model_traversals_allocate_nothing() -> anyhow::Resu
     }
     Ok(())
 }
+
+#[test]
+fn ui_macro_matches_builder_allocations_for_a_thousand_nodes() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{ui_builder_tree, ui_macro_tree};
+
+    for _ in 0..8 {
+        ui_builder_tree();
+        ui_macro_tree();
+    }
+    let (_, builder) = count_allocations(ui_builder_tree)?;
+    let (_, declarative) = count_allocations(ui_macro_tree)?;
+    assert_eq!(declarative, builder);
+    Ok(())
+}

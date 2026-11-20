@@ -797,8 +797,98 @@ macro_rules! make_registry {
                 Suite { name: "datagrid-frame-10m", run: datagrid_frame_10m },
                 Suite { name: "code-frame-100k", run: code_frame_100k },
                 Suite { name: "code-frame-10m", run: code_frame_10m },
+                Suite { name: "ui-macro-frame-1k", run: ui_macro_tree },
+                Suite { name: "ui-builder-frame-1k", run: ui_builder_tree },
             ]
         }
     };
 }
 crate::with_production_suites!(make_registry);
+
+/// A 1,000-node tree constructed in GPUI's active frame arena.
+pub fn ui_macro_tree() {
+    draw_ui_tree::<true>();
+}
+
+/// Handwritten builder equivalent of `ui_macro_tree`.
+pub fn ui_builder_tree() {
+    draw_ui_tree::<false>();
+}
+
+fn build_ui_tree<const DECLARATIVE: bool>() -> gpui_kit::Div {
+    use gpui_kit::{div, prelude::*};
+    use guiraffe_ui::ui;
+
+    if DECLARATIVE {
+        ui! { div { flex flex_col for _row in 0..1000 { div { "Task" } } } }
+    } else {
+        div()
+            .flex()
+            .flex_col()
+            .children((0..1000).map(|_row| div().child("Task")))
+    }
+}
+
+struct UiTree<const DECLARATIVE: bool>;
+
+impl<const DECLARATIVE: bool> gpui_kit::Render for UiTree<DECLARATIVE> {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        build_ui_tree::<DECLARATIVE>()
+    }
+}
+
+struct UiTreeFrame<const DECLARATIVE: bool> {
+    app: gpui_kit::HeadlessAppContext,
+    root: gpui_kit::WindowHandle<UiTree<DECLARATIVE>>,
+}
+
+impl<const DECLARATIVE: bool> UiTreeFrame<DECLARATIVE> {
+    fn new() -> anyhow::Result<Self> {
+        use gpui_kit::{AppContext, HeadlessAppContext, px, size};
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut app = HeadlessAppContext::with_platform(
+            text,
+            std::sync::Arc::new(gpui_kit::assets::Assets),
+            || Ok(None),
+        );
+        let root = app.open_window(size(px(400.), px(600.)), |_, cx| cx.new(|_| UiTree))?;
+        Ok(Self { app, root })
+    }
+
+    fn draw(&mut self) -> anyhow::Result<()> {
+        use gpui_kit::AppContext;
+        self.app.update_window(self.root.into(), |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })?;
+        Ok(())
+    }
+}
+
+fn draw_ui_tree<const DECLARATIVE: bool>() {
+    thread_local! {
+        static DSL: std::cell::RefCell<anyhow::Result<UiTreeFrame<true>>> =
+            std::cell::RefCell::new(UiTreeFrame::new());
+        static BUILDER: std::cell::RefCell<anyhow::Result<UiTreeFrame<false>>> =
+            std::cell::RefCell::new(UiTreeFrame::new());
+    }
+    fn draw<const DSL: bool>(frame: &mut anyhow::Result<UiTreeFrame<DSL>>) {
+        match frame {
+            Ok(frame) => {
+                if let Err(error) = frame.draw() {
+                    panic!("UI tree draw failed: {error:#}");
+                }
+            }
+            Err(error) => panic!("UI tree setup failed: {error:#}"),
+        }
+    }
+    if DECLARATIVE {
+        DSL.with_borrow_mut(draw);
+    } else {
+        BUILDER.with_borrow_mut(draw);
+    }
+}

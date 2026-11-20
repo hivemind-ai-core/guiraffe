@@ -9,7 +9,7 @@ use gpui_kit::{
 };
 use guiraffe_components::Text;
 use guiraffe_core::ColorName;
-use guiraffe_ui::{DataUi, Document, EventId, Logic, Names, PatchBuf, Registry, SlotId, Value};
+use guiraffe_ui::{DataUi, Document, EventId, Logic, Names, PatchBuf, Registry, SlotId, Value, ui};
 
 use super::{column, example};
 use crate::catalog::Entry;
@@ -30,28 +30,58 @@ pub fn entries() -> Vec<Entry> {
             covers: &[],
             demo: |_, cx| crate::catalog::stateless(widget_reference, cx),
         },
+        Entry {
+            krate: "ui",
+            name: "ui! macro",
+            summary: "Declarative Rust syntax for GPUI elements and builder props.",
+            covers: &[],
+            demo: |_, cx| crate::catalog::stateless(macro_demo, cx),
+        },
     ]
 }
 
 fn widget_reference(_: &mut Window, _: &mut App) -> gpui_kit::AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap(gpui_kit::px(12.))
-        .children(guiraffe_ui::catalog::WIDGETS.iter().map(|widget| {
-            let props = widget
-                .props
-                .iter()
-                .map(|prop| prop.name)
-                .collect::<Vec<_>>();
-            div()
-                .flex()
-                .flex_col()
-                .child(guiraffe_components::Title::new(widget.id).order(4))
-                .child(Text::new(widget.summary))
-                .children((!props.is_empty()).then(|| Text::new(props.join(", ")).dimmed(true)))
-        }))
-        .into_any_element()
+    ui! {
+        div {
+            flex flex_col gap: gpui_kit::px(12.)
+            for widget in guiraffe_ui::catalog::WIDGETS {
+                {
+                    let props = widget.props.iter().map(|prop| prop.name).collect::<Vec<_>>();
+                    ui! {
+                        div {
+                            flex flex_col
+                            guiraffe_components::Title(widget.id) { order: 4 }
+                            Text(widget.summary)
+                            if !props.is_empty() { Text(props.join(", ")) { dimmed: true } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    .into_any_element()
+}
+
+fn macro_demo(_: &mut Window, _: &mut App) -> gpui_kit::AnyElement {
+    let source = r#"ui! {
+    div {
+        flex flex_col gap_2
+        Title("Build status") { order: 3 }
+        Text("All checks passed") { color: ColorName::Teal }
+    }
+}"#;
+    ui! {
+        div {
+            flex gap_6
+            div { font_family: "monospace" {source} }
+            div {
+                flex flex_col gap_2
+                guiraffe_components::Title("Build status") { order: 3 }
+                Text("All checks passed") { color: ColorName::Teal }
+            }
+        }
+    }
+    .into_any_element()
 }
 
 const DOC: &str = r#"{
