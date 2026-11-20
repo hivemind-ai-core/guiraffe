@@ -88,3 +88,8 @@ changes order. `view(entity)` embeds an existing entity. The backend controls ho
 tree draws on a notification. `cached(style)` uses a retained GPUI view with a repeatable
 `move` closure. Give it definite dimensions and put changing inputs in their own child entity,
 since a parent notification can reuse the cached paint.
+
+Each `cached` call site gets a separate retained view under each key. The macro rejects
+`cached` inside an unkeyed `for`. Render repeated instances of a `#[component]` containing
+`cached` in distinct keyed scopes as well. Inside a loop, use `for … key …`; for individually
+written siblings, give each an enclosing element with a distinct GPUI ID.

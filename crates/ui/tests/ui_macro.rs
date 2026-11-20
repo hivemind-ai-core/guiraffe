@@ -167,3 +167,45 @@ fn cached_boundary_and_view_notifications(cx: &mut TestAppContext) {
     }
     assert_eq!(cache_count.get(), initial.1);
 }
+
+#[component]
+fn CachedRow(row: &'static str, width: f32) -> impl IntoElement {
+    ui! {
+        cached(StyleRefinement::default().w(px(120.)).h(px(24.))) {
+            div {
+                w: px(width),
+                .debug_selector(|| row.to_owned())
+                {row}
+            }
+        }
+    }
+}
+
+struct CachedRows;
+
+impl Render for CachedRows {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        ui! {
+            div {
+                flex flex_col
+                for (row, width) in [("first row", 44.), ("second row", 88.)] key row {
+                    CachedRow(row, width)
+                }
+            }
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn keyed_components_render_distinct_cached_bodies(cx: &mut TestAppContext) {
+    let (_, window) = cx.add_window_view(|_, _| CachedRows);
+    window.run_until_parked();
+    window.update(|window, cx| window.draw(cx).clear(cx));
+    let first = window.debug_bounds("first row").expect("first cached body");
+    let second = window
+        .debug_bounds("second row")
+        .expect("second cached body");
+    assert_eq!(first.size.width, px(44.));
+    assert_eq!(second.size.width, px(88.));
+    assert!(first.top() < second.top());
+}

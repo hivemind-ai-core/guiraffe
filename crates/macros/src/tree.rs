@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
@@ -29,7 +29,7 @@ enum Node {
     Element(Element),
     Value(TokenStream),
     View(Expr),
-    Cached(Expr, Vec<Node>),
+    Cached(Span, Expr, Vec<Node>),
     If(Expr, Vec<Node>, Option<Vec<Node>>),
     Match(Expr, Vec<(Pat, Option<Expr>, Node)>),
     For(Box<Pat>, Expr, Option<Box<Expr>>, Vec<Node>),
@@ -182,13 +182,16 @@ impl Parse for Node {
                 None
             };
             let body = block(input)?;
-            if key.is_none()
-                && let Some(path) = body.iter().find_map(Node::interactive)
-            {
-                return Err(Error::new_spanned(
-                    path,
-                    "an interactive element with an id in `for` requires `key <expr>`",
-                ));
+            if key.is_none() {
+                if let Some(span) = body.iter().find_map(Node::cache_span) {
+                    return Err(Error::new(span, "`cached` in `for` requires `key <expr>`"));
+                }
+                if let Some(path) = body.iter().find_map(Node::interactive) {
+                    return Err(Error::new_spanned(
+                        path,
+                        "an interactive element with an id in `for` requires `key <expr>`",
+                    ));
+                }
             }
             return Ok(Self::For(Box::new(pattern), iter, key, body));
         }
@@ -225,7 +228,7 @@ impl Parse for Node {
             return if path.is_ident("view") {
                 Ok(Self::View(value))
             } else {
-                Ok(Self::Cached(value, block(input)?))
+                Ok(Self::Cached(path.span(), value, block(input)?))
             };
         }
         let constructor = path
@@ -323,6 +326,23 @@ fn same_heads<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> bool {
 }
 
 impl Node {
+    fn cache_span(&self) -> Option<Span> {
+        match self {
+            Self::Cached(span, ..) => Some(*span),
+            Self::Element(element) => element.items.iter().find_map(|item| match item {
+                Item::Child(child) => child.cache_span(),
+                Item::Builder(_) => None,
+            }),
+            Self::If(_, yes, no) => yes
+                .iter()
+                .chain(no.iter().flatten())
+                .find_map(Self::cache_span),
+            Self::Match(_, arms) => arms.iter().find_map(|(_, _, node)| node.cache_span()),
+            Self::For(_, _, _, nodes) => nodes.iter().find_map(Self::cache_span),
+            Self::Value(_) | Self::View(_) => None,
+        }
+    }
+
     fn interactive(&self) -> Option<&Path> {
         match self {
             Self::Element(element) => {
@@ -358,7 +378,7 @@ impl Node {
                 .iter()
                 .chain(no.iter().flatten())
                 .find_map(Self::interactive),
-            Self::Cached(_, nodes) => nodes.iter().find_map(Self::interactive),
+            Self::Cached(..) => None,
             Self::Match(_, arms) => arms.iter().find_map(|(_, _, node)| node.interactive()),
             Self::For(..) | Self::Value(_) | Self::View(_) => None,
         }
@@ -409,7 +429,7 @@ impl Node {
             }
             Self::Value(value) => value.clone(),
             Self::View(value) => quote!(#value),
-            Self::Cached(style, nodes) => {
+            Self::Cached(_, style, nodes) => {
                 let body = direct(nodes).map_or_else(
                     || {
                         let children = collect(nodes);

@@ -1,0 +1,5 @@
+error: `cached` in `for` requires `key <expr>`
+ --> tests/ui/unkeyed-cache.rs:7:30
+  |
+7 |                 if row > 0 { cached(style) { Text(row) } }
+  |                              ^^^^^^

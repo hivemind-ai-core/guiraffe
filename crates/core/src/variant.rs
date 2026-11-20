@@ -228,7 +228,7 @@ pub fn resolve_uncached(ctx: &ResolveCtx, color: ColorName, variant: Variant) ->
         _ => {
             // Strongest tint it sits on: the pressed state (hover deepened once more).
             let strongest_tint = tint(if dark { 0.28 } else { 0.18 });
-            readable_shade(
+            readable_hue(
                 color,
                 if dark { 4 } else { ctx.filled_shade() },
                 strongest_tint,
@@ -372,6 +372,17 @@ mod tests {
                     assert!(ratio >= min, "{scheme:?} {color:?} {v:?}: {ratio}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn light_subtle_teal_preserves_hue_and_contrast() {
+        let ctx = ResolveCtx::new(Scheme::Light);
+        let colors = resolve(&ctx, ColorName::Teal, Variant::Subtle);
+        let foreground = colors.foreground;
+        assert!(foreground.g > foreground.b && foreground.b > foreground.r);
+        for background in [colors.background, colors.hover] {
+            assert!(foreground.contrast(background.over(ctx.surface)) >= 4.5);
         }
     }
 

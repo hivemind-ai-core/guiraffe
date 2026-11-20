@@ -5,7 +5,7 @@ use gpui_kit::{
     WindowOptions,
     component::{
         Disableable, Selectable,
-        button::Button,
+        button::{Button, ButtonVariants},
         input::{Input, InputState},
     },
     div,
@@ -132,17 +132,20 @@ impl Render for TeamTasks {
                     Title("Team tasks") { order: 2 }
                     Button("tasks") {
                         label: "All tasks"
-                        selected: page == Page::Tasks
+                        selected: page == Page::Tasks;
+                        .when(page == Page::Tasks, Button::primary)
                         on_click: cx.listener(|this, _, _, cx| { this.page = Page::Tasks; cx.notify(); })
                     }
                     Button("detail") {
                         label: "Task details"
-                        selected: page == Page::Detail
+                        selected: page == Page::Detail;
+                        .when(page == Page::Detail, Button::primary)
                         on_click: cx.listener(|this, _, _, cx| { this.page = Page::Detail; cx.notify(); })
                     }
                     Button("stats") {
                         label: "Team stats"
-                        selected: page == Page::Stats
+                        selected: page == Page::Stats;
+                        .when(page == Page::Stats, Button::primary)
                         on_click: cx.listener(|this, _, _, cx| { this.page = Page::Stats; cx.notify(); })
                     }
                     Button("theme") {
@@ -196,6 +199,7 @@ impl Render for TeamTasks {
                             Input(&assignee_input)
                             Button("save") {
                                 label: "Save"
+                                self_start
                                 disabled: empty
                                 on_click: cx.listener(|this, _, _, cx| {
                                     let title = this.title.read(cx).value();
