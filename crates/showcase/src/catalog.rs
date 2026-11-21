@@ -24,6 +24,11 @@ pub struct Entry {
 pub const INTERNAL: &[(&str, &str, &str)] = &[
     ("layout", "Col", "child of Grid; shown in the Grid entry"),
     (
+        "sheet",
+        "SheetState",
+        "state entity mounted by Sheet in the Spreadsheet entry",
+    ),
+    (
         "components",
         "CardSection",
         "child of Card; shown in the Card entry",
