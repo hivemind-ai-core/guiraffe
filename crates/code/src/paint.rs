@@ -705,17 +705,19 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
                 )
             }
             None => {
-                for (i, density) in doc.document.minimap().iter().enumerate() {
-                    if *density > 0. {
-                        let y = origin.y + px(i as f32 * height / 256.);
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                point(origin.x, y),
-                                size(px(density * g.mini), px((height / 256.).max(1.))),
+                let height_per_bin = height / 256.;
+                for (start, len, density) in density_strokes(doc.document.minimap(), height_per_bin)
+                {
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(origin.x, origin.y + px(start as f32 * height_per_bin)),
+                            size(
+                                px(density * g.mini),
+                                px((height_per_bin * len as f32).max(1.)),
                             ),
-                            ink.opacity(0.35),
-                        ));
-                    }
+                        ),
+                        ink.opacity(0.35),
+                    ));
                 }
                 let t = total as f32;
                 let y = first as f32 / t * height;
@@ -734,6 +736,21 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
         );
     }
 }
+// At less than one pixel per bin the strokes overlap and each contributes opacity.
+fn density_strokes(
+    density: &[f32; 256],
+    height_per_bin: f32,
+) -> impl Iterator<Item = (usize, usize, f32)> + '_ {
+    density
+        .chunk_by(move |left, right| height_per_bin >= 1. && left == right)
+        .scan(0, |start, bins| {
+            let stroke = (*start, bins.len(), bins[0]);
+            *start += bins.len();
+            Some(stroke)
+        })
+        .filter(|(_, _, density)| *density > 0.)
+}
+
 /// Per-line minimap step when every line fits at 2px or more; capped at 4px.
 pub(crate) fn minimap_line_height(lines: usize, height: f32) -> Option<f32> {
     let step = height / lines.max(1) as f32;
@@ -883,6 +900,19 @@ mod tests {
     };
     use gpui_kit::{ShapedLine, SharedString};
     use std::rc::Rc;
+
+    #[test]
+    fn uniform_density_minimap_batches_to_one_quad_at_any_document_scale() {
+        for lines in [10_000, 10_000_000] {
+            let document = crate::CodeDocument::new("x\n".repeat(lines - 1) + "x");
+            let density = document.minimap();
+            assert_eq!(
+                super::density_strokes(density, 3.).collect::<Vec<_>>(),
+                [(0, 256, 1. / 120.)]
+            );
+            assert_eq!(super::density_strokes(density, 0.5).count(), 256);
+        }
+    }
 
     #[test]
     fn shape_cache_evicts_by_text_size_as_well_as_entry_count() {
