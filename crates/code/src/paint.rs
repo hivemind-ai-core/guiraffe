@@ -829,13 +829,19 @@ pub(crate) fn paint_traces(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        MAX_SHAPE_CACHE_ENTRIES, MAX_SHAPE_CACHE_TEXT_BYTES, MAX_SHAPED_LINE_BYTES, ShapeCache,
+    };
+    use gpui_kit::{ShapedLine, SharedString};
+    use std::rc::Rc;
 
     #[test]
     fn shape_cache_evicts_by_text_size_as_well_as_entry_count() {
         let mut cache = ShapeCache::default();
         let mut shape = ShapedLine::default();
-        shape.text = "x".repeat(MAX_SHAPED_LINE_BYTES).into();
+        shape
+            .text
+            .clone_from(&SharedString::from("x".repeat(MAX_SHAPED_LINE_BYTES)));
         let shape = Rc::new(shape);
         let capacity = MAX_SHAPE_CACHE_TEXT_BYTES / MAX_SHAPED_LINE_BYTES;
         for row in 0..=capacity {
