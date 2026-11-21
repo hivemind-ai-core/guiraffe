@@ -145,6 +145,71 @@ fn navigation_reveals_offscreen_events_and_pointer_preserves_focus(cx: &mut Test
     }
 }
 
+#[gpui_kit::test]
+fn cached_timeline_is_retained_when_a_sibling_changes(cx: &mut TestAppContext) {
+    use gpui_kit::StyleRefinement;
+
+    struct Sibling(u32, guiraffe_test::render::RenderCounter);
+
+    impl Render for Sibling {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.1.hit();
+            div().child(self.0.to_string())
+        }
+    }
+
+    struct Root {
+        timeline: Entity<EventTimelineState>,
+        sibling: Entity<Sibling>,
+    }
+
+    impl Render for Root {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(
+                    self.timeline
+                        .clone()
+                        .cached(StyleRefinement::default().w_full().h(px(240.))),
+                )
+                .child(self.sibling.clone())
+        }
+    }
+
+    cx.update(|cx| {
+        guiraffe_core::init(cx);
+        guiraffe_timeline::init(cx);
+    });
+
+    let renders = guiraffe_test::render::RenderCounter::new();
+    let observed = renders.clone();
+    let sibling_renders = guiraffe_test::render::RenderCounter::new();
+    let sibling_observed = sibling_renders.clone();
+    let (root, window) = cx.add_window_view(move |_, cx| Root {
+        timeline: cx.new(|cx| {
+            EventTimelineState::new(model(1_000), cx).item_content(move |_, _, _| {
+                observed.hit();
+                div().child("Custom event content").into_any_element()
+            })
+        }),
+        sibling: cx.new(|_| Sibling(0, sibling_observed)),
+    });
+    window.run_until_parked();
+    let sibling = root.read_with(window, |root, _| root.sibling.clone());
+    let initial = renders.get();
+    let sibling_initial = sibling_renders.get();
+    assert!(initial > 0);
+    sibling.update(window, |value, cx| {
+        value.0 += 1;
+        cx.notify();
+    });
+    window.run_until_parked();
+    assert_eq!(renders.get(), initial);
+    assert!(sibling_renders.get() > sibling_initial);
+}
+
 #[cfg(target_os = "linux")]
 #[gpui_kit::test]
 #[ignore = "release-mode 100k-event soak; run explicitly"]
