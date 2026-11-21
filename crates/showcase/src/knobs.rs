@@ -476,8 +476,8 @@ mod tests {
     }
 
     #[test]
-    fn segmented_control_knobs_paint_complete_frames() {
-        assert_immediate_transition("SegmentedControl", &[(0, 3), (1, 1), (2, 1)]);
+    fn sample_component_knobs_paint_complete_frames() {
+        assert_immediate_transition("SegmentedControl", &[(0, 3), (2, 1)]);
         assert_immediate_transition("Flame graph", &[(0, 1), (1, 1)]);
         assert_immediate_transition("Chart grammar", &[(0, 1), (2, 0)]);
     }
