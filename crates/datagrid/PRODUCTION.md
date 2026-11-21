@@ -161,5 +161,7 @@ and interaction tests still exercise the normal cell semantics.
 
 | Warm mounted viewport jump, both source sizes | Row-band baseline | Retained header |
 |---|---:|---:|
+| Instructions at 100k rows | 29,033,009 | 27,988,798 |
+| Instructions at 10M rows | 29,025,842 | 28,007,635 |
 | Allocation requests | 10,482 | 10,022 |
 | Requested bytes | 2,649,388 | 2,409,034 |
