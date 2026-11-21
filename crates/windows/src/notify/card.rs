@@ -333,13 +333,15 @@ impl RenderOnce for NotificationCard {
             .aria_label(label)
             .when_some(color, |el, _| {
                 // Accent stripe: a second cue besides the icon (never color alone, §12.4).
+                // Inset with round ends: GPUI does not clip children to rounded corners.
                 el.child(
                     div()
                         .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left_0()
-                        .w(px(4.0))
+                        .top(px(PAD.spacing() * 0.75))
+                        .bottom(px(PAD.spacing() * 0.75))
+                        .left(px(3.0))
+                        .w(px(3.0))
+                        .rounded_full()
                         .bg(filled.background.to_hsla()),
                 )
             })
