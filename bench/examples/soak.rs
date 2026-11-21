@@ -294,11 +294,14 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
+        "code-annotations" => mounted::code_annotations(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         "flow" => flow(
             args.iter().any(|arg| arg == "--no-minimap"),
@@ -434,6 +437,139 @@ mod mounted {
         } else {
             -1.
         }
+    }
+
+    pub fn code_annotations(
+        mount_started: Instant,
+        run: impl FnOnce(Frame, Duration),
+    ) -> Result<()> {
+        use guiraffe_code::{
+            Annotation, AnnotationKind, CodeDocument, CodeHandle, CodeViewer, GutterColumn,
+            Position, PreparedAnalysis, SourceRange,
+        };
+        use guiraffe_core::ColorName;
+
+        struct CodeHost(CodeHandle);
+
+        impl Render for CodeHost {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                CodeViewer::new(&self.0)
+            }
+        }
+
+        let lines = scaled(1_000_000);
+        let doc = Arc::new(CodeDocument::new(
+            "let value = source(argument);\n".repeat(lines),
+        ));
+        let mut annotations = Vec::new();
+        for (kind, count, color, text) in [
+            (
+                AnnotationKind::Highlight,
+                100_000,
+                ColorName::Blue,
+                "reference",
+            ),
+            (
+                AnnotationKind::Underline,
+                20_000,
+                ColorName::Red,
+                "diagnostic",
+            ),
+            (
+                AnnotationKind::Bubble,
+                5_000,
+                ColorName::Blue,
+                "review comment",
+            ),
+            (
+                AnnotationKind::Highlight,
+                50_000,
+                ColorName::Yellow,
+                "search match",
+            ),
+            (AnnotationKind::InlineHint, 1_000, ColorName::Gray, "type"),
+            (AnnotationKind::Symbol, 1, ColorName::Blue, "symbol"),
+        ] {
+            let count = scaled(count);
+            let payload: Arc<str> = text.into();
+            for i in 0..count {
+                let (line, column) = match kind {
+                    AnnotationKind::InlineHint => (i % lines.min(40), i / 40 % 25),
+                    AnnotationKind::Symbol => (0, 0),
+                    _ => (i * lines / count, 4),
+                };
+                annotations.push(Annotation {
+                    id: annotations.len() as u64,
+                    range: SourceRange::new(
+                        Position::new(line, column),
+                        Position::new(line, column + 1),
+                    ),
+                    kind,
+                    color,
+                    payload: payload.clone(),
+                });
+            }
+        }
+        let commits: Vec<Arc<str>> = (0..scaled(2_000))
+            .map(|i| format!("author {i:04}").into())
+            .collect();
+        let mark: Arc<str> = "!".into();
+        let gutters = vec![
+            GutterColumn {
+                title: "Blame".into(),
+                cells: (0..lines)
+                    .map(|line| (line, commits[line * commits.len() / lines].clone()))
+                    .collect(),
+                width_chars: 12,
+            },
+            GutterColumn {
+                title: "Marks".into(),
+                cells: (0..scaled(50_000))
+                    .map(|i| (i * lines / scaled(50_000), mark.clone()))
+                    .collect(),
+                width_chars: 2,
+            },
+        ];
+        let prepared = PreparedAnalysis::new(doc.clone(), annotations.into(), Vec::new());
+        let (mut window, view) = mount(
+            "code_annotations_soak",
+            |_| {},
+            |_, cx| {
+                let code = CodeHandle::new(1, doc, cx);
+                code.set_analysis(prepared, cx);
+                code.set_gutters(gutters.clone(), cx);
+                cx.new(|_| CodeHost(code))
+            },
+        )?;
+        let mount = mount_started.elapsed();
+        run(
+            &mut |step| {
+                let code = window.update(|_, cx| view.read(cx).0.clone());
+                window.update(|_, cx| match step % 8 {
+                    0 => code.scroll_to_line(0, cx),
+                    1 => code.set_hover(Some(Position::new(0, 0)), cx),
+                    2 | 3 => {
+                        code.set_hover(None, cx);
+                        let mut viewport = code.viewport();
+                        viewport.y += if step % 8 == 2 { 18. } else { 720. };
+                        code.scroll_to(viewport, cx);
+                    }
+                    4 => code.scroll_to_line((step * 997) % lines, cx),
+                    5 => code.select(
+                        Some(SourceRange::new(Position::new(0, 0), Position::new(0, 3))),
+                        cx,
+                    ),
+                    6 if step % 128 == 6 => code.set_gutters(Vec::new(), cx),
+                    7 if step % 128 == 7 => code.set_gutters(gutters.clone(), cx),
+                    _ => {}
+                });
+                window.update(|window, cx| window.render_frame(cx));
+                settle(&mut window);
+                Ok(())
+            },
+            mount,
+        );
+        Ok(())
     }
 
     /// Sample the process cost of the same window without fixture content.
