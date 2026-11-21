@@ -2,7 +2,7 @@
 
 use gpui_kit::{App, AppContext, ElementId, Entity, IntoElement, RenderOnce, Window};
 use guiraffe_core::{
-    widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
+    widget_catalog::{EventHandler, WidgetRegistration, WidgetRegistry},
     widget_value::Value,
 };
 
