@@ -336,7 +336,10 @@ fn traversing_history_evicts_distant_text_and_restores_rows(cx: &mut TestAppCont
         cx.update(|cx| {
             history.update(cx, |history, cx| {
                 history.list.pause_following_tail();
-                history.list.scroll_to_reveal_item(index);
+                history.list.scroll_to(gpui_kit::ListOffset {
+                    item_ix: index,
+                    offset_in_item: px(0.),
+                });
                 cx.notify();
             });
         });
@@ -345,6 +348,7 @@ fn traversing_history_evicts_distant_text_and_restores_rows(cx: &mut TestAppCont
     cx.update(|cx| {
         let history = history.read(cx);
         assert!(history.rows[0].read(cx).markdown.is_none());
+        assert!(history.rows[392].read(cx).markdown.is_some());
         assert!(
             history
                 .rows
@@ -356,7 +360,10 @@ fn traversing_history_evicts_distant_text_and_restores_rows(cx: &mut TestAppCont
     });
     cx.update(|cx| {
         history.update(cx, |history, cx| {
-            history.list.scroll_to_reveal_item(0);
+            history.list.scroll_to(gpui_kit::ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.),
+            });
             cx.notify();
         })
     });
