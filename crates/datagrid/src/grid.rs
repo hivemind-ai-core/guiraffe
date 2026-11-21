@@ -3131,7 +3131,8 @@ fn paint_cell_labels(
 ) {
     let style = window.text_style();
     let font_size = style.font_size.to_pixels(window.rem_size());
-    let line_height = window.pixel_snap(window.line_height());
+    let line_height = window.pixel_snap(style.line_height_in_pixels(window.rem_size()));
+    let font = style.font();
     let text_system = window.text_system().clone();
     for label in labels {
         if let Some(background) = label.background {
@@ -3147,17 +3148,17 @@ fn paint_cell_labels(
             continue;
         }
         let width = (label.width - pad * 2.).max(px(0.));
-        let mut run = style.to_run(label.text.len());
         let key = (
             label.hash,
             f32::from(width).to_bits(),
             f32::from(font_size).to_bits(),
-            run.font.clone(),
+            font.clone(),
         );
         if !shapes
             .get(&key)
             .is_some_and(|shape| shape.text == label.text)
         {
+            let mut run = style.to_run(label.text.len());
             let mut layout = text_system.layout_line(
                 label.text.as_ref(),
                 font_size,
@@ -3196,7 +3197,6 @@ fn paint_cell_labels(
             continue;
         };
         let layout = &shape.layout;
-        run.len = shape.len;
         let measured_width = layout.width.ceil().min(width);
         let align_offset = match label.align {
             Align::End => width - measured_width,
@@ -3211,13 +3211,13 @@ fn paint_cell_labels(
                 ),
         );
         let decorations = [gpui_kit::DecorationRun {
-            len: run.len as u32,
-            color: run.color,
-            background_color: run.background_color,
-            underline: run.underline,
-            strikethrough: run.strikethrough,
+            len: shape.len as u32,
+            color: style.color,
+            background_color: style.background_color,
+            underline: style.underline,
+            strikethrough: style.strikethrough,
         }];
-        if run.background_color.is_some() {
+        if style.background_color.is_some() {
             let _ = layout.paint_background(
                 origin,
                 line_height,

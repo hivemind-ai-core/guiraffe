@@ -142,7 +142,7 @@ offsets in a final line longer than the stride.
 | Index construction, one loaded-host sample | 112.417 ms | 115.081 ms |
 
 The plain-source fixture has no highlight spans. For styled documents, the
-two theme span arrays in `Highlighted` still scale with document syntax.
+two theme span arrays in the uniform-index revision scaled with document syntax.
 The renderer-backed process RSS budget remains a separate acceptance check.
 To compare the same frame sequence with scene construction alone, run
 `production_soak code --no-renderer`.
@@ -157,3 +157,30 @@ To compare the same frame sequence with scene construction alone, run
 The WGPU comparison includes device and pipeline setup. The fixture reported
 process RSS after the same drawing sequence in each mode. Its remaining
 renderer-backed RSS exceeds 1.25 × 20 MB + 64 MiB (about 89,950 KiB).
+
+## Viewport syntax styles
+
+CodeViewer retains the worker-prepared Tree-sitter context so ranged queries
+preserve multiline syntax and injected language context. A visible line
+queries the active theme only on a shape miss and limits the query to the
+same UTF-8 prefix used for shaping (16 KiB). Temporary spans are dropped
+after shaping. The shape cache evicts styled lines outside the viewport
+plus eight display rows on either side, including across folds. It also
+keeps its 2,048-entry and 256 KiB text limits. The cache test exercises
+eviction at 10k and 10M rows, and the highlight test compares a distant
+multiline comment with the same line after a source change.
+
+Tree-sitter retains a document-sized parse tree and rope for styled source.
+Parsing runs on the existing worker. A cold visible style query runs during
+shaping, and its worst-case latency and styled parse memory have yet to be
+qualified at production scale. The public style iterators now yield owned
+range/style pairs, since the snapshot has no persistent array to borrow.
+
+| Plain 10M-line fixture, KiB | Empty window | Steady RSS | Steady delta | Peak RSS | Peak delta |
+|---|---:|---:|---:|---:|---:|
+| WGPU | 98,304 | 127,788 | 29,484 | 136,808 | 38,504 |
+| CPU only | 17,340 | 47,368 | 30,028 | 55,864 | 38,524 |
+
+The same process samples the empty window after its first draw, before
+allocating the source. Peak uses Linux VmHWM. WGPU p99 was 2.010 ms and
+CPU-only p99 was 1.065 ms in these indicative, loaded-host runs.

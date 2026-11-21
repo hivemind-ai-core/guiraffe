@@ -65,14 +65,14 @@ impl Host {
     }
 }
 
-fn rss_kib() -> Result<u64> {
+fn memory_kib(field: &str) -> Result<u64> {
     std::fs::read_to_string("/proc/self/status")?
         .lines()
-        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .find_map(|line| line.strip_prefix(field))
         .and_then(|line| line.split_whitespace().next())
-        .context("missing process VmRSS")?
+        .with_context(|| format!("missing process {field}"))?
         .parse()
-        .context("invalid process VmRSS")
+        .with_context(|| format!("invalid process {field}"))
 }
 
 fn report(samples: &mut [f64], elapsed: Duration) -> Result<(f64, f64, u64)> {
@@ -80,7 +80,7 @@ fn report(samples: &mut [f64], elapsed: Duration) -> Result<(f64, f64, u64)> {
     let percentile = |p: usize| samples[(samples.len() * p).div_ceil(100) - 1];
     let p99 = percentile(99);
     let max = *samples.last().context("no frames recorded")?;
-    let rss = rss_kib()?;
+    let rss = memory_kib("VmRSS:")?;
     println!(
         "elapsed_s={:.2} frames={} p50_ms={:.3} p95_ms={:.3} p99_ms={p99:.3} max_ms={max:.3} rss_kib={rss}",
         elapsed.as_secs_f64(),
@@ -113,13 +113,6 @@ fn main() -> Result<()> {
 }
 
 fn run(component: &str, nightly: bool, renderer: bool) -> Result<()> {
-    let document = match component {
-        "grid" => None,
-        "code" => Some(Arc::new(CodeDocument::new(Arc::<str>::from(
-            "x\n".repeat(ROWS - 1) + "x",
-        )))),
-        _ => bail!("unknown component {component}"),
-    };
     let text = gpui_kit::platform::current_platform(true).text_system();
     let mut app =
         HeadlessAppContext::with_platform(text, Arc::new(gpui_kit::assets::Assets), move || {
@@ -135,6 +128,15 @@ fn run(component: &str, nightly: bool, renderer: bool) -> Result<()> {
     })?;
     app.run_until_parked();
 
+    let empty_rss = memory_kib("VmRSS:")?;
+    println!("empty_window_rss_kib={empty_rss}");
+    let document = match component {
+        "grid" => None,
+        "code" => Some(Arc::new(CodeDocument::new(Arc::<str>::from(
+            "x\n".repeat(ROWS - 1) + "x",
+        )))),
+        _ => bail!("unknown component {component}"),
+    };
     let mount_start = Instant::now();
     let mut control = None;
     app.update_window(window.into(), |_, window, cx| {
@@ -185,7 +187,7 @@ fn run(component: &str, nightly: bool, renderer: bool) -> Result<()> {
     for _ in 1..if nightly { 600 } else { 120 } {
         frame(nightly)?;
     }
-    let baseline = rss_kib()?;
+    let baseline = memory_kib("VmRSS:")?;
     let start = Instant::now();
     let mut deadline = REPORT_INTERVAL;
     let mut samples = Vec::with_capacity(1_024);
@@ -193,6 +195,10 @@ fn run(component: &str, nightly: bool, renderer: bool) -> Result<()> {
         samples.push(frame(nightly)?);
         if (!nightly && samples.len() == 60) || start.elapsed() >= deadline {
             let (p99, max, rss) = report(&mut samples, start.elapsed())?;
+            let peak = memory_kib("VmHWM:")?;
+            let delta = i128::from(rss) - i128::from(empty_rss);
+            let peak_delta = i128::from(peak) - i128::from(empty_rss);
+            println!("rss_delta_kib={delta} peak_rss_kib={peak} peak_rss_delta_kib={peak_delta}");
             if !nightly {
                 break;
             }
