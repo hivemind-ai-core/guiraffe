@@ -14,7 +14,7 @@
 use std::{collections::HashSet, rc::Rc};
 
 use gpui_kit::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     KeyBinding, ParentElement, PathBuilder, Pixels, Point, Render, RenderOnce, Role, ScrollEvent,
     SharedString, StyleRefinement, Styled, TestSupportExt, Window, canvas, div, point, prelude::*,
     px,
@@ -25,7 +25,8 @@ use guiraffe_core::{
 };
 
 use crate::event_layout::{
-    EventModel, LinkKind, Placement, TimelineEvent, clip_segment, visible_events, visible_range,
+    DOT_OFFSET, EventModel, LinkKind, Placement, TimelineEvent, clip_segment, visible_events,
+    visible_range,
 };
 use crate::measure::{self, BodyCell};
 
@@ -463,18 +464,8 @@ impl Render for EventTimelineState {
                 f64::from(f32::from(window.viewport_size().height)),
             );
         }
-        let slots = visible_range(
-            self.offset.0,
-            chronological + self.pitch.0,
-            self.pitch.0,
-            self.model.slots,
-        );
-        let lanes = visible_range(
-            self.offset.1,
-            cross + self.pitch.1,
-            self.pitch.1,
-            self.model.tracks.len(),
-        );
+        let slots = visible_range(self.offset.0, chronological, self.pitch.0, self.model.slots);
+        let lanes = visible_range(self.offset.1, cross, self.pitch.1, self.model.tracks.len());
         let model = self.model.clone();
         let paint_model = model.clone();
         let paint_projection = projection.clone();
@@ -539,11 +530,13 @@ impl Render for EventTimelineState {
                 let colors = resolved.color(color);
                 let (x, y) = projection.coordinates(placement.slot as f64, track as f64);
                 let (w, h) = self.orientation.xy(self.pitch.0, self.pitch.1);
-                let (dot_x, dot_y) = self.orientation.xy(
-                    px((self.pitch.0 * crate::event_layout::DOT_OFFSET) as f32),
-                    px(0.0),
-                );
-                let dot = px(spacing * 0.55);
+                let (left, top) = match self.orientation {
+                    EventOrientation::Vertical => (
+                        px(spacing * 0.8),
+                        px((self.pitch.0 * DOT_OFFSET) as f32 - spacing * 0.75),
+                    ),
+                    EventOrientation::Horizontal => (px(spacing * 1.6), px(spacing * 0.8)),
+                };
                 let label: SharedString = if window.is_a11y_active() {
                     let [branches, merges] = model.relations(item.id);
                     let tags = item.tags.join(", ");
@@ -615,42 +608,20 @@ impl Render for EventTimelineState {
                                 .into_any_element()
                         })
                     });
-                let card = div()
-                    .absolute()
-                    .flex()
-                    .flex_col()
-                    .gap(px(spacing / 5.0))
-                    .overflow_hidden()
-                    .top(match self.orientation {
-                        EventOrientation::Vertical => dot_y - px(spacing * 0.75),
-                        EventOrientation::Horizontal => px(spacing * 0.8),
-                    })
-                    .left(match self.orientation {
-                        EventOrientation::Vertical => px(spacing * 0.8),
-                        EventOrientation::Horizontal => px(spacing * 1.6),
-                    })
-                    .right(px(spacing * 1.15))
-                    .bottom(px(spacing * 0.2))
-                    .bg(surfaces.body.to_hsla())
-                    .child(title)
-                    .when_some(content, |card, content| card.child(content));
                 items.push(
                     div()
                         .absolute()
-                        .left(x)
-                        .top(y)
-                        .w(px(w as f32))
-                        .h(px(h as f32))
-                        .child(
-                            div()
-                                .absolute()
-                                .left(dot_x - dot / 2.0)
-                                .top(dot_y - dot / 2.0)
-                                .size(dot)
-                                .rounded_full()
-                                .bg(colors.dot),
-                        )
-                        .child(card),
+                        .left(x + left)
+                        .top(y + top)
+                        .w(px(w as f32) - left - px(spacing * 1.15))
+                        .h(px(h as f32) - top - px(spacing * 0.2))
+                        .flex()
+                        .flex_col()
+                        .gap(px(spacing / 5.0))
+                        .overflow_hidden()
+                        .bg(surfaces.body.to_hsla())
+                        .child(title)
+                        .when_some(content, |card, content| card.child(content)),
                 );
             }
         }
@@ -833,6 +804,40 @@ impl Render for EventTimelineState {
                                         );
                                     }
                                 });
+                                let dot = px(spacing * 0.55);
+                                let dot_size = gpui_kit::size(dot, dot);
+                                let half = dot / 2.0;
+                                for track in paint_lanes.clone() {
+                                    let (Some(lane), Some(track_data)) = (
+                                        paint_model.lanes.get(track),
+                                        paint_model.tracks.get(track),
+                                    ) else {
+                                        continue;
+                                    };
+                                    for placement in visible_events(lane, paint_slots.clone()) {
+                                        let Some(item) = paint_model.events.get(placement.event)
+                                        else {
+                                            continue;
+                                        };
+                                        let color = paint_theme
+                                            .color(
+                                                item.color.or(track_data.color).or(default_color),
+                                            )
+                                            .dot;
+                                        let center = paint_projection.position(
+                                            bounds.origin,
+                                            placement.slot as f64 + DOT_OFFSET,
+                                            track as f64,
+                                        );
+                                        let bounds = Bounds {
+                                            origin: center - point(half, half),
+                                            size: dot_size,
+                                        };
+                                        window.paint_quad(
+                                            gpui_kit::fill(bounds, color).corner_radii(half),
+                                        );
+                                    }
+                                }
                             },
                         )
                         .absolute()
