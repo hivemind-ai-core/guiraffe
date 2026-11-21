@@ -567,6 +567,22 @@ impl<const P: bool> TreeView<P> {
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.as_str();
+        if key == "escape" && self.edit.is_none() {
+            let picker = self.colour_picker.take().is_some();
+            let slider = self.slider.take().is_some();
+            let scrub = self.scrub.take().is_some();
+            if picker || slider || scrub {
+                if self.tab_stop {
+                    window.focus(&self.focus, cx);
+                }
+                if picker || slider {
+                    cx.notify();
+                }
+                cx.stop_propagation();
+                return;
+            }
+        }
+
         if key == "tab"
             && self.edit.is_some()
             && self.tab_to_editor(event.keystroke.modifiers.shift, window, cx)
@@ -752,8 +768,21 @@ impl<const P: bool> TreeView<P> {
         };
         match validation {
             Ok(()) => {
-                let redraw = self.error.take().is_some() || self.edit.is_some();
+                let mut redraw = self.error.take().is_some();
+                if self
+                    .colour_picker
+                    .as_ref()
+                    .is_some_and(|(row, _, _)| *row == id)
+                {
+                    self.colour_picker = None;
+                    redraw = true;
+                }
+                if self.slider.as_ref().is_some_and(|(row, _, _)| *row == id) {
+                    self.slider = None;
+                    redraw = true;
+                }
                 if self.edit.take().is_some() {
+                    redraw = true;
                     self.rebuild_geometry();
                     self.clamp_scroll();
                 }
