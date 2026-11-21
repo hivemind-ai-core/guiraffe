@@ -1193,3 +1193,30 @@ fn dragging_the_horizontal_thumb_scrolls_the_center_band(cx: &mut TestAppContext
     );
     assert!((grid.scroll_offset().0 - sx).abs() < 0.5);
 }
+
+/// The grid builds the rows the viewport shows and no more: a row outside it
+/// is clipped, and the rows that scroll in are built in the frame they are
+/// needed. The extra slot is the row that is coming into view.
+#[gpui_kit::test]
+fn the_grid_builds_only_the_rows_the_viewport_shows(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(8), cx));
+    let visible = grid.visible_rows().len();
+    assert!(
+        grid.stats().pool as usize <= visible + 1,
+        "the grid keeps {} row slots for {visible} visible rows",
+        grid.stats().pool
+    );
+
+    // The rows that come into view are built; the ones that stay are not
+    // built twice over.
+    let before = grid.stats();
+    vcx.update(|_, cx| grid.set_scroll(0., 500_000. * f64::from(grid.row_height()), cx));
+    vcx.run_until_parked();
+    let after = grid.stats();
+    assert!(
+        after.row_renders - before.row_renders <= after.pool as u64,
+        "a scroll rebuilt {} rows for a pool of {}",
+        after.row_renders - before.row_renders,
+        after.pool
+    );
+}
