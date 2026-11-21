@@ -220,8 +220,9 @@ fn charts(
                     stream.append((next..end).collect());
                     stream.retain_last(STREAM_RATE as usize);
                     next = end;
-                    let model = streaming_spec(stream.clone()).prepare();
-                    window.update(|_, cx| view.update(cx, |chart, cx| chart.replace(model, cx)));
+                    let spec = streaming_spec(stream.clone());
+                    window
+                        .update(|_, cx| view.update(cx, |chart, cx| chart.replace_spec(spec, cx)));
                 }
             }
             let bounds = window
