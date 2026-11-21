@@ -1,46 +1,93 @@
-# TODO (tracked per crate; also see spec/)
-- [x] core: palettes, sizes, variants, theme global + Controls bridge (foreman)
-- [ ] flow-core: model, viewport, spatial index, history, serde (codex)
-- [ ] flow: canvas, handles, connect, selection, minimap, controls, bench (codex)
-- [ ] mermaid: port mer, async render cache, pan/zoom (omp)
-- [ ] markdown: GFM viewer, highlighting, streaming, mermaid feature (omp)
-- [ ] layout: Stack/Group/Flex/Grid/SimpleGrid/Container/Center/AspectRatio/AppShell (kilo)
-- [x] windows: registry, lifecycle, bus, persistence (foreman, wave 2)
-- [ ] overlays: stack, modals, drawer, toasts, spotlight, desktop notify (wave 2)
-- [ ] components: see spec/03 (wave 2) — shipped: Timeline, Loader, Spoiler, Burger, CopyButton, KbdGroup, ColorSwatch, AvatarGroup, Stepper
-- [ ] gallery app (wave 2)
-- [ ] agent chat UI (wave 2)
+# TODO
 
-## Follow-ups found in review
-- [ ] windows: X11 restores windows 2px right of request (see ../gui KNOWN_ISSUES #127) — compensate when platform is X11
-- [ ] windows: tear-off panels between windows (dock-host port), parent/child + modal windows
-- [ ] windows: example app (examples/multi.rs)
-- [ ] core: style helper traits (.p_size, .radius_size, .shadow_size) once layout lands
-- [ ] timeline follow-ups (review nits): Days ticks align to epoch (weeks start Thursday; "months" are 30d) — use calendar-aware steps; Gantt rows are not virtualized (fine < ~1k tasks); dope sheet has no ruler yet.
+Living task list (foreman-maintained; updated 2026-11-21). Plans: plans/ROADMAP-0.2.md (sections
+A–F), plans/PERF-0.2.md, specs in spec/. Branches merge into release/0.2 via foreman integration
+batches; nothing goes to main without the user.
 
-## Next (user request 2026-11-16)
-- [ ] **Efficient spreadsheet / data sheet**: standalone and embedded, virtualized rows and columns, provider-backed incremental data, keyboard/range selection and clipboard, read-only and optional editing; acceptance and performance evidence in spec/16.
-- [ ] **Showcase app** (`apps/showcase`): every component from every crate, one page each, real data, both themes; doubles as e2e/snapshot target. Gate: a test enumerates exported components and fails if any lacks a showcase page.
-- [ ] **Tooling DX**: `guiraffe new --template {blank,dashboard,editor,chat}`, `guiraffe dev` (watch+rebuild+relaunch), `guiraffe add <crate>`, `guiraffe doctor` (toolchain, gpui-fast pin, system deps), `guiraffe snapshot`/`bench` wrappers, docs site generated from showcase.
-- [ ] **After current work:** study the Refactoring UI book (in repo root, user-provided; do not commit it) — its component list and principles → design-quality styling + layout presets (theme recipes, spacing/type scales, hierarchy, color, depth) in core/layout, applied across showcase.
-- [ ] Bugs found while building the showcase: flow `FlowState::new` is fallible inside `cx.new` (add infallible ctor from validated editor; flow/state.rs:39); chat tool-call header centred instead of left (chat/message.rs); overlays FloatingTooltip lacks border/shadow contrast (overlays/floating.rs:39); LoadingOverlay default fully opaque (overlays/widgets.rs:58); guiraffe-test Snapshotter needs a "settle" option so background-rendered content (mermaid) appears in goldens; regression test for mermaid width re-render.
+## In progress
+- [ ] **GPUI warm-repaint allocation pass** (codex, `perf-warm-alloc`): unchanged views replay with
+      0 allocations; gpui-fast already 1–2 for most components, Markdown 91; tab-stop replay, Taffy
+      scratch, scene sort, rounded-clip reuse; upstream backend next.
+- [ ] **Multi-track event timeline** (codex, `feat-event-timeline`, spec/28).
+- [ ] **Calendar views** year/month/week/day (Kimi, `feat-calendar`, spec/27).
+- [ ] **Spotlight redesign** (Claude subagent, `feat-spotlight`).
+- [ ] **Desktop notifications + system tray** (Claude subagent, `feat-notify-tray`; Linux tested,
+      macOS/Windows untested).
+- [ ] **DnD polish** (Claude subagent, `feat-dnd-polish`): Kanban columns are the drop zones
+      (whole column body, insertion line, column highlight); IDE layout icon toggles.
+- [ ] **StyleContext lost on isolated re-render under gpui-fast** (Claude subagent,
+      `fix-stylecontext-fast`): controls can drop out of Tab order after a click; fix in core.
+- [ ] **Newcomer docs** (Claude subagent, `docs/getting-started`): getting-started guide with
+      buildable examples, React/Electron migration guide.
+- [ ] Side work (omp): cache inventory (plans/CACHE-INVENTORY.md), allocation audit of
+      ui/windows/motion/commands/devtools/state/router/icons.
 
-## User feedback on showcase (2026-11-16)
-- [ ] 1 ScrollArea doesn't scroll · 2 SegmentedControl needs two clicks (focus then select) · 3 RangeSlider track glitch · 4 FloatingTooltip never hides (focus/hover loss in general?)
-- [ ] 5 Mermaid diagrams blank (live too; ../gui renders them — compare)
-- [ ] 6 Flow glitches: edge end overshoots handle; handle/edge stub drawn past node edge; step-edge corners overshoot after zoom/pan · 7 minimap drag-to-pan
-- [ ] 8/9 Gantt + tracks: lock x positions (per item / global) · 10 resize cursor on edges · 11 resize from left edge too (configurable: none/start/end/both)
-- [ ] Integrate GPUI Controls (buttons, form inputs, selects, etc.) + GPUI Kit charts into showcase; every entry needs a live options panel exposing its configuration
-- [ ] chat: Reasoning toggle header centred (same bug as tool header, chat/message.rs); 302/188 contrast-floor failures pinned in core state-token test → fix palette (with Refactoring UI study); §12 widget audit gaps in spec/18 (SegmentedControl/RangeSlider focus grab, bare-div ActionIcon/ChipGroup/Dropzone/sidebar, no a11y roles, timeline pointer-only)
-- [ ] code viewer polish: minimap is a solid block when whole file fits (draw line strokes + light viewport box); trace curve crosses text (route in gutter/margin); inlay hint double space; VALIDATION.md cites stale release hash. data-ui: nested repeat defaults to window height (default to container).
-- [ ] **Showcase completeness audit** (user 2026-11-17): every component and every public option demonstrated (knobs where it makes sense), across all crates — after feat-code-demos and feat-datagrid merge (they touch the showcase). Produce a component×option matrix in the showcase README and fill the gaps.
-- [ ] code demos polish: trace endpoint dots overlap first glyph; cross-viewer trace crosses line numbers; showcase meta line 'guiraffe-code ·' has empty covers list for code entries.
-- [ ] Owner gaps from showcase audit (crates/showcase/COVERAGE.md): ActionIcon disabled/loading; Pill size/color/disabled; Indicator position/offset/size; Highlight/Mark color; TagsInput disabled/error/required/size + shared input invalid/required state; ScrollArea scrollbar options; Toast color/icon/title; FloatingTooltip arrow; flow read-only + runtime options; mermaid theme override/selection; markdown heading anchors/TOC; chat props; Gantt snap; datagrid filter UI; Kit charts knobs (superseded by guiraffe-charts).
-- [ ] compare app: Document page wraps a plain MarkdownView in a scroll container because scrollable mode used to collapse — now fixed (fix-user-bugs-3); switch it to MarkdownView scrollable. Add input-latency and RAPL energy to the harness.
-- [ ] catalogue recipes polish: error helper text should use error colour + smaller size; DataUi input height a bit short vs Kit inputs
-- [x] palette polish: light-mode tinted and subtle text preserves the palette hue when contrast requires going beyond its darkest shade.
+## Ready to integrate
+- [ ] Flow document memory (`bd882ba`, gating): 36/46 MiB delta vs 68 MiB limit. Public API
+      change (`Name`, `Handles`) → CHANGELOG.
+- [ ] Date/time pickers (`961a46e`): Date/DateRange/Time/DateTime/DateTimeRange pickers.
 
-## DnD showcase polish (foreman golden review, 2026-11-18)
-- Kanban: the "Drop at end" target renders like a real card in every column; make it a subtle dashed drop zone shown only while dragging (or when the column is empty).
-- IDE layout: "Left / Bottom / Right" panel toggles are bare text; use ActionIcon/segmented toggles.
-- Tree/flame demo polish landed in feat-flame-tree; DataGrid/CodeViewer, Flow/Timeline/Charts wall-clock budgets pending the quiet-machine run.
+## Performance goal — remaining (plans/PERF-0.2.md)
+- [ ] Final quiet window (all agents paused): re-measure all scenarios on both backends; 30-minute
+      mixed soak (≤2 % drift); stress-limits sweep (plans/PERF-LIMITS.md); GUIraffe-side Electron
+      comparison; commit a new full bench baseline.
+- [ ] Chat memory (delta 106/116 vs 76 MiB before batch 12 — confirm fixed); Markdown gpui-fast
+      memory ~6 MiB over.
+- [ ] PRODUCTION.md performance rows ✅ for every component, linked to checks; merge the cache
+      inventory into them.
+
+## 0.2 roadmap — not started
+- [ ] **Sheet** (spreadsheet component, spec/22) — next free codex slot.
+- [ ] **Inspect/drive node ids**: stable ids for static widgets (`.test_id`), observation for all
+      components.
+- [ ] **Agent authoring rest** (spec/21): fixtures, typed handlers, custom widget registration,
+      Mocket coverage overlay, recipes library.
+- [ ] Salvage omp's `feat-mermaid-2` (render cache, size-aware re-raster, panic-isolation test).
+- [ ] Calendar follow-up: Schedule/Agenda list view.
+- [ ] UI/UX backlog (plans/UI-UX-BACKLOG.md).
+- [ ] Kit gaps (report upstream): dark slider track contrast; dim checkbox label in dark; Calendar
+      notifies on every render; day cells lack date/a11y hooks; calendar nav ignores min/max; no
+      calendar keyboard nav; Button doesn't announce selected state; five stock gpui-fast Kit test
+      failures.
+- [ ] gpui-fast quirks: picker popover open/close re-renders the host once; host picks up popover
+      reads after a forced frame.
+
+## Release readiness
+- [ ] CHANGELOG 0.2; KNOWN_ISSUES.md current; API docs coverage.
+- [ ] Packaging notes: apps must copy the vendored `[patch.crates-io]` entries (vendor/README.md);
+      `guiraffe new` template should include them.
+- [ ] Upstream PR drafts ready (plans/GPUI-UPSTREAM.md, plans/KIT-UPSTREAM.md, mermaid) — user
+      decides when to submit.
+- [ ] 0.1: user's manual pass on a real display → merge release/0.1 to main, tag v0.1.0.
+- [ ] 0.2: final full gate + golden review → merge to main, tag v0.2.0 (user approval).
+
+## After release (roadmap F)
+- [ ] Startup study: per-phase warm/cold breakdown, floor vs empty GPUI / bare wgpu window, levers
+      (EGL deferral, shader cache, parallel init, lazy init, linking); cold start needs a page-cache
+      drop (sudo).
+
+## Later / out of scope for now
+- macOS/Windows CI and testing; crates.io publishing; multi-window docking (0.3).
+- windows: tear-off panels, parent/child + modal windows, examples/multi.rs; X11 2 px restore
+  offset compensation.
+- Tooling DX: templates for `guiraffe new`, `guiraffe dev` hot relaunch, docs site from showcase.
+- Refactoring UI study → design recipes (book in repo root, do not commit it).
+- compare app: input-latency and RAPL energy metrics.
+
+## Verify and close (older review/feedback items, many likely fixed in the 0.1 bug batches)
+- [ ] Showcase feedback 2026-11-16: ScrollArea scroll; SegmentedControl double-click; RangeSlider
+      track glitch; FloatingTooltip hiding; Mermaid blank diagrams; Flow edge/handle overshoot and
+      minimap drag-to-pan; Gantt/tracks x-lock, resize cursor, left-edge resize.
+- [ ] Bugs from showcase build: FlowState::new fallible in cx.new; chat tool/reasoning headers
+      centred; FloatingTooltip contrast; LoadingOverlay opacity; Snapshotter "settle" option;
+      mermaid width re-render test.
+- [ ] Code viewer polish: minimap when the whole file fits; trace curve crossing text; inlay hint
+      double space; trace endpoint dots; showcase meta line empty covers for code entries.
+- [ ] Showcase coverage gaps (crates/showcase/COVERAGE.md): ActionIcon disabled/loading, Pill,
+      Indicator, Highlight colors, TagsInput states, ScrollArea options, Toast options, tooltip
+      arrow, flow read-only, mermaid theme, markdown anchors/TOC, chat props, Gantt snap, datagrid
+      filter UI; component×option matrix in the showcase README.
+- [ ] Catalogue recipes polish (error helper text colour/size; DataUi input height).
+- [ ] compare app Document page: use MarkdownView scrollable mode.
+- [ ] Timeline nits: calendar-aware day/week/month ticks; dope sheet ruler.
+- [ ] core: style helper traits (.p_size, .radius_size, .shadow_size).
