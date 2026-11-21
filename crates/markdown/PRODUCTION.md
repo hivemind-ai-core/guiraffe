@@ -35,3 +35,10 @@ measure the isolated parser process. The section visitor that drops each
 AST after counting its blocks took 1.60 s and used 14,184 KiB peak RSS on
 the same fixture. Mounted
 latency, memory, and repaint allocations remain open.
+
+In the loaded upstream dev soak, sharing paragraph runs reduced sampled
+paragraph-clone self time from 9.41% to 2.26%. The two frame intervals
+measured 504–551 ms p99 before sharing and 134–152 ms afterward. The
+settled mount was 4.83 s and sampled RSS was 170–171 MiB after sharing.
+The settled-mount probe drains background work, and the measurements do
+not establish the quiet release budgets.
