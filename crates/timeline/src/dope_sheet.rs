@@ -431,13 +431,9 @@ impl Render for DopeSheet {
                     visible: c.visible,
                     owner: owner.clone(),
                 };
-                if let Some((old, entity)) = current {
-                    if *old != header {
-                        entity.update(cx, |view, cx| {
-                            *view = header.clone();
-                            cx.notify();
-                        });
-                        *old = header;
+                if let Some(entry) = current {
+                    if entry.0 != header {
+                        *entry = (header.clone(), cx.new(|_| header));
                     }
                 } else {
                     self.headers.push((header.clone(), cx.new(|_| header)));
