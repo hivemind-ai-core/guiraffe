@@ -72,25 +72,25 @@ Mermaid. Markdown records its first published rendered frame and prints a
 separate background-ready timestamp. Chat and Markdown retain the mounted RSS
 and warm-repaint scaling checks.
 
-| Probe | Recorded baseline | Inherited patch evidence |
+| Probe | Recorded baseline | Merged release or historical patch evidence |
 |---|---:|---:|
-| Markdown first useful frame | 705–755 ms, quiet release | 106 ms, loaded upstream dev |
-| Markdown background work through first settled frame | — | 1,017 ms, loaded upstream dev |
-| Markdown frame p99 | 11.0–11.6 ms, quiet release | 5.0–6.5 ms, prior loaded upstream dev |
-| Markdown RSS delta | 136 MiB upstream / 235 MiB Fast, quiet release | 66,656 KiB, prior loaded upstream dev |
-| Chat 100k history RSS delta | 105,368 KiB upstream, prior dev | 57,356 KiB upstream / 56,344 KiB Fast, prior dev |
+| Markdown first useful frame | 705–755 ms, quiet release | 32.3 ms, loaded upstream release |
+| Markdown background work through first settled frame | — | 808 ms, loaded upstream release |
+| Markdown frame p99 | 11.0–11.6 ms, quiet release | 4.95–5.32 ms, loaded upstream release |
+| Markdown RSS delta | 136 MiB upstream / 235 MiB Fast, quiet release | 64,624 KiB, loaded upstream release |
+| Chat 100k history RSS delta | 105,368 KiB upstream, prior dev | 57,788 KiB upstream release / 56,344 KiB Fast dev |
 | Fence scan instructions, 128 appends | 1.770B | 17.09M |
 | Markdown inline run size | 424 B | 96 B |
 
-The 106 ms and 1,017 ms figures came from re-profiling the inherited
-binary at 50k lines, stored under `target/takeover-inherited-markdown*`.
-The parser accounted for 69.49% inclusive, with two independent AST
-traversals. The 10-frame smoke checks exercise the release soak entry
-points and do not establish p99. Cache bounds and test links are in
+Build and measurement logs are in `target/build-release.log` and
+`target/takeover-validation/`. The merged release profile at 50k lines
+attributed 73.72% inclusive to `markdown::to_mdast`, with independent
+render and metadata traversals. Both scale-50 release smoke runs completed
+10 frames. The upstream short soak uses two 10-second sample intervals. Cache bounds and test links are in
 `vendor/README.md` and both component `PRODUCTION.md` files.
 
-Remaining verification includes the integrated release smoke, scoped tests
-and Clippy on both backends, and the full gate. Markdown still needs
+Remaining verification includes the scoped tests and Clippy on both backends
+and the full gate. Markdown still needs
 revision-pinned evidence for RSS on both backends, p99 and long tasks, and
 zero-allocation warm repaint. The foreman approved sharing the render and
 metadata parse after the merge handoff. Preserve section equivalence,
