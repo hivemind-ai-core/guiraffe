@@ -15,12 +15,12 @@ each component at its spec/23 scale target, one per row.
 - `soak empty` is the floor probe (no dataset) and sets the harness floor, not a budget.
 - `soak code-annotations` (spec/25) was merged in `release/0.2` `f71d552`; it is listed with its raw
   size and limit, and is not yet measured because it postdates the quiet window.
-- The limits probes add `soak mixed` and move `grid`/`code` into the soak binary. `mixed` is a composite
-  stress scenario - it rotates flow (5,000 nodes), gantt (10,000 tasks), tree (10,000 branches), property
-  grid (1,000 groups), grid and code (1,000,000 rows), markdown (5,000 lines), chat (1,000 messages),
-  chart (1,000 points) and timeline (1,000 keys) through one window - so it has no single raw-data
-  budget and is not in this table. The `grid` and `code` rows cover both binaries, because the datasets
-  are identical.
+- The soak binary also provides `mixed`, `grid` and `code`. `mixed` is a composite stress scenario -
+  it rotates flow (5,000 nodes), gantt (10,000 tasks), tree (10,000 branches), property grid (1,000
+  groups), grid and code (1,000,000 rows), markdown (5,000 lines), chat (1,000 messages), chart (1,000
+  points) and timeline (1,000 keys) through one window - so it has no single raw-data budget and is
+  not in this table. The `grid` and `code` rows cover both binaries, because the datasets are
+  identical.
 
 > Revision 3 (2026-11-21 11:40): the limit is now evaluated the way the harness enforces it - against
 > the **peak RSS increase over the empty window**, not against absolute process RSS (see `production_soak.rs`,
