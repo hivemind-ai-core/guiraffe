@@ -1202,7 +1202,7 @@ fn the_grid_builds_only_the_rows_the_viewport_shows(cx: &mut TestAppContext) {
     let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(8), cx));
     let visible = grid.visible_rows().len();
     assert!(
-        grid.stats().pool as usize <= visible + 1,
+        grid.stats().pool <= visible + 1,
         "the grid keeps {} row slots for {visible} visible rows",
         grid.stats().pool
     );
