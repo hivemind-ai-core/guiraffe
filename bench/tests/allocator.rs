@@ -58,6 +58,7 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
             !s.name.starts_with("flow-")
                 && !matches!(s.name, "timeline-box-select-100k" | "timeline-draw-bars-100k")
                 && !s.name.starts_with("data-ui-")
+                && !s.name.starts_with("warm-")
                 && s.name != "datagrid-sort-1m"
                 && s.name != "code-index-10m"
                 // Compiling a chart scene for a new viewport builds its output geometry; it is
@@ -75,6 +76,46 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A warm repaint of an unchanged view may not grow: the same frame, drawn
+/// again, allocates the same. The budget is what one frame of each family
+/// costs today; a regression in a component's render path shows up here.
+#[test]
+fn warm_repaints_allocate_a_bounded_amount() -> anyhow::Result<()> {
+    for suite in guiraffe_bench::suites::registered()
+        .into_iter()
+        .filter(|s| s.name.starts_with("warm-"))
+    {
+        (suite.run)(); // Mount and warm the fixture.
+        (suite.run)();
+        (suite.run)();
+        let (_, counts) = count_allocations(suite.run)?;
+        let (_, again) = count_allocations(suite.run)?;
+        eprintln!("{}: {counts:?} then {again:?}", suite.name);
+        assert_eq!(
+            counts.allocations, again.allocations,
+            "{} allocates more on every repaint",
+            suite.name
+        );
+        // The budget is what one frame of the family costs today. It is the
+        // crates' own render paths that are counted here, so a component that
+        // starts allocating on every repaint shows up.
+        let budget = match suite.name {
+            "warm-components" => 400,
+            "warm-inputs" => 500,
+            "warm-layout" => 250,
+            "warm-overlays" => 100,
+            _ => 4_000,
+        };
+        assert!(
+            counts.allocations <= budget,
+            "{} allocates {} on a warm repaint, over its budget of {budget}",
+            suite.name,
+            counts.allocations
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()> {
     use guiraffe_bench::suites::{
@@ -83,7 +124,7 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
     let (grid_allocations, grid_bytes) = if gpui_kit::GPUI_FAST {
         (1_900, 420 * 1024)
     } else {
-        (1_150, 460 * 1024)
+        (1_050, 440 * 1024)
     };
     for (name, small, large, allocation_budget, byte_budget) in [
         (

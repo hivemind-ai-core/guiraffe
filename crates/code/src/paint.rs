@@ -28,6 +28,7 @@ fn bounded_runs(runs: Vec<TextRun>, len: usize) -> Vec<TextRun> {
         .collect()
 }
 
+const STYLE_OVERSCAN_ROWS: usize = 8;
 const MAX_SHAPE_CACHE_ENTRIES: usize = 2_048;
 const MAX_SHAPE_CACHE_TEXT_BYTES: usize = 256 * 1024;
 
@@ -40,8 +41,50 @@ pub(crate) struct ShapeCache {
     text_bytes: usize,
     frame: Rc<std::cell::RefCell<Vec<PaintedRow>>>,
     gutter_label: String,
+    styled_viewport: Option<(std::ops::Range<usize>, u64)>,
 }
 impl ShapeCache {
+    fn retain_viewport_styles(
+        &mut self,
+        map: &RowMap,
+        visible: &std::ops::Range<usize>,
+        epoch: u64,
+        styled: bool,
+    ) {
+        let next = styled.then(|| {
+            (
+                visible.start.saturating_sub(STYLE_OVERSCAN_ROWS)
+                    ..visible
+                        .end
+                        .saturating_add(STYLE_OVERSCAN_ROWS)
+                        .min(map.len()),
+                epoch,
+            )
+        });
+        if self.styled_viewport == next {
+            return;
+        }
+        let keep = |key: &ShapeKey| {
+            let (hash, shape_epoch, line, _, _) = *key;
+            // Gutter labels and shared plain text do not carry syntax styles.
+            hash != 0
+                || line == usize::MAX
+                || next.as_ref().is_some_and(|(rows, epoch)| {
+                    shape_epoch == *epoch
+                        && map.source_row(line).is_some_and(|row| rows.contains(&row))
+                })
+        };
+        self.items.retain(|key, shape| {
+            let retain = keep(key);
+            if !retain {
+                self.text_bytes -= shape.text.len();
+            }
+            retain
+        });
+        self.order.retain(keep);
+        self.styled_viewport = next;
+    }
+
     fn line(
         &mut self,
         text: &str,
@@ -176,7 +219,11 @@ fn runs(
         }
         let mut run = base_run(&source[start..end], theme.surfaces().text.to_hsla(), font);
         let absolute = range.start + start;
-        if let Some((_, style)) = styles.iter().find(|(r, _)| r.contains(&absolute)) {
+        let style_index = styles.partition_point(|(r, _)| r.end <= absolute);
+        if let Some((_, style)) = styles
+            .get(style_index)
+            .filter(|(r, _)| r.contains(&absolute))
+        {
             if let Some(c) = style.color {
                 run.color = c;
             }
@@ -317,6 +364,7 @@ pub(crate) fn prepare(
             surface_color.b,
             surface_color.a,
         ]));
+    cache.retain_viewport_styles(&map, &visible, epoch, highlighted.has_parser());
     let appearance = if theme.scheme == Scheme::Dark { 1 } else { 0 };
     let s = theme.surfaces();
     let mut label = std::mem::take(&mut cache.gutter_label);
@@ -337,7 +385,7 @@ pub(crate) fn prepare(
                 let text = prefix(text);
                 // Short, unstyled lines can share shaping across source rows.
                 let (hash, context_line) = if text.len() <= 64
-                    && highlighted.spans.is_empty()
+                    && !highlighted.has_parser()
                     && shared.annotations.borrow().is_empty()
                 {
                     (content_hash(text.as_bytes()), usize::MAX)
@@ -830,7 +878,8 @@ pub(crate) fn paint_traces(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_SHAPE_CACHE_ENTRIES, MAX_SHAPE_CACHE_TEXT_BYTES, MAX_SHAPED_LINE_BYTES, ShapeCache,
+        MAX_SHAPE_CACHE_ENTRIES, MAX_SHAPE_CACHE_TEXT_BYTES, MAX_SHAPED_LINE_BYTES, RowMap,
+        ShapeCache,
     };
     use gpui_kit::{ShapedLine, SharedString};
     use std::rc::Rc;
@@ -858,5 +907,29 @@ mod tests {
         assert_eq!(cache.items.len(), MAX_SHAPE_CACHE_ENTRIES);
         assert_eq!(cache.order.len(), cache.items.len());
         assert_eq!(cache.text_bytes, 0);
+    }
+
+    #[test]
+    fn styled_shape_cache_keeps_only_the_viewport_and_overscan() {
+        for line_count in [10_000, 10_000_000] {
+            let map = RowMap::new(line_count, &[], &[]);
+            let mut cache = ShapeCache::default();
+            cache.retain_viewport_styles(&map, &(100..120), 1, true);
+            for line in [100, 110, 119] {
+                let mut shape = ShapedLine::default();
+                shape.text = "let value = 42;".into();
+                cache.insert((0, 1, line, 0, 0), Rc::new(shape));
+            }
+            cache.retain_viewport_styles(&map, &(119..139), 1, true);
+            assert_eq!(
+                cache.order.iter().map(|key| key.2).collect::<Vec<_>>(),
+                vec![119]
+            );
+            assert_eq!(cache.text_bytes, "let value = 42;".len());
+            cache.retain_viewport_styles(&map, &(9_000..9_020), 1, true);
+            assert!(cache.items.is_empty());
+            assert!(cache.order.is_empty());
+            assert_eq!(cache.text_bytes, 0);
+        }
     }
 }

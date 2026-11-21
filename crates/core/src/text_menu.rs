@@ -122,6 +122,9 @@ struct Open {
 #[derive(Default)]
 struct Inner {
     open: Option<Open>,
+    /// The element id of this view's menu layer, built once: the view renders
+    /// it again on every frame, and the id never changes.
+    layer_id: Option<gpui_kit::ElementId>,
 }
 
 /// One open-or-closed context menu, owned by a text surface. Cheap to clone.
@@ -301,14 +304,21 @@ pub fn text_view_menu(
 ) -> gpui_kit::Div {
     use gpui_kit::{InteractiveElement, MouseButton, MouseDownEvent, Styled};
     let key: SharedString = key.into();
-    let layer = window.use_keyed_state(
-        gpui_kit::ElementId::Name(format!("guiraffe-text-menu/{key}").into()),
-        cx,
-        {
-            let menu = menu.clone();
-            |_, _| TextMenuLayer { menu }
-        },
-    );
+    let layer_id = {
+        let mut inner = menu.inner.borrow_mut();
+        match inner.layer_id.clone() {
+            Some(id) => id,
+            None => {
+                let id = gpui_kit::ElementId::Name(format!("guiraffe-text-menu/{key}").into());
+                inner.layer_id = Some(id.clone());
+                id
+            }
+        }
+    };
+    let layer = window.use_keyed_state(layer_id, cx, {
+        let menu = menu.clone();
+        |_, _| TextMenuLayer { menu }
+    });
     let menu = layer.read(cx).menu.clone();
     let owner = layer.entity_id();
     let open = {

@@ -14,6 +14,17 @@ macro_rules! mounted_frames {
     };
 }
 
+macro_rules! warm_repaints {
+    ($($function:ident),+ $(,)?) => {
+        $(
+            #[library_benchmark]
+            fn $function() {
+                guiraffe_bench::suites::$function();
+            }
+        )+
+        library_benchmark_group!(name = warm; benchmarks = $($function),+);
+    };
+}
 mounted_frames!(
     datagrid_frame_100k,
     datagrid_frame_10m,
@@ -58,8 +69,10 @@ fn tree_local_expand_and_collapse(
 
 library_benchmark_group!(name = tree_updates; benchmarks = tree_local_expand_and_collapse);
 
+warm_repaints!(warm_components, warm_inputs, warm_layout, warm_overlays,);
+
 main!(
     config = LibraryBenchmarkConfig::default()
         .tool(Callgrind::default().soft_limits([(EventKind::Ir, 2.0)]));
-    library_benchmark_groups = frames, tree_updates
+    library_benchmark_groups = frames, tree_updates, warm
 );
