@@ -1189,7 +1189,7 @@ mod mounted {
     /// Reduced motion, as in the crate's own interaction tests.
     fn chat_message(index: u64) -> guiraffe_chat::Message {
         use guiraffe_chat::{Message, MessageId, Role};
-        let (role, text) = if index % 2 == 0 {
+        let (role, text) = if index.is_multiple_of(2) {
             (
                 Role::User,
                 format!(
