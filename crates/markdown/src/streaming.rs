@@ -180,32 +180,57 @@ fn is_fence(trimmed: &str, marker: u8, run: usize) -> bool {
 /// The view uses this to avoid handing a half-streamed fence to the renderer:
 /// a diagram re-laid out on every token is both expensive and flickery.
 pub fn unfinished_mermaid_fence(source: &str) -> Option<usize> {
-    // (fence char, run length, is mermaid, byte offset where the fence starts)
-    let mut fence: Option<(u8, usize, bool, usize)> = None;
-    for (index, line) in lines_with_offsets(source) {
-        let terminated = index + line.len() < source.len();
-        let trimmed = line.trim_start();
-        let indent = line.len() - trimmed.len();
-        match fence {
-            // A closing run only counts once its line has ended: more characters on the
-            // same line (three backticks then "x") would make it content, not a close.
-            Some((marker, run, _, _))
-                if terminated && indent <= 3 && is_fence(trimmed, marker, run) =>
-            {
-                fence = None
-            }
-            Some(_) => {}
-            None => {
-                if let Some((marker, run)) = fence_opener(trimmed) {
-                    let lang = trimmed[run..].split_whitespace().next().unwrap_or_default();
-                    fence = Some((marker, run, lang.eq_ignore_ascii_case("mermaid"), index));
+    MermaidFenceScan::default().update(source)
+}
+
+#[derive(Clone, Copy)]
+struct OpenFence {
+    marker: u8,
+    run: usize,
+    mermaid_start: Option<usize>,
+}
+
+/// Tracks only complete lines. Recheck the partial last line against that
+/// state because the next append may complete or change its info string.
+#[derive(Default)]
+pub(crate) struct MermaidFenceScan {
+    settled: usize,
+    open: Option<OpenFence>,
+}
+
+impl MermaidFenceScan {
+    pub(crate) fn update(&mut self, source: &str) -> Option<usize> {
+        for line in source[self.settled..].split_inclusive('\n') {
+            let Some(complete) = line.strip_suffix('\n') else {
+                return self
+                    .open
+                    .or_else(|| Self::opener(line.trim_start(), self.settled))
+                    .and_then(|fence| fence.mermaid_start);
+            };
+            let trimmed = complete.trim_start();
+            match self.open {
+                Some(fence)
+                    if complete.len() - trimmed.len() <= 3
+                        && is_fence(trimmed, fence.marker, fence.run) =>
+                {
+                    self.open = None;
                 }
+                Some(_) => {}
+                None => self.open = Self::opener(trimmed, self.settled),
             }
+            self.settled += line.len();
         }
+        self.open.and_then(|fence| fence.mermaid_start)
     }
-    match fence {
-        Some((_, _, true, start)) => Some(start),
-        _ => None,
+
+    fn opener(trimmed: &str, offset: usize) -> Option<OpenFence> {
+        let (marker, run) = fence_opener(trimmed)?;
+        let lang = trimmed[run..].split_whitespace().next().unwrap_or_default();
+        Some(OpenFence {
+            marker,
+            run,
+            mermaid_start: lang.eq_ignore_ascii_case("mermaid").then_some(offset),
+        })
     }
 }
 
@@ -248,6 +273,51 @@ mod tests {
                 settled_prefix(source)
             );
             assert_eq!(second, expected, "split at byte {split}");
+        }
+    }
+
+    #[test]
+    fn mermaid_scan_matches_one_shot_for_every_three_chunk_partition() {
+        let source = concat!(
+            "Élan\n\n",
+            "````MeRmAiD title\nA --> B\n```\n```` invalid close\n````\n",
+            "~~~rust\n~~~mermaid\n~~~\n",
+            "  ~~~mermaid\r\nB --> C\r\n",
+        );
+        let ends: Vec<_> = source
+            .char_indices()
+            .map(|(end, _)| end)
+            .chain([source.len()])
+            .collect();
+        for (index, &first) in ends.iter().enumerate() {
+            for &second in &ends[index..] {
+                let mut scan = MermaidFenceScan::default();
+                for end in [first, second, source.len()] {
+                    let prefix = &source[..end];
+                    assert_eq!(
+                        scan.update(prefix),
+                        unfinished_mermaid_fence(prefix),
+                        "{first}, {second}, {prefix:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mermaid_scan_consumes_only_new_lines_after_large_prefixes() {
+        for lines in [10, 10_000] {
+            let mut source = "settled prose\n".repeat(lines);
+            let mut scan = MermaidFenceScan::default();
+            assert_eq!(scan.update(&source), None);
+            assert_eq!(scan.settled, source.len());
+            let origin = source.len();
+            source.push_str("```mer");
+            assert_eq!(scan.update(&source), None);
+            assert_eq!(scan.settled, origin);
+            source.push_str("maid\n");
+            assert_eq!(scan.update(&source), Some(origin));
+            assert_eq!(scan.settled - origin, "```mermaid\n".len());
         }
     }
 

@@ -41,8 +41,23 @@ before hosts can recycle those selected entities.
 The live viewer and parser both hold a snapshot during an append. Let
 cloned paragraphs share their inline runs and copy them only on edit.
 Keep the existing parsed-node API and selection pointers. Test copy-on-write
-with text and selection projections, then profile the remaining source
-and top-level block vector copies.
+with text and selection projections. Store the root blocks in a persistent
+vector so replacing the last parsed block shares settled leaves with the
+previous snapshot. Verify sharing at multiple document sizes and preserve
+source ranges and list continuation. The contiguous source string still
+needs to be copied on append.
+
+## Materialize Markdown text runs near the viewport
+
+For opted-in, large Markdown TextViews, lower settled text-only paragraphs
+to source ranges and exact inline metadata. Materialize the runs when a
+paragraph enters the viewport or overscan and evict the furthest block
+at the existing 256-block limit. Keep formatting and absolute source
+positions from the canonical parse, and retain logical selection handles
+across eviction. Source copy uses original spans, while plain copy reads
+the stored source and normalization metadata. Exercise cross-window
+copy and full traversal on both backends. Keep paragraphs with inline
+objects and the streaming tail eager.
 
 ## Share immutable Tree-sitter queries across highlighters
 
@@ -50,3 +65,12 @@ Cache compiled queries by canonical language and query purpose, checking
 the grammar and query source before reuse. Keep mutable parser state local
 and cap the fence parser cache. Cover alias reuse, grammar re-registration,
 injections, and high-cardinality fence names.
+
+## Observe raw AST sections during initial rendering
+
+Allow an estimated-height Markdown text view to receive each raw AST section
+from the first background parse before lowering it to render blocks. The
+observer gets source-relative positions and a completion signal. Superseding
+the request drops the observer, allowing a host to schedule its own fallback.
+The observer holds a metadata accumulator and the host receives at most one
+result. It retains no AST sections.

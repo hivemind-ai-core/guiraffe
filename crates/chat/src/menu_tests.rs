@@ -97,7 +97,12 @@ fn message_text_context_menu_copies_selection_and_message(cx: &mut TestAppContex
     });
     settle(cx, handle);
     settle(cx, handle);
-    let view = cx.update(|cx| chat.read(cx).messages[&MessageId(1)].clone());
+    let view = cx.update(|cx| {
+        chat.read(cx)
+            .mounted_message(MessageId(1), cx)
+            .expect("mounted message")
+            .clone()
+    });
     let origin = cx.update(|cx| {
         view.read(cx)
             .markdown
