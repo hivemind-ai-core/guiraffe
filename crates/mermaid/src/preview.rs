@@ -124,6 +124,7 @@ impl Overview {
             let width = edge
                 .override_style
                 .stroke_width
+                .filter(|width| width.is_finite())
                 .unwrap_or(match edge.style {
                     EdgeStyle::Thick => 1.25,
                     _ => 0.65,
