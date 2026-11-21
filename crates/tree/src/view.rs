@@ -1,4 +1,5 @@
 use crate::geometry::RowGeometry;
+use crate::search::{SearchScan, match_range};
 use crate::{
     Children, Navigation, NodeId, Property, PropertyOptions, TreeModel, TreeSource, Value,
 };
@@ -25,6 +26,8 @@ use guiraffe_core::{
 use std::{cell::Cell, rc::Rc, time::Instant};
 
 const ROW: f64 = 36.;
+/// Nodes visited per search step before yielding to the UI thread.
+const SEARCH_BATCH: usize = 512;
 
 /// Default row height for a TreeList or PropertyGrid.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -99,29 +102,6 @@ fn row_control_size(height: f32) -> ControlSize {
     } else {
         ControlSize::Medium
     }
-}
-
-/// Byte range of the first case-insensitive occurrence of `needle` (already lowercase) in
-/// `label`. Compares each char's lowercase expansion in place, so it allocates nothing.
-pub(crate) fn match_range(label: &str, needle: &str) -> Option<std::ops::Range<usize>> {
-    if needle.is_empty() {
-        return None;
-    }
-    label.char_indices().find_map(|(start, _)| {
-        let mut hay = label[start..].char_indices().flat_map(|(at, c)| {
-            c.to_lowercase()
-                .map(move |lower| (at + c.len_utf8(), lower))
-        });
-        let mut end = start;
-        for wanted in needle.chars() {
-            let (after, lower) = hay.next()?;
-            if lower != wanted {
-                return None;
-            }
-            end = start + after;
-        }
-        Some(start..end)
-    })
 }
 
 fn text_height(text: &str, max_rows: usize) -> f64 {
@@ -247,7 +227,8 @@ impl<const P: bool> TreeView<P> {
         }
     }
 
-    /// Show a filter for currently expanded properties.
+    /// Show a search box that filters every loaded property, opening collapsed groups that
+    /// contain matches and keeping each match's ancestors as its path.
     pub fn searchable(mut self, window: &mut Window, cx: &mut Context<Self>) -> Self {
         if !P {
             return self;
@@ -261,7 +242,7 @@ impl<const P: bool> TreeView<P> {
                     .as_ref()
                     .is_none_or(|filter| filter.query != query)
                 {
-                    this.filter_rows(query, cx);
+                    this.filter_rows(query, true, cx);
                 }
             }
         });
@@ -450,7 +431,10 @@ impl<const P: bool> TreeView<P> {
         }
     }
 
-    fn filter_rows(&mut self, query: String, cx: &mut Context<Self>) {
+    /// Replace the filter projection. A non-empty query searches every loaded node; with
+    /// `reveal`, collapsed branches that contain matches open when the scan completes. An empty
+    /// query only hides advanced rows of the current projection.
+    fn filter_rows(&mut self, query: String, reveal: bool, cx: &mut Context<Self>) {
         if query.is_empty() && self.show_advanced {
             if self.filter.take().is_some() {
                 self.scroll = 0.;
@@ -460,44 +444,53 @@ impl<const P: bool> TreeView<P> {
             return;
         }
         self.scroll = 0.;
-        let needle = query.clone();
         let executor = cx.background_executor().clone();
-        let task = cx.spawn(async move |view, cx| {
-            let mut matches = Vec::new();
-            let mut start = 0;
-            loop {
-                executor.timer(std::time::Duration::from_millis(1)).await;
-                let Ok((end, done)) = view.read_with(cx, |this, _| {
-                    let count = this.model.row_count();
-                    let end = (start + 512).min(count);
-                    for rank in start..end {
-                        if let Some(row) = this.model.row(rank)
-                            && (this.show_advanced
-                                || !this.source.property_options(row.id).advanced)
-                            && (needle.is_empty()
-                                || match_range(this.source.label(row.id), &needle).is_some())
-                        {
-                            matches.push(rank);
+        let task = if query.is_empty() {
+            cx.spawn(async move |view, cx| {
+                let mut matches = Vec::new();
+                let mut start = 0;
+                loop {
+                    executor.timer(std::time::Duration::from_millis(1)).await;
+                    let Ok((end, done)) = view.read_with(cx, |this, _| {
+                        let count = this.model.row_count();
+                        let end = (start + SEARCH_BATCH).min(count);
+                        for rank in start..end {
+                            if let Some(row) = this.model.row(rank)
+                                && !this.source.property_options(row.id).advanced
+                            {
+                                matches.push(rank);
+                            }
                         }
+                        (end, end == count)
+                    }) else {
+                        break;
+                    };
+                    if done {
+                        let _ = view.update(cx, |this, cx| this.finish_filter(matches, cx));
+                        break;
                     }
-                    (end, end == count)
-                }) else {
-                    break;
-                };
-                if done {
-                    let _ = view.update(cx, |this, cx| {
-                        if let Some(filter) = &mut this.filter {
-                            filter.ranks = matches;
-                            filter.pending = false;
-                            this.rebuild_geometry();
-                            cx.notify();
-                        }
-                    });
-                    break;
+                    start = end;
                 }
-                start = end;
-            }
-        });
+            })
+        } else {
+            let mut scan = SearchScan::new(query.clone(), reveal);
+            cx.spawn(async move |view, cx| {
+                loop {
+                    executor.timer(std::time::Duration::from_millis(1)).await;
+                    let Ok(done) = view.read_with(cx, |this, _| this.search_step(&mut scan)) else {
+                        break;
+                    };
+                    if done {
+                        let _ = view.update(cx, |this, cx| {
+                            let source = this.source.clone();
+                            let ranks = scan.finish(source.as_ref(), &mut this.model);
+                            this.finish_filter(ranks, cx);
+                        });
+                        break;
+                    }
+                }
+            })
+        };
         self.filter = Some(Filter {
             query,
             ranks: Vec::new(),
@@ -508,33 +501,49 @@ impl<const P: bool> TreeView<P> {
         cx.notify();
     }
 
-    /// Type `query` into the search box and finish the filter scan synchronously.
+    fn search_step(&self, scan: &mut SearchScan) -> bool {
+        let show_advanced = self.show_advanced;
+        let source = self.source.as_ref();
+        scan.step(source, &self.model, SEARCH_BATCH, |id| {
+            show_advanced || !source.property_options(id).advanced
+        })
+    }
+
+    fn finish_filter(&mut self, ranks: Vec<usize>, cx: &mut Context<Self>) {
+        if let Some(filter) = &mut self.filter {
+            filter.ranks = ranks;
+            filter.pending = false;
+            filter.task = None;
+            self.rebuild_geometry();
+            self.clamp_scroll();
+            cx.notify();
+        }
+    }
+
+    /// Type `query` into the search box and finish the search synchronously.
     #[cfg(test)]
     fn search_now(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let needle = query.trim().to_lowercase();
+        // Install the filter first so the input's change event sees an unchanged query.
+        self.filter = Some(Filter {
+            query: needle.clone(),
+            ranks: Vec::new(),
+            task: None,
+            pending: true,
+        });
         if let Some((input, _)) = &self.search {
             input.update(cx, |input, cx| input.set_value(query, window, cx));
         }
-        let needle = query.trim().to_lowercase();
-        let ranks = (0..self.model.row_count())
-            .filter(|&rank| {
-                self.model
-                    .row(rank)
-                    .is_some_and(|row| match_range(self.source.label(row.id), &needle).is_some())
-            })
-            .collect();
-        self.filter = Some(Filter {
-            query: needle,
-            ranks,
-            task: None,
-            pending: false,
-        });
-        self.rebuild_geometry();
-        cx.notify();
+        let mut scan = SearchScan::new(needle, true);
+        while !self.search_step(&mut scan) {}
+        let source = self.source.clone();
+        let ranks = scan.finish(source.as_ref(), &mut self.model);
+        self.finish_filter(ranks, cx);
     }
 
     fn restart_filter(&mut self, cx: &mut Context<Self>) {
         if let Some(filter) = &self.filter {
-            self.filter_rows(filter.query.clone(), cx);
+            self.filter_rows(filter.query.clone(), false, cx);
         }
     }
 
@@ -1873,7 +1882,7 @@ impl<const P: bool> Render for TreeView<P> {
                                         .filter
                                         .as_ref()
                                         .map_or_else(String::new, |filter| filter.query.clone());
-                                    this.filter_rows(query, cx);
+                                    this.filter_rows(query, true, cx);
                                 }
                             })),
                     )
@@ -1975,15 +1984,6 @@ mod tests {
                     .cached(StyleRefinement::default().size_full()),
             )
         }
-    }
-
-    #[test]
-    fn match_range_is_case_insensitive_and_on_char_boundaries() {
-        assert_eq!(match_range("Font Size", "size"), Some(5..9));
-        assert_eq!(match_range("Opacity", "o"), Some(0..1));
-        assert_eq!(match_range("Ünïcode ÄB", "äb"), Some(10..13));
-        assert_eq!(match_range("Name", "names"), None);
-        assert_eq!(match_range("Name", ""), None);
     }
 
     #[gpui_kit::test]
@@ -2308,8 +2308,8 @@ mod tests {
         });
         view.update(cx, |view, cx| {
             view.set_expanded(0, true, cx);
-            view.filter_rows("property".to_owned(), cx);
-            view.filter_rows("settings".to_owned(), cx);
+            view.filter_rows("property".to_owned(), true, cx);
+            view.filter_rows("settings".to_owned(), true, cx);
         });
         cx.run_until_parked();
         for _ in 0..3 {
@@ -2319,8 +2319,55 @@ mod tests {
         }
         assert_eq!(view.read_with(cx, |view, _| view.row_count()), 1);
         assert_eq!(view.read_with(cx, |view, _| view.model_rank(0)), Some(0));
-        view.update(cx, |view, cx| view.filter_rows(String::new(), cx));
+        view.update(cx, |view, cx| view.filter_rows(String::new(), true, cx));
         assert_eq!(view.read_with(cx, |view, _| view.row_count()), 801);
+    }
+
+    #[gpui_kit::test]
+    fn search_reveals_collapsed_matches_and_cancels_superseded_scans(cx: &mut TestAppContext) {
+        let view = cx.new(|cx| {
+            PropertyGrid::new(
+                Rc::new(Data(
+                    (1..=800).collect(),
+                    Value::Number(10.),
+                    Value::Number(5.),
+                )),
+                cx,
+            )
+        });
+        let settle = |cx: &mut TestAppContext| {
+            for _ in 0..4 {
+                cx.background_executor
+                    .advance_clock(std::time::Duration::from_millis(2));
+                cx.run_until_parked();
+            }
+        };
+        // A superseded scan never reveals: only the root matches "settings".
+        view.update(cx, |view, cx| {
+            view.filter_rows("property".to_owned(), true, cx);
+            view.filter_rows("settings".to_owned(), true, cx);
+        });
+        settle(cx);
+        assert!(!view.read_with(cx, |view, _| view.model.expanded(0)));
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 1);
+
+        // Children of the collapsed root match: the root opens and stays as their path.
+        view.update(cx, |view, cx| {
+            view.filter_rows("property".to_owned(), true, cx)
+        });
+        assert!(view.read_with(cx, |view, _| {
+            view.filter.as_ref().is_some_and(|f| f.pending)
+        }));
+        settle(cx);
+        assert!(view.read_with(cx, |view, _| view.model.expanded(0)));
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 801);
+        assert_eq!(view.read_with(cx, |view, _| view.model_rank(0)), Some(0));
+
+        // Collapsing during a search is respected by the rescan; the root stays as the path.
+        view.update(cx, |view, cx| view.set_expanded(0, false, cx));
+        settle(cx);
+        assert!(!view.read_with(cx, |view, _| view.model.expanded(0)));
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 1);
     }
 
     struct Editors {

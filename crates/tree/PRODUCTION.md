@@ -94,13 +94,13 @@ measurement.
 | --- | --- |
 | Variable row heights | One ID/height pair per configured override and one prefix entry per visible override. An active multiline editor can add one temporary entry. Window lookup searches the sparse prefix entries, then visits only the viewport. |
 | Sticky header and indentation guides | One sticky ancestor and up to 45 guides per viewport row. No label or layout cache. |
-| Search projection | At most one visible rank per matching row. One cancellable task scans expanded rows in batches of 512 and moves its result into the view. A new query or hierarchy mutation replaces the projection. |
+| Search projection | At most one visible rank per matching row or ancestor on a match path. One cancellable task walks every loaded node depth-first, 512 nodes per step, holding one frame per tree level, the matching IDs and the collapsed branches on match paths. A new query opens those branches (deepest first, so each revealed subtree is spliced once) when the walk completes; a rescan after a hierarchy mutation keeps the user's collapse and lists the collapsed branch as the path. A new query or mutation drops the running task. Labels are matched case-insensitively without allocation. |
 | Editors | One active input editor with at most four component fields, one colour picker, and one slider. Multiline editors grow to at most eight lines. |
 | Split | One ratio and measured width per view. Each keyed instance uses one application-managed layout-store entry. |
 
 The sparse geometry tests cover identical viewport output at 10k and 10M
 rows and zero allocations for warm viewport traversal at both scales.
-Auto-fit inspects the visible names. Expand All stages loaded branches
+Auto-fit inspects the visible names. Revealing a match inside an extremely wide collapsed branch splices that branch synchronously, like a manual expand. Expand All stages loaded branches
 and leaves unloaded branches closed. Inserting or dropping one
 extremely wide branch still uses the underlying synchronous model splice.
 

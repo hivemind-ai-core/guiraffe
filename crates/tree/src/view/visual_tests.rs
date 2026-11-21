@@ -237,7 +237,10 @@ fn search_highlights_matches() {
         (640., 340.),
         |view, window, cx| {
             let mut view = view.inspector_controls("visual-search", window, cx);
-            view.search_now("o", window, cx);
+            // "Origin" sits in the collapsed "Layout" group: the search reveals it, and the
+            // unhighlighted group rows show the path to each match.
+            view.set_expanded(6, false, cx);
+            view.search_now("or", window, cx);
             view
         },
     );
