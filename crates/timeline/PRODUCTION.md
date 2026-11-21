@@ -192,3 +192,8 @@ A trial bounded tessellated-path cache increased the sparse replay from
 175.8M to 176.9M instructions and did not reduce forced-repaint allocations,
 so it was discarded. Quiet latency for every interaction and memory over a 30-minute run
 still need verification.
+
+Five separate 500-iteration, 100k-task interaction probes measured p99s of
+6.4 ms for pan, 18.9 ms for vertical scroll, 13.6 ms for zoom, 11.6 ms for
+hover and 31.0 ms for selection. These shared-host replays used the same
+interaction probes as the earlier run, with independently varying load.
