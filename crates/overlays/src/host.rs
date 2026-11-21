@@ -721,6 +721,7 @@ pub fn init(cx: &mut App) {
     )]);
     guiraffe_motion::init(cx);
     crate::spotlight::init(cx);
+    crate::data_ui::register(cx);
     cx.set_global(Initialized);
 }
 /// Build this Root inside `WindowManager::open` to keep its typed window handle.

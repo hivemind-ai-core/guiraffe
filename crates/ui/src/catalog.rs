@@ -12,12 +12,15 @@ use crate::widget_spec;
 mod inputs;
 #[path = "../../layout/src/widget_specs.rs"]
 mod layout;
+#[path = "../../overlays/src/widget_specs.rs"]
+mod overlays;
 
 pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
     WIDGETS
         .iter()
         .chain(inputs::WIDGETS)
         .chain(layout::WIDGETS)
+        .chain(overlays::WIDGETS)
         .copied()
 }
 

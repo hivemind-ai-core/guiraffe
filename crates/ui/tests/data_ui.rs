@@ -431,3 +431,118 @@ fn extra_component_properties_validate_and_render(cx: &mut TestAppContext) {
     assert!(compile(&doc).diagnostics().is_empty());
     let _ = mount(cx, &doc);
 }
+
+#[gpui_kit::test]
+fn chip_click_updates_a_bound_selection_and_delivers_an_event(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    #[derive(Default)]
+    struct ChipLogic(
+        Option<EventId>,
+        std::rc::Rc<std::cell::RefCell<Option<Value>>>,
+    );
+    impl Logic for ChipLogic {
+        fn bind(&mut self, names: &Names, _: &mut PatchBuf) {
+            self.0 = names.event("chips-changed");
+        }
+        fn on_event(&mut self, event: EventId, payload: &Value, _: &mut PatchBuf) {
+            if self.0 == Some(event) {
+                self.1.replace(Some(payload.clone()));
+            }
+        }
+    }
+
+    cx.update(guiraffe_inputs::init);
+    let doc = Document::new(
+        Node::new("chip-group")
+            .prop("options", serde_json::json!(["Rust", "Zig"]))
+            .prop("value", serde_json::json!([0]))
+            .prop("multiple", true)
+            .prop("color", "teal")
+            .prop("disabled", false)
+            .prop("focusable", true)
+            .bind("value", "selection")
+            .on("change", "chips-changed"),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    let payload = std::rc::Rc::default();
+    let mut host = None;
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let ui = DataUi::new(
+            &doc,
+            registry,
+            ChipLogic(None, std::rc::Rc::clone(&payload)),
+            cx,
+        )
+        .expect("compile chip group");
+        host = Some(ui.clone());
+        Shell { ui }
+    });
+    window.run_until_parked();
+    window.update(|window, cx| window.click(("chip", 1usize), cx));
+    window.run_until_parked();
+    let host = host.expect("host mounted");
+    let expected = Value::List(vec![Value::Num(0.0), Value::Num(1.0)].into());
+    window.update(|_, cx| {
+        assert_eq!(
+            host.read(cx).slot_value("selection"),
+            Some(expected.clone())
+        )
+    });
+    assert_eq!(*payload.borrow(), Some(expected));
+}
+
+#[gpui_kit::test]
+fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
+    cx.update(guiraffe_inputs::init);
+    cx.update(guiraffe_layout::init);
+    cx.update(guiraffe_overlays::init);
+    cx.update(|cx| {
+        let registry = Registry::for_app(cx);
+        assert_eq!(registry.kinds().count(), catalog::all_widgets().count());
+        for spec in catalog::all_widgets() {
+            let registered = registry.get(spec.id).expect(spec.id);
+            let props: Vec<_> = spec.props.iter().map(|p| p.name).collect();
+            let events: Vec<_> = spec.events.iter().map(|e| e.id).collect();
+            assert_eq!(registered.schema().props, props, "{}", spec.id);
+            assert_eq!(registered.schema().events, events, "{}", spec.id);
+        }
+    });
+}
+
+#[gpui_kit::test]
+fn overlay_document_validates_compiles_and_renders(cx: &mut TestAppContext) {
+    cx.update(guiraffe_overlays::init);
+    let doc = Document::new(
+        Node::new("affix")
+            .prop("position", "top-left")
+            .prop("offset", "sm")
+            .child(Node::new("text").prop("text", "Overlay content"))
+            .child(
+                Node::new("loading-overlay")
+                    .prop("visible", false)
+                    .prop("size", "lg")
+                    .prop("color", "orange")
+                    .prop("variant", "outline"),
+            ),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("overlay document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_overlay_builders() {
+    use guiraffe_core::{ColorName, Size, Variant};
+    use guiraffe_overlays::{Affix, LoadingOverlay, toast::ToastPosition};
+    let overlay = ui! {
+        Affix { position: ToastPosition::TopRight; offset: Size::Sm
+            LoadingOverlay { visible: false; size: Size::Lg; color: ColorName::Orange; variant: Variant::Outline }
+        }
+    };
+    let _ = overlay.into_element();
+}
