@@ -198,7 +198,7 @@ impl Render for CopyButton {
             .label(name);
         let side = px(size.control_height());
         div()
-            .id(SharedString::from(id.clone()))
+            .id(id.clone())
             .a11y_disabled(disabled)
             .test_support()
             .debug_selector(move || id.to_string())

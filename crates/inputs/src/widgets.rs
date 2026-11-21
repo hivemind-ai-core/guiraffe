@@ -64,7 +64,7 @@ impl ChipGroup {
             .into_iter()
             .map(Into::into)
             .collect::<Vec<SharedString>>();
-        let text = labels.iter().map(|label| label.clone()).collect();
+        let text = labels.to_vec();
         let checked_text = labels
             .iter()
             .map(|label| format!("\u{2713} {label}").into())

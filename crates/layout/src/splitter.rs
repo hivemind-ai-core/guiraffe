@@ -159,6 +159,11 @@ pub enum SplitterEvent {
 /// let splitter = guiraffe_layout::Splitter::new(&state).first("sidebar").second("content");
 /// # }
 /// ```
+/// The sizes a splitter starts at, read from the store under a key: the key
+/// they were read under, the number of panes they were read for, and the
+/// sizes themselves.
+type StoredSizes = (String, usize, Vec<Option<Pixels>>);
+
 pub struct SplitterState {
     /// The state the resizable group keeps its sizes in.
     group: Entity<ResizableState>,
@@ -170,7 +175,7 @@ pub struct SplitterState {
     reported: RefCell<Vec<Pixels>>,
     /// The sizes the panes start at, read from the store when the splitter is
     /// built: the store is read once, not for every frame.
-    stored: RefCell<Option<(String, usize, Vec<Option<Pixels>>)>>,
+    stored: RefCell<Option<StoredSizes>>,
 }
 
 impl EventEmitter<SplitterEvent> for SplitterState {}
