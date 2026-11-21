@@ -43,6 +43,7 @@ pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
+    sort_scratch: Vec<(u64, usize)>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<Path<ScaledPixels>>,
@@ -150,18 +151,25 @@ impl Scene {
     }
 
     pub fn finish(&mut self) {
-        self.shadows.sort_by_key(|shadow| shadow.order);
-        self.quads.sort_by_key(|quad| quad.order);
+        let scratch = &mut self.sort_scratch;
+        sort_in_draw_order(&mut self.shadows, scratch, |shadow| shadow.order.into());
+        sort_in_draw_order(&mut self.quads, scratch, |quad| quad.order.into());
         // Path IDs record insertion order, including within a paint layer.
-        self.paths.sort_unstable_by_key(|path| (path.order, path.id.0));
-        self.underlines.sort_by_key(|underline| underline.order);
-        self.monochrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
-        self.subpixel_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
-        self.polychrome_sprites
-            .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
-        self.surfaces.sort_by_key(|surface| surface.order);
+        self.paths
+            .sort_unstable_by_key(|path| (path.order, path.id.0));
+        sort_in_draw_order(&mut self.underlines, scratch, |underline| {
+            underline.order.into()
+        });
+        sort_in_draw_order(&mut self.monochrome_sprites, scratch, |sprite| {
+            sprite_sort_key(sprite.order, sprite.tile.texture_id.index)
+        });
+        sort_in_draw_order(&mut self.subpixel_sprites, scratch, |sprite| {
+            sprite_sort_key(sprite.order, sprite.tile.texture_id.index)
+        });
+        sort_in_draw_order(&mut self.polychrome_sprites, scratch, |sprite| {
+            sprite_sort_key(sprite.order, sprite.tile.texture_id.index)
+        });
+        sort_in_draw_order(&mut self.surfaces, scratch, |surface| surface.order.into());
     }
 
     #[cfg_attr(
@@ -190,6 +198,75 @@ impl Scene {
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
         }
+    }
+}
+
+fn sprite_sort_key(order: DrawOrder, texture: u32) -> u64 {
+    u64::from(order) << 32 | u64::from(texture)
+}
+
+// One high-water scratch vector for all primitive kinds. Oversized scenes
+// use the standard sort so exceptional frames do not pin extra scratch.
+const MAX_RETAINED_SORT_ITEMS: usize = 65_536;
+
+fn sort_in_draw_order<T>(
+    items: &mut [T],
+    scratch: &mut Vec<(u64, usize)>,
+    key: impl Fn(&T) -> u64,
+) {
+    if items.is_sorted_by_key(&key) {
+        return;
+    }
+    if items.len() > MAX_RETAINED_SORT_ITEMS {
+        items.sort_by_key(key);
+        return;
+    }
+
+    scratch.clear();
+    scratch.reserve_exact(items.len());
+    scratch.extend(
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| (key(item), index)),
+    );
+    // The original index preserves stable draw order for equal keys.
+    scratch.sort_unstable();
+
+    // Apply each cycle of the permutation in place. Mark consumed
+    // positions by resetting their source indices to themselves.
+    for start in 0..items.len() {
+        let mut destination = start;
+        let mut source = scratch[destination].1;
+        while source != start {
+            items.swap(destination, source);
+            scratch[destination].1 = destination;
+            destination = source;
+            source = scratch[destination].1;
+        }
+        scratch[destination].1 = destination;
+    }
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::sort_in_draw_order;
+
+    #[test]
+    fn draw_sort_keeps_ties_in_insertion_order_and_reuses_scratch() {
+        let unordered = [(2, 'a'), (1, 'b'), (0, 'c'), (2, 'd'), (1, 'e'), (0, 'f')];
+        let mut scratch = Vec::new();
+        let mut items = unordered;
+        sort_in_draw_order(&mut items, &mut scratch, |item| item.0);
+        assert_eq!(
+            items,
+            [(0, 'c'), (0, 'f'), (1, 'b'), (1, 'e'), (2, 'a'), (2, 'd')]
+        );
+        let allocation = scratch.as_ptr();
+
+        items = unordered;
+        sort_in_draw_order(&mut items, &mut scratch, |item| item.0);
+        assert_eq!(scratch.as_ptr(), allocation);
     }
 }
 

@@ -23,6 +23,21 @@ tab-stop resets, sorts paths in place with insertion order as a tie-breaker,
 and reuses shallow dispatch stacks, recent element IDs and empty font
 features.
 
+## Reuse stable renderer sort scratch
+
+A frame sorts paint buffers into renderer order. Reuse one bounded vector of
+sort keys and input indices, then apply its permutation in place. Input
+indices preserve ties, including overlapping primitives at the same draw
+order. Already ordered batches skip the permutation. Scenes larger than
+65,536 primitives of one kind use the standard stable sort, keeping retained
+scratch at or below 1 MiB per scene on 64-bit targets. gpui-fast already
+retains its own stable sort scratch.
+
+With tab-stop and Taffy scratch reuse applied, the upstream Flow fixture
+dropped from 1,135,960 to 10,040 requested bytes per retained draw. DataGrid,
+Gantt, Markdown and Charts also removed one request per frame. A renderer
+sort regression checks order for duplicate keys and scratch reuse.
+
 # Draft pull request for longbridge/gpui-fast
 
 ## Pace callback-only Wayland ticks from the compositor
