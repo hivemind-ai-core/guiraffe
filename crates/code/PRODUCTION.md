@@ -146,3 +146,14 @@ two theme span arrays in `Highlighted` still scale with document syntax.
 The renderer-backed process RSS budget remains a separate acceptance check.
 To compare the same frame sequence with scene construction alone, run
 `production_soak code --no-renderer`.
+
+| Optimized 20 MB soak, loaded host | Explicit offsets | Uniform stride |
+|---|---:|---:|
+| Process RSS with WGPU renderer | 166,256 KiB | 127,624 KiB |
+| Process RSS with the renderer callback disabled | 85,572 KiB | 47,576 KiB |
+| WGPU process RSS delta | 80,684 KiB | 80,048 KiB |
+| Renderer-backed p99, 60 frames | 1.629 ms | 3.794 ms |
+
+The WGPU comparison includes device and pipeline setup. The fixture reported
+process RSS after the same drawing sequence in each mode. Its remaining
+renderer-backed RSS exceeds 1.25 × 20 MB + 64 MiB (about 89,950 KiB).
