@@ -244,3 +244,22 @@ fn zooming_in_rerasterizes_sharp_once_zooming_settles(cx: &mut TestAppContext) {
         "logical size is zoom-independent (no feedback)"
     );
 }
+
+#[gpui_kit::test]
+fn returning_to_the_published_raster_size_cancels_pending_zoom_work(cx: &mut TestAppContext) {
+    let (_handle, host) = open(cx);
+    settle(cx);
+    cx.update(|cx| {
+        let state = host.read(cx).diagram.clone();
+        state.update(cx, |s, cx| {
+            expect_ready(s);
+            // Expand enough to exceed the density of the initial raster.
+            s.reset_zoom(cx);
+            s.zoom_in(cx);
+            assert!(s.has_pending_zoom_refresh());
+            // An unchanged pixel size can use the published image directly.
+            s.reset_zoom(cx);
+            assert!(!s.has_pending_zoom_refresh());
+        });
+    });
+}

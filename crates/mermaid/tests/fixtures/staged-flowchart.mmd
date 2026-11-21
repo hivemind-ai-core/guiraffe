@@ -1,0 +1,13 @@
+flowchart TD
+  Start[Start] --> Review{Review}
+  Review -->|ready| Build[Build]
+  Review -->|revise| Edit[Edit]
+  Edit -.-> Review
+  Build --> Linux[Linux]
+  Build --> Mac[macOS]
+  Build --> Win[Windows]
+  Linux --> Verify[Verify]
+  Mac --> Verify
+  Win --> Verify
+  Verify --> Publish[Publish]
+  Verify -.-> Edit
