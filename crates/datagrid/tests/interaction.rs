@@ -667,6 +667,36 @@ fn scrolling_is_o_viewport_and_never_renders_the_host(cx: &mut TestAppContext) {
     assert_eq!(grid.stats(), before);
 }
 
+/// A vertical scroll moves the rows but does not change the column header, so
+/// the header is kept (and not laid out) again.
+#[gpui_kit::test]
+fn vertical_scroll_keeps_the_column_header(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(8), cx));
+    let h = f64::from(grid.row_height());
+    let before = grid.stats();
+    vcx.update(|_, cx| grid.set_scroll(0., 500_000. * h, cx));
+    vcx.run_until_parked();
+    let after = grid.stats();
+    assert_eq!(after.grid_renders - before.grid_renders, 1);
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            after.header_renders, before.header_renders,
+            "a vertical scroll rebuilt the column header"
+        );
+    }
+
+    // Resizing a column changes the header, so it is rebuilt.
+    let before = grid.stats();
+    vcx.update(|_, cx| grid.set_column_width(0, 220., cx));
+    vcx.run_until_parked();
+    let after = grid.stats();
+    assert_eq!(
+        after.header_renders - before.header_renders,
+        1,
+        "resizing a column did not rebuild the column header"
+    );
+}
+
 #[gpui_kit::test]
 fn focus_policy_and_stable_layout(cx: &mut TestAppContext) {
     let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(3), cx));
@@ -1193,3 +1223,4 @@ fn dragging_the_horizontal_thumb_scrolls_the_center_band(cx: &mut TestAppContext
     );
     assert!((grid.scroll_offset().0 - sx).abs() < 0.5);
 }
+

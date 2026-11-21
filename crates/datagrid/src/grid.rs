@@ -356,6 +356,7 @@ pub type Validator = Rc<dyn Fn(&EditRequest<'_>) -> Result<(), SharedString>>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GridStats {
     pub grid_renders: u64,
+    pub header_renders: u64,
     pub row_renders: u64,
     pub cells_built: u64,
     pub visible_rows: usize,
@@ -511,6 +512,10 @@ struct Model {
     autoscroll_task: bool,
     stats: GridStats,
     text: String,
+    /// Bumped whenever the column layout changes (columns resized, reordered, pinned).
+    layout_epoch: u64,
+    /// Bumped whenever the sort keys change.
+    sort_epoch: u64,
 }
 
 impl Model {
@@ -708,8 +713,24 @@ pub(crate) struct Core {
     focus: FocusHandle,
     events: Entity<GridEvents>,
     view: RefCell<Option<gpui_kit::EntityId>>,
+    header: RefCell<Option<Entity<GridHeader>>>,
+    header_sig: RefCell<Option<HeaderSig>>,
     rows: RefCell<Vec<Entity<RowView>>>,
     palette: RefCell<Option<(GuiraffeTheme, Palette)>>,
+}
+
+/// What the header shows. It changes only when the columns, the sort, the
+/// horizontal offset, the width or the metrics change - never when the grid
+/// scrolls vertically, so the header view is kept across a scroll.
+#[derive(Clone, Copy, PartialEq)]
+struct HeaderSig {
+    layout_epoch: u64,
+    sort_epoch: u64,
+    scroll_x: f64,
+    width: f32,
+    row_h: f32,
+    pad: f32,
+    font: f32,
 }
 
 impl Drop for Core {
@@ -775,6 +796,8 @@ impl GridHandle {
             autoscroll_task: false,
             stats: GridStats::default(),
             text: String::with_capacity(64),
+            layout_epoch: 0,
+            sort_epoch: 0,
         };
         model.resolve_metrics();
         model.refresh_editable();
@@ -783,11 +806,17 @@ impl GridHandle {
             focus: cx.focus_handle(),
             events: cx.new(|_| GridEvents),
             view: RefCell::new(None),
+            header: RefCell::new(None),
+            header_sig: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
             palette: RefCell::new(None),
         });
         let view = cx.new(|_| GridView { core: core.clone() });
         *core.view.borrow_mut() = Some(view.entity_id());
+        let header = cx.new(|_| GridHeader {
+            core: Rc::downgrade(&core),
+        });
+        *core.header.borrow_mut() = Some(header);
         core.sync(true, cx);
         Self { core, view }
     }
@@ -1208,6 +1237,7 @@ impl Core {
             }
         }
         self.notify_grid(cx);
+        self.notify_header(cx);
         if all {
             for slot in 0..pool {
                 self.notify_slot(slot, cx);
@@ -1216,6 +1246,31 @@ impl Core {
             for row in vw::entering(old, visible) {
                 self.notify_slot(vw::slot_of(row, pool), cx);
             }
+        }
+    }
+
+    /// Notify the header view when what it shows changed. A vertical scroll leaves
+    /// the header untouched, so it is not rebuilt (and not laid out) again.
+    fn notify_header(self: &Rc<Self>, cx: &mut App) {
+        let sig = {
+            let m = self.m.borrow();
+            HeaderSig {
+                layout_epoch: m.layout_epoch,
+                sort_epoch: m.sort_epoch,
+                scroll_x: m.scroll_x,
+                width: m.grid_w(),
+                row_h: m.row_h,
+                pad: m.pad,
+                font: m.font,
+            }
+        };
+        let changed = self.header_sig.borrow().is_none_or(|old| old != sig);
+        if !changed {
+            return;
+        }
+        *self.header_sig.borrow_mut() = Some(sig);
+        if let Some(id) = self.header.borrow().as_ref().map(|h| h.entity_id()) {
+            cx.notify(id);
         }
     }
 
@@ -1238,6 +1293,7 @@ impl Core {
         let (sel_changed, hidden_edit) = {
             let mut m = self.m.borrow_mut();
             m.layout = ColumnLayout::compute(&m.defs, &m.order);
+            m.layout_epoch = m.layout_epoch.wrapping_add(1);
             m.refresh_editable();
             let cols = m.cols();
             let count = m.count;
@@ -1305,6 +1361,7 @@ impl Core {
                 return;
             }
             m.sort = keys.clone();
+            m.sort_epoch = m.sort_epoch.wrapping_add(1);
         }
         self.emit(GridEvent::SortChanged(keys.into()), cx);
         self.refresh_order(cx);
@@ -2624,45 +2681,22 @@ pub(crate) struct GridView {
     core: Rc<Core>,
 }
 
-macro_rules! nav_actions {
-    ($el:expr, $core:expr, $( $action:ident => ($nav:expr, $ext:expr) ),* $(,)?) => {{
-        let el = $el;
-        $(
-            let c = $core.clone();
-            let el = el.on_action(move |_: &$action, _: &mut Window, cx: &mut App| c.navigate($nav, $ext, cx));
-        )*
-        el
-    }};
+/// The column header, kept in its own view: a vertical scroll does not change
+/// it, so it is neither rebuilt nor laid out again while the rows move.
+pub(crate) struct GridHeader {
+    core: Weak<Core>,
 }
 
-impl Render for GridView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let core = self.core.clone();
-        let ctx = StyleContext::current();
-        let resync = {
-            let mut m = core.m.borrow_mut();
-            m.stats.grid_renders += 1;
-            if m.context != ctx {
-                m.context = ctx;
-                m.resolve_metrics()
-            } else {
-                false
-            }
+impl Render for GridHeader {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(core) = self.core.upgrade() else {
+            return div().into_any_element();
         };
-        if resync {
-            let c = core.clone();
-            cx.defer(move |cx| c.sync(true, cx));
-        }
         let pal = core.palette(cx);
-        let tab = core.tab_stop();
-        let focused = core.focus.is_focused(window);
-        let m = core.m.borrow();
+        let mut m = core.m.borrow_mut();
         let row_h = m.row_h;
         let w = m.grid_w();
-        let rows = core.rows.borrow();
-        let row_f = f64::from(row_h);
-
-        // Header cells: visible center columns plus pinned bands.
+        m.stats.header_renders += 1;
         let mut header = div()
             .absolute()
             .top_0()
@@ -2781,6 +2815,50 @@ impl Render for GridView {
         for p in &m.layout.right {
             header = header.child(header_cell(p, rx + p.x as f32));
         }
+        header.into_any_element()
+    }
+}
+
+macro_rules! nav_actions {
+    ($el:expr, $core:expr, $( $action:ident => ($nav:expr, $ext:expr) ),* $(,)?) => {{
+        let el = $el;
+        $(
+            let c = $core.clone();
+            let el = el.on_action(move |_: &$action, _: &mut Window, cx: &mut App| c.navigate($nav, $ext, cx));
+        )*
+        el
+    }};
+}
+
+impl Render for GridView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let core = self.core.clone();
+        let ctx = StyleContext::current();
+        let resync = {
+            let mut m = core.m.borrow_mut();
+            m.stats.grid_renders += 1;
+            if m.context != ctx {
+                m.context = ctx;
+                m.resolve_metrics()
+            } else {
+                false
+            }
+        };
+        if resync {
+            let c = core.clone();
+            cx.defer(move |cx| c.sync(true, cx));
+        }
+        let pal = core.palette(cx);
+        let tab = core.tab_stop();
+        let focused = core.focus.is_focused(window);
+        let m = core.m.borrow();
+        let row_h = m.row_h;
+        let w = m.grid_w();
+        let rows = core.rows.borrow();
+        let row_f = f64::from(row_h);
+
+        // Header cells: visible center columns plus pinned bands.
+        let header = core.header.borrow().clone();
 
         // Row wrappers: positioned here, content in the retained row views.
         let mut body = div()
@@ -2808,6 +2886,8 @@ impl Render for GridView {
         // Scrollbar (overlay; never takes layout space).
         let content_h = m.count as f64 * row_f;
         let body_h = m.body_h();
+        let lw = m.layout.left_width;
+        let center_vp = m.layout.center_viewport(w);
         let vbar = (content_h > body_h).then(|| {
             let (top, h) = scrollbar_thumb(m.scroll_y, content_h, body_h);
             div()
@@ -2978,7 +3058,7 @@ impl Render for GridView {
                 .size_full(),
             )
             .child(body)
-            .child(header)
+            .children(header)
             .children(vbar)
             .children(hbar)
             .when_some(drop_x, |el, x| {
