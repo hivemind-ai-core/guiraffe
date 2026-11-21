@@ -1,9 +1,10 @@
 //! Cold 500-node Mermaid preview and refinement timings on the real GPUI scheduler.
 //!
 //! Run with `cargo run --release -p guiraffe-mermaid --example first_frame`.
+//! Pass `-- --window-only` for a process-memory control without diagram data.
 
 use std::fmt::Write as _;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui_kit::{
     App, AppContext as _, Bounds, Context, Entity, IntoElement, ParentElement as _, Point, Render,
@@ -14,6 +15,7 @@ use guiraffe_mermaid::{MermaidView, MermaidViewState, view::Status};
 struct Probe {
     diagram: Entity<MermaidViewState>,
     started: Instant,
+    window_only: bool,
     preview_seen: bool,
     finished: bool,
     _observe: gpui_kit::Subscription,
@@ -22,12 +24,31 @@ struct Probe {
 impl Render for Probe {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let diagram = self.diagram.read(cx);
-        if !self.preview_seen && diagram.status() == &Status::Drawing && diagram.image().is_some() {
+        if !self.preview_seen
+            && diagram.status() == &Status::Drawing
+            && let Some(image) = diagram.image()
+        {
             self.preview_seen = true;
-            println!("first useful frame: {:?}", self.started.elapsed());
+            let size = image.image.size(0);
+            println!(
+                "first useful frame: {:?} ({} x {} raster)",
+                self.started.elapsed(),
+                size.width.0,
+                size.height.0,
+            );
         }
         if !self.finished {
             match diagram.status() {
+                Status::Empty if self.window_only => {
+                    self.finished = true;
+                    println!("window-only frame: {:?}", self.started.elapsed());
+                    let timer = cx.background_executor().timer(Duration::from_millis(50));
+                    cx.spawn(async move |_, cx| {
+                        timer.await;
+                        let _ = cx.update(|cx| cx.quit());
+                    })
+                    .detach();
+                }
                 Status::Ready => {
                     self.finished = true;
                     assert!(
@@ -48,6 +69,7 @@ impl Render for Probe {
 }
 
 fn main() {
+    let window_only = std::env::args().any(|arg| arg == "--window-only");
     let mut source = String::from("flowchart TD\n");
     for i in 0..500 {
         writeln!(source, "  n{i}[Node {i}]").expect("write node");
@@ -71,11 +93,14 @@ fn main() {
             move |_, cx| {
                 let diagram = MermaidView::create_state("mermaid-cold-mount", cx);
                 let started = Instant::now();
-                diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+                if !window_only {
+                    diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+                }
                 cx.new(|cx| Probe {
                     _observe: cx.observe(&diagram, |_, _, cx| cx.notify()),
                     diagram,
                     started,
+                    window_only,
                     preview_seen: false,
                     finished: false,
                 })
