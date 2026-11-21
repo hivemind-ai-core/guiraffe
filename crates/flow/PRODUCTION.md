@@ -39,3 +39,21 @@ The zoom regression measures arrow proportions and handle contact at 0.25×,
 0.5×, 1×, 2× and 4×. The showcase includes inspected 0.5× and 2× Flow
 snapshots on both GPUI backends. Arrowheads, handles, open-marker strokes,
 animated markers and connection previews share the camera scale.
+
+
+## Retained paint geometry
+
+The edge mesh cache holds at most 8,192 route entries and 16 MiB of
+allocated vertex capacity, plus the path and map-entry metadata. Each
+entry shares its immutable route with the scene. A route replacement
+invalidates that entry. Cached triangles use world coordinates and are
+shared across pan and zoom. If admission hits either limit, the next camera
+or canvas-size change drops cached entries outside the new visible set.
+Oversize meshes and meshes that cannot be admitted draw transiently.
+
+Grid and minimap geometry each retain one representation. The grid depends
+on canvas size, spacing and background style. The dense minimap is
+bounded to 8,100 vertices per layer. The edge submission batches reserve
+capacity based on the previous visible frame and GPUI owns their submitted
+vertices. The cache regression simulates 216,000 camera frames and checks
+both retained mesh limits on every frame.
