@@ -60,6 +60,7 @@ pub struct TracksView {
     hover: Option<Grab>,
     /// Selected clip `(track, clip id)`; keyboard edits act on it.
     selected: Option<(usize, u32)>,
+    selected_index: Option<usize>,
     focus: FocusHandle,
     /// `None`: a tab stop only inside a focus scope.
     focusable: Option<bool>,
@@ -80,14 +81,20 @@ pub fn clip_element_id(track: usize, clip: u32) -> ElementId {
 
 /// Decide what a press at time `t` (pixel `x`) on `track` grabs. Pure; tested.
 pub fn hit(track: &Track, axis: &Axis, x: f64, edges: ResizeEdges) -> Option<(u32, Grab)> {
+    let (index, grab) = hit_index(track, axis, x, edges)?;
+    Some((track.clips()[index].id, grab))
+}
+
+fn hit_index(track: &Track, axis: &Axis, x: f64, edges: ResizeEdges) -> Option<(usize, Grab)> {
     let t = axis.t(x);
     // Clips are sorted and disjoint; only those near x can match.
-    crate::visible(track.clips(), axis, |c| c.start, |c| c.end())
-        .iter()
-        .find_map(|c| {
-            crate::edit::grab_at(axis.x(c.start), axis.x(c.end()), x, t, c.start, edges)
-                .map(|g| (c.id, g))
-        })
+    let clips = track.clips();
+    let first = clips.partition_point(|c| c.end() < axis.t((x - EDGE_GRAB).max(0.)));
+    let last = clips.partition_point(|c| c.start <= axis.t((x + EDGE_GRAB).min(axis.width)));
+    clips[first..last].iter().find_map(|c| {
+        crate::edit::grab_at(axis.x(c.start), axis.x(c.end()), x, t, c.start, edges)
+            .map(|g| (first + i, g))
+    })
 }
 
 impl TracksView {
@@ -114,6 +121,7 @@ impl TracksView {
             editable: true,
             hover: None,
             selected: None,
+            selected_index: None,
             focus: cx.focus_handle(),
             focusable: None,
         })
@@ -125,11 +133,16 @@ impl TracksView {
     }
 
     pub fn select(&mut self, sel: Option<(usize, u32)>, cx: &mut Context<Self>) {
-        let sel = sel.filter(|(t, c)| {
+        let index = sel.and_then(|(track, clip)| {
             self.tracks
-                .get(*t)
-                .is_some_and(|(_, tr)| tr.clips().iter().any(|x| x.id == *c))
+                .get(track)?
+                .1
+                .clips()
+                .iter()
+                .position(|c| c.id == clip)
         });
+        let sel = sel.filter(|_| index.is_some());
+        self.selected_index = index;
         if self.selected != sel {
             self.selected = sel;
             cx.notify();
@@ -246,12 +259,13 @@ impl TracksView {
     }
 
     fn press_item(&mut self, track: usize, x: f64) -> bool {
-        let hit = self
-            .tracks
-            .get(track)
-            .and_then(|(_, track)| hit(track, &self.surface.axis, x, ResizeEdges::None));
-        if let Some((clip, _)) = hit {
+        let hit = self.tracks.get(track).and_then(|(_, lane)| {
+            hit_index(lane, &self.surface.axis, x, ResizeEdges::None)
+                .map(|(index, _)| (index, lane.clips()[index].id))
+        });
+        if let Some((index, clip)) = hit {
             self.selected = Some((track, clip));
+            self.selected_index = Some(index);
         }
         self.drag = self
             .grab(track, x)
@@ -365,6 +379,27 @@ impl TracksView {
     }
 }
 
+// At overview zoom, each column represents the first clip intersecting it.
+fn overview_columns(track: &Track, axis: Axis) -> impl Iterator<Item = (usize, u32)> + '_ {
+    let width = axis.width.ceil().clamp(0., 16_384.) as usize;
+    let step = axis.width / width.max(1) as f64;
+    let mut remaining = track.clips();
+    (0..width).filter_map(move |column| {
+        let start = axis.t(column as f64 * step);
+        let end = axis.t((column + 1) as f64 * step);
+        let skip = remaining.partition_point(|clip| clip.end() <= start);
+        remaining = &remaining[skip..];
+        remaining
+            .first()
+            .filter(|clip| clip.start < end)
+            .map(|clip| (column, clip.id))
+    })
+}
+
+fn overview(track: &Track, axis: &Axis) -> bool {
+    crate::visible(track.clips(), axis, |c| c.start, |c| c.end()).len() > (axis.width / 4.) as usize
+}
+
 impl Render for TracksView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = GuiraffeTheme::global(cx);
@@ -374,6 +409,10 @@ impl Render for TracksView {
         let ring_on = ring_visible(&self.focus, window);
         let tab = guiraffe_core::tab_stop(self.focusable);
         let selected = self.selected;
+        let selected_index = self.selected_index;
+        let accessibility = window.is_a11y_active();
+        let view = cx.weak_entity();
+        let row_count = ((f32::from(self.body.get().size.height) / TRACK_H).ceil() as usize).max(1);
         if let Some(w) = crate::measure::width(&self.body) {
             self.surface.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
@@ -452,13 +491,15 @@ impl Render for TracksView {
                 div()
                     .flex()
                     .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
                     .child(
                         div()
                             .w(px(HEADER_W))
                             .flex_none()
                             .border_r_1()
                             .border_color(line)
-                            .children(self.tracks.iter().enumerate().map(|(i, (name, track))| {
+                            .children(self.tracks.iter().take(row_count).enumerate().map(|(i, (name, track))| {
                                 let clip = track.clips().first().map(|c| c.id);
                                 let locked = clip.is_some_and(|id| self.is_locked(i, id));
                                 div()
@@ -498,6 +539,7 @@ impl Render for TracksView {
                     .child(
                         div()
                             .id("tracks-body")
+                            .test_support()
                             .cursor(crate::edit::cursor_for(
                                 self.drag.map(|d| d.grab).or(self.hover),
                             ))
@@ -543,8 +585,74 @@ impl Render for TracksView {
                                 .size_full(),
                             )
                             .child(self.surface.element(t.clone(), false, 32., 0.))
-                            .children(self.tracks.iter().enumerate().flat_map(|(i, (name, tr))| {
-                                crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
+                            .child(canvas(
+                                |_, _, _| (),
+                                {
+                                    let theme = t.clone();
+                                    move |b, _, window, cx| {
+                                        let Some(view) = view.upgrade() else { return };
+                                        let view = view.read(cx);
+                                        let height = (f32::from(b.size.height) / TRACK_H).ceil() as usize;
+                                        let count = axis.width.ceil().clamp(1., 16_384.);
+                                        let step = (axis.width / count) as f32;
+                                        let normal = theme.variant(None, Variant::Light).background.to_hsla();
+                                        let disabled = theme.state(StateKind::Disabled, Variant::Light, None).background.to_hsla();
+                                        let dim = theme.state(StateKind::Dimmed, Variant::Light, None).background.to_hsla();
+                                        for (row, (_, track)) in view.tracks.iter().take(height).enumerate() {
+                                            if accessibility || !overview(track, &axis) {
+                                                continue;
+                                            }
+                                            let paint = |start: usize, end: usize, ink, window: &mut Window| {
+                                                window.paint_quad(gpui_kit::fill(
+                                                    Bounds::new(
+                                                        b.origin + gpui_kit::point(px(start as f32 * step), px(row as f32 * TRACK_H + 4.)),
+                                                        gpui_kit::size(px((end - start) as f32 * step), px(TRACK_H - 8.)),
+                                                    ),
+                                                    ink,
+                                                ));
+                                            };
+                                            let mut run = None;
+                                            for (column, clip) in overview_columns(track, axis) {
+                                                let style = if view.locked.contains(&(row, clip)) {
+                                                    item_style
+                                                } else if !editable {
+                                                    global_style
+                                                } else {
+                                                    crate::LockStyle::None
+                                                };
+                                                let ink = match style {
+                                                    crate::LockStyle::None => normal,
+                                                    crate::LockStyle::Badge => disabled,
+                                                    crate::LockStyle::Dimmed | crate::LockStyle::Hatched => dim,
+                                                };
+                                                if let Some((start, end, color)) = run {
+                                                    if end == column && color == ink {
+                                                        run = Some((start, column + 1, color));
+                                                        continue;
+                                                    }
+                                                    paint(start, end, color, window);
+                                                }
+                                                run = Some((column, column + 1, ink));
+                                            }
+                                            if let Some((start, end, color)) = run {
+                                                paint(start, end, color, window);
+                                            }
+                                        }
+                                    }
+                                },
+                            ).absolute().size_full())
+                            .children(self.tracks.iter().take(row_count).enumerate().flat_map(|(i, (name, tr))| {
+                                let clips = if !accessibility && overview(tr, &axis) {
+                                    selected
+                                        .filter(|(row, _)| *row == i)
+                                        .and(selected_index)
+                                        .and_then(|index| tr.clips().get(index))
+                                        .filter(|clip| clip.end() >= axis.start && clip.start <= axis.t(axis.width))
+                                        .map_or(&[][..], std::slice::from_ref)
+                                } else {
+                                    crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
+                                };
+                                clips
                                     .iter()
                                     .map(|c| {
                                         let (x0, x1) =
@@ -620,6 +728,18 @@ mod tests {
 
     fn axis() -> Axis {
         Axis::new(0.0, 10.0, 1000.0) // 100 px per second
+    }
+
+    #[test]
+    fn overview_emits_one_mark_per_occupied_column_at_any_density() {
+        for count in [10_000, 100_000] {
+            let axis = Axis::new(0., count as f64 * 0.001, 100.);
+            let mut track = Track::default();
+            for index in 0..count {
+                track.insert(index as f64 * 0.001, 0.001);
+            }
+            assert_eq!(overview_columns(&track, axis).count(), 100);
+        }
     }
 
     #[test]
