@@ -79,6 +79,7 @@ fn reduce_crossing_sweep(
     outer_right: f32,
     outer_top: f32,
     outer_bottom: f32,
+    cancelled: &dyn Fn() -> bool,
 ) -> bool {
     let mut changed = false;
     let mut existing_segments = IndexedSegments::default();
@@ -88,6 +89,9 @@ fn reduce_crossing_sweep(
     const MAX_LEN_RATIO_MULTI_GAIN: f32 = 2.6;
 
     for &idx in order {
+        if cancelled() {
+            return false;
+        }
         if routed_points[idx].len() < 2 {
             existing_segments.push_path(&routed_points[idx]);
             continue;
@@ -206,6 +210,7 @@ pub(in crate::layout) fn reduce_orthogonal_path_crossings(
     nodes: &BTreeMap<String, NodeLayout>,
     routed_points: &mut [Vec<(f32, f32)>],
     config: &LayoutConfig,
+    cancelled: &dyn Fn() -> bool,
 ) {
     if graph.edges.len() < 2 {
         return;
@@ -268,6 +273,7 @@ pub(in crate::layout) fn reduce_orthogonal_path_crossings(
             outer_right,
             outer_top,
             outer_bottom,
+            cancelled,
         );
         changed |= reduce_crossing_sweep(
             &reverse,
@@ -280,6 +286,7 @@ pub(in crate::layout) fn reduce_orthogonal_path_crossings(
             outer_right,
             outer_top,
             outer_bottom,
+            cancelled,
         );
         if !changed {
             break;
@@ -604,9 +611,13 @@ pub(in crate::layout) fn detour_flowchart_paths_around_non_endpoint_nodes(
     nodes: &BTreeMap<String, NodeLayout>,
     routed_points: &mut [Vec<(f32, f32)>],
     config: &LayoutConfig,
+    cancelled: &dyn Fn() -> bool,
 ) {
     let clearance = (config.node_spacing * 0.12).max(8.0);
     for (idx, points) in routed_points.iter_mut().enumerate() {
+        if cancelled() {
+            return;
+        }
         let Some(edge) = graph.edges.get(idx) else {
             continue;
         };
@@ -762,12 +773,16 @@ pub(in crate::layout) fn detour_flowchart_paths_around_foreign_subgraphs(
     subgraphs: &[SubgraphLayout],
     routed_points: &mut [Vec<(f32, f32)>],
     config: &LayoutConfig,
+    cancelled: &dyn Fn() -> bool,
 ) {
     if subgraphs.is_empty() {
         return;
     }
     let clearance = (config.node_spacing * 0.12).max(8.0);
     for (idx, points) in routed_points.iter_mut().enumerate() {
+        if cancelled() {
+            return;
+        }
         let Some(edge) = graph.edges.get(idx) else {
             continue;
         };
@@ -1086,8 +1101,12 @@ pub(in crate::layout) fn repair_flowchart_endpoint_reentries(
     nodes: &BTreeMap<String, NodeLayout>,
     routed_points: &mut [Vec<(f32, f32)>],
     config: &LayoutConfig,
+    cancelled: &dyn Fn() -> bool,
 ) {
     for (idx, points) in routed_points.iter_mut().enumerate() {
+        if cancelled() {
+            return;
+        }
         let Some(edge) = graph.edges.get(idx) else {
             continue;
         };
@@ -1135,6 +1154,7 @@ pub(in crate::layout) fn deoverlap_flowchart_paths(
     nodes: &BTreeMap<String, NodeLayout>,
     routed_points: &mut [Vec<(f32, f32)>],
     config: &LayoutConfig,
+    cancelled: &dyn Fn() -> bool,
 ) {
     if graph.edges.len() < 2 {
         return;
@@ -1158,6 +1178,9 @@ pub(in crate::layout) fn deoverlap_flowchart_paths(
         let mut changed = false;
         let mut prior = IndexedSegments::default();
         for idx in 1..routed_points.len() {
+            if cancelled() {
+                return;
+            }
             prior.push_path(&routed_points[idx - 1]);
             if routed_points[idx].len() < 2 {
                 continue;
@@ -1464,12 +1487,16 @@ pub(in crate::layout) fn simplify_flowchart_detour_rectangles(
     graph: &Graph,
     nodes: &BTreeMap<String, NodeLayout>,
     routed_points: &mut [Vec<(f32, f32)>],
+    cancelled: &dyn Fn() -> bool,
 ) {
     if graph.edges.len() < 2 {
         return;
     }
 
     for idx in 0..routed_points.len() {
+        if cancelled() {
+            return;
+        }
         let baseline = routed_points[idx].clone();
         let baseline_bends = path_bend_count(&baseline);
         if baseline_bends < 4 {

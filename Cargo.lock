@@ -3618,6 +3618,7 @@ dependencies = [
 name = "guiraffe-mermaid"
 version = "0.1.0"
 dependencies = [
+ "futures-channel",
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-markdown",

@@ -512,3 +512,9 @@ fallback reference for longer or unclassified entries.
 From the GUIraffe checkout, run
 `vendor/mermaid-rs-renderer/parity/run.sh --soak` to compare against the published
 release on the packaged fixtures, showcase and 500-node workload.
+
+GUIraffe also uses a separate staged-layout extension. The preview shares node
+placement with the refined pass, draws simple anchored edges, and is cancelled
+with the refinement when the source changes. The parity runner checks the
+preview/refined SVG goldens and can time the 500-node preview SVG separately
+with `--profile-staged`.

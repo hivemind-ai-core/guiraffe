@@ -112,8 +112,8 @@ pub use ir::{
     StateNotePosition, Subgraph,
 };
 pub use layout::{
-    EdgeLayout, Layout, LayoutStageMetrics, NodeLayout, SubgraphLayout, compute_layout,
-    compute_layout_with_metrics,
+    EdgeLayout, Layout, LayoutStageMetrics, NodeLayout, SubgraphLayout, compute_flowchart_staged,
+    compute_layout, compute_layout_with_metrics,
 };
 pub use parser::{ParseOutput, parse_mermaid};
 #[cfg(feature = "png")]

@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::config::LayoutConfig;
 use crate::ir::{DiagramKind, Graph};
 
-use super::super::{EdgeLayout, NodeLayout, TextBlock, resolve_edge_style};
 use super::super::types::SubgraphLayout;
+use super::super::{EdgeLayout, NodeLayout, TextBlock, resolve_edge_style};
 use super::path_cleanup::{
     deoverlap_flowchart_paths, detour_flowchart_paths_around_foreign_subgraphs,
     detour_flowchart_paths_around_non_endpoint_nodes, reduce_orthogonal_path_crossings,
@@ -17,28 +17,48 @@ pub(in crate::layout) fn apply_edge_path_cleanup(
     subgraphs: &[SubgraphLayout],
     routed_points: &mut [Vec<(f32, f32)>],
     config: &LayoutConfig,
+    cancelled: &dyn Fn() -> bool,
 ) {
     if graph.kind == DiagramKind::Flowchart {
-        reduce_orthogonal_path_crossings(graph, nodes, routed_points, config);
-        deoverlap_flowchart_paths(graph, nodes, routed_points, config);
-        simplify_flowchart_detour_rectangles(graph, nodes, routed_points);
+        reduce_orthogonal_path_crossings(graph, nodes, routed_points, config, cancelled);
+        if cancelled() {
+            return;
+        }
+        deoverlap_flowchart_paths(graph, nodes, routed_points, config, cancelled);
+        if cancelled() {
+            return;
+        }
+        simplify_flowchart_detour_rectangles(graph, nodes, routed_points, cancelled);
         simplify_flowchart_axis_oscillations(routed_points);
-        detour_flowchart_paths_around_non_endpoint_nodes(graph, nodes, routed_points, config);
+        detour_flowchart_paths_around_non_endpoint_nodes(
+            graph,
+            nodes,
+            routed_points,
+            config,
+            cancelled,
+        );
         detour_flowchart_paths_around_foreign_subgraphs(
             graph,
             nodes,
             subgraphs,
             routed_points,
             config,
+            cancelled,
         );
         simplify_flowchart_axis_oscillations(routed_points);
     } else if matches!(
         graph.kind,
         DiagramKind::Class | DiagramKind::Er | DiagramKind::State
     ) {
-        reduce_orthogonal_path_crossings(graph, nodes, routed_points, config);
+        reduce_orthogonal_path_crossings(graph, nodes, routed_points, config, cancelled);
+        if cancelled() {
+            return;
+        }
         if graph.kind == DiagramKind::Er {
-            deoverlap_flowchart_paths(graph, nodes, routed_points, config);
+            deoverlap_flowchart_paths(graph, nodes, routed_points, config, cancelled);
+            if cancelled() {
+                return;
+            }
         }
         // Rank-adjacent ports can differ by a fraction of a pixel on the cross
         // axis, which turns visually straight connectors into two-bend doglegs.

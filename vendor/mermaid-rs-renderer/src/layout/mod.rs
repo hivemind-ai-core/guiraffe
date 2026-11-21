@@ -165,6 +165,39 @@ pub fn compute_layout_with_metrics(
     theme: &Theme,
     config: &LayoutConfig,
 ) -> (Layout, LayoutStageMetrics) {
+    compute_layout_controlled(graph, theme, config, None)
+}
+
+/// Publish a cheaply routed flowchart frame after node placement, then refine
+/// the same placement. Cancellation is checked between routes and sweep edges.
+pub fn compute_flowchart_staged(
+    graph: &Graph,
+    theme: &Theme,
+    config: &LayoutConfig,
+    preview: &mut dyn FnMut(&Layout),
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Layout> {
+    if cancelled() {
+        return None;
+    }
+    let mut stage = FlowchartStage { preview, cancelled };
+    let (layout, _) = compute_layout_controlled(graph, theme, config, Some(&mut stage));
+    (!cancelled()).then_some(layout)
+}
+
+struct FlowchartStage<'a> {
+    preview: &'a mut dyn FnMut(&Layout),
+    cancelled: &'a dyn Fn() -> bool,
+}
+
+fn compute_layout_controlled(
+    graph: &Graph,
+    theme: &Theme,
+    config: &LayoutConfig,
+    stage: Option<&mut FlowchartStage<'_>>,
+) -> (Layout, LayoutStageMetrics) {
+    let never_cancel: &dyn Fn() -> bool = &|| false;
+    let cancelled = stage.as_ref().map_or(never_cancel, |stage| stage.cancelled);
     let graph = normalize_graph_for_layout(graph);
     let graph = graph.as_ref();
     let mut stage_metrics = LayoutStageMetrics::default();
@@ -207,9 +240,13 @@ pub fn compute_layout_with_metrics(
         | crate::ir::DiagramKind::Requirement
         | crate::ir::DiagramKind::Packet
         | crate::ir::DiagramKind::Flowchart => {
-            compute_flowchart_layout(graph, theme, config, Some(&mut stage_metrics))
+            compute_flowchart_layout(graph, theme, config, Some(&mut stage_metrics), stage)
         }
     };
+
+    if cancelled() {
+        return (layout, stage_metrics);
+    }
 
     apply_preferred_aspect_ratio_layout(&mut layout, config);
 
@@ -431,6 +468,7 @@ fn compute_flowchart_layout(
     theme: &Theme,
     config: &LayoutConfig,
     stage_metrics: Option<&mut LayoutStageMetrics>,
+    stage: Option<&mut FlowchartStage<'_>>,
 ) -> Layout {
     let mut effective_config = flowchart::policy::apply_initial_config_heuristics(graph, config);
     let tiny_graph = flowchart::policy::is_tiny_graph_layout(graph);
@@ -707,6 +745,32 @@ fn compute_flowchart_layout(
         flowchart::stage_validation::debug_assert_structural("node-placement", report);
     }
 
+    let cancelled = if let Some(stage) = stage {
+        if graph.kind == crate::ir::DiagramKind::Flowchart && !(stage.cancelled)() {
+            let edges = flowchart::edge_pipeline::preview_edges(
+                graph,
+                &nodes,
+                &subgraphs,
+                config,
+                &edge_route_labels,
+                &edge_start_labels,
+                &edge_end_labels,
+            );
+            let preview = flowchart::finalize::finalize_graph_layout(
+                graph,
+                nodes.clone(),
+                edges,
+                subgraphs.clone(),
+                theme,
+                config,
+            );
+            (stage.preview)(&preview);
+        }
+        stage.cancelled
+    } else {
+        &|| false
+    };
+
     let edges = flowchart::edge_pipeline::build_routed_edges(
         flowchart::edge_pipeline::RoutedEdgeBuildContext {
             graph,
@@ -720,6 +784,7 @@ fn compute_flowchart_layout(
             label_dummy_ids: &label_dummy_ids,
             tiny_graph,
             stage_metrics,
+            cancelled,
         },
     );
 

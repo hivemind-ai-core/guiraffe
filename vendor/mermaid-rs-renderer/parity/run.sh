@@ -4,6 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 work="$root/target/mermaid-parity"
 mkdir -p "$work/tmp" "$work/src"
+export GUIRAFFE_ROOT="$root"
 export TMPDIR="$work/tmp" CARGO_TARGET_DIR="$work/build"
 export CARGO_BUILD_JOBS=4
 cp "$root/vendor/mermaid-rs-renderer/parity/main.rs" "$work/src/main.rs"

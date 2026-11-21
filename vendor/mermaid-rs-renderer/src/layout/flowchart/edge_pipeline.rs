@@ -2117,6 +2117,48 @@ fn negotiate_flowchart_route_congestion(
     }
 }
 
+pub(in crate::layout) fn preview_edges(
+    graph: &Graph,
+    nodes: &BTreeMap<String, NodeLayout>,
+    subgraphs: &[SubgraphLayout],
+    config: &LayoutConfig,
+    labels: &[Option<TextBlock>],
+    start_labels: &[Option<TextBlock>],
+    end_labels: &[Option<TextBlock>],
+) -> Vec<EdgeLayout> {
+    let points: Vec<_> = graph
+        .edges
+        .iter()
+        .map(|edge| {
+            let Some((from, to)) = effective_edge_endpoint_layouts(graph, nodes, subgraphs, edge)
+            else {
+                return Vec::new();
+            };
+            if edge.from == edge.to {
+                return route_self_loop(&from, graph.direction, config);
+            }
+            let (start_side, end_side, _) = edge_sides(&from, &to, graph.direction);
+            vec![
+                anchor_point_for_node(&from, start_side, 0.0),
+                anchor_point_for_node(&to, end_side, 0.0),
+            ]
+        })
+        .collect();
+    let anchors: Vec<_> = points
+        .iter()
+        .map(|path| edge_label_anchor_from_points(path))
+        .collect();
+    post_route::build_edge_layouts(
+        graph,
+        &points,
+        labels,
+        start_labels,
+        end_labels,
+        &anchors,
+        config,
+    )
+}
+
 pub(in crate::layout) struct RoutedEdgeBuildContext<'a> {
     pub(in crate::layout) graph: &'a Graph,
     pub(in crate::layout) nodes: &'a BTreeMap<String, NodeLayout>,
@@ -2129,6 +2171,7 @@ pub(in crate::layout) struct RoutedEdgeBuildContext<'a> {
     pub(in crate::layout) label_dummy_ids: &'a [Option<String>],
     pub(in crate::layout) tiny_graph: bool,
     pub(in crate::layout) stage_metrics: Option<&'a mut LayoutStageMetrics>,
+    pub(in crate::layout) cancelled: &'a dyn Fn() -> bool,
 }
 
 pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> Vec<EdgeLayout> {
@@ -2144,7 +2187,11 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         label_dummy_ids,
         tiny_graph,
         stage_metrics,
+        cancelled,
     } = ctx;
+    if cancelled() {
+        return Vec::new();
+    }
     let obstacles = build_obstacles(nodes, subgraphs, config);
     let obstacle_index = RoutingObstacleIndex::new(&obstacles);
     let label_obstacles = build_label_obstacles_for_routing(nodes, subgraphs);
@@ -2182,6 +2229,9 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     let mut port_candidates: HashMap<(String, PortTrack), Vec<PortCandidate>> = HashMap::new();
     let mut side_choice_segments: Vec<Segment> = Vec::with_capacity(graph.edges.len());
     for (idx, edge) in graph.edges.iter().enumerate() {
+        if cancelled() {
+            return Vec::new();
+        }
         let Some((from, to)) = effective_edge_endpoint_layouts(graph, nodes, subgraphs, edge)
         else {
             continue;
@@ -2276,11 +2326,17 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     }
     let mut node_side_counts: HashMap<String, [usize; 4]> = HashMap::new();
     for (idx, edge) in graph.edges.iter().enumerate() {
+        if cancelled() {
+            return Vec::new();
+        }
         let (start_side, end_side) = selected_edge_sides[idx];
         bump_side_load(&mut node_side_counts, &edge.from, start_side);
         bump_side_load(&mut node_side_counts, &edge.to, end_side);
     }
     for (idx, edge) in graph.edges.iter().enumerate() {
+        if cancelled() {
+            return Vec::new();
+        }
         let Some((from, to)) = effective_edge_endpoint_layouts(graph, nodes, subgraphs, edge)
         else {
             continue;
@@ -2486,6 +2542,9 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         && graph.edges.len() >= 18
         && graph.edges.len() * 2 >= layout_node_count * 3;
     for (idx, edge) in graph.edges.iter().enumerate() {
+        if cancelled() {
+            return Vec::new();
+        }
         let Some((from, to)) = effective_edge_endpoint_layouts(graph, nodes, subgraphs, edge)
         else {
             continue;
@@ -2602,6 +2661,9 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     let mut existing_segments = IndexedSegments::default();
     let mut label_anchors: Vec<Option<(f32, f32)>> = vec![None; graph.edges.len()];
     for (_, _, _, idx) in &route_order {
+        if cancelled() {
+            return Vec::new();
+        }
         let edge = &graph.edges[*idx];
         let key = edge_pair_key(edge);
         let total = *pair_counts.get(&key).unwrap_or(&1) as f32;
@@ -2842,7 +2904,17 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         );
     }
 
-    post_route::apply_edge_path_cleanup(graph, nodes, subgraphs, &mut routed_points, config);
+    post_route::apply_edge_path_cleanup(
+        graph,
+        nodes,
+        subgraphs,
+        &mut routed_points,
+        config,
+        cancelled,
+    );
+    if cancelled() {
+        return Vec::new();
+    }
 
     if route_labels_via {
         for idx in 0..routed_points.len() {
@@ -2870,6 +2942,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             nodes,
             &mut routed_points,
             config,
+            cancelled,
         );
         path_cleanup::simplify_flowchart_axis_oscillations(&mut routed_points);
         path_cleanup::detour_flowchart_paths_around_non_endpoint_nodes(
@@ -2877,6 +2950,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             nodes,
             &mut routed_points,
             config,
+            cancelled,
         );
     }
 
@@ -2894,6 +2968,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             nodes,
             &mut routed_points,
             config,
+            cancelled,
         );
         // Containment pass: label/anchor sync can drag paths through foreign
         // subgraph boxes. Run before endpoint enforcement/repairs so those
@@ -2904,10 +2979,17 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             subgraphs,
             &mut routed_points,
             config,
+            cancelled,
         );
         path_cleanup::simplify_flowchart_axis_oscillations(&mut routed_points);
         enforce_flowchart_endpoint_ports(graph, nodes, &edge_ports, &mut routed_points, config);
-        path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
+        path_cleanup::repair_flowchart_endpoint_reentries(
+            graph,
+            nodes,
+            &mut routed_points,
+            config,
+            cancelled,
+        );
         repair_flowchart_endpoint_reentries_by_rerouting(
             EndpointRerouteRepairContext {
                 graph,
@@ -2923,7 +3005,16 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             &mut edge_ports,
             &mut routed_points,
         );
-        path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
+        path_cleanup::repair_flowchart_endpoint_reentries(
+            graph,
+            nodes,
+            &mut routed_points,
+            config,
+            cancelled,
+        );
+    }
+    if cancelled() {
+        return Vec::new();
     }
     #[cfg(debug_assertions)]
     if graph.kind == DiagramKind::Flowchart {

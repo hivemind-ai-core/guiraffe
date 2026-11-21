@@ -70,12 +70,32 @@ fn check_fixtures(dir: &Path) -> usize {
 }
 
 fn main() {
-    if std::env::args().any(|arg| arg == "--profile-patched") {
+    let arguments: Vec<_> = std::env::args().collect();
+    if arguments.iter().any(|arg| arg == "--profile-patched") {
         let source = soak_source();
         let (_, elapsed) = evaluate!(patched, &source, modern, Some(14.0)).expect("soak diagram");
         println!("patched soak parse + layout: {elapsed:?}");
         return;
     }
+    if arguments.iter().any(|arg| arg == "--profile-reference") {
+        let source = soak_source();
+        let (_, elapsed) = evaluate!(reference, &source, modern, Some(14.0)).expect("soak diagram");
+        println!("reference soak parse + layout: {elapsed:?}");
+        return;
+    }
+    if arguments.iter().any(|arg| arg == "--profile-staged") {
+        check_staged(&soak_source(), None, false);
+        return;
+    }
+    let write_goldens = arguments.iter().any(|arg| arg == "--write-staged-goldens");
+    check_staged(
+        include_str!(concat!(
+            env!("GUIRAFFE_ROOT"),
+            "/crates/mermaid/tests/fixtures/staged-flowchart.mmd"
+        )),
+        Some(Path::new("crates/mermaid/tests/fixtures")),
+        write_goldens,
+    );
     let count = check_fixtures(Path::new("vendor/mermaid-rs-renderer/tests/fixtures"));
     assert!(count > 0);
     println!("{count} valid upstream fixtures matched");
@@ -109,4 +129,86 @@ fn soak_source() -> String {
         }
     }
     source
+}
+
+fn check_staged(source: &str, goldens: Option<&Path>, write_goldens: bool) {
+    use std::cell::Cell;
+    let start = Instant::now();
+    let mut theme = patched::Theme::modern();
+    theme.font_size = 14.0;
+    let config = patched::LayoutConfig {
+        fast_text_metrics: goldens.is_some(),
+        ..Default::default()
+    };
+    let graph = patched::parse_mermaid_strict(source)
+        .expect("staged fixture")
+        .graph;
+    let mut preview = None;
+    let mut preview_svg = None;
+    let refined = patched::compute_flowchart_staged(
+        &graph,
+        &theme,
+        &config,
+        &mut |layout| {
+            let svg = patched::render_svg(layout, &theme, &config);
+            println!("staged parse + layout + preview SVG: {:?}", start.elapsed());
+            preview = Some(layout.clone());
+            preview_svg = Some(svg);
+        },
+        &|| false,
+    )
+    .expect("refined frame");
+    println!("staged parse + refined layout: {:?}", start.elapsed());
+    let preview = preview.expect("preview frame");
+    let id = preview
+        .nodes
+        .iter()
+        .find(|(_, node)| !node.hidden)
+        .expect("anchor")
+        .0;
+    let before = &preview.nodes[id];
+    let after = &refined.nodes[id];
+    assert_eq!(preview.nodes.len(), refined.nodes.len());
+    for (id, node) in &preview.nodes {
+        let refined = &refined.nodes[id];
+        assert_eq!((node.width, node.height), (refined.width, refined.height));
+        assert!(
+            ((node.x - before.x) - (refined.x - after.x)).abs() <= 0.02,
+            "x moved for {id}"
+        );
+        assert!(
+            ((node.y - before.y) - (refined.y - after.y)).abs() <= 0.02,
+            "y moved for {id}"
+        );
+    }
+
+    let final_svg = patched::render_svg(&refined, &theme, &config);
+    let direct = patched::compute_layout(&graph, &theme, &config);
+    assert!(final_svg == patched::render_svg(&direct, &theme, &config));
+    if let Some(dir) = goldens {
+        for (mode, svg) in [
+            ("preview", preview_svg.expect("preview SVG")),
+            ("refined", final_svg),
+        ] {
+            let path = dir.join(format!("staged-{mode}.svg"));
+            if write_goldens {
+                fs::write(&path, svg).expect("write golden");
+            } else {
+                assert!(
+                    fs::read_to_string(&path).expect("read golden") == svg,
+                    "{mode} SVG differs"
+                );
+            }
+        }
+    }
+    let cancelled = Cell::new(false);
+    let outcome = patched::compute_flowchart_staged(
+        &graph,
+        &theme,
+        &config,
+        &mut |_| cancelled.set(true),
+        &|| cancelled.get(),
+    );
+    assert!(cancelled.get());
+    assert!(outcome.is_none());
 }
