@@ -19,3 +19,7 @@ pub mod replay;
 pub mod snapshot;
 #[cfg(feature = "inspect")]
 pub mod transport;
+
+/// Per-thread allocation counting for warm-repaint assertions. No feature gate:
+/// it needs nothing beyond `std` and costs a TLS read only when armed.
+pub mod alloc;
