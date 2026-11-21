@@ -41,7 +41,19 @@ fn changed_keys<V: Clone + PartialEq>(
         .collect()
 }
 impl Editor {
-    pub fn new(mut graph: Graph) -> Result<Self, FlowError> {
+    pub fn new(graph: Graph) -> Result<Self, FlowError> {
+        Self::with_scene(graph, Scene::new)
+    }
+
+    /// Build a document that can render local edges before preparing its full edge index.
+    pub fn new_deferred(graph: Graph) -> Result<Self, FlowError> {
+        Self::with_scene(graph, Scene::new_deferred)
+    }
+
+    fn with_scene(
+        mut graph: Graph,
+        scene: impl FnOnce(Graph) -> Result<Scene, FlowError>,
+    ) -> Result<Self, FlowError> {
         let selected = graph
             .nodes
             .values()
@@ -57,7 +69,7 @@ impl Editor {
             .edge_id_high_water
             .max(graph.edges.keys().next_back().copied().unwrap_or(0));
         let mut editor = Self {
-            scene: Arc::new(Scene::new(graph)?),
+            scene: Arc::new(scene(graph)?),
             undo: VecDeque::new(),
             redo: Vec::new(),
             limit: 100,

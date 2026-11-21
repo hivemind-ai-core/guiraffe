@@ -137,9 +137,15 @@ impl Interaction {
     }
     pub fn fit(&mut self, size: Point) {
         self.cancel();
+        self.viewport = self.fitted_viewport(size);
+    }
+
+    pub(crate) fn fitted_viewport(&self, size: Point) -> Viewport {
+        let mut viewport = self.viewport;
         if let Some(bounds) = self.editor.scene().bounds() {
-            self.viewport.fit(bounds, size, 40.);
+            viewport.fit(bounds, size, 40.);
         }
+        viewport
     }
     pub fn delete_selected(&mut self) -> Result<bool, FlowError> {
         self.cancel();
