@@ -555,6 +555,14 @@ fn rich_annotations(_: &mut Window, cx: &mut App) -> AnyView {
                 },
             ),
             (
+                2,
+                span(source, 2, "shipping", 0),
+                DecorationStyle::Block {
+                    estimated_rows: 2,
+                    payload: "Review · Verify free shipping at the minimum order amount.".into(),
+                },
+            ),
+            (
                 3,
                 SourceRange::new(Position::new(1, 0), Position::new(1, 0)),
                 DecorationStyle::Gutter {
@@ -592,6 +600,15 @@ fn rich_annotations(_: &mut Window, cx: &mut App) -> AnyView {
         code.set_analysis(decorations.prepare_analysis(Vec::new(), Vec::new()), cx);
         code.set_decorations(Some(Arc::new(decorations)), cx);
     }
+    code.on_block_widget(
+        Some(Rc::new(|widget, _, _| {
+            div()
+                .py_1()
+                .child(Text::new(widget.payload.to_string()).size(Size::Sm))
+                .into_any_element()
+        })),
+        cx,
+    );
     cx.new(|_| RichAnnotationsDemo(code)).into()
 }
 

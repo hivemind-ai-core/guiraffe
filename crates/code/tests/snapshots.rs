@@ -352,6 +352,16 @@ fn layered_annotations_in_light_and_dark() -> Result<(), Box<dyn std::error::Err
                 markdown: "**Review**\nAdd a case without tax.".into(),
             },
         ),
+        (
+            3,
+            2,
+            8,
+            11,
+            DecorationStyle::Block {
+                estimated_rows: 2,
+                payload: "Coverage review · Verify the zero-tax case".into(),
+            },
+        ),
     ];
     for (id, (layer, line, start, end, style)) in ranges.into_iter().enumerate() {
         let style = decorations.intern_style(style)?;
@@ -411,6 +421,19 @@ fn layered_annotations_in_light_and_dark() -> Result<(), Box<dyn std::error::Err
             let code = CodeHandle::new(1, data.document().clone(), cx);
             code.set_analysis(analysis, cx);
             code.set_decorations(Some(data), cx);
+            code.on_block_widget(
+                Some(Rc::new(|widget, _, cx| {
+                    let surface = GuiraffeTheme::global(cx).surfaces();
+                    div()
+                        .h(px(30.))
+                        .pl(px(7.))
+                        .bg(surface.surface.to_hsla())
+                        .text_color(surface.dimmed.to_hsla())
+                        .child(widget.payload.to_string())
+                        .into_any_element()
+                })),
+                cx,
+            );
             cx.new(|_| Scene(code))
         })?;
         assert_snapshot(name, &image, &config)?;

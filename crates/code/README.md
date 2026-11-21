@@ -60,3 +60,10 @@ Markdown review cards, call `prepare_analysis` on the worker and publish the
 result with `set_analysis` alongside the decorations. Hosts can receive
 hover and click payloads with `on_decoration`. F8 and Shift+F8 navigate
 diagnostics. F7 and Shift+F7 navigate diff marks.
+
+For inter-line content use `DecorationStyle::Block` with an estimated row
+height and a payload, then supply a renderer with `CodeHandle::on_block_widget`
+to embed a custom GPUI element. The viewer mounts visible widgets and caches
+the measured height for the current layout. The default renders the payload
+as text. Cloning a decoration snapshot shares unchanged interval indexes,
+so a worker can refresh a layer while the previous snapshot is displayed.
