@@ -1,20 +1,25 @@
 # Chat performance
 
-The [long-history interaction tests](src/gpui_tests.rs) cover batched list
-insertion, lazy Markdown state creation, and traversal with eviction.
-History keeps text state for 64 recently used rows and evicts the row
-farthest from the current row being laid out. When a row returns to the list,
-it recreates Markdown from raw text. Reasoning parses only when open and
-recreates its state if the row was evicted.
+Chat keeps cold history in indexed message records and creates a GPUI
+message entity when the row is laid out or starts streaming. History keeps
+64 ordinary resident entities and evicts the one farthest from the row being
+laid out. The record preserves raw message data and disclosure state.
+Reasoning Markdown parses on demand when open.
 
-Rows participating in a selection retain their text entities until Kit
-releases the selection. This preserves window-owned copy and selection
-endpoints. That exception can grow during a selection across history.
-Separately, Kit retains up to 4,096 shaped layouts per UI thread, up to
-eight fence parsers per thread with at most 64 KiB of cached source per
-parser, and up to 128 compiled Tree-sitter query entries process-wide.
-Unknown fence names do not create parser entries.
+Streaming rows, rows with an open menu, and rows participating in a
+selection retain their entities until the interaction ends. The selection
+exception can grow during a drag across history. Kit independently keeps
+up to 4,096 shaped layouts per UI thread, eight fence parsers per thread
+with at most 64 KiB of cached source per parser, and 128 compiled Tree-sitter
+query entries process-wide.
 
-One message view and its underlying data are still allocated per history
-row. Cold mount, peak RSS with a selection spanning history, and warm
-repaint allocations remain open.
+The [interaction tests](src/gpui_tests.rs) exercise the 64-entity bound at
+every offset through 400 rows, then revisit evicted rows and check that tool
+and reasoning disclosures survived. The
+[Linux RSS test](../../bench/examples/soak.rs) compares fresh processes
+with an empty window and with 100,000 messages. On the shared development
+machine, its upstream backend delta fell from 105,368 KiB to 57,356 KiB
+against a 77,033 KiB budget. The same-harness dev scroll probe mounted in
+119 ms and measured 3.2–3.9 ms p99, with a 58,556 KiB process peak delta
+over the empty window. Peak RSS during a selection spanning history and
+warm repaint allocations remain open.

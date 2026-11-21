@@ -1139,8 +1139,35 @@ mod mounted {
     /// Chat: 100,000-message history, scrolled while a reply streams one token
     /// per frame; each reply finishes after 400 tokens and the next begins.
     /// Reduced motion, as in the crate's own interaction tests.
+    fn chat_message(index: u64) -> guiraffe_chat::Message {
+        use guiraffe_chat::{Message, MessageId, Role};
+        let (role, text) = if index % 2 == 0 {
+            (
+                Role::User,
+                format!(
+                    "Question {index}: how should the **cache** behave when entry {index} is evicted?"
+                ),
+            )
+        } else if index % 10 == 1 {
+            (
+                Role::Assistant,
+                format!(
+                    "Here is answer {index}.\n\n- keep the *hot* set\n- drop the cold tail\n\n```rust\nlet entry = cache.get({index});\n```\n"
+                ),
+            )
+        } else {
+            (
+                Role::Assistant,
+                format!(
+                    "Answer {index}: evict the least recently used entry and keep `stats` updated. See [docs](https://example.org/{index})."
+                ),
+            )
+        };
+        Message::new(MessageId(index + 1), role, text)
+    }
+
     pub fn chat(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_chat::{ChatState, Message, MessageId, Role};
+        use guiraffe_chat::ChatState;
         let count = scaled(100_000) as u64;
         let (mut window, view) = mount(
             "chat_soak",
@@ -1157,15 +1184,8 @@ mod mounted {
             |window, cx| {
                 let state = cx.new(|cx| ChatState::new(window, cx));
                 state.update(cx, |chat, cx| {
-                    for n in 0..count {
-                        let (role, text) = if n % 2 == 0 {
-                            (Role::User, format!("Question {n}: how should the **cache** behave when entry {n} is evicted?"))
-                        } else if n % 10 == 1 {
-                            (Role::Assistant, format!("Here is answer {n}.\n\n- keep the *hot* set\n- drop the cold tail\n\n```rust\nlet entry = cache.get({n});\n```\n"))
-                        } else {
-                            (Role::Assistant, format!("Answer {n}: evict the least recently used entry and keep `stats` updated. See [docs](https://example.org/{n})."))
-                        };
-                        chat.push_message(Message::new(MessageId(n + 1), role, text), cx);
+                    for index in 0..count {
+                        chat.push_message(chat_message(index), cx);
                     }
                 });
                 cx.new(|_| ChatHost(state))
@@ -1198,5 +1218,68 @@ mod mounted {
             Ok(())
         });
         Ok(())
+    }
+    #[cfg(all(test, target_os = "linux"))]
+    mod tests {
+        use super::{chat, chat_message, empty};
+        use std::process::Command;
+
+        const SCENARIO: &str = "GUIRAFFE_CHAT_RSS_TEST_SCENARIO";
+
+        fn mounted_peak(scenario: &str) -> u64 {
+            let output = Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "mounted::tests::chat_history_rss_budget",
+                    "--nocapture",
+                ])
+                .env(SCENARIO, scenario)
+                .env_remove("SOAK_SCALE")
+                .output()
+                .expect("run mount in isolated process");
+            assert!(
+                output.status.success(),
+                "scenario {scenario}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .find_map(|line| line.strip_prefix("chat-test-rss-kib="))
+                .and_then(|value| value.parse().ok())
+                .expect("child peak RSS")
+        }
+
+        #[test]
+        fn chat_history_rss_budget() {
+            if let Ok(scenario) = std::env::var(SCENARIO) {
+                match scenario.as_str() {
+                    "empty" => empty(|_| {}).expect("mount baseline"),
+                    "chat" => chat(|_| {}).expect("mount 100k chat history"),
+                    _ => panic!("unknown scenario {scenario}"),
+                }
+                let status = std::fs::read_to_string("/proc/self/status").expect("process status");
+                let peak = status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("VmHWM:"))
+                    .and_then(|value| value.split_whitespace().next())
+                    .expect("kernel peak RSS");
+                println!("chat-test-rss-kib={peak}");
+                return;
+            }
+            let baseline = mounted_peak("empty");
+            let loaded = mounted_peak("chat");
+            let raw_bytes: usize = (0..100_000)
+                .map(|index| chat_message(index).text.len())
+                .sum();
+            let budget = (raw_bytes + raw_bytes / 4).div_ceil(1024) as u64 + 64 * 1024;
+            let delta = loaded.saturating_sub(baseline);
+            println!(
+                "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
+            );
+            assert!(
+                delta <= budget,
+                "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
+            );
+        }
     }
 }
