@@ -170,6 +170,32 @@ fn soak_100k(cx: &mut TestAppContext) {
             * 1024
     }
 
+    fn thread_cpu_ns() -> u64 {
+        std::fs::read_to_string("/proc/thread-self/schedstat")
+            .ok()
+            .and_then(|status| status.split_whitespace().next()?.parse().ok())
+            .unwrap_or_else(|| panic!("thread CPU time unavailable"))
+    }
+
+    fn record(histogram: &mut [u64; 1001], elapsed: Duration) {
+        let bucket = (elapsed.as_micros() / 100).min(1000) as usize;
+        if let Some(bin) = histogram.get_mut(bucket) {
+            *bin += 1;
+        }
+    }
+
+    fn p99_ms(histogram: &[u64; 1001], samples: u64) -> f64 {
+        let mut cumulative = 0;
+        let bucket = histogram
+            .iter()
+            .position(|count| {
+                cumulative += count;
+                cumulative * 100 >= samples * 99
+            })
+            .unwrap_or(1000);
+        (bucket + 1) as f64 / 10.0
+    }
+
     cx.update(|cx| {
         guiraffe_core::init(cx);
         guiraffe_timeline::init(cx);
@@ -238,7 +264,8 @@ fn soak_100k(cx: &mut TestAppContext) {
             .and_then(|value| value.parse().ok())
             .unwrap_or(1800),
     );
-    let mut histogram = [0u64; 1001];
+    let mut wall = [0; 1001];
+    let mut cpu = [0; 1001];
     let start = Instant::now();
     let mut samples = 0;
     let mut peak = rss_bytes();
@@ -251,6 +278,7 @@ fn soak_100k(cx: &mut TestAppContext) {
             1..60 => "down",
             _ => "up",
         };
+        let cpu_start = thread_cpu_ns();
         let frame = Instant::now();
         vcx.update(|window, cx| {
             if samples % 120 == 30 {
@@ -271,10 +299,12 @@ fn soak_100k(cx: &mut TestAppContext) {
             }
         });
         vcx.update(|window, cx| window.draw(cx).clear(cx));
-        let bucket = (frame.elapsed().as_micros() / 100).min(1000) as usize;
-        if let Some(bin) = histogram.get_mut(bucket) {
-            *bin += 1;
-        }
+        let elapsed = frame.elapsed();
+        record(&mut wall, elapsed);
+        record(
+            &mut cpu,
+            Duration::from_nanos(thread_cpu_ns().saturating_sub(cpu_start)),
+        );
         if samples % 120 == 0 {
             last_rss = rss_bytes();
             peak = peak.max(last_rss);
@@ -284,21 +314,14 @@ fn soak_100k(cx: &mut TestAppContext) {
         }
         samples += 1;
     }
-    let mut cumulative = 0;
-    let bucket = histogram
-        .iter()
-        .position(|count| {
-            cumulative += count;
-            cumulative * 100 >= samples * 99
-        })
-        .unwrap_or(1000);
-    let p99_ms = (bucket + 1) as f64 / 10.0;
+    let wall_p99 = p99_ms(&wall, samples);
+    let cpu_p99 = p99_ms(&cpu, samples);
     println!(
-        "mount_ms={:.2} p99_cpu_ms={p99_ms:.2} samples={samples} duration_s={:.2} raw_bytes={raw_bytes} baseline_rss={baseline} peak_rss={peak} warm_rss={warmed:?} final_rss={last_rss}",
+        "mount_ms={:.2} p99_frame_ms={wall_p99:.2} p99_thread_cpu_ms={cpu_p99:.2} samples={samples} duration_s={:.2} raw_bytes={raw_bytes} baseline_rss={baseline} peak_rss={peak} warm_rss={warmed:?} final_rss={last_rss}",
         mount.as_secs_f64() * 1000.0,
         start.elapsed().as_secs_f64()
     );
     assert!(mount <= Duration::from_millis(200));
-    assert!(p99_ms <= 8.0);
+    assert!(wall_p99 <= 8.0);
     assert!(peak.saturating_sub(baseline) <= raw_bytes * 5 / 4 + 64 * 1024 * 1024);
 }

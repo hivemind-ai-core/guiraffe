@@ -20,8 +20,8 @@ use gpui_kit::{
     px,
 };
 use guiraffe_core::{
-    ColorName, GuiraffeTheme, Press, PressableExt, Size, StateKind, Variant, focus_ring,
-    ring_visible,
+    ColorName, GuiraffeTheme, Press, PressColors, PressableExt, Size, Surfaces, Variant,
+    focus_ring, ring_visible,
 };
 
 use crate::event_layout::{
@@ -92,6 +92,7 @@ pub struct EventTimelineState {
     header: f64,
     body: BodyCell,
     content: Option<Content>,
+    theme_cache: Option<Rc<TimelineTheme>>,
     style: StyleRefinement,
 }
 
@@ -129,6 +130,7 @@ impl EventTimelineState {
             header: 0.0,
             body: BodyCell::default(),
             content: None,
+            theme_cache: None,
             style: StyleRefinement::default(),
         }
     }
@@ -364,10 +366,70 @@ fn stroke(
     }
 }
 
+#[derive(Clone, Copy)]
+struct TrackColors {
+    dot: gpui_kit::Hsla,
+    rail: gpui_kit::Hsla,
+    badge_background: gpui_kit::Hsla,
+    badge_text: gpui_kit::Hsla,
+    press: PressColors,
+}
+
+impl TrackColors {
+    fn new(theme: &GuiraffeTheme, color: ColorName) -> Self {
+        let filled = theme.variant(Some(color), Variant::Filled);
+        let light = theme.variant(Some(color), Variant::Light);
+        Self {
+            dot: filled.background.to_hsla(),
+            rail: light.foreground.to_hsla(),
+            badge_background: light.background.to_hsla(),
+            badge_text: light.foreground.to_hsla(),
+            press: theme.press_colors(Variant::Subtle, Some(color)),
+        }
+    }
+}
+
+struct TimelineTheme {
+    theme: GuiraffeTheme,
+    surfaces: Surfaces,
+    colors: [TrackColors; ColorName::ALL.len()],
+    primary: TrackColors,
+}
+
+impl TimelineTheme {
+    fn new(theme: &GuiraffeTheme) -> Self {
+        let colors = ColorName::ALL.map(|color| TrackColors::new(theme, color));
+        Self {
+            theme: theme.clone(),
+            surfaces: theme.surfaces(),
+            primary: colors
+                .get(theme.primary as usize)
+                .copied()
+                .unwrap_or_else(|| TrackColors::new(theme, theme.primary)),
+            colors,
+        }
+    }
+
+    fn color(&self, color: Option<ColorName>) -> TrackColors {
+        color
+            .and_then(|color| self.colors.get(color as usize))
+            .copied()
+            .unwrap_or(self.primary)
+    }
+}
+
 impl Render for EventTimelineState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = GuiraffeTheme::global(cx).clone();
-        let surfaces = theme.surfaces();
+        let theme = GuiraffeTheme::global(cx);
+        let resolved = match &self.theme_cache {
+            Some(cached) if &cached.theme == theme => cached.clone(),
+            _ => {
+                let resolved = Rc::new(TimelineTheme::new(theme));
+                self.theme_cache = Some(resolved.clone());
+                resolved
+            }
+        };
+        let surfaces = resolved.surfaces;
         let size = self
             .size
             .unwrap_or(guiraffe_core::StyleContext::current().control_size);
@@ -418,7 +480,7 @@ impl Render for EventTimelineState {
         let paint_projection = projection.clone();
         let paint_lanes = lanes.clone();
         let paint_slots = slots.clone();
-        let paint_theme = theme.clone();
+        let paint_theme = resolved.clone();
         let default_color = self.color;
         let body = self.body.clone();
         let owner = cx.entity_id();
@@ -426,16 +488,12 @@ impl Render for EventTimelineState {
             .clone()
             .filter_map(|track| {
                 let lane = model.tracks.get(track)?;
-                let (_, lane_offset) =
-                    (0.0, track as f64 * projection.pitch.1 - projection.offset.1);
+                let lane_offset = track as f64 * projection.pitch.1 - projection.offset.1;
                 let (left, top) = projection.orientation.xy(0.0, lane_offset);
                 let (w, h) = projection
                     .orientation
                     .xy(projection.header, projection.pitch.1);
-                let color = theme
-                    .variant(lane.color.or(default_color), Variant::Filled)
-                    .background
-                    .to_hsla();
+                let color = resolved.color(lane.color.or(default_color)).dot;
                 Some(
                     div()
                         .absolute()
@@ -478,8 +536,7 @@ impl Render for EventTimelineState {
                 let chosen = self.selected == Some(item.id);
                 let current = self.cursor == Some(placement);
                 let color = item.color.or(track_data.color).or(default_color);
-                let accent = theme.variant(color, Variant::Filled).background.to_hsla();
-                let badge = theme.variant(color, Variant::Light);
+                let colors = resolved.color(color);
                 let (x, y) = projection.coordinates(placement.slot as f64, track as f64);
                 let (w, h) = self.orientation.xy(self.pitch.0, self.pitch.1);
                 let (dot_x, dot_y) = self.orientation.xy(
@@ -504,7 +561,7 @@ impl Render for EventTimelineState {
                 } else {
                     item.label.clone().into()
                 };
-                let press = Press::new(theme.press_colors(Variant::Subtle, color))
+                let press = Press::new(colors.press)
                     .role(Role::ListBoxOption)
                     .focusable(Some(false))
                     .label(label)
@@ -537,8 +594,8 @@ impl Render for EventTimelineState {
                             .flex_none()
                             .rounded_sm()
                             .px(px(spacing / 4.0))
-                            .bg(badge.background.to_hsla())
-                            .text_color(badge.foreground.to_hsla())
+                            .bg(colors.badge_background)
+                            .text_color(colors.badge_text)
                             .child(tag.clone())
                     }))
                     .press(&press, &self.item_focus, window)
@@ -591,7 +648,7 @@ impl Render for EventTimelineState {
                                 .top(dot_y - dot / 2.0)
                                 .size(dot)
                                 .rounded_full()
-                                .bg(accent),
+                                .bg(colors.dot),
                         )
                         .child(card),
                 );
@@ -701,10 +758,8 @@ impl Render for EventTimelineState {
                                     let Some(track) = paint_model.tracks.get(lane) else {
                                         continue;
                                     };
-                                    let color = paint_theme
-                                        .variant(track.color.or(default_color), Variant::Light)
-                                        .foreground
-                                        .to_hsla();
+                                    let color =
+                                        paint_theme.color(track.color.or(default_color)).rail;
                                     let start = paint_projection.position(
                                         bounds.origin,
                                         paint_projection.offset.0 / paint_projection.pitch.0,
@@ -734,10 +789,7 @@ impl Render for EventTimelineState {
                                         LinkKind::Branch => Some(ColorName::Blue),
                                         LinkKind::Merge => Some(ColorName::Teal),
                                     });
-                                    let color = paint_theme
-                                        .variant(color, Variant::Filled)
-                                        .background
-                                        .to_hsla();
+                                    let color = paint_theme.color(color).dot;
                                     let width = if route.link.kind == LinkKind::Merge {
                                         spacing / 6.0
                                     } else {
@@ -817,13 +869,6 @@ impl Render for EventTimelineState {
             style.refine(&self.style);
             style
         };
-        focus_ring(
-            root,
-            focused,
-            px(0.),
-            theme
-                .state(StateKind::FocusRing, Variant::Light, None)
-                .border,
-        )
+        focus_ring(root, focused, px(0.), resolved.primary.press.ring)
     }
 }
