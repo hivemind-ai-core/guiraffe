@@ -2,8 +2,8 @@
 //! shadow comes from the theme (spec/00 §12.1).
 
 use gpui_kit::{
-    App, Bounds, BoxShadow, Context, IntoElement, ParentElement, Pixels, Point, Render,
-    SharedString, Styled, Window, div, point, px,
+    App, Bounds, BoxShadow, Context, CursorStyle, IntoElement, ParentElement, Pixels, Point,
+    Render, SharedString, Styled, Window, canvas, div, point, px,
 };
 use guiraffe_core::{GuiraffeTheme, Rgb, Size};
 use std::{cell::Cell, rc::Rc};
@@ -72,6 +72,9 @@ pub(crate) type Indicator = (Bounds<Pixels>, IndicatorStyle);
 /// Drop feedback drawn in the drag overlay: zones first, lines on top.
 pub(crate) struct DropOutline {
     pub(crate) indicators: Vec<Indicator>,
+    /// Cursor for the gesture in progress. Set here rather than by the overlay so a gesture
+    /// that starts without other feedback re-renders only this small view.
+    pub(crate) cursor: Option<CursorStyle>,
     pub(crate) origin: Rc<Cell<Point<Pixels>>>,
 }
 
@@ -79,6 +82,7 @@ impl DropOutline {
     pub(crate) fn new(origin: Rc<Cell<Point<Pixels>>>) -> Self {
         Self {
             indicators: Vec::new(),
+            cursor: None,
             origin,
         }
     }
@@ -90,11 +94,19 @@ impl Render for DropOutline {
         let primary = theme.primary_color().to_hsla();
         let corner = radius(theme);
         let origin = self.origin.get();
+        let cursor = self.cursor;
         div()
             .absolute()
             .top_0()
             .left_0()
             .size_full()
+            .children(cursor.map(|cursor| {
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| window.set_window_cursor_style(cursor),
+                )
+                .size_0()
+            }))
             .children(self.indicators.iter().map(|&(bounds, style)| {
                 let offset = bounds.origin - origin;
                 let el = div()
@@ -115,11 +127,14 @@ impl Render for DropOutline {
 pub(crate) fn set_indicators(
     outline: &gpui_kit::Entity<DropOutline>,
     indicators: Vec<Indicator>,
+    cursor: Option<CursorStyle>,
     cx: &mut App,
 ) {
-    if outline.read(cx).indicators != indicators {
+    let current = outline.read(cx);
+    if current.indicators != indicators || current.cursor != cursor {
         outline.update(cx, |outline, cx| {
             outline.indicators = indicators;
+            outline.cursor = cursor;
             cx.notify();
         });
     }

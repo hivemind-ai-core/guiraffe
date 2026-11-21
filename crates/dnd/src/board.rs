@@ -129,7 +129,7 @@ impl SortableBoard {
     fn show_keyboard_target(&self, target: Option<(usize, usize)>, cx: &mut Context<Self>) {
         let indicators = target.map_or_else(Vec::new, |(list, gap)| self.indicators(list, gap));
         let outline = self.drag.read(cx).outline.clone();
-        set_indicators(&outline, indicators, cx);
+        set_indicators(&outline, indicators, None, cx);
     }
 
     /// Take responsibility for mounting the drag overlay before the first render.
@@ -372,7 +372,7 @@ impl BoardDragOverlay {
             .map_or_else(Vec::new, |((list, gap), board)| {
                 board.read(cx).indicators(list, gap)
             });
-        set_indicators(&self.outline, indicators, cx);
+        set_indicators(&self.outline, indicators, None, cx);
     }
 
     /// Re-render the board when a pointer drag starts or ends: it drops the cards' hover and

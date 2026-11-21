@@ -113,8 +113,13 @@ pub struct DockDragOverlay {
 }
 
 impl DockDragOverlay {
-    fn outline(&self, indicator: Option<(Bounds<Pixels>, IndicatorStyle)>, cx: &mut App) {
-        set_indicators(&self.outline, indicator.into_iter().collect(), cx);
+    fn outline(
+        &self,
+        indicator: Option<(Bounds<Pixels>, IndicatorStyle)>,
+        cursor: Option<CursorStyle>,
+        cx: &mut App,
+    ) {
+        set_indicators(&self.outline, indicator.into_iter().collect(), cursor, cx);
     }
 
     /// Re-render the dock when a tab drag starts or ends: it drops the tabs' hover and
@@ -128,21 +133,6 @@ impl DockDragOverlay {
     /// Whether a tab is being dragged.
     fn is_dragging_tab(&self) -> bool {
         matches!(self.gesture, Some(Gesture::Tab { active: true, .. }))
-    }
-
-    /// The cursor while a gesture is in progress: grabbing for a tab drag, the resize cursor
-    /// for a split or dock edge.
-    fn cursor(&self) -> Option<CursorStyle> {
-        let resize = |axis| match axis {
-            Axis::Horizontal => CursorStyle::ResizeLeftRight,
-            Axis::Vertical => CursorStyle::ResizeUpDown,
-        };
-        match self.gesture.as_ref()? {
-            Gesture::Tab { active: true, .. } => Some(CursorStyle::ClosedHand),
-            Gesture::Tab { .. } => None,
-            Gesture::Split { resize: split, .. } => Some(resize(split.axis)),
-            Gesture::Side { dock, .. } => Some(resize(dock.placement().axis())),
-        }
     }
 
     fn begin(&mut self, gesture: Gesture, window: &Window, cx: &mut Context<Self>) {
@@ -159,18 +149,14 @@ impl DockDragOverlay {
             }
         }));
         self.keyboard_panel = None;
-        let resizing = !matches!(gesture, Gesture::Tab { .. });
+
         self.gesture = Some(gesture);
-        if resizing {
-            // Only the overlay re-renders: it owns the resize cursor.
-            cx.notify();
-        }
     }
 
     fn cancel(&mut self, cx: &mut Context<Self>) -> Option<Gesture> {
         let finished = self.gesture.take()?;
         self.escape = None;
-        self.outline(None, cx);
+        self.outline(None, None, cx);
         cx.notify();
         if matches!(finished, Gesture::Tab { active: true, .. }) {
             self.notify_area(cx);
@@ -341,6 +327,7 @@ impl DockDragOverlay {
                     self.outline(
                         self.resolve(event.position, source)
                             .map(|(target, bounds)| (bounds, indicator_style(&target))),
+                        Some(CursorStyle::ClosedHand),
                         cx,
                     );
                     if started {
@@ -364,6 +351,7 @@ impl DockDragOverlay {
                         guide(resize.outline_at(event.position - origin), resize.axis),
                         IndicatorStyle::Line,
                     )),
+                    Some(resize_cursor(resize.axis)),
                     cx,
                 );
                 cx.stop_propagation();
@@ -387,6 +375,7 @@ impl DockDragOverlay {
                         ),
                         IndicatorStyle::Line,
                     )),
+                    Some(resize_cursor(dock.placement().axis())),
                     cx,
                 );
                 cx.stop_propagation();
@@ -490,6 +479,14 @@ fn guide(handle: Bounds<Pixels>, axis: Axis) -> Bounds<Pixels> {
     }
 }
 
+/// The resize cursor for a handle that moves along `axis`.
+fn resize_cursor(axis: Axis) -> CursorStyle {
+    match axis {
+        Axis::Horizontal => CursorStyle::ResizeLeftRight,
+        Axis::Vertical => CursorStyle::ResizeUpDown,
+    }
+}
+
 fn split_edge(bounds: Bounds<Pixels>, pointer: Point<Pixels>) -> Option<Placement> {
     if pointer.x < bounds.left() + bounds.size.width * 0.25 {
         Some(Placement::Left)
@@ -510,7 +507,6 @@ impl Render for DockDragOverlay {
         let movement = down.clone();
         let release = down.clone();
         let origin = self.origin.clone();
-        let cursor = self.cursor();
         let preview = match &self.gesture {
             Some(Gesture::Tab {
                 preview,
@@ -528,9 +524,6 @@ impl Render for DockDragOverlay {
                 canvas(
                     move |bounds, _, _| origin.set(bounds.origin),
                     move |_, _, window, _| {
-                        if let Some(cursor) = cursor {
-                            window.set_window_cursor_style(cursor);
-                        }
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture && event.button == MouseButton::Left
                             {
