@@ -748,3 +748,58 @@ fn cached_annotated_code_viewer_reuses_its_render(cx: &mut gpui_kit::TestAppCont
     eprintln!("eight warm draws: plain {plain:?}, annotated {annotated:?}");
     assert_eq!(plain, annotated);
 }
+
+#[gpui_kit::test]
+fn unchanged_list_draw_allocations_are_independent_of_list_length(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::{
+        Context, IntoElement, ListAlignment, ListState, Render, Styled, Window, div, list, px,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    struct ListFixture {
+        list: ListState,
+        rows_rendered: Rc<Cell<usize>>,
+    }
+
+    impl Render for ListFixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rows_rendered = self.rows_rendered.clone();
+            list(self.list.clone(), move |_, _, _| {
+                rows_rendered.set(rows_rendered.get() + 1);
+                div().w_full().h(px(20.)).into_any_element()
+            })
+            .w(px(320.))
+            .h(px(200.))
+        }
+    }
+
+    let mut measure = |length| {
+        let rows_rendered = Rc::new(Cell::new(0));
+        let (_, window) = cx.add_window_view(|_, _| ListFixture {
+            list: ListState::new(length, ListAlignment::Top, px(40.))
+                .with_uniform_item_height(px(20.)),
+            rows_rendered: rows_rendered.clone(),
+        });
+        window.update(|window, cx| {
+            for _ in 0..4 {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            }
+            rows_rendered.set(0);
+            let (_, counts) = count_allocations(|| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+            .expect("count unchanged list draw");
+            (rows_rendered.get(), counts)
+        })
+    };
+
+    let small = measure(10_000);
+    let large = measure(100_000);
+    eprintln!("plain list: 10,000 items {small:?}, 100,000 items {large:?}");
+    assert!(small.0 > 0, "the warm draw must lay out visible rows");
+    assert_eq!(small, large, "list length changed warm viewport work");
+}

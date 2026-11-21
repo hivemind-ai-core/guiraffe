@@ -27,6 +27,13 @@ fn memory_kib() -> Result<[u64; 2]> {
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+fn finish_replay_frame(window: &mut VisualTestContext) {
+    window.run_until_parked();
+    // Text snapshots are test-only. A retained Fast root might not render
+    // to clear them, so discard them at the replay boundary ourselves.
+    window.update(|window, _| gpui_kit::base::test_support::begin_frame(window));
+}
+
 /// `SOAK_SCALE=n` divides every dataset size by `n` (profiling under callgrind).
 fn scaled(size: usize) -> usize {
     if let Ok(size) = std::env::var("SOAK_ITEMS") {
@@ -167,7 +174,7 @@ fn timeline(run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
                 source: ScrollSource::Pointer,
             });
         }
-        window.run_until_parked();
+        finish_replay_frame(window);
         Ok(())
     });
 }
@@ -289,7 +296,7 @@ fn charts(
                     });
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         },
         first_frame,
@@ -365,9 +372,9 @@ fn main() -> Result<()> {
         "property-grid" => {
             mounted::property_grid(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "markdown" => {
-            mounted::markdown(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
+        "markdown" => mounted::markdown(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "mermaid" => return mounted::mermaid(mount_started, short),
         "chat" => mounted::chat(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         _ => return Err("unknown soak component".into()),
@@ -542,7 +549,7 @@ fn limit_report(mount: Duration, mut times: Vec<u128>) -> Result<()> {
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
-    use super::{Instant, Result, scaled};
+    use super::{Instant, Result, finish_replay_frame, scaled};
     pub mod mixed;
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
@@ -859,7 +866,7 @@ mod mounted {
     fn settle(window: &mut VisualTestContext) {
         window.run_until_parked();
         window.executor().advance_clock(FRAME);
-        window.run_until_parked();
+        finish_replay_frame(window);
     }
 
     fn bounds(window: &mut VisualTestContext, id: impl Into<ElementId>) -> Option<Bounds<Pixels>> {
@@ -953,7 +960,7 @@ mod mounted {
                     hover(&mut window, at);
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1023,7 +1030,7 @@ mod mounted {
                     body + point(px(((i * 37) % 400) as f32), px(((i * 13) % 300) as f32)),
                 ),
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1076,7 +1083,7 @@ mod mounted {
                     window.simulate_click(at.unwrap_or(center), Modifiers::default());
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1109,7 +1116,7 @@ mod mounted {
             } else {
                 hover(&mut window, point(x, y));
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1180,7 +1187,7 @@ mod mounted {
                     6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
                     _ => hover(&mut window, at),
                 }
-                window.run_until_parked();
+                finish_replay_frame(&mut window);
                 Ok(())
             },
             mount,
@@ -1275,7 +1282,7 @@ mod mounted {
             }
             _ => hover(window, row + point(px(40.), px(0.))),
         }
-        window.run_until_parked();
+        finish_replay_frame(window);
     }
 
     /// TreeList: 1,000,000 nodes with all 100,000 branches expanded.
@@ -1426,10 +1433,10 @@ mod mounted {
 
     /// Markdown: a 50,000-line document, scrolled, with a streamed chunk
     /// appended every fourth frame.
-    pub fn markdown(run: impl FnOnce(Frame)) -> Result<()> {
+    pub fn markdown(started: Instant, run: impl FnOnce(Frame, Duration)) -> Result<()> {
         let source = document(scaled(50_000));
         raw_bytes(source.len());
-        let (mut window, view) = mount(
+        let (mut window, view) = open(
             "markdown_soak",
             |_| {},
             |_, cx| {
@@ -1438,21 +1445,49 @@ mod mounted {
             },
         )?;
         let state = window.update(|_, cx| view.read(cx).0.clone());
-        let center = point(px(640.), px(400.));
-        run(&mut |i| {
-            if i % 4 == 0 {
-                let chunk = match (i / 4) % 64 {
-                    63 => format!("\n\n## Streamed {i}\n\n"),
-                    k if k % 16 == 15 => "\n\n".to_string(),
-                    _ => format!("token{i} "),
-                };
-                window.update(|_, cx| state.update(cx, |s, cx| s.append(&chunk, cx)));
-            } else {
-                wheel(&mut window, center, 0., -120. * sign(i, 256), false);
+        let published = |window: &mut VisualTestContext| {
+            window.update(|_, cx| {
+                state
+                    .read(cx)
+                    .text()
+                    .read(cx)
+                    .rendered_text()
+                    .source()
+                    .starts_with("# Chapter ")
+            })
+        };
+        window.update(|window, cx| window.render_frame(cx));
+        if !published(&mut window) {
+            window.run_until_parked();
+            window.update(|window, cx| window.render_frame(cx));
+            if !published(&mut window) {
+                return Err("Markdown document did not render".into());
             }
-            settle(&mut window);
-            Ok(())
-        });
+        }
+        let mount = started.elapsed();
+        settle(&mut window);
+        window.update(|window, cx| window.render_frame(cx));
+        window.run_until_parked();
+        println!("background_ready_us={}", started.elapsed().as_micros());
+
+        let center = point(px(640.), px(400.));
+        run(
+            &mut |i| {
+                if i % 4 == 0 {
+                    let chunk = match (i / 4) % 64 {
+                        63 => format!("\n\n## Streamed {i}\n\n"),
+                        k if k % 16 == 15 => "\n\n".to_string(),
+                        _ => format!("token{i} "),
+                    };
+                    window.update(|_, cx| state.update(cx, |s, cx| s.append(&chunk, cx)));
+                } else {
+                    wheel(&mut window, center, 0., -120. * sign(i, 256), false);
+                }
+                settle(&mut window);
+                Ok(())
+            },
+            mount,
+        );
         Ok(())
     }
 
@@ -1705,8 +1740,35 @@ mod mounted {
     /// Chat: 100,000-message history, scrolled while a reply streams one token
     /// per frame; each reply finishes after 400 tokens and the next begins.
     /// Reduced motion, as in the crate's own interaction tests.
+    fn chat_message(index: u64) -> guiraffe_chat::Message {
+        use guiraffe_chat::{Message, MessageId, Role};
+        let (role, text) = if index.is_multiple_of(2) {
+            (
+                Role::User,
+                format!(
+                    "Question {index}: how should the **cache** behave when entry {index} is evicted?"
+                ),
+            )
+        } else if index % 10 == 1 {
+            (
+                Role::Assistant,
+                format!(
+                    "Here is answer {index}.\n\n- keep the *hot* set\n- drop the cold tail\n\n```rust\nlet entry = cache.get({index});\n```\n"
+                ),
+            )
+        } else {
+            (
+                Role::Assistant,
+                format!(
+                    "Answer {index}: evict the least recently used entry and keep `stats` updated. See [docs](https://example.org/{index})."
+                ),
+            )
+        };
+        Message::new(MessageId(index + 1), role, text)
+    }
+
     pub fn chat(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_chat::{ChatState, Message, MessageId, Role};
+        use guiraffe_chat::ChatState;
         let count = scaled(100_000) as u64;
         let (mut window, view) = mount(
             "chat_soak",
@@ -1723,15 +1785,8 @@ mod mounted {
             |window, cx| {
                 let state = cx.new(|cx| ChatState::new(window, cx));
                 state.update(cx, |chat, cx| {
-                    for n in 0..count {
-                        let (role, text) = if n % 2 == 0 {
-                            (Role::User, format!("Question {n}: how should the **cache** behave when entry {n} is evicted?"))
-                        } else if n % 10 == 1 {
-                            (Role::Assistant, format!("Here is answer {n}.\n\n- keep the *hot* set\n- drop the cold tail\n\n```rust\nlet entry = cache.get({n});\n```\n"))
-                        } else {
-                            (Role::Assistant, format!("Answer {n}: evict the least recently used entry and keep `stats` updated. See [docs](https://example.org/{n})."))
-                        };
-                        chat.push_message(Message::new(MessageId(n + 1), role, text), cx);
+                    for index in 0..count {
+                        chat.push_message(chat_message(index), cx);
                     }
                 });
                 cx.new(|_| ChatHost(state))
@@ -1774,5 +1829,195 @@ mod mounted {
             Ok(())
         });
         Ok(())
+    }
+    #[cfg(all(test, target_os = "linux"))]
+    mod tests {
+        use super::{
+            ChatHost, MarkdownHost, chat, chat_message, document, empty, finish_replay_frame,
+            markdown, mount,
+        };
+        use gpui_kit::{AppContext as _, test::TestWindowExt as _};
+        use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
+        use std::{process::Command, time::Instant};
+
+        #[global_allocator]
+        static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+        const SCENARIO: &str = "GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO";
+
+        fn mounted_peak(test: &str, scenario: &str) -> u64 {
+            let output = Command::new(std::env::current_exe().expect("test executable"))
+                .args(["--exact", test, "--nocapture"])
+                .env(SCENARIO, scenario)
+                .env_remove("SOAK_SCALE")
+                .env_remove("SOAK_ITEMS")
+                .output()
+                .expect("run mount in isolated process");
+            assert!(
+                output.status.success(),
+                "scenario {scenario}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .find_map(|line| line.strip_prefix("mounted-test-rss-kib="))
+                .and_then(|value| value.parse().ok())
+                .expect("child peak RSS")
+        }
+
+        fn run_rss_child() -> bool {
+            if let Ok(scenario) = std::env::var(SCENARIO) {
+                match scenario.as_str() {
+                    "empty" => empty(|_| {}).expect("mount baseline"),
+                    "chat" => chat(|_| {}).expect("mount 100k chat history"),
+                    "markdown" => markdown(Instant::now(), |frame, _| {
+                        for index in 0..64 {
+                            frame(index).expect("scroll and append");
+                        }
+                    })
+                    .expect("mount 50k-line Markdown"),
+                    _ => panic!("unknown scenario {scenario}"),
+                }
+                let status = std::fs::read_to_string("/proc/self/status").expect("process status");
+                let peak = status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("VmHWM:"))
+                    .and_then(|value| value.split_whitespace().next())
+                    .expect("kernel peak RSS");
+                println!("mounted-test-rss-kib={peak}");
+                return true;
+            }
+            false
+        }
+
+        fn assert_rss_budget(test: &str, scenario: &str, raw_bytes: usize) {
+            let baseline = mounted_peak(test, "empty");
+            let loaded = mounted_peak(test, scenario);
+            let budget = (raw_bytes + raw_bytes / 4).div_ceil(1024) as u64 + 64 * 1024;
+            let delta = loaded.saturating_sub(baseline);
+            println!(
+                "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
+            );
+            assert!(
+                delta <= budget,
+                "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
+            );
+        }
+
+        #[test]
+        fn chat_history_rss_budget() {
+            if run_rss_child() {
+                return;
+            }
+            let raw_bytes: usize = (0..100_000)
+                .map(|index| chat_message(index).text.len())
+                .sum();
+            assert_rss_budget("mounted::tests::chat_history_rss_budget", "chat", raw_bytes);
+        }
+
+        #[test]
+        fn markdown_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget(
+                    "mounted::tests::markdown_rss_budget",
+                    "markdown",
+                    document(50_000).len(),
+                );
+            }
+        }
+
+        #[test]
+        fn replay_releases_test_text_at_the_frame_boundary() {
+            let (mut window, _) = mount(
+                "markdown-replay-text",
+                |_| {},
+                |_, cx| {
+                    let state = cx.new(|cx| guiraffe_markdown::MarkdownState::new("Text", cx));
+                    cx.new(|_| MarkdownHost(state))
+                },
+            )
+            .expect("Markdown mount");
+
+            window.update(|window, cx| {
+                window.render_frame(cx);
+                assert!(!gpui_kit::base::test_support::texts(window).is_empty());
+            });
+            finish_replay_frame(&mut window);
+            window.update(|window, _| {
+                assert!(gpui_kit::base::test_support::texts(window).is_empty());
+            });
+        }
+
+        #[test]
+        fn text_warm_repaint_work_does_not_grow_with_history() -> anyhow::Result<()> {
+            // Count the draw with caches enabled, outside test-window dispatch.
+            let count_draw = |window: &mut gpui_kit::VisualTestContext| {
+                window.update(|window, cx| {
+                    count_allocations(|| window.draw(cx).clear(cx)).map(|(_, counts)| counts)
+                })
+            };
+            let markdown_allocs = |lines| {
+                let (mut window, _) = mount(
+                    "markdown-warm-allocation",
+                    |_| {},
+                    |_, cx| {
+                        let state =
+                            cx.new(|cx| guiraffe_markdown::MarkdownState::new(document(lines), cx));
+                        cx.new(|_| MarkdownHost(state))
+                    },
+                )
+                .expect("Markdown mount");
+                for _ in 0..4 {
+                    window.update(|window, cx| window.draw(cx).clear(cx));
+                }
+                count_draw(&mut window)
+            };
+            let chat_allocs = |rows| {
+                let (mut window, _) = mount(
+                    "chat-warm-allocation",
+                    |cx| {
+                        guiraffe_chat::init(cx);
+                        guiraffe_motion::MotionPrefs::set(
+                            guiraffe_motion::MotionPrefs {
+                                reduced: true,
+                                ..guiraffe_motion::MotionPrefs::global(cx)
+                            },
+                            cx,
+                        );
+                    },
+                    |window, cx| {
+                        let state = cx.new(|cx| guiraffe_chat::ChatState::new(window, cx));
+                        state.update(cx, |chat, cx| {
+                            // The tail-following viewport sees the same message IDs.
+                            for id in (1..=rows).rev() {
+                                chat.push_message(
+                                    guiraffe_chat::Message::new(
+                                        guiraffe_chat::MessageId(id),
+                                        guiraffe_chat::Role::User,
+                                        "Same visible **message**",
+                                    ),
+                                    cx,
+                                );
+                            }
+                        });
+                        cx.new(|_| ChatHost(state))
+                    },
+                )
+                .expect("Chat mount");
+                for _ in 0..4 {
+                    window.update(|window, cx| window.draw(cx).clear(cx));
+                }
+                count_draw(&mut window)
+            };
+            let markdown_small = markdown_allocs(10_000)?;
+            let markdown_large = markdown_allocs(50_000)?;
+            let chat_small = chat_allocs(10_000)?;
+            let chat_large = chat_allocs(100_000)?;
+            eprintln!("Markdown: {markdown_small:?} -> {markdown_large:?}");
+            eprintln!("Chat: {chat_small:?} -> {chat_large:?}");
+            assert_eq!(markdown_small, markdown_large);
+            assert_eq!(chat_small, chat_large);
+            Ok(())
+        }
     }
 }

@@ -18,26 +18,45 @@ use crate::text::{
 
 /// Parse Markdown into a tree of nodes.
 pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument, SharedString> {
-    parse_with_cancel(source, cx, || false)
+    parse_with_cancel(source, cx, false, || false, |_| {})
 }
 
 pub(in crate::text) fn parse_with_cancel(
     source: &str,
     cx: &mut NodeContext,
+    defer_paragraphs: bool,
     cancelled: impl Fn() -> bool,
+    mut observe_section: impl FnMut(&Node),
 ) -> Result<ParsedDocument, SharedString> {
     let options = cx.markdown_extensions.parse_options();
     let mut prose = cx.markdown_extensions.parse_options();
     prose.constructs.math_text = false;
     prose.constructs.math_flow = false;
+    let source_text: SharedString = source.to_owned().into();
+    let source_base = cx.offset;
+    let defer_paragraphs = defer_paragraphs && source.len() > 32 * 1024;
     let mut blocks = Vec::new();
+    let mut last = None;
     visit_ast_sections(source, &options, &cancelled, |mut root| {
+        observe_section(&root);
         flatten_unclaimed_math(&mut root, source, &prose, cx);
-        blocks.extend(ast_into_blocks(source, root, cx));
+        let parsed = ast_into_blocks(source, root, cx);
+        if defer_paragraphs {
+            // Streaming starts at the last block. Keep that block eager so
+            // the fade tracker can compare its old and new inline runs.
+            for block in parsed {
+                if let Some(previous) = last.replace(block) {
+                    blocks.push(previous.into_cold_paragraph(&source_text, source_base));
+                }
+            }
+        } else {
+            blocks.extend(parsed);
+        }
     })?;
+    blocks.extend(last);
     Ok(ParsedDocument {
-        source: source.to_owned().into(),
-        blocks: Arc::new(blocks),
+        source: source_text,
+        blocks: Arc::new(blocks.into()),
     })
 }
 
@@ -379,6 +398,7 @@ fn parse_inline_children(
     children: &[Node],
     cx: &mut NodeContext,
 ) -> String {
+    paragraph.children_mut().reserve_exact(children.len());
     let mut text = String::new();
     for group in inline_groups(children) {
         match group {
@@ -392,6 +412,7 @@ fn parse_inline_children(
             }
         }
     }
+    paragraph.trim_child_capacity();
     text
 }
 
@@ -505,11 +526,13 @@ fn merge_children_with_mark(
             }
             let merged_offset = merged_text.len();
             merged_text.push_str(&node.text);
-            merged_source_segments.extend(node.source_segments.drain(..).map(|mut segment| {
-                segment.rendered.start += merged_offset;
-                segment.rendered.end += merged_offset;
-                segment
-            }));
+            merged_source_segments.extend(node.source_segments.into_vec().into_iter().map(
+                |mut segment| {
+                    segment.rendered.start += merged_offset;
+                    segment.rendered.end += merged_offset;
+                    segment
+                },
+            ));
 
             for (range, child_mark) in node.marks {
                 merged_marks.push((
@@ -533,7 +556,7 @@ fn merge_children_with_mark(
                     std::mem::take(&mut merged_source_segments),
                     mark.clone(),
                 );
-                paragraph.push(InlineNode::image(image));
+                paragraph.push(InlineNode::image(*image));
             }
         }
     }
@@ -1028,9 +1051,10 @@ fn parse_paragraph(
         }
         Node::Html(val) => match super::html::parse(&val.value, cx) {
             Ok(el) => {
-                if let Some(inline_text) =
-                    append_inline_html_blocks(paragraph, Arc::unwrap_or_clone(el.blocks))
-                {
+                if let Some(inline_text) = append_inline_html_blocks(
+                    paragraph,
+                    Arc::unwrap_or_clone(el.blocks).into_iter().collect(),
+                ) {
                     text = inline_text;
                 } else {
                     if cfg!(debug_assertions) {
@@ -1345,7 +1369,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
         }
         Node::Html(val) => match super::html::parse(&val.value, cx) {
             Ok(el) => BlockNode::Root {
-                children: Arc::unwrap_or_clone(el.blocks),
+                children: Arc::unwrap_or_clone(el.blocks).into_iter().collect(),
                 span: new_span(val.position, cx),
             },
             Err(err) => {
@@ -1615,8 +1639,8 @@ mod tests {
         let document = parse(source, &mut cx).unwrap();
         let paragraph = first_paragraph(&document.blocks[0]).unwrap();
         assert_eq!(
-            paragraph.children[0].source_segments,
-            vec![SourceSegment {
+            paragraph.children[0].source_segments.as_ref(),
+            &[SourceSegment {
                 rendered: 0..source.len(),
                 source: 0..source.len(),
                 linear: true,
@@ -1764,7 +1788,6 @@ mod tests {
         assert_eq!(paragraph.text(), source);
         let segments = &paragraph.children[0].source_segments;
         assert_eq!(segments.len(), 1);
-        assert!(segments.capacity() < 64);
         assert_eq!(segments[0].source, 0..source.len());
         assert_eq!(
             selected_rendered_range(&source, source.len() - 3..source.len()),
@@ -1817,8 +1840,8 @@ mod tests {
         let paragraph = first_paragraph(&document.blocks[0]).unwrap();
         assert_eq!(paragraph.children[0].text.as_ref(), "a ∾̳ b");
         assert_eq!(
-            paragraph.children[0].source_segments,
-            vec![
+            paragraph.children[0].source_segments.as_ref(),
+            &[
                 SourceSegment {
                     rendered: 0..2,
                     source: 0..2,
@@ -1912,8 +1935,9 @@ mod tests {
         let source = "mapped\n\nA &amp; B";
         let mut cx = NodeContext::default();
         let document = parse(source, &mut cx).unwrap();
-        let [BlockNode::Paragraph(mapped), BlockNode::Paragraph(entity)] =
-            document.blocks.as_slice()
+        assert_eq!(document.blocks.len(), 2);
+        let (BlockNode::Paragraph(mapped), BlockNode::Paragraph(entity)) =
+            (&document.blocks[0], &document.blocks[1])
         else {
             panic!("expected two paragraphs");
         };

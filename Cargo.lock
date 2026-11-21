@@ -2390,6 +2390,7 @@ dependencies = [
  "gpui-pre-macros",
  "gpui-pre-sum-tree",
  "html5ever",
+ "im",
  "instant",
  "itertools 0.13.0",
  "lsp-types",

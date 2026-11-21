@@ -450,6 +450,13 @@ impl IndexBuilder {
                     paragraph.span.map(|span| TextLeafKey::block(span.start)),
                 );
             }
+            BlockNode::ColdParagraph(paragraph) => {
+                let paragraph = paragraph.materialize(false);
+                self.push_paragraph(
+                    &paragraph,
+                    paragraph.span.map(|span| TextLeafKey::block(span.start)),
+                );
+            }
             BlockNode::Heading { children, span, .. } => {
                 self.push_paragraph(children, span.map(|span| TextLeafKey::block(span.start)));
             }
@@ -574,7 +581,10 @@ impl IndexBuilder {
 
 /// The last cell and source end of each table row. Collect them once so
 /// remapping cells neither rescans a table nor recomputes a row's end.
-fn table_row_source_ends(blocks: &[BlockNode], rows: &mut Vec<(TextLeafKey, Option<usize>)>) {
+fn table_row_source_ends<'a>(
+    blocks: impl IntoIterator<Item = &'a BlockNode>,
+    rows: &mut Vec<(TextLeafKey, Option<usize>)>,
+) {
     for block in blocks {
         match block {
             BlockNode::Table(table) => {
@@ -776,7 +786,7 @@ impl<'a> LeafRemap<'a> {
 
         let mut table_rows = Vec::new();
         if !tail_only {
-            table_row_source_ends(&old.blocks, &mut table_rows);
+            table_row_source_ends(old.blocks.iter(), &mut table_rows);
             table_rows.sort_by_key(|(key, _)| *key);
         }
 
@@ -1360,7 +1370,10 @@ mod tests {
     }
 
     /// The blocks holding text, the way `IndexBuilder` walks them.
-    fn leaf_nodes<'a>(blocks: &'a [BlockNode], leaves: &mut Vec<LeafNode<'a>>) {
+    fn leaf_nodes<'a>(
+        blocks: impl IntoIterator<Item = &'a BlockNode>,
+        leaves: &mut Vec<LeafNode<'a>>,
+    ) {
         for block in blocks {
             match block {
                 BlockNode::Root { children, .. }
@@ -1409,7 +1422,7 @@ mod tests {
             );
         }
         let mut leaves = Vec::new();
-        leaf_nodes(&document.blocks, &mut leaves);
+        leaf_nodes(document.blocks.iter(), &mut leaves);
         let spans = &text.index().leaves;
         assert_eq!(leaves.len(), spans.len(), "leaves of {markdown:?}");
         let leaves = leaves

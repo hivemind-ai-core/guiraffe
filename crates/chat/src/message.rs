@@ -25,6 +25,7 @@ pub struct MessageView {
     reasoning: Option<Entity<Reasoning>>,
     reasoning_subscription: Option<Subscription>,
     pub(crate) editable: bool,
+    pub(crate) streaming: bool,
     owner: WeakEntity<crate::ChatState>,
     presence: Option<Presence>,
     #[cfg(test)]
@@ -33,6 +34,23 @@ pub struct MessageView {
     markdown_subscription: Option<Subscription>,
     pub(crate) layout: RowLayout,
 }
+#[derive(Default)]
+#[cfg_attr(test, derive(Debug, Eq, PartialEq))]
+pub(crate) struct Disclosures {
+    tools: Vec<usize>,
+    reasoning: bool,
+}
+
+impl Disclosures {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tools.is_empty() && !self.reasoning
+    }
+
+    pub(crate) fn clear_reasoning(&mut self) {
+        self.reasoning = false;
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct RowLayout {
     pub list: ListState,
@@ -55,16 +73,22 @@ impl MessageView {
         owner: WeakEntity<crate::ChatState>,
         animate: bool,
         layout: RowLayout,
+        disclosures: Option<&Disclosures>,
         cx: &mut Context<Self>,
     ) -> Self {
         let tools: Vec<_> = data
             .tools
             .iter()
-            .map(|tool| cx.new(|_| ToolCard::new(tool.clone())))
+            .enumerate()
+            .map(|(index, tool)| {
+                let open = disclosures.is_some_and(|state| state.tools.contains(&index));
+                cx.new(|_| ToolCard::new(tool.clone(), open))
+            })
             .collect();
         let reasoning = (!data.reasoning.is_empty()).then(|| {
             let row = cx.weak_entity();
-            cx.new(|_| Reasoning::new(row, &layout))
+            let open = disclosures.is_some_and(|state| state.reasoning);
+            cx.new(|_| Reasoning::new(row, &layout, open))
         });
         let presence = animate.then(|| {
             let transition =
@@ -79,6 +103,7 @@ impl MessageView {
             .map(|reasoning| layout.observe(reasoning, cx));
         Self {
             editable: data.role == Role::User,
+            streaming: false,
             data,
             markdown: None,
             menu: None,
@@ -94,10 +119,16 @@ impl MessageView {
             layout,
         }
     }
-    pub(crate) fn has_text_selection(&self, cx: &App) -> bool {
-        self.markdown
-            .as_ref()
-            .is_some_and(|text| text.read(cx).has_selection(cx))
+    pub(crate) fn retain_offscreen(&self, cx: &App) -> bool {
+        self.streaming
+            || self
+                .menu
+                .as_ref()
+                .is_some_and(guiraffe_core::TextMenu::is_open)
+            || self
+                .markdown
+                .as_ref()
+                .is_some_and(|text| text.read(cx).has_selection(cx))
             || self.reasoning.as_ref().is_some_and(|reasoning| {
                 reasoning
                     .read(cx)
@@ -107,16 +138,18 @@ impl MessageView {
             })
     }
 
-    pub(crate) fn evict_text(&mut self, cx: &mut Context<Self>) {
-        self.markdown = None;
-        self.markdown_subscription = None;
-        if let Some(reasoning) = &self.reasoning
-            && reasoning.read(cx).markdown.is_some()
-        {
-            reasoning.update(cx, |reasoning, _| {
-                reasoning.markdown = None;
-                reasoning._layout_subscription = None;
-            });
+    pub(crate) fn disclosures(&self, cx: &App) -> Disclosures {
+        Disclosures {
+            tools: self
+                .tools
+                .iter()
+                .enumerate()
+                .filter_map(|(index, tool)| tool.read(cx).open.then_some(index))
+                .collect(),
+            reasoning: self
+                .reasoning
+                .as_ref()
+                .is_some_and(|state| state.read(cx).open),
         }
     }
 
@@ -161,7 +194,7 @@ impl MessageView {
             });
         } else {
             let row = cx.weak_entity();
-            let reasoning = cx.new(|_| Reasoning::new(row, &self.layout));
+            let reasoning = cx.new(|_| Reasoning::new(row, &self.layout, false));
             self.reasoning_subscription = Some(self.layout.observe(&reasoning, cx));
             self.reasoning = Some(reasoning);
             cx.notify();
@@ -181,7 +214,7 @@ impl MessageView {
             });
         } else {
             self.data.tools.push(tool.clone());
-            let card = cx.new(|_| ToolCard::new(tool));
+            let card = cx.new(|_| ToolCard::new(tool, false));
             self._layout_subscriptions
                 .push(self.layout.observe(&card, cx));
             self.tools.push(card);
@@ -417,11 +450,11 @@ fn tool_details(tool: &ToolCall) -> SharedString {
     format!("Arguments\n{}\n\nResult\n{}", tool.arguments, tool.result).into()
 }
 impl ToolCard {
-    fn new(tool: ToolCall) -> Self {
+    fn new(tool: ToolCall, open: bool) -> Self {
         Self {
             details: tool_details(&tool),
             tool,
-            open: false,
+            open,
         }
     }
 }
@@ -480,9 +513,9 @@ struct Reasoning {
     _layout_subscription: Option<Subscription>,
 }
 impl Reasoning {
-    fn new(row: WeakEntity<MessageView>, layout: &RowLayout) -> Self {
+    fn new(row: WeakEntity<MessageView>, layout: &RowLayout, open: bool) -> Self {
         Self {
-            open: false,
+            open,
             row,
             layout: layout.clone(),
             _layout_subscription: None,
