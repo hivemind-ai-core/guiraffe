@@ -5,8 +5,8 @@ use std::{collections::HashMap, rc::Rc};
 
 use gpui_kit::{
     App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, PathBuilder, Pixels, Render, Role,
-    ScrollEvent, Styled, TestSupportExt, Window, canvas, div, point, prelude::*, px,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, PathBuilder, Pixels, Point, Render,
+    Role, ScrollEvent, Styled, TestSupportExt, Window, canvas, div, point, prelude::*, px,
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 
@@ -602,26 +602,56 @@ fn paint_bar(
     ));
 }
 
-fn arrow(
+// GPUI path tessellation uses u16 vertex indices. Keep batches small and split
+// a batch if long routes still exceed the tessellator's capacity.
+const ARROW_BATCH_SIZE: usize = 32;
+
+fn paint_arrows(
     window: &mut Window,
-    from: gpui_kit::Point<Pixels>,
-    to: gpui_kit::Point<Pixels>,
+    arrows: &[(Point<Pixels>, Point<Pixels>)],
+    viewport: Bounds<Pixels>,
     color: Hsla,
 ) {
-    let mid = px((f32::from(from.x) + f32::from(to.x)) / 2.0).max(from.x + px(8.0));
-    let mut b = PathBuilder::stroke(px(1.5));
-    b.move_to(from);
-    b.cubic_bezier_to(to, point(mid, from.y), point(mid, to.y));
-    if let Ok(p) = b.build() {
-        window.paint_path(p, color);
+    if arrows.is_empty() {
+        return;
     }
-    let mut head = PathBuilder::fill();
-    head.move_to(to);
-    head.line_to(point(to.x - px(6.0), to.y - px(4.0)));
-    head.line_to(point(to.x - px(6.0), to.y + px(4.0)));
-    head.close();
-    if let Ok(p) = head.build() {
-        window.paint_path(p, color);
+    let mut stroke = PathBuilder::stroke(px(1.5));
+    let mut heads = None;
+    for &(from, to) in arrows {
+        let mid = ((from.x + to.x) / 2.0).max(from.x + px(8.0));
+        stroke.move_to(from);
+        stroke.cubic_bezier_to(to, point(mid, from.y), point(mid, to.y));
+        if to.x >= viewport.left()
+            && to.x - px(6.0) <= viewport.right()
+            && to.y + px(4.0) >= viewport.top()
+            && to.y - px(4.0) <= viewport.bottom()
+        {
+            // Submit triangles directly so coincident heads retain their fill.
+            let solid = point(0.0, 1.0);
+            heads
+                .get_or_insert_with(|| gpui_kit::Path::new(to))
+                .push_triangle(
+                    (
+                        to,
+                        point(to.x - px(6.0), to.y + px(4.0)),
+                        point(to.x - px(6.0), to.y - px(4.0)),
+                    ),
+                    (solid, solid, solid),
+                );
+        }
+    }
+    match stroke.build() {
+        Err(_) if arrows.len() > 1 => {
+            let (first, last) = arrows.split_at(arrows.len() / 2);
+            paint_arrows(window, first, viewport, color);
+            paint_arrows(window, last, viewport, color);
+            return;
+        }
+        Ok(path) => window.paint_path(path, color),
+        Err(_) => {}
+    }
+    if let Some(path) = heads {
+        window.paint_path(path, color);
     }
 }
 
@@ -955,17 +985,26 @@ impl Render for GanttView {
                                         let Ok(schedule) = schedule.as_ref() else {
                                             return;
                                         };
+                                        let mut arrows = [(b.origin, b.origin); ARROW_BATCH_SIZE];
+                                        let mut count = 0;
                                         geo.visible_arrows(
                                             schedule,
                                             axis,
                                             scroll_y,
                                             f32::from(b.size.height),
                                             |(x0, y0), (x1, y1)| {
-                                                let p0 = b.origin + point(px(x0), px(y0));
-                                                let p1 = b.origin + point(px(x1), px(y1));
-                                                arrow(window, p0, p1, arrow_color);
+                                                arrows[count] = (
+                                                    b.origin + point(px(x0), px(y0)),
+                                                    b.origin + point(px(x1), px(y1)),
+                                                );
+                                                count += 1;
+                                                if count == arrows.len() {
+                                                    paint_arrows(window, &arrows, b, arrow_color);
+                                                    count = 0;
+                                                }
                                             },
                                         );
+                                        paint_arrows(window, &arrows[..count], b, arrow_color);
                                     },
                                 )
                                 .absolute()
