@@ -11,7 +11,7 @@ use super::{column, example};
 use crate::catalog::{Entry, stateless};
 use crate::events::EventLog;
 use crate::knobs::{
-    Applied, Knob, KnobValues, SIZE_NAMES, playground_with, playground_with_update, with_knobs,
+    Knob, KnobValues, SIZE_NAMES, playground_with, playground_with_update, with_knobs,
 };
 use gpui_kit::AnyElement;
 
@@ -509,7 +509,7 @@ fn disclosure_items() -> Vec<DisclosureItem> {
 }
 
 fn accordion(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Accordion",
         &[
             Knob::new("Variant", &["Contained", "Separated", "Filled"]),
@@ -521,35 +521,35 @@ fn accordion(window: &mut Window, cx: &mut App) -> AnyView {
                 Accordion::new(disclosure_items(), AccordionOptions::default(), vec![0], cx);
             let log = EventLog::new(cx);
             EventLog::watch::<AccordionChange, _>(&log, &control, cx);
-            (control, log, Applied::default())
+            (control, log)
         },
-        |(control, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let variant = v
-                    .pick(
-                        0,
-                        &[
-                            AccordionVariant::Contained,
-                            AccordionVariant::Separated,
-                            AccordionVariant::Filled,
-                        ],
-                    )
-                    .unwrap_or_default();
-                let chevron = v
-                    .pick(1, &[ChevronPosition::End, ChevronPosition::Start])
-                    .unwrap_or_default();
-                control.update(cx, |control, cx| {
-                    control.set_options(
-                        AccordionOptions {
-                            variant,
-                            chevron,
-                            multiple: v.on(2),
-                            focusable: Some(true),
-                        },
-                        cx,
-                    )
-                });
-            }
+        |(control, _), v, cx| {
+            let variant = v
+                .pick(
+                    0,
+                    &[
+                        AccordionVariant::Contained,
+                        AccordionVariant::Separated,
+                        AccordionVariant::Filled,
+                    ],
+                )
+                .unwrap_or_default();
+            let chevron = v
+                .pick(1, &[ChevronPosition::End, ChevronPosition::Start])
+                .unwrap_or_default();
+            control.update(cx, |control, cx| {
+                control.set_options(
+                    AccordionOptions {
+                        variant,
+                        chevron,
+                        multiple: v.on(2),
+                        focusable: Some(true),
+                    },
+                    cx,
+                )
+            });
+        },
+        |(control, log), _, _, _| {
             column([
                 div().w(px(420.)).child(control.clone()).into_any_element(),
                 example("Events", log.clone()),
@@ -561,19 +561,19 @@ fn accordion(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn expanding_list(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "ExpandingList",
         &[Knob::toggle("Keyboard navigation")],
         |_, cx| {
             let control = ExpandingList::new(disclosure_items(), px(72.), cx);
             let log = EventLog::new(cx);
             EventLog::watch::<ExpandingListChange, _>(&log, &control, cx);
-            (control, log, Applied::default())
+            (control, log)
         },
-        |(control, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                control.update(cx, |control, cx| control.set_focusable(Some(v.on(0)), cx));
-            }
+        |(control, _), v, cx| {
+            control.update(cx, |control, cx| control.set_focusable(Some(v.on(0)), cx));
+        },
+        |(control, log), _, _, _| {
             column([
                 div().w(px(420.)).child(control.clone()).into_any_element(),
                 example("Events", log.clone()),
@@ -585,7 +585,7 @@ fn expanding_list(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "SpeedDial",
         &[
             Knob::new(
@@ -616,33 +616,33 @@ fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
             );
             let log = EventLog::new(cx);
             EventLog::watch::<SpeedDialEvent, _>(&log, &control, cx);
-            (control, log, Applied::default())
+            (control, log)
         },
-        |(control, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let radius = v.pick(1, &[80., 120.]).unwrap_or(80.);
-                let layout = match v.index(0) {
-                    1 => DialLayout::Horizontal { spacing: 48. },
-                    2 => DialLayout::Radial {
-                        radius,
-                        start_degrees: -90.,
-                        arc: DialArc::Quarter,
-                        clockwise: true,
-                    },
-                    3 => DialLayout::Radial {
-                        radius,
-                        start_degrees: -180.,
-                        arc: DialArc::Half,
-                        clockwise: true,
-                    },
-                    _ => DialLayout::Vertical { spacing: 48. },
-                };
-                control.update(cx, |control, cx| {
-                    control.set_focusable(Some(true), cx);
-                    control.set_layout(layout, cx);
-                    control.set_show_labels(v.on(2), cx);
-                });
-            }
+        |(control, _), v, cx| {
+            let radius = v.pick(1, &[80., 120.]).unwrap_or(80.);
+            let layout = match v.index(0) {
+                1 => DialLayout::Horizontal { spacing: 48. },
+                2 => DialLayout::Radial {
+                    radius,
+                    start_degrees: -90.,
+                    arc: DialArc::Quarter,
+                    clockwise: true,
+                },
+                3 => DialLayout::Radial {
+                    radius,
+                    start_degrees: -180.,
+                    arc: DialArc::Half,
+                    clockwise: true,
+                },
+                _ => DialLayout::Vertical { spacing: 48. },
+            };
+            control.update(cx, |control, cx| {
+                control.set_focusable(Some(true), cx);
+                control.set_layout(layout, cx);
+                control.set_show_labels(v.on(2), cx);
+            });
+        },
+        |(control, log), _, _, _| {
             column([
                 div()
                     .w(px(410.))

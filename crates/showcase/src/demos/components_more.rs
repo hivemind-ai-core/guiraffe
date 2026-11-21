@@ -10,7 +10,7 @@ use guiraffe_core::{ColorName, Size};
 use super::{column, example};
 use crate::catalog::Entry;
 use crate::events::EventLog;
-use crate::knobs::{Applied, Knob, KnobValues, playground_with, with_knobs};
+use crate::knobs::{Knob, KnobValues, playground_with, playground_with_update, with_knobs};
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -161,7 +161,7 @@ fn stepper(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn loader(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live Loader",
         &[
             Knob::new("Type", &["oval", "bars", "dots"]),
@@ -174,20 +174,20 @@ fn loader(window: &mut Window, cx: &mut App) -> AnyView {
                 l.update(cx, |l, cx| l.set_kind(k, cx));
                 l
             });
-            (Loader::new(cx), all, Applied::default())
+            (Loader::new(cx), all)
         },
-        |(live, all, applied), v, _, cx| {
-            if applied.changed(v) {
-                let kind = v
-                    .pick(0, &[LoaderType::Oval, LoaderType::Bars, LoaderType::Dots])
-                    .unwrap_or_default();
-                let (size, color) = (v.size(1), v.color(2));
-                live.update(cx, |l, cx| {
-                    l.set_kind(kind, cx);
-                    l.set_size(Some(size), cx);
-                    l.set_color(color, cx);
-                });
-            }
+        |(live, _), v, cx| {
+            let kind = v
+                .pick(0, &[LoaderType::Oval, LoaderType::Bars, LoaderType::Dots])
+                .unwrap_or_default();
+            let (size, color) = (v.size(1), v.color(2));
+            live.update(cx, |l, cx| {
+                l.set_kind(kind, cx);
+                l.set_size(Some(size), cx);
+                l.set_color(color, cx);
+            });
+        },
+        |(live, all), _, _, _| {
             column([
                 div().child(live.clone()).into_any_element(),
                 example(
@@ -212,7 +212,7 @@ and in summer the light lasts until almost midnight. Plan two days for Nærøyfj
 cliffs rise straight out of the water and waterfalls appear after every rain.";
 
 fn spoiler(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live Spoiler",
         &[
             Knob::new("Collapsed lines", &["1", "2", "3"]).default(1),
@@ -226,25 +226,23 @@ fn spoiler(window: &mut Window, cx: &mut App) -> AnyView {
                     cx,
                 )
             });
-            (s, Applied::default())
+            s
         },
-        |(s, applied), v, _, cx| {
-            if applied.changed(v) {
-                let (lines, color) = (v.index(0) + 1, v.color(1));
-                s.update(cx, |s, cx| {
-                    s.set_collapsed_lines(lines, cx);
-                    s.set_color(color, cx);
-                });
-            }
-            div().w(px(420.)).child(s.clone()).into_any_element()
+        |s, v, cx| {
+            let (lines, color) = (v.index(0) + 1, v.color(1));
+            s.update(cx, |s, cx| {
+                s.set_collapsed_lines(lines, cx);
+                s.set_color(color, cx);
+            });
         },
+        |s, _, _, _| div().w(px(420.)).child(s.clone()).into_any_element(),
         window,
         cx,
     )
 }
 
 fn burger(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live Burger",
         &[Knob::size(), Knob::color()],
         |_, cx| {
@@ -254,16 +252,16 @@ fn burger(window: &mut Window, cx: &mut App) -> AnyView {
             b.update(cx, |b, _| {
                 b.on_change(move |open, _, cx| EventLog::log(&l, format!("on_change({open})"), cx))
             });
-            (b, log, Applied::default())
+            (b, log)
         },
-        |(b, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let (size, color) = (v.size(0), v.color(1));
-                b.update(cx, |b, cx| {
-                    b.set_size(Some(size), cx);
-                    b.set_color(color, cx);
-                });
-            }
+        |(b, _), v, cx| {
+            let (size, color) = (v.size(0), v.color(1));
+            b.update(cx, |b, cx| {
+                b.set_size(Some(size), cx);
+                b.set_color(color, cx);
+            });
+        },
+        |(b, log), _, _, _| {
             column([
                 div().child(b.clone()).into_any_element(),
                 example("Events", log.clone()),
@@ -275,7 +273,7 @@ fn burger(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn copy_button(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live CopyButton",
         &[
             Knob::new("Label", &["icon", "text"]).default(1),
@@ -291,19 +289,19 @@ fn copy_button(window: &mut Window, cx: &mut App) -> AnyView {
                 b.set_value("cargo add guiraffe", cx);
                 b.on_copy(move |v, _, cx| EventLog::log(&l, format!("on_copy({v:?})"), cx));
             });
-            (b, log, Applied::default())
+            (b, log)
         },
-        |(b, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let label = v.on(0).then(|| "Copy command".into());
-                let (size, color, disabled) = (v.size(1), v.color(2), v.on(3));
-                b.update(cx, |b, cx| {
-                    b.set_label(label, cx);
-                    b.set_size(Some(size), cx);
-                    b.set_color(color, cx);
-                    b.set_disabled(disabled, cx);
-                });
-            }
+        |(b, _), v, cx| {
+            let label = v.on(0).then(|| "Copy command".into());
+            let (size, color, disabled) = (v.size(1), v.color(2), v.on(3));
+            b.update(cx, |b, cx| {
+                b.set_label(label, cx);
+                b.set_size(Some(size), cx);
+                b.set_color(color, cx);
+                b.set_disabled(disabled, cx);
+            });
+        },
+        |(b, log), _, _, _| {
             column([
                 div()
                     .flex()
