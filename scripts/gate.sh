@@ -8,6 +8,8 @@
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 2
 LOG=target/gate-logs; mkdir -p "$LOG"
+# Gate builds are one-shot: incremental caches cost ~15 GB per worktree for little reuse.
+export CARGO_INCREMENTAL=0
 UP="env CARGO_TARGET_DIR=target/gate-up"; FAST="env CARGO_TARGET_DIR=target/gate-fast"
 T="--workspace --no-fail-fast --lib --bins --tests"
 CRATES=$(cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c "import json,sys;print(' '.join(p['name'] for p in json.load(sys.stdin)['packages'] if any('lib' in t['kind'] or 'proc-macro' in t['kind'] for t in p['targets'])))")

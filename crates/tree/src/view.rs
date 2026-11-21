@@ -149,11 +149,14 @@ impl<const P: bool> TreeView<P> {
     }
 
     pub fn set_expanded(&mut self, id: NodeId, open: bool, cx: &mut Context<Self>) {
+        let visible_change = self.model.row_index(id).is_some() && self.model.expanded(id) != open;
         if let Some(id) = self.model.set_expanded(id, open, self.source.as_ref()) {
             cx.emit(TreeEvent::LoadChildren(id));
         }
-        self.clamp_scroll();
-        cx.notify();
+        if visible_change {
+            self.clamp_scroll();
+            cx.notify();
+        }
     }
 
     fn clamp_scroll(&mut self) {
@@ -588,6 +591,27 @@ mod tests {
                     .cached(StyleRefinement::default().size_full()),
             )
         }
+    }
+
+    #[gpui_kit::test]
+    fn hidden_and_unchanged_expansion_do_not_notify(cx: &mut TestAppContext) {
+        let notifications = Rc::new(Cell::new(0));
+        let tree = cx.new(|cx| {
+            let count = notifications.clone();
+            cx.observe_self(move |_, _| count.set(count.get() + 1))
+                .detach();
+            TreeList::new(
+                Rc::new(Data(vec![1], Value::Number(10.), Value::Number(5.))),
+                cx,
+            )
+        });
+
+        tree.update(cx, |tree, cx| tree.set_expanded(1, true, cx));
+        assert_eq!(notifications.get(), 0);
+        tree.update(cx, |tree, cx| tree.set_expanded(0, true, cx));
+        assert_eq!(notifications.get(), 1);
+        tree.update(cx, |tree, cx| tree.set_expanded(0, true, cx));
+        assert_eq!(notifications.get(), 1);
     }
 
     #[gpui_kit::test]

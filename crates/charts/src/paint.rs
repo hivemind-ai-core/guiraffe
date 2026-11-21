@@ -68,6 +68,33 @@ pub(crate) fn box_fill(
     window.paint_quad(fill(bounds, color).corner_radii(px(radius)));
 }
 
+fn paint_dots(window: &mut Window, origin: Point<Pixels>, dots: &[(Position, f32)], color: Hsla) {
+    const DIAGONAL: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    const CIRCLE: [(f32, f32); 8] = [
+        (1., 0.),
+        (DIAGONAL, DIAGONAL),
+        (0., 1.),
+        (-DIAGONAL, DIAGONAL),
+        (-1., 0.),
+        (-DIAGONAL, -DIAGONAL),
+        (0., -1.),
+        (DIAGONAL, -DIAGONAL),
+    ];
+    let Some(&(first, _)) = dots.first() else {
+        return;
+    };
+    let mut path = gpui_kit::Path::new(at(origin, first));
+    let uv = point(0., 1.);
+    for &((x, y), radius) in dots {
+        let center = at(origin, (x, y));
+        let offset = |(dx, dy)| at(origin, (x + radius * dx, y + radius * dy));
+        for (a, b) in CIRCLE.into_iter().zip(CIRCLE.into_iter().cycle().skip(1)) {
+            path.push_triangle((center, offset(a), offset(b)), (uv, uv, uv));
+        }
+    }
+    window.paint_path(path, color);
+}
+
 pub(crate) fn segment(
     window: &mut Window,
     origin: Point<Pixels>,
@@ -289,6 +316,7 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
                             *radius,
                         );
                     }
+                    Geometry::Dots(dots) => paint_dots(window, origin, dots, color),
                     Geometry::Text(pos, text) => label(
                         window,
                         cx,
