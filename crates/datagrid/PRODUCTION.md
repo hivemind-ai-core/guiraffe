@@ -88,8 +88,8 @@ rows and 37,185,423 instructions at 10M rows.
 The [instruction suite](../../bench/benches/production_frames.rs) warms a 1,200 by
 800 headless viewport and measures one scroll and draw. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
-100k and 10M rows. It caps each draw at 10,300 allocations and 2,750 KiB of
-requests. The [mounted interaction test](tests/interaction.rs) requires
+10k and 10M rows. The upstream cap is 1,150 allocations and 460 KiB,
+and the gpui-fast cap is 1,900 allocations and 420 KiB. The [mounted interaction test](tests/interaction.rs) requires
 equal source reads, row renders, constructed cells and pool size.
 
 The Callgrind captures below used the same fixture and cached dependencies
@@ -168,3 +168,35 @@ and interaction tests still exercise the normal cell semantics.
 
 With gpui-fast and the retained header, the same fixture requested 5,019
 allocations and 1,202,424 bytes at both sizes in the debug workspace gate.
+
+## Canvas-painted cells
+
+Each retained row paints ordinary single-line cells into its center and pinned
+band canvases. The cursor, editor and multiline cells use elements. When GPUI
+activates accessibility, visible cells retain their individual row and column
+semantics, labels, selection and bounds. Column resize updates the column layout,
+header and visible row geometry without rebinding the row pool or clamping selection.
+
+The shared cell preview cache is an LRU of 1,024 formatted strings, each capped
+at 4,096 UTF-8 bytes. The separate 1,024-entry shape LRU keys on the preview hash,
+available width, font size and font. Both caches check preview equality on hash
+hits. The shape cache holds the bounded preview and its shaped glyphs. Row band
+buffers retain at most the painted cells for each allocated viewport slot.
+
+| Optimized upstream grid fixture | Retained header | Canvas cells |
+|---|---:|---:|
+| Warm 10M-row jump instructions | 26,128,406 | 6,265,028 |
+| Warm 10k-row jump instructions | 26,120,520 | 6,262,601 |
+| Allocation requests per warm jump, both source sizes | 10,022 | 1,073 |
+| Requested bytes per warm jump | 2,349,002 | 430,262 |
+| Div paint, inclusive share of a renderer-backed Samply capture | 43.05% | 38.46% |
+| BoundsTree insertion, self share | 2.59% | 6.46% |
+| Renderer-backed p99, 60 frames on loaded host | 11.874 ms | 4.598 ms |
+| Renderer-backed mounted process RSS | 110,120 KiB | 109,172 KiB |
+
+The captures use the same harness and optimized dependencies. Samply shares
+include startup. Warm counts exclude initialization and revisit the same two
+ranges at each source size. In the debug allocator gate, upstream requested
+1,076 allocations and 431,000 bytes at both sizes. GPUI-fast requested 1,798
+allocations and 385,096 bytes at both sizes.
+The 50-allocation target and the zero-allocation target remain open.

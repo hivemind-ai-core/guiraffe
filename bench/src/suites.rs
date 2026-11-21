@@ -747,6 +747,7 @@ macro_rules! production_frame_suite {
     };
 }
 
+production_frame_suite!(datagrid_frame_10k, Grid, 10_000);
 production_frame_suite!(datagrid_frame_100k, Grid, 100_000);
 production_frame_suite!(datagrid_frame_10m, Grid, 10_000_000);
 production_frame_suite!(code_frame_100k, Code, 100_000);
