@@ -13,8 +13,10 @@ use gpui_kit::{
     Styled, Window, div, px,
 };
 use guiraffe_code::{
-    Anchor, Annotation, AnnotationKind, CodeDocument, CodeHandle, CodeOptions, CodeViewer, Fold,
-    GutterColumn, Position, SourceRange, SymbolInfo, Trace, TraceHandle,
+    Anchor, AnchorBias, Annotation, AnnotationKind, BlameCommit, CodeDocument, CodeHandle,
+    CodeOptions, CodeViewer, DecorationInput, DecorationStyle, Decorations, Fold, GutterColumn,
+    GutterMark, HighlightShape, Position, Severity, SourceRange, SymbolInfo, Trace, TraceHandle,
+    UnderlinePattern,
 };
 use guiraffe_components::Text;
 use guiraffe_core::{ColorName, Size};
@@ -35,6 +37,13 @@ pub fn entries() -> Vec<Entry> {
             summary: "Diagnostics (wavy underlines), highlights in every colour, inline type hints, code lenses, Markdown bubbles packed in the margin, and hover symbol cards with Go to definition.",
             covers: &[],
             demo: analysis,
+        },
+        Entry {
+            krate: "code",
+            name: "Code annotations",
+            summary: "Layered diagnostics, grouped git blame, review comments and coverage. F8 moves to the next diagnostic and Shift+F8 moves back.",
+            covers: &[],
+            demo: rich_annotations,
         },
         Entry {
             krate: "code",
@@ -489,6 +498,118 @@ fn js_annotations() -> Vec<Annotation> {
         ann(25, span(s, 2, "await", 0), Highlight, "", ColorName::Orange),
         ann(26, span(s, 1, "async", 0), Highlight, "", ColorName::Orange),
     ]
+}
+
+struct RichAnnotationsDemo(CodeHandle);
+
+impl Render for RichAnnotationsDemo {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().h(px(320.)).child(CodeViewer::new(&self.0))
+    }
+}
+
+fn rich_annotations(_: &mut Window, cx: &mut App) -> AnyView {
+    let source = "fn total(cart: &Cart) -> u64 {\n    let subtotal = cart.net;\n    let shipping = cart.fee;\n    subtotal + shiping\n}\n";
+    let code = handle(212, source, "rust", cx);
+    let document = code.document();
+    let setup = || {
+        let mut decorations = Decorations::new(document)?;
+        let marks = [
+            (
+                0,
+                span(source, 3, "shiping", 0),
+                DecorationStyle::Diagnostic {
+                    severity: Severity::Error,
+                    pattern: UnderlinePattern::Wavy,
+                    message: "Cannot find value shiping. Did you mean shipping?".into(),
+                },
+            ),
+            (
+                0,
+                span(source, 1, "subtotal", 0),
+                DecorationStyle::Highlight {
+                    shape: HighlightShape::Rounded,
+                    color: ColorName::Blue,
+                },
+            ),
+            (
+                1,
+                SourceRange::new(
+                    Position::new(0, 0),
+                    Position::new(2, source.lines().nth(2).map_or(0, str::len)),
+                ),
+                DecorationStyle::Blame(Arc::new(BlameCommit {
+                    author: "Ada Rivera".into(),
+                    short_hash: "af86a44".into(),
+                    message: "Include shipping in checkout totals".into(),
+                    date: "2026-11-07".into(),
+                    age_days: 14,
+                    url: None,
+                })),
+            ),
+            (
+                2,
+                span(source, 1, "subtotal", 0),
+                DecorationStyle::Review {
+                    markdown: "**Review**  \nTest free shipping.".into(),
+                },
+            ),
+            (
+                2,
+                span(source, 2, "shipping", 0),
+                DecorationStyle::Block {
+                    estimated_rows: 2,
+                    payload: "Review · Verify free shipping at the minimum order amount.".into(),
+                },
+            ),
+            (
+                3,
+                SourceRange::new(Position::new(1, 0), Position::new(1, 0)),
+                DecorationStyle::Gutter {
+                    lane: 0,
+                    mark: GutterMark::Covered,
+                },
+            ),
+            (
+                3,
+                SourceRange::new(Position::new(3, 0), Position::new(3, 0)),
+                DecorationStyle::Gutter {
+                    lane: 0,
+                    mark: GutterMark::Uncovered,
+                },
+            ),
+        ];
+        for (id, (layer, range, style)) in marks.into_iter().enumerate() {
+            let style = decorations.intern_style(style)?;
+            decorations.update_layer(
+                layer,
+                Default::default(),
+                &[],
+                [DecorationInput {
+                    id: id as u64,
+                    range,
+                    style,
+                    start_bias: AnchorBias::Left,
+                    end_bias: AnchorBias::Right,
+                }],
+            )?;
+        }
+        Ok::<_, guiraffe_code::DecorationError>(decorations)
+    };
+    if let Ok(decorations) = setup() {
+        code.set_analysis(decorations.prepare_analysis(Vec::new(), Vec::new()), cx);
+        code.set_decorations(Some(Arc::new(decorations)), cx);
+    }
+    code.on_block_widget(
+        Some(Rc::new(|widget, _, _| {
+            div()
+                .py_1()
+                .child(Text::new(widget.payload.to_string()).size(Size::Sm))
+                .into_any_element()
+        })),
+        cx,
+    );
+    cx.new(|_| RichAnnotationsDemo(code)).into()
 }
 
 struct AnalysisDemo {

@@ -19,6 +19,8 @@ pub enum AnnotationKind {
     InlineHint,
     Lens,
     Bubble,
+    /// An inter-line content widget projected from layered decorations.
+    Block,
     Symbol,
 }
 /// Additional columns (blame, coverage, breakpoints, etc.) are supplied as sparse data.
@@ -39,23 +41,45 @@ pub struct Fold {
 pub enum Row {
     Source(usize),
     Lens(usize),
+    Block {
+        annotation: usize,
+        start: usize,
+        rows: usize,
+    },
 }
 #[derive(Debug, Clone)]
 struct Segment {
     row: usize,
     len: usize,
     source: usize,
-    lens: Option<usize>,
+    insertion: Option<InsertedRow>,
+    preceding_source: Option<usize>,
 }
+#[derive(Debug, Clone, Copy)]
+enum InsertedRow {
+    Lens(usize),
+    Block(usize),
+}
+
 /// Sparse row index: a million ordinary lines occupy one segment. Folding and lenses add
 /// segments, rather than a million-element mapping rebuilt on each fold toggle.
 #[derive(Debug, Clone, Default)]
 pub struct RowMap {
     segments: Vec<Segment>,
     len: usize,
+    last_source: Option<usize>,
 }
 impl RowMap {
     pub fn new(lines: usize, folds: &[Fold], annotations: &[Annotation]) -> Self {
+        Self::with_blocks(lines, folds, annotations, &Default::default())
+    }
+
+    pub(crate) fn with_blocks(
+        lines: usize,
+        folds: &[Fold],
+        annotations: &[Annotation],
+        blocks: &std::collections::BTreeMap<u64, usize>,
+    ) -> Self {
         let mut hidden: Vec<Range<usize>> = folds
             .iter()
             .filter(|f| f.collapsed && f.start < f.end)
@@ -78,41 +102,66 @@ impl RowMap {
             points.insert(r.start);
             points.insert(r.end);
         }
-        let mut lenses = std::collections::BTreeMap::<usize, Vec<usize>>::new();
-        for (id, a) in annotations
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.kind == AnnotationKind::Lens && a.range.start.line < lines)
-        {
-            points.insert(a.range.start.line);
-            lenses.entry(a.range.start.line).or_default().push(id);
+        let mut insertions = std::collections::BTreeMap::<usize, Vec<(InsertedRow, usize)>>::new();
+        for (id, annotation) in annotations.iter().enumerate() {
+            let line = annotation.range.start.line;
+            if line >= lines {
+                continue;
+            }
+            let (before, item, height) = match annotation.kind {
+                AnnotationKind::Lens => (line, InsertedRow::Lens(id), 1),
+                AnnotationKind::Block => {
+                    let folded = merged.partition_point(|range| range.end <= line);
+                    if merged
+                        .get(folded)
+                        .is_some_and(|range| range.contains(&line))
+                    {
+                        continue;
+                    }
+                    let Some(&height) = blocks.get(&annotation.id) else {
+                        continue;
+                    };
+                    (line + 1, InsertedRow::Block(id), height)
+                }
+                _ => continue,
+            };
+            points.insert(before);
+            insertions.entry(before).or_default().push((item, height));
         }
         let points: Vec<_> = points.into_iter().collect();
         let mut map = Self::default();
-        for pair in points.windows(2) {
-            let (start, end) = (pair[0], pair[1]);
+        for (index, &start) in points.iter().enumerate() {
+            let end = points.get(index + 1).copied().unwrap_or(start);
             let i = merged.partition_point(|r| r.end <= start);
-            if merged.get(i).is_some_and(|r| r.contains(&start)) {
-                continue;
-            }
-            if let Some(ids) = lenses.get(&start) {
-                for id in ids {
-                    map.push(start, 1, Some(*id));
+            let hidden = merged.get(i).is_some_and(|r| r.contains(&start));
+            if let Some(items) = insertions.get_mut(&start) {
+                items.sort_by_key(|(item, _)| matches!(item, InsertedRow::Lens(_)));
+                for &(item, height) in items.iter() {
+                    if !hidden || matches!(item, InsertedRow::Block(_)) {
+                        map.push(start, height, Some(item));
+                    }
                 }
             }
-            map.push(start, end - start, None);
+            if !hidden {
+                map.push(start, end - start, None);
+            }
         }
         map
     }
-    fn push(&mut self, source: usize, len: usize, lens: Option<usize>) {
+    fn push(&mut self, source: usize, len: usize, insertion: Option<InsertedRow>) {
         if len == 0 {
             return;
+        }
+        let preceding_source = self.last_source;
+        if insertion.is_none() {
+            self.last_source = Some(self.segments.len());
         }
         self.segments.push(Segment {
             row: self.len,
             source,
             len,
-            lens,
+            insertion,
+            preceding_source,
         });
         self.len += len;
     }
@@ -131,8 +180,13 @@ impl RowMap {
                 .partition_point(|s| s.row <= index)
                 .saturating_sub(1),
         )?;
-        Some(match s.lens {
-            Some(id) => Row::Lens(id),
+        Some(match s.insertion {
+            Some(InsertedRow::Lens(id)) => Row::Lens(id),
+            Some(InsertedRow::Block(annotation)) => Row::Block {
+                annotation,
+                start: s.row,
+                rows: s.len,
+            },
             None => Row::Source(s.source + index - s.row),
         })
     }
@@ -142,7 +196,7 @@ impl RowMap {
             .partition_point(|s| s.source <= line)
             .saturating_sub(1);
         let s = self.segments.get(i)?;
-        (s.lens.is_none() && line < s.source + s.len)
+        (s.insertion.is_none() && line < s.source + s.len)
             .then_some(s.row + line.saturating_sub(s.source))
     }
     /// Resolve a hidden source line to the preceding visible row (its fold header).
@@ -151,7 +205,12 @@ impl RowMap {
             .segments
             .partition_point(|s| s.source <= line)
             .checked_sub(1)?;
-        let segment = self.segments.get(i)?;
+        let candidate = self.segments.get(i)?;
+        let segment = if candidate.insertion.is_some() {
+            self.segments.get(candidate.preceding_source?)?
+        } else {
+            candidate
+        };
         Some(segment.row + line.saturating_sub(segment.source).min(segment.len - 1))
     }
 }
@@ -376,6 +435,35 @@ mod tests {
         assert_eq!(rows.source_row_or_before(3), Some(2));
     }
     #[test]
+    fn block_rows_remain_visible_after_their_anchor_and_respect_folds() {
+        let annotations = [ann(1, AnnotationKind::Block), ann(3, AnnotationKind::Block)];
+        let heights = std::collections::BTreeMap::from([(1, 3), (3, 2)]);
+        let map = RowMap::with_blocks(
+            5,
+            &[Fold {
+                start: 1,
+                end: 4,
+                collapsed: true,
+            }],
+            &annotations,
+            &heights,
+        );
+        assert_eq!(map.row(1), Some(Row::Source(1)));
+        assert_eq!(
+            map.row(2),
+            Some(Row::Block {
+                annotation: 0,
+                start: 2,
+                rows: 3
+            })
+        );
+        assert_eq!(map.row(4), map.row(2));
+        assert_eq!(map.row(5), Some(Row::Source(4)));
+        assert_eq!(map.source_row_or_before(3), Some(1));
+        assert_eq!(map.len(), 6);
+    }
+
+    #[test]
     fn interval_query_is_sublinear_and_finds_spanning_ranges() {
         let doc = CodeDocument::new(Arc::<str>::from("x\n".repeat(10000)));
         let mut anns: Vec<_> = (0..10000).map(|i| ann(i, AnnotationKind::Bubble)).collect();
@@ -584,6 +672,11 @@ pub struct PreparedAnalysis {
     pub(crate) hints: std::collections::BTreeMap<usize, DisplayLine>,
     pub(crate) ids: std::collections::BTreeMap<u64, usize>,
     pub(crate) text: Arc<[Annotation]>,
+    pub(crate) has_range_styling: bool,
+    pub(crate) has_bubbles: bool,
+    pub(crate) block_rows: std::collections::BTreeMap<u64, usize>,
+    pub(crate) block_keys:
+        std::collections::BTreeMap<u64, (crate::DecorationLayerId, crate::DecorationId)>,
 }
 impl PreparedAnalysis {
     /// Intended for a host's background worker. Invalid ranges are omitted.
@@ -631,6 +724,13 @@ impl PreparedAnalysis {
             .enumerate()
             .map(|(i, a)| (a.id, i))
             .collect();
+        let has_range_styling = annotations.iter().any(|a| {
+            matches!(
+                a.kind,
+                AnnotationKind::Highlight | AnnotationKind::Underline
+            )
+        });
+        let has_bubbles = annotations.iter().any(|a| a.kind == AnnotationKind::Bubble);
         let text = annotations
             .iter()
             .filter(|a| {
@@ -654,7 +754,20 @@ impl PreparedAnalysis {
             hints,
             ids,
             text,
+            has_range_styling,
+            has_bubbles,
+            block_rows: Default::default(),
+            block_keys: Default::default(),
         }
+    }
+    pub(crate) fn replace_folds(&mut self, folds: Vec<Fold>) {
+        self.rows = RowMap::with_blocks(
+            self.document.line_count(),
+            &folds,
+            &self.annotations,
+            &self.block_rows,
+        );
+        self.folds = folds;
     }
 }
 
