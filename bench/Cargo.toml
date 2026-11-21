@@ -37,6 +37,10 @@ iai-callgrind = { version = "=0.16.1", optional = true }
 
 [dev-dependencies]
 guiraffe-flow.workspace = true
+guiraffe-chat.workspace = true
+guiraffe-markdown.workspace = true
+guiraffe-mermaid.workspace = true
+guiraffe-motion.workspace = true
 criterion = "0.8"
 
 [[bench]]
