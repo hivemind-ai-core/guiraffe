@@ -394,19 +394,18 @@ mod tests {
                 cx.new(|_| FrameFixture(playground, record))
             })
             .expect("open window");
-        let capture = |cx: &mut HeadlessAppContext| {
-            cx.update_window(window.into(), |_, window, cx| {
-                let _ = window.draw(cx);
-                window.render_to_image().expect("render frame")
-            })
-            .expect("draw frame")
+        let draw = |cx: &mut HeadlessAppContext| {
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("draw frame");
         };
         for _ in 0..3 {
-            let _ = capture(&mut cx);
+            draw(&mut cx);
             cx.run_until_parked();
         }
         for &(id, value) in changes {
-            let before = capture(&mut cx);
+            let before = cx
+                .capture_screenshot(window.into())
+                .expect("capture baseline");
             armed.set(true);
             window
                 .update(&mut cx, |root, _, cx| {
@@ -417,10 +416,12 @@ mod tests {
 
             for _ in 0..2 {
                 cx.run_until_parked();
-                let _ = capture(&mut cx);
+                draw(&mut cx);
             }
             armed.set(false);
-            let settled = capture(&mut cx);
+            let settled = cx
+                .capture_screenshot(window.into())
+                .expect("capture settled frame");
             let recorded = frames.take();
             assert!(
                 before != settled,
