@@ -13,7 +13,7 @@ impl RowGeometry {
         self.overrides = overrides
             .into_iter()
             .filter(|(_, height)| height.is_finite() && *height > 0.)
-            .map(|(id, height)| (id, f64::from(height.max(16.))))
+            .map(|(id, height)| (id, f64::from(height.clamp(24., 8_192.))))
             .collect();
         self.overrides.sort_by_key(|(id, _)| *id);
         self.overrides.dedup_by_key(|(id, _)| *id);

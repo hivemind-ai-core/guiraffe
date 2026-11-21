@@ -8,6 +8,7 @@ use gpui_kit::{
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
     ScrollEvent, SharedString, StatefulInteractiveElement, Styled, TestSupportExt, Window,
     component::{
+        Sizable, Size as ControlSize,
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
         color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
@@ -90,6 +91,14 @@ pub enum TreeEvent {
     Reorder { node: NodeId, before: NodeId },
     Edited(NodeId, Value),
     PickPath(NodeId),
+}
+
+fn row_control_size(height: f32) -> ControlSize {
+    if height <= 28. {
+        ControlSize::XSmall
+    } else {
+        ControlSize::Medium
+    }
 }
 
 fn text_height(text: &str, max_rows: usize) -> f64 {
@@ -316,6 +325,17 @@ impl<const P: bool> TreeView<P> {
         self.geometry.set(overrides);
         self.rebuild_geometry();
         self
+    }
+
+    pub fn set_row_heights(
+        &mut self,
+        overrides: impl IntoIterator<Item = (NodeId, f32)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.geometry.set(overrides);
+        self.rebuild_geometry();
+        self.clamp_scroll();
+        cx.notify();
     }
 
     fn rebuild_geometry(&mut self) {
@@ -633,7 +653,6 @@ impl<const P: bool> TreeView<P> {
         {
             match property.value {
                 Value::Bool(value) => self.edit_value(id, Value::Bool(!value), cx),
-                Value::Enum(_) => return, // The individual choices are tab stops.
                 _ => self.start_edit(id, window, cx),
             }
         } else if matches!(key, "space" | "enter") {
@@ -998,7 +1017,8 @@ impl<const P: bool> TreeView<P> {
         self.edit_value(id, Value::Number(value), cx);
     }
 
-    fn property_cell(&self, id: NodeId, cx: &Context<Self>) -> Option<AnyElement> {
+    fn property_cell(&self, id: NodeId, row_height: f32, cx: &Context<Self>) -> Option<AnyElement> {
+        let size = row_control_size(row_height);
         let property = self.source.property(id)?;
         let options = self.source.property_options(id);
         let editing = self.edit.as_ref().is_some_and(|edit| edit.id == id);
@@ -1015,6 +1035,7 @@ impl<const P: bool> TreeView<P> {
                     let label = self.source.label(id).to_owned();
                     match &self.edit.as_ref()?.input {
                         EditorInput::Single(input) => Input::new(input)
+                            .with_size(size)
                             .aria_label(label)
                             .w_full()
                             .into_any_element(),
@@ -1034,6 +1055,7 @@ impl<const P: bool> TreeView<P> {
                                         .child(field)
                                         .child(
                                             Input::new(input)
+                                                .with_size(size)
                                                 .aria_label(format!("{label} {field}"))
                                                 .w_full(),
                                         )
@@ -1048,6 +1070,7 @@ impl<const P: bool> TreeView<P> {
                             .child(Textarea::new(input).aria_label(label).w_full().flex_1())
                             .child(
                                 Button::new(("property-text-save", id as usize))
+                                    .with_size(size)
                                     .label("Save")
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(Edit {
@@ -1063,6 +1086,7 @@ impl<const P: bool> TreeView<P> {
                     }
                 }
                 _ if options.mixed => Button::new(("property-mixed", id as usize))
+                    .with_size(size)
                     .tab_stop(self.tab_stop)
                     .label("—")
                     .accessibility_label(format!("{}: Mixed values", self.source.label(id)))
@@ -1071,6 +1095,7 @@ impl<const P: bool> TreeView<P> {
                     )
                     .into_any_element(),
                 Value::Bool(value) => Checkbox::new(("property-bool", id as usize))
+                    .with_size(size)
                     .accessibility_label(self.source.label(id).to_owned())
                     .tab_stop(self.tab_stop)
                     .checked(*value)
@@ -1085,6 +1110,7 @@ impl<const P: bool> TreeView<P> {
                         let selected = choice == value;
                         let choice = choice.clone();
                         Button::new(choice.clone())
+                            .with_size(size)
                             .tab_stop(self.tab_stop)
                             .label(choice.clone())
                             .selected(selected)
@@ -1100,6 +1126,7 @@ impl<const P: bool> TreeView<P> {
                         .children(property.choices.iter().enumerate().map(
                             |(choice_index, choice)| {
                                 Checkbox::new(("property-flag", choice_index))
+                                    .with_size(size)
                                     .tab_stop(self.tab_stop)
                                     .label(choice.clone())
                                     .checked(flags.contains(choice))
@@ -1123,6 +1150,7 @@ impl<const P: bool> TreeView<P> {
                 _ => {
                     if self.tab_stop {
                         Button::new(("property-value", id as usize))
+                            .with_size(size)
                             .tab_stop(true)
                             .label(property.value.text())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1172,12 +1200,13 @@ impl<const P: bool> TreeView<P> {
                 if let Some((_, state, _)) =
                     self.colour_picker.as_ref().filter(|(row, _, _)| *row == id)
                 {
-                    Some(ColorPicker::new(state).into_any_element())
+                    Some(ColorPicker::new(state).with_size(size).into_any_element())
                 } else if property.read_only {
                     Some(swatch.into_any_element())
                 } else {
                     Some(
                         Button::new(("property-swatch", id as usize))
+                            .with_size(size)
                             .compact()
                             .tab_stop(self.tab_stop)
                             .accessibility_label("Choose colour")
@@ -1235,6 +1264,7 @@ impl<const P: bool> TreeView<P> {
                             .into_any_element();
                     }
                     Button::new(("property-slider", id as usize))
+                        .with_size(size)
                         .compact()
                         .label("Range")
                         .tab_stop(self.tab_stop)
@@ -1245,6 +1275,7 @@ impl<const P: bool> TreeView<P> {
             .children(
                 (!property.read_only && matches!(property.value, Value::Path(_))).then(|| {
                     Button::new(("property-path", id as usize))
+                        .with_size(size)
                         .label("Browse")
                         .tab_stop(self.tab_stop)
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(TreeEvent::PickPath(id))))
@@ -1255,6 +1286,7 @@ impl<const P: bool> TreeView<P> {
                     .then(|| {
                         let default = property.default.clone();
                         Button::new(("property-reset", id as usize))
+                            .with_size(size)
                             .tab_stop(self.tab_stop)
                             .label("Reset")
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1350,6 +1382,8 @@ impl<const P: bool> Render for TreeView<P> {
         let rows = range.filter_map(|index| {
             let (row, siblings) = self.model.row_and_siblings(self.model_rank(index)?)?;
             let id = row.id;
+            let height = (self.row_top(index + 1) - self.row_top(index)) as f32;
+            let size = row_control_size(height);
             let open = self.model.expanded(id);
             let branch = self.source.children(id) != Children::Ready(&[]);
             let selected = self.model.selected(id);
@@ -1368,7 +1402,7 @@ impl<const P: bool> Render for TreeView<P> {
                 .aria_label(label.clone())
                 .aria_selected(selected)
                 .aria_level(row.depth + 1)
-                .h(px((self.row_top(index + 1) - self.row_top(index)) as f32))
+                .h(px(height))
                 .w_full()
                 .flex()
                 .items_center()
@@ -1466,6 +1500,7 @@ impl<const P: bool> Render for TreeView<P> {
                     }))
                     .child(div().w(px(28.)).flex_none().children(branch.then(|| {
                         Button::new(("tree-expand", id as usize))
+                            .with_size(size)
                             .tab_stop(false)
                             .compact()
                             .w_full()
@@ -1495,6 +1530,7 @@ impl<const P: bool> Render for TreeView<P> {
                             .overflow_hidden()
                             .child(
                                 Button::new(("tree-select", id as usize))
+                                    .with_size(size)
                                     .tab_stop(false)
                                     .ghost()
                                     .justify_start()
@@ -1514,6 +1550,7 @@ impl<const P: bool> Render for TreeView<P> {
                             .flatten()
                             .map(|checked| {
                                 Checkbox::new(("tree-check", id as usize))
+                                    .with_size(size)
                                     .accessibility_label(format!("Check {}", self.source.label(id)))
                                     .tab_stop(false)
                                     .checked(checked)
@@ -1522,7 +1559,11 @@ impl<const P: bool> Render for TreeView<P> {
                                     }))
                             }),
                     )
-                    .children(if P { self.property_cell(id, cx) } else { None }),
+                    .children(if P {
+                        self.property_cell(id, height, cx)
+                    } else {
+                        None
+                    }),
             )
         });
         let mut tree = div()

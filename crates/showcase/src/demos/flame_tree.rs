@@ -254,6 +254,7 @@ struct TreeDemo<const P: bool> {
     settings: Settings,
     advanced: Cell<bool>,
     style: Cell<RowStyle>,
+    tall_header: Cell<bool>,
     _subscription: gpui_kit::Subscription,
 }
 
@@ -301,6 +302,7 @@ impl<const P: bool> TreeDemo<P> {
             settings,
             advanced: Cell::new(false),
             style: Cell::new(RowStyle::default()),
+            tall_header: Cell::new(true),
             _subscription: subscription,
         }
     }
@@ -321,6 +323,7 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
             Knob::toggle("Indent guides"),
             Knob::toggle("Group styling"),
             Knob::toggle("Sticky groups"),
+            Knob::toggle("Taller first group").default(1),
         ],
         |window, cx| cx.new(|cx| TreeDemo::<P>::new(window, cx)),
         |entity, knobs, _, cx| {
@@ -345,6 +348,15 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
             if demo.style.replace(style) != style {
                 let view = demo.view.clone();
                 cx.defer(move |cx| view.update(cx, |view, cx| view.set_row_style(style, cx)));
+            }
+            let tall = knobs.on(7);
+            if demo.tall_header.replace(tall) != tall {
+                let view = demo.view.clone();
+                cx.defer(move |cx| {
+                    view.update(cx, |view, cx| {
+                        view.set_row_heights(tall.then_some((0, 44.)), cx);
+                    });
+                });
             }
             entity.clone().into_any_element()
         },
