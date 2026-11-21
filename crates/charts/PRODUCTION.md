@@ -110,3 +110,15 @@ of self samples to bounds-tree insertion with layered quads, compared with
 scatter generation 11.5%, and coordinate projection 6.2%. A trial that
 restricted the upper-bound search to a short suffix did not improve total
 Callgrind instructions at either 100k or 1M points and was dropped.
+
+| Cached draw backend | Octagon allocations | Layered quad allocations | Octagon bytes | Layered quad bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Upstream | 263 | 74 | 498,444 | 79,500 |
+| Fast | 373 | 59 | 698,712 | 11,160 |
+
+Fast GPUI previously made a third copy of each path buffer in its ordered
+scene gather. With layered quads, DHAT found 29 allocations in each of
+`Scene::replay` and `Scene::insert_primitive` (5,568 bytes per site) and a
+single 24-byte arena clear allocation. The allocator regression test caps
+the mounted draw at 100 calls and 96 KiB upstream and 80 calls and 24 KiB
+on fast. Both paths use the existing cached chart canvas and scene cache.

@@ -424,9 +424,9 @@ fn warmed_chart_replays_cached_ink(cx: &mut gpui_kit::TestAppContext) {
         // GPUI duplicates the vertex buffers during cached scene replay.
         // Bound the full draw until the backend shares those buffers.
         let (allocations, bytes) = if gpui_kit::GPUI_FAST {
-            (400, 536 * 1024)
+            (80, 24 * 1024)
         } else {
-            (300, 400 * 1024)
+            (100, 96 * 1024)
         };
         assert!(counts.allocations <= allocations, "{counts:?}");
         assert!(counts.bytes <= bytes, "{counts:?}");
