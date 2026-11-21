@@ -118,7 +118,10 @@ pub use layout::{
 pub use parser::{ParseOutput, parse_mermaid};
 #[cfg(feature = "png")]
 pub use render::write_output_png;
-pub use render::{SvgDimensions, measure_svg_dimensions, render_svg, write_output_svg};
+pub use render::{
+    SvgDimensions, measure_svg_dimensions, render_flowchart_overview_svg, render_svg,
+    write_output_svg,
+};
 pub use theme::Theme;
 
 /// Options for the high-level `render` function.

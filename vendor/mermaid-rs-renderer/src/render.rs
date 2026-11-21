@@ -209,6 +209,26 @@ pub fn render_svg_with_dimensions(
     config: &LayoutConfig,
     dimensions: Option<(f32, f32)>,
 ) -> String {
+    render_svg_impl(layout, theme, config, dimensions, true)
+}
+
+/// Draw a flowchart preview whose node text is below a device pixel.
+pub fn render_flowchart_overview_svg(
+    layout: &Layout,
+    theme: &Theme,
+    config: &LayoutConfig,
+) -> String {
+    let show_node_labels = layout.kind != crate::ir::DiagramKind::Flowchart;
+    render_svg_impl(layout, theme, config, None, show_node_labels)
+}
+
+fn render_svg_impl(
+    layout: &Layout,
+    theme: &Theme,
+    config: &LayoutConfig,
+    dimensions: Option<(f32, f32)>,
+    show_node_labels: bool,
+) -> String {
     let mut svg = String::new();
     let state_font_size = if layout.kind == crate::ir::DiagramKind::State {
         theme.font_size * 0.85
@@ -1411,7 +1431,8 @@ pub fn render_svg_with_dimensions(
             }
             let center_x = node.x + node.width / 2.0;
             let center_y = node.y + node.height / 2.0;
-            let hide_label = node.label.lines.iter().all(|line| line.trim().is_empty())
+            let hide_label = !show_node_labels
+                || node.label.lines.iter().all(|line| line.trim().is_empty())
                 || node.id.starts_with("__start_")
                 || node.id.starts_with("__end_");
             if !hide_label {

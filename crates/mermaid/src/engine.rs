@@ -18,7 +18,7 @@ use std::{
 use gpui_kit::{DevicePixels, ParsedSvg, RenderImage, Size, SvgRenderer, SvgSize};
 use mermaid_rs_renderer::{
     DiagramKind, Layout, LayoutConfig, Theme, compute_flowchart_staged, compute_layout,
-    measure_svg_dimensions, parse_mermaid_strict, render_svg,
+    measure_svg_dimensions, parse_mermaid_strict, render_flowchart_overview_svg, render_svg,
 };
 
 use crate::{
@@ -89,7 +89,12 @@ struct Frame {
     anchor: Option<(f32, f32)>,
 }
 
-fn frame(layout: &Layout, theme: &Theme, config: &LayoutConfig) -> Result<Frame, RenderError> {
+fn frame(
+    layout: &Layout,
+    theme: &Theme,
+    config: &LayoutConfig,
+    preview: Option<&Request>,
+) -> Result<Frame, RenderError> {
     let dims = measure_svg_dimensions(layout, config, None);
     if !dimensions_are_usable(dims.width, dims.height) {
         return Err(RenderError::Dimensions);
@@ -104,9 +109,20 @@ fn frame(layout: &Layout, theme: &Theme, config: &LayoutConfig) -> Result<Frame,
     } else {
         None
     };
+    let subpixel_labels = preview.is_some_and(|request| {
+        let width = dims.width.min(request.display_width.max(100.0));
+        let height = width * dims.height / dims.width;
+        let (pixels, _) = zoom_raster_size(width, height, request.zoom, request.density);
+        theme.font_size * pixels as f32 / dims.width < 1.0
+    });
+    let svg = if subpixel_labels {
+        render_flowchart_overview_svg(layout, theme, config)
+    } else {
+        render_svg(layout, theme, config)
+    };
     Ok(Frame {
         drawing: Drawn {
-            svg: render_svg(layout, theme, config).into(),
+            svg: svg.into(),
             natural: (dims.width, dims.height),
         },
         anchor,
@@ -145,7 +161,7 @@ fn draw_layout(
     };
     layout
         .as_ref()
-        .map(|layout| frame(layout, theme, &config))
+        .map(|layout| frame(layout, theme, &config, None))
         .transpose()
 }
 
@@ -314,7 +330,7 @@ impl Engine {
                     let cancelled = || stage.cancelled.load(Ordering::Relaxed);
                     let mut preview = |layout: &Layout| {
                         if !cancelled()
-                            && let Ok(frame) = frame(layout, &request.theme, &config)
+                            && let Ok(frame) = frame(layout, &request.theme, &config, Some(request))
                             && let Ok(mut entry) = self.entry(request, frame)
                             && let Ok(image) = self.rasterize(request, &mut entry, false)
                             && !cancelled()
@@ -503,6 +519,26 @@ mod tests {
             3,
             "1x again after 2x: one raster size is cached per entry"
         );
+    }
+
+    #[test]
+    fn only_subpixel_preview_labels_are_omitted() {
+        let mut request = request(FLOW);
+        let config = LayoutConfig::default();
+        let parsed = parse_mermaid_strict(FLOW).expect("flowchart");
+        let mut layout = compute_layout(&parsed.graph, &request.theme, &config);
+        layout.width = 38_000.0;
+        let svg = |preview| {
+            frame(&layout, &request.theme, &config, preview)
+                .expect("frame")
+                .drawing
+                .svg
+        };
+        assert!(svg(None).contains(">Start<"));
+        assert!(!svg(Some(&request)).contains(">Start<"));
+        request.zoom = 4.0;
+        let zoomed = frame(&layout, &request.theme, &config, Some(&request)).expect("zoomed");
+        assert!(zoomed.drawing.svg.contains(">Start<"));
     }
 
     #[test]
