@@ -3693,7 +3693,9 @@ dependencies = [
  "guiraffe-tree",
  "guiraffe-ui",
  "jsonschema",
+ "proc-macro2",
  "serde_json",
+ "syn 2.0.119",
 ]
 
 [[package]]

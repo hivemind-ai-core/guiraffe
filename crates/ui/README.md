@@ -84,3 +84,10 @@ password as a literal or slot binding.
 
 For a registry-specific check, use `Validation::check_with_registry`. The
 portable catalogue includes descriptors from the workspace's widget crates.
+
+The showcase catalogue drift test scans public Render and RenderOnce types and
+their source-visible methods, including `props!` setters. Link a newly covered
+Rust type to its catalogue kind in `crates/showcase/tests/catalogue_drift.rs`.
+Give any intentionally imperative method an exact entry with a reason in
+`IMPERATIVE`. The `known_gaps.txt` fixture tracks existing registration debt.
+Remove its resolved entries as widgets and properties are registered.
