@@ -16,7 +16,8 @@
 //!
 //! For native applications, create a [`Commands`] service per window, register
 //! handlers, and place [`CommandScope`] around focused content. [`Menu`] consumes
-//! the same registry; Ctrl+Shift+P opens the existing overlays Spotlight adapter.
+//! the same registry; Ctrl+Shift+P opens the overlays Spotlight command bar, with
+//! categories as groups and shortcuts as keycap chips.
 //! See the crate README and `examples/commands.rs` for host context management.
 pub mod context;
 mod error;
