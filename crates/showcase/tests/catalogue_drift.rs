@@ -7,13 +7,14 @@ use std::{collections::BTreeSet, path::Path};
 
 fn kind(surface: &str) -> Option<&'static str> {
     Some(match surface {
-        "chat::Chat" | "chat::ChatState" | "chat::Composer" => "chat",
-        "charts::ChartView" => "chart",
-        "code::CodeViewer" => "code-viewer",
-        "datagrid::DataGrid" => "data-grid",
+        "chat::Chat" | "chat::ChatState" | "chat::Composer" | "chat::ChatProps" => "chat",
+        "charts::ChartView" | "charts::ChartOptions" | "charts::ChartSpec" => "chart",
+        "code::CodeViewer" | "code::CodeOptions" => "code-viewer",
+        "datagrid::DataGrid" | "datagrid::GridOptions" => "data-grid",
         "dnd::SortableBoard" => "sortable-board",
         "flamegraph::FlameGraph" => "flame-graph",
-        "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport" => "flow",
+        "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
+        | "flow::FlowOptions" => "flow",
         "components::Card" => "card",
         "components::Highlight" => "highlight",
         "components::Pill" => "pill",
@@ -37,7 +38,9 @@ fn kind(surface: &str) -> Option<&'static str> {
         "mermaid::MermaidView" => "mermaid",
         "overlays::Affix" => "affix",
         "overlays::LoadingOverlay" => "loading-overlay",
-        "tree::TreeView" | "tree::PropertyGrid" => "property-grid",
+        "tree::TreeView" | "tree::PropertyGrid" | "tree::RowStyle" | "tree::PropertyOptions" => {
+            "property-grid"
+        }
         "tree::TreeList" => "tree-list",
         "timeline::TracksView" => "tracks-view",
         _ => return None,
@@ -412,6 +415,29 @@ fn covered(surface: &str) -> bool {
     let Some(spec) = kind(owner).and_then(guiraffe_ui::catalog::lookup) else {
         return false;
     };
+    if let Some(field) = method.strip_prefix("field ") {
+        let name = match (owner, field) {
+            ("charts::ChartSpec", "x" | "y" | "right") => "axes".into(),
+            (_, field) => field.replace('_', "-"),
+        };
+        if owner == "tree::PropertyOptions" {
+            let name = if field == "multiline_rows" {
+                "multilineRows"
+            } else {
+                field
+            };
+            return spec
+                .props
+                .iter()
+                .find(|prop| prop.name == "nodes")
+                .is_some_and(|nodes| {
+                    nodes.schema()["items"]["properties"]["property"]["properties"]
+                        .get(name)
+                        .is_some()
+                });
+        }
+        return spec.props.iter().any(|prop| prop.name == name);
+    }
     match method {
         "new" => true, // Constructor parameters are declared by the kind's descriptor.
         "child" | "children" => spec.accepts_children,
@@ -463,6 +489,17 @@ fn covered(surface: &str) -> bool {
 fn public_document_surface_does_not_regress() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let public = source::public_surface(&crates);
+    for (api, reason) in IMPERATIVE {
+        assert!(
+            public.contains(*api),
+            "stale imperative exception for {api}"
+        );
+        assert!(
+            !reason.trim().is_empty(),
+            "document the exception for {api}"
+        );
+    }
+
     let uncovered: BTreeSet<_> = public
         .iter()
         .filter(|api| !covered(api))

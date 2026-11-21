@@ -86,7 +86,10 @@ For a registry-specific check, use `Validation::check_with_registry`. The
 portable catalogue includes descriptors from the workspace's widget crates.
 
 The showcase catalogue drift test scans public Render and RenderOnce types and
-their source-visible methods, including `props!` setters. Link a newly covered
+their source-visible methods, including `props!` setters. It also tracks type
+aliases, widget factory functions and public fields on configuration structs.
+Use the shared `widget_schema!` macro so runtime property and event positions
+come from the same descriptors as the generated catalogue. Link a newly covered
 Rust type to its catalogue kind in `crates/showcase/tests/catalogue_drift.rs`.
 Give any intentionally imperative method an exact entry with a reason in
 `IMPERATIVE`. The `known_gaps.txt` fixture tracks existing registration debt.

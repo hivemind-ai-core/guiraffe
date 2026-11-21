@@ -47,6 +47,7 @@ struct Inventory {
     renders: BTreeSet<String>,
     methods: BTreeSet<(String, String)>,
     aliases: Vec<(String, Type)>,
+    fields: BTreeSet<(String, String)>,
     factories: Vec<(String, Type)>,
 }
 
@@ -62,6 +63,9 @@ impl Inventory {
                     .filter(|(owner, _)| owner == ty)
                     .map(|(_, method)| format!("{krate}::{ty}::{method}")),
             );
+        }
+        for (owner, field) in &self.fields {
+            result.insert(format!("{krate}::{owner}::field {field}"));
         }
         for (name, ty) in &self.aliases {
             if returns_widget(ty, &render_types) {
@@ -80,7 +84,19 @@ impl Inventory {
         for item in items {
             match item {
                 Item::Struct(item) if matches!(item.vis, Visibility::Public(_)) => {
-                    self.structs.insert(item.ident.to_string());
+                    let name = item.ident.to_string();
+                    if name.ends_with("Options")
+                        || name.ends_with("Props")
+                        || matches!(name.as_str(), "ChartSpec" | "RowStyle")
+                    {
+                        self.fields.extend(item.fields.iter().filter_map(|field| {
+                            if !matches!(field.vis, Visibility::Public(_)) {
+                                return None;
+                            }
+                            Some((name.clone(), field.ident.as_ref()?.to_string()))
+                        }));
+                    }
+                    self.structs.insert(name);
                 }
                 Item::Mod(item)
                     if !item.attrs.iter().any(|attr| {
@@ -201,6 +217,7 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
         }
         props!(ButtonView { macro_prop: Size => size });
         pub type Alias = ButtonView;
+        pub struct ViewOptions { pub newer: bool, internal: bool }
         pub fn factory() -> (Entity<DockArea>, Entity<ButtonView>) { todo!() }
         #[cfg(test)]
         mod tests {
@@ -220,6 +237,7 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
             "fixture::ButtonView::macro_prop".into(),
             "fixture::ButtonView::new_prop".into(),
             "fixture::fn factory".into(),
+            "fixture::ViewOptions::field newer".into(),
         ])
     );
 }

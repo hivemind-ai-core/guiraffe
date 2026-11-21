@@ -1,3 +1,5 @@
+code::DecorationLayerOptions::field merge_identical
+code::DecorationLayerOptions::field z_index
 commands::CommandScope
 commands::CommandScope::new
 commands::Menu
@@ -5,11 +7,17 @@ commands::Menu::new
 commands::Menu::props
 commands::Menu::show_categories
 commands::Menu::show_keybindings
+commands::MenuProps::field show_categories
+commands::MenuProps::field show_keybindings
 components::Accordion
 components::Accordion::new
 components::Accordion::open
 components::Accordion::set_controlled
 components::Accordion::set_options
+components::AccordionOptions::field chevron
+components::AccordionOptions::field focusable
+components::AccordionOptions::field multiple
+components::AccordionOptions::field variant
 components::ActionIcon
 components::ActionIcon::color
 components::ActionIcon::focusable
@@ -154,6 +162,14 @@ dnd::BoardDragOverlay
 dnd::DockDragOverlay
 dnd::fn new_dock
 dnd::fn new_native_dock
+flow-core::LayoutOptions::field affected
+flow-core::LayoutOptions::field constraints
+flow-core::LayoutOptions::field crossing_weight
+flow-core::LayoutOptions::field direction
+flow-core::LayoutOptions::field order
+flow-core::LayoutOptions::field pinned
+flow-core::LayoutOptions::field routing
+flow-core::LayoutOptions::field spacing
 layout::AppShell
 layout::AppShell::aside
 layout::AppShell::border
@@ -250,6 +266,13 @@ mermaid::MermaidViewState::svg
 mermaid::MermaidViewState::viewport
 mermaid::MermaidViewState::zoom_in
 mermaid::MermaidViewState::zoom_out
+overlays::FloatingOptions::field align
+overlays::FloatingOptions::field arrow_padding
+overlays::FloatingOptions::field flip
+overlays::FloatingOptions::field gap
+overlays::FloatingOptions::field padding
+overlays::FloatingOptions::field shift
+overlays::FloatingOptions::field side
 overlays::FloatingTooltip
 overlays::FloatingTooltip::new
 overlays::FloatingTooltip::options
