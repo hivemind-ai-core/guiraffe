@@ -66,9 +66,9 @@ impl PropSpec {
         let ty = match self.type_name {
             "ring-sections" | "integer-array" | "code-annotations" | "code-folds"
             | "tree-nodes" | "range-value" | "grid-rows" | "grid-columns" | "flame-frames"
-            | "timeline-tracks" | "track-selection" | "board-columns" | "chart-layers"
-            | "chart-axes" | "chart-labels" | "chat-messages" | "chat-attachments"
-            | "chat-commands" | "calendar-presets" | "dock-panels" => "array",
+            | "timeline-tracks" | "track-selection" | "gantt-tasks" | "board-columns"
+            | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
+            | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -97,6 +97,7 @@ impl PropSpec {
             "grid-columns" => schema["items"] = grid_column_schema(),
             "flame-frames" => schema["items"] = flame_frame_schema(),
             "timeline-tracks" => schema["items"] = timeline_track_schema(),
+            "gantt-tasks" => schema["items"] = gantt_task_schema(),
             "board-columns" => schema["items"] = board_column_schema(),
             "chart-layers" => schema["items"] = chart_layer_schema(),
             "chart-axes" => schema["items"] = chart_axis_schema(),
@@ -186,6 +187,8 @@ impl EventSpec {
             "calendar-value" => calendar_value_schema(),
             "flow-graph" => flow_graph_schema(),
             "dock-state" => dock_state_schema(),
+            "gantt-reschedule" => gantt_event_schema(false),
+            "gantt-resize" => gantt_event_schema(true),
             "flow-selection" => {
                 let ids = json!({"type":"array","items":{"type":"integer","minimum":0}});
                 json!({"type":"object","required":["nodes","edges"],"additionalProperties":false,
@@ -499,6 +502,36 @@ pub fn timeline_track_schema() -> Value {
             }}
         }
     })
+}
+
+pub fn gantt_task_schema() -> Value {
+    let id = json!({"type":"integer","minimum":0,"maximum":u32::MAX});
+    json!({
+        "type":"object","additionalProperties":false,
+        "required":["id","name","duration"],
+        "properties":{
+            "id":id,
+            "name":{"type":"string"},
+            "duration":{"type":"number","exclusiveMinimum":0},
+            "notBefore":{"type":"number"},
+            "after":{"type":"array","items":id}
+        }
+    })
+}
+
+fn gantt_event_schema(resize: bool) -> Value {
+    let mut schema = json!({
+        "type":"object","additionalProperties":false,"required":["id","notBefore"],
+        "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":u32::MAX},
+            "notBefore":{"type":"number"}
+        }
+    });
+    if resize {
+        schema["required"] = json!(["id", "notBefore", "duration"]);
+        schema["properties"]["duration"] = json!({"type":"number","exclusiveMinimum":0});
+    }
+    schema
 }
 
 pub fn board_column_schema() -> Value {

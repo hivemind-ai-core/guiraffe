@@ -47,6 +47,7 @@ pub fn init(cx: &mut gpui_kit::App) {
         guiraffe_core::init(cx);
     }
     tracks_view::document::register(cx);
+    gantt_view::document::register(cx);
     edit::init(cx);
 }
 

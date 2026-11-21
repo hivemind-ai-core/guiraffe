@@ -47,6 +47,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         }
         "tree::TreeList" => "tree-list",
         "timeline::TracksView" => "tracks-view",
+        "timeline::GanttView" => "gantt",
         _ => return None,
     })
 }
@@ -128,6 +129,46 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "mermaid::MermaidViewState::viewport",
         "Returns the current viewport for Rust hosts that build a separate toolbar.",
+    ),
+    (
+        "timeline::GanttView::axis",
+        "Returns the native viewport axis computed by the schedule view.",
+    ),
+    (
+        "timeline::GanttView::schedule",
+        "Returns the derived schedule or graph errors for Rust hosts.",
+    ),
+    (
+        "timeline::GanttView::is_locked",
+        "Read the controlled locked ids from the document input.",
+    ),
+    (
+        "timeline::GanttView::grab",
+        "Native hit testing converts pointer coordinates into an editing gesture.",
+    ),
+    (
+        "timeline::GanttView::press",
+        "Starts an input gesture from native pointer coordinates.",
+    ),
+    (
+        "timeline::GanttView::drag_to",
+        "Continues an active input gesture from native pointer coordinates.",
+    ),
+    (
+        "timeline::GanttView::release",
+        "Finishes the active native input gesture.",
+    ),
+    (
+        "timeline::GanttView::nudge",
+        "An imperative keyboard action. Documents supply key-step and task input.",
+    ),
+    (
+        "timeline::GanttView::reschedule",
+        "A Rust edit command. Update task inputs to drive scheduling and bind the reschedule event to receive user edits.",
+    ),
+    (
+        "timeline::GanttView::resize_edge",
+        "A Rust edit command. Update task duration directly or bind the resize event to receive user edits.",
     ),
     (
         "tree::TreeView::expand_loaded",
@@ -512,6 +553,7 @@ fn covered(surface: &str) -> bool {
                 ("timeline::TracksView", "seek") => "playhead".into(),
                 ("timeline::TracksView", "select") => "selected".into(),
                 ("timeline::TracksView", "set_locked") => "tracks".into(),
+                ("timeline::GanttView", "select") => "selected".into(),
                 ("chat::ChatState", "begin_reply") => "streaming-message".into(),
                 ("chat::ChatState", "add_attachment") => "attachments".into(),
                 ("chat::ChatState", "with_props" | "props" | "set_props") => "title".into(),

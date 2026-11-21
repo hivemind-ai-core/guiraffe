@@ -553,6 +553,17 @@ impl Validation<'_> {
                                 .all(|v| v.as_u64().is_some_and(|v| u32::try_from(v).is_ok())))
                 }),
                 "timeline-tracks" => check_timeline_tracks(got),
+                "gantt-tasks" => got.as_array().is_some_and(|tasks| {
+                    let schema = crate::widget_spec::gantt_task_schema();
+                    tasks.iter().all(|task| {
+                        matches_data_schema(task, &schema)
+                            && task["duration"].as_f64().is_some_and(|duration| {
+                                duration > 0.0
+                                    && (task["notBefore"].as_f64().unwrap_or_default() + duration)
+                                        .is_finite()
+                            })
+                    })
+                }),
                 "flame-frames" => check_flame_frames(got),
                 "grid-rows" => got.as_array().is_some_and(|rows| {
                     let schema = crate::widget_spec::grid_row_schema();

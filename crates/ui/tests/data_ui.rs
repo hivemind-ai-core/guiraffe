@@ -1329,3 +1329,54 @@ fn dock_document_validates_and_mounts_native_panels(cx: &mut TestAppContext) {
     });
     window.run_until_parked();
 }
+
+#[gpui_kit::test]
+fn gantt_document_drives_native_tasks_and_edit_options(cx: &mut TestAppContext) {
+    cx.update(guiraffe_timeline::init);
+    let doc = Document::new(
+        Node::new("gantt")
+            .prop(
+                "tasks",
+                serde_json::json!([
+                    {"id":1,"name":"Design","notBefore":1,"duration":3},
+                    {"id":2,"name":"Build","duration":5,"after":[1]}
+                ]),
+            )
+            .prop("time-format", "frames")
+            .prop("frames-per-second", 24)
+            .prop("resize-edges", "end")
+            .prop("editable", true)
+            .prop("focusable", true)
+            .prop("key-step", 1.5)
+            .prop("lock-style", "hatched")
+            .prop("global-lock-style", "dimmed")
+            .prop("locked", serde_json::json!([1]))
+            .prop("selected", 2)
+            .on("reschedule", "move-task")
+            .on("resize", "resize-task"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("gantt document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_a_native_gantt_view() {
+    use guiraffe_timeline::{GanttView, Task, TimeFormat};
+
+    fn example(cx: &mut gpui_kit::App) -> impl IntoElement {
+        let tasks = vec![Task {
+            id: 1,
+            name: "Assemble".into(),
+            not_before: 0.0,
+            duration: 1.0,
+            after: vec![],
+        }];
+        ui! { div { {GanttView::new(tasks, TimeFormat::Days, cx)} } }
+    }
+    let _ = example;
+}

@@ -71,4 +71,47 @@ pub static TRACKS: WidgetSpec = WidgetSpec {
     a11y_role: "group",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&TRACKS];
+pub static GANTT: WidgetSpec = WidgetSpec {
+    id: "gantt",
+    krate: "timeline",
+    summary: "Dependency schedule with editable task bars and critical paths.",
+    props: &[
+        prop("tasks", "gantt-tasks", "[]"),
+        choice("time-format", "\"days\"", &["seconds", "frames", "days"]),
+        PropSpec {
+            range: Some((1.0, 240.0)),
+            ..prop("frames-per-second", "number", "30")
+        },
+        choice(
+            "resize-edges",
+            "\"both\"",
+            &["none", "start", "end", "both"],
+        ),
+        prop("editable", "boolean", "true"),
+        prop("focusable", "boolean", "null"),
+        prop("key-step", "number", "null"),
+        choice("lock-style", "\"badge\"", LOCK),
+        choice("global-lock-style", "\"none\"", LOCK),
+        prop("locked", "integer-array", "[]"),
+        PropSpec {
+            range: Some((0.0, u32::MAX as f64)),
+            ..prop("selected", "integer", "null")
+        },
+    ],
+    accepts_children: false,
+    events: &[
+        EventSpec {
+            id: "reschedule",
+            payload_type: "gantt-reschedule",
+        },
+        EventSpec {
+            id: "resize",
+            payload_type: "gantt-resize",
+        },
+    ],
+    state: "keyed schedule with local viewport and edits",
+    theme_tokens: &[],
+    a11y_role: "group",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[&TRACKS, &GANTT];
