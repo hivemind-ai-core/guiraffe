@@ -215,6 +215,8 @@ name each one and its eviction rule.
 | Dope sheet header views | one cached header view per visible row (including partial rows) | **bounded**: visible rows | reused across pan/zoom/key edits | `crates/timeline/PRODUCTION.md` |
 | Tracks overview geometry (`tracks_view.rs`) | no retained overview geometry: it reads the sorted disjoint clip intervals and emits at most one mark per logical pixel column | **bounded**: 16,384 pixel columns, built per paint | n/a (nothing retained between frames) | `crates/timeline/PRODUCTION.md` |
 | `SplitterState`-style drag scratch in views (`drag`, `pending_fit`, `hover`, `selected`) | interaction state | **bounded**: one each per view | cleared when the gesture ends | view interaction tests |
+| `EventModel.placements` / `.incident` / `.max_end` / `.lanes` (`event_layout.rs`) | validation/index pass over events and links (`id → Placement`, per-event incident link slots, per-lane placement runs) | doc-scoped, built once per `EventModel::new` and immutable afterwards | replaced with the model | `interval_index_retains_connectors_with_offscreen_endpoints` (`event_layout.rs` tests) |
+| `EventTimelineState.theme_cache: Option<Rc<TimelineTheme>>` (`event_view.rs`) | resolved theme plus per-`ColorName` track colours | **bounded**: one, and only while `GuiraffeTheme` is unchanged | replaced when the theme differs | `crates/timeline/PRODUCTION.md` |
 
 
 ## tree
