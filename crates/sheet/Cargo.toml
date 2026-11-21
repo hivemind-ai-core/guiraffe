@@ -12,6 +12,7 @@ gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-datagrid.workspace = true
 im = "15.1"
+lru = { version = "0.12.5", default-features = false }
 
 [dev-dependencies]
 proptest = "1"

@@ -490,6 +490,46 @@ mod tests {
 
     proptest! {
         #[test]
+        fn transactions_match_naive(
+            transactions in proptest::collection::vec(
+                proptest::collection::vec((0usize..32, 0u8..32), 1..15), 1..32
+            )
+        ) {
+            let mut model = SheetModel::new(4, 8);
+            let mut dense = [0u8; 32];
+            let mut states = vec![dense];
+            let assert_state = |model: &SheetModel, expected: &[u8; 32]| {
+                for (index, value) in expected.iter().enumerate() {
+                    let pos = CellPos::new(index / 8, index % 8);
+                    prop_assert_eq!(
+                        model.cell(pos).and_then(|cell| cell.text.parse::<u8>().ok()).unwrap_or(0),
+                        *value
+                    );
+                }
+                Ok(())
+            };
+            for batch in transactions {
+                let changes = model.edit(batch.into_iter().map(|(index, value)| {
+                    dense[index] = value;
+                    let cell = if value == 0 { Cell::default() } else { Cell::new(value.to_string()) };
+                    (CellPos::new(index / 8, index % 8), cell)
+                }));
+                if !changes.is_empty() {
+                    states.push(dense);
+                }
+                assert_state(&model, &dense)?;
+            }
+            for state in states.iter().rev().skip(1) {
+                prop_assert!(!model.undo().is_empty());
+                assert_state(&model, state)?;
+            }
+            for state in states.iter().skip(1) {
+                prop_assert!(!model.redo().is_empty());
+                assert_state(&model, state)?;
+            }
+        }
+
+        #[test]
         fn series_matches_linear_model(first in -100i32..100, step in -20i32..20, length in 3usize..50) {
             let a = CellPos::new(0, 0);
             let b = CellPos::new(1, 0);

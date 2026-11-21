@@ -166,6 +166,19 @@ impl Graph {
         }
     }
 
+    fn dependents(&self, pos: CellPos) -> impl Iterator<Item = CellPos> + '_ {
+        let direct = self.reverse.get(&pos);
+        direct
+            .into_iter()
+            .flatten()
+            .copied()
+            .chain(self.ranges.iter().filter_map(move |(&dependent, ranges)| {
+                (direct.is_none_or(|direct| !direct.contains(&dependent))
+                    && ranges.iter().any(|r| r.contains(pos)))
+                .then_some(dependent)
+            }))
+    }
+
     fn calculate(&mut self, cancelled: impl Fn() -> bool) -> Option<()> {
         let mut dirty = self.dirty.clone();
         let mut queue: VecDeque<_> = dirty.iter().copied().collect();
@@ -173,12 +186,7 @@ impl Graph {
             if cancelled() {
                 return None;
             }
-            let dependents = self.reverse.get(&pos).into_iter().flatten().copied().chain(
-                self.ranges.iter().filter_map(|(&dependent, ranges)| {
-                    ranges.iter().any(|r| r.contains(pos)).then_some(dependent)
-                }),
-            );
-            for dependent in dependents {
+            for dependent in self.dependents(pos) {
                 if dirty.insert(dependent) {
                     queue.push_back(dependent);
                 }
@@ -186,7 +194,6 @@ impl Graph {
         }
 
         let mut pending = HashMap::new();
-        let mut successors = HashMap::<_, Vec<_>>::new();
         let mut changes = HashMap::new();
         for &pos in &dirty {
             if cancelled() {
@@ -213,9 +220,6 @@ impl Graph {
                 queue.push_back(pos);
             }
             pending.insert(pos, dependencies.len());
-            for input in dependencies {
-                successors.entry(input).or_default().push(pos);
-            }
         }
         while let Some(pos) = queue.pop_front() {
             if cancelled() {
@@ -233,7 +237,7 @@ impl Graph {
             };
             changes.insert(pos, Some(value));
             pending.remove(&pos);
-            for successor in successors.remove(&pos).into_iter().flatten() {
+            for successor in self.dependents(pos) {
                 if let Some(count) = pending.get_mut(&successor) {
                     *count -= 1;
                     if *count == 0 {
@@ -245,18 +249,22 @@ impl Graph {
         if cancelled() {
             return None;
         }
-        changes.extend(
+        let mut values = self.values.clone();
+        for (pos, value) in changes.into_iter().chain(
             pending
                 .into_keys()
                 .map(|pos| (pos, Some(Err(FormulaError::Cycle)))),
-        );
-        for (&pos, &value) in &changes {
+        ) {
+            if cancelled() {
+                return None;
+            }
             if let Some(value) = value {
-                self.values.insert(pos, value);
+                values.insert(pos, value);
             } else {
-                self.values.remove(&pos);
+                values.remove(&pos);
             }
         }
+        self.values = values;
         self.dirty.clear();
         Some(())
     }
@@ -289,6 +297,13 @@ impl FormulaValues for Reader<'_> {
     }
 
     fn visit(&self, r: Reference, visitor: &mut dyn FnMut(f64)) -> Result<(), FormulaError> {
+        if r.first.row > r.last.row
+            || r.first.col > r.last.col
+            || r.last.row >= self.graph.rows
+            || r.last.col >= self.graph.cols
+        {
+            return Err(FormulaError::Reference);
+        }
         for pos in self
             .graph
             .numbers

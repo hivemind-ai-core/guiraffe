@@ -13,7 +13,7 @@
 //!     assert_eq!(model.copy_tsv().as_deref(), Some("42"));
 //! }
 //! ```
-pub use guiraffe_datagrid::CellPos;
+pub use guiraffe_datagrid::{CellPos, Nav};
 
 mod address;
 pub use address::{a1, column_name, parse_a1};
@@ -26,4 +26,4 @@ pub use model::{Alignment, Cell, CellFormat, NumberFormat, SheetModel};
 mod axis;
 pub use axis::Axis;
 mod view;
-pub use view::{Sheet, SheetState, init};
+pub use view::{CONTEXT, Sheet, SheetCommand, SheetState, init};

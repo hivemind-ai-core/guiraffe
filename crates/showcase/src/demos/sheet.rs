@@ -73,6 +73,19 @@ fn demo(_: &mut Window, cx: &mut App) -> AnyView {
             entries.push((CellPos::new(row, index + 1), cell));
         }
     }
+    entries.push((CellPos::new(28, 0), Cell::new("All expenses")));
+    entries.push((CellPos::new(28, 4), Cell::new("=SUM(E2:E5)")));
+    entries.push((CellPos::new(29, 0), Cell::new("Period end")));
+    entries.push((
+        CellPos::new(29, 4),
+        Cell {
+            text: "20543".into(),
+            format: CellFormat {
+                number: NumberFormat::Date,
+                align: Alignment::Right,
+            },
+        },
+    ));
     let mut model = SheetModel::from_cells(1_000_000, 1000, entries);
     model.select(CellPos::new(2, 1), false);
     model.select(CellPos::new(2, 3), true);

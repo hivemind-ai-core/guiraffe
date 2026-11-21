@@ -1,13 +1,16 @@
 use std::{
-    cell::Cell as Local,
+    cell::{Cell as Local, RefCell},
+    num::NonZeroUsize,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use gpui_kit::{
     App, AppContext, Bounds, ClipboardItem, ContentMask, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Point,
-    Render, Role, ScrollEvent, SharedString, StatefulInteractiveElement, Styled, Window, canvas,
+    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton, ParentElement, Pixels,
+    Point, Render, RenderOnce, Role, ScrollEvent, SharedString, StatefulInteractiveElement, Styled,
+    Window, canvas,
     component::input::{Input, InputState},
     div, fill, point, px, size,
 };
@@ -20,17 +23,107 @@ use crate::{
 };
 
 /// The Sheet control displays an existing state entity.
-pub struct Sheet;
+#[derive(IntoElement)]
+pub struct Sheet {
+    state: Entity<SheetState>,
+}
 
 impl Sheet {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(state: &Entity<SheetState>) -> Entity<SheetState> {
-        state.clone()
+    pub fn new(state: &Entity<SheetState>) -> Self {
+        Self {
+            state: state.clone(),
+        }
     }
 }
 
-/// Crate initialization. The control owns focus and handles navigation while focused.
-pub fn init(_cx: &mut App) {}
+impl RenderOnce for Sheet {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        self.state
+    }
+}
+
+/// Key context for the focused sheet, outside the cell editor.
+pub const CONTEXT: &str = "GrSheet";
+
+/// Bindable spreadsheet commands. Editing a cell switches to the Kit Input context.
+#[derive(Clone, PartialEq, gpui_kit::Action)]
+#[action(namespace=guiraffe_sheet,no_json)]
+pub enum SheetCommand {
+    Move {
+        direction: Nav,
+        extend: bool,
+        jump: bool,
+    },
+    Edit,
+    Clear,
+    Copy,
+    Cut,
+    Paste,
+    Undo,
+    Redo,
+    FillDown,
+    FillRight,
+    SelectAll,
+    SelectColumn,
+    SelectRow,
+}
+
+/// Install the Sheet keybindings. Applications can replace them in the same context.
+pub fn init(cx: &mut App) {
+    struct Bound;
+    impl gpui_kit::Global for Bound {}
+    if cx.has_global::<Bound>() {
+        return;
+    }
+    cx.set_global(Bound);
+    let scope = Some(CONTEXT);
+    let mut keys = Vec::new();
+    for (key, direction, jump_direction) in [
+        ("up", Nav::Up, Nav::Up),
+        ("down", Nav::Down, Nav::Down),
+        ("left", Nav::Left, Nav::Left),
+        ("right", Nav::Right, Nav::Right),
+        ("home", Nav::Home, Nav::First),
+        ("end", Nav::End, Nav::Last),
+    ] {
+        for (prefix, extend, jump) in [
+            ("", false, false),
+            ("shift-", true, false),
+            ("ctrl-", false, true),
+            ("ctrl-shift-", true, true),
+        ] {
+            keys.push(KeyBinding::new(
+                &format!("{prefix}{key}"),
+                SheetCommand::Move {
+                    direction: if jump { jump_direction } else { direction },
+                    extend,
+                    jump,
+                },
+                scope,
+            ));
+        }
+    }
+    for (key, command) in [
+        ("enter", SheetCommand::Edit),
+        ("f2", SheetCommand::Edit),
+        ("delete", SheetCommand::Clear),
+        ("backspace", SheetCommand::Clear),
+        ("secondary-c", SheetCommand::Copy),
+        ("secondary-x", SheetCommand::Cut),
+        ("secondary-v", SheetCommand::Paste),
+        ("secondary-z", SheetCommand::Undo),
+        ("secondary-y", SheetCommand::Redo),
+        ("secondary-shift-z", SheetCommand::Redo),
+        ("secondary-d", SheetCommand::FillDown),
+        ("secondary-r", SheetCommand::FillRight),
+        ("secondary-a", SheetCommand::SelectAll),
+        ("ctrl-space", SheetCommand::SelectColumn),
+        ("shift-space", SheetCommand::SelectRow),
+    ] {
+        keys.push(KeyBinding::new(key, command, scope));
+    }
+    cx.bind_keys(keys);
+}
 
 #[derive(Clone, Copy)]
 enum Drag {
@@ -51,6 +144,8 @@ pub struct SheetState {
     frozen: CellPos,
     scroll: (f64, f64),
     bounds: Local<Bounds<Pixels>>,
+    paint_cache: Rc<RefCell<PaintCache>>,
+    edits: u64,
     focus: FocusHandle,
     drag: Option<Drag>,
     fill_target: Option<CellPos>,
@@ -75,6 +170,7 @@ impl SheetState {
         engine: Arc<dyn FormulaEngine>,
         cx: &mut Context<Self>,
     ) -> Self {
+        init(cx);
         let (rows, cols) = model.dimensions();
         let (mut recalc, startup_error) = match Recalculator::new(rows, cols, engine) {
             Ok(recalc) => (Some(recalc), None),
@@ -106,6 +202,8 @@ impl SheetState {
             frozen: CellPos::default(),
             scroll: (0., 0.),
             bounds: Local::new(Bounds::default()),
+            paint_cache: Rc::new(RefCell::new(PaintCache::new())),
+            edits: 0,
             focus: cx.focus_handle(),
             drag: None,
             fill_target: None,
@@ -155,6 +253,7 @@ impl SheetState {
         if changed.is_empty() {
             return;
         }
+        self.edits = self.edits.wrapping_add(1);
         let batch = changed
             .into_iter()
             .map(|pos| {
@@ -344,88 +443,93 @@ impl SheetState {
             cx.stop_propagation();
             return;
         }
-        let nav = match key.key.as_str() {
-            "up" => Some(Nav::Up),
-            "down" => Some(Nav::Down),
-            "left" => Some(Nav::Left),
-            "right" => Some(Nav::Right),
-            "home" => Some(if ctrl { Nav::First } else { Nav::Home }),
-            "end" => Some(if ctrl { Nav::Last } else { Nav::End }),
-            _ => None,
-        };
-        if let Some(nav) = nav {
-            self.model.navigate(nav, shift, ctrl, 1);
-            self.select_visible();
-        } else {
-            match (key.key.as_str(), ctrl) {
-                ("enter" | "f2", false) => self.begin_edit(None, window, cx),
-                ("delete" | "backspace", false) => {
-                    let changed = self.model.clear_selection();
-                    self.submit(changed, cx);
-                }
-                ("c" | "x", true) => {
-                    if let Some(text) = self.model.copy_tsv() {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                        if key.key == "x" {
-                            let changed = self.model.clear_selection();
-                            self.submit(changed, cx);
-                        }
-                    }
-                }
-                ("v", true) => {
-                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        let changed = self.model.paste_tsv(&text);
+        if !ctrl && !key.modifiers.alt && key.key_char.is_some() {
+            self.begin_edit(key.key_char.clone(), window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    fn command(&mut self, command: &SheetCommand, window: &mut Window, cx: &mut Context<Self>) {
+        match *command {
+            SheetCommand::Move {
+                direction,
+                extend,
+                jump,
+            } => {
+                self.model.navigate(direction, extend, jump, 1);
+                self.select_visible();
+            }
+            SheetCommand::Edit => self.begin_edit(None, window, cx),
+            SheetCommand::Clear => {
+                let changed = self.model.clear_selection();
+                self.submit(changed, cx);
+            }
+            SheetCommand::Copy | SheetCommand::Cut => {
+                if let Some(text) = self.model.copy_tsv() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    if *command == SheetCommand::Cut {
+                        let changed = self.model.clear_selection();
                         self.submit(changed, cx);
                     }
                 }
-                ("z" | "y", true) => {
-                    let changed = if shift || key.key == "y" {
-                        self.model.redo()
+            }
+            SheetCommand::Paste => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    let changed = self.model.paste_tsv(&text);
+                    self.submit(changed, cx);
+                }
+            }
+            SheetCommand::Undo | SheetCommand::Redo => {
+                let changed = if *command == SheetCommand::Redo {
+                    self.model.redo()
+                } else {
+                    self.model.undo()
+                };
+                self.submit(changed, cx);
+            }
+            SheetCommand::FillDown | SheetCommand::FillRight => {
+                if let Some((rows, cols)) = self.model.selection.rect() {
+                    let target = CellPos::new(rows.end - 1, cols.end - 1);
+                    let (rows, cols) = if *command == SheetCommand::FillDown {
+                        (rows.start..rows.start + 1, cols)
                     } else {
-                        self.model.undo()
+                        (rows, cols.start..cols.start + 1)
                     };
+                    let changed = self.model.fill(rows, cols, target, false);
                     self.submit(changed, cx);
                 }
-                ("d" | "r", true) => {
-                    if let Some((rows, cols)) = self.model.selection.rect() {
-                        let target = CellPos::new(rows.end - 1, cols.end - 1);
-                        let (rows, cols) = if key.key == "d" {
-                            (rows.start..rows.start + 1, cols)
-                        } else {
-                            (rows, cols.start..cols.start + 1)
-                        };
-                        let changed = self.model.fill(rows, cols, target, false);
-                        self.submit(changed, cx);
-                    }
-                }
-                ("space", _) if ctrl || shift => {
-                    let pos = self.model.selection.cursor.unwrap_or_default();
-                    let (rows, cols) = self.model.dimensions();
-                    if rows > 0 && cols > 0 {
-                        self.model.select(
-                            CellPos::new(
-                                if ctrl { 0 } else { pos.row },
-                                if shift { 0 } else { pos.col },
-                            ),
-                            false,
-                        );
-                        self.model.select(
-                            CellPos::new(
-                                if ctrl { rows - 1 } else { pos.row },
-                                if shift { cols - 1 } else { pos.col },
-                            ),
-                            true,
-                        );
-                    }
-                }
-                (_, false) if !key.modifiers.alt && key.key_char.is_some() => {
-                    self.begin_edit(key.key_char.clone(), window, cx);
-                }
-                _ => return,
+            }
+            SheetCommand::SelectAll => {
+                let (rows, cols) = self.model.dimensions();
+                self.model.selection.select_all(rows, cols);
+            }
+            SheetCommand::SelectColumn | SheetCommand::SelectRow => {
+                self.select_axis(
+                    self.model.selection.cursor.unwrap_or_default(),
+                    *command == SheetCommand::SelectColumn,
+                    *command == SheetCommand::SelectRow,
+                );
             }
         }
         cx.notify();
-        cx.stop_propagation();
+    }
+
+    fn select_axis(&mut self, pos: CellPos, column: bool, row: bool) {
+        let (rows, cols) = self.model.dimensions();
+        if rows == 0 || cols == 0 {
+            return;
+        }
+        // Leave the cursor at the first cell so a large selection doesn't scroll to its end.
+        let last = CellPos::new(
+            if column { rows - 1 } else { pos.row },
+            if row { cols - 1 } else { pos.col },
+        );
+        let first = CellPos::new(
+            if column { 0 } else { pos.row },
+            if row { 0 } else { pos.col },
+        );
+        self.model.select(last, false);
+        self.model.select(first, true);
     }
 
     fn pointer_down(
@@ -451,20 +555,33 @@ impl SheetState {
         window.focus(&self.focus, cx);
         self.editor = None;
         let rect = self.rect(pos);
-        if y < self.header() {
-            self.drag = Some(Drag::Resize {
-                row: false,
-                index: pos.col,
-                start: x,
-                size: self.cols.size(pos.col),
-            });
+        let near_right = f64::from(f32::from(rect.right())) - x <= 6.;
+        let near_bottom = f64::from(f32::from(rect.bottom())) - y <= 6.;
+        if y < self.header() && x < self.gutter() {
+            let (rows, cols) = self.model.dimensions();
+            self.model.selection.select_all(rows, cols);
+        } else if y < self.header() {
+            if near_right {
+                self.drag = Some(Drag::Resize {
+                    row: false,
+                    index: pos.col,
+                    start: x,
+                    size: self.cols.size(pos.col),
+                });
+            } else {
+                self.select_axis(pos, true, false);
+            }
         } else if x < self.gutter() {
-            self.drag = Some(Drag::Resize {
-                row: true,
-                index: pos.row,
-                start: y,
-                size: self.rows.size(pos.row),
-            });
+            if near_bottom {
+                self.drag = Some(Drag::Resize {
+                    row: true,
+                    index: pos.row,
+                    start: y,
+                    size: self.rows.size(pos.row),
+                });
+            } else {
+                self.select_axis(pos, false, true);
+            }
         } else {
             let handle = self.model.selection.rect().is_some_and(|(rows, cols)| {
                 pos == CellPos::new(rows.end - 1, cols.end - 1)
@@ -495,7 +612,17 @@ impl SheetState {
         let pos = self.axes_at(x, y);
         match self.drag {
             Some(Drag::Selection) => self.model.select(pos, true),
-            Some(Drag::Fill) if self.model.contains(pos) => self.fill_target = Some(pos),
+            Some(Drag::Fill) if self.model.contains(pos) => {
+                if let Some((r, c)) = self.model.selection.rect() {
+                    let vertical = pos.row.clamp(r.start, r.end - 1).abs_diff(pos.row);
+                    let horizontal = pos.col.clamp(c.start, c.end - 1).abs_diff(pos.col);
+                    self.fill_target = Some(if vertical >= horizontal {
+                        CellPos::new(pos.row, c.end - 1)
+                    } else {
+                        CellPos::new(r.end - 1, pos.col)
+                    });
+                }
+            }
             Some(Drag::Resize {
                 row: true,
                 index,
@@ -544,6 +671,8 @@ impl Focusable for SheetState {
 impl Render for SheetState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
+        let cache = self.paint_cache.clone();
+        let paint = cache.clone();
         let (rows, cols) = self.model.dimensions();
         let scheme = GuiraffeTheme::global(cx);
         let ring = scheme
@@ -608,7 +737,12 @@ impl Render for SheetState {
             .size_full()
             .overflow_hidden()
             .track_focus(&self.focus.clone().tab_stop(true))
-            .key_context("GrSheet")
+            .key_context(if self.editor.is_some() {
+                "GrSheetEditor"
+            } else {
+                CONTEXT
+            })
+            .on_action(cx.listener(Self::command))
             .capture_key_down(cx.listener(Self::keyboard))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::pointer_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::pointer_up))
@@ -620,9 +754,9 @@ impl Render for SheetState {
                     move |bounds, _, cx| {
                         let state = entity.read(cx);
                         state.bounds.set(bounds);
-                        state.labels(bounds)
+                        state.labels(bounds, &mut cache.borrow_mut());
                     },
-                    |_, frame, window, cx| frame.paint(window, cx),
+                    move |_, (), window, cx| paint.borrow_mut().paint(window, cx),
                 )
                 .absolute()
                 .size_full(),
@@ -673,7 +807,7 @@ fn visible(
     scroll: f64,
     viewport: f64,
     len: usize,
-) -> impl Iterator<Item = usize> {
+) -> impl Iterator<Item = usize> + Clone {
     let pinned = axis.index(viewport).saturating_add(1).min(frozen);
     let start = axis.index(axis.offset(frozen) + scroll).max(frozen);
     let end = axis.index(viewport + scroll).saturating_add(1).min(len);
@@ -695,15 +829,42 @@ struct Label {
     selected: bool,
     cursor: bool,
     handle: bool,
+    preview: bool,
 }
 
-struct Frame {
+type ShapeKey = (SharedString, gpui_kit::Font, u32);
+
+struct PaintCache {
     bounds: Bounds<Pixels>,
+    frozen_x: Option<Pixels>,
+    frozen_y: Option<Pixels>,
     labels: Vec<Label>,
+    shape: lru::LruCache<ShapeKey, Arc<gpui_kit::LineLayout>>,
+    row_headers: lru::LruCache<usize, SharedString>,
+    column_headers: lru::LruCache<usize, SharedString>,
+    text: lru::LruCache<CellPos, (SharedString, Alignment)>,
+    revision: (u64, u64),
+}
+
+impl PaintCache {
+    fn new() -> Self {
+        let capacity = NonZeroUsize::MIN.saturating_add(1023);
+        Self {
+            bounds: Bounds::default(),
+            frozen_x: None,
+            frozen_y: None,
+            labels: Vec::new(),
+            shape: lru::LruCache::new(capacity),
+            row_headers: lru::LruCache::new(capacity),
+            column_headers: lru::LruCache::new(capacity),
+            text: lru::LruCache::new(capacity),
+            revision: (0, 0),
+        }
+    }
 }
 
 impl SheetState {
-    fn labels(&self, bounds: Bounds<Pixels>) -> Frame {
+    fn labels(&self, bounds: Bounds<Pixels>, cache: &mut PaintCache) {
         let (rows, cols) = self.model.dimensions();
         let width = f64::from(f32::from(bounds.size.width));
         let height = f64::from(f32::from(bounds.size.height));
@@ -711,24 +872,38 @@ impl SheetState {
         let header = self.header();
         let frozen_x = gutter + self.cols.offset(self.frozen.col);
         let frozen_y = header + self.rows.offset(self.frozen.row);
-        let mut frame = Frame {
-            bounds,
-            labels: Vec::new(),
-        };
-        let visible_cols: Vec<_> = visible(
+        cache.bounds = bounds;
+        cache.frozen_x = (self.frozen.col != 0 && frozen_x < width).then(|| px(frozen_x as f32));
+        cache.frozen_y = (self.frozen.row != 0 && frozen_y < height).then(|| px(frozen_y as f32));
+        cache.labels.clear();
+        let revision = (self.edits, self.published);
+        if cache.revision != revision {
+            cache.text.clear();
+            cache.revision = revision;
+        }
+        let visible_cols = visible(
             &self.cols,
             self.frozen.col,
             self.scroll.0,
             width - gutter,
             cols,
-        )
-        .collect();
+        );
+        let labels = &mut cache.labels;
         let cursor = self.model.selection.cursor;
         let end = self
             .model
             .selection
             .rect()
             .map(|(r, c)| CellPos::new(r.end - 1, c.end - 1));
+        let fill_range = self
+            .fill_target
+            .zip(self.model.selection.rect())
+            .map(|(p, (r, c))| {
+                (
+                    r.start.min(p.row)..r.end.max(p.row + 1),
+                    c.start.min(p.col)..c.end.max(p.col + 1),
+                )
+            });
         let mut add = |rect: Bounds<Pixels>,
                        clip: Bounds<Pixels>,
                        text,
@@ -736,8 +911,9 @@ impl SheetState {
                        header,
                        selected,
                        cursor,
-                       handle| {
-            frame.labels.push(Label {
+                       handle,
+                       preview| {
+            labels.push(Label {
                 rect,
                 clip,
                 text,
@@ -746,9 +922,10 @@ impl SheetState {
                 selected,
                 cursor,
                 handle,
+                preview,
             });
         };
-        for &col in &visible_cols {
+        for col in visible_cols.clone() {
             let mut rect = self.rect(CellPos::new(0, col));
             rect.origin.y = px(0.);
             rect.size.height = px(header as f32);
@@ -760,9 +937,13 @@ impl SheetState {
             add(
                 rect,
                 bounds_at(x, 0., (width - x).max(0.), header),
-                column_name(col).into(),
+                cache
+                    .column_headers
+                    .get_or_insert(col, || column_name(col).into())
+                    .clone(),
                 Alignment::Center,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -786,21 +967,29 @@ impl SheetState {
             add(
                 rect,
                 bounds_at(0., y, gutter, (height - y).max(0.)),
-                (row as u128 + 1).to_string().into(),
+                cache
+                    .row_headers
+                    .get_or_insert(row, || (row as u128 + 1).to_string().into())
+                    .clone(),
                 Alignment::Center,
                 true,
                 false,
                 false,
                 false,
+                false,
             );
-            for &col in &visible_cols {
+            for col in visible_cols.clone() {
                 let pos = CellPos::new(row, col);
                 let x = if col < self.frozen.col {
                     gutter
                 } else {
                     frozen_x
                 };
-                let (text, alignment) = self.label(pos);
+                let (text, alignment) = if self.model.cell(pos).is_some() {
+                    cache.text.get_or_insert(pos, || self.label(pos)).clone()
+                } else {
+                    (SharedString::default(), Alignment::Left)
+                };
                 add(
                     self.rect(pos),
                     bounds_at(x, y, (width - x).max(0.), (height - y).max(0.)),
@@ -810,10 +999,12 @@ impl SheetState {
                     self.model.selection.is_cell_selected(row, col),
                     cursor == Some(pos),
                     end == Some(pos) && !self.model.read_only,
+                    fill_range
+                        .as_ref()
+                        .is_some_and(|(r, c)| r.contains(&row) && c.contains(&col)),
                 );
             }
         }
-        frame
     }
 
     fn label(&self, pos: CellPos) -> (SharedString, Alignment) {
@@ -822,7 +1013,7 @@ impl SheetState {
         };
         let alignment = cell.format.align;
         if cell.format.number == NumberFormat::Text {
-            return (SharedString::from(cell.text.as_ref()), alignment);
+            return (bounded_label(&cell.text), alignment);
         }
         let number = if cell.text.starts_with('=') {
             match self
@@ -845,10 +1036,19 @@ impl SheetState {
             .into(),
             (Some(value), NumberFormat::Date) => iso_date(value).into(),
             (Some(value), _) if cell.text.starts_with('=') => value.to_string().into(),
-            _ => SharedString::from(cell.text.as_ref()),
+            _ => bounded_label(&cell.text),
         };
         (text, alignment)
     }
+}
+
+fn bounded_label(text: &str) -> SharedString {
+    const MAX_LABEL_BYTES: usize = 1024;
+    if text.len() <= MAX_LABEL_BYTES {
+        return SharedString::from(text);
+    }
+    let prefix = &text[..text.floor_char_boundary(MAX_LABEL_BYTES)];
+    SharedString::from(format!("{prefix}…"))
 }
 
 fn iso_date(value: f64) -> String {
@@ -869,8 +1069,8 @@ fn iso_date(value: f64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-impl Frame {
-    fn paint(self, window: &mut Window, cx: &mut App) {
+impl PaintCache {
+    fn paint(&mut self, window: &mut Window, cx: &mut App) {
         let theme = GuiraffeTheme::global(cx);
         let palette = theme.surfaces();
         let selection = theme.state(StateKind::Selected, Variant::Light, None);
@@ -881,7 +1081,8 @@ impl Frame {
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = style.line_height_in_pixels(window.rem_size());
         let text_system = window.text_system().clone();
-        for label in self.labels {
+        let font = style.font();
+        for label in &self.labels {
             let rect = Bounds::new(self.bounds.origin + label.rect.origin, label.rect.size);
             let clip = Bounds::new(self.bounds.origin + label.clip.origin, label.clip.size)
                 .intersect(&rect);
@@ -897,7 +1098,7 @@ impl Frame {
                     GuiraffeTheme::hsla(palette.body)
                 };
                 window.paint_quad(fill(rect, background));
-                let line = if label.cursor {
+                let line = if label.cursor || label.preview {
                     accent
                 } else {
                     GuiraffeTheme::hsla(palette.border)
@@ -942,8 +1143,19 @@ impl Frame {
                 } else {
                     palette.text
                 });
-                let layout =
-                    text_system.layout_line(label.text.as_ref(), font_size, &[run.clone()], None);
+                let key = (
+                    label.text.clone(),
+                    font.clone(),
+                    f32::from(font_size).to_bits(),
+                );
+                let layout = self.shape.get_or_insert(key, || {
+                    text_system.layout_line(
+                        label.text.as_ref(),
+                        font_size,
+                        std::slice::from_ref(&run),
+                        None,
+                    )
+                });
                 let room = (rect.size.width - px(12.) - layout.width).max(px(0.));
                 let shift = match label.alignment {
                     Alignment::Left => px(0.),
@@ -969,6 +1181,25 @@ impl Frame {
                     cx,
                 );
             });
+        }
+        let divider = GuiraffeTheme::hsla(palette.dimmed);
+        if let Some(x) = self.frozen_x {
+            window.paint_quad(fill(
+                Bounds::new(
+                    self.bounds.origin + point(x - px(1.), px(0.)),
+                    size(px(1.), self.bounds.size.height),
+                ),
+                divider,
+            ));
+        }
+        if let Some(y) = self.frozen_y {
+            window.paint_quad(fill(
+                Bounds::new(
+                    self.bounds.origin + point(px(0.), y - px(1.)),
+                    size(self.bounds.size.width, px(1.)),
+                ),
+                divider,
+            ));
         }
     }
 }
