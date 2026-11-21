@@ -290,7 +290,170 @@ pub(crate) struct Sample {
     pub text: Option<Arc<str>>,
 }
 
+#[derive(Default)]
+pub(crate) struct Coordinates {
+    x: Vec<f64>,
+    y: Vec<f64>,
+    ids: Vec<(usize, u64)>,
+    first: Option<DatumId>,
+    stride: (usize, u64),
+}
+
+impl Coordinates {
+    fn id(&self, index: usize, first: DatumId) -> DatumId {
+        let (index, key) = self.ids.get(index).copied().unwrap_or_else(|| {
+            self.regular_id(first, index)
+                .unwrap_or((first.index, first.key))
+        });
+        DatumId {
+            index,
+            key,
+            ..first
+        }
+    }
+
+    fn regular_id(&self, first: DatumId, offset: usize) -> Option<(usize, u64)> {
+        Some((
+            first
+                .index
+                .checked_add(self.stride.0.checked_mul(offset)?)?,
+            first
+                .key
+                .checked_add(self.stride.1.checked_mul(offset as u64)?)?,
+        ))
+    }
+
+    fn push(&mut self, row: Sample) {
+        let first = *self.first.get_or_insert(row.id);
+        let len = self.x.len();
+        if len == 1 {
+            self.stride = (
+                row.id.index.saturating_sub(first.index),
+                row.id.key.saturating_sub(first.key),
+            );
+        }
+        if self.ids.is_empty() && self.regular_id(first, len) != Some((row.id.index, row.id.key)) {
+            self.ids = (0..len).filter_map(|i| self.regular_id(first, i)).collect();
+        }
+        if !self.ids.is_empty() {
+            self.ids.push((row.id.index, row.id.key));
+        }
+        self.x.push(row.x);
+        self.y.push(row.y);
+    }
+
+    fn row(&self, index: usize) -> Sample {
+        Sample {
+            id: self.id(
+                index,
+                self.first.unwrap_or(DatumId {
+                    series: SeriesId::default(),
+                    index: 0,
+                    key: 0,
+                    facet: 0,
+                }),
+            ),
+            x: self.x[index],
+            y: self.y[index],
+            top: self.y[index],
+            base: 0.,
+            x2: None,
+            y2: None,
+            low: None,
+            ohlc: None,
+            size: 3.,
+            color: None,
+            text: None,
+        }
+    }
+}
+
+pub(crate) enum Rows {
+    Plain(Coordinates),
+    Styled(Vec<Sample>),
+}
+
+impl Rows {
+    fn new(mark: Mark) -> Self {
+        if matches!(mark, Mark::Line | Mark::Point | Mark::Bubble) {
+            Self::Plain(Coordinates::default())
+        } else {
+            Self::Styled(Vec::new())
+        }
+    }
+
+    fn push(&mut self, sample: Sample) {
+        if let Self::Plain(columns) = self {
+            if sample.color.is_none() && sample.size == 3. && sample.text.is_none() {
+                columns.push(sample);
+                return;
+            }
+            *self = Self::Styled((0..columns.x.len()).map(|i| columns.row(i)).collect());
+        }
+        if let Self::Styled(rows) = self {
+            rows.push(sample);
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Plain(columns) => columns.x.len(),
+            Self::Styled(rows) => rows.len(),
+        }
+    }
+
+    pub fn row(&self, index: usize) -> Sample {
+        match self {
+            Self::Plain(columns) => columns.row(index),
+            Self::Styled(rows) => rows[index].clone(),
+        }
+    }
+
+    pub fn xy(&self, index: usize) -> (f64, f64) {
+        match self {
+            Self::Plain(c) => (c.x[index], c.y[index]),
+            Self::Styled(rows) => (rows[index].x, rows[index].y),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Sample> + '_ {
+        (0..self.len()).map(|i| self.row(i))
+    }
+
+    pub fn partition_x(&self, predicate: impl Fn(f64) -> bool) -> usize {
+        match self {
+            Self::Plain(columns) => columns.x.partition_point(|&x| predicate(x)),
+            Self::Styled(rows) => rows.partition_point(|row| predicate(row.x)),
+        }
+    }
+
+    fn sort(&mut self) {
+        match self {
+            Self::Plain(columns) if !columns.x.is_sorted() => {
+                let mut order: Vec<_> = (0..columns.x.len()).collect();
+                order.sort_unstable_by(|&a, &b| {
+                    columns.x[a].total_cmp(&columns.x[b]).then(a.cmp(&b))
+                });
+                let mut sorted = Coordinates {
+                    x: Vec::with_capacity(order.len()),
+                    y: Vec::with_capacity(order.len()),
+                    ..Coordinates::default()
+                };
+                for index in order {
+                    sorted.push(columns.row(index));
+                }
+                *columns = sorted;
+            }
+            Self::Styled(rows) if !rows.is_sorted_by(|a, b| a.x <= b.x) => {
+                rows.sort_by(|a, b| a.x.total_cmp(&b.x));
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(crate) struct Run {
+    pub pick_bounds: Vec<(f64, f64)>,
     pub mark: Mark,
     pub id: SeriesId,
     pub facet: u32,
@@ -298,7 +461,7 @@ pub(crate) struct Run {
     pub palette: u32,
     pub slot: usize,
     pub slots: usize,
-    pub rows: Vec<Sample>,
+    pub rows: Rows,
     pub max_x_extent: f64,
     pub levels: Vec<Vec<usize>>,
     pub line_breaks: Vec<usize>,
@@ -377,7 +540,7 @@ impl ChartSpec {
             } else {
                 &self.y.scale
             };
-            let mut groups: BTreeMap<(u32, u32), Vec<Sample>> = BTreeMap::new();
+            let mut groups: BTreeMap<(u32, u32), Rows> = BTreeMap::new();
             let mut gaps = BTreeMap::<(u32, u32), Vec<f64>>::new();
             (layer.visit)(index, limit, cancelled, &mut |mut sample| {
                 let invalid_log = |scale: &Scale, value: f64| {
@@ -422,7 +585,7 @@ impl ChartSpec {
                 count += 1;
                 groups
                     .entry((sample.id.facet, sample.id.series.group))
-                    .or_default()
+                    .or_insert_with(|| Rows::new(layer.mark))
                     .push(sample);
             });
             if cancelled() {
@@ -513,14 +676,12 @@ impl ChartSpec {
                         _ => {}
                     }
                 }
-                if !rows.is_sorted_by(|a, b| a.x <= b.x) {
-                    rows.sort_by(|a, b| a.x.total_cmp(&b.x));
-                }
+                rows.sort();
                 let mut line_breaks: Vec<_> = gaps
                     .remove(&(facet, group))
                     .into_iter()
                     .flatten()
-                    .map(|x| rows.partition_point(|row| row.x <= x))
+                    .map(|x| rows.partition_x(|value| value <= x))
                     .filter(|&index| index > 0 && index < rows.len())
                     .collect();
                 line_breaks.sort_unstable();
@@ -540,8 +701,10 @@ impl ChartSpec {
                     max_x_extent,
                     levels: Vec::new(),
                     line_breaks,
+                    pick_bounds: Vec::new(),
                 };
                 run.build_levels(cancelled);
+                run.build_pick_bounds(cancelled);
                 runs.push(run);
                 *slot += 1;
             }
@@ -639,7 +802,7 @@ impl Extent {
     }
 }
 
-fn arrange(mark: Mark, groups: &mut BTreeMap<(u32, u32), Vec<Sample>>) {
+fn arrange(mark: Mark, groups: &mut BTreeMap<(u32, u32), Rows>) {
     let arrangement = mark.arrangement();
     if !matches!(arrangement, Arrangement::Stack | Arrangement::Normalize) {
         return;
@@ -651,12 +814,26 @@ fn arrange(mark: Mark, groups: &mut BTreeMap<(u32, u32), Vec<Sample>>) {
     };
     let mut totals = BTreeMap::new();
     if arrangement == Arrangement::Normalize {
-        for row in groups.values().flatten() {
+        for row in groups
+            .values()
+            .filter_map(|rows| match rows {
+                Rows::Styled(rows) => Some(rows),
+                _ => None,
+            })
+            .flatten()
+        {
             *totals.entry(key(row)).or_insert(0.) += row.top.abs();
         }
     }
     let mut previous = BTreeMap::new();
-    for row in groups.values_mut().flatten() {
+    for row in groups
+        .values_mut()
+        .filter_map(|rows| match rows {
+            Rows::Styled(rows) => Some(rows),
+            _ => None,
+        })
+        .flatten()
+    {
         let key = key(row);
         let base = previous.entry(key).or_insert(0.);
         let total = totals.get(&key).copied().filter(|&v| v > 0.).unwrap_or(1.);
@@ -681,8 +858,8 @@ mod tests {
         let chart = spec.preview();
         assert!(chart.len() <= 2_048);
         let rows = &chart.runs[0].rows;
-        assert_eq!(rows.first().expect("first").id.index, 0);
-        assert_eq!(rows.last().expect("last").id.index, 99_999);
+        assert_eq!(rows.row(0).id.index, 0);
+        assert_eq!(rows.row(rows.len() - 1).id.index, 99_999);
         assert!(rows.iter().all(|row| row.x == row.id.index as f64));
     }
 
@@ -710,7 +887,11 @@ mod tests {
             ))
             .prepare();
         let run = &chart.runs[0];
-        let bytes = run.rows.capacity() * size_of::<Sample>()
+        let Rows::Plain(columns) = &run.rows else {
+            panic!("expected compact storage")
+        };
+        let bytes = (columns.x.capacity() + columns.y.capacity()) * size_of::<f64>()
+            + columns.ids.capacity() * size_of::<(usize, u64)>()
             + run
                 .levels
                 .iter()
@@ -719,7 +900,7 @@ mod tests {
                 * size_of::<usize>()
             + run.line_breaks.capacity() * size_of::<usize>();
         assert!(
-            bytes <= POINTS * 256,
+            bytes <= POINTS * 24,
             "prepared line buffers: {} bytes per point",
             bytes.div_ceil(POINTS)
         );
@@ -737,7 +918,7 @@ mod tests {
                 for negative in [false, true] {
                     let mut end: f64 = 0.;
                     let mut sum: f64 = 0.;
-                    for row in chart.runs.iter().flat_map(|r| &r.rows).filter(|r| r.y.is_sign_negative() == negative) {
+                    for row in chart.runs.iter().flat_map(|r| r.rows.iter()).filter(|r| r.y.is_sign_negative() == negative) {
                         prop_assert!((row.base - end).abs() < 1e-10);
                         prop_assert!((row.top - row.base).is_sign_negative() == negative || row.y == 0.);
                         end = row.top;

@@ -5,6 +5,8 @@ use crate::{
 };
 use std::{collections::BTreeSet, ops::Range, sync::Arc};
 
+const PICK_BLOCK: usize = 256;
+
 pub(crate) type Position = (f32, f32);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -90,7 +92,7 @@ impl Scene {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct Hit {
     pub id: DatumId,
     pub point: Position,
@@ -232,7 +234,11 @@ impl PreparedChart {
                             })
                             .all(|other| {
                                 other.rows.len() == run.rows.len()
-                                    && other.rows.iter().zip(&run.rows).all(|(a, b)| a.x == b.x)
+                                    && other
+                                        .rows
+                                        .iter()
+                                        .zip(run.rows.iter())
+                                        .all(|(a, b)| a.x == b.x)
                             });
                         if !aligned {
                             return None;
@@ -243,7 +249,7 @@ impl PreparedChart {
                             visible.len(),
                             budget,
                             |i| {
-                                let row = &run.rows[visible.start + i];
+                                let row = run.rows.row(visible.start + i);
                                 (row.x, row.top)
                             },
                             &mut indices,
@@ -313,7 +319,22 @@ impl PreparedChart {
                 }
                 _ => run.visible(min, max, false),
             };
-            for row in &run.rows[range] {
+            if !run.pick_bounds.is_empty() {
+                let mut search = LinePick {
+                    range,
+                    cursor,
+                    distance,
+                    hit: None,
+                };
+                projection.pick_line(1, 0..run.pick_bounds.len() / 2 * PICK_BLOCK, &mut search);
+                if search.hit.is_some() {
+                    best = search.hit;
+                    distance = search.distance;
+                }
+                continue;
+            }
+            for index in range {
+                let row = &run.rows.row(index);
                 if let Some(mut point) = projection.anchor(row) {
                     let mut d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
                     if let Mark::Bar(arrangement, orientation) = run.mark {
@@ -347,11 +368,34 @@ impl PreparedChart {
 }
 
 impl Run {
+    pub(crate) fn build_pick_bounds(&mut self, cancelled: &impl Fn() -> bool) {
+        if self.mark != Mark::Line || self.rows.len() <= PICK_BLOCK {
+            return;
+        }
+        let leaves = self.rows.len().div_ceil(PICK_BLOCK).next_power_of_two();
+        let mut bounds = vec![(f64::INFINITY, f64::NEG_INFINITY); 2 * leaves];
+        for (block, start) in (0..self.rows.len()).step_by(PICK_BLOCK).enumerate() {
+            if cancelled() {
+                return;
+            }
+            let entry = &mut bounds[leaves + block];
+            for index in start..(start + PICK_BLOCK).min(self.rows.len()) {
+                let y = self.rows.xy(index).1;
+                entry.0 = entry.0.min(y);
+                entry.1 = entry.1.max(y);
+            }
+        }
+        for index in (1..leaves).rev() {
+            let a = bounds[2 * index];
+            let b = bounds[2 * index + 1];
+            bounds[index] = (a.0.min(b.0), a.1.max(b.1));
+        }
+        self.pick_bounds = bounds;
+    }
+
     fn visible(&self, min: f64, max: f64, neighbors: bool) -> Range<usize> {
-        let start = self.rows.partition_point(|r| r.x < min - self.max_x_extent);
-        let end = self
-            .rows
-            .partition_point(|r| r.x <= max + self.max_x_extent);
+        let start = self.rows.partition_x(|x| x < min - self.max_x_extent);
+        let end = self.rows.partition_x(|x| x <= max + self.max_x_extent);
         let adjacent = usize::from(neighbors);
         start.saturating_sub(adjacent)..end.saturating_add(adjacent).min(self.rows.len())
     }
@@ -368,7 +412,7 @@ impl Run {
                 len,
                 len.div_ceil(8),
                 |i| {
-                    let row = &self.rows[previous.map_or(i, |level| level[i])];
+                    let row = self.rows.row(previous.map_or(i, |level| level[i]));
                     (row.x, row.top)
                 },
                 &mut scratch,
@@ -387,6 +431,13 @@ impl Run {
     }
 }
 
+struct LinePick {
+    range: Range<usize>,
+    cursor: Position,
+    distance: f32,
+    hit: Option<Hit>,
+}
+
 struct Projection<'a> {
     chart: &'a PreparedChart,
     domains: [Domain; 3],
@@ -395,6 +446,61 @@ struct Projection<'a> {
 }
 
 impl Projection<'_> {
+    fn pick_line(&self, node: usize, block: Range<usize>, search: &mut LinePick) {
+        let start = block.start.max(search.range.start);
+        let end = block.end.min(search.range.end);
+        if start >= end {
+            return;
+        }
+        let (min_y, max_y) = self.run.pick_bounds[node];
+        let a = self.xy(self.run.rows.xy(start).0, min_y);
+        let b = self.xy(self.run.rows.xy(end - 1).0, max_y);
+        let cursor = search.cursor;
+        // A failed projection may be an overflow at the extremes. Descend
+        // without pruning so finite interior points still participate.
+        if let (Some((left, bottom)), Some((right, top))) = (a, b) {
+            if right < self.rect.left
+                || left > self.rect.right
+                || bottom < self.rect.top
+                || top > self.rect.bottom
+            {
+                return;
+            }
+            let dx = (left - cursor.0).max(cursor.0 - right).max(0.);
+            let dy = (top - cursor.1).max(cursor.1 - bottom).max(0.);
+            let lower_bound = dx.powi(2) + dy.powi(2);
+            if lower_bound > search.distance
+                || (search.hit.is_some() && lower_bound == search.distance)
+            {
+                return;
+            }
+        }
+        // Descending index preserves the linear scan's last-wins tie rule.
+        if block.len() > PICK_BLOCK {
+            let mid = block.start + block.len() / 2;
+            self.pick_line(2 * node + 1, mid..block.end, search);
+            self.pick_line(2 * node, block.start..mid, search);
+            return;
+        }
+        for index in (start..end).rev() {
+            let (x, y) = self.run.rows.xy(index);
+            let Some(point) = self.xy(x, y).filter(|&point| self.rect.contains(point)) else {
+                continue;
+            };
+            let d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
+            if d < search.distance || (search.hit.is_none() && d == search.distance) {
+                search.distance = d;
+                search.hit = Some(Hit {
+                    id: self.run.rows.row(index).id,
+                    point,
+                    x,
+                    y,
+                    secondary: self.run.secondary,
+                });
+            }
+        }
+    }
+
     fn y_axis(&self) -> usize {
         if self.run.secondary { 2 } else { 1 }
     }
@@ -466,8 +572,8 @@ impl Projection<'_> {
                 return;
             }
         }
-        for row in &self.run.rows[visible] {
-            self.individual(row, out);
+        for index in visible {
+            self.individual(&self.run.rows.row(index), out);
         }
     }
 
@@ -498,13 +604,16 @@ impl Projection<'_> {
             source = Some(level);
             range = start..end;
         }
-        let row =
-            |i| &self.run.rows[source.map_or(range.start + i, |level| level[range.start + i])];
+        let row = |i| {
+            self.run
+                .rows
+                .row(source.map_or(range.start + i, |level| level[range.start + i]))
+        };
         lttb_with_cancel(
             range.len(),
             budget,
             |i| {
-                let (x, y) = self.anchor(row(i)).unwrap_or_default();
+                let (x, y) = self.anchor(&row(i)).unwrap_or_default();
                 (f64::from(x), f64::from(y))
             },
             scratch,
@@ -523,14 +632,14 @@ impl Projection<'_> {
         indices: impl DoubleEndedIterator<Item = usize> + Clone,
         out: &mut Vec<Draw>,
     ) {
-        let row = |i| &self.run.rows[i];
+        let row = |i| self.run.rows.row(i);
         let Some(first) = indices.clone().next() else {
             return;
         };
         let area = matches!(self.run.mark, Mark::Area(_));
         let mut points: Vec<_> = indices
             .clone()
-            .filter_map(|i| self.anchor(row(i)))
+            .filter_map(|i| self.anchor(&row(i)))
             .collect();
         if area {
             points.extend(indices.rev().filter_map(|i| {
@@ -546,13 +655,13 @@ impl Projection<'_> {
                     points,
                     closed: area,
                 },
-                color: self.color(row(first)),
+                color: self.color(&row(first)),
             });
         } else if let Some(point) = points.first() {
             out.push(Draw {
                 series: self.run.id,
                 geometry: Geometry::Dot(*point, 2.),
-                color: self.color(row(first)),
+                color: self.color(&row(first)),
             });
         }
     }
@@ -568,7 +677,8 @@ impl Projection<'_> {
         // Share the viewport draw budget across visible series. Hit testing uses source points.
         let mut free_cells = columns * rows;
         let mut occupied = vec![false; columns * rows];
-        for (index, row) in self.run.rows[visible].iter().enumerate() {
+        for index in visible {
+            let row = &self.run.rows.row(index);
             if index.is_multiple_of(256) && cancelled() {
                 return;
             }
@@ -867,6 +977,36 @@ mod tests {
                 .key,
             1
         );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn indexed_line_pick_matches_linear_scan(
+            values in proptest::collection::vec((1u16..80, 1u16..80), 257..800),
+            x in 0f32..600.,
+            y in 0f32..300.,
+            radius in 0f32..100.,
+            log_scale in proptest::bool::ANY,
+        ) {
+            let mut spec = ChartSpec::new("hover").layer(Layer::new(
+                Mark::Line,
+                values,
+                Channels::new(|row: &(u16, u16)| f64::from(row.0), |row| f64::from(row.1)),
+            ));
+            if log_scale {
+                spec.x.scale = crate::Scale::Log;
+                spec.y.scale = crate::Scale::Log;
+            }
+            let mut chart = spec.prepare();
+            let domain = chart.x_domain();
+            let hidden = BTreeSet::new();
+            let scene = chart.scene(600., 300., domain, &hidden);
+            let panel = &scene.panels[0];
+            let indexed = chart.nearest(panel, domain, &hidden, (x, y), radius);
+            chart.runs[0].pick_bounds.clear();
+            let linear = chart.nearest(panel, domain, &hidden, (x, y), radius);
+            proptest::prop_assert_eq!(indexed, linear);
+        }
     }
 
     #[test]
