@@ -10,7 +10,7 @@ idle frames.
 | --- | --- |
 | First useful frame | The native mount probe times the first render with a published preview. Large flowcharts do placement once. Plain subpixel flowcharts use GPUI primitives and keep the full SVG path for exact refinement. The worker waits for preview paint, with a 100 ms fallback for hidden views. |
 | Exact refinement | `vendor/mermaid-rs-renderer/parity/run.sh --soak` compares output to renderer 0.3.1. The staged fixture also checks node dimensions and relative placement through refinement. |
-| Static repaint | The allocator regression in `bench/tests/allocator.rs` compares eight warmed GPUI draws at 50 and 500 nodes. Upstream GPUI dropped from 63 to 9 allocations per draw at each size. The zero-allocation criterion remains open. |
+| Static repaint | The allocator regression in `bench/tests/allocator.rs` compares eight warmed GPUI draws at 50 and 500 nodes. At both sizes the synchronized test measured 72 allocations and 32,704 bytes across eight upstream draws, and eight allocations and 192 bytes across eight gpui-fast draws. These counts match the previous branch tip. The zero-allocation criterion remains open. |
 | Memory | The native-window probe measures peak RSS in independent processes. Pass `-- --window-only` for the empty-window control. See the paired measurements below. |
 
 ## Native 500-node measurements
@@ -47,6 +47,11 @@ through `draw_layout` before exact routing. Rows can overlap.
 | Preview routing | 1.2% | 0 sampled |
 | SVG parse | 9.9% | 0 sampled |
 | Rasterization | 29.6% | 0 sampled |
+
+The upstream headless short soak measured p99 of 30.359 ms in its first
+10-second window and 0.618 ms in its second. RSS held at 34,040 KiB. The
+harness settled to the refined raster during setup and includes executor
+settling in its frame samples. Native interaction timing remains open.
 
 The native preview builds bounded geometry off-thread and paints up to two
 edge paths and one quad per visible preview node. Exact routing starts after
