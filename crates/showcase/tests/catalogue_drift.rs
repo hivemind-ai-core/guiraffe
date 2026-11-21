@@ -35,8 +35,8 @@ fn kind(surface: &str) -> Option<&'static str> {
         "layout::ScrollArea" => "scroll-area",
         "layout::SimpleGrid" => "simple-grid",
         "layout::Space" => "space",
-        "markdown::MarkdownView" => "markdown",
-        "mermaid::MermaidView" => "mermaid",
+        "markdown::MarkdownView" | "markdown::MarkdownState" => "markdown",
+        "mermaid::MermaidView" | "mermaid::MermaidViewState" => "mermaid",
         "overlays::Affix" => "affix",
         "overlays::FloatingTooltip" | "overlays::FloatingOptions" => "floating-tooltip",
         "overlays::LoadingOverlay" => "loading-overlay",
@@ -68,12 +68,64 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "A document supplies source data. An application-owned MarkdownState entity is a Rust API.",
     ),
     (
+        "markdown::MarkdownState::append",
+        "Streaming producers append to the bound source string, which updates the native view.",
+    ),
+    (
+        "markdown::MarkdownState::context_menu",
+        "Returns the native host menu assembled for the current text selection.",
+    ),
+    (
+        "markdown::MarkdownState::document",
+        "Returns the retained parsed document to Rust callers integrating analysis.",
+    ),
+    (
+        "markdown::MarkdownState::extensions",
+        "Returns the fixed parser extension set used by the viewer.",
+    ),
+    (
+        "markdown::MarkdownState::headings",
+        "Read-only extraction from the retained Markdown source.",
+    ),
+    (
+        "markdown::MarkdownState::shown_len",
+        "Returns the internal display buffer length for streaming instrumentation.",
+    ),
+    (
+        "markdown::MarkdownState::stats",
+        "Read-only renderer instrumentation.",
+    ),
+    (
+        "markdown::MarkdownState::text",
+        "Returns the internal native text entity for Rust hosts.",
+    ),
+    (
         "mermaid::MermaidView::state",
         "The document owns keyed state and supplies diagram source through a property.",
     ),
     (
         "mermaid::MermaidView::create_state",
         "Allocates an application-owned entity for callers building a view in Rust.",
+    ),
+    (
+        "mermaid::MermaidViewState::status",
+        "Read-only status of the asynchronous diagram renderer.",
+    ),
+    (
+        "mermaid::MermaidViewState::has_preview",
+        "Reports an internal distinction between the raster preview and the final diagram.",
+    ),
+    (
+        "mermaid::MermaidViewState::image",
+        "Returns the native image object from the last successful render.",
+    ),
+    (
+        "mermaid::MermaidViewState::svg",
+        "Read-only export of the last successful render.",
+    ),
+    (
+        "mermaid::MermaidViewState::viewport",
+        "Returns the current viewport for Rust hosts that build a separate toolbar.",
     ),
     (
         "tree::TreeView::expand_loaded",
