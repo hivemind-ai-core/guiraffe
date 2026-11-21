@@ -3420,6 +3420,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-icons",
+ "guiraffe-inputs",
  "guiraffe-mocket",
  "guiraffe-test",
  "guiraffe-ui",
@@ -3472,6 +3473,8 @@ name = "guiraffe-core"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "im",
+ "serde_json",
 ]
 
 [[package]]
@@ -3742,6 +3745,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-components",
  "guiraffe-core",
+ "guiraffe-inputs",
  "guiraffe-macros",
  "guiraffe-test",
  "guiraffe-ui",

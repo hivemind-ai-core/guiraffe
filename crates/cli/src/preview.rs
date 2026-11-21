@@ -100,12 +100,10 @@ impl Preview {
                             self.error = Some(e.to_string());
                         }
                     }
-                    None => {
-                        match DataUi::new(&doc, Arc::new(Registry::with_builtins()), NoLogic, cx) {
-                            Ok(ui) => self.ui = Some(ui),
-                            Err(e) => self.error = Some(e.to_string()),
-                        }
-                    }
+                    None => match DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx) {
+                        Ok(ui) => self.ui = Some(ui),
+                        Err(e) => self.error = Some(e.to_string()),
+                    },
                 }
                 self.reloads += 1;
             }
@@ -238,7 +236,7 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
     gpui_kit::application()
         .with_assets(guiraffe_icons::GuiraffeAssets)
         .run(move |cx: &mut App| {
-            guiraffe_components::init(cx);
+            guiraffe_inputs::init(cx);
             let title = format!("GUIraffe preview — {}", path.display());
             let opened = cx.open_window(
                 gpui_kit::WindowOptions {

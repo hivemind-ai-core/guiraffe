@@ -70,3 +70,17 @@ Typed slots support checked reads via `get(&SlotTable)` and typed writes via `se
 Literal size/color tokens compile into `Prop::Size` and `Prop::Color`; invalid tokens are diagnosed. Global style slots parse their tokens when values change, not during rendering. Item-relative size/color expressions are currently unsupported; use compiled literals or global style slots.
 
 Run `cargo run -p guiraffe-ui --example bindings` for all four native inputs, list splices, conditional visibility, and typed logic. Tests run on both backends; render-count assertions branch on `gpui_kit::GPUI_FAST`.
+
+## Crate-owned widgets
+
+Initialize the widget crate in the application before building a DataUi registry.
+For example, call `guiraffe_inputs::init(cx)` and then construct the registry
+with `Registry::for_app(cx)`. A password-strength meter accepts the current
+password as a literal or slot binding.
+
+```json
+{"version":1,"root":{"kind":"password-strength","bind":{"password":"password"}}}
+```
+
+For a registry-specific check, use `Validation::check_with_registry`. The
+portable catalogue includes descriptors from the workspace's widget crates.

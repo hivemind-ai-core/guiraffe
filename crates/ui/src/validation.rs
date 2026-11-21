@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Document, Node,
-    catalog::{KINDS, lookup},
+    catalog::{WidgetSpec, all_widgets},
 };
 
 #[derive(Debug, Serialize)]
@@ -54,11 +54,29 @@ fn suggestion(got: &str, choices: &[&str]) -> String {
 
 impl Validation<'_> {
     pub fn check(&self, document: &Document) -> Vec<Issue> {
+        self.check_with_specs(document, all_widgets())
+    }
+
+    /// Validate against descriptors available to a particular host.
+    pub fn check_with_registry(
+        &self,
+        document: &Document,
+        registry: &crate::Registry,
+    ) -> Vec<Issue> {
+        self.check_with_specs(document, registry.specs())
+    }
+
+    fn check_with_specs(
+        &self,
+        document: &Document,
+        specs: impl Iterator<Item = &'static WidgetSpec>,
+    ) -> Vec<Issue> {
+        let specs: std::collections::BTreeMap<_, _> = specs.map(|spec| (spec.id, spec)).collect();
         let mut issues = Vec::new();
         let mut ids = BTreeSet::new();
         let mut pending = vec![(&document.root, "/root".to_owned())];
         while let Some((node, path)) = pending.pop() {
-            self.check_node(node, &path, &mut ids, &mut issues);
+            self.check_node(node, &path, &mut ids, &mut issues, &specs);
             pending.extend(
                 node.children
                     .iter()
@@ -76,6 +94,7 @@ impl Validation<'_> {
         path: &str,
         ids: &mut BTreeSet<&'a str>,
         issues: &mut Vec<Issue>,
+        specs: &std::collections::BTreeMap<&str, &WidgetSpec>,
     ) {
         let mut issue = |property: &str, got: Value, accepted: Value, hint: String| {
             issues.push(Issue {
@@ -96,13 +115,14 @@ impl Validation<'_> {
                 "Assign a unique id to this node.".into(),
             );
         }
-        let Some(spec) = lookup(&node.kind) else {
+        let Some(spec) = specs.get(node.kind.as_str()) else {
             if !(self.mocket_placeholders && node.kind.starts_with("mocket:")) {
+                let kinds: Vec<_> = specs.keys().copied().collect();
                 issue(
                     "kind",
                     json!(node.kind),
-                    json!(KINDS),
-                    suggestion(&node.kind, KINDS),
+                    json!(kinds),
+                    suggestion(&node.kind, &kinds),
                 );
             }
             return;

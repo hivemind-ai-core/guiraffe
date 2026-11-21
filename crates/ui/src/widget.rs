@@ -269,6 +269,7 @@ impl Widget for Placeholder {
 #[derive(Clone, Default)]
 pub struct Registry {
     widgets: HashMap<SharedString, Arc<dyn Widget>>,
+    specs: HashMap<SharedString, &'static crate::catalog::WidgetSpec>,
 }
 
 impl Registry {
@@ -279,16 +280,72 @@ impl Registry {
     pub fn with_builtins() -> Self {
         let mut r = Self::empty();
         crate::builtins::register(&mut r);
+        r.specs.extend(
+            crate::catalog::WIDGETS
+                .iter()
+                .map(|spec| (spec.id.into(), *spec)),
+        );
         r
     }
+    /// Load builtins and the widget registrations installed by the application's crates.
+    pub fn for_app(cx: &App) -> Self {
+        use guiraffe_core::widget_catalog::WidgetRegistry;
+
+        let mut registry = Self::with_builtins();
+        if let Some(installed) = cx.try_global::<WidgetRegistry>() {
+            for registration in installed.registrations() {
+                registry.register(
+                    registration.spec.id,
+                    widget(registration.schema, move |node, children, window, cx| {
+                        (registration.render)(node, children, window, cx)
+                    }),
+                );
+                registry
+                    .specs
+                    .insert(registration.spec.id.into(), registration.spec);
+            }
+        }
+        registry
+    }
+
     pub fn register(&mut self, kind: impl Into<SharedString>, widget: impl Widget) -> &mut Self {
-        self.widgets.insert(kind.into(), Arc::new(widget));
+        let kind = kind.into();
+        self.specs.remove(&kind);
+        self.widgets.insert(kind, Arc::new(widget));
         self
     }
+    /// Metadata for widgets available to this host.
+    pub fn specs(&self) -> impl Iterator<Item = &'static crate::catalog::WidgetSpec> + '_ {
+        self.specs.values().copied()
+    }
+
     pub fn get(&self, kind: &str) -> Option<Arc<dyn Widget>> {
         self.widgets.get(kind).cloned()
     }
     pub fn kinds(&self) -> impl Iterator<Item = &str> {
         self.widgets.keys().map(|k| k.as_ref())
+    }
+}
+
+impl guiraffe_core::widget_catalog::WidgetNode for NodeView<'_> {
+    fn prop(&self, index: usize) -> &Value {
+        self.prop(index)
+    }
+
+    fn size(&self, index: usize) -> Option<Size> {
+        self.size(index)
+    }
+
+    fn color(&self, index: usize) -> Option<ColorName> {
+        self.color(index)
+    }
+
+    fn handler(&self, index: usize) -> Option<guiraffe_core::widget_catalog::EventHandler> {
+        self.handler(index)
+            .map(|handler| Rc::new(handler) as guiraffe_core::widget_catalog::EventHandler)
+    }
+
+    fn element_id(&self) -> gpui_kit::ElementId {
+        self.element_id()
     }
 }

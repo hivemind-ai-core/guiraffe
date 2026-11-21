@@ -338,3 +338,35 @@ fn hot_reload_keeps_live_values_and_lets_logic_fill_new_slots(cx: &mut TestAppCo
         Some("filled on bind")
     );
 }
+
+#[gpui_kit::test]
+fn crate_owned_password_meter_validates_compiles_and_renders(cx: &mut TestAppContext) {
+    cx.update(guiraffe_inputs::init);
+    let document = Document::new(
+        Node::new("password-strength")
+            .prop("password", "A7!example")
+            .bind("password", "password"),
+    );
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let issues = validation::Validation::default().check_with_registry(&document, &registry);
+        assert!(issues.is_empty(), "{issues:?}");
+        let template = Arc::new(Template::compile(&document, &registry).expect("compile meter"));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{:?}",
+            template.diagnostics()
+        );
+        Shell {
+            ui: DataUi::from_template(template, registry, NoLogic, cx),
+        }
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_the_password_meter_constructor() {
+    use guiraffe_inputs::PasswordStrength;
+    let meter = ui! { PasswordStrength("A7!example") };
+    let _ = meter.into_element();
+}
