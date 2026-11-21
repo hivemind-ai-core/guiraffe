@@ -109,3 +109,13 @@ probe. Flex layout was 3.83% and 2.66%, respectively. Bounds-tree insertion
 was 5.96% in the latter capture. These are shares from different captures
 and build profiles. Standalone scheduler instruction counts above provide
 the like-for-like CPU comparison.
+
+The same local mounted probe on gpui-fast reported 330.9 ms mount,
+17.4 ms warmed p99 and 56.0 MiB sampled RSS on the shared machine.
+
+An upstream probe used the bench counting allocator around one
+`Window::refresh` and frame render after four warm-up frames. It measured
+3,367 calls requesting 1,981,143 bytes at each of 10k, 100k and 10M tasks.
+This includes the entire GPUI window refresh. The measured repaint traffic
+stayed flat as the source grew, and the zero-allocation criterion remains
+open.
