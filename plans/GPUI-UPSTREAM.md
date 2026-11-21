@@ -23,6 +23,34 @@ tab-stop resets, sorts paths in place with insertion order as a tie-breaker,
 and reuses shallow dispatch stacks, recent element IDs and empty font
 features.
 
+## Reuse stable renderer sort scratch
+
+A frame sorts paint buffers into renderer order. Reuse one bounded vector of
+sort keys and input indices, then apply its permutation in place. Input
+indices preserve ties, including overlapping primitives at the same draw
+order. Already ordered batches skip the permutation. Scenes larger than
+65,536 primitives of one kind use the standard stable sort, keeping retained
+scratch at or below 1 MiB per scene on 64-bit targets. gpui-fast already
+retains its own stable sort scratch.
+
+With tab-stop and Taffy scratch reuse applied, the upstream Flow fixture
+dropped from 1,135,960 to 10,040 requested bytes per retained draw. DataGrid,
+Gantt, Markdown and Charts also removed one request per frame. A renderer
+sort regression checks order for duplicate keys and scratch reuse.
+
+## Retain viewport-sized Kit roots
+
+The Kit root opts into the same cached view path as a viewport-sized child.
+The root's inner layout keeps the normal viewport stretch. A child
+notification invalidates its ancestors, and whole-window refresh forces
+a full render. While accessibility is active, the root runs ordinary
+prepaint so the accessibility builder receives its nodes.
+
+In upstream warm replay, this reduced the fixtures from 60–67 requests per
+draw to two or four. Every remaining request was for cloned key context
+entries. The integration test covers intact scene output, a child
+notification, and explicit refresh.
+
 # Draft pull request for longbridge/gpui-fast
 
 ## Pace callback-only Wayland ticks from the compositor
@@ -69,3 +97,72 @@ The mounted plain-list allocation test draws equal viewports over 10,000
 and 100,000 items. It asserts both layout calls and allocation traffic
 after warmup. The Markdown and Chat soak checks also compare normal
 mounted repaint traffic at two history sizes.
+
+## Reuse tab-stop order buffers during paint replay
+
+Both GPUI snapshots now append focus registrations to a reusable frame vector.
+The first Tab or Shift-Tab traversal sorts it in place by group path and
+insertion order and binary-searches the currently focused entry. Group
+nesting, duplicate indices, non-tab stops, and wrapping keep their existing
+ordering rules. Storage follows the two window frames and retains capacity up
+to the largest registration count previously seen by each frame. The
+six-entry inline group path can still spill for deeper nesting.
+
+In the upstream release soak probe, the tab-stop change reduced Gantt from
+215 to 80 allocation requests per unchanged draw and from 322,504 to
+74,104 requested bytes. The vendor regression replays grouped tab operations,
+checks forward and reverse traversal, and verifies the same vector allocation
+is reused after a clear.
+
+# Draft pull request for DioxusLabs/taffy
+
+## Retain bounded scratch for block and out-of-flow layout
+
+Let `LayoutPartialTree` opt into scratch storage and have `TaffyTree`
+retain it when the node tree is cleared. Recursive block sizing and
+out-of-flow layout take their vectors by ownership and return them once
+the pass completes, so descendants can use disjoint buffers. Custom trees
+get the existing temporary-vector behavior by default.
+
+Recycle block items, the out-of-flow worklist and temporary hoisted IDs.
+Each of the three pools retains at most sixteen buffers of at most 16 KiB
+each. Returning a buffer drops its contents, including any state attached
+to a block item. The bound is 768 KiB per tree, plus spare vector headers.
+Owned result vectors and per-node child lists keep their existing lifetimes.
+
+In the upstream mounted release probe, this removed 17 requests per retained
+draw in five fixtures and 20 in Charts, after tab-stop reuse. Taffy's 171
+library tests include a nested scratch reuse check.
+
+## Share the entries of replayed key contexts in both GPUI snapshots
+
+The dispatch tree copies key context values when replaying retained nodes.
+Share their backing entries with an Arc and detach on mutation. Keep one
+shared empty context. Edits, clearing, comparisons, and predicate evaluation
+keep their value semantics.
+
+GDB traced the fast backend's 48-byte requests to the context clone in
+`fast::dispatch::copy_nodes`. The five fixtures without rounded-clip
+compilation went from one or two requests to zero. Upstream cloned the same
+entries twice through `DispatchTree::move_node` and `set_key_context`.
+
+## Reuse compiled gpui-fast rounded clip groups on complete replay
+
+A replay that starts with an empty scene and copies the entire preceding
+frame records its source range. At finish, the operation count must still
+match and the tile layers must have matching keys, revisions, content
+identities, and dirty metadata. Transfer the preceding compiled scene in
+that case. The raw scene remains the scratch for the next replay, including
+its bounds-tree capacity. Changed or partial replays compile as before.
+
+This adds no third retained scene. A targeted regression checks that a
+complete replay retains the compiled groups and that an appended operation
+rejects reuse. The mounted Markdown fixture went from 91 requests and
+410,760 requested bytes to zero with this change and shared key contexts.
+
+## Share retained test-support bounds selectors
+
+Both backends use shared string storage for a recorded bounds selector.
+Paint stores the selector in the lookup map and record stream. Replay
+copies the shared reference without duplicating the string in either
+destination. Selector lookup continues to borrow plain strings.

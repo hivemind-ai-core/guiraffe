@@ -21,10 +21,14 @@ requests `wp_presentation` feedback for buffer submissions. Set
 | Both `src/elements/list.rs` | Retains the measurement tree when the viewport produces identical sizes and readiness. Changed records still follow the existing measurement update path. |
 | Both `src/arena.rs` | Invalidates the token before dropping values. Resets it in place when no handles survive and allocates a new token when a stale handle still owns the old one. |
 | Both `src/window.rs` | Exposes the rendered path count under test support so the allocation test verifies replay produced all 1,000 paths. |
-| `gpui-pre/src/scene.rs` | Sorts paths in place by draw order and sequential `PathId`. The ID preserves insertion order for ties. |
+| `gpui-pre/src/scene.rs` | Sorts paths in place by draw order and sequential `PathId`. Other primitive kinds share a reusable stable sort permutation capped at 65,536 entries per scene. |
+| `gpui-pre/src/window.rs`, `gpui-pre/src/view.rs`, `gpui-base/src/root.rs` | Kit opts its viewport root into cached layout and paint. Refresh and child invalidation rebuild as usual. The root prepaints live when accessibility is active. |
 | `gpui-pre/src/window.rs`, `gpui-pre/src/element.rs` | Reuses exact global element ID paths from 64 direct-mapped slots per window. Collisions compare complete paths before reusing a value. IDs still use their original backing and equality. |
 | `gpui-pre/src/key_dispatch.rs` | Keeps the replay stack inline for up to 32 dispatch ancestors. Deeper trees spill into a temporary buffer. |
-| `gpui-pre/src/tab_stop.rs` | Clears existing frame buffers and keeps the empty tab-stop tree when no nodes were added. |
+| Both `src/keymap/context.rs` | Shares immutable key context entries during retained dispatch replay and detaches on mutation. |
+| Both `src/window.rs` and `src/elements/div.rs` | Shares test-only bounds selector strings across replay records and lookup maps. |
+| `gpui-fast/src/window.rs`, `gpui-fast/src/fast/rounded_clip*.rs` | Reuses the preceding compiled scene after a complete replay with matching layer metadata. |
+| Both `src/tab_stop.rs` | Reuses the tab-stop order buffer across frames and sorts it on the first keyboard traversal. Group paths and insertion order resolve ties. |
 | `gpui-pre/src/text_system/font_features.rs` | Shares one empty font feature vector across default styles. |
 | `gpui-fast/src/fast/layers/paint.rs` | Keeps shared backing when all vertex masks are empty and preserves clipping for custom masks. |
 | `gpui-fast/src/fast/path_cache.rs` | Converts the path-cache test fixture from a vector to the wrapper. |
@@ -40,8 +44,9 @@ Arc header per independent buffer and no vertex cache. The ID cache retains
 at most 64 paths per window. Each cached path holds at most 32 element IDs. The font cache retains one process-wide empty vector.
 
 Sprite primitives are copied without allocating. Cached text already reuses
-`Arc<CacheKey>` and shaped layout handles in both backends. Tab-stop replay
-for focusable widgets may still allocate.
+`Arc<CacheKey>` and shaped layout handles in both backends. Tab-stop replay retains two frame-owned order buffers per window, each sized to the
+largest number of focus registrations seen by that frame. Unusually deep groups
+can still spill a tab path past its six inline entries.
 
 # GPUI Kit 0.9.1 patches
 
@@ -79,3 +84,12 @@ Fast 0.1.15. They cover two long-press selection interactions, ordered-list
 markers, table row corner radius, and an unsuccessful range reveal. The
 standalone `gpui-component` text suite passes all 78 checks on both stock
 and patched Kit. The GUIraffe workspace gate passes on both backends.
+
+# Taffy 0.15.1 patches
+
+Both GPUI backends use the vendored crates.io release from Taffy commit
+`0064bd54cbe38bf1d8bcd6ec6ab0704d45fb048a`. The local patch reuses
+temporary block items, out-of-flow work entries, and hoisted IDs through
+`TaffyTree::clear`. Each pool keeps up to sixteen cleared buffers of up to
+16 KiB each. The layout algorithms, result ownership, and ordering stay the
+same.

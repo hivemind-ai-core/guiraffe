@@ -1,13 +1,23 @@
 use crate::SharedString;
 use anyhow::{Context as _, Result};
-use std::fmt;
+use std::{
+    fmt,
+    sync::{Arc, OnceLock},
+};
 
 /// A datastructure for resolving whether an action should be dispatched
 /// at this point in the element tree. Contains a set of identifiers
 /// and/or key value pairs representing the current context for the
 /// keymap.
-#[derive(Clone, Default, Eq, PartialEq, Hash)]
-pub struct KeyContext(Vec<ContextEntry>);
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct KeyContext(Arc<Vec<ContextEntry>>);
+
+impl Default for KeyContext {
+    fn default() -> Self {
+        static EMPTY: OnceLock<Arc<Vec<ContextEntry>>> = OnceLock::new();
+        Self(EMPTY.get_or_init(Arc::default).clone())
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 /// An entry in a KeyContext
@@ -99,14 +109,18 @@ impl KeyContext {
 
     /// Clear this context.
     pub fn clear(&mut self) {
-        self.0.clear();
+        if let Some(entries) = Arc::get_mut(&mut self.0) {
+            entries.clear();
+        } else {
+            *self = Self::default();
+        }
     }
 
     /// Extend this context with another context.
     pub fn extend(&mut self, other: &Self) {
-        for entry in &other.0 {
+        for entry in other.0.iter() {
             if !self.contains(&entry.key) {
-                self.0.push(entry.clone());
+                Arc::make_mut(&mut self.0).push(entry.clone());
             }
         }
     }
@@ -116,7 +130,7 @@ impl KeyContext {
         let key = identifier.into();
 
         if !self.contains(&key) {
-            self.0.push(ContextEntry { key, value: None })
+            Arc::make_mut(&mut self.0).push(ContextEntry { key, value: None })
         }
     }
 
@@ -124,7 +138,7 @@ impl KeyContext {
     pub fn set<S1: Into<SharedString>, S2: Into<SharedString>>(&mut self, key: S1, value: S2) {
         let key = key.into();
         if !self.contains(&key) {
-            self.0.push(ContextEntry {
+            Arc::make_mut(&mut self.0).push(ContextEntry {
                 key,
                 value: Some(value.into()),
             })
@@ -517,6 +531,20 @@ mod tests {
     use super::*;
     use crate as gpui;
     use KeyBindingContextPredicate::*;
+
+    #[test]
+    fn cloned_key_context_shares_entries_until_edited() {
+        let original = KeyContext::parse("Root").unwrap();
+        let mut copy = original.clone();
+        assert!(std::sync::Arc::ptr_eq(&original.0, &copy.0));
+
+        copy.set("mode", "editing");
+        assert!(copy.contains("mode"));
+        assert!(!original.contains("mode"));
+        copy.clear();
+        assert_eq!(copy, KeyContext::default());
+        assert!(original.contains("Root"));
+    }
 
     #[test]
     fn test_actions_definition() {

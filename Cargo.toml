@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*", "bench", "examples/ui-macro-demo"]
-exclude = ["vendor/gpui-base", "vendor/gpui-component", "vendor/gpui-fast-linux", "vendor/mermaid-rs-renderer"]
+exclude = ["vendor/gpui-base", "vendor/gpui-component", "vendor/gpui-fast-linux", "vendor/mermaid-rs-renderer", "vendor/taffy"]
 resolver = "3"
 
 [workspace.package]
@@ -68,3 +68,4 @@ gpui-pre = { path = "vendor/gpui-pre" }
 gpui-base = { path = "vendor/gpui-base" }
 gpui-component = { path = "vendor/gpui-component" }
 mermaid-rs-renderer = { path = "vendor/mermaid-rs-renderer" }
+taffy = { path = "vendor/taffy" }

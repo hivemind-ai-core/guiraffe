@@ -1059,9 +1059,9 @@ pub(crate) struct Frame {
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: FxHashMap<Arc<str>, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    pub(crate) debug_bounds_records: Vec<(Arc<str>, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1097,7 +1097,7 @@ pub(crate) struct PaintIndex {
 
 impl Frame {
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
+    pub(crate) fn record_debug_bounds(&mut self, selector: Arc<str>, bounds: Bounds<Pixels>) {
         self.debug_bounds.insert(selector.clone(), bounds);
         self.debug_bounds_records.push((selector, bounds));
     }
@@ -1223,7 +1223,12 @@ impl Frame {
             }
         }
 
-        self.scene.finish();
+        if !crate::fast::rounded_clip_scene::reuse_full_replay(
+            &mut self.scene,
+            &mut prev_frame.scene,
+        ) {
+            self.scene.finish();
+        }
     }
 }
 
@@ -4410,10 +4415,18 @@ impl Window {
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
-            range.start.scene_index..range.end.scene_index,
-            &self.rendered_frame.scene,
-        );
+        let scene = &mut self.next_frame.scene;
+        let previous = &self.rendered_frame.scene;
+        let operations = range.start.scene_index..range.end.scene_index;
+        let full_replay = previous.fast_rounded_clip.compiled
+            && operations.start == 0
+            && operations.end == previous.len()
+            && scene.len() == 0
+            && scene.layers.frames.is_empty();
+        scene.replay(operations, previous);
+        if full_replay {
+            scene.fast_rounded_clip.replayed_full_frame = true;
+        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.

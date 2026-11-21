@@ -19,7 +19,7 @@ use crate::{
     PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, Subscription, SystemWindowTab,
+    StrikethroughStyle, Style, StyleRefinement, SubpixelSprite, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
     TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
     Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
@@ -1049,9 +1049,9 @@ pub(crate) struct Frame {
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: FxHashMap<Arc<str>, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    debug_bounds_records: Vec<(Arc<str>, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1084,7 +1084,7 @@ pub(crate) struct PaintIndex {
 
 impl Frame {
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
+    pub(crate) fn record_debug_bounds(&mut self, selector: Arc<str>, bounds: Bounds<Pixels>) {
         self.debug_bounds.insert(selector.clone(), bounds);
         self.debug_bounds_records.push((selector, bounds));
     }
@@ -1234,6 +1234,7 @@ pub struct Window {
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
+    retained_root: Option<EntityId>,
     pub(crate) element_id_stack: ElementIdStack,
     recent_element_ids: [Option<GlobalElementId>; 64],
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -2362,6 +2363,7 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
+            retained_root: None,
             element_id_stack: ElementIdStack::default(),
             recent_element_ids: std::array::from_fn(|_| None),
             text_style_stack: Vec::new(),
@@ -2568,6 +2570,24 @@ impl Window {
         self.root = Some(view.clone().into());
         self.refresh();
         view
+    }
+
+    /// Opt a window root into cached viewport layout and paint. Notifications
+    /// still invalidate the subtree, and refresh still forces full rendering.
+    #[doc(hidden)]
+    pub fn retain_root_view(&mut self, root: EntityId) {
+        self.retained_root = Some(root);
+    }
+
+    pub(crate) fn root_view_is_retained(&self, root: EntityId) -> bool {
+        self.retained_root == Some(root) && !self.a11y.is_active()
+    }
+
+    pub(crate) fn stretch_root_layout(&mut self, layout: LayoutId, size: Size<Pixels>) {
+        let scale = self.scale_factor();
+        if let Some(engine) = &mut self.layout_engine {
+            engine.stretch_auto_size_to_fill(layout, size, scale);
+        }
     }
 
     /// Returns the root entity of the window, if it has one.
@@ -3951,17 +3971,19 @@ impl Window {
         // Layout all root elements. Like the root element on the web, which
         // stretches to fill the viewport unless explicitly sized, window roots
         // fill the window when their size is `auto`.
-        let scale_factor = self.scale_factor();
         #[cfg(feature = "profiler")]
         let request_layout_start = Instant::now();
-        let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
+        let root = self.root.as_ref().unwrap().clone();
+        let mut root_element = if self.root_view_is_retained(root.entity_id()) {
+            root.cached(StyleRefinement::default().size_full())
+                .into_any_element()
+        } else {
+            root.into_any_element()
+        };
         let root_layout_id = root_element.request_layout(self, cx);
         #[cfg(feature = "profiler")]
         let prepaint_start = Instant::now();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
+        self.stretch_root_layout(root_layout_id, root_size);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3975,10 +3997,7 @@ impl Window {
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any_element();
             let prompt_layout_id = element.request_layout(self, cx);
-            self.layout_engine
-                .as_mut()
-                .unwrap()
-                .stretch_auto_size_to_fill(prompt_layout_id, root_size, scale_factor);
+            self.stretch_root_layout(prompt_layout_id, root_size);
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);

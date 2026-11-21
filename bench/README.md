@@ -169,3 +169,35 @@ Each case creates the document or computed source and warms the window
 before measuring one viewport switch and draw. The 100k and 10M cases
 use the same window dimensions and target rows. Instruction counts cover
 CPU-side drawing, including GPUI layout and painting work.
+
+### Warm repaint allocation probe
+
+Build the mounted soak fixtures with allocation instrumentation enabled. The
+ordinary soak build has no instrumentation. Keep backend builds in separate
+target directories within the worktree.
+
+```sh
+CARGO_PROFILE_RELEASE_DEBUG=line-tables-only cargo build --release -p guiraffe-bench \
+  --example soak --features warm-repaint-probe
+for component in grid markdown gantt flow chart-scatter mermaid; do
+  SOAK_ITEMS=1000 SOAK_WARM_REPAINT=1 SOAK_ALLOC_STACKS=1 \
+    target/release/examples/soak "$component"
+done
+```
+
+Use `--features warm-repaint-probe,gpui-fast` and an isolated
+`CARGO_TARGET_DIR` for the fast backend. The probe mounts the component under
+a viewport-sized cached view, warms both frame buffers, then counts successful
+UI-thread allocations and reallocations during an explicit CPU draw and arena
+clear. Stack capture uses a separate draw, grouping by the first attributable
+function. It excludes renderer presentation and work done on background threads.
+
+Set `SOAK_INVALIDATE_WINDOW=1` to call `Window::refresh` before every draw and
+measure whole-window invalidation separately. For CPU sampling, omit
+`SOAK_ALLOC_STACKS`, set `SOAK_FRAMES=10000`, and apply the documented
+`samply` workflow with `--filter warm_repaint::draw` in the summary.
+
+The mounted Linux allocator tests run with the bench suite and can be run
+directly with `cargo test -p guiraffe-bench --example soak`. Repeat with
+`--features gpui-fast` to exercise the second backend. Each fixture checks
+eight consecutive draws after warm-up.
