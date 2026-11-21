@@ -85,6 +85,58 @@ pub(crate) fn register(cx: &mut App) {
                     simple_grid(node).children(children).into_any_element()
                 },
             },
+            WidgetRegistration {
+                spec: &widget_specs::SPLITTER,
+                schema: guiraffe_core::widget_schema!(&widget_specs::SPLITTER),
+                render: |node, children, window, cx| {
+                    use crate::{Splitter, SplitterAxis, SplitterState};
+                    use guiraffe_core::widget_value::Value;
+
+                    let state = window
+                        .use_keyed_state(node.state_id(), cx, |_, cx| SplitterState::new(cx))
+                        .read(cx)
+                        .clone();
+                    let mut splitter = Splitter::new(&state)
+                        .axis(if node.prop(0).as_str() == Some("vertical") {
+                            SplitterAxis::Vertical
+                        } else {
+                            SplitterAxis::Horizontal
+                        })
+                        .panes(children);
+                    let size = |value: &Value| {
+                        value
+                            .as_f64()
+                            .map(|value| value.clamp(0.0, f64::from(f32::MAX)) as f32)
+                    };
+                    let minimum = size(node.prop(3)).unwrap_or_else(crate::theme::panel_min_size);
+                    splitter = splitter.min_size(px(minimum));
+                    if let Some(maximum) = size(node.prop(4)) {
+                        splitter = splitter.max_size(px(maximum.max(minimum)));
+                    }
+                    let sizes = node.prop(1);
+                    for index in 0..sizes.list_len().unwrap_or_default() {
+                        if let Some(value) = sizes.list_get(index).and_then(size) {
+                            splitter = splitter.pane_size(index, px(value));
+                        }
+                    }
+                    if let Some(value) = size(node.prop(2)) {
+                        splitter = splitter.first_size(px(value));
+                    }
+                    if let Some(key) = node.prop(5).as_str() {
+                        splitter = splitter.persist_key(key.to_owned());
+                    }
+                    if let Some(handler) = node.handler(0) {
+                        splitter = splitter.on_resize(move |sizes, window, cx| {
+                            let values = sizes
+                                .iter()
+                                .map(|size| Value::Num(f64::from(f32::from(*size))))
+                                .collect::<Vec<_>>();
+                            handler(Value::List(values.into()), window, cx);
+                        });
+                    }
+                    splitter.into_any_element()
+                },
+            },
         ],
     );
 }

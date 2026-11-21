@@ -24,6 +24,10 @@
 //! ```ignore
 //! ui! { Menu("file-menu", &commands) { show_categories: true; show_keybindings: true } }
 //! ```
+use guiraffe_core::widget_spec;
+mod document;
+mod widget_specs;
+
 pub mod context;
 mod error;
 pub mod keybinding;

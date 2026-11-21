@@ -19,6 +19,7 @@ serde_json.workspace = true
 im = "15.1"
 
 [dev-dependencies]
+guiraffe-commands.workspace = true
 guiraffe-charts.workspace = true
 guiraffe-chat.workspace = true
 guiraffe-code.workspace = true

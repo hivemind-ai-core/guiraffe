@@ -495,6 +495,9 @@ fn chip_click_updates_a_bound_selection_and_delivers_an_event(cx: &mut TestAppCo
 
 fn init_document_widgets(cx: &mut TestAppContext) {
     cx.update(guiraffe_components::init);
+    cx.update(|cx| {
+        let _ = guiraffe_commands::init(cx);
+    });
     cx.update(guiraffe_inputs::init);
     cx.update(guiraffe_layout::init);
     cx.update(guiraffe_code::init);
@@ -1962,5 +1965,87 @@ fn ui_macro_accepts_the_native_spotlight_entity() {
         });
         ui! { div { {search} } }
     }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn native_commands_icons_steps_and_splitter_render(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    cx.update(guiraffe_layout::init);
+    cx.update(|cx| {
+        let _ = guiraffe_commands::init(cx);
+    });
+    let doc = Document::new(
+        Node::new("command-scope").child(
+            Node::new("splitter")
+                .prop("axis", "vertical")
+                .prop("pane-sizes", serde_json::json!([120, null]))
+                .prop("first-size", 160)
+                .prop("min-size", 48)
+                .prop("max-size", 600)
+                .prop("persist-key", "example")
+                .on("resize", "save-pane-sizes")
+                .child(
+                    Node::new("command-menu")
+                        .prop("commands", serde_json::json!([{
+                            "id": "file.save", "title": "Save", "category": "File",
+                            "keywords": "write", "keybinding": "Control+S",
+                            "when": "!dialog", "enabled": true
+                        }]))
+                        .prop("show-categories", true)
+                        .prop("show-keybindings", true)
+                        .on("invoke", "run-command")
+                        .on("error", "report-command-error"),
+                )
+                .child(
+                    Node::new("stack")
+                        .child(Node::new("theme-icon").prop("icon", "icons/check.svg").prop("size", "sm").prop("variant", "outline"))
+                        .child(Node::new("action-icon").prop("icon", "icons/search.svg").prop("label", "Search").prop("focusable", true).on("click", "search"))
+                        .child(Node::new("close-button").prop("label", "Close panel").on("click", "close-panel"))
+                        .child(Node::new("copy-button").prop("value", "Deploy").prop("focusable", true).on("copy", "copied"))
+                        .child(Node::new("stepper").prop("steps", serde_json::json!([
+                            {"label": "Start", "description": "Create an account", "icon": "icons/check.svg"},
+                            {"label": "Finish"}
+                        ])).prop("active", 0).on("step-click", "select-step")),
+                ),
+        ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("native commands and splitter"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_native_commands_icons_steps_and_splitter_panes() {
+    use gpui_kit::{Entity, ParentElement, assets::IconName, div, px};
+    use guiraffe_commands::{CommandScope, Commands, Menu};
+    use guiraffe_components::{ActionIcon, Step, Stepper, ThemeIcon};
+    use guiraffe_core::{ColorName, Size, Variant};
+    use guiraffe_layout::{Splitter, SplitterAxis, SplitterState};
+    use guiraffe_ui::ui;
+
+    fn example(commands: &Commands, state: &Entity<SplitterState>) -> impl IntoElement {
+        let menu = ui! {
+            Menu("commands", commands) { show_categories: false; show_keybindings: true }
+        };
+        let controls = ui! {
+            div {
+                ThemeIcon(IconName::Check) { radius: Size::Xs; variant: Variant::Outline }
+                ActionIcon("search", IconName::Check) { label: "Search"; color: ColorName::Teal; focusable: true }
+                Stepper([Step::new("Start")]) { active: 0; size: Size::Sm; focusable: true }
+            }
+        };
+        let split = Splitter::new(state)
+            .axis(SplitterAxis::Vertical)
+            .first_size(px(120.))
+            .first(menu)
+            .second(controls);
+        ui! { CommandScope(commands) { {split} } }
+    }
+
     let _ = example;
 }

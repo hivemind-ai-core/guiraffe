@@ -130,4 +130,39 @@ pub static EXPANDING_LIST: WidgetSpec = WidgetSpec {
     a11y_role: "group",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&SEGMENTED, &BURGER, &ACCORDION, &EXPANDING_LIST];
+pub static COPY_BUTTON: WidgetSpec = WidgetSpec {
+    id: "copy-button",
+    krate: "components",
+    summary: "Copies text and displays the native confirmation state.",
+    props: &[
+        prop("value", "string", "\"\""),
+        prop("label", "string", "null"),
+        SIZE,
+        PropSpec {
+            accepted: &[
+                "dark", "gray", "red", "pink", "grape", "violet", "indigo", "blue", "cyan", "teal",
+                "green", "lime", "yellow", "orange",
+            ],
+            token_backed: true,
+            ..prop("color", "string", "null")
+        },
+        prop("disabled", "boolean", "false"),
+        prop("focusable", "boolean", "null"),
+    ],
+    accepts_children: false,
+    events: &[EventSpec {
+        id: "copy",
+        payload_type: "string",
+    }],
+    state: "keyed copy feedback and bound clipboard text",
+    theme_tokens: &["control_size", "variant.foreground"],
+    a11y_role: "button",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[
+    &SEGMENTED,
+    &BURGER,
+    &ACCORDION,
+    &EXPANDING_LIST,
+    &COPY_BUTTON,
+];

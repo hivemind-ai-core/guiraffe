@@ -14,6 +14,8 @@ mod charts;
 mod chat;
 #[path = "../../code/src/widget_specs.rs"]
 mod code;
+#[path = "../../commands/src/widget_specs.rs"]
+mod commands;
 #[path = "../../components/src/widget_specs.rs"]
 mod components;
 #[path = "../../datagrid/src/widget_specs.rs"]
@@ -46,6 +48,7 @@ pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
         .chain(chat::WIDGETS)
         .chain(code::WIDGETS)
         .chain(components::WIDGETS)
+        .chain(commands::WIDGETS)
         .chain(datagrid::WIDGETS)
         .chain(dnd::WIDGETS)
         .chain(flamegraph::WIDGETS)
@@ -272,6 +275,39 @@ widgets! {
          "color": "string" = "null", COLOR, None, false;
          "bullet-size": "number" = "null", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
          "line-width": "number" = "null", &[] as &[&str], Some((1.0, f32::MAX as f64)), false], [];
+    THEME_ICON: "theme-icon", "components", "Themed icon drawn from an application SVG asset.", false, "stateless", "presentation",
+        ["control_size", "variant.foreground", "variant.background", "default_radius"],
+        ["icon": "string" = "\"icons/check.svg\"", &[] as &[&str], None, true;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "variant": "string" = "\"filled\"", VARIANT, None, false;
+         "radius": "string" = "null", SIZE, None, false], [];
+    ACTION_ICON: "action-icon", "components", "Icon-only action with an accessible label and click event.", false, "stateless", "button",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["icon": "string" = "\"icons/search.svg\"", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "variant": "string" = "null", VARIANT, None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "loading": "boolean" = "false", &[] as &[&str], None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false;
+         "label": "string" = "null", &[] as &[&str], None, false], ["click": "null"];
+    CLOSE_BUTTON: "close-button", "components", "Native close action with the standard close icon.", false, "stateless", "button",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["size": "string" = "\"sm\"", SIZE, None, false;
+         "color": "string" = "\"gray\"", COLOR, None, false;
+         "variant": "string" = "\"subtle\"", VARIANT, None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "loading": "boolean" = "false", &[] as &[&str], None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false;
+         "label": "string" = "\"Close\"", &[] as &[&str], None, false], ["click": "null"];
+    STEPPER: "stepper", "components", "Progress through a sequence of named steps.", false, "stateless", "list",
+        ["control_size", "variant.foreground", "variant.background", "surfaces.text"],
+        ["steps": "step-items" = "[]", &[] as &[&str], None, false;
+         "active": "integer" = "0", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false], ["step-click": "integer"];
 }
 
 /// Look up an authoring descriptor by its document kind.

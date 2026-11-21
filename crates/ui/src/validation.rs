@@ -252,6 +252,17 @@ fn check_tree_nodes(values: &Value) -> bool {
     true
 }
 
+fn valid_command_id(id: &str) -> bool {
+    id.len() <= 256
+        && id.split(['.', '-', '_']).all(|segment| {
+            let mut characters = segment.chars();
+            characters
+                .next()
+                .is_some_and(|first| first.is_ascii_lowercase())
+                && characters.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+}
+
 // Validate the JSON Schema subset used by structured authoring props. Document links and bindings have already
 // been resolved by the caller before checking a literal data shape.
 fn matches_data_schema(value: &Value, schema: &Value) -> bool {
@@ -520,6 +531,24 @@ impl Validation<'_> {
                     commands
                         .iter()
                         .all(|command| matches_data_schema(command, &schema))
+                }),
+                "menu-commands" => got.as_array().is_some_and(|commands| {
+                    let schema = crate::widget_spec::menu_command_schema();
+                    commands.iter().all(|command| {
+                        matches_data_schema(command, &schema)
+                            && command["id"].as_str().is_some_and(valid_command_id)
+                            && command["title"]
+                                .as_str()
+                                .is_some_and(|title| !title.trim().is_empty())
+                    })
+                }),
+                "step-items" => got.as_array().is_some_and(|steps| {
+                    let schema = crate::widget_spec::step_item_schema();
+                    steps.iter().all(|step| matches_data_schema(step, &schema))
+                }),
+                "splitter-sizes" => got.as_array().is_some_and(|sizes| {
+                    let schema = crate::widget_spec::splitter_size_schema();
+                    sizes.iter().all(|size| matches_data_schema(size, &schema))
                 }),
                 "integer-array" => got
                     .as_array()

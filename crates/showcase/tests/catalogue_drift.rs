@@ -16,6 +16,13 @@ fn kind(surface: &str) -> Option<&'static str> {
         "flamegraph::FlameGraph" => "flame-graph",
         "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
         | "flow::FlowOptions" => "flow",
+        "commands::CommandScope" => "command-scope",
+        "commands::Menu" | "commands::MenuProps" => "command-menu",
+        "components::ActionIcon" => "action-icon",
+        "components::ThemeIcon" => "theme-icon",
+        "components::fn close_button" => "close-button",
+        "components::CopyButton" => "copy-button",
+        "components::Step" | "components::Stepper" => "stepper",
         "components::Accordion" | "components::AccordionOptions" => "accordion",
         "components::AvatarGroup" => "avatar-group",
         "components::Burger" => "burger",
@@ -49,6 +56,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "layout::ScrollArea" => "scroll-area",
         "layout::SimpleGrid" => "simple-grid",
         "layout::Space" => "space",
+        "layout::Splitter" | "layout::SplitterState" => "splitter",
         "layout::Stack" => "stack",
         "markdown::MarkdownView" | "markdown::MarkdownState" => "markdown",
         "mermaid::Host" | "mermaid::MermaidView" | "mermaid::MermaidViewState" => "mermaid",
@@ -71,6 +79,14 @@ fn kind(surface: &str) -> Option<&'static str> {
 
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
+    (
+        "components::CopyButton::copied",
+        "Read-only native copy confirmation.",
+    ),
+    (
+        "components::CopyButton::copy",
+        "Imperative clipboard write. Documents use the native action and copy event.",
+    ),
     (
         "overlays::Spotlight::open",
         "Opens a palette in the host window's overlay stack. The document mounts the search control inline and can bind its visibility.",
@@ -756,6 +772,7 @@ fn covered(surface: &str) -> bool {
             ("timeline::GanttView", "Resized") => "resize",
             ("timeline::DopeSheet", "KeyRetimed") => "key-retime",
             ("timeline::DopeSheet", "ChannelChanged") => "channel-change",
+            ("layout::SplitterState", "Resized") => "resize",
             ("timeline::BarCurveView", "BarEvent") => "change",
             ("timeline::CurveView", "KeyMoved") => "key-move",
             ("chat::ChatState", "Submitted") => "submit",
@@ -814,7 +831,17 @@ fn covered(surface: &str) -> bool {
             .find(|prop| prop.name == "items")
             .is_some_and(|prop| prop.schema()["items"]["properties"].get(method).is_some());
     }
+    if owner == "components::Step" && matches!(method, "description" | "icon") {
+        return spec
+            .props
+            .iter()
+            .find(|prop| prop.name == "steps")
+            .is_some_and(|prop| prop.schema()["items"]["properties"].get(method).is_some());
+    }
     match method {
+        "first" | "second" | "pane" | "panes" if owner == "layout::Splitter" => {
+            spec.accepts_children
+        }
         "new" => true, // Constructor parameters are declared by the kind's descriptor.
         "child" | "children" => spec.accepts_children,
         "more" if owner == "components::AvatarGroup" => spec.accepts_children,
@@ -850,6 +877,9 @@ fn covered(surface: &str) -> bool {
                 ("flow::FlowState" | "flow::FlowViewport", "set_viewport") => "zoom".into(),
                 ("flow::FlowState", "from_editor") => "graph".into(),
                 ("components::Card" | "components::Paper", "p") => "padding".into(),
+                ("commands::Menu", "props") => "show-categories".into(),
+                ("components::ActionIcon" | "components::ThemeIcon", "from_asset") => "icon".into(),
+                ("layout::Splitter", "pane_size") => "pane-sizes".into(),
                 ("components::Loader", "set_period") => "period-ms".into(),
                 ("components::Accordion", "open" | "set_controlled") => "value".into(),
                 ("components::Accordion", "set_options") => "variant".into(),

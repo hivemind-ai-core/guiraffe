@@ -71,4 +71,5 @@ pub fn init(cx: &mut gpui_kit::App) {
     burger::document::register(cx);
     accordion::document::register(cx);
     expanding_list::document::register(cx);
+    copy_button::document::register(cx);
 }

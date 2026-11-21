@@ -1,40 +1,9 @@
 code::DecorationLayerOptions::field merge_identical
 code::DecorationLayerOptions::field z_index
-commands::CommandScope
-commands::CommandScope::new
-commands::Menu
-commands::Menu::new
-commands::Menu::props
-commands::Menu::show_categories
-commands::Menu::show_keybindings
-commands::MenuProps::field show_categories
-commands::MenuProps::field show_keybindings
-components::ActionIcon
-components::ActionIcon::color
-components::ActionIcon::disabled
-components::ActionIcon::focusable
-components::ActionIcon::label
-components::ActionIcon::loading
-components::ActionIcon::new
-components::ActionIcon::on_click
-components::ActionIcon::size
-components::ActionIcon::variant
 components::Card::section
 components::CardSection
 components::CardSection::new
 components::CardSection::with_border
-components::CopyButton
-components::CopyButton::copied
-components::CopyButton::copy
-components::CopyButton::new
-components::CopyButton::on_copy
-components::CopyButton::set_color
-components::CopyButton::set_disabled
-components::CopyButton::set_focusable
-components::CopyButton::set_label
-components::CopyButton::set_size
-components::CopyButton::set_value
-components::CopyButton::value
 components::ScopedButton
 components::ScopedButton::focusable
 components::ScopedButton::new
@@ -59,24 +28,6 @@ components::Spoiler::set_focusable
 components::Spoiler::set_size
 components::Spoiler::set_timing
 components::Spoiler::toggle
-components::Step
-components::Step::description
-components::Step::icon
-components::Step::new
-components::Stepper
-components::Stepper::active
-components::Stepper::color
-components::Stepper::focusable
-components::Stepper::new
-components::Stepper::on_step_click
-components::Stepper::size
-components::ThemeIcon
-components::ThemeIcon::color
-components::ThemeIcon::new
-components::ThemeIcon::radius
-components::ThemeIcon::size
-components::ThemeIcon::variant
-components::fn close_button
 flow-core::LayoutOptions::field affected
 flow-core::LayoutOptions::field constraints
 flow-core::LayoutOptions::field crossing_weight
@@ -123,20 +74,6 @@ layout::Grid::gutter_px
 layout::Grid::justify
 layout::Grid::layout
 layout::Grid::new
-layout::Splitter
-layout::Splitter::axis
-layout::Splitter::first
-layout::Splitter::first_size
-layout::Splitter::max_size
-layout::Splitter::min_size
-layout::Splitter::new
-layout::Splitter::on_resize
-layout::Splitter::pane
-layout::Splitter::pane_size
-layout::Splitter::panes
-layout::Splitter::persist_key
-layout::Splitter::second
-layout::SplitterState::event Resized
 overlays::Modals
 overlays::OverlayHost
 overlays::OverlayHost::clear_toasts

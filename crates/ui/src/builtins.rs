@@ -161,6 +161,47 @@ fn button(n: &NodeView<'_>) -> Button {
 
 use crate::catalog::*;
 
+fn component_variant(n: &NodeView<'_>) -> Option<Variant> {
+    match n.prop(n.prop_index("variant")).as_str() {
+        Some("filled") => Some(Variant::Filled),
+        Some("light") => Some(Variant::Light),
+        Some("outline") => Some(Variant::Outline),
+        Some("subtle") => Some(Variant::Subtle),
+        Some("transparent") => Some(Variant::Transparent),
+        Some("white") => Some(Variant::White),
+        Some("default") => Some(Variant::Default),
+        _ => None,
+    }
+}
+
+fn configure_action_icon(
+    n: &NodeView<'_>,
+    mut icon: guiraffe_components::ActionIcon,
+) -> guiraffe_components::ActionIcon {
+    icon = icon
+        .disabled(n.bool(n.prop_index("disabled")))
+        .loading(n.bool(n.prop_index("loading")));
+    if let Some(label) = n.prop(n.prop_index("label")).as_str() {
+        icon = icon.label(label.to_owned());
+    }
+    if let Some(color) = n.color(n.prop_index("color")) {
+        icon = icon.color(color);
+    }
+    if let Some(size) = n.size(n.prop_index("size")) {
+        icon = icon.size(size);
+    }
+    if let Some(variant) = component_variant(n) {
+        icon = icon.variant(variant);
+    }
+    if let Some(focusable) = n.prop(n.prop_index("focusable")).as_bool() {
+        icon = icon.focusable(focusable);
+    }
+    if let Some(handler) = n.handler(n.event_index("click")) {
+        icon = icon.on_click(move |_, window, cx| handler(crate::Value::Null, window, cx));
+    }
+    icon
+}
+
 pub fn register(r: &mut Registry) {
     crate::controls::register(r);
     r.register(
@@ -486,19 +527,90 @@ pub fn register(r: &mut Registry) {
             if let Some(color) = n.color(n.prop_index("color")) {
                 group = group.color(color);
             }
-            if let Some(variant) = match n.prop(n.prop_index("variant")).as_str() {
-                Some("filled") => Some(Variant::Filled),
-                Some("light") => Some(Variant::Light),
-                Some("outline") => Some(Variant::Outline),
-                Some("subtle") => Some(Variant::Subtle),
-                Some("transparent") => Some(Variant::Transparent),
-                Some("white") => Some(Variant::White),
-                Some("default") => Some(Variant::Default),
-                _ => None,
-            } {
+            if let Some(variant) = component_variant(n) {
                 group = group.variant(variant);
             }
             group.into_any_element()
+        }),
+    );
+    r.register(
+        THEME_ICON.0.id,
+        widget(&THEME_ICON.1, |n, _, _, _| {
+            let path = n
+                .prop(n.prop_index("icon"))
+                .as_str()
+                .unwrap_or("icons/check.svg");
+            let mut icon = guiraffe_components::ThemeIcon::from_asset(path.to_owned())
+                .variant(component_variant(n).unwrap_or(Variant::Filled));
+            if let Some(color) = n.color(n.prop_index("color")) {
+                icon = icon.color(color);
+            }
+            if let Some(size) = n.size(n.prop_index("size")) {
+                icon = icon.size(size);
+            }
+            if let Some(radius) = n.size(n.prop_index("radius")) {
+                icon = icon.radius(radius);
+            }
+            icon.into_any_element()
+        }),
+    );
+    r.register(
+        ACTION_ICON.0.id,
+        widget(&ACTION_ICON.1, |n, _, _, _| {
+            let path = n
+                .prop(n.prop_index("icon"))
+                .as_str()
+                .unwrap_or("icons/search.svg");
+            let icon = guiraffe_components::ActionIcon::from_asset(n.element_id(), path.to_owned());
+            configure_action_icon(n, icon).into_any_element()
+        }),
+    );
+    r.register(
+        CLOSE_BUTTON.0.id,
+        widget(&CLOSE_BUTTON.1, |n, _, _, _| {
+            configure_action_icon(n, guiraffe_components::close_button(n.element_id()))
+                .into_any_element()
+        }),
+    );
+    r.register(
+        STEPPER.0.id,
+        widget(&STEPPER.1, |n, _, _, _| {
+            use guiraffe_components::{Step, Stepper};
+            let values = n.prop(n.prop_index("steps"));
+            let label = ["label".into()];
+            let description = ["description".into()];
+            let icon = ["icon".into()];
+            let steps = (0..values.list_len().unwrap_or_default()).filter_map(|index| {
+                let entry = values.list_get(index)?;
+                let mut step = Step::new(entry.field(&label).as_str()?.to_owned());
+                if let Some(description) = entry.field(&description).as_str() {
+                    step = step.description(description.to_owned());
+                }
+                if let Some(icon) = entry.field(&icon).as_str() {
+                    step = step.icon(gpui_kit::component::Icon::default().path(icon.to_owned()));
+                }
+                Some(step)
+            });
+            let active = n
+                .num(n.prop_index("active"))
+                .unwrap_or_default()
+                .clamp(0., f64::from(u32::MAX)) as usize;
+            let mut stepper = Stepper::new(steps).active(active);
+            if let Some(size) = n.size(n.prop_index("size")) {
+                stepper = stepper.size(size);
+            }
+            if let Some(color) = n.color(n.prop_index("color")) {
+                stepper = stepper.color(color);
+            }
+            if let Some(focusable) = n.prop(n.prop_index("focusable")).as_bool() {
+                stepper = stepper.focusable(focusable);
+            }
+            if let Some(handler) = n.handler(n.event_index("step-click")) {
+                stepper = stepper.on_step_click(move |index, _, window, cx| {
+                    handler(crate::Value::Num(index as f64), window, cx);
+                });
+            }
+            stepper.into_any_element()
         }),
     );
     r.register(

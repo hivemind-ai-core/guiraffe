@@ -162,6 +162,7 @@ pub fn init(cx: &mut App) -> Vec<guiraffe_core::keys::InvalidBinding> {
         routes: HashMap::new(),
         default,
     });
+    crate::document::register(cx);
     let palette = keys::binding(PALETTE_SHORTCUT, ShowCommands, Some("GrCommand"), cx);
     keys::bind_keys(vec![palette], cx)
 }

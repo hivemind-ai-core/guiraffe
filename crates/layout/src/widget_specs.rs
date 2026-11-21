@@ -1,6 +1,6 @@
 //! Layout metadata shared with the authoring catalogue generator.
 
-use super::widget_spec::{PropSpec, WidgetSpec};
+use super::widget_spec::{EventSpec, PropSpec, WidgetSpec};
 
 const SIZES: &[&str] = &["xs", "sm", "md", "lg", "xl"];
 
@@ -69,6 +69,52 @@ pub static SPACE: WidgetSpec = WidgetSpec {
     a11y_role: "presentation",
 };
 
+pub static SPLITTER: WidgetSpec = WidgetSpec {
+    id: "splitter",
+    krate: "layout",
+    summary: "Resizable panes with optional persisted divider positions.",
+    props: &[
+        PropSpec {
+            name: "axis",
+            type_name: "string",
+            default_json: "\"horizontal\"",
+            accepted: &["horizontal", "vertical"],
+            range: None,
+            required: false,
+            token_backed: false,
+        },
+        PropSpec {
+            name: "pane-sizes",
+            type_name: "splitter-sizes",
+            default_json: "[]",
+            accepted: &[],
+            range: None,
+            required: false,
+            token_backed: false,
+        },
+        number("first-size", "null", 0.0),
+        number("min-size", "72", 0.0),
+        number("max-size", "null", 0.0),
+        PropSpec {
+            name: "persist-key",
+            type_name: "string",
+            default_json: "null",
+            accepted: &[],
+            range: None,
+            required: false,
+            token_backed: false,
+        },
+    ],
+    accepts_children: true,
+    events: &[EventSpec {
+        id: "resize",
+        payload_type: "number-array",
+    }],
+    state: "keyed native pane sizes and optional layout persistence",
+    theme_tokens: &["surfaces.border", "surfaces.hover"],
+    a11y_role: "group",
+};
+
 pub const WIDGETS: &[&WidgetSpec] = &[
     &CENTER,
     &ASPECT_RATIO,
@@ -78,6 +124,7 @@ pub const WIDGETS: &[&WidgetSpec] = &[
     &DIVIDER,
     &SCROLL_AREA,
     &SIMPLE_GRID,
+    &SPLITTER,
 ];
 
 const fn choice(

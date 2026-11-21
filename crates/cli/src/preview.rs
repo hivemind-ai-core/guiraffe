@@ -233,6 +233,7 @@ pub fn run_inspect(path: PathBuf, screen: Option<String>, socket: &Path) -> Resu
 
 pub(crate) fn init_document_widgets(cx: &mut App) {
     guiraffe_components::init(cx);
+    let _ = guiraffe_commands::init(cx);
     guiraffe_inputs::init(cx);
     guiraffe_layout::init(cx);
     guiraffe_code::init(cx);

@@ -70,7 +70,8 @@ impl PropSpec {
             | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
             | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels"
             | "avatar-people" | "dope-channels" | "number-array" | "curve-series"
-            | "activity-items" | "disclosure-items" | "spotlight-commands" => "array",
+            | "activity-items" | "disclosure-items" | "spotlight-commands" | "menu-commands"
+            | "step-items" | "splitter-sizes" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -114,6 +115,9 @@ impl PropSpec {
             "activity-items" => schema["items"] = activity_item_schema(),
             "disclosure-items" => schema["items"] = disclosure_item_schema(),
             "spotlight-commands" => schema["items"] = spotlight_command_schema(),
+            "menu-commands" => schema["items"] = menu_command_schema(),
+            "step-items" => schema["items"] = step_item_schema(),
+            "splitter-sizes" => schema["items"] = splitter_size_schema(),
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => schema = curve_selection_schema(),
@@ -231,6 +235,7 @@ impl EventSpec {
             "selection" => json!({"type":["string","null"]}),
             "nullable-integer" => json!({"type":["integer","null"],"minimum":0}),
             "integer-array" => json!({"type":"array","items":{"type":"integer","minimum":0}}),
+            "number-array" => json!({"type":"array","items":{"type":"number"}}),
             ty => json!({"type":ty}),
         }
     }
@@ -939,4 +944,27 @@ pub fn spotlight_command_schema() -> Value {
             "keywords":{"type":"string"},"disabled":{"type":"boolean"}
         }
     })
+}
+
+pub fn menu_command_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["id","title"],
+        "properties":{
+            "id":{"type":"string","pattern":"^[a-z][a-z0-9]*([._-][a-z][a-z0-9]*)*$","maxLength":256},
+            "title":{"type":"string","minLength":1},"category":{"type":"string"},
+            "keywords":{"type":"string"},"keybinding":{"type":"string"},
+            "when":{"type":"string"},"enabled":{"type":"boolean"}
+        }
+    })
+}
+
+pub fn step_item_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["label"],
+        "properties":{"label":{"type":"string"},"description":{"type":"string"},"icon":{"type":"string"}}
+    })
+}
+
+pub fn splitter_size_schema() -> Value {
+    json!({"type":["number","null"],"minimum":0,"maximum":f32::MAX})
 }
