@@ -613,3 +613,45 @@ fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> any
     );
     Ok(())
 }
+
+#[test]
+fn layered_code_viewport_queries_allocate_nothing_at_both_scales() -> anyhow::Result<()> {
+    use guiraffe_code::{
+        AnchorBias, CodeDocument, DecorationInput, DecorationStyle, Decorations, Position,
+        SourceRange,
+    };
+    use std::sync::Arc;
+
+    for count in [10_000, 1_000_000] {
+        let document = Arc::new(CodeDocument::new("x\n".repeat(count)));
+        let mut decorations = Decorations::new(document)?;
+        let style = decorations.intern_style(DecorationStyle::Deprecated)?;
+        decorations.update_layer(
+            0,
+            Default::default(),
+            &[],
+            (0..count).map(|line| DecorationInput {
+                id: line as u64,
+                range: SourceRange::new(Position::new(line, 0), Position::new(line, 1)),
+                style,
+                start_bias: AnchorBias::Left,
+                end_bias: AnchorBias::Right,
+            }),
+        )?;
+        let layer = decorations.layer(0).expect("published layer");
+        let (visible, counts) = count_allocations(|| {
+            let mut visible = 0;
+            for line in 100..140 {
+                layer.query((line * 2)..(line * 2 + 1), |mark| {
+                    std::hint::black_box(mark);
+                    visible += 1;
+                });
+            }
+            visible
+        })?;
+        assert_eq!(visible, 40);
+        assert_eq!(counts.allocations, 0, "{counts:?}");
+        assert_eq!(counts.bytes, 0, "{counts:?}");
+    }
+    Ok(())
+}

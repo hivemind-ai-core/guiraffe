@@ -1,6 +1,6 @@
-use crate::Position;
 use crate::paint::ShapeCache;
 use crate::*;
+use crate::{Decorations, Position};
 use gpui_kit::*;
 use guiraffe_core::{GuiraffeTheme, Scheme, Size, StyleContext};
 use guiraffe_markdown::{MarkdownState, MarkdownView};
@@ -13,6 +13,34 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
+
+/// Pointer action over a layered decoration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecorationAction {
+    Hover,
+    Leave,
+    Click,
+}
+
+/// A stable identity and typed payload for one decoration interaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecorationEvent {
+    pub action: DecorationAction,
+    pub layer: DecorationLayerId,
+    pub decoration: DecorationId,
+    pub style: DecorationStyle,
+}
+
+pub type DecorationHandler = Rc<dyn Fn(DecorationEvent, &mut App)>;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DecorationTarget {
+    Text,
+    Gutter(u8),
+    Blame,
+    Lens,
+    Outside,
+}
 
 enum AnalysisRequest {
     Source(Arc<str>, Arc<str>, bool),
@@ -83,6 +111,7 @@ pub(crate) struct Geometry {
     pub bounds: Bounds<Pixels>,
     pub line_height: f32,
     pub font_size: f32,
+    pub cell_width: f32,
     pub gutter: f32,
     pub margin: f32,
     pub mini: f32,
@@ -95,6 +124,10 @@ pub(crate) struct Shared {
     pub id: u64,
     pub highlighted: RefCell<Highlighted>,
     pub annotations: RefCell<Arc<[Annotation]>>,
+    pub decorations: RefCell<Option<Arc<Decorations>>>,
+    decoration_handler: RefCell<Option<DecorationHandler>>,
+    hover_decoration: Cell<Option<(DecorationLayerId, DecorationId)>>,
+    hover_target: Cell<Option<DecorationTarget>>,
     text_annotations: RefCell<Arc<[Annotation]>>,
     pub hints: RefCell<BTreeMap<usize, DisplayLine>>,
     pub index: RefCell<IntervalIndex>,
@@ -145,6 +178,10 @@ impl CodeHandle {
             id,
             highlighted: RefCell::new(Highlighted::plain(document)),
             annotations: RefCell::new(Arc::from([])),
+            decorations: RefCell::default(),
+            decoration_handler: RefCell::default(),
+            hover_decoration: Cell::default(),
+            hover_target: Cell::default(),
             text_annotations: RefCell::new(Arc::from([])),
             hints: RefCell::default(),
             index: RefCell::new(IntervalIndex::default()),
@@ -250,6 +287,206 @@ impl CodeHandle {
             self.notify_all(cx);
         }
     }
+    /// Publish layered decorations prepared for the currently displayed document.
+    /// Returns false if the source revision has changed. Pass `None` to clear the overlay.
+    pub fn set_decorations(&self, next: Option<Arc<Decorations>>, cx: &mut App) -> bool {
+        if next
+            .as_ref()
+            .is_some_and(|next| !Arc::ptr_eq(next.document(), &self.document()))
+        {
+            return false;
+        }
+        let current = self.shared.decorations.borrow();
+        let unchanged = match (current.as_ref(), next.as_ref()) {
+            (Some(current), Some(next)) => Arc::ptr_eq(current, next),
+            (None, None) => true,
+            _ => false,
+        };
+        drop(current);
+        if !unchanged {
+            *self.shared.decorations.borrow_mut() = next;
+            self.shared.hover_decoration.set(None);
+            self.shared.hover_target.set(None);
+            self.notify_all(cx);
+        }
+        true
+    }
+
+    /// Register a callback for layered decoration hover and click actions.
+    pub fn on_decoration(&self, handler: Option<DecorationHandler>) {
+        *self.shared.decoration_handler.borrow_mut() = handler;
+    }
+
+    fn decoration_target(&self, point: Point<Pixels>) -> DecorationTarget {
+        let geometry = self.shared.geometry.borrow();
+        let x = (point.x - geometry.bounds.origin.x).as_f32();
+        if x >= geometry.gutter {
+            if x < geometry.bounds.size.width.as_f32() - geometry.margin - geometry.mini {
+                return DecorationTarget::Text;
+            }
+            return DecorationTarget::Outside;
+        }
+        let data = self.shared.decorations.borrow();
+        let Some(data) = data.as_ref() else {
+            return DecorationTarget::Outside;
+        };
+        let blame = if data.has_blame() {
+            29. * geometry.cell_width
+        } else {
+            0.
+        };
+        let edge = geometry.gutter - blame;
+        if x >= edge && data.has_blame() {
+            return DecorationTarget::Blame;
+        }
+        let lane_width = 2. * geometry.cell_width;
+        let first = edge - f32::from(data.gutter_lanes()) * lane_width;
+        if x >= first && lane_width > 0. {
+            return DecorationTarget::Gutter(((x - first) / lane_width) as u8);
+        }
+        DecorationTarget::Outside
+    }
+
+    fn lens_position(&self, point: Point<Pixels>) -> Option<Position> {
+        let geometry = self.shared.geometry.borrow();
+        if geometry.line_height <= 0.
+            || !geometry.bounds.contains(&point)
+            || (point.x - geometry.bounds.origin.x).as_f32() < geometry.gutter
+        {
+            return None;
+        }
+        let y = f64::from((point.y - geometry.bounds.origin.y).as_f32()) + self.viewport().y;
+        let row = (y / f64::from(geometry.line_height)).floor() as usize;
+        let Row::Lens(index) = self.shared.rows.borrow().row(row)? else {
+            return None;
+        };
+        self.shared
+            .annotations
+            .borrow()
+            .get(index)
+            .map(|a| a.range.start)
+    }
+
+    fn decoration_at(
+        &self,
+        position: Option<Position>,
+        target: DecorationTarget,
+    ) -> Option<(DecorationLayerId, DecorationId)> {
+        let state = self.shared.decorations.borrow();
+        let decorations = state.as_ref()?;
+        if target == DecorationTarget::Outside {
+            return None;
+        }
+        let mut position = position?;
+        if matches!(
+            target,
+            DecorationTarget::Blame | DecorationTarget::Gutter(_)
+        ) {
+            position.column = 0;
+        }
+        let bytes = decorations.document().offset(position)? as u64;
+        let mut best = None;
+        for (id, layer) in decorations.layers() {
+            let mut hit = None;
+            layer.query_limited(bytes..bytes + 1, 64, |mark| {
+                let matches = match (target, decorations.style(mark.style)) {
+                    (
+                        DecorationTarget::Gutter(lane),
+                        Some(DecorationStyle::Gutter { lane: style, .. }),
+                    ) => lane == (*style).min(3),
+                    (DecorationTarget::Blame, Some(DecorationStyle::Blame(_))) => true,
+                    (
+                        DecorationTarget::Lens,
+                        Some(DecorationStyle::Inline {
+                            widget: InlineWidget::CodeLens,
+                            ..
+                        }),
+                    ) => true,
+
+                    (
+                        DecorationTarget::Text,
+                        Some(DecorationStyle::Blame(_) | DecorationStyle::Gutter { .. }),
+                    ) => false,
+                    (DecorationTarget::Text, Some(_)) => true,
+                    _ => false,
+                };
+                if matches && hit.is_none_or(|previous| mark.id < previous) {
+                    hit = Some(mark.id);
+                }
+            });
+            if let Some(hit) = hit {
+                best = Some((id, hit));
+            }
+        }
+        best
+    }
+
+    fn emit_decoration(
+        &self,
+        key: (DecorationLayerId, DecorationId),
+        action: DecorationAction,
+        cx: &mut App,
+    ) {
+        let Some(handler) = self.shared.decoration_handler.borrow().clone() else {
+            return;
+        };
+        let style = self.shared.decorations.borrow().as_ref().and_then(|data| {
+            let mark = data.layer(key.0)?.get(key.1)?;
+            data.style(mark.style).cloned()
+        });
+        if let Some(style) = style {
+            handler(
+                DecorationEvent {
+                    action,
+                    layer: key.0,
+                    decoration: key.1,
+                    style,
+                },
+                cx,
+            );
+        }
+    }
+
+    /// Move the caret to the adjacent diagnostic. Returns false at either end.
+    pub fn navigate_diagnostic(&self, previous: bool, cx: &mut App) -> bool {
+        self.navigate_decoration(previous, false, cx)
+    }
+
+    /// Move the caret to the adjacent diff mark. Returns false at either end.
+    pub fn navigate_change(&self, previous: bool, cx: &mut App) -> bool {
+        self.navigate_decoration(previous, true, cx)
+    }
+
+    fn navigate_decoration(&self, reverse: bool, change: bool, cx: &mut App) -> bool {
+        let next = {
+            let state = self.shared.decorations.borrow();
+            let Some(data) = state.as_ref() else {
+                return false;
+            };
+            let document = data.document();
+            let caret = self
+                .selection()
+                .and_then(|range| document.offset(range.start));
+            let navigation = data.layers().filter_map(|(_, layer)| {
+                layer
+                    .adjacent(caret.map(|offset| offset as u32), reverse, change)
+                    .map(|mark| mark.start)
+            });
+            let next = if reverse {
+                navigation.max()
+            } else {
+                navigation.min()
+            };
+            next.and_then(|offset| document.position(offset as usize))
+        };
+        let Some(next) = next else {
+            return false;
+        };
+        self.select(Some(SourceRange::new(next, next)), cx);
+        self.scroll_to_line(next.line, cx);
+        true
+    }
+
     /// Convenience for small analysis batches. Large producers should build PreparedAnalysis
     /// on their background worker and publish it with set_analysis instead.
     pub fn set_annotations(&self, annotations: Arc<[Annotation]>, cx: &mut App) {
@@ -514,8 +751,24 @@ impl CodeHandle {
         *self.shared.definition.borrow_mut() = handler;
     }
     pub fn set_hover(&self, position: Option<Position>, cx: &mut App) {
-        if self.shared.hover.replace(position) == position {
+        self.set_hover_target(position, DecorationTarget::Text, cx);
+    }
+
+    fn set_hover_target(&self, position: Option<Position>, target: DecorationTarget, cx: &mut App) {
+        let unchanged_target = self.shared.hover_target.replace(Some(target)) == Some(target);
+        if self.shared.hover.replace(position) == position && unchanged_target {
             return;
+        }
+        let next = self.decoration_at(position, target);
+        let previous = self.shared.hover_decoration.replace(next);
+        if previous != next {
+            if let Some(previous) = previous {
+                self.emit_decoration(previous, DecorationAction::Leave, cx);
+            }
+            if let Some(next) = next {
+                self.emit_decoration(next, DecorationAction::Hover, cx);
+            }
+            self.notify_overlay(cx);
         }
         let symbol = position.and_then(|p| {
             if let Some(provider) = self.shared.provider.borrow().as_ref() {
@@ -695,6 +948,9 @@ impl CodeHandle {
                 .borrow_mut()
                 .clone_from(&Arc::from([]));
             self.shared.bubbles.borrow_mut().clear();
+            self.shared.decorations.borrow_mut().take();
+            self.shared.hover_decoration.set(None);
+            self.shared.hover_target.set(None);
             self.shared.annotation_ids.borrow_mut().clear();
             self.shared.folds.borrow_mut().clear();
             self.shared.hints.borrow_mut().clear();
@@ -797,6 +1053,7 @@ fn accessible_lines(
     line_height: f32,
     height: f32,
     selection: Option<SourceRange>,
+    decorations: Option<&Decorations>,
 ) -> impl IntoElement {
     let mut list = div()
         .id("code-source-lines")
@@ -820,13 +1077,33 @@ fn accessible_lines(
                 && range.start.line <= line
                 && (line < range.end.line || (line == range.end.line && range.end.column > 0))
         });
+        let mut label = format!("Line {}: {}", line + 1, &text[..end]);
+        if let Some(decorations) = decorations
+            && let Some(bytes) = document.line_range(line)
+        {
+            use std::fmt::Write;
+            for (_, layer) in decorations.layers() {
+                layer.query_limited(bytes.start as u64..bytes.end as u64 + 1, 8, |mark| {
+                    if let Some(DecorationStyle::Diagnostic {
+                        severity, message, ..
+                    }) = decorations.style(mark.style)
+                    {
+                        let end = message
+                            .char_indices()
+                            .nth(160)
+                            .map_or(message.len(), |(index, _)| index);
+                        let _ = write!(label, ". {severity:?}: {}", &message[..end]);
+                    }
+                });
+            }
+        }
         let y = (row as f64 * f64::from(line_height) - viewport.y) as f32;
         list = list.child(
             div()
                 .id(("source-line", line))
                 .test_support()
                 .role(Role::ListItem)
-                .aria_label(format!("Line {}: {}", line + 1, &text[..end]))
+                .aria_label(label)
                 .aria_position_in_set(line + 1)
                 .aria_size_of_set(document.line_count())
                 .aria_selected(selected)
@@ -917,6 +1194,7 @@ impl Render for OverlayLayer {
                 lh,
                 h,
                 self.shared.selection.get(),
+                self.shared.decorations.borrow().as_deref(),
             ));
         }
         if self.shared.stats.get().last_truncated_rows > 0 {
@@ -964,6 +1242,75 @@ impl Render for OverlayLayer {
                             ),
                     );
                 }
+            }
+        }
+        if let Some(selection) = self.shared.selection.get()
+            && let Some(decorations) = self.shared.decorations.borrow().as_ref()
+            && let Some(bytes) = decorations.document().line_range(selection.start.line)
+            && let Some(at) = crate::paint::anchor(
+                &self.shared,
+                Position::new(selection.start.line, bytes.len()),
+            )
+        {
+            let mut blame = None;
+            for (_, layer) in decorations.layers().filter(|(_, layer)| layer.has_blame()) {
+                layer.query_limited(bytes.start as u64..bytes.start as u64 + 1, 8, |mark| {
+                    if let Some(DecorationStyle::Blame(commit)) = decorations.style(mark.style) {
+                        blame = Some(commit);
+                    }
+                });
+            }
+            if let Some(commit) = blame {
+                let origin = self.shared.geometry.borrow().bounds.origin;
+                let x = (at.x - origin.x + px(lh * 0.5)).as_f32();
+                let available = width - margin - mini - x;
+                if available > lh * 4. {
+                    let message: String = commit.message.chars().take(120).collect();
+                    root = root.child(
+                        div()
+                            .absolute()
+                            .left(px(x))
+                            .top(at.y - origin.y - px(lh * 0.5))
+                            .w(px(available))
+                            .h(px(lh))
+                            .overflow_hidden()
+                            .text_color(s.dimmed.to_hsla())
+                            .text_size(px(Size::Xs.font_size()))
+                            .child(format!(
+                                "{} · {} days ago · {message}",
+                                commit.author, commit.age_days
+                            )),
+                    );
+                }
+            }
+        }
+        if let Some((layer, id)) = self.shared.hover_decoration.get()
+            && let Some(decorations) = self.shared.decorations.borrow().as_ref()
+            && let Some(record) = decorations.layer(layer).and_then(|layer| layer.get(id))
+            && let Some(style) = decorations.style(record.style)
+        {
+            let detail = match style {
+                DecorationStyle::Blame(commit) => Some(format!(
+                    "{} · {} · {}\n{}",
+                    commit.author, commit.date, commit.short_hash, commit.message
+                )),
+                DecorationStyle::Diagnostic { message, .. } => Some(message.as_ref().to_owned()),
+                _ => None,
+            };
+            if let Some(detail) = detail {
+                root = root.child(
+                    div()
+                        .absolute()
+                        .right(px(mini))
+                        .bottom(px(lh))
+                        .max_w(px(margin.max(lh * 14.)))
+                        .rounded(px(Size::Sm.radius()))
+                        .bg(s.surface.to_hsla())
+                        .border_1()
+                        .border_color(s.border.to_hsla())
+                        .p(px(Size::Sm.spacing()))
+                        .child(detail),
+                );
             }
         }
         if let Some(md) = self.shared.hover_markdown.borrow().as_ref() {
@@ -1053,7 +1400,18 @@ impl RenderOnce for CodeViewer {
                     let local = event.position - g.bounds.origin;
                     let gutter = local.x.as_f32() < g.gutter;
                     drop(g);
+                    if let Some(mark) = down
+                        .decoration_at(down.lens_position(event.position), DecorationTarget::Lens)
+                    {
+                        down.emit_decoration(mark, DecorationAction::Click, cx);
+                        return;
+                    }
                     if let Some(p) = down.hit(event.position) {
+                        if let Some(mark) =
+                            down.decoration_at(Some(p), down.decoration_target(event.position))
+                        {
+                            down.emit_decoration(mark, DecorationAction::Click, cx);
+                        }
                         if gutter {
                             down.toggle_fold(p.line, cx);
                         } else {
@@ -1105,7 +1463,15 @@ impl RenderOnce for CodeViewer {
                 {
                     motion.select(Some(SourceRange::new(start.min(end), start.max(end))), cx);
                 } else {
-                    motion.set_hover(position, cx);
+                    if let Some(lens) = motion.lens_position(event.position) {
+                        motion.set_hover_target(Some(lens), DecorationTarget::Lens, cx);
+                    } else {
+                        motion.set_hover_target(
+                            position,
+                            motion.decoration_target(event.position),
+                            cx,
+                        );
+                    }
                 }
             })
             .on_mouse_up(MouseButton::Left, move |_, _, _| {
@@ -1133,6 +1499,12 @@ impl RenderOnce for CodeViewer {
                 match event.keystroke.key.as_str() {
                     "c" if command => key.copy(cx),
                     "a" if command => key.select_all(cx),
+                    "f8" => {
+                        key.navigate_diagnostic(event.keystroke.modifiers.shift, cx);
+                    }
+                    "f7" => {
+                        key.navigate_change(event.keystroke.modifiers.shift, cx);
+                    }
                     "pagedown" | "pageup" => {
                         let g = key.shared.geometry.borrow();
                         let step = g.bounds.size.height.as_f32()
@@ -1241,6 +1613,70 @@ mod review_tests {
         }
     }
     #[gpui_kit::test]
+    fn layered_diagnostics_navigate_emit_hover_and_reject_other_revisions(cx: &mut TestAppContext) {
+        use crate::{
+            AnchorBias, DecorationAction, DecorationInput, DecorationStyle, Decorations, Severity,
+            UnderlinePattern,
+        };
+        use std::{cell::RefCell, rc::Rc};
+
+        cx.update(|cx| {
+            let document = Arc::new(CodeDocument::new("first\nsecond"));
+            let code = CodeHandle::new(12, document.clone(), cx);
+            let mut decorations = Decorations::new(document).unwrap();
+            let style = decorations
+                .intern_style(DecorationStyle::Diagnostic {
+                    severity: Severity::Warning,
+                    pattern: UnderlinePattern::Dotted,
+                    message: "Check these values".into(),
+                })
+                .unwrap();
+            decorations
+                .update_layer(
+                    1,
+                    Default::default(),
+                    &[],
+                    (0_u64..2).map(|id| {
+                        let start = Position::new(id as usize, 0);
+                        DecorationInput {
+                            id,
+                            range: SourceRange::new(start, Position::new(id as usize, 3)),
+                            style,
+                            start_bias: AnchorBias::Left,
+                            end_bias: AnchorBias::Right,
+                        }
+                    }),
+                )
+                .unwrap();
+            assert!(code.set_decorations(Some(Arc::new(decorations)), cx));
+            let elsewhere =
+                Arc::new(Decorations::new(Arc::new(CodeDocument::new("first\nsecond"))).unwrap());
+            assert!(!code.set_decorations(Some(elsewhere), cx));
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let captured = events.clone();
+            code.on_decoration(Some(Rc::new(move |event, _| {
+                captured.borrow_mut().push(event)
+            })));
+            assert!(code.navigate_diagnostic(false, cx));
+            assert_eq!(code.selection().unwrap().start, Position::new(0, 0));
+            code.set_hover(Some(Position::new(0, 1)), cx);
+            code.set_hover(Some(Position::new(0, 2)), cx);
+            code.set_hover(None, cx);
+            assert_eq!(
+                events
+                    .borrow()
+                    .iter()
+                    .map(|event| event.action)
+                    .collect::<Vec<_>>(),
+                [DecorationAction::Hover, DecorationAction::Leave]
+            );
+            assert!(code.navigate_diagnostic(false, cx));
+            assert_eq!(code.selection().unwrap().start, Position::new(1, 0));
+            assert!(!code.navigate_diagnostic(false, cx));
+        });
+    }
+
+    #[gpui_kit::test]
     fn accessible_line_nodes_expose_a_bounded_near_end_viewport(cx: &mut TestAppContext) {
         use gpui_kit::{
             Context, IntoElement, Render, Role, Window,
@@ -1262,6 +1698,7 @@ mod review_tests {
                     },
                     20.,
                     80.,
+                    None,
                     None,
                 )
             }

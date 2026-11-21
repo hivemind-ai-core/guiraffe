@@ -444,8 +444,9 @@ mod mounted {
         run: impl FnOnce(Frame, Duration),
     ) -> Result<()> {
         use guiraffe_code::{
-            Annotation, AnnotationKind, CodeDocument, CodeHandle, CodeViewer, GutterColumn,
-            Position, PreparedAnalysis, SourceRange,
+            AnchorBias, Annotation, AnnotationKind, BlameCommit, CodeDocument, CodeHandle,
+            CodeViewer, DecorationInput, DecorationStyle, Decorations, GutterMark, HighlightShape,
+            Position, PreparedAnalysis, Severity, SourceRange, UnderlinePattern,
         };
         use guiraffe_core::ColorName;
 
@@ -461,7 +462,15 @@ mod mounted {
         let doc = Arc::new(CodeDocument::new(
             "let value = source(argument);\n".repeat(lines),
         ));
+        let mut decorations = Decorations::new(doc.clone())?;
         let mut annotations = Vec::new();
+        let decoration = |id, start, end, style| DecorationInput {
+            id,
+            range: SourceRange::new(start, end),
+            style,
+            start_bias: AnchorBias::Left,
+            end_bias: AnchorBias::Right,
+        };
         for (kind, count, color, text) in [
             (
                 AnnotationKind::Highlight,
@@ -492,6 +501,42 @@ mod mounted {
         ] {
             let count = scaled(count);
             let payload: Arc<str> = text.into();
+            if matches!(kind, AnnotationKind::Highlight | AnnotationKind::Underline) {
+                let (layer, style) = if kind == AnnotationKind::Underline {
+                    (
+                        2,
+                        DecorationStyle::Diagnostic {
+                            severity: Severity::Error,
+                            pattern: UnderlinePattern::Wavy,
+                            message: payload,
+                        },
+                    )
+                } else {
+                    (
+                        if color == ColorName::Yellow { 1 } else { 0 },
+                        DecorationStyle::Highlight {
+                            shape: HighlightShape::Background,
+                            color,
+                        },
+                    )
+                };
+                let style = decorations.intern_style(style)?;
+                decorations.update_layer(
+                    layer,
+                    Default::default(),
+                    &[],
+                    (0..count).map(|i| {
+                        let line = i * lines / count;
+                        decoration(
+                            i as u64,
+                            Position::new(line, 4),
+                            Position::new(line, 5),
+                            style,
+                        )
+                    }),
+                )?;
+                continue;
+            }
             for i in 0..count {
                 let (line, column) = match kind {
                     AnnotationKind::InlineHint => (i % lines.min(40), i / 40 % 25),
@@ -510,26 +555,44 @@ mod mounted {
                 });
             }
         }
-        let commits: Vec<Arc<str>> = (0..scaled(2_000))
-            .map(|i| format!("author {i:04}").into())
-            .collect();
-        let mark: Arc<str> = "!".into();
-        let gutters = vec![
-            GutterColumn {
-                title: "Blame".into(),
-                cells: (0..lines)
-                    .map(|line| (line, commits[line * commits.len() / lines].clone()))
-                    .collect(),
-                width_chars: 12,
-            },
-            GutterColumn {
-                title: "Marks".into(),
-                cells: (0..scaled(50_000))
-                    .map(|i| (i * lines / scaled(50_000), mark.clone()))
-                    .collect(),
-                width_chars: 2,
-            },
-        ];
+        let mark = decorations.intern_style(DecorationStyle::Gutter {
+            lane: 0,
+            mark: GutterMark::Error,
+        })?;
+        let count = scaled(50_000);
+        decorations.update_layer(
+            3,
+            Default::default(),
+            &[],
+            (0..count).map(|i| {
+                let at = Position::new(i * lines / count, 0);
+                decoration(i as u64, at, at, mark)
+            }),
+        )?;
+        let commit_count = scaled(2_000);
+        let mut blame = Vec::with_capacity(commit_count);
+        for i in 0..commit_count {
+            let style =
+                decorations.intern_style(DecorationStyle::Blame(Arc::new(BlameCommit {
+                    author: format!("author {i:04}").into(),
+                    short_hash: format!("{i:07x}").into(),
+                    message: "Review fixture commit".into(),
+                    date: "2026-11-01".into(),
+                    age_days: 1 + i as u32 % 500,
+                    url: None,
+                })))?;
+            let start = i * lines / commit_count;
+            let end = (i + 1) * lines / commit_count - 1;
+            let end_column = doc.line(end).map_or(0, str::len);
+            blame.push(decoration(
+                i as u64,
+                Position::new(start, 0),
+                Position::new(end, end_column),
+                style,
+            ));
+        }
+        decorations.update_layer(4, Default::default(), &[], blame)?;
+        let decorations = Arc::new(decorations);
         let prepared = PreparedAnalysis::new(doc.clone(), annotations.into(), Vec::new());
         let (mut window, view) = mount(
             "code_annotations_soak",
@@ -537,7 +600,7 @@ mod mounted {
             |_, cx| {
                 let code = CodeHandle::new(1, doc, cx);
                 code.set_analysis(prepared, cx);
-                code.set_gutters(gutters.clone(), cx);
+                code.set_decorations(Some(decorations.clone()), cx);
                 cx.new(|_| CodeHost(code))
             },
         )?;
@@ -547,7 +610,7 @@ mod mounted {
                 let code = window.update(|_, cx| view.read(cx).0.clone());
                 window.update(|_, cx| match step % 8 {
                     0 => code.scroll_to_line(0, cx),
-                    1 => code.set_hover(Some(Position::new(0, 0)), cx),
+                    1 => code.set_hover(Some(Position::new(0, 4)), cx),
                     2 | 3 => {
                         code.set_hover(None, cx);
                         let mut viewport = code.viewport();
@@ -559,8 +622,12 @@ mod mounted {
                         Some(SourceRange::new(Position::new(0, 0), Position::new(0, 3))),
                         cx,
                     ),
-                    6 if step % 128 == 6 => code.set_gutters(Vec::new(), cx),
-                    7 if step % 128 == 7 => code.set_gutters(gutters.clone(), cx),
+                    6 if step % 128 == 6 => {
+                        code.set_decorations(None, cx);
+                    }
+                    7 if step % 128 == 7 => {
+                        code.set_decorations(Some(decorations.clone()), cx);
+                    }
                     _ => {}
                 });
                 window.update(|window, cx| window.render_frame(cx));

@@ -207,3 +207,42 @@ the current viewport. A card occupies three line heights, so the cache
 holds at most `floor(viewport_height / (3 × line_height))` entries. Hiding
 the analysis margin clears the cache. The GPUI regression test scrolls to
 a different part of the same document and checks that the old card is gone.
+
+## Layered annotations
+
+| Retained structure | Bound |
+|---|---|
+| Layer interval index | 24 bytes per record, two 4-byte order entries per record, and at most one 20-byte node per record. Diagnostic and diff navigation adds a 4-byte index per navigable record. |
+| Style and blame tables | One interned entry per distinct style or commit in the published snapshot. Store consecutive lines from one commit as one range to avoid per-line author strings or indexes. |
+| Overview | 256 presence bins per layer. The minimap paints at most eight layers and coalesces adjacent occupied bins into strokes. |
+| Viewport paint | At most 64 detailed matches per visible row and layer, plus a density marker if more match. After eight detailed diagnostic strokes, the renderer paints a line-level diagnostic marker. |
+| Review Markdown | Only the currently placed cards, using the viewport bound above. |
+
+The [stress probe](../../bench/examples/soak.rs) is `soak code-annotations`.
+`SOAK_FRAMES=1200` selects the profiling replay. For the original mounted
+fixture, GPUI's raster bounds and scene bounds insertions took 11.04% and
+8.59% self time. The per-line gutter map clone and drop took 5.35% combined.
+The probe now represents blame as 2,000 interned commit ranges spanning all
+one million lines and toggles the published snapshot by reference.
+
+The model tests compare the interval index against a linear oracle and verify
+that both 10k and 1M records report the same visible result. This checks
+visible output counts. Tree traversal still has a logarithmic setup cost,
+and the mounted repaint allocation and long-session gates remain open.
+
+| Loaded-host annotation replay | Legacy representations | Packed ranges and grouped blame |
+|---|---:|---:|
+| Setup and first frame, 20-second replay | 312 ms | 161 ms |
+| p99, two 10-second windows | 16.46 / 14.93 ms | 10.06 / 9.53 ms |
+| Steady RSS, two windows | 150,060 / 150,440 KiB | 74,984 / 75,328 KiB |
+| GPUI raster bounds, sampled self time | 11.04% | 8.42% |
+| GPUI scene bounds insert, sampled self time | 8.59% | 10.85% |
+| Legacy gutter map clone + drop, sampled self time | 5.35% | Below the printed top 16 |
+| Standalone Callgrind, index construction plus 1M viewport lookups | 1,766,887,884 Ir | 930,552,621 Ir |
+
+Packed replay measurements precede the disjoint-layer query fast path.
+The standalone instruction comparison includes the fast path and returned
+the same checksum for both algorithms. A disjoint layer retains one
+four-byte order entry per record in place of the general index's two order
+entries and nodes. The allocator test measures 40 viewport queries at
+10k and 1M records. It isolates the range index from window drawing.
