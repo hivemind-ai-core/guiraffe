@@ -57,3 +57,20 @@ survive the clear, and retain the existing invalidation for escaped boxes.
 
 Verify with the same cached 1,000-path canvas and copy-on-write checks. The
 API migration for a direct vector assignment is `Vec::into`.
+
+
+## Reuse tab-stop order buffers during paint replay
+
+Both GPUI snapshots now append focus registrations to a reusable frame vector.
+The first Tab or Shift-Tab traversal sorts it in place by group path and
+insertion order and binary-searches the currently focused entry. Group
+nesting, duplicate indices, non-tab stops, and wrapping keep their existing
+ordering rules. Storage follows the two window frames and retains capacity up
+to the largest registration count previously seen by each frame. The
+six-entry inline group path can still spill for deeper nesting.
+
+In the upstream release soak probe, the tab-stop change reduced Gantt from
+215 to 80 allocation requests per unchanged draw and from 322,504 to
+74,104 requested bytes. The vendor regression replays grouped tab operations,
+checks forward and reverse traversal, and verifies the same vector allocation
+is reused after a clear.
