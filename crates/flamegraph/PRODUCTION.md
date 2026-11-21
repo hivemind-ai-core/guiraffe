@@ -64,7 +64,7 @@ The short soak uses the prepared full-layout API. A separate 10M headless
 test of the deferred constructor reached a labelled preview at 150 ms
 with a warm window and 478 ms including a cold window. Full publication
 took over two seconds under contention. A separate 256-frame run peaked at 345 MiB. Five forced warm redraws each
-made 224 allocation calls and requested 86,633 bytes on the UI thread. That
-measurement includes a full GPUI window refresh and should not be treated as
-an allocation-free repaint result. The 30-minute drift and cold/full-load
-budgets remain unverified or outside target.
+made 224 allocation calls before and after the changes. Requested bytes
+per redraw dropped from 6,710,465 to 86,633. The measurement includes a full
+GPUI window refresh. The 30-minute drift and cold/full-load budgets remain
+unverified or outside target.
