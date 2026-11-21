@@ -54,16 +54,32 @@ impl PropSpec {
     }
 
     pub fn schema(&self) -> Value {
-        let mut schema = json!({"type": self.type_name});
-        if !self.accepted.is_empty() {
+        let ty = match self.type_name {
+            "ring-sections" => "array",
+            ty => ty,
+        };
+        let mut schema = json!({"type": ty});
+        if !self.accepted.is_empty() && ty == "string" {
             schema["enum"] = json!(self.accepted);
         }
         if let Some((min, max)) = self.range {
             schema["minimum"] = json!(min);
             schema["maximum"] = json!(max);
         }
-        if self.type_name == "array" {
-            schema["items"] = json!({"type": "string"});
+        match self.type_name {
+            "array" => schema["items"] = json!({"type": "string"}),
+            "ring-sections" => {
+                schema["items"] = json!({
+                    "type":"object",
+                    "required":["value","color"],
+                    "additionalProperties":false,
+                    "properties":{
+                        "value":{"type":"number","minimum":0,"maximum":100},
+                        "color":{"type":"string","enum":self.accepted},
+                    },
+                })
+            }
+            _ => {}
         }
         schema
     }

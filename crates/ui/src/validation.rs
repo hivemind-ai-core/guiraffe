@@ -199,13 +199,26 @@ impl Validation<'_> {
                     prop.range
                         .is_none_or(|(min, max)| (min..=max).contains(&number))
                 }),
+                "ring-sections" => got.as_array().is_some_and(|sections| {
+                    sections.iter().all(|section| {
+                        section.as_object().is_some_and(|fields| {
+                            fields.len() == 2
+                                && section["value"]
+                                    .as_f64()
+                                    .is_some_and(|v| (0.0..=100.0).contains(&v))
+                                && section["color"]
+                                    .as_str()
+                                    .is_some_and(|c| prop.accepted.contains(&c))
+                        })
+                    })
+                }),
                 "array" => got
                     .as_array()
                     .is_some_and(|items| items.iter().all(Value::is_string)),
                 _ => false,
             };
             if !valid {
-                let accepted = if prop.accepted.is_empty() {
+                let accepted = if !prop.token_backed {
                     prop.schema()
                 } else {
                     json!(prop.accepted)
@@ -214,7 +227,7 @@ impl Validation<'_> {
                     prop.name,
                     got.clone(),
                     accepted,
-                    if prop.accepted.is_empty() {
+                    if !prop.token_backed {
                         "Use a value matching the property schema.".into()
                     } else {
                         format!("Use one of: {}.", prop.accepted.join(", "))

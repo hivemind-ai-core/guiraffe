@@ -397,3 +397,37 @@ fn ui_macro_accepts_the_layout_builders() {
     };
     let _ = layout.into_element();
 }
+
+#[gpui_kit::test]
+fn extra_component_properties_validate_and_render(cx: &mut TestAppContext) {
+    let doc = Document::new(
+        Node::new("card")
+            .prop("shadow", "md")
+            .prop("radius", "lg")
+            .prop("padding", "sm")
+            .prop("with-border", false)
+            .child(
+                Node::new("text")
+                    .prop("text", "Example")
+                    .prop("truncate", true)
+                    .prop("font-weight", 700),
+            )
+            .child(
+                Node::new("pill")
+                    .prop("label", "Example")
+                    .prop("size", "xl")
+                    .on("remove", "remove-tag"),
+            )
+            .child(Node::new("ring").prop("thickness", 8).prop(
+                "sections",
+                serde_json::json!([
+                    {"value": 25, "color": "blue"},
+                    {"value": 50, "color": "teal"}
+                ]),
+            )),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(compile(&doc).diagnostics().is_empty());
+    let _ = mount(cx, &doc);
+}

@@ -37,7 +37,7 @@ macro_rules! widgets {
                 id: $id, krate: $krate, summary: $summary, accepts_children: $children,
                 state: $state, a11y_role: $role, theme_tokens: &[$($token),*],
                 props: &[$(PropSpec {name: $name, type_name: $ty, default_json: $default,
-                    accepted: $accepted, range: $range, token_backed: !$accepted.is_empty(),
+                    accepted: $accepted, range: $range, token_backed: !$accepted.is_empty() && matches!($ty.as_bytes(), b"string"),
                     required: $required}),*],
                 events: &[$(EventSpec {id: $event, payload_type: $payload}),*],
             },
@@ -64,17 +64,26 @@ widgets! {
          "dimmed": "boolean" = "false", &[] as &[&str], None, false;
          "size": "string" = "null", SIZE, None, false;
          "color": "string" = "null", COLOR, None, false;
-         "single-line": "boolean" = "false", &[] as &[&str], None, false], [];
+         "single-line": "boolean" = "false", &[] as &[&str], None, false;
+         "truncate": "boolean" = "false", &[] as &[&str], None, false;
+         "font-weight": "number" = "null", &[] as &[&str], Some((1.0, 1000.0)), false], [];
     HIGHLIGHT: "highlight", "components", "Text with matching terms highlighted.", false, "stateless", "text", ["surfaces.mark", "surfaces.text"],
         ["text": "string" = "\"\"", &[] as &[&str], None, true;
          "term": "string" = "\"\"", &[] as &[&str], None, false], [];
     PILL: "pill", "components", "Compact label.", false, "stateless", "text", ["control_size", "surfaces.track", "surfaces.text"],
-        ["label": "string" = "\"\"", &[] as &[&str], None, true], [];
-    CARD: "card", "components", "Surface for grouped content.", true, "stateless", "group", ["density.space", "default_radius", "recipes.card", "surfaces.body", "surfaces.text", "surfaces.border"], [], [];
+        ["label": "string" = "\"\"", &[] as &[&str], None, true;
+         "size": "string" = "null", SIZE, None, false], ["remove": "string"];
+    CARD: "card", "components", "Surface for grouped content.", true, "stateless", "group", ["density.space", "default_radius", "recipes.card", "surfaces.body", "surfaces.text", "surfaces.border"],
+        ["shadow": "string" = "\"sm\"", SIZE, None, false;
+         "radius": "string" = "null", SIZE, None, false;
+         "padding": "string" = "null", SIZE, None, false;
+         "with-border": "boolean" = "true", &[] as &[&str], None, false], [];
     RING: "ring", "components", "Circular progress indicator.", false, "stateless", "progressbar", ["surfaces.track", "surfaces.text", "variant.background"],
         ["value": "number" = "0", &[] as &[&str], Some((0.0, 100.0)), false;
          "color": "string" = "\"blue\"", COLOR, None, false;
          "diameter": "number" = "64", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
+         "thickness": "number" = "12", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
+         "sections": "ring-sections" = "[]", COLOR, None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false], [];
     BUTTON: "button", "gpui-kit", "Clickable action.", false, "stateless", "button", ["kit.primary", "kit.primary_foreground"],
         ["label": "string" = "\"\"", &[] as &[&str], None, true], ["click": "null"];

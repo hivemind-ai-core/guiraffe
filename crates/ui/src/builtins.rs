@@ -2,7 +2,7 @@
 //! Spacing comes from the inherited style context (spec/14), not from the document.
 
 use gpui_kit::{
-    AnyElement, IntoElement, ParentElement, Styled, component::button::Button, div, px,
+    AnyElement, FontWeight, IntoElement, ParentElement, Styled, component::button::Button, div, px,
 };
 use guiraffe_components::{Card, Highlight, Pill, RingProgress, Text, Title};
 use guiraffe_core::{Size, StyleContext};
@@ -103,6 +103,12 @@ pub fn register(r: &mut Registry) {
             if let Some(c) = n.color(n.prop_index("color")) {
                 t = t.color(c);
             }
+            if let Some(weight) = n.num(n.prop_index("font-weight")) {
+                t = t.fw(FontWeight(weight.clamp(1.0, 1000.0) as f32));
+            }
+            if n.bool(n.prop_index("truncate")) {
+                t = t.truncate(true);
+            }
             if n.bool(n.prop_index("single-line")) {
                 t = t
                     .truncate(true)
@@ -131,26 +137,73 @@ pub fn register(r: &mut Registry) {
     r.register(
         PILL.0.id,
         widget(&PILL.1, |n, _, _, _| {
-            Pill::new(n.element_id(), n.text(n.prop_index("label"))).into_any_element()
+            let mut pill = Pill::new(n.element_id(), n.text(n.prop_index("label")));
+            if let Some(size) = n.size(n.prop_index("size")) {
+                pill = pill.size(size);
+            }
+            if let Some(remove) = n.handler(n.event_index("remove")) {
+                let id = n.spec.id.clone().unwrap_or_default();
+                pill = pill.on_remove(move |element, window, cx| {
+                    let id = if id.is_empty() {
+                        element.to_string().into()
+                    } else {
+                        id.clone()
+                    };
+                    remove(crate::Value::Str(id), window, cx);
+                });
+            }
+            pill.into_any_element()
         }),
     );
     r.register(
         CARD.0.id,
-        widget(&CARD.1, |_, kids, _, _| {
-            Card::new().children(kids).into_any_element()
+        widget(&CARD.1, |n, kids, _, _| {
+            let border = n
+                .prop(n.prop_index("with-border"))
+                .as_bool()
+                .unwrap_or(true);
+            let mut card = Card::new().with_border(border);
+            if let Some(shadow) = n.size(n.prop_index("shadow")) {
+                card = card.shadow(shadow);
+            }
+            if let Some(radius) = n.size(n.prop_index("radius")) {
+                card = card.radius(radius);
+            }
+            if let Some(padding) = n.size(n.prop_index("padding")) {
+                card = card.p(padding);
+            }
+            card.children(kids).into_any_element()
         }),
     );
     r.register(
         RING.0.id,
         widget(&RING.1, |n, _, _, _| {
-            RingProgress::new()
+            let mut ring = RingProgress::new()
                 .diameter(n.num(n.prop_index("diameter")).unwrap_or(64.0) as f32)
-                .section(
+                .thickness(n.num(n.prop_index("thickness")).unwrap_or(12.0) as f32)
+                .label(n.text(n.prop_index("label")));
+            let sections = n.prop(n.prop_index("sections"));
+            if let Some(len) = sections.list_len().filter(|len| *len > 0) {
+                let value_key = ["value".into()];
+                let color_key = ["color".into()];
+                for i in 0..len {
+                    if let Some(section) = sections.list_get(i)
+                        && let Some(value) = section.field(&value_key).as_f64()
+                        && let Some(color) = section
+                            .field(&color_key)
+                            .as_str()
+                            .and_then(guiraffe_core::ColorName::from_name)
+                    {
+                        ring = ring.section(value.clamp(0.0, 100.0) as f32, color);
+                    }
+                }
+            } else {
+                ring = ring.section(
                     n.num(n.prop_index("value")).unwrap_or(0.0) as f32,
                     n.color(n.prop_index("color")).unwrap_or_default(),
-                )
-                .label(n.text(n.prop_index("label")))
-                .into_any_element()
+                );
+            }
+            ring.into_any_element()
         }),
     );
     r.register(
