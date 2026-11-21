@@ -95,3 +95,46 @@ window draws reuse the previous paint ranges without invoking Flow render
 callbacks. Camera, gesture and document notifications invalidate the viewport.
 GPUI's scene replay can allocate transient buffers. Forced window refreshes
 rebuild the viewport, and accessibility rendering takes the normal entity path.
+
+## Warm camera and hover replay
+
+Set `SOAK_FLOW_WARM_REPLAY=1` for the headless Flow soak to repeat 32
+camera positions and alternate pointer moves between a node and a gap.
+The runner performs two warm-up passes before sampling. Each iteration
+includes a camera draw and a pointer move with a second draw request.
+
+At 50,000 nodes and 100,000 edges, index publication took 302–404 ms
+from fixture start and 44–69 ms after the first draw across loaded
+release runs. This measures the interval through publication in the
+headless test dispatcher. The warm replay's two short windows each
+recorded 97,708 KiB RSS and 94,918 KiB PSS. On this shared host, setup
+through first draw took 259 ms and the second window's p99 was 37.5 ms
+per two-draw iteration. Quiet single-event latency remains open.
+
+| Self samples | 160 camera iterations | 1,200 warm camera and hover iterations |
+| --- | ---: | ---: |
+| GPUI BoundsTree insert | 4.72% | 5.69% |
+| GPUI path clone and scale | 4.42% | 4.02% |
+| Flow frame paint | 1.87% | 2.45% |
+| Flow mesh paint | 1.75% | 1.50% |
+| Flow deferred mesh lookup | 1.09% | 1.42% |
+
+These are two different workloads on the same production implementation.
+In the warm profile, deferred mesh lookup accounted for about 0.70 ms
+of sampled CPU per iteration including callees. Flow frame paint
+accounted for about 0.35 ms of self time. No individual Flow-owned
+hot path was clearly above 1 ms after excluding GPUI work. The
+existing cache limits and allocation measurements still apply.
+
+The opt-in test `ten_million_nodes_keep_detailed_viewport_work_constant`
+materializes both 10,000 and 10,000,000 nodes, with identical edges
+near the view and a disabled minimap. It runs the mounted renderer
+at three matching pan/zoom settings after index publication. Visible
+node IDs, node and edge counts, edge vertex counts, and stroke and
+marker batch counts matched at all three settings. Index traversal
+visits were 20/20/22 at 10k and 40/40/44 at 10M. Exact equality of
+total query work remains open because BVH navigation grows with
+tree depth. Run the test explicitly with
+`cargo test -p guiraffe-flow --lib ten_million_nodes_keep_detailed_viewport_work_constant -- --ignored --nocapture`.
+The upstream debug run took 178 seconds, so the regular workspace
+gate skips this fixture.

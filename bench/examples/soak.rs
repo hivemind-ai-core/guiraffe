@@ -82,26 +82,37 @@ fn flow(
         "background_ready_us={}",
         mount_started.elapsed().as_micros()
     );
-    run(
-        &mut |i| {
-            let zoom = if i % 31 < 15 { 1.25 } else { 1. };
-            view.update(&mut cx, |v, cx| {
-                v.set_viewport(
-                    Viewport {
-                        pan: Point::new(
-                            -((i % 97) as f32) * 240. * zoom,
-                            -((i % 490) as f32) * 150. * zoom,
-                        ),
-                        zoom,
-                    },
-                    cx,
-                )
+    let warm_replay = std::env::var_os("SOAK_FLOW_WARM_REPLAY").is_some();
+    let mut frame = |i: usize| {
+        let i = if warm_replay { i % 32 } else { i };
+        let zoom = if i % 31 < 15 { 1.25 } else { 1. };
+        view.update(&mut cx, |v, cx| {
+            v.set_viewport(
+                Viewport {
+                    pan: Point::new(
+                        -((i % 97) as f32) * 240. * zoom,
+                        -((i % 490) as f32) * 150. * zoom,
+                    ),
+                    zoom,
+                },
+                cx,
+            )
+        })?;
+        window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
+        if warm_replay {
+            window.update(&mut cx, |_, w, cx| {
+                w.simulate_mouse_move(point(px(if i % 2 == 0 { 40. } else { 210. }), px(24.)), cx);
+                w.render_frame(cx);
             })?;
-            window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
-            Ok(())
-        },
-        mount,
-    );
+        }
+        Ok(())
+    };
+    if warm_replay {
+        for i in 0..64 {
+            frame(i)?;
+        }
+    }
+    run(&mut frame, mount);
     Ok(())
 }
 
