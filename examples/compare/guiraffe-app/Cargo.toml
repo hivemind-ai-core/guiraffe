@@ -48,3 +48,12 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Same vendored GPUI/Kit/Mermaid patches as the main workspace (vendor/README.md). A standalone
+# workspace does not inherit the root [patch] table, so apps outside it must repeat these.
+[patch.crates-io]
+gpui-fast = { path = "../../../vendor/gpui-fast" }
+gpui-pre = { path = "../../../vendor/gpui-pre" }
+gpui-base = { path = "../../../vendor/gpui-base" }
+gpui-component = { path = "../../../vendor/gpui-component" }
+mermaid-rs-renderer = { path = "../../../vendor/mermaid-rs-renderer" }
