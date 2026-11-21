@@ -44,7 +44,7 @@ animated markers and connection previews share the camera scale.
 ## Retained paint geometry
 
 The edge mesh cache holds at most 8,192 route entries and 16 MiB of
-allocated vertex capacity, plus the path and map-entry metadata. Each
+position and UV data in exact-sized arrays, plus mesh and map-entry metadata. Each
 entry shares its immutable route with the scene. A route replacement
 invalidates that entry. Cached triangles use world coordinates and are
 shared across pan and zoom. If admission hits either limit, the next camera

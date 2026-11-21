@@ -1,6 +1,6 @@
 //! Cached world-space tessellation with bounded storage and indexed culling.
 use crate::{Background, Gesture, Interaction};
-use gpui_kit::{Bounds, Path, PathBuilder, Pixels, Window, fill, point, px};
+use gpui_kit::{Bounds, Path, PathBuilder, PathVertex, Pixels, Window, fill, point, px};
 use guiraffe_core::{GuiraffeTheme, Rgb, Surfaces};
 use guiraffe_flow_core::{
     EdgeId, EdgePath, Marker, Node, Point as WorldPoint, Rect, Scene, Viewport, Visible,
@@ -16,17 +16,46 @@ const EDGE_STROKE: f32 = 1.5;
 const MAX_EDGE_MESHES: usize = 8192;
 const MAX_EDGE_MESH_BYTES: usize = 16 * 1024 * 1024;
 
-fn vertex_size<T>(_: &[T]) -> usize {
-    std::mem::size_of::<T>()
+#[derive(Clone)]
+struct EdgeVertex {
+    position: gpui_kit::Point<Pixels>,
+    uv: gpui_kit::Point<f32>,
 }
 
-fn mesh_bytes(path: &Path<Pixels>) -> usize {
-    path.vertices.capacity() * vertex_size(&path.vertices)
+#[derive(Clone)]
+struct EdgeMesh {
+    bounds: Bounds<Pixels>,
+    vertices: Box<[EdgeVertex]>,
+}
+impl EdgeMesh {
+    fn new(route: &EdgePath) -> Option<Self> {
+        mesh(route).map(Self::from_path)
+    }
+
+    fn from_path(path: Path<Pixels>) -> Self {
+        Self {
+            bounds: path.bounds,
+            // Stroke tessellation has no per-vertex clip. GPUI applies the
+            // current clip to the submitted path, so omit it from retained storage.
+            vertices: path
+                .vertices
+                .into_iter()
+                .map(|vertex| EdgeVertex {
+                    position: vertex.xy_position,
+                    uv: vertex.st_position,
+                })
+                .collect(),
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        std::mem::size_of_val(self.vertices.as_ref())
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct MeshCache {
-    entries: BTreeMap<EdgeId, (Arc<EdgePath>, Path<Pixels>)>,
+    entries: BTreeMap<EdgeId, (Arc<EdgePath>, EdgeMesh)>,
     pub edge_buffer: Vec<EdgeId>,
     mesh_bytes: usize,
     admission_limited: bool,
@@ -58,11 +87,7 @@ impl MeshCache {
                 .get(id)
                 .is_some_and(|next| Arc::ptr_eq(route, next))
         });
-        self.mesh_bytes = self
-            .entries
-            .values()
-            .map(|(_, path)| mesh_bytes(path))
-            .sum();
+        self.mesh_bytes = self.entries.values().map(|(_, path)| path.bytes()).sum();
     }
     fn begin_edges(&mut self, viewport: (Viewport, gpui_kit::Size<Pixels>), visible: &[EdgeId]) {
         if self.admission_limited && self.last_mesh_viewport != Some(viewport) {
@@ -70,25 +95,25 @@ impl MeshCache {
                 if visible.binary_search(id).is_ok() {
                     return true;
                 }
-                self.mesh_bytes -= mesh_bytes(path);
+                self.mesh_bytes -= path.bytes();
                 false
             });
             self.admission_limited = false;
         }
         self.last_mesh_viewport = Some(viewport);
     }
-    fn get(&mut self, id: EdgeId, route: &Arc<EdgePath>) -> Option<Cow<'_, Path<Pixels>>> {
+    fn get(&mut self, id: EdgeId, route: &Arc<EdgePath>) -> Option<Cow<'_, EdgeMesh>> {
         if self
             .entries
             .get(&id)
             .is_none_or(|(old, _)| !Arc::ptr_eq(old, route))
         {
-            let path = mesh(route)?;
+            let path = EdgeMesh::new(route)?;
             if let Some((_, old)) = self.entries.remove(&id) {
-                self.mesh_bytes -= mesh_bytes(&old);
+                self.mesh_bytes -= old.bytes();
             }
             self.misses += 1;
-            let bytes = mesh_bytes(&path);
+            let bytes = path.bytes();
             if self.entries.len() >= MAX_EDGE_MESHES
                 || bytes > MAX_EDGE_MESH_BYTES - self.mesh_bytes
             {
@@ -242,7 +267,7 @@ fn transformed_mesh(
 }
 fn append_transformed(
     output: &mut Path<Pixels>,
-    path: &Path<Pixels>,
+    path: &EdgeMesh,
     viewport: Viewport,
     origin: gpui_kit::Point<Pixels>,
 ) {
@@ -258,11 +283,13 @@ fn append_transformed(
     } else {
         output.bounds.union(&bounds)
     };
+    let pan = pixel(viewport.pan);
     output
         .vertices
-        .extend(path.vertices.iter().cloned().map(|mut vertex| {
-            vertex.xy_position = vertex.xy_position * viewport.zoom + origin + pixel(viewport.pan);
-            vertex
+        .extend(path.vertices.iter().map(|vertex| PathVertex {
+            xy_position: vertex.position * viewport.zoom + origin + pan,
+            st_position: vertex.uv,
+            content_mask: Default::default(),
         }));
 }
 fn paint_mesh(
@@ -378,7 +405,7 @@ impl Frame {
             let to = self.preview(edge.target.node);
             if from.is_some() || to.is_some() {
                 if let Ok(route) = EdgePath::new(graph, edge, from, to)
-                    && let Some(path) = mesh(&route)
+                    && let Some(path) = EdgeMesh::new(&route)
                 {
                     append_transformed(output, &path, self.viewport, bounds.origin);
                 }
@@ -818,18 +845,45 @@ mod tests {
             cache.get(id, &route).expect("uncached meshes still paint");
         }
         assert!(cache.admission_limited);
-        assert!(cache.entries.len() <= MAX_EDGE_MESHES);
+        assert!(cache.entries.len() < MAX_EDGE_MESHES);
         assert!(cache.mesh_bytes <= MAX_EDGE_MESH_BYTES);
+        assert!(
+            cache.mesh_bytes + cache.get(1, &route).expect("mesh").bytes() > MAX_EDGE_MESH_BYTES
+        );
         cache.begin_edges((Viewport::default(), gpui_kit::Size::default()), &[1]);
         assert_eq!(cache.entries.len(), 1);
         assert_eq!(
             cache.mesh_bytes,
-            mesh_bytes(&cache.get(1, &route).expect("retained"))
+            cache.get(1, &route).expect("retained").bytes()
         );
         cache.clear();
         assert_eq!(cache.mesh_bytes, 0);
         assert!(cache.entries.is_empty());
     }
+    #[test]
+    fn small_meshes_hit_the_entry_limit_before_the_byte_limit() {
+        let graph = Graph::from_parts(
+            [
+                Node::new(1, "", WorldPoint::default()),
+                Node::new(2, "", WorldPoint::new(400., 100.)),
+            ],
+            [],
+        )
+        .expect("graph");
+        let mut edge = Edge::new(1, 1, 2);
+        edge.edge_type = guiraffe_flow_core::EdgeType::Straight;
+        let route = Arc::new(EdgePath::new(&graph, &edge, None, None).expect("route"));
+        let mut cache = MeshCache::default();
+
+        for id in 0..=MAX_EDGE_MESHES as EdgeId {
+            cache.get(id, &route).expect("mesh");
+        }
+
+        assert_eq!(cache.entries.len(), MAX_EDGE_MESHES);
+        assert!(cache.admission_limited);
+        assert!(cache.mesh_bytes < MAX_EDGE_MESH_BYTES);
+    }
+
     #[test]
     fn mesh_cache_stays_bounded_over_thirty_minutes_of_camera_changes() {
         let graph = Graph::from_parts(
@@ -1199,6 +1253,7 @@ mod tests {
         };
         let origin = point(px(20.), px(30.));
         let expected = transformed_mesh(&source, viewport, origin);
+        let source = EdgeMesh::from_path(source);
         let mut batch = Path::new(origin);
         batch.vertices.reserve_exact(source.vertices.len() * 20);
         let ptr = batch.vertices.as_ptr();
@@ -1209,6 +1264,8 @@ mod tests {
         assert_eq!(batch.vertices.len(), expected.vertices.len() * 20);
         for (actual, expected) in batch.vertices.iter().zip(&expected.vertices) {
             assert_eq!(actual.xy_position, expected.xy_position);
+            assert_eq!(actual.st_position, expected.st_position);
+            assert_eq!(actual.content_mask.bounds, expected.content_mask.bounds);
             assert!(batch.bounds.contains(&actual.xy_position));
         }
     }
