@@ -116,6 +116,7 @@ lightweight-row implementation before the final editor changes.
 | Callgrind instructions, setup and 64 frames at 10,001 rows | 405,094,957 | 303,714,634 |
 | Callgrind memcpy instructions | 90,887,281 | 58,064,349 |
 | Callgrind main flexbox routine instructions | 26,819,333 | 17,600,400 |
+| Callgrind calls to malloc, realloc and calloc | 149,183 | 113,174 |
 | Short-soak mount, 100,001 rows | 96.3 ms | 14.8 ms |
 | Short-soak p99, two intervals | 8.25–9.40 ms | 6.66–7.71 ms |
 | Largest short-soak frame | 16.42 ms | 15.50 ms |
@@ -125,6 +126,7 @@ lightweight-row implementation before the final editor changes.
 | Warm sparse viewport geometry allocations | — | 0 |
 
 These runs did not activate the inspector toolbar or custom row styles.
+The Callgrind allocator calls cover setup and all 64 scripted frames.
 The geometry allocation check covers viewport traversal. Mounted
 unchanged-repaint allocations and release acceptance at one million
 rows still require separate end-to-end measurements.
