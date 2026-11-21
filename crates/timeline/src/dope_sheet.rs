@@ -2,16 +2,14 @@
 use crate::{
     Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
-use gpui_kit::component::{
-    Disableable, Selectable, Sizable,
-    button::{Button, ButtonVariants},
-};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{ActiveTheme, Icon, Sizable, Size, Theme, tooltip::Tooltip};
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, Styled,
     TestSupportExt, Window, canvas, div, prelude::*, px,
 };
-use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant};
+use guiraffe_core::{A11yDisabledExt, ColorName, GuiraffeTheme, StateKind, Variant};
 use std::{cell::Cell, rc::Rc};
 pub const ROW_H: f32 = 28.;
 pub const NAME_W: f32 = 230.;
@@ -226,13 +224,13 @@ impl DopeSheet {
             f32::from(p.y - b.origin.y),
         )
     }
-    fn toggle(&mut self, channel: usize, kind: u8, cx: &mut Context<Self>) {
+    fn toggle(&mut self, channel: usize, kind: ChannelControl, cx: &mut Context<Self>) {
         if let Some(c) = self.model.channels.get_mut(channel) {
             match kind {
-                0 => c.collapsed = !c.collapsed,
-                1 => c.muted = !c.muted,
-                2 => c.locked = !c.locked,
-                _ => c.visible = !c.visible,
+                ChannelControl::Expand => c.collapsed = !c.collapsed,
+                ChannelControl::Mute => c.muted = !c.muted,
+                ChannelControl::Lock => c.locked = !c.locked,
+                ChannelControl::Visibility => c.visible = !c.visible,
             }
             self.model.rebuild_rows();
             self.drag = None;
@@ -255,49 +253,122 @@ struct ChannelHeader {
     owner: gpui_kit::WeakEntity<DopeSheet>,
 }
 
+#[derive(Clone, Copy)]
+enum ChannelControl {
+    Expand,
+    Mute,
+    Lock,
+    Visibility,
+}
+
 impl ChannelHeader {
-    fn on_toggle(
-        &self,
-        action: u8,
-    ) -> impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + use<> {
+    fn control(&self, kind: ChannelControl, theme: &Theme) -> impl IntoElement + use<> {
+        let (id, label, icon, selected, disabled) = match kind {
+            ChannelControl::Expand => (
+                "channel-expand",
+                "Expand or collapse channel",
+                if !self.group {
+                    IconName::Minus
+                } else if self.collapsed {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                },
+                false,
+                !self.group,
+            ),
+            ChannelControl::Mute => (
+                "channel-mute",
+                "Mute channel",
+                if self.muted {
+                    IconName::VolumeX
+                } else {
+                    IconName::Volume2
+                },
+                self.muted,
+                false,
+            ),
+            ChannelControl::Lock => (
+                "channel-lock",
+                "Lock channel",
+                if self.locked {
+                    IconName::Lock
+                } else {
+                    IconName::LockOpen
+                },
+                self.locked,
+                false,
+            ),
+            ChannelControl::Visibility => (
+                "channel-visible",
+                "Channel visibility",
+                if self.visible {
+                    IconName::Eye
+                } else {
+                    IconName::EyeOff
+                },
+                false,
+                false,
+            ),
+        };
         let owner = self.owner.clone();
         let channel = self.channel;
-        move |_, _, cx| {
-            if let Some(owner) = owner.upgrade() {
-                owner.update(cx, |view, cx| view.toggle(channel, action, cx));
-            }
-        }
+        let foreground = if disabled {
+            theme.muted_foreground.opacity(0.5)
+        } else {
+            theme.secondary_foreground
+        };
+        let hover = theme
+            .tokens
+            .accent
+            .opacity(if theme.mode.is_dark() { 0.5 } else { 1. });
+        let hover_foreground = theme.accent_foreground;
+        let active = theme.tokens.button_active;
+        div()
+            .debug_selector(move || format!("{id}-{channel}"))
+            .child(
+                div()
+                    .id((id, channel))
+                    .role(Role::Button)
+                    .aria_description(label)
+                    .aria_selected(selected)
+                    .size_5()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .rounded(theme.radius)
+                    .text_color(foreground)
+                    .when(selected, |el| el.bg(theme.tokens.secondary_active))
+                    .when(!disabled && !selected, |el| {
+                        el.hover(move |style| style.bg(hover).text_color(hover_foreground))
+                            .active(move |style| style.bg(active))
+                    })
+                    .when(!disabled, |el| {
+                        el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                            .on_click(move |_, _, cx| {
+                                if let Some(owner) = owner.upgrade() {
+                                    owner.update(cx, |view, cx| view.toggle(channel, kind, cx));
+                                }
+                            })
+                    })
+                    .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+                    .child(Icon::new(icon).with_size(Size::XSmall))
+                    .a11y_disabled(disabled),
+            )
     }
 }
 
 impl Render for ChannelHeader {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx);
-        let c = self;
-        let i = c.channel;
+        let control_theme = cx.theme();
         div()
             .size_full()
             .flex()
             .items_center()
-            .pl(px(c.depth as f32 * 12.))
-            .child(crate::locks::probe(
-                "channel-expand",
-                i,
-                Button::new(("channel-expand", i))
-                    .ghost()
-                    .with_size(gpui_kit::component::Size::XSmall)
-                    .tab_stop(false)
-                    .disabled(!c.group)
-                    .icon(gpui_kit::component::Icon::new(if !c.group {
-                        gpui_kit::assets::IconName::Minus
-                    } else if c.collapsed {
-                        gpui_kit::assets::IconName::ChevronRight
-                    } else {
-                        gpui_kit::assets::IconName::ChevronDown
-                    }))
-                    .tooltip("Expand or collapse channel")
-                    .on_click(c.on_toggle(0)),
-            ))
+            .pl(px(self.depth as f32 * 12.))
+            .child(self.control(ChannelControl::Expand, control_theme))
             .child(
                 div()
                     .w(px(4.))
@@ -305,61 +376,14 @@ impl Render for ChannelHeader {
                     .rounded(px(2.))
                     .mr(px(4.))
                     .bg(theme
-                        .variant(Some(c.color), Variant::Filled)
+                        .variant(Some(self.color), Variant::Filled)
                         .background
                         .to_hsla()),
             )
-            .child(div().flex_1().overflow_hidden().child(c.name.clone()))
-            .child(crate::locks::probe(
-                "channel-mute",
-                i,
-                Button::new(("channel-mute", i))
-                    .ghost()
-                    .with_size(gpui_kit::component::Size::XSmall)
-                    .tab_stop(false)
-                    .icon(gpui_kit::component::Icon::new(if c.muted {
-                        gpui_kit::assets::IconName::VolumeX
-                    } else {
-                        gpui_kit::assets::IconName::Volume2
-                    }))
-                    .tab_stop(false)
-                    .tooltip("Mute channel")
-                    .selected(c.muted)
-                    .on_click(c.on_toggle(1)),
-            ))
-            .child(crate::locks::probe(
-                "channel-lock",
-                i,
-                Button::new(("channel-lock", i))
-                    .ghost()
-                    .with_size(gpui_kit::component::Size::XSmall)
-                    .tab_stop(false)
-                    .icon(gpui_kit::component::Icon::new(if c.locked {
-                        gpui_kit::assets::IconName::Lock
-                    } else {
-                        gpui_kit::assets::IconName::LockOpen
-                    }))
-                    .tab_stop(false)
-                    .tooltip("Lock channel")
-                    .selected(c.locked)
-                    .on_click(c.on_toggle(2)),
-            ))
-            .child(crate::locks::probe(
-                "channel-visible",
-                i,
-                Button::new(("channel-visible", i))
-                    .ghost()
-                    .with_size(gpui_kit::component::Size::XSmall)
-                    .tab_stop(false)
-                    .icon(gpui_kit::component::Icon::new(if c.visible {
-                        gpui_kit::assets::IconName::Eye
-                    } else {
-                        gpui_kit::assets::IconName::EyeOff
-                    }))
-                    .tab_stop(false)
-                    .tooltip("Channel visibility")
-                    .on_click(c.on_toggle(3)),
-            ))
+            .child(div().flex_1().overflow_hidden().child(self.name.clone()))
+            .child(self.control(ChannelControl::Mute, control_theme))
+            .child(self.control(ChannelControl::Lock, control_theme))
+            .child(self.control(ChannelControl::Visibility, control_theme))
     }
 }
 
