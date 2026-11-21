@@ -37,7 +37,11 @@ fn scaled(size: usize) -> usize {
     (size / divisor).max(1)
 }
 
-fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) -> Result<()> {
+fn flow(
+    no_minimap: bool,
+    mount_started: Instant,
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
+) -> Result<()> {
     let nodes = scaled(50_000) as u64;
     let graph = Graph::from_parts(
         (0..nodes).map(|i| {
@@ -71,23 +75,33 @@ fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>))
         .expect("window")
     });
     window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
-    run(&mut |i| {
-        let zoom = if i % 31 < 15 { 1.25 } else { 1. };
-        view.update(&mut cx, |v, cx| {
-            v.set_viewport(
-                Viewport {
-                    pan: Point::new(
-                        -((i % 97) as f32) * 240. * zoom,
-                        -((i % 490) as f32) * 150. * zoom,
-                    ),
-                    zoom,
-                },
-                cx,
-            )
-        })?;
-        window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
-        Ok(())
-    });
+    let mount = mount_started.elapsed();
+    // The test dispatcher needs to be pumped explicitly to publish the spatial index.
+    cx.run_until_parked();
+    println!(
+        "background_ready_us={}",
+        mount_started.elapsed().as_micros()
+    );
+    run(
+        &mut |i| {
+            let zoom = if i % 31 < 15 { 1.25 } else { 1. };
+            view.update(&mut cx, |v, cx| {
+                v.set_viewport(
+                    Viewport {
+                        pan: Point::new(
+                            -((i % 97) as f32) * 240. * zoom,
+                            -((i % 490) as f32) * 150. * zoom,
+                        ),
+                        zoom,
+                    },
+                    cx,
+                )
+            })?;
+            window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
+            Ok(())
+        },
+        mount,
+    );
     Ok(())
 }
 
@@ -274,9 +288,11 @@ fn main() -> Result<()> {
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
-        "flow" => flow(args.iter().any(|arg| arg == "--no-minimap"), |frame| {
-            result = sample(frame, mount_started.elapsed(), short);
-        })?,
+        "flow" => flow(
+            args.iter().any(|arg| arg == "--no-minimap"),
+            mount_started,
+            |frame, mount| result = sample(frame, mount, short),
+        )?,
         "timeline" => timeline(|frame| result = sample(frame, mount_started.elapsed(), short)),
         "chart-line" => charts(false, false, |frame, mount| {
             result = sample(frame, mount, short)
@@ -306,9 +322,9 @@ fn main() -> Result<()> {
         "bar-editor" => {
             mounted::bar_editor(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "flamegraph" => {
-            mounted::flamegraph(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
+        "flamegraph" => mounted::flamegraph(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "tree" => mounted::tree(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         "property-grid" => {
             mounted::property_grid(|frame| result = sample(frame, mount_started.elapsed(), short))?
@@ -382,7 +398,7 @@ fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bo
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
-    use super::{Result, scaled};
+    use super::{Instant, Result, scaled};
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
         ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, ScrollSource, Styled,
@@ -414,6 +430,21 @@ mod mounted {
         init: impl FnOnce(&mut App),
         build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> Result<(VisualTestContext, Entity<V>)> {
+        let (mut window, view) = open(name, init, build)?;
+        window.run_until_parked();
+        window.update(|window, cx| window.render_frame(cx));
+        settle(&mut window);
+        // Views that measure themselves (axis width, viewport bounds) lay out again.
+        window.update(|window, cx| window.render_frame(cx));
+        window.run_until_parked();
+        Ok((window, view))
+    }
+
+    fn open<V: Render>(
+        name: &'static str,
+        init: impl FnOnce(&mut App),
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> Result<(VisualTestContext, Entity<V>)> {
         let cx = TestAppContext::build(TestDispatcher::new(0), Some(name));
         cx.update(|cx| {
             guiraffe_core::init(cx);
@@ -429,14 +460,7 @@ mod mounted {
             };
             gpui_kit::open_window(options, cx, build)
         })?;
-        let mut window = VisualTestContext::from_window(handle, &cx);
-        window.run_until_parked();
-        window.update(|window, cx| window.render_frame(cx));
-        settle(&mut window);
-        // Views that measure themselves (axis width, viewport bounds) lay out again.
-        window.update(|window, cx| window.render_frame(cx));
-        window.run_until_parked();
-        Ok((window, view))
+        Ok((VisualTestContext::from_window(handle, &cx), view))
     }
 
     fn settle(window: &mut VisualTestContext) {
@@ -539,7 +563,7 @@ mod mounted {
 
     /// Tracks: 100 tracks of 1,000 clips (100,000 clips), fitted to the full length.
     pub fn tracks(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_timeline::{TimeFormat, Track, TracksView, tracks_view::clip_element_id};
+        use guiraffe_timeline::{TimeFormat, Track, TracksView, tracks_view::TRACK_H};
         let per_track = scaled(1_000);
         let tracks = (0..100)
             .map(|t| {
@@ -556,6 +580,7 @@ mod mounted {
             TracksView::new(tracks, TimeFormat::Seconds, length, cx)
         })?;
         let root = require(&mut window, "tracks")?;
+        let track_body = require(&mut window, "tracks-body")?;
         let body = root.origin + point(root.size.width * 0.55, root.size.height * 0.4);
         run(&mut |i| {
             match i % 4 {
@@ -566,21 +591,34 @@ mod mounted {
                 }
                 2 => {
                     let track = (i / 4) % 16;
-                    let clip = window.update(|_, cx| {
-                        let v = view.read(cx);
-                        let axis = v.axis();
-                        let mid = axis.start + axis.width * axis.scale * 0.5;
-                        let clips = v.tracks().get(track)?.1.clips();
-                        clips
-                            .get(clips.partition_point(|c| c.start < mid))
-                            .map(|c| c.id)
-                    });
-                    let at = clip
-                        .and_then(|id| bounds(&mut window, clip_element_id(track, id)))
-                        .map(|b| b.center())
-                        .filter(|p| inside(root, *p))
-                        .unwrap_or(body);
+                    let (clip_id, x) = window
+                        .update(|_, cx| {
+                            let view = view.read(cx);
+                            let axis = view.axis();
+                            let mid = axis.t(axis.width * 0.5);
+                            let clips = view.tracks().get(track)?.1.clips();
+                            let first = clips.partition_point(|clip| clip.end() <= axis.start);
+                            let end = clips.partition_point(|clip| clip.start < axis.end());
+                            let visible = clips.get(first..end)?;
+                            let index = visible
+                                .partition_point(|clip| clip.start < mid)
+                                .min(visible.len().saturating_sub(1));
+                            let clip = visible.get(index)?;
+                            let left = clip.start.max(axis.start);
+                            let right = clip.end().min(axis.end());
+                            Some((clip.id, axis.x(left + (right - left) * 0.5)))
+                        })
+                        .ok_or("missing visible clip during tracks selection")?;
+                    let at =
+                        track_body.origin + point(px(x as f32), px((track as f32 + 0.5) * TRACK_H));
                     window.simulate_click(at, Modifiers::default());
+                    let selected = window.update(|_, cx| view.read(cx).selected());
+                    if selected != Some((track, clip_id)) {
+                        return Err(format!(
+                            "tracks selection expected ({track}, {clip_id}), got {selected:?}"
+                        )
+                        .into());
+                    }
                 }
                 _ => hover(
                     &mut window,
@@ -683,8 +721,8 @@ mod mounted {
 
     /// FlameGraph: 10,000,000 frames as 20,000 stacks of depth 500 (mirrors
     /// the `flamegraph_ten_million` bench source).
-    pub fn flamegraph(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_flamegraph::{FlameGraph, FlameLayout, Frame as Sample, FrameSource};
+    pub fn flamegraph(started: Instant, run: impl FnOnce(Frame, Duration)) -> Result<()> {
+        use guiraffe_flamegraph::{FlameGraph, Frame as Sample, FrameSource};
         const LABELS: [&str; 8] = [
             "main", "run", "dispatch", "render", "layout", "paint", "alloc", "hash",
         ];
@@ -706,26 +744,45 @@ mod mounted {
             }
         }
         let frames = scaled(10_000_000).div_ceil(500) * 500;
-        let layout =
-            Arc::new(FlameLayout::new(Arc::new(Profile(frames))).map_err(|e| format!("{e:?}"))?);
-        let (mut window, _view) = mount("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
-            cx.new(|_| FlameGraph::new(layout))
+        let (mut window, view) = open("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
+            cx.new(|cx| {
+                FlameGraph::from_source(Arc::new(Profile(frames)), cx)
+                    .unwrap_or_else(|error| panic!("invalid soak profile: {error:?}"))
+            })
         })?;
+        // The deterministic test dispatcher runs its background queue when
+        // parked. Draw and verify the preview before draining that queue.
+        window.update(|window, cx| window.render_frame(cx));
+        require(&mut window, "flame-plot")?;
+        let mount = started.elapsed();
+        println!(
+            "preview_pending={}",
+            view.read_with(&window, |view, _| view.is_loading())
+        );
+        settle(&mut window);
+        window.update(|window, cx| window.render_frame(cx));
+        if let Some(error) = view.read_with(&window, |view, _| view.load_failure()) {
+            return Err(format!("invalid soak profile: {error:?}").into());
+        }
+        println!("setup_and_full_layout_us={}", started.elapsed().as_micros());
         let plot = require(&mut window, "flame-plot")?;
-        run(&mut |i| {
-            let at = point(
-                plot.origin.x + plot.size.width * (0.1 + 0.8 * ((i * 37) % 100) as f32 / 100.),
-                plot.origin.y + plot.size.height - px(10. + 21. * ((i * 7) % 30) as f32),
-            );
-            match i % 8 {
-                0 | 1 => wheel(&mut window, at, 0., 35., false),
-                2 | 3 => wheel(&mut window, at, 0., -35., false),
-                6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
-                _ => hover(&mut window, at),
-            }
-            window.run_until_parked();
-            Ok(())
-        });
+        run(
+            &mut |i| {
+                let at = point(
+                    plot.origin.x + plot.size.width * (0.1 + 0.8 * ((i * 37) % 100) as f32 / 100.),
+                    plot.origin.y + plot.size.height - px(10. + 21. * ((i * 7) % 30) as f32),
+                );
+                match i % 8 {
+                    0 | 1 => wheel(&mut window, at, 0., 35., false),
+                    2 | 3 => wheel(&mut window, at, 0., -35., false),
+                    6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
+                    _ => hover(&mut window, at),
+                }
+                window.run_until_parked();
+                Ok(())
+            },
+            mount,
+        );
         Ok(())
     }
 
