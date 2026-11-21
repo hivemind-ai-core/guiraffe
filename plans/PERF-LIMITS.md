@@ -38,9 +38,9 @@ pending quiet-window measurement.
 
 | Check | Before this change | After this change |
 |---|---|---|
-| Mixed short, 1,000× smaller fixtures | No mixed runner | Both intervals passed. Peak frame 40.37 ms. RSS 34,512 → 34,880 KiB (+1.07%). |
-| Mixed short, default fixture sizes | No mixed runner | Both intervals reported. Markdown-active frame 53.39 ms triggered the long-frame failure. RSS 90,172 → 90,376 KiB (+0.23%). |
-| Isolated limits, start 16 and cap 32 | No geometric sweep | All 19 scenarios produced results. Five reached the p99 threshold and the others reached the smoke cap. |
+| Mixed short, 1,000× smaller fixtures | No mixed runner | Both intervals passed. Peak frame 28.68 ms. RSS 33,632 → 34,028 KiB (+1.18%). |
+| Mixed short, default fixture sizes | No mixed runner | Both intervals reported. Markdown-active frame 52.51 ms triggered the long-frame failure. RSS fell from 88,968 to 86,320 KiB. |
+| Isolated limits, start 16 and cap 32 | No geometric sweep | All 19 scenarios produced results. Four failed the p99 budget and the others reached the smoke cap. |
 | Instruction counts and repaint allocations | Existing component gates | Widget implementations were outside this change. No new comparison was collected. |
 
 The scaled 360-frame baseline Flow profile attributed 17.18% of self samples

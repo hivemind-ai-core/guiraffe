@@ -407,7 +407,12 @@ pub fn run(short: bool) -> Result<()> {
                     _ => wheel(&mut window, at, 0., 32. * sign(step, 8), false),
                 }
             }
-            window.update(|w, cx| w.render_frame(cx));
+            window.update(|w, cx| {
+                // The test dispatcher does not deliver platform frame callbacks
+                // when drawing manually. Tick motion and discard each completed batch.
+                w.simulate_next_frame(cx);
+                w.render_frame(cx);
+            });
             settle(&mut window);
             let elapsed = started.elapsed();
             failed |= elapsed > Duration::from_millis(50);
