@@ -66,6 +66,11 @@ fn extrapolate(a: Rgb, b: Rgb) -> Rgb {
     }
 }
 
+/// Every surface a focus ring can be drawn over (it sits outside the control's box).
+fn ring_surfaces(s: &crate::theme::Surfaces) -> [Rgb; 4] {
+    [s.body, s.surface, s.raised, s.track]
+}
+
 /// WCAG floors from §12.1.
 pub const TEXT_MIN: f32 = 4.5;
 pub const NON_TEXT_MIN: f32 = 3.0;
@@ -115,6 +120,37 @@ impl GuiraffeTheme {
             },
             StateKind::Selected => {
                 let f = self.variant(color, Variant::Filled);
+                if high && f.background.contrast(s.body) < NON_TEXT_MIN {
+                    // High contrast: the selected fill is a state indicator and must stand
+                    // out from the body (3:1). Step the hue away from the body until it does.
+                    let family = color.unwrap_or(self.primary);
+                    // Text on it: whichever of black or white reads better (a luminance
+                    // cut-off picks the weaker one on mid-tone fills).
+                    let best = |bg: Rgb| {
+                        if Rgb::BLACK.contrast(bg) >= Rgb::WHITE.contrast(bg) {
+                            Rgb::BLACK
+                        } else {
+                            Rgb::WHITE
+                        }
+                    };
+                    let shades: &[u8] = match self.scheme {
+                        Scheme::Light => &[7, 8, 9],
+                        Scheme::Dark => &[5, 4, 3, 2, 1, 0],
+                    };
+                    let (bg, fg) = shades
+                        .iter()
+                        .map(|shade| family.shade(*shade))
+                        .map(|bg| (bg, best(bg)))
+                        .find(|(bg, fg)| {
+                            bg.contrast(s.body) >= NON_TEXT_MIN && fg.contrast(*bg) >= TEXT_MIN
+                        })
+                        .unwrap_or((s.text, s.body));
+                    return StateColors {
+                        foreground: fg,
+                        background: bg,
+                        border: bg,
+                    };
+                }
                 StateColors {
                     foreground: f.foreground,
                     background: f.background,
@@ -132,21 +168,30 @@ impl GuiraffeTheme {
                 border: boundary,
             },
             StateKind::FocusRing => {
-                let ring = color.map_or_else(
-                    || self.primary_color(),
-                    |c| {
-                        c.shade(match self.scheme {
-                            Scheme::Light => self.primary_shade_light,
-                            Scheme::Dark => self.primary_shade_dark,
-                        })
-                    },
-                );
-                // Never let the ring vanish into the body.
-                let ring = if ring.contrast(s.body) >= NON_TEXT_MIN {
-                    ring
-                } else {
-                    s.text
+                let family = color.unwrap_or(self.primary);
+                let base = match self.scheme {
+                    Scheme::Light => self.primary_shade_light,
+                    Scheme::Dark => self.primary_shade_dark,
                 };
+                // The ring sits outside the control, over whatever surface holds it (body,
+                // card, track, raised segment), so it must clear the floor on all of them.
+                // Keep the hue: step away from the background (darker in light, lighter in
+                // dark) to the nearest shade that passes, and only then fall back to text.
+                let passes = |c: Rgb| {
+                    ring_surfaces(&s)
+                        .iter()
+                        .all(|b| c.contrast(*b) >= NON_TEXT_MIN)
+                };
+                let steps: [u8; 10] = match self.scheme {
+                    Scheme::Light => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                    Scheme::Dark => [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+                };
+                let ring = steps
+                    .iter()
+                    .skip_while(|shade| **shade != base.min(9))
+                    .map(|shade| family.shade(*shade))
+                    .find(|c| passes(*c))
+                    .unwrap_or(s.text);
                 StateColors {
                     foreground: s.text,
                     background: s.body,
@@ -298,6 +343,55 @@ pub fn contrast_checks(t: &GuiraffeTheme) -> Vec<ContrastCheck> {
             TEXT_MIN,
         );
     }
+    // Approved surface/state pairings: controls are not only placed on the body. Translucent
+    // (tinted) variants composite over the surface they sit on, so their text is measured on
+    // each one; neutral (Gray) and destructive (Red) emphasis are checked next to the
+    // primary. The focus ring and secondary text must read on every surface too.
+    let surfaces = [
+        ("body", s.body),
+        ("surface", s.surface),
+        ("raised", s.raised),
+        ("track", s.track),
+    ];
+    let ring = t.state(StateKind::FocusRing, Variant::Default, None).border;
+    let dimmed = t
+        .state(StateKind::Dimmed, Variant::Default, None)
+        .foreground;
+    for (surface, bg) in surfaces {
+        for (emphasis, color) in [
+            ("primary", None),
+            ("neutral", Some(crate::ColorName::Gray)),
+            ("destructive", Some(crate::ColorName::Red)),
+        ] {
+            for variant in [Variant::Light, Variant::Subtle, Variant::Outline] {
+                let v = t.variant(color, variant);
+                push(
+                    format!("{emphasis} {variant:?} text on {surface}"),
+                    v.foreground,
+                    v.background.over(bg),
+                    TEXT_MIN,
+                );
+                push(
+                    format!("{emphasis} {variant:?} hover text on {surface}"),
+                    v.foreground,
+                    v.hover.over(bg),
+                    TEXT_MIN,
+                );
+            }
+        }
+        push(format!("Dimmed text on {surface}"), dimmed, bg, TEXT_MIN);
+        push(format!("Focus ring on {surface}"), ring, bg, NON_TEXT_MIN);
+    }
+    // Focus on a selected item: the ring is offset outside the control, so it is read
+    // against the surface around the selected fill (covered above), never against the fill
+    // itself. The selected fill must itself stand out from the body as a state indicator.
+    let selected = t.state(StateKind::Selected, Variant::Default, None);
+    push(
+        "Selected fill vs body".into(),
+        selected.background,
+        s.body,
+        NON_TEXT_MIN,
+    );
     out
 }
 
@@ -344,10 +438,16 @@ mod tests {
     /// Documented exemption: in Standard contrast the Default variant keeps the subtle grey
     /// control border (≈1.5:1, Mantine/Refactoring UI style). High contrast meets 3:1. See
     /// spec/18 "Contrast report" for the rationale; everything else must pass.
+    ///
+    /// Second exemption, Standard only: the selected fill is the Filled shade (Mantine), and
+    /// for light hues (cyan, teal, green, lime, yellow, orange in light; pink…indigo, cyan in
+    /// dark) it reaches only 1.9–2.8:1 against the body. Its text still meets 4.5:1. Changing
+    /// it would recolour every filled control, so it is a palette decision (spec/18); High
+    /// contrast meets 3:1.
     fn exempt(contrast: Contrast, failure: &str) -> bool {
         contrast == Contrast::Standard
             && failure.ends_with("< 3")
-            && failure.contains("Default boundary")
+            && (failure.contains("Default boundary") || failure.contains("Selected fill vs body"))
     }
 
     /// The §12.1 contrast report: every state, both schemes, every primary, both contrast

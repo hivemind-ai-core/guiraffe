@@ -314,7 +314,12 @@ pub(crate) fn prepare(
         )
         .width
         .as_f32();
-    let gutter = (if options.line_numbers { digits + 3 } else { 2 }
+    let decorations = shared.decorations.borrow();
+    let annotation_gutter = decorations.as_ref().map_or(0, |decorations| {
+        usize::from(decorations.gutter_lanes()) * 2 + if decorations.has_blame() { 29 } else { 0 }
+    });
+    let gutter = (annotation_gutter
+        + if options.line_numbers { digits + 3 } else { 2 }
         + shared
             .gutters
             .borrow()
@@ -327,10 +332,10 @@ pub(crate) fn prepare(
         (options.margin_chars as f32 * cell).min((bounds.size.width.as_f32() * 0.4).max(0.));
     let mut geometry = shared.geometry.borrow_mut();
     geometry.bounds = bounds;
-    geometry.layout_epoch = shared.layout_epoch.get();
     geometry.font_size = font_size;
     geometry.line_height = lh;
     geometry.gutter = gutter;
+    geometry.cell_width = cell;
     geometry.margin = margin;
     geometry.mini = mini;
     geometry.font = font.clone();
@@ -368,6 +373,7 @@ pub(crate) fn prepare(
     let appearance = if theme.scheme == Scheme::Dark { 1 } else { 0 };
     let s = theme.surfaces();
     let mut label = std::mem::take(&mut cache.gutter_label);
+    let first_visible_row = visible.start;
     for row in visible {
         let y = bounds.origin.y + px((row as f64 * f64::from(lh) - viewport.y) as f32);
         match map.row(row) {
@@ -386,7 +392,8 @@ pub(crate) fn prepare(
                 // Short, unstyled lines can share shaping across source rows.
                 let (hash, context_line) = if text.len() <= 64
                     && !highlighted.has_parser()
-                    && shared.annotations.borrow().is_empty()
+                    && !shared.has_range_styling.get()
+                    && !hints.contains_key(&line)
                 {
                     (content_hash(text.as_bytes()), usize::MAX)
                 } else {
@@ -435,6 +442,38 @@ pub(crate) fn prepare(
                     }
                     label.extend(std::iter::repeat_n(' ', width - used));
                 }
+                if let Some(decorations) = decorations.as_ref() {
+                    label.extend(std::iter::repeat_n(
+                        ' ',
+                        usize::from(decorations.gutter_lanes()) * 2,
+                    ));
+                    if decorations.has_blame() {
+                        let label_start = label.len();
+                        if let Some(range) = doc.line_range(line) {
+                            let mut blame = None;
+                            for (_, layer) in
+                                decorations.layers().filter(|(_, layer)| layer.has_blame())
+                            {
+                                layer.query(range.start as u64..range.start as u64 + 1, |mark| {
+                                    if let Some(DecorationStyle::Blame(commit)) =
+                                        decorations.style(mark.style)
+                                        && (mark.start as usize == range.start
+                                            || row == first_visible_row)
+                                    {
+                                        blame = Some(commit.as_ref());
+                                    }
+                                });
+                            }
+                            if let Some(commit) = blame {
+                                write_gutter_field(&mut label, &commit.author, 12);
+                                write_gutter_field(&mut label, &commit.short_hash, 8);
+                                let _ = write!(label, " {}d", commit.age_days.min(9999));
+                            }
+                        }
+                        let used = label[label_start..].chars().count();
+                        label.extend(std::iter::repeat_n(' ', 29_usize.saturating_sub(used)));
+                    }
+                }
                 let label_hash = content_hash(label.as_bytes());
                 let label_shape = cache.line(
                     &label,
@@ -480,7 +519,7 @@ pub(crate) fn prepare(
                     });
                 }
             }
-            None => {}
+            Some(Row::Block { .. }) | None => {}
         }
     }
     cache.gutter_label = label;
@@ -652,6 +691,262 @@ fn visit_range_rects(shared: &Shared, range: SourceRange, mut visit: impl FnMut(
         }
     }
 }
+fn write_gutter_field(label: &mut String, value: &str, width: usize) {
+    label.push(' ');
+    let mut used = 0;
+    for ch in value.chars().filter(|ch| !ch.is_control()).take(width) {
+        label.push(ch);
+        used += 1;
+    }
+    label.extend(std::iter::repeat_n(' ', width - used));
+}
+
+fn paint_decorations(shared: &Shared, theme: &GuiraffeTheme, window: &mut Window) {
+    let decorations = shared.decorations.borrow();
+    let Some(decorations) = decorations.as_ref() else {
+        return;
+    };
+    let geometry = shared.geometry.borrow();
+    let viewport = shared.viewport.get();
+    let rows = shared.rows.borrow();
+    let hints = shared.hints.borrow();
+    let document = decorations.document();
+    let line_height = px(geometry.line_height);
+    let code_left = geometry.bounds.origin.x + px(geometry.gutter);
+    let code_right = geometry.bounds.right() - px(geometry.margin + geometry.mini);
+    let width = (code_right - code_left).max(px(0.));
+
+    for (_, layer) in decorations.layers() {
+        for (&line, shape) in &geometry.shaped {
+            let Some(bytes) = document.line_range(line) else {
+                continue;
+            };
+            let Some(row) = rows.source_row(line) else {
+                continue;
+            };
+            let y = geometry.bounds.origin.y
+                + px((row as f64 * f64::from(geometry.line_height) - viewport.y) as f32);
+            let hint = hints.get(&line);
+            let mut distinct = [(0, 0, 0); 16];
+            let mut distinct_count = 0;
+            let mut diagnostics = 0;
+            let mut inspected = 0;
+            let count =
+                layer.query_limited(bytes.start as u64..bytes.end as u64 + 1, 65, |record| {
+                    inspected += 1;
+                    if inspected == 65 {
+                        return;
+                    }
+                    let Some(style) = decorations.style(record.style) else {
+                        return;
+                    };
+                    if let DecorationStyle::Gutter { lane, mark } = style {
+                        if (record.start as usize) < bytes.start {
+                            return;
+                        }
+                        let lanes = f32::from(decorations.gutter_lanes());
+                        let blame_width = if decorations.has_blame() { 29. } else { 0. };
+                        let offset = blame_width + (lanes - f32::from((*lane).min(3))) * 2.;
+                        let x = code_left - px(offset * geometry.cell_width);
+                        paint_gutter_mark(*mark, point(x, y), line_height, theme, window);
+                        return;
+                    }
+                    if let DecorationStyle::Blame(commit) = style {
+                        let x = code_left - px(29. * geometry.cell_width);
+                        let heat = (1. / (1. + commit.age_days as f32 / 30.)).clamp(0.12, 1.);
+                        window.paint_quad(fill(
+                            Bounds::new(point(x, y), size(px(3.), line_height)),
+                            color(ColorName::Orange, theme).opacity(heat),
+                        ));
+                        return;
+                    }
+                    let mut start =
+                        (record.start as usize).clamp(bytes.start, bytes.end) - bytes.start;
+                    let mut end = (record.end as usize).clamp(bytes.start, bytes.end) - bytes.start;
+                    if end == start && record.end > record.start {
+                        return;
+                    }
+                    if layer.options().merge_identical && distinct_count < distinct.len() {
+                        let key = (record.style, start, end);
+                        if distinct[..distinct_count].contains(&key) {
+                            return;
+                        }
+                        distinct[distinct_count] = key;
+                        distinct_count += 1;
+                    }
+                    if let Some(hint) = hint {
+                        start = hint.source_to_display(start, true);
+                        end = hint.source_to_display(end, false);
+                    }
+                    let x1 = shape.x_for_index(start).as_f32() - viewport.x as f32;
+                    let x2 = shape.x_for_index(end).as_f32() - viewport.x as f32;
+                    let left = px(x1.min(x2)).max(px(0.));
+                    let right = px(x2.max(x1) + if start == end { 1. } else { 0. }).min(width);
+                    if right <= left {
+                        return;
+                    }
+                    let bounds =
+                        Bounds::new(point(code_left + left, y), size(right - left, line_height));
+                    match style {
+                        DecorationStyle::Highlight { shape, color: name } => {
+                            let ink = color(*name, theme);
+                            let transparent = Hsla::transparent_black();
+                            let quad = match shape {
+                                HighlightShape::Background => fill(bounds, ink.opacity(0.20)),
+                                HighlightShape::Outline | HighlightShape::BracketPair => {
+                                    fill(bounds, transparent)
+                                        .border_widths(px(1.))
+                                        .border_color(ink)
+                                }
+                                HighlightShape::Rounded => fill(bounds, transparent)
+                                    .border_widths(px(1.))
+                                    .border_color(ink)
+                                    .corner_radii(px(4.)),
+                            };
+                            window.paint_quad(quad);
+                        }
+                        DecorationStyle::Diagnostic {
+                            severity, pattern, ..
+                        } => {
+                            diagnostics += 1;
+                            let ink = color(severity_color(*severity), theme);
+                            if diagnostics <= 8 {
+                                paint_underline(bounds, *pattern, ink, window);
+                            } else if diagnostics == 9 {
+                                let width = shape.width.min(width);
+                                paint_underline(
+                                    Bounds::new(point(code_left, y), size(width, line_height)),
+                                    UnderlinePattern::Straight,
+                                    ink,
+                                    window,
+                                );
+                            }
+                        }
+                        DecorationStyle::Blame(_)
+                        | DecorationStyle::Gutter { .. }
+                        | DecorationStyle::Inline { .. }
+                        | DecorationStyle::Review { .. }
+                        | DecorationStyle::Block { .. } => {}
+                        DecorationStyle::Unnecessary => {
+                            window.paint_quad(fill(
+                                bounds,
+                                theme.surfaces().body.to_hsla().opacity(0.55),
+                            ));
+                        }
+                        DecorationStyle::Deprecated => {
+                            let bar = Bounds::new(
+                                point(bounds.left(), y + line_height * 0.53),
+                                size(bounds.size.width, px(1.)),
+                            );
+                            window.paint_quad(fill(bar, theme.surfaces().dimmed.to_hsla()));
+                        }
+                    }
+                });
+            if count == 65 {
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(code_left, y + line_height - px(1.)),
+                        size(width, px(1.)),
+                    ),
+                    theme.surfaces().dimmed.to_hsla().opacity(0.5),
+                ));
+            }
+        }
+    }
+}
+
+fn paint_gutter_mark(
+    mark: GutterMark,
+    origin: Point<Pixels>,
+    line_height: Pixels,
+    theme: &GuiraffeTheme,
+    window: &mut Window,
+) {
+    let (name, width, height, radius) = match mark {
+        GutterMark::Breakpoint => (ColorName::Red, 8., line_height * 0.5, 4.),
+        GutterMark::Bookmark => (ColorName::Blue, 8., line_height * 0.5, 1.),
+        GutterMark::Error => (ColorName::Red, 4., line_height * 0.5, 1.),
+        GutterMark::Added | GutterMark::Covered => (ColorName::Green, 4., line_height, 0.),
+        GutterMark::Modified => (ColorName::Blue, 4., line_height, 0.),
+        GutterMark::Deleted => (ColorName::Red, 8., px(2.), 0.),
+        GutterMark::Uncovered => (ColorName::Red, 4., line_height, 0.),
+        GutterMark::PartiallyCovered => (ColorName::Yellow, 4., line_height, 0.),
+    };
+    let origin = origin + point(px(1.), (line_height - height) * 0.5);
+    window.paint_quad(
+        fill(
+            Bounds::new(origin, size(px(width), height)),
+            color(name, theme),
+        )
+        .corner_radii(px(radius)),
+    );
+}
+
+fn severity_color(severity: Severity) -> ColorName {
+    match severity {
+        Severity::Error => ColorName::Red,
+        Severity::Warning => ColorName::Orange,
+        Severity::Info => ColorName::Blue,
+        Severity::Hint => ColorName::Gray,
+    }
+}
+
+fn paint_underline(
+    bounds: Bounds<Pixels>,
+    pattern: UnderlinePattern,
+    ink: Hsla,
+    window: &mut Window,
+) {
+    let y = bounds.bottom() - px(2.);
+    let start = bounds.left();
+    let end = bounds.right();
+    match pattern {
+        UnderlinePattern::Straight | UnderlinePattern::Double => {
+            window.paint_quad(fill(
+                Bounds::new(point(start, y), size(bounds.size.width, px(1.))),
+                ink,
+            ));
+            if pattern == UnderlinePattern::Double {
+                window.paint_quad(fill(
+                    Bounds::new(point(start, y - px(2.)), size(bounds.size.width, px(1.))),
+                    ink,
+                ));
+            }
+        }
+        UnderlinePattern::Wavy => {
+            let mut path = PathBuilder::stroke(px(1.));
+            let mut x = start;
+            let mut up = true;
+            path.move_to(point(x, y));
+            while x < end {
+                x = (x + px(2.)).min(end);
+                path.line_to(point(x, y + px(if up { -1. } else { 1. })));
+                up = !up;
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, ink);
+            }
+        }
+        UnderlinePattern::Dotted | UnderlinePattern::Dashed => {
+            let dash = px(if pattern == UnderlinePattern::Dotted {
+                1.
+            } else {
+                4.
+            });
+            let mut x = start;
+            let mut path = PathBuilder::stroke(px(1.));
+            while x < end {
+                path.move_to(point(x, y));
+                path.line_to(point((x + dash).min(end), y));
+                x += dash + px(2.);
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, ink);
+            }
+        }
+    }
+}
+
 pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut App) {
     let owned_theme = GuiraffeTheme::global(cx).clone();
     let theme = &owned_theme;
@@ -666,6 +961,7 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
             visit_range_rects(shared, *range, |rect| window.paint_quad(fill(rect, ink)));
         }
     }
+    paint_decorations(shared, theme, window);
     paint_local_traces(shared, &shared.traces.borrow(), theme, window);
     let g = shared.geometry.borrow();
     let options = shared.options.borrow();
@@ -705,23 +1001,55 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
                 )
             }
             None => {
-                for (i, density) in doc.document.minimap().iter().enumerate() {
-                    if *density > 0. {
-                        let y = origin.y + px(i as f32 * height / 256.);
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                point(origin.x, y),
-                                size(px(density * g.mini), px((height / 256.).max(1.))),
+                let height_per_bin = height / 256.;
+                for (start, len, density) in density_strokes(doc.document.minimap(), height_per_bin)
+                {
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(origin.x, origin.y + px(start as f32 * height_per_bin)),
+                            size(
+                                px(density * g.mini),
+                                px((height_per_bin * len as f32).max(1.)),
                             ),
-                            ink.opacity(0.35),
-                        ));
-                    }
+                        ),
+                        ink.opacity(0.35),
+                    ));
                 }
                 let t = total as f32;
                 let y = first as f32 / t * height;
                 (y, ((last - first + 1) as f32 / t * height).max(2.))
             }
         };
+        if let Some(decorations) = shared.decorations.borrow().as_ref() {
+            for (lane, (_, layer)) in decorations.layers().take(8).enumerate() {
+                let mut first = 0;
+                let x = origin.x + px((lane % 4) as f32 * 2.);
+                let ink = color(
+                    [
+                        ColorName::Red,
+                        ColorName::Blue,
+                        ColorName::Green,
+                        ColorName::Orange,
+                    ][lane % 4],
+                    theme,
+                )
+                .opacity(if layer.is_stale() { 0.3 } else { 0.7 });
+                for bins in layer.overview().chunk_by(|a, b| a == b) {
+                    if bins[0] {
+                        let top = height * first as f32 / 256.;
+                        let bottom = height * (first + bins.len()) as f32 / 256.;
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(x, origin.y + px(top)),
+                                size(px(2.), px((bottom - top).max(1.))),
+                            ),
+                            ink,
+                        ));
+                    }
+                    first += bins.len();
+                }
+            }
+        }
         let h = h.min((height - y).max(0.));
         let blue = color(ColorName::Blue, theme);
         window.paint_quad(
@@ -734,6 +1062,21 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
         );
     }
 }
+// At less than one pixel per bin the strokes overlap and each contributes opacity.
+fn density_strokes(
+    density: &[f32; 256],
+    height_per_bin: f32,
+) -> impl Iterator<Item = (usize, usize, f32)> + '_ {
+    density
+        .chunk_by(move |left, right| height_per_bin >= 1. && left == right)
+        .scan(0, |start, bins| {
+            let stroke = (*start, bins.len(), bins[0]);
+            *start += bins.len();
+            Some(stroke)
+        })
+        .filter(|(_, _, density)| *density > 0.)
+}
+
 /// Per-line minimap step when every line fits at 2px or more; capped at 4px.
 pub(crate) fn minimap_line_height(lines: usize, height: f32) -> Option<f32> {
     let step = height / lines.max(1) as f32;
@@ -883,6 +1226,19 @@ mod tests {
     };
     use gpui_kit::{ShapedLine, SharedString};
     use std::rc::Rc;
+
+    #[test]
+    fn uniform_density_minimap_batches_to_one_quad_at_any_document_scale() {
+        for lines in [10_000, 10_000_000] {
+            let document = crate::CodeDocument::new("x\n".repeat(lines - 1) + "x");
+            let density = document.minimap();
+            assert_eq!(
+                super::density_strokes(density, 3.).collect::<Vec<_>>(),
+                [(0, 256, 1. / 120.)]
+            );
+            assert_eq!(super::density_strokes(density, 0.5).count(), 256);
+        }
+    }
 
     #[test]
     fn shape_cache_evicts_by_text_size_as_well_as_entry_count() {
