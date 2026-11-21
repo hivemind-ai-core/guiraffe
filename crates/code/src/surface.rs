@@ -546,23 +546,26 @@ impl CodeHandle {
         let mut blocks = self.shared.block_layout.borrow_mut();
         let previous_annotations = self.shared.annotations.borrow();
         let previous_ids = self.shared.annotation_ids.borrow();
-        let same_payload = |id: &u64| {
+        let same_payload = |old_id: &u64, new_id: &u64| {
             let old = previous_ids
-                .get(id)
+                .get(old_id)
                 .and_then(|&i| previous_annotations.get(i));
             let new = prepared
                 .ids
-                .get(id)
+                .get(new_id)
                 .and_then(|&i| prepared.annotations.get(i));
             matches!((old, new), (Some(old), Some(new)) if old.payload == new.payload)
         };
+        let previous_blocks: BTreeMap<_, _> =
+            blocks.keys.iter().map(|(id, key)| (*key, *id)).collect();
         let mut reused_rows = false;
         // An unrelated decoration update must not jump back to estimated widget heights.
         // The next layout still measures the widgets at their current width.
         for (id, rows) in &mut prepared.block_rows {
-            if blocks.keys.get(id) == prepared.block_keys.get(id)
-                && same_payload(id)
-                && let Some(previous) = blocks.rows.get(id)
+            if let Some(key) = prepared.block_keys.get(id)
+                && let Some(old_id) = previous_blocks.get(key)
+                && same_payload(old_id, id)
+                && let Some(previous) = blocks.rows.get(old_id)
                 && rows != previous
             {
                 *rows = *previous;
@@ -580,7 +583,7 @@ impl CodeHandle {
         self.shared
             .bubbles
             .borrow_mut()
-            .retain(|id, _| same_payload(id));
+            .retain(|id, _| same_payload(id, id));
         drop(previous_ids);
         drop(previous_annotations);
         let text_changed = blocks.rows != prepared.block_rows
@@ -1603,7 +1606,9 @@ impl OverlayLayer {
                 let click = shared.clone();
                 root = root.child(
                     block
-                        .id(("code-block", id as usize))
+                        .id(ElementId::Name(
+                            format!("code-block-{}-{}", key.0, key.1).into(),
+                        ))
                         .on_hover(move |is_hovered, _, cx| {
                             let action = if *is_hovered {
                                 DecorationAction::Hover

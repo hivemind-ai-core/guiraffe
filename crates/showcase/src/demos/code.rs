@@ -733,8 +733,8 @@ fn checkout_decorations(
                     end_bias: AnchorBias::Right,
                 }],
             )?;
-            id += 1;
         }
+        id += 1;
         Ok::<(), guiraffe_code::DecorationError>(())
     };
     let token = |line, needle| span(CHECKOUT, line, needle, 0);
