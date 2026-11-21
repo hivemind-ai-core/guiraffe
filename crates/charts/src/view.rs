@@ -62,9 +62,32 @@ impl Default for ChartOptions {
 struct Frame {
     bounds: Bounds<Pixels>,
     scene: Option<(Domain, Scene)>,
+    previous_scene: Option<(Domain, Scene)>,
     pending: Option<SceneRequest>,
     builds: usize,
     paints: usize,
+}
+
+impl Frame {
+    fn restore_scene(&mut self, requested: Domain) -> bool {
+        if self
+            .previous_scene
+            .as_ref()
+            .is_some_and(|(domain, _)| *domain == requested)
+            && let Some((domain, scene)) = self.previous_scene.take()
+        {
+            self.publish_scene(domain, scene);
+            return true;
+        }
+        false
+    }
+
+    fn publish_scene(&mut self, domain: Domain, scene: Scene) {
+        self.previous_scene = self
+            .scene
+            .replace((domain, scene))
+            .filter(|(_, previous)| previous.cacheable());
+    }
 }
 
 struct SceneRequest(Arc<AtomicBool>);
@@ -86,6 +109,7 @@ struct PlotState {
 impl PlotState {
     fn invalidate(&mut self) {
         self.frame.scene = None;
+        self.frame.previous_scene = None;
         self.frame.pending = None;
     }
 
@@ -103,13 +127,14 @@ impl PlotState {
         {
             return;
         }
+        if self.frame.restore_scene(self.domain) {
+            return;
+        }
         let width = f32::from(bounds.size.width);
         let height = f32::from(bounds.size.height);
         if self.chart.len() < 100_000 {
-            self.frame.scene = Some((
-                self.domain,
-                self.chart.scene(width, height, self.domain, &self.hidden),
-            ));
+            let scene = self.chart.scene(width, height, self.domain, &self.hidden);
+            self.frame.publish_scene(self.domain, scene);
             self.frame.builds += 1;
             return;
         }
@@ -138,7 +163,7 @@ impl PlotState {
                     .is_some_and(|request| Arc::ptr_eq(&request.0, &cancelled))
                 {
                     state.frame.pending = None;
-                    state.frame.scene = Some((domain, scene));
+                    state.frame.publish_scene(domain, scene);
                     state.frame.builds += 1;
                     cx.notify();
                 }
@@ -183,7 +208,7 @@ impl Render for ChartOverlayLayer {
 }
 
 /// Owns persistent chart settings and a child entity for transient pointer state.
-/// Prepare large models on a background executor and publish them through `replace`.
+/// Use `replace_spec` to prepare updates on a background executor.
 pub struct ChartView {
     plot: Rc<RefCell<PlotState>>,
     overlay: Entity<Overlay>,
@@ -234,26 +259,28 @@ impl ChartView {
     /// source. Use `new` when a prepared chart is already available.
     pub fn from_spec(spec: ChartSpec, options: ChartOptions, cx: &mut App) -> Entity<Self> {
         let view = Self::new(spec.preview(), options, cx);
-        view.update(cx, |view, cx| {
-            let cancelled = Arc::new(AtomicBool::new(false));
-            view.preparing = Some(SceneRequest(cancelled.clone()));
-            let executor = cx.background_executor().clone();
-            cx.spawn(async move |view, cx| {
-                let stop = cancelled.clone();
-                let chart = executor
-                    .spawn(
-                        async move { spec.prepare_with_cancel(&|| stop.load(Ordering::Relaxed)) },
-                    )
-                    .await;
-                let _ = view.update(cx, |view, cx| {
-                    if !cancelled.load(Ordering::Relaxed) {
-                        view.replace(chart, cx);
-                    }
-                });
-            })
-            .detach();
-        });
+        view.update(cx, |view, cx| view.replace_spec(spec, cx));
         view
+    }
+
+    /// Prepare a new source snapshot without blocking the UI thread. The view
+    /// keeps its current plot while preparing and cancels superseded batches.
+    pub fn replace_spec(&mut self, spec: ChartSpec, cx: &mut Context<Self>) {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.preparing = Some(SceneRequest(cancelled.clone()));
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |view, cx| {
+            let stop = cancelled.clone();
+            let chart = executor
+                .spawn(async move { spec.prepare_with_cancel(&|| stop.load(Ordering::Relaxed)) })
+                .await;
+            let _ = view.update(cx, |view, cx| {
+                if !cancelled.load(Ordering::Relaxed) {
+                    view.replace(chart, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn replace(&mut self, chart: PreparedChart, cx: &mut Context<Self>) {
@@ -336,6 +363,10 @@ impl ChartView {
     }
 
     fn clear_hover(&self, cx: &mut Context<Self>) {
+        let overlay = self.overlay.read(cx);
+        if overlay.hover.is_none() && overlay.anchor.is_none() {
+            return;
+        }
         self.overlay.update(cx, |overlay, cx| {
             overlay.hover = None;
             overlay.anchor = None;
@@ -353,6 +384,8 @@ impl ChartView {
         if plot.domain == domain {
             return;
         }
+        let full = plot.chart.x_domain();
+        let reset_visibility_changed = (plot.domain == full) != (domain == full);
         plot.domain = domain;
         plot.frame.pending = None;
         drop(plot);
@@ -366,7 +399,9 @@ impl ChartView {
         if brush {
             cx.emit(ChartEvent::Brushed(domain));
         }
-        cx.notify();
+        if reset_visibility_changed {
+            cx.notify();
+        }
     }
 
     fn reset(&mut self, cx: &mut Context<Self>) {
@@ -1005,6 +1040,23 @@ fn constrained_domain(scale: &crate::Scale, full: Domain, requested: Domain) -> 
 mod navigation_tests {
     use super::*;
     use crate::Scale;
+
+    #[test]
+    fn returning_to_recent_domain_reuses_scene() {
+        let first = Domain::UNIT;
+        let second = Domain::new(0.25, 0.75).expect("valid regression fixture");
+        let mut frame = Frame::default();
+        assert!(!frame.restore_scene(first));
+        frame.publish_scene(first, Scene { panels: Vec::new() });
+        frame.publish_scene(second, Scene { panels: Vec::new() });
+        assert!(frame.restore_scene(first));
+        assert_eq!(frame.scene.as_ref().map(|(domain, _)| *domain), Some(first));
+        assert!(frame.restore_scene(second));
+        assert_eq!(
+            frame.scene.as_ref().map(|(domain, _)| *domain),
+            Some(second)
+        );
+    }
 
     #[test]
     fn viewport_has_bounded_pan_and_zoom() {
