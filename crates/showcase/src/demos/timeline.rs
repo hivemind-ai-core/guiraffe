@@ -609,56 +609,6 @@ fn bars(_: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui_kit::{
-        Focusable, TestAppContext,
-        test::{TestQueryExt, TestWindowExt},
-    };
-
-    struct GanttDemo(Entity<EditOptions<GanttView>>);
-
-    impl Render for GanttDemo {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().size_full().child(self.0.clone())
-        }
-    }
-
-    #[gpui_kit::test]
-    fn gantt_bar_click_and_live_grid_knob_control_arrow_step(cx: &mut TestAppContext) {
-        cx.update(crate::init);
-        let options = cx.update(gantt_options);
-        let (_, window) = cx.add_window_view(|_, _| GanttDemo(options.clone()));
-        window.update(|w, cx| w.render_frame(cx));
-        let gantt = options.read_with(window, |opts, _| opts.view.clone());
-        let start = |window: &mut gpui_kit::VisualTestContext| {
-            gantt.read_with(window, |view, _| {
-                view.schedule().as_ref().expect("schedule")[&1].early_start
-            })
-        };
-        let before = start(window);
-        window.update(|w, cx| {
-            w.click(("gantt-bar", 0usize), cx);
-            assert!(gantt.read(cx).focus_handle(cx).is_focused(w));
-            w.press("right", cx);
-        });
-        assert_eq!(start(window), before + DAY);
-        let week = window.update(|w, _| w.find_by_label("1 week").bounds().center());
-        window.simulate_click(week, Default::default());
-        assert_eq!(
-            options.read_with(window, |opts, cx| opts.grid.read(cx).selected()),
-            1
-        );
-        window.update(|w, cx| {
-            w.render_frame(cx);
-            w.click(("gantt-bar", 0usize), cx);
-            w.press("right", cx);
-        });
-        assert_eq!(start(window), before + 8. * DAY);
-    }
-}
-
 struct EventHistory(Entity<EventTimelineState>, Entity<EventTimelineState>);
 
 impl Render for EventHistory {
@@ -827,4 +777,54 @@ fn concurrent_processes(_: &mut Window, cx: &mut App) -> AnyView {
         ],
         cx,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{
+        Focusable, TestAppContext,
+        test::{TestQueryExt, TestWindowExt},
+    };
+
+    struct GanttDemo(Entity<EditOptions<GanttView>>);
+
+    impl Render for GanttDemo {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+
+    #[gpui_kit::test]
+    fn gantt_bar_click_and_live_grid_knob_control_arrow_step(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let options = cx.update(gantt_options);
+        let (_, window) = cx.add_window_view(|_, _| GanttDemo(options.clone()));
+        window.update(|w, cx| w.render_frame(cx));
+        let gantt = options.read_with(window, |opts, _| opts.view.clone());
+        let start = |window: &mut gpui_kit::VisualTestContext| {
+            gantt.read_with(window, |view, _| {
+                view.schedule().as_ref().expect("schedule")[&1].early_start
+            })
+        };
+        let before = start(window);
+        window.update(|w, cx| {
+            w.click(("gantt-bar", 0usize), cx);
+            assert!(gantt.read(cx).focus_handle(cx).is_focused(w));
+            w.press("right", cx);
+        });
+        assert_eq!(start(window), before + DAY);
+        let week = window.update(|w, _| w.find_by_label("1 week").bounds().center());
+        window.simulate_click(week, Default::default());
+        assert_eq!(
+            options.read_with(window, |opts, cx| opts.grid.read(cx).selected()),
+            1
+        );
+        window.update(|w, cx| {
+            w.render_frame(cx);
+            w.click(("gantt-bar", 0usize), cx);
+            w.press("right", cx);
+        });
+        assert_eq!(start(window), before + 8. * DAY);
+    }
 }
