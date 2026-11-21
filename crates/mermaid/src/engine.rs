@@ -402,9 +402,7 @@ impl Engine {
         let width = dims.width.min(request.display_width.max(100.0));
         let height = width * dims.height / dims.width;
         let scale = width / dims.width;
-        let pixels = zoom_raster_size(width, height, request.zoom, request.density);
-        if request.theme.font_size * pixels.0 as f32 / dims.width < 1.0
-            && let Some(node) = layout.nodes.values().find(|node| !node.hidden)
+        if let Some(node) = layout.nodes.values().find(|node| !node.hidden)
             && let Some(overview) = Overview::new(layout, &dims, &request.theme)
         {
             return Ok(StagedPreview::Native {
@@ -606,27 +604,49 @@ mod tests {
     }
 
     #[test]
-    fn subpixel_plain_flowchart_preview_skips_svg_rasterization() {
-        let source = "flowchart LR\n  A[Start] --> B[Done]";
+    fn styled_grouped_flowchart_preview_skips_svg_rasterization() {
+        let source = "flowchart LR\n  subgraph Group\n  A{Start} ==>|thick| B[Done]\n  end\n  B -.-> C\n  C -- text --- A\n  style A fill:#123456,stroke:#654321";
         let request = request(source);
         let config = LayoutConfig::default();
         let parsed = parse_mermaid_strict(source).expect("flowchart");
         let mut layout = compute_layout(&parsed.graph, &request.theme, &config);
         // Wide previews can contain multi-segment paths such as self-loops.
         layout.edges[0].points = vec![(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 0.0)];
-        layout.width = 38_000.0;
         let mut engine = engine();
         let preview = engine.preview(&request, &layout, &config).expect("preview");
         assert!(matches!(preview, StagedPreview::Native { .. }));
         assert_eq!(engine.rasterizations(), 0);
         assert!(engine.is_empty());
+    }
 
-        let first = layout.nodes.values_mut().next().expect("node");
-        first.shape = mermaid_rs_renderer::ir::NodeShape::Diamond;
-        let preview = engine.preview(&request, &layout, &config).expect("preview");
-        assert!(matches!(preview, StagedPreview::Raster(_)));
-        assert_eq!(engine.rasterizations(), 1);
-        assert!(engine.is_empty());
+    #[test]
+    fn native_preview_preserves_the_refined_svg() {
+        use std::fmt::Write as _;
+
+        let mut source = String::from(
+            "flowchart TD\nsubgraph Group\nA{Start} ==>|thick| B\nend\nB -.-> C\nstyle A fill:#123456\n",
+        );
+        for node in 0..256 {
+            writeln!(source, "C --> n{node}[Node {node}]").expect("write edge");
+        }
+        let request = request(&source);
+        let expected = draw(&source, &request.theme).expect("unstaged drawing");
+        let mut engine = engine();
+        let mut native = 0;
+        let refined = engine
+            .render_staged(&request, &AtomicBool::new(false), |frame| {
+                assert!(matches!(frame, StagedPreview::Native { .. }));
+                native += 1;
+            })
+            .expect("staged drawing")
+            .expect("refined image");
+        assert_eq!(native, 1);
+        assert_eq!(
+            engine.rasterizations(),
+            1,
+            "only the refined image is rasterized"
+        );
+        assert_eq!(refined.image.svg, expected.svg);
     }
 
     #[test]
@@ -654,7 +674,7 @@ mod tests {
         assert_eq!(previews, 1);
         assert!(result.is_none());
         assert!(engine.is_empty());
-        assert_eq!(engine.rasterizations(), 1);
+        assert_eq!(engine.rasterizations(), 0);
     }
 
     #[test]

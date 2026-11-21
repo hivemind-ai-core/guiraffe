@@ -524,9 +524,9 @@ impl MermaidViewState {
                     diagram = diagram.child(
                         canvas(
                             |_, _, _| {},
-                            move |bounds, (), window, _| {
+                            move |bounds, (), window, cx| {
                                 if let Some(overview) = overview {
-                                    overview.paint(bounds, window);
+                                    overview.paint(bounds, window, cx);
                                 }
                                 let _ = painted.try_send(());
                             },
