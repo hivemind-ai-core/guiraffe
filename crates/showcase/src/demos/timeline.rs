@@ -666,11 +666,11 @@ impl Render for EventHistory {
         column([
             example(
                 "Vertical",
-                div().h(px(365.)).child(EventTimeline::new(&self.0)),
+                div().h(px(286.)).child(EventTimeline::new(&self.0)),
             ),
             example(
                 "Horizontal",
-                div().h(px(280.)).child(EventTimeline::new(&self.1)),
+                div().h(px(166.)).child(EventTimeline::new(&self.1)),
             ),
         ])
     }
@@ -723,7 +723,7 @@ fn history(
                 source,
                 destination,
                 kind,
-                color: None,
+                color: (kind == LinkKind::Merge && destination == 5).then_some(ColorName::Violet),
             })
             .collect();
         EventModel::new(tracks, events, links)
@@ -731,7 +731,11 @@ fn history(
     let (Ok(vertical), Ok(horizontal)) = (make_model(), make_model()) else {
         return cx.new(|_| InvalidHistory).into();
     };
-    let vertical = cx.new(|cx| EventTimelineState::new(vertical, cx).focusable(true));
+    let vertical = cx.new(|cx| {
+        EventTimelineState::new(vertical, cx)
+            .size(Size::Sm)
+            .focusable(true)
+    });
     let horizontal = cx.new(|cx| {
         EventTimelineState::new(horizontal, cx)
             .orientation(EventOrientation::Horizontal)
