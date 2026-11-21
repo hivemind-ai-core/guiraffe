@@ -152,7 +152,9 @@ impl ChatState {
             if let Some(old) = self.last_user.and_then(|id| self.messages.get(&id)) {
                 old.update(cx, |row, cx| {
                     row.editable = false;
-                    cx.notify();
+                    if row.markdown.is_some() {
+                        cx.notify();
+                    }
                 });
             }
             self.last_user = Some(id);
@@ -164,9 +166,6 @@ impl ChatState {
             index: h.rows.len(),
         };
         let row = cx.new(|cx| message::MessageView::new(data, owner, animate, layout, cx));
-        if user {
-            row.update(cx, |row, _| row.editable = true);
-        }
         self.messages.insert(id, row.clone());
         self.history.update(cx, |history, cx| history.push(row, cx));
         true
@@ -185,7 +184,10 @@ impl ChatState {
                     return Vec::new();
                 };
                 let removed = history.rows.split_off(index + 1);
-                history.list.splice(index + 1..index + 1 + removed.len(), 0);
+                let listed = history.list.item_count();
+                if index + 1 < listed {
+                    history.list.splice(index + 1..listed, 0);
+                }
                 cx.notify();
                 removed
             });
@@ -277,11 +279,7 @@ impl ChatState {
             }
         });
         let row = self.messages[&id].clone();
-        let history = self.history.clone();
-        let (list, index) = {
-            let h = history.read(cx);
-            (h.list.clone(), h.rows.len() - 1)
-        };
+        let layout = row.read(cx).layout.clone();
         self.stream_task = Some(cx.spawn(async move |chat, cx| {
             loop {
                 cx.background_executor()
@@ -294,7 +292,7 @@ impl ChatState {
                 if !delta.is_empty() {
                     cx.update(|cx| {
                         row.update(cx, |row, cx| row.append(&delta, cx));
-                        list.remeasure_items(index..index + 1);
+                        layout.changed();
                     });
                 }
                 if consumer.is_finished() {
@@ -357,7 +355,7 @@ impl ChatState {
             return true;
         }
         row.update(cx, |row, cx| row.set_tool(tool, cx));
-        self.history.read(cx).list.remeasure();
+        row.read(cx).layout.changed();
         true
     }
     pub(crate) fn request_retry(&mut self, id: MessageId, cx: &mut Context<Self>) {

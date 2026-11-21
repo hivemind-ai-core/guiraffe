@@ -252,16 +252,35 @@ fn long_variable_history_virtualizes_and_jump_restores_tail(cx: &mut TestAppCont
                     cx,
                 );
             }
-        })
+            let history = chat.history.read(cx);
+            assert_eq!(
+                history.list.item_count(),
+                0,
+                "list inserts are batched until layout"
+            );
+            assert!(
+                history
+                    .rows
+                    .iter()
+                    .all(|row| row.read(cx).markdown.is_none())
+            );
+        });
     });
     draw(cx, handle);
     cx.update(|cx| {
         let h = chat.read(cx).history.read(cx);
+        assert_eq!(h.list.item_count(), 500);
         let rendered = h
             .rows
             .iter()
             .filter(|r| r.read(cx).renders.get() > 0)
             .count();
+        let parsed = h
+            .rows
+            .iter()
+            .filter(|row| row.read(cx).markdown.is_some())
+            .count();
+        assert_eq!(parsed, rendered);
         assert!(rendered < 40, "virtualized rows: {rendered}");
         assert!(rendered > 0);
         assert!(h.list.is_following_tail());
