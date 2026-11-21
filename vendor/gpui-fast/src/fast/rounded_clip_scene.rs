@@ -20,6 +20,41 @@ use crate::{
 const CLIP_TEXTURE_BASE: u32 = 0xF100_0000;
 const GEOMETRY_KEY: LayerKey = LayerKey(u32::MAX);
 
+/// Keep the compiled result when the complete previous paint stream was
+/// replayed in the same window and no additional operations were appended.
+pub(crate) fn reuse_full_replay(scene: &mut Scene, previous: &mut Scene) -> bool {
+    if !scene.fast_rounded_clip.replayed_full_frame
+        || !previous.fast_rounded_clip.compiled
+        || scene.len() != previous.len()
+    {
+        return false;
+    }
+    let mut existing = previous
+        .layers
+        .frames
+        .iter()
+        .filter(|frame| frame.tile_size != 0);
+    for current in &scene.layers.frames {
+        let Some(old) = existing.next() else {
+            return false;
+        };
+        if current.key != old.key
+            || current.generation != old.generation
+            || current.background != old.background
+            || current.tile_size != old.tile_size
+            || !current.content.ptr_eq(&old.content)
+            || current.dirty_tiles != old.dirty_tiles
+        {
+            return false;
+        }
+    }
+    if existing.next().is_some() {
+        return false;
+    }
+    mem::swap(scene, previous);
+    true
+}
+
 /// Materialize private paint scopes as existing, renderer-readable layer
 /// objects. Preserve the original operation stream for retained paint ranges.
 pub(crate) fn compile(scene: &mut Scene) {

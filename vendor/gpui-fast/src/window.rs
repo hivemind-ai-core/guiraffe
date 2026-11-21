@@ -1223,7 +1223,12 @@ impl Frame {
             }
         }
 
-        self.scene.finish();
+        if !crate::fast::rounded_clip_scene::reuse_full_replay(
+            &mut self.scene,
+            &mut prev_frame.scene,
+        ) {
+            self.scene.finish();
+        }
     }
 }
 
@@ -4410,10 +4415,18 @@ impl Window {
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
-            range.start.scene_index..range.end.scene_index,
-            &self.rendered_frame.scene,
-        );
+        let scene = &mut self.next_frame.scene;
+        let previous = &self.rendered_frame.scene;
+        let operations = range.start.scene_index..range.end.scene_index;
+        let full_replay = previous.fast_rounded_clip.compiled
+            && operations.start == 0
+            && operations.end == previous.len()
+            && scene.len() == 0
+            && scene.layers.frames.is_empty();
+        scene.replay(operations, previous);
+        if full_replay {
+            scene.fast_rounded_clip.replayed_full_frame = true;
+        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.

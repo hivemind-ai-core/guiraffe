@@ -145,3 +145,17 @@ GDB traced the fast backend's 48-byte requests to the context clone in
 `fast::dispatch::copy_nodes`. The five fixtures without rounded-clip
 compilation went from one or two requests to zero. Upstream cloned the same
 entries twice through `DispatchTree::move_node` and `set_key_context`.
+
+## Reuse compiled gpui-fast rounded clip groups on complete replay
+
+A replay that starts with an empty scene and copies the entire preceding
+frame records its source range. At finish, the operation count must still
+match and the tile layers must have matching keys, revisions, content
+identities, and dirty metadata. Transfer the preceding compiled scene in
+that case. The raw scene remains the scratch for the next replay, including
+its bounds-tree capacity. Changed or partial replays compile as before.
+
+This adds no third retained scene. A targeted regression checks that a
+complete replay retains the compiled groups and that an appended operation
+rejects reuse. The mounted Markdown fixture went from 91 requests and
+410,760 requested bytes to zero with this change and shared key contexts.
