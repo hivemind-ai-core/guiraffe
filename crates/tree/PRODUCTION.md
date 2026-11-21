@@ -81,3 +81,9 @@ Five forced whole-window redraws requested 879 allocations and 357,987
 bytes each for TreeList (previously 894 and 357,995). The legacy 110k
 PropertyGrid probe requested 1,279 allocations and 576,768 bytes each
 (previously 1,294 and 576,768).
+
+A 1,024-frame thread-CPU probe with 64 frames excluded for warm-up
+measured TreeList at 2.07 ms p99 / 2.93 ms max and PropertyGrid at
+4.19 ms p99 / 5.00 ms max. The corresponding loaded wall p99 was
+29.49 ms and 31.72 ms. Quiet-window wall timing remains the acceptance
+measurement.

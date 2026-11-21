@@ -103,3 +103,9 @@ and 30-minute drift remain open.
 
 The five forced whole-window redraws each retained the prior count of
 224 allocations and 86,633 requested bytes.
+
+A real headless window drew the pending preview in 123 ms with the
+window renderer warmed. Starting a cold renderer and window in the
+same timed interval took 637 ms. A 1,024-frame thread-CPU probe with
+64 frames excluded for warm-up measured 1.70 ms p99 and 2.15 ms max
+on the UI thread. The loaded wall p99 in that probe was 13.09 ms.
