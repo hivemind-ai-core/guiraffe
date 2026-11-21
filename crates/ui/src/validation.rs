@@ -543,12 +543,13 @@ impl Validation<'_> {
                     let schema = crate::widget_spec::disclosure_item_schema();
                     items.iter().all(|item| matches_data_schema(item, &schema))
                 }),
-                "spotlight-commands" => got.as_array().is_some_and(|commands| {
-                    let schema = crate::widget_spec::spotlight_command_schema();
-                    commands
+                "spotlight-actions" => got.as_array().is_some_and(|actions| {
+                    let schema = crate::widget_spec::spotlight_action_schema();
+                    actions
                         .iter()
-                        .all(|command| matches_data_schema(command, &schema))
+                        .all(|action| matches_data_schema(action, &schema))
                 }),
+                "spotlight-labels" => matches_data_schema(got, &prop.schema()),
                 "menu-commands" => got.as_array().is_some_and(|commands| {
                     let schema = crate::widget_spec::menu_command_schema();
                     commands.iter().all(|command| {

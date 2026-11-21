@@ -79,6 +79,12 @@ pub static PROPERTY_GRID: WidgetSpec = WidgetSpec {
             ..prop("split-ratio", "number", "null")
         },
         prop("persist-key", "string", "null"),
+        prop("focus-row", "boolean", "true"),
+        prop("reset-button", "boolean", "true"),
+        PropSpec {
+            accepted: &["hidden", "icons", "labels"],
+            ..prop("edit-buttons", "string", "\"hidden\"")
+        },
     ],
     accepts_children: false,
     events: &[

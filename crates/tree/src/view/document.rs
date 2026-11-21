@@ -12,7 +12,7 @@ use guiraffe_core::{
     widget_value::Value as Data,
 };
 
-use super::{RowDensity, RowStyle, TreeEvent, TreeView};
+use super::{EditButtons, RowDensity, RowStyle, TreeEvent, TreeView};
 use crate::{
     Children, NodeId, Property, PropertyOptions, TreeData, TreeSource, Value, widget_specs,
 };
@@ -217,6 +217,7 @@ impl TreeData for DocumentRows {
             advanced: field(source, "advanced").as_bool().unwrap_or_default(),
             multiline_rows: unsigned(field(source, "multilineRows"))
                 .map(|rows| rows.clamp(1, 8) as usize),
+            reset_button: field(source, "resetButton").as_bool(),
         }
     }
 
@@ -239,11 +240,20 @@ struct InspectorOptions {
     persist_key: Option<String>,
 }
 
+/// Property grid editing options, applied through the view's runtime setters.
+#[derive(Clone, Copy, PartialEq)]
+struct EditOptions {
+    focus_row: bool,
+    reset_button: bool,
+    edit_buttons: EditButtons,
+}
+
 #[derive(IntoElement)]
 struct DocumentTree<const P: bool> {
     key: ElementId,
     rows: Data,
     row_style: RowStyle,
+    editing: EditOptions,
     expanded: Option<BTreeSet<NodeId>>,
     focusable: bool,
     inspector: InspectorOptions,
@@ -277,6 +287,16 @@ impl<const P: bool> DocumentTree<P> {
                 searchable: flag(9),
                 split_ratio: node.prop(10).as_f64().map(|v| v as f32),
                 persist_key: node.prop(11).as_str().map(str::to_owned),
+            },
+            // Only the property grid declares these; unset values keep the Rust defaults.
+            editing: EditOptions {
+                focus_row: node.prop(12).as_bool().unwrap_or(true),
+                reset_button: node.prop(13).as_bool().unwrap_or(true),
+                edit_buttons: match node.prop(14).as_str() {
+                    Some("icons") => EditButtons::Icons,
+                    Some("labels") => EditButtons::Labels,
+                    _ => EditButtons::Hidden,
+                },
             },
             handlers: std::array::from_fn(|index| node.handler(index)),
         }
@@ -418,6 +438,9 @@ impl<const P: bool> RenderOnce for DocumentTree<P> {
                 if tree.row_style != self.row_style {
                     tree.set_row_style(self.row_style, cx);
                 }
+                tree.set_focus_row(self.editing.focus_row, cx);
+                tree.set_reset_button(self.editing.reset_button, cx);
+                tree.set_edit_buttons(self.editing.edit_buttons, cx);
                 if let Some(expanded) = &self.expanded {
                     for id in state.source.nodes.keys().copied() {
                         let open = expanded.contains(&id);

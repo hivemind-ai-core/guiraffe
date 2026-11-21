@@ -147,22 +147,45 @@ pub static FLOATING_TOOLTIP: WidgetSpec = WidgetSpec {
 pub static SPOTLIGHT: WidgetSpec = WidgetSpec {
     id: "spotlight",
     krate: "overlays",
-    summary: "Search and select commands from a document-provided list.",
-    props: &[PropSpec {
-        name: "commands",
-        type_name: "spotlight-commands",
-        default_json: "[]",
-        accepted: &[],
-        range: None,
-        required: false,
-        token_backed: false,
-    }],
+    summary: "Keyboard-first command bar embedded inline: grouped, searchable actions with pinned and recent sections.",
+    props: &[
+        service_property("actions", "spotlight-actions", "[]"),
+        service_property("pinned", "array", "[]"),
+        service_property("recents", "array", "[]"),
+        PropSpec {
+            range: Some((0.0, 1000.0)),
+            ..service_property("recent-limit", "integer", "5")
+        },
+        service_property("limit", "integer", "null"),
+        service_property("placeholder", "string", "\"Search commands…\""),
+        service_property("labels", "spotlight-labels", "{}"),
+        service_property("loading", "boolean", "false"),
+        service_property("query", "string", "null"),
+        PropSpec {
+            range: Some((1.0, 4096.0)),
+            ..service_property("width", "number", "null")
+        },
+        PropSpec {
+            range: Some((1.0, 4096.0)),
+            ..service_property("max-list-height", "number", "null")
+        },
+    ],
     accepts_children: false,
-    events: &[EventSpec {
-        id: "select",
-        payload_type: "string",
-    }],
-    state: "keyed search input and result selection",
+    events: &[
+        EventSpec {
+            id: "activate",
+            payload_type: "string",
+        },
+        EventSpec {
+            id: "selection-change",
+            payload_type: "selection",
+        },
+        EventSpec {
+            id: "query-change",
+            payload_type: "string",
+        },
+    ],
+    state: "keyed search query, selection and recents; document values apply when they change",
     theme_tokens: &["surfaces.hover", "control_size"],
     a11y_role: "combobox",
 };

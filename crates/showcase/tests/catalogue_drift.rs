@@ -80,7 +80,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "overlays::Affix" => "affix",
         "overlays::FloatingTooltip" | "overlays::FloatingOptions" => "floating-tooltip",
         "overlays::LoadingOverlay" => "loading-overlay",
-        "overlays::Spotlight" => "spotlight",
+        "overlays::Spotlight" | "overlays::SpotlightState" => "spotlight",
         "tree::TreeView" | "tree::PropertyGrid" | "tree::RowStyle" | "tree::PropertyOptions" => {
             "property-grid"
         }
@@ -169,8 +169,52 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Imperative clipboard write. Documents use the native action and copy event.",
     ),
     (
-        "overlays::Spotlight::open",
-        "Opens a palette in the host window's overlay stack. The document mounts the search control inline and can bind its visibility.",
+        "overlays::SpotlightState::open",
+        "Opens the palette in the host window's overlay stack with focus restore. Documents mount the same panel inline.",
+    ),
+    (
+        "overlays::SpotlightState::close",
+        "Closes the window overlay opened from Rust. The inline document panel has no overlay to close.",
+    ),
+    (
+        "overlays::SpotlightState::toggle",
+        "Toggles the window overlay opened from Rust. The inline document panel has no overlay to toggle.",
+    ),
+    (
+        "overlays::SpotlightState::is_open",
+        "Read-only overlay state for Rust hosts.",
+    ),
+    (
+        "overlays::SpotlightState::transition",
+        "Overlay open/close animation. The inline document panel does not animate in.",
+    ),
+    (
+        "overlays::SpotlightState::event Opened",
+        "Overlay lifecycle event; the inline document panel is never opened as an overlay.",
+    ),
+    (
+        "overlays::SpotlightState::event Closed",
+        "Overlay lifecycle event; the inline document panel is never opened as an overlay.",
+    ),
+    (
+        "overlays::SpotlightState::filter",
+        "Takes a native ranking closure. Documents use the built-in fuzzy filter.",
+    ),
+    (
+        "overlays::SpotlightState::load",
+        "Takes a native future. Documents supply actions and loading directly.",
+    ),
+    (
+        "overlays::SpotlightState::input",
+        "Native InputState handle for Rust focus management.",
+    ),
+    (
+        "overlays::SpotlightState::model",
+        "Read-only access to the pure row model for Rust tests and hosts.",
+    ),
+    (
+        "overlays::SpotlightState::selected_action",
+        "Read-only query. Documents receive selection-change.",
     ),
     (
         "core::TextMenuLayer",
@@ -875,6 +919,8 @@ fn covered(surface: &str) -> bool {
             ("chat::ChatState", "Stopped") => "stop",
             ("chat::ChatState", "AttachmentRequested") => "attachment-request",
             ("chat::ChatState", "Finished") => "finish",
+            ("overlays::SpotlightState", "Activated") => "activate",
+            ("overlays::SpotlightState", "QueryChanged") => "query-change",
             ("datagrid::GridEvents", "SortChanged") => "sort-change",
             ("datagrid::GridEvents", "CellEdited") => "cell-edit",
             ("datagrid::GridEvents", "EditCancelled") => "edit-cancel",
@@ -926,10 +972,10 @@ fn covered(surface: &str) -> bool {
                 .is_some_and(|prop| prop.schema()["properties"].get(name).is_some());
         }
         if owner == "tree::PropertyOptions" {
-            let name = if field == "multiline_rows" {
-                "multilineRows"
-            } else {
-                field
+            let name = match field {
+                "multiline_rows" => "multilineRows",
+                "reset_button" => "resetButton",
+                _ => field,
             };
             return spec
                 .props
@@ -1083,6 +1129,8 @@ fn covered(surface: &str) -> bool {
                 ("layout::Space", "w") => "width".into(),
                 ("overlays::FloatingTooltip", "options") => "side".into(),
                 ("tree::TreeView", "inspector_controls") => "searchable".into(),
+                ("overlays::SpotlightState", "group") => "actions".into(),
+                ("overlays::SpotlightState", "recent_ids") => "recents".into(),
                 ("tree::TreeView", "row_style" | "set_row_style") => "density".into(),
                 ("tree::TreeView", "row_heights" | "set_row_heights" | "replace_source") => {
                     "nodes".into()

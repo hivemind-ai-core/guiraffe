@@ -57,7 +57,7 @@ impl PropSpec {
     pub fn accepts_record(&self) -> bool {
         matches!(
             self.type_name,
-            "object" | "flow-graph" | "dock-state" | "flow-layout"
+            "object" | "flow-graph" | "dock-state" | "flow-layout" | "spotlight-labels"
         )
     }
 
@@ -95,7 +95,7 @@ impl PropSpec {
             | "curve-series"
             | "activity-items"
             | "disclosure-items"
-            | "spotlight-commands"
+            | "spotlight-actions"
             | "menu-commands"
             | "step-items"
             | "splitter-sizes"
@@ -115,6 +115,7 @@ impl PropSpec {
             "dock-state" => dock_state_schema(),
             "iso-time" => json!({"type":"string","pattern":ISO_TIME}),
             "iso-date" => json!({"type":"string","pattern":ISO_DATE}),
+            "spotlight-labels" => spotlight_labels_schema(),
             _ => json!({"type": ty}),
         };
         if !self.accepted.is_empty() && ty == "string" {
@@ -151,7 +152,7 @@ impl PropSpec {
             "curve-series" => schema["items"] = curve_series_schema(),
             "activity-items" => schema["items"] = activity_item_schema(),
             "disclosure-items" => schema["items"] = disclosure_item_schema(),
-            "spotlight-commands" => schema["items"] = spotlight_command_schema(),
+            "spotlight-actions" => schema["items"] = spotlight_action_schema(),
             "menu-commands" => schema["items"] = menu_command_schema(),
             "step-items" => schema["items"] = step_item_schema(),
             "splitter-sizes" => schema["items"] = splitter_size_schema(),
@@ -588,7 +589,8 @@ pub fn tree_node_schema() -> Value {
                     "step":{"type":"number","minimum":0},
                     "mixed":{"type":"boolean"},
                     "advanced":{"type":"boolean"},
-                    "multilineRows":{"type":"integer","minimum":1,"maximum":8}
+                    "multilineRows":{"type":"integer","minimum":1,"maximum":8},
+                    "resetButton":{"type":"boolean"}
                 }
             }
         }
@@ -1116,12 +1118,29 @@ pub fn disclosure_item_schema() -> Value {
     })
 }
 
-pub fn spotlight_command_schema() -> Value {
+/// One Spotlight action. `icon` names a bundled icon by asset path (`icons/file-plus.svg`)
+/// or file stem (`file-plus`); `shortcut` is a display label such as `Ctrl+Shift+P`.
+pub fn spotlight_action_schema() -> Value {
     json!({
-        "type":"object","additionalProperties":false,"required":["id","label"],
+        "type":"object","additionalProperties":false,"required":["id","title"],
         "properties":{
-            "id":{"type":"string"},"label":{"type":"string"},
-            "keywords":{"type":"string"},"disabled":{"type":"boolean"}
+            "id":{"type":"string"},"title":{"type":"string"},
+            "description":{"type":"string"},"group":{"type":"string"},
+            "keywords":{"type":"string"},"icon":{"type":"string"},
+            "shortcut":{"type":"string"},"disabled":{"type":"boolean"}
+        }
+    })
+}
+
+/// Localizable Spotlight strings; omitted fields keep the built-in English text. The search
+/// placeholder is the separate `placeholder` property.
+pub fn spotlight_labels_schema() -> Value {
+    let text = json!({"type":"string"});
+    json!({
+        "type":"object","additionalProperties":false,
+        "properties":{
+            "pinned":text,"recent":text,"emptyTitle":text,"emptyDescription":text,
+            "noResultsTitle":text,"noResultsDescription":text,"loading":text,"name":text
         }
     })
 }

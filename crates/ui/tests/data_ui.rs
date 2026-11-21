@@ -737,7 +737,8 @@ fn tree_documents_validate_and_render_property_grid_and_tree_list(cx: &mut TestA
     let nodes = serde_json::json!([
         {"id":11,"label":"Group","height":40},
         {"id":12,"depth":1,"label":"Width","checked":true,"badge":"Px","icon":"#",
-         "property":{"type":"number","value":24,"default":16,"min":1,"max":100,"step":1,"units":"px"}}
+         "property":{"type":"number","value":24,"default":16,"min":1,"max":100,"step":1,"units":"px",
+                     "resetButton":true}}
     ]);
     let doc = Document::new(
         Node::new("group")
@@ -760,6 +761,9 @@ fn tree_documents_validate_and_render_property_grid_and_tree_list(cx: &mut TestA
                     .prop("searchable", true)
                     .prop("split-ratio", 0.55)
                     .prop("persist-key", "properties")
+                    .prop("focus-row", false)
+                    .prop("reset-button", false)
+                    .prop("edit-buttons", "labels")
                     .on("edit", "property-edited"),
             ),
     );
@@ -1904,22 +1908,37 @@ fn ui_macro_accepts_native_disclosure_controls() {
 }
 
 #[gpui_kit::test]
-fn spotlight_document_selects_a_native_search_result(cx: &mut TestAppContext) {
+fn spotlight_document_activates_a_native_search_result(cx: &mut TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     use std::{cell::RefCell, rc::Rc};
 
+    #[derive(Default)]
+    struct Seen {
+        activated: Vec<Value>,
+        selections: Vec<Value>,
+        queries: Vec<Value>,
+    }
     struct SearchLogic {
-        selected: Option<EventId>,
-        result: Rc<RefCell<Option<Value>>>,
+        events: [Option<EventId>; 3],
+        seen: Rc<RefCell<Seen>>,
     }
     impl Logic for SearchLogic {
         fn bind(&mut self, names: &Names, _: &mut PatchBuf) {
-            self.selected = names.event("run-command");
+            self.events = [
+                names.event("run-command"),
+                names.event("highlight"),
+                names.event("search"),
+            ];
         }
         fn on_event(&mut self, event: EventId, payload: &Value, _: &mut PatchBuf) {
-            if Some(event) == self.selected {
-                self.result.replace(Some(payload.clone()));
-            }
+            let mut seen = self.seen.borrow_mut();
+            let list = match self.events.iter().position(|id| *id == Some(event)) {
+                Some(0) => &mut seen.activated,
+                Some(1) => &mut seen.selections,
+                Some(2) => &mut seen.queries,
+                _ => return,
+            };
+            list.push(payload.clone());
         }
     }
 
@@ -1927,17 +1946,34 @@ fn spotlight_document_selects_a_native_search_result(cx: &mut TestAppContext) {
     let doc = Document::new(
         Node::new("spotlight")
             .prop(
-                "commands",
+                "actions",
                 serde_json::json!([
-                    {"id":"validate","label":"Validate screen","keywords":"check linter"},
-                    {"id":"publish","label":"Publish screen","disabled":true}
+                    {"id":"validate","title":"Validate screen","keywords":"check linter",
+                     "group":"Screen","description":"Run the linter","shortcut":"Ctrl+Shift+V",
+                     "icon":"check"},
+                    {"id":"publish","title":"Publish screen","group":"Screen","disabled":true},
+                    {"id":"open","title":"Open file","icon":"icons/folder-open.svg"}
                 ]),
             )
-            .on("select", "run-command"),
+            .prop("pinned", serde_json::json!(["open"]))
+            .prop("recents", serde_json::json!([]))
+            .prop("recent-limit", 3)
+            .prop("limit", 20)
+            .prop("placeholder", "Find a command")
+            .prop(
+                "labels",
+                serde_json::json!({"pinned":"Favourites","noResultsTitle":"Nothing"}),
+            )
+            .prop("loading", false)
+            .prop("width", 480)
+            .prop("max-list-height", 320)
+            .on("activate", "run-command")
+            .on("selection-change", "highlight")
+            .on("query-change", "search"),
     );
     let issues = validation::Validation::default().check(&doc);
     assert!(issues.is_empty(), "{issues:?}");
-    let result = Rc::default();
+    let seen = Rc::default();
     let (_, window) = cx.add_window_view(|_, cx| {
         let registry = Arc::new(Registry::for_app(cx));
         let template = Arc::new(Template::compile(&doc, &registry).expect("command search"));
@@ -1951,34 +1987,52 @@ fn spotlight_document_selects_a_native_search_result(cx: &mut TestAppContext) {
                 template,
                 registry,
                 SearchLogic {
-                    selected: None,
-                    result: Rc::clone(&result),
+                    events: [None; 3],
+                    seen: Rc::clone(&seen),
                 },
                 cx,
             ),
         }
     });
     window.run_until_parked();
-    window.update(|window, cx| window.click(("command", 0usize), cx));
+    // Rows: "Favourites" header, Open file, "Screen" header, Validate, Publish (disabled).
+    window.update(|window, cx| {
+        assert!(window.find(("spotlight-row", 1usize)).visible());
+        window.click(("spotlight-row", 4usize), cx);
+    });
     window.run_until_parked();
-    assert_eq!(*result.borrow(), Some("validate".into()));
+    assert!(
+        seen.borrow().activated.is_empty(),
+        "a disabled action never runs"
+    );
+    window.update(|window, cx| window.click(("spotlight-row", 3usize), cx));
+    window.run_until_parked();
+    assert_eq!(seen.borrow().activated, [Value::from("validate")]);
+    assert!(
+        seen.borrow().selections.contains(&Value::from("validate")),
+        "{:?}",
+        seen.borrow().selections
+    );
+    // The palette keeps its own recents across document renders: Validate moves under
+    // "Recent", so a third section header appears.
+    window.update(|window, _| {
+        assert!(window.find(("spotlight-group", 2usize)).visible());
+    });
 }
 
 #[test]
 fn ui_macro_accepts_the_native_spotlight_entity() {
     use gpui_kit::{AppContext, Context, Window};
-    use guiraffe_overlays::{Spotlight, search::Command};
+    use guiraffe_overlays::{Spotlight, SpotlightAction, SpotlightState};
 
     fn example(window: &mut Window, cx: &mut Context<Shell>) -> impl IntoElement {
         let search = cx.new(|cx| {
-            Spotlight::new(
-                vec![Command::new("validate", "Validate screen")],
-                window,
-                cx,
-                |_, _, _| {},
-            )
+            SpotlightState::new(window, cx)
+                .actions([SpotlightAction::new("validate", "Validate screen")])
+                .on_activate(|_, _, _| {})
         });
-        ui! { div { {search} } }
+        let inline = Spotlight::new(&search);
+        ui! { div { {search} {inline} } }
     }
     let _ = example;
 }

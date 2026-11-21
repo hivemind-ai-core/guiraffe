@@ -35,6 +35,7 @@
 //! usual), Enter runs, Escape closes. The search input
 //! keeps keyboard focus throughout; pointer hover and clicks on rows never take it.
 mod action;
+pub(crate) mod document;
 #[cfg(test)]
 mod gpui_tests;
 mod model;
@@ -303,6 +304,65 @@ impl SpotlightState {
     pub fn set_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
         if self.loading != loading {
             self.loading = loading;
+            cx.notify();
+        }
+    }
+    /// Runtime form of [`SpotlightState::recent_limit`].
+    pub fn set_recent_limit(&mut self, limit: usize, cx: &mut Context<Self>) {
+        self.model.set_recent_limit(limit);
+        self.after_rows_changed(false, cx);
+    }
+    /// Runtime form of [`SpotlightState::limit`]; `None` lists every match.
+    pub fn set_limit(&mut self, limit: Option<usize>, cx: &mut Context<Self>) {
+        self.model.set_limit(limit);
+        self.after_rows_changed(false, cx);
+    }
+    /// Runtime form of [`SpotlightState::labels`].
+    pub fn set_labels(
+        &mut self,
+        labels: SpotlightLabels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.labels == labels {
+            return;
+        }
+        let placeholder = labels.placeholder.clone();
+        self.model
+            .set_section_labels(labels.pinned.clone(), labels.recent.clone());
+        self.labels = labels;
+        self.input.update(cx, |input, cx| {
+            input.set_placeholder(placeholder, window, cx)
+        });
+        self.after_rows_changed(false, cx);
+    }
+    /// Runtime form of [`SpotlightState::placeholder`].
+    pub fn set_placeholder(
+        &mut self,
+        text: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = text.into();
+        if self.labels.placeholder == text {
+            return;
+        }
+        self.labels.placeholder = text.clone();
+        self.input
+            .update(cx, |input, cx| input.set_placeholder(text, window, cx));
+        cx.notify();
+    }
+    /// Runtime form of [`SpotlightState::width`]; `None` restores the default width.
+    pub fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
+        if self.width != width {
+            self.width = width;
+            cx.notify();
+        }
+    }
+    /// Runtime form of [`SpotlightState::max_list_height`]; `None` restores the default.
+    pub fn set_max_list_height(&mut self, height: Option<Pixels>, cx: &mut Context<Self>) {
+        if self.max_list_height != height {
+            self.max_list_height = height;
             cx.notify();
         }
     }
