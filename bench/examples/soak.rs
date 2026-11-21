@@ -330,9 +330,9 @@ fn main() -> Result<()> {
         "property-grid" => {
             mounted::property_grid(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "markdown" => {
-            mounted::markdown(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
+        "markdown" => mounted::markdown(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "mermaid" => {
             mounted::mermaid(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
@@ -1031,9 +1031,9 @@ mod mounted {
 
     /// Markdown: a 50,000-line document, scrolled, with a streamed chunk
     /// appended every fourth frame.
-    pub fn markdown(run: impl FnOnce(Frame)) -> Result<()> {
+    pub fn markdown(started: Instant, run: impl FnOnce(Frame, Duration)) -> Result<()> {
         let source = document(scaled(50_000));
-        let (mut window, view) = mount(
+        let (mut window, view) = open(
             "markdown_soak",
             |_| {},
             |_, cx| {
@@ -1042,21 +1042,49 @@ mod mounted {
             },
         )?;
         let state = window.update(|_, cx| view.read(cx).0.clone());
-        let center = point(px(640.), px(400.));
-        run(&mut |i| {
-            if i % 4 == 0 {
-                let chunk = match (i / 4) % 64 {
-                    63 => format!("\n\n## Streamed {i}\n\n"),
-                    k if k % 16 == 15 => "\n\n".to_string(),
-                    _ => format!("token{i} "),
-                };
-                window.update(|_, cx| state.update(cx, |s, cx| s.append(&chunk, cx)));
-            } else {
-                wheel(&mut window, center, 0., -120. * sign(i, 256), false);
+        let published = |window: &mut VisualTestContext| {
+            window.update(|_, cx| {
+                state
+                    .read(cx)
+                    .text()
+                    .read(cx)
+                    .rendered_text()
+                    .source()
+                    .starts_with("# Chapter ")
+            })
+        };
+        window.update(|window, cx| window.render_frame(cx));
+        if !published(&mut window) {
+            window.run_until_parked();
+            window.update(|window, cx| window.render_frame(cx));
+            if !published(&mut window) {
+                return Err("Markdown document did not render".into());
             }
-            settle(&mut window);
-            Ok(())
-        });
+        }
+        let mount = started.elapsed();
+        settle(&mut window);
+        window.update(|window, cx| window.render_frame(cx));
+        window.run_until_parked();
+        println!("background_ready_us={}", started.elapsed().as_micros());
+
+        let center = point(px(640.), px(400.));
+        run(
+            &mut |i| {
+                if i % 4 == 0 {
+                    let chunk = match (i / 4) % 64 {
+                        63 => format!("\n\n## Streamed {i}\n\n"),
+                        k if k % 16 == 15 => "\n\n".to_string(),
+                        _ => format!("token{i} "),
+                    };
+                    window.update(|_, cx| state.update(cx, |s, cx| s.append(&chunk, cx)));
+                } else {
+                    wheel(&mut window, center, 0., -120. * sign(i, 256), false);
+                }
+                settle(&mut window);
+                Ok(())
+            },
+            mount,
+        );
         Ok(())
     }
 
