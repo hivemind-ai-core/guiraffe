@@ -1,3 +1,9 @@
+//!
+//! A Rust `ui!` example.
+//!
+//! ```ignore
+//! ui! { div { {cx.new(|cx| SortableBoard::new(columns, cx).with_grid(2))} } }
+//! ```
 mod board;
 pub use board::{BoardDragOverlay, Card, SortableBoard};
 pub mod dock;

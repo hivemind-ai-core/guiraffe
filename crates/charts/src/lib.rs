@@ -1,4 +1,10 @@
 //! Composable charts with borrowed sources and canvas geometry.
+//!
+//! A Rust `ui!` example.
+//!
+//! ```ignore
+//! ui! { div { {ChartView::from_spec(spec, ChartOptions::default(), cx)} } }
+//! ```
 
 mod data;
 mod model;
