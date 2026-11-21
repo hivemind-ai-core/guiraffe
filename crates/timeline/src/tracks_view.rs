@@ -709,7 +709,7 @@ impl Render for TracksView {
                                 };
                                 clips
                                     .iter()
-                                    .map(|c| {
+                                    .map(move |c| {
                                         let (x0, x1) =
                                             (axis.x(c.start) as f32, axis.x(c.end()) as f32);
                                         let on = selected == Some((i, c.id));
@@ -753,7 +753,6 @@ impl Render for TracksView {
                                                 )
                                             })
                                     })
-                                    .collect::<Vec<_>>()
                             }))
                             .child({
                                 let mut layer = crate::PlotSurface::new(axis);
