@@ -382,6 +382,39 @@ fn production_flame_and_tree_model_traversals_allocate_nothing() -> anyhow::Resu
 }
 
 #[test]
+fn tree_tail_expansion_uses_one_visible_row_buffer() -> anyhow::Result<()> {
+    use guiraffe_tree::{Children, NodeId, TreeModel, TreeSource};
+
+    struct Source(Vec<NodeId>);
+
+    impl TreeSource for Source {
+        fn roots(&self) -> &[NodeId] {
+            &[0]
+        }
+
+        fn children(&self, id: NodeId) -> Children<'_> {
+            Children::Ready(if id == 0 { &self.0 } else { &[] })
+        }
+
+        fn label(&self, _: NodeId) -> &str {
+            "node"
+        }
+    }
+
+    for count in [125_000_u64, 1_000_000] {
+        let source = Source((1..=count).collect());
+        let mut model = TreeModel::new(&source);
+        let (_, counts) = count_allocations(|| model.set_expanded(0, true, &source))?;
+        assert!(
+            counts.bytes <= 185 * count,
+            "tail expansion allocated a second set of rows: {counts:?}"
+        );
+        assert_eq!(model.row_index(count), Some(count as usize));
+    }
+    Ok(())
+}
+
+#[test]
 fn ui_macro_matches_builder_allocations_for_a_thousand_nodes() -> anyhow::Result<()> {
     use guiraffe_bench::suites::{ui_builder_tree, ui_macro_tree};
 

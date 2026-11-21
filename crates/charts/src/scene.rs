@@ -5,6 +5,8 @@ use crate::{
 };
 use std::{collections::BTreeSet, ops::Range, sync::Arc};
 
+const PICK_BLOCK: usize = 256;
+
 pub(crate) type Position = (f32, f32);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -45,6 +47,7 @@ pub(crate) enum Geometry {
     Segment(Position, Position),
     Box(Position, Position),
     Dot(Position, f32),
+    Dots(Vec<(Position, f32)>),
     Text(Position, Arc<str>),
 }
 
@@ -78,9 +81,30 @@ impl Scene {
             .flat_map(|panel| &panel.draws)
             .map(|draw| match &draw.geometry {
                 Geometry::Path { points, .. } => points.len(),
+                Geometry::Dots(dots) => dots.len(),
                 _ => 1,
             })
             .sum()
+    }
+
+    pub(crate) fn cacheable(&self) -> bool {
+        self.panels.len() <= 64
+            && self.primitive_count() <= 8_192
+            && self.vertex_count() <= 16_384
+            && self
+                .panels
+                .iter()
+                .map(|panel| {
+                    panel.label.len()
+                        + panel
+                            .ticks
+                            .iter()
+                            .flatten()
+                            .map(|tick| std::mem::size_of::<Tick>() + tick.label.len())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+                <= 65_536
     }
 
     pub(crate) fn panel(&self, position: Position) -> Option<&Panel> {
@@ -90,7 +114,7 @@ impl Scene {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct Hit {
     pub id: DatumId,
     pub point: Position,
@@ -232,7 +256,11 @@ impl PreparedChart {
                             })
                             .all(|other| {
                                 other.rows.len() == run.rows.len()
-                                    && other.rows.iter().zip(&run.rows).all(|(a, b)| a.x == b.x)
+                                    && other
+                                        .rows
+                                        .iter()
+                                        .zip(run.rows.iter())
+                                        .all(|(a, b)| a.x == b.x)
                             });
                         if !aligned {
                             return None;
@@ -243,7 +271,7 @@ impl PreparedChart {
                             visible.len(),
                             budget,
                             |i| {
-                                let row = &run.rows[visible.start + i];
+                                let row = run.rows.row(visible.start + i);
                                 (row.x, row.top)
                             },
                             &mut indices,
@@ -313,7 +341,22 @@ impl PreparedChart {
                 }
                 _ => run.visible(min, max, false),
             };
-            for row in &run.rows[range] {
+            if !run.pick_bounds.is_empty() {
+                let mut search = PointPick {
+                    range,
+                    cursor,
+                    distance,
+                    hit: None,
+                };
+                projection.pick_points(1, 0..run.pick_bounds.len() / 2 * PICK_BLOCK, &mut search);
+                if search.hit.is_some() {
+                    best = search.hit;
+                    distance = search.distance;
+                }
+                continue;
+            }
+            for index in range {
+                let row = &run.rows.row(index);
                 if let Some(mut point) = projection.anchor(row) {
                     let mut d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
                     if let Mark::Bar(arrangement, orientation) = run.mark {
@@ -347,11 +390,36 @@ impl PreparedChart {
 }
 
 impl Run {
+    pub(crate) fn build_pick_bounds(&mut self, cancelled: &impl Fn() -> bool) {
+        if !matches!(self.mark, Mark::Line | Mark::Point | Mark::Bubble)
+            || self.rows.len() <= PICK_BLOCK
+        {
+            return;
+        }
+        let leaves = self.rows.len().div_ceil(PICK_BLOCK).next_power_of_two();
+        let mut bounds = vec![(f64::INFINITY, f64::NEG_INFINITY); 2 * leaves];
+        for (block, start) in (0..self.rows.len()).step_by(PICK_BLOCK).enumerate() {
+            if cancelled() {
+                return;
+            }
+            let entry = &mut bounds[leaves + block];
+            for index in start..(start + PICK_BLOCK).min(self.rows.len()) {
+                let y = self.rows.xy(index).1;
+                entry.0 = entry.0.min(y);
+                entry.1 = entry.1.max(y);
+            }
+        }
+        for index in (1..leaves).rev() {
+            let a = bounds[2 * index];
+            let b = bounds[2 * index + 1];
+            bounds[index] = (a.0.min(b.0), a.1.max(b.1));
+        }
+        self.pick_bounds = bounds;
+    }
+
     fn visible(&self, min: f64, max: f64, neighbors: bool) -> Range<usize> {
-        let start = self.rows.partition_point(|r| r.x < min - self.max_x_extent);
-        let end = self
-            .rows
-            .partition_point(|r| r.x <= max + self.max_x_extent);
+        let start = self.rows.partition_x(|x| x < min - self.max_x_extent);
+        let end = self.rows.partition_x(|x| x <= max + self.max_x_extent);
         let adjacent = usize::from(neighbors);
         start.saturating_sub(adjacent)..end.saturating_add(adjacent).min(self.rows.len())
     }
@@ -368,8 +436,13 @@ impl Run {
                 len,
                 len.div_ceil(8),
                 |i| {
-                    let row = &self.rows[previous.map_or(i, |level| level[i])];
-                    (row.x, row.top)
+                    let index = previous.map_or(i, |level| level[i]);
+                    if self.mark == Mark::Line {
+                        self.rows.xy(index)
+                    } else {
+                        let row = self.rows.row(index);
+                        (row.x, row.top)
+                    }
                 },
                 &mut scratch,
                 cancelled,
@@ -387,6 +460,27 @@ impl Run {
     }
 }
 
+fn scatter_candidates(visible: Range<usize>, budget: usize) -> impl Iterator<Item = usize> {
+    let len = visible.len();
+    let count = len.min(budget.max(1));
+    (0..count).map(move |slot| {
+        let width = len / count;
+        let extra = len % count;
+        let start = slot * width + slot.min(extra);
+        let width = width + usize::from(slot < extra);
+        // Decorrelate the stride from periodic input while keeping one point
+        // from each contiguous x interval.
+        visible.start + start + slot.wrapping_mul(41) % width
+    })
+}
+
+struct PointPick {
+    range: Range<usize>,
+    cursor: Position,
+    distance: f32,
+    hit: Option<Hit>,
+}
+
 struct Projection<'a> {
     chart: &'a PreparedChart,
     domains: [Domain; 3],
@@ -395,6 +489,61 @@ struct Projection<'a> {
 }
 
 impl Projection<'_> {
+    fn pick_points(&self, node: usize, block: Range<usize>, search: &mut PointPick) {
+        let start = block.start.max(search.range.start);
+        let end = block.end.min(search.range.end);
+        if start >= end {
+            return;
+        }
+        let (min_y, max_y) = self.run.pick_bounds[node];
+        let a = self.xy(self.run.rows.xy(start).0, min_y);
+        let b = self.xy(self.run.rows.xy(end - 1).0, max_y);
+        let cursor = search.cursor;
+        // A failed projection may be an overflow at the extremes. Descend
+        // without pruning so finite interior points still participate.
+        if let (Some((left, bottom)), Some((right, top))) = (a, b) {
+            if right < self.rect.left
+                || left > self.rect.right
+                || bottom < self.rect.top
+                || top > self.rect.bottom
+            {
+                return;
+            }
+            let dx = (left - cursor.0).max(cursor.0 - right).max(0.);
+            let dy = (top - cursor.1).max(cursor.1 - bottom).max(0.);
+            let lower_bound = dx.powi(2) + dy.powi(2);
+            if lower_bound > search.distance
+                || (search.hit.is_some() && lower_bound == search.distance)
+            {
+                return;
+            }
+        }
+        // Descending index preserves the linear scan's last-wins tie rule.
+        if block.len() > PICK_BLOCK {
+            let mid = block.start + block.len() / 2;
+            self.pick_points(2 * node + 1, mid..block.end, search);
+            self.pick_points(2 * node, block.start..mid, search);
+            return;
+        }
+        for index in (start..end).rev() {
+            let (x, y) = self.run.rows.xy(index);
+            let Some(point) = self.xy(x, y).filter(|&point| self.rect.contains(point)) else {
+                continue;
+            };
+            let d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
+            if d < search.distance || (search.hit.is_none() && d == search.distance) {
+                search.distance = d;
+                search.hit = Some(Hit {
+                    id: self.run.rows.row(index).id,
+                    point,
+                    x,
+                    y,
+                    secondary: self.run.secondary,
+                });
+            }
+        }
+    }
+
     fn y_axis(&self) -> usize {
         if self.run.secondary { 2 } else { 1 }
     }
@@ -404,6 +553,15 @@ impl Projection<'_> {
         let x = self.chart.axes[0].scale.project(self.domains[0], x)?;
         let y = self.chart.axes[axis].scale.project(self.domains[axis], y)?;
         Some(self.rect.project(x, y))
+    }
+
+    fn anchor_at(&self, index: usize) -> Option<Position> {
+        if self.run.mark == Mark::Line {
+            let (x, y) = self.run.rows.xy(index);
+            self.xy(x, y)
+        } else {
+            self.anchor(&self.run.rows.row(index))
+        }
     }
 
     fn anchor(&self, row: &Sample) -> Option<Position> {
@@ -462,12 +620,18 @@ impl Projection<'_> {
             let columns = (self.rect.width() / cell_size).clamp(1., 128.) as usize;
             let rows = (self.rect.height() / cell_size).clamp(1., 64.) as usize;
             if visible.len() > 8_192 / scatter_runs.max(1) {
-                self.scatter(visible, columns, rows, out, cancelled);
+                self.scatter(
+                    visible,
+                    (columns, rows),
+                    8_192 / scatter_runs.max(1),
+                    out,
+                    cancelled,
+                );
                 return;
             }
         }
-        for row in &self.run.rows[visible] {
-            self.individual(row, out);
+        for index in visible {
+            self.individual(&self.run.rows.row(index), out);
         }
     }
 
@@ -498,24 +662,18 @@ impl Projection<'_> {
             source = Some(level);
             range = start..end;
         }
-        let row =
-            |i| &self.run.rows[source.map_or(range.start + i, |level| level[range.start + i])];
+        let source_index = |i| source.map_or(range.start + i, |level| level[range.start + i]);
         lttb_with_cancel(
             range.len(),
             budget,
             |i| {
-                let (x, y) = self.anchor(row(i)).unwrap_or_default();
+                let (x, y) = self.anchor_at(source_index(i)).unwrap_or_default();
                 (f64::from(x), f64::from(y))
             },
             scratch,
             cancelled,
         );
-        self.connected_path(
-            scratch
-                .iter()
-                .map(|&i| source.map_or(range.start + i, |level| level[range.start + i])),
-            out,
-        );
+        self.connected_path(scratch.iter().map(|&i| source_index(i)), out);
     }
 
     fn connected_path(
@@ -523,15 +681,12 @@ impl Projection<'_> {
         indices: impl DoubleEndedIterator<Item = usize> + Clone,
         out: &mut Vec<Draw>,
     ) {
-        let row = |i| &self.run.rows[i];
+        let row = |i| self.run.rows.row(i);
         let Some(first) = indices.clone().next() else {
             return;
         };
         let area = matches!(self.run.mark, Mark::Area(_));
-        let mut points: Vec<_> = indices
-            .clone()
-            .filter_map(|i| self.anchor(row(i)))
-            .collect();
+        let mut points: Vec<_> = indices.clone().filter_map(|i| self.anchor_at(i)).collect();
         if area {
             points.extend(indices.rev().filter_map(|i| {
                 let row = row(i);
@@ -546,13 +701,13 @@ impl Projection<'_> {
                     points,
                     closed: area,
                 },
-                color: self.color(row(first)),
+                color: self.color(&row(first)),
             });
         } else if let Some(point) = points.first() {
             out.push(Draw {
                 series: self.run.id,
                 geometry: Geometry::Dot(*point, 2.),
-                color: self.color(row(first)),
+                color: self.color(&row(first)),
             });
         }
     }
@@ -560,16 +715,17 @@ impl Projection<'_> {
     fn scatter(
         &self,
         visible: Range<usize>,
-        columns: usize,
-        rows: usize,
+        (columns, rows): (usize, usize),
+        budget: usize,
         out: &mut Vec<Draw>,
         cancelled: &impl Fn() -> bool,
     ) {
         // Share the viewport draw budget across visible series. Hit testing uses source points.
         let mut free_cells = columns * rows;
         let mut occupied = vec![false; columns * rows];
-        for (index, row) in self.run.rows[visible].iter().enumerate() {
-            if index.is_multiple_of(256) && cancelled() {
+        for (slot, index) in scatter_candidates(visible, budget).enumerate() {
+            let row = &self.run.rows.row(index);
+            if slot.is_multiple_of(256) && cancelled() {
                 return;
             }
             let Some(point) = self.anchor(row).filter(|&p| self.rect.contains(p)) else {
@@ -582,11 +738,30 @@ impl Projection<'_> {
                 && let Some(radius) = self.dot_radius(row)
             {
                 occupied[cell] = true;
-                out.push(Draw {
-                    geometry: Geometry::Dot(point, radius),
-                    series: self.run.id,
-                    color: self.color(row),
-                });
+                let color = self.color(row);
+                if let Some(Draw {
+                    geometry: Geometry::Dots(dots),
+                    series,
+                    color: previous,
+                }) = out.last_mut()
+                    && *series == self.run.id
+                    && *previous == color
+                {
+                    dots.push((point, radius));
+                } else {
+                    let capacity = if self.run.rows.color_varies() {
+                        1
+                    } else {
+                        free_cells.min(budget)
+                    };
+                    let mut dots = Vec::with_capacity(capacity);
+                    dots.push((point, radius));
+                    out.push(Draw {
+                        geometry: Geometry::Dots(dots),
+                        series: self.run.id,
+                        color,
+                    });
+                }
                 free_cells -= 1;
                 if free_cells == 0 {
                     break;
@@ -743,6 +918,16 @@ mod tests {
     use crate::{Channels, ChartSpec, Layer};
 
     #[test]
+    fn dense_scatter_candidate_work_is_independent_of_total_size() {
+        for size in [10_000, 1_000_000, 10_000_000] {
+            let indices: Vec<_> = scatter_candidates(0..size, 8_192).collect();
+            assert_eq!(indices.len(), 8_192);
+            assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(indices.iter().all(|&index| index < size));
+        }
+    }
+
+    #[test]
     fn dense_scatter_shares_screen_cells_across_series_budgets() {
         let chart = ChartSpec::new("dense scatter")
             .layer(Layer::new(
@@ -867,6 +1052,37 @@ mod tests {
                 .key,
             1
         );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn indexed_pick_matches_linear_scan(
+            values in proptest::collection::vec((1u16..80, 1u16..80), 257..800),
+            x in 0f32..600.,
+            y in 0f32..300.,
+            radius in 0f32..100.,
+            log_scale in proptest::bool::ANY,
+            scatter in proptest::bool::ANY,
+        ) {
+            let mut spec = ChartSpec::new("hover").layer(Layer::new(
+                if scatter { Mark::Point } else { Mark::Line },
+                values,
+                Channels::new(|row: &(u16, u16)| f64::from(row.0), |row| f64::from(row.1)),
+            ));
+            if log_scale {
+                spec.x.scale = crate::Scale::Log;
+                spec.y.scale = crate::Scale::Log;
+            }
+            let mut chart = spec.prepare();
+            let domain = chart.x_domain();
+            let hidden = BTreeSet::new();
+            let scene = chart.scene(600., 300., domain, &hidden);
+            let panel = &scene.panels[0];
+            let indexed = chart.nearest(panel, domain, &hidden, (x, y), radius);
+            chart.runs[0].pick_bounds.clear();
+            let linear = chart.nearest(panel, domain, &hidden, (x, y), radius);
+            proptest::prop_assert_eq!(indexed, linear);
+        }
     }
 
     #[test]
