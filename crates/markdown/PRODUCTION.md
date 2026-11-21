@@ -106,3 +106,19 @@ A four-minute upstream release diagnostic recorded 24 ten-second intervals.
 All were below 8 ms p99, and RSS repeatedly crossed the 2% drift threshold.
 The diagnostic stopped after reproducing the drift. The 30-minute soak and
 production executor long-task check remain open.
+
+The first Fast release short soak at 50k lines peaked 157,156 KiB above
+empty. Massif attributed 14,348,160 bytes at the 512-frame heap peak to
+the test-only text snapshot recorder. Fast's retained root can skip the
+render that clears that recorder. The soak now clears those snapshots
+after each replay frame, including mixed and other Kit-backed workloads.
+A mounted regression verifies that a frame can record text and that the
+replay boundary clears it.
+
+With bounded test snapshots, upstream release Markdown measured 28.8 ms
+to the first useful frame, 4.27–4.53 ms p99 and a 64,972 KiB peak RSS delta.
+Fast measured 25.8 ms, 5.26–5.39 ms p99 and a 74,024 KiB peak delta.
+The Fast release run still exceeded the 67,686 KiB RSS budget by
+6,338 KiB and crossed the drift threshold. Its 64-frame development
+RSS gate passed at 64,908 KiB above empty. The final mounted warm probe
+matched at 1,444 allocations upstream and 93 on Fast at both sizes.

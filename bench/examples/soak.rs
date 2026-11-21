@@ -27,6 +27,13 @@ fn memory_kib() -> Result<[u64; 2]> {
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+fn finish_replay_frame(window: &mut VisualTestContext) {
+    window.run_until_parked();
+    // Text snapshots are test-only. A retained Fast root might not render
+    // to clear them, so discard them at the replay boundary ourselves.
+    window.update(|window, _| gpui_kit::base::test_support::begin_frame(window));
+}
+
 /// `SOAK_SCALE=n` divides every dataset size by `n` (profiling under callgrind).
 fn scaled(size: usize) -> usize {
     if let Ok(size) = std::env::var("SOAK_ITEMS") {
@@ -167,7 +174,7 @@ fn timeline(run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
                 source: ScrollSource::Pointer,
             });
         }
-        window.run_until_parked();
+        finish_replay_frame(window);
         Ok(())
     });
 }
@@ -289,7 +296,7 @@ fn charts(
                     });
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         },
         first_frame,
@@ -542,7 +549,7 @@ fn limit_report(mount: Duration, mut times: Vec<u128>) -> Result<()> {
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
-    use super::{Instant, Result, scaled};
+    use super::{Instant, Result, finish_replay_frame, scaled};
     pub mod mixed;
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
@@ -859,7 +866,7 @@ mod mounted {
     fn settle(window: &mut VisualTestContext) {
         window.run_until_parked();
         window.executor().advance_clock(FRAME);
-        window.run_until_parked();
+        finish_replay_frame(window);
     }
 
     fn bounds(window: &mut VisualTestContext, id: impl Into<ElementId>) -> Option<Bounds<Pixels>> {
@@ -953,7 +960,7 @@ mod mounted {
                     hover(&mut window, at);
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1023,7 +1030,7 @@ mod mounted {
                     body + point(px(((i * 37) % 400) as f32), px(((i * 13) % 300) as f32)),
                 ),
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1076,7 +1083,7 @@ mod mounted {
                     window.simulate_click(at.unwrap_or(center), Modifiers::default());
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1109,7 +1116,7 @@ mod mounted {
             } else {
                 hover(&mut window, point(x, y));
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -1180,7 +1187,7 @@ mod mounted {
                     6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
                     _ => hover(&mut window, at),
                 }
-                window.run_until_parked();
+                finish_replay_frame(&mut window);
                 Ok(())
             },
             mount,
@@ -1275,7 +1282,7 @@ mod mounted {
             }
             _ => hover(window, row + point(px(40.), px(0.))),
         }
-        window.run_until_parked();
+        finish_replay_frame(window);
     }
 
     /// TreeList: 1,000,000 nodes with all 100,000 branches expanded.
@@ -1825,8 +1832,11 @@ mod mounted {
     }
     #[cfg(all(test, target_os = "linux"))]
     mod tests {
-        use super::{ChatHost, MarkdownHost, chat, chat_message, document, empty, markdown, mount};
-        use gpui_kit::AppContext as _;
+        use super::{
+            ChatHost, MarkdownHost, chat, chat_message, document, empty, finish_replay_frame,
+            markdown, mount,
+        };
+        use gpui_kit::{AppContext as _, test::TestWindowExt as _};
         use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
         use std::{process::Command, time::Instant};
 
@@ -1914,6 +1924,28 @@ mod mounted {
                     document(50_000).len(),
                 );
             }
+        }
+
+        #[test]
+        fn replay_releases_test_text_at_the_frame_boundary() {
+            let (mut window, _) = mount(
+                "markdown-replay-text",
+                |_| {},
+                |_, cx| {
+                    let state = cx.new(|cx| guiraffe_markdown::MarkdownState::new("Text", cx));
+                    cx.new(|_| MarkdownHost(state))
+                },
+            )
+            .expect("Markdown mount");
+
+            window.update(|window, cx| {
+                window.render_frame(cx);
+                assert!(!gpui_kit::base::test_support::texts(window).is_empty());
+            });
+            finish_replay_frame(&mut window);
+            window.update(|window, _| {
+                assert!(gpui_kit::base::test_support::texts(window).is_empty());
+            });
         }
 
         #[test]

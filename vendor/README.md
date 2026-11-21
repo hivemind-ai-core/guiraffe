@@ -72,3 +72,10 @@ stores one estimate or measurement per block. Paragraph decoration, table metric
 scrollable Markdown are retained for at most 256 top-level blocks per view.
 Materialized cold paragraphs share that bound. Chat
 retains selected rows until the window releases their selection endpoints.
+
+The standalone GPUI Kit 0.9.1 Fast text suite has five pre-existing
+`gpui-base` failures, reproduced against the published crates with GPUI
+Fast 0.1.15. They cover two long-press selection interactions, ordered-list
+markers, table row corner radius, and an unsuccessful range reveal. The
+standalone `gpui-component` text suite passes all 78 checks on both stock
+and patched Kit. The GUIraffe workspace gate passes on both backends.

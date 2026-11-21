@@ -135,3 +135,32 @@ and 127 for Chat at both tested sizes. The standalone Kit text harness
 reproduced five Fast failures previously recorded on the inherited release
 baseline. The upstream Kit text harness passed 439 base and 78 component
 tests, and the Fast component harness passed 78.
+
+### Final release build and gate
+
+`scripts/gate.sh` passed on code commit `44029cb`, including both workspace
+test stages, per-crate doctests, Clippy and formatting. It reported no
+changed goldens. The merge of `release/0.2` at `73b5782` added roadmap
+documentation only.
+
+| Release short soak with bounded snapshots | First useful frame | p99 | Peak RSS above empty |
+| --- | ---: | ---: | ---: |
+| Upstream Markdown, 50k lines | 28.8 ms | 4.27–4.53 ms | 64,972 KiB |
+| Fast Markdown, 50k lines | 25.8 ms | 5.26–5.39 ms | 74,024 KiB |
+| Upstream Chat, 100k messages | 50.2 ms | 3.02–4.51 ms | 59,856 KiB |
+| Fast Chat, 100k messages | 43.9 ms | 3.60–3.93 ms | 65,756 KiB |
+
+Massif on the pre-cleanup Fast release replay attributed 14,348,160 B at
+the 512-frame heap peak to Kit's test text recorder. On Fast the root
+can be retained and skip clearing this recorder. The replay clears text
+snapshots at its frame boundary without forcing a root render. The Fast
+Markdown peak delta fell from 157,156 to 74,024 KiB. The remaining 6,338 KiB
+RSS overage and drift remain follow-ups. Both mixed replays covered all
+12 phases, and 32 ten-frame scale-50 smoke probes passed across the two
+backends. All four mounted example tests passed on each backend, including
+the new snapshot lifetime check. In those tests the Markdown warm draw
+matched at 1,444 allocations on upstream and 93 on Fast at both sizes.
+
+The five standalone Fast Kit failures were also reproduced on the
+published 0.9.1 crates with GPUI Fast 0.1.15. The stock and patched
+`gpui-component` suites both passed all 78 text tests.
