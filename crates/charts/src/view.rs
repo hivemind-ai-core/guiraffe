@@ -362,6 +362,10 @@ impl ChartView {
     }
 
     fn clear_hover(&self, cx: &mut Context<Self>) {
+        let overlay = self.overlay.read(cx);
+        if overlay.hover.is_none() && overlay.anchor.is_none() {
+            return;
+        }
         self.overlay.update(cx, |overlay, cx| {
             overlay.hover = None;
             overlay.anchor = None;
@@ -379,6 +383,8 @@ impl ChartView {
         if plot.domain == domain {
             return;
         }
+        let full = plot.chart.x_domain();
+        let reset_visibility_changed = (plot.domain == full) != (domain == full);
         plot.domain = domain;
         plot.frame.pending = None;
         drop(plot);
@@ -392,7 +398,9 @@ impl ChartView {
         if brush {
             cx.emit(ChartEvent::Brushed(domain));
         }
-        cx.notify();
+        if reset_visibility_changed {
+            cx.notify();
+        }
     }
 
     fn reset(&mut self, cx: &mut Context<Self>) {
