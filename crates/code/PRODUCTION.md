@@ -271,3 +271,8 @@ before and after adding a diagnostic. Eight upstream draws used 56
 allocations and 74,368 bytes in each case with unchanged CodeViewer render
 counters. The annotation queries allocate zero. Forcing a complete warm
 window draw still misses the zero-allocation acceptance criterion.
+
+DHAT located a recurring 1,840-byte allocation in the upstream
+`TabStopMap::clear` call from `Window::draw`, and recurring context clones
+in `DispatchTree::reuse_subtree`. These allocations occur while GPUI reuses
+the cached CodeViewer subtree.
