@@ -36,10 +36,11 @@ pub static CODE_VIEWER: WidgetSpec = WidgetSpec {
             ..prop("margin-chars", "number", "24")
         },
         prop("annotations", "code-annotations", "[]"),
+        prop("folds", "code-folds", "[]"),
     ],
     accepts_children: false,
     events: &[],
-    state: "keyed viewer state driven by source and analysis data",
+    state: "keyed viewer state driven by source, annotations and folds",
     theme_tokens: &[],
     a11y_role: "document",
 };

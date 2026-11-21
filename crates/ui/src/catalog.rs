@@ -58,6 +58,8 @@ pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
 }
 
 const SIZE: &[&str] = &["xs", "sm", "md", "lg", "xl"];
+const ALIGN: &[&str] = &["start", "center", "end", "stretch", "baseline"];
+const JUSTIFY: &[&str] = &["start", "center", "end", "between", "around", "evenly"];
 const COLOR: &[&str] = &[
     "dark", "gray", "red", "pink", "grape", "violet", "indigo", "blue", "cyan", "teal", "green",
     "lime", "yellow", "orange",
@@ -85,10 +87,19 @@ macro_rules! widgets {
 }
 
 widgets! {
-    STACK: "stack", "ui", "Vertical stack.", true, "stateless", "group", ["density.space"],
-        ["gap": "string" = "\"sm\"", SIZE, None, false], [];
-    GROUP: "group", "ui", "Wrapping horizontal group.", true, "stateless", "group", ["density.space"],
-        ["gap": "string" = "\"sm\"", SIZE, None, false], [];
+    STACK: "stack", "layout", "Vertical stack.", true, "stateless", "group", ["density.space"],
+        ["gap": "string" = "\"sm\"", SIZE, None, false;
+         "gap-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
+         "align": "string" = "\"stretch\"", ALIGN, None, false;
+         "justify": "string" = "\"start\"", JUSTIFY, None, false;
+         "grow": "boolean" = "false", &[] as &[&str], None, false], [];
+    GROUP: "group", "layout", "Horizontal group that wraps by default.", true, "stateless", "group", ["density.space"],
+        ["gap": "string" = "\"sm\"", SIZE, None, false;
+         "gap-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
+         "align": "string" = "\"center\"", ALIGN, None, false;
+         "justify": "string" = "\"start\"", JUSTIFY, None, false;
+         "grow": "boolean" = "false", &[] as &[&str], None, false;
+         "wrap": "boolean" = "true", &[] as &[&str], None, false], [];
     GRID: "grid", "ui", "Equal-width grid rows.", true, "stateless", "group", ["density.space"],
         ["gap": "string" = "\"sm\"", SIZE, None, false;
          "columns": "number" = "2", &[] as &[&str], Some((1.0, 12.0)), false], [];

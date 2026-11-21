@@ -647,13 +647,14 @@ fn code_document_drives_view_options_and_annotations(cx: &mut TestAppContext) {
     cx.update(guiraffe_code::init);
     let doc = Document::new(
         Node::new("code-viewer")
-            .prop("source", "let x = 42;")
+            .prop("source", "let x = {\n    42\n};")
             .bind("source", "code")
             .prop("language", "rust")
             .prop("size", "sm")
             .prop("line-numbers", false)
             .prop("minimap", true)
             .prop("margin-chars", 20)
+            .prop("folds", serde_json::json!([{"start":0,"end":3,"collapsed":true}]))
             .prop("annotations", serde_json::json!([
                 {"id":1,"line":0,"start":4,"end":5,"kind":"underline","payload":"A binding","color":"orange"}
             ])),
@@ -675,6 +676,18 @@ fn ui_macro_accepts_a_code_viewer_handle() {
         ui! { CodeViewer(&handle) }
     }
     let _ = example;
+}
+
+#[test]
+fn document_validation_rejects_a_fold_without_hidden_lines() {
+    let doc = Document::new(
+        Node::new("code-viewer")
+            .prop("source", "first\nsecond")
+            .prop("folds", serde_json::json!([{"start":0,"end":1}])),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].property, "folds");
 }
 
 #[gpui_kit::test]
@@ -863,6 +876,46 @@ fn expanded_layout_documents_validate_and_render(cx: &mut TestAppContext) {
             .expect("layout document"),
     });
     window.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn stack_and_group_documents_drive_native_layout_builders(cx: &mut TestAppContext) {
+    let doc = Document::new(
+        Node::new("stack")
+            .prop("gap", "xs")
+            .prop("gap-px", 8)
+            .prop("align", "center")
+            .prop("justify", "between")
+            .prop("grow", true)
+            .child(
+                Node::new("group")
+                    .prop("gap", "md")
+                    .prop("gap-px", 12)
+                    .prop("align", "baseline")
+                    .prop("justify", "evenly")
+                    .prop("grow", true)
+                    .prop("wrap", false)
+                    .child(Node::new("text").prop("text", "Item")),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(compile(&doc).diagnostics().is_empty());
+    let _ = mount(cx, &doc);
+}
+
+#[test]
+fn ui_macro_accepts_native_stack_and_group_builders() {
+    use guiraffe_core::Size;
+    use guiraffe_layout::{Align, Group, Justify, Stack};
+
+    let _ = ui! {
+        Stack { gap: Size::Xs; gap_px: 8.; align: Align::Center; justify: Justify::Between; grow: true;
+            Group { gap: Size::Md; gap_px: 12.; align: Align::Baseline; justify: Justify::Evenly; grow: true; wrap: false;
+                "Item"
+            }
+        }
+    };
 }
 
 #[gpui_kit::test]

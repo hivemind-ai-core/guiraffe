@@ -64,11 +64,11 @@ impl PropSpec {
 
     pub fn schema(&self) -> Value {
         let ty = match self.type_name {
-            "ring-sections" | "integer-array" | "code-annotations" | "tree-nodes"
-            | "range-value" | "grid-rows" | "grid-columns" | "flame-frames" | "timeline-tracks"
-            | "track-selection" | "board-columns" | "chart-layers" | "chart-axes"
-            | "chart-labels" | "chat-messages" | "chat-attachments" | "chat-commands"
-            | "calendar-presets" | "dock-panels" => "array",
+            "ring-sections" | "integer-array" | "code-annotations" | "code-folds"
+            | "tree-nodes" | "range-value" | "grid-rows" | "grid-columns" | "flame-frames"
+            | "timeline-tracks" | "track-selection" | "board-columns" | "chart-layers"
+            | "chart-axes" | "chart-labels" | "chat-messages" | "chat-attachments"
+            | "chat-commands" | "calendar-presets" | "dock-panels" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -91,6 +91,7 @@ impl PropSpec {
             "array" => schema["items"] = json!({"type": "string"}),
             "integer-array" => schema["items"] = json!({"type":"integer","minimum":0}),
             "code-annotations" => schema["items"] = code_annotation_schema(),
+            "code-folds" => schema["items"] = code_fold_schema(),
             "tree-nodes" => schema["items"] = tree_node_schema(),
             "grid-rows" => schema["items"] = grid_row_schema(),
             "grid-columns" => schema["items"] = grid_column_schema(),
@@ -320,6 +321,20 @@ pub fn code_annotation_schema() -> Value {
             "kind":{"enum":["highlight","underline","inline-hint","lens","bubble","symbol"]},
             "payload":{"type":"string"},
             "color":{"enum":["dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal","green","lime","yellow","orange"]}
+        }
+    })
+}
+
+pub fn code_fold_schema() -> Value {
+    let line = json!({"type":"integer","minimum":0,"maximum":u32::MAX});
+    json!({
+        "type":"object",
+        "additionalProperties":false,
+        "required":["start","end"],
+        "properties":{
+            "start":line,
+            "end":line,
+            "collapsed":{"type":"boolean"}
         }
     })
 }

@@ -7,6 +7,7 @@ use gpui_kit::{
 };
 use guiraffe_components::{Card, Highlight, Pill, RingProgress, Text, Title};
 use guiraffe_core::{Size, StyleContext};
+use guiraffe_layout::{Align, Group, Justify, Stack};
 
 use crate::widget::{NodeView, Registry, widget};
 
@@ -14,6 +15,34 @@ fn gap(n: &NodeView<'_>) -> f32 {
     StyleContext::current()
         .density
         .space(n.size(n.prop_index("gap")).unwrap_or(Size::Sm))
+}
+
+fn flow_gap(n: &NodeView<'_>) -> f32 {
+    n.num(n.prop_index("gap-px"))
+        .filter(|v| (0.0..=f64::from(f32::MAX)).contains(v))
+        .map_or_else(|| gap(n), |v| v as f32)
+}
+
+fn flow_align(n: &NodeView<'_>, default: Align) -> Align {
+    match n.prop(n.prop_index("align")).as_str() {
+        Some("start") => Align::Start,
+        Some("center") => Align::Center,
+        Some("end") => Align::End,
+        Some("stretch") => Align::Stretch,
+        Some("baseline") => Align::Baseline,
+        _ => default,
+    }
+}
+
+fn flow_justify(n: &NodeView<'_>) -> Justify {
+    match n.prop(n.prop_index("justify")).as_str() {
+        Some("center") => Justify::Center,
+        Some("end") => Justify::End,
+        Some("between") => Justify::Between,
+        Some("around") => Justify::Around,
+        Some("evenly") => Justify::Evenly,
+        _ => Justify::Start,
+    }
 }
 
 /// Split children into rows of `cols` (the last row may be shorter).
@@ -134,10 +163,11 @@ pub fn register(r: &mut Registry) {
     r.register(
         STACK.0.id,
         widget(&STACK.1, |n, kids, _, _| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(gap(n)))
+            Stack::new()
+                .gap_px(flow_gap(n))
+                .align(flow_align(n, Align::Stretch))
+                .justify(flow_justify(n))
+                .grow(n.bool(n.prop_index("grow")))
                 .children(kids)
                 .into_any_element()
         }),
@@ -145,12 +175,12 @@ pub fn register(r: &mut Registry) {
     r.register(
         GROUP.0.id,
         widget(&GROUP.1, |n, kids, _, _| {
-            div()
-                .flex()
-                .flex_row()
-                .flex_wrap()
-                .items_center()
-                .gap(px(gap(n)))
+            Group::new()
+                .gap_px(flow_gap(n))
+                .align(flow_align(n, Align::Center))
+                .justify(flow_justify(n))
+                .grow(n.bool(n.prop_index("grow")))
+                .wrap(n.prop(n.prop_index("wrap")).as_bool().unwrap_or(true))
                 .children(kids)
                 .into_any_element()
         }),

@@ -498,6 +498,16 @@ impl Validation<'_> {
                 "integer-array" => got
                     .as_array()
                     .is_some_and(|items| items.iter().all(|item| item.as_u64().is_some())),
+                "code-folds" => got.as_array().is_some_and(|folds| {
+                    let schema = crate::widget_spec::code_fold_schema();
+                    folds.iter().all(|fold| {
+                        matches_data_schema(fold, &schema)
+                            && fold["start"]
+                                .as_u64()
+                                .zip(fold["end"].as_u64())
+                                .is_some_and(|(start, end)| end > start + 1)
+                    })
+                }),
                 "code-annotations" => got.as_array().is_some_and(|annotations| {
                     let schema = crate::widget_spec::code_annotation_schema();
                     annotations.iter().all(|annotation| {

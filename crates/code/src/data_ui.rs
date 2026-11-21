@@ -10,7 +10,7 @@ use guiraffe_core::{
 };
 
 use crate::{
-    Annotation, AnnotationKind, CodeDocument, CodeHandle, CodeOptions, CodeViewer, Position,
+    Annotation, AnnotationKind, CodeDocument, CodeHandle, CodeOptions, CodeViewer, Fold, Position,
     SourceRange, widget_specs,
 };
 
@@ -34,6 +34,7 @@ pub(crate) fn register(cx: &mut App) {
                             as usize,
                     },
                     annotations: annotations.clone(),
+                    folds: node.prop(7).clone(),
                 }
                 .into_any_element()
             },
@@ -89,11 +90,35 @@ fn parse_annotations(values: &Value) -> Arc<[Annotation]> {
         .collect()
 }
 
+fn parse_folds(values: &Value) -> Vec<Fold> {
+    let start = ["start".into()];
+    let end = ["end".into()];
+    let collapsed = ["collapsed".into()];
+    let line = |line: &Value| {
+        line.as_f64()
+            .filter(|line| (0.0..=f64::from(u32::MAX)).contains(line) && line.fract() == 0.0)
+            .map(|line| line as usize)
+    };
+    (0..values.list_len().unwrap_or_default())
+        .filter_map(|i| {
+            let value = values.list_get(i)?;
+            let start = line(value.field(&start))?;
+            let end = line(value.field(&end))?;
+            (end.saturating_sub(start) > 1).then(|| Fold {
+                start,
+                end,
+                collapsed: value.field(&collapsed).as_bool().unwrap_or(true),
+            })
+        })
+        .collect()
+}
+
 struct ViewerState {
     handle: CodeHandle,
     source: SharedString,
     language: SharedString,
     annotations: Value,
+    folds: Value,
 }
 
 #[derive(IntoElement)]
@@ -103,6 +128,7 @@ struct CodeDocumentView {
     language: SharedString,
     options: CodeOptions,
     annotations: Value,
+    folds: Value,
 }
 
 impl RenderOnce for CodeDocumentView {
@@ -115,6 +141,7 @@ impl RenderOnce for CodeDocumentView {
                 source: SharedString::default(),
                 language: SharedString::default(),
                 annotations: Value::Null,
+                folds: Value::Null,
             }
         });
         let handle = state.update(cx, |state, cx| {
@@ -133,6 +160,10 @@ impl RenderOnce for CodeDocumentView {
                 state
                     .handle
                     .set_annotations(parse_annotations(&state.annotations), cx);
+            }
+            if source_changed || self.folds != state.folds {
+                state.folds = self.folds;
+                state.handle.set_folds(parse_folds(&state.folds), cx);
             }
             state.handle.set_options(self.options, cx);
             state.handle.clone()
