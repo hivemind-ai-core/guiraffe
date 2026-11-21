@@ -331,3 +331,38 @@ fn deferred_source_publishes_and_replacement_supersedes_pending_work(cx: &mut Te
         );
     });
 }
+
+#[gpui_kit::test]
+fn superseded_stream_batch_keeps_previous_plot_until_latest_spec_is_ready(cx: &mut TestAppContext) {
+    use guiraffe_charts::Stream;
+
+    let (chart, window) = mount(cx);
+    let mut source = Stream::default();
+    source.append((0..500).collect::<Vec<i32>>());
+    let make_spec = |snapshot: Stream<i32>, max| {
+        let mut spec = ChartSpec::new("Stream").layer(Layer::new(
+            Mark::Line,
+            snapshot,
+            Channels::new(|value: &i32| f64::from(*value), |value| f64::from(*value)),
+        ));
+        spec.x.domain = Domain::new(0., max);
+        spec
+    };
+    let first_batch = make_spec(source.clone(), 499.);
+    source.append((500..1_000).collect());
+    source.retain_last(500);
+    let latest_batch = make_spec(source, 999.);
+    window.update(|_, cx| {
+        chart.view.update(cx, |view, cx| {
+            let previous = view.viewport();
+            view.replace_spec(first_batch, cx);
+            view.replace_spec(latest_batch, cx);
+            assert_eq!(view.viewport(), previous);
+        });
+    });
+    window.run_until_parked();
+    assert_eq!(
+        chart.view.read_with(window, |view, _| view.viewport()),
+        Domain::new(0., 999.).expect("valid stream domain"),
+    );
+}

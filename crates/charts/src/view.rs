@@ -207,7 +207,7 @@ impl Render for ChartOverlayLayer {
 }
 
 /// Owns persistent chart settings and a child entity for transient pointer state.
-/// Prepare large models on a background executor and publish them through `replace`.
+/// Use `replace_spec` to prepare updates on a background executor.
 pub struct ChartView {
     plot: Rc<RefCell<PlotState>>,
     overlay: Entity<Overlay>,
@@ -258,26 +258,28 @@ impl ChartView {
     /// source. Use `new` when a prepared chart is already available.
     pub fn from_spec(spec: ChartSpec, options: ChartOptions, cx: &mut App) -> Entity<Self> {
         let view = Self::new(spec.preview(), options, cx);
-        view.update(cx, |view, cx| {
-            let cancelled = Arc::new(AtomicBool::new(false));
-            view.preparing = Some(SceneRequest(cancelled.clone()));
-            let executor = cx.background_executor().clone();
-            cx.spawn(async move |view, cx| {
-                let stop = cancelled.clone();
-                let chart = executor
-                    .spawn(
-                        async move { spec.prepare_with_cancel(&|| stop.load(Ordering::Relaxed)) },
-                    )
-                    .await;
-                let _ = view.update(cx, |view, cx| {
-                    if !cancelled.load(Ordering::Relaxed) {
-                        view.replace(chart, cx);
-                    }
-                });
-            })
-            .detach();
-        });
+        view.update(cx, |view, cx| view.replace_spec(spec, cx));
         view
+    }
+
+    /// Prepare a new source snapshot without blocking the UI thread. The view
+    /// keeps its current plot while preparing and cancels superseded batches.
+    pub fn replace_spec(&mut self, spec: ChartSpec, cx: &mut Context<Self>) {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.preparing = Some(SceneRequest(cancelled.clone()));
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |view, cx| {
+            let stop = cancelled.clone();
+            let chart = executor
+                .spawn(async move { spec.prepare_with_cancel(&|| stop.load(Ordering::Relaxed)) })
+                .await;
+            let _ = view.update(cx, |view, cx| {
+                if !cancelled.load(Ordering::Relaxed) {
+                    view.replace(chart, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn replace(&mut self, chart: PreparedChart, cx: &mut Context<Self>) {
