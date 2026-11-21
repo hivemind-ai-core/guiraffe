@@ -51,6 +51,8 @@ struct RowIndex {
     blocks: Vec<Block>,
     starts: Vec<usize>,
     free: Vec<usize>,
+    #[cfg(test)]
+    indexed_rows: usize,
 }
 
 impl RowIndex {
@@ -73,6 +75,10 @@ impl RowIndex {
     }
 
     fn replace_blocks(&mut self, range: Range<usize>, start: usize, rows: &[Row]) {
+        #[cfg(test)]
+        {
+            self.indexed_rows = rows.len();
+        }
         self.free
             .extend(self.blocks[range.clone()].iter().map(|block| block.key));
         let count = rows.len().div_ceil(ROW_BLOCK);
@@ -399,6 +405,7 @@ mod index_tests {
             };
             rows.insert(1, child);
             index.splice(1..1, 1, &rows);
+            assert_eq!(index.indexed_rows, ROW_BLOCK + 1);
             assert_eq!(index.get(child.id), Some(1));
             assert_eq!(index.get(tail), Some(count));
             assert_eq!(index.ids[&tail], packed);
@@ -406,6 +413,7 @@ mod index_tests {
             rows.remove(1);
             index.ids.remove(&child.id);
             index.splice(1..2, 0, &rows);
+            assert_eq!(index.indexed_rows, ROW_BLOCK / 2);
             assert_eq!(index.get(child.id), None);
             assert_eq!(index.ids[&tail], packed);
             for (position, row) in rows.iter().enumerate() {
