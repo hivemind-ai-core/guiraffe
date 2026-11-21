@@ -96,9 +96,28 @@ impl SheetModel {
             selection: Selection::new(SelectionMode::Range),
             read_only: false,
         };
-        for (pos, cell) in cells {
-            if model.contains(pos) {
-                model.write(pos, cell);
+        let mut entries: Vec<_> = cells
+            .into_iter()
+            .filter(|(pos, _)| model.contains(*pos))
+            .collect();
+        // Stable order preserves the final write to a coordinate, including a clearing write.
+        entries.sort_by_key(|(pos, _)| *pos);
+        entries.dedup_by(|later, earlier| {
+            if later.0 != earlier.0 {
+                return false;
+            }
+            std::mem::swap(&mut later.1, &mut earlier.1);
+            true
+        });
+        let empty = Cell::default();
+        model.cells = entries
+            .into_iter()
+            .filter(|(_, cell)| *cell != empty)
+            .collect();
+        for (&pos, cell) in &model.cells {
+            if !cell.text.is_empty() {
+                Self::update_occupancy(&mut model.occupied_rows, pos.row, pos.col, true);
+                Self::update_occupancy(&mut model.occupied_cols, pos.col, pos.row, true);
             }
         }
         model
@@ -457,6 +476,27 @@ fn translate(text: &str, from: CellPos, to: CellPos, rows: usize, cols: usize) -
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn bulk_loading_keeps_the_final_value_and_ignores_clears() {
+        let a = CellPos::new(0, 0);
+        let b = CellPos::new(0, 1);
+        let model = SheetModel::from_cells(
+            1,
+            2,
+            [
+                (b, Cell::new("keep until cleared")),
+                (a, Cell::new("first")),
+                (CellPos::new(1, 0), Cell::new("out of bounds")),
+                (a, Cell::new("second")),
+                (b, Cell::default()),
+                (a, Cell::new("last")),
+            ],
+        );
+        assert_eq!(model.cells().count(), 1);
+        assert_eq!(model.cell(a).map(|cell| cell.text.as_ref()), Some("last"));
+        assert!(!model.history.can_undo());
+    }
 
     #[test]
     fn fill_keeps_fixed_reference_axes() {
