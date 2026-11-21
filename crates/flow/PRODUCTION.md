@@ -89,3 +89,9 @@ eighth of a screen pixel. Picking, labels and arrowheads use exact route
 points. On gpui-fast, large viewports with the default node renderer build
 the visible cards inline to reduce retained view state. Custom renderers and
 accessibility use the normal node entity path.
+
+The viewport uses a sized GPUI cached view boundary. Unchanged incremental
+window draws reuse the previous paint ranges without invoking Flow render
+callbacks. Camera, gesture and document notifications invalidate the viewport.
+GPUI's scene replay can allocate transient buffers. Forced window refreshes
+rebuild the viewport, and accessibility rendering takes the normal entity path.

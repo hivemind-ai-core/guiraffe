@@ -4,8 +4,8 @@ use crate::{
     FlowViewport, Graph, NodeRenderer, Viewport, WorldPoint, core, editor_for_view, paint,
 };
 use gpui_kit::{
-    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    Pixels, Render, RenderOnce, Window,
+    AnyElement, App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, Pixels, Render, RenderOnce, StyleRefinement, Styled, Window,
 };
 use std::collections::BTreeSet;
 use std::{
@@ -377,13 +377,24 @@ impl Focusable for FlowState {
         self.canvas.read(cx).focus_handle(cx)
     }
 }
+fn viewport_element(canvas: Entity<FlowViewport>, window: &Window) -> AnyElement {
+    if window.is_a11y_active() {
+        return canvas.into_any_element();
+    }
+    // The surrounding host supplies this viewport's size. GPUI can replay its
+    // prior paint ranges when the window draws without a Flow invalidation.
+    canvas
+        .cached(StyleRefinement::default().size_full())
+        .into_any_element()
+}
+
 impl Render for FlowState {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         {
             self.renders += 1;
         }
-        self.canvas.clone()
+        viewport_element(self.canvas.clone(), window)
     }
 }
 /// A control element backed by [`FlowState`], reusable in host views.
@@ -399,8 +410,8 @@ impl FlowCanvas {
     }
 }
 impl RenderOnce for FlowCanvas {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        self.state.read(cx).canvas.clone()
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        viewport_element(self.state.read(cx).canvas.clone(), window)
     }
 }
 
@@ -436,6 +447,64 @@ mod tests {
                 .child(self.sibling.clone())
         }
     }
+    #[gpui_kit::test]
+    fn unchanged_draw_reuses_flow_viewport(cx: &mut TestAppContext) {
+        let (window, state) = cx.update(|cx| {
+            guiraffe_core::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| {
+                    FlowState::new(
+                        Graph::from_parts(
+                            [
+                                Node::new(1, "", WorldPoint::new(20., 80.)),
+                                Node::new(2, "", WorldPoint::new(400., 80.)),
+                            ],
+                            [crate::core::Edge::new(1, 1, 2)],
+                        )
+                        .expect("graph"),
+                        cx,
+                    )
+                    .expect("flow")
+                    .options(FlowOptions {
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
+                })
+            })
+            .expect("window")
+        });
+        window
+            .update(cx, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("warm view");
+        let view = state.read_with(cx, |state, _| state.canvas.clone());
+        let renders = view.read_with(cx, |view, _| view.renders);
+        for _ in 0..5 {
+            window
+                .update(cx, |_, window, cx| window.draw(cx).clear(cx))
+                .expect("unchanged draw");
+        }
+        assert_eq!(view.read_with(cx, |view, _| view.renders), renders);
+
+        state.update(cx, |state, cx| {
+            state
+                .set_viewport(
+                    Viewport {
+                        pan: WorldPoint::new(20., 0.),
+                        zoom: 1.,
+                    },
+                    cx,
+                )
+                .expect("changed camera");
+        });
+        window
+            .update(cx, |_, window, cx| window.draw(cx).clear(cx))
+            .expect("changed draw");
+        assert!(view.read_with(cx, |view, _| view.renders) > renders);
+    }
+
     #[gpui_kit::test]
     fn mounted_large_flow_publishes_deferred_crossing_edges(cx: &mut TestAppContext) {
         let graph = Graph::from_parts(
