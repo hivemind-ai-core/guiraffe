@@ -3729,6 +3729,8 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "guiraffe-layout",
+ "guiraffe-test",
  "proptest",
 ]
 
