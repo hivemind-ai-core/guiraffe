@@ -24,7 +24,7 @@ use super::{column, example};
 use crate::catalog::Entry;
 use crate::events::EventLog;
 use crate::knobs::{
-    Knob, KnobValues, Preview, SIZE_NAMES, playground_with, playground_with_update,
+    Applied, Knob, KnobValues, Preview, SIZE_NAMES, playground_with, playground_with_update,
 };
 
 pub fn entries() -> Vec<Entry> {
