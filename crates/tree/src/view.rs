@@ -263,7 +263,9 @@ impl<const P: bool> TreeView<P> {
     pub fn persist_key(self, key: impl Into<String>, cx: &mut Context<Self>) -> Self {
         let key = key.into();
         let initial = self.split.as_ref().map_or(0.5, |split| split.ratio);
-        guiraffe_layout::init(cx);
+        if guiraffe_layout::layout_store(cx).is_none() {
+            cx.set_global(guiraffe_layout::LayoutStore::in_memory());
+        }
         let ratio = guiraffe_layout::layout_store(cx)
             .and_then(|store| store.splitter_sizes(&key))
             .and_then(|sizes| sizes.get(0))
@@ -2110,7 +2112,13 @@ mod tests {
         cx.update(|cx| {
             gpui_kit::base::init(cx);
             gpui_kit::component::init(cx);
-            guiraffe_layout::init(cx);
+            guiraffe_core::apply(
+                GuiraffeTheme {
+                    scheme: guiraffe_core::Scheme::Dark,
+                    ..Default::default()
+                },
+                cx,
+            );
         });
         let data = Rc::new(Data(vec![1], Value::Number(10.), Value::Number(5.)));
         let view = cx.new(|cx| {
@@ -2122,6 +2130,12 @@ mod tests {
         let (_, window) =
             cx.add_window_view(|window, cx| gpui_kit::base::Root::new(view.clone(), window, cx));
         window.run_until_parked();
+        window.update(|_, cx| {
+            assert_eq!(
+                GuiraffeTheme::global(cx).scheme,
+                guiraffe_core::Scheme::Dark
+            );
+        });
         let divider = window.update(|window, _| {
             let divider = window.find_by_label("Resize property columns");
             assert_eq!(divider.role(), Some(Role::Splitter));
