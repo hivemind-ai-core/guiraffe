@@ -1,0 +1,28 @@
+[package]
+name = "guiraffe-calendar"
+description = "Virtualized year, month, week, and day calendar views for GUIraffe."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-components.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+serde.workspace = true
+schemars = "1"
+
+[dev-dependencies]
+anyhow.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { path = "../test", features = ["snapshot", "render", "layout"] }
+proptest = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]

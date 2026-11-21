@@ -39,6 +39,9 @@ guiraffe-tree = { path = "crates/tree" }
 guiraffe-datagrid = { path = "crates/datagrid" }
 guiraffe-devtools = { path = "crates/devtools" }
 guiraffe-dnd = { path = "crates/dnd" }
+guiraffe-calendar = { path = "crates/calendar" }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = { version = "0.10", features = ["serde"] }
 gpui-kit = { version = "=0.9.1", features = ["component", "assets"] }
 # The same pin as gpui-kit: the test support of the framework (the element and
 # text registries the inspect API reads) lives here.
