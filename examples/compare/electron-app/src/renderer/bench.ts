@@ -7,13 +7,14 @@ const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(r
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const epochNow = () => performance.timeOrigin + performance.now();
 
-/** Continuous rAF chain; returns the intervals between consecutive frames. */
+/** Continuous rAF chain recording callback entry, like GPUI's recorder. */
 function recordFrames(): { stop(): number[] } {
   const intervals: number[] = [];
   let last: number | null = null;
   let running = true;
-  const tick = (t: number) => {
+  const tick = () => {
     if (!running) return;
+    const t = performance.now();
     if (last !== null) intervals.push(t - last);
     last = t;
     requestAnimationFrame(tick);

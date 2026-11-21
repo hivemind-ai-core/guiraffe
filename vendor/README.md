@@ -5,6 +5,16 @@ The root Cargo manifest patches the crates.io packages `gpui-pre 0.3.12`
 retains the published crate sources, manifests and Apache 2.0 license.
 Registry extraction markers are omitted. The GPUI Kit pin is `=0.9.1`.
 
+The root and standalone comparison app also patch `gpui-fast-linux 0.1.15`.
+On Wayland, a previously presented surface with callback demand can request
+another compositor tick through a commit that keeps its current buffer.
+The platform still parks when demand ends and uses its timer for bootstrap
+and outstanding presentation retries where a callback may never arrive.
+The change uses the existing single pending callback slot per window.
+With `GPUI_WAYLAND_PRESENTATION_TRACE=1`, the Wayland backend also
+requests `wp_presentation` feedback for buffer submissions. Set
+`WAYLAND_DEBUG=client` to see those timestamps in the protocol log.
+
 | File | Local change |
 | --- | --- |
 | Both `src/scene.rs` | Changes `Path::vertices` to an `Arc<Vec<_>>`-backed `PathVertices` wrapper. Scene replay, insertion and fast gather share vertices. Mutation detaches via `Arc::make_mut`. Scaling still computes device-space coordinates in the same order. |

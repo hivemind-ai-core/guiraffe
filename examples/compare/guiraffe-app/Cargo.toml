@@ -53,6 +53,7 @@ opt-level = 2
 # workspace does not inherit the root [patch] table, so apps outside it must repeat these.
 [patch.crates-io]
 gpui-fast = { path = "../../../vendor/gpui-fast" }
+gpui-fast-linux = { path = "../../../vendor/gpui-fast-linux" }
 gpui-pre = { path = "../../../vendor/gpui-pre" }
 gpui-base = { path = "../../../vendor/gpui-base" }
 gpui-component = { path = "../../../vendor/gpui-component" }
