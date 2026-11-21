@@ -413,10 +413,27 @@ fn overview_columns(track: &Track, axis: Axis) -> impl Iterator<Item = (usize, u
     let width = axis.width.ceil().clamp(0., 16_384.) as usize;
     let step = axis.width / width.max(1) as f64;
     let mut remaining = track.clips();
+    let nearby = remaining.len() <= width * 2;
     (0..width).filter_map(move |column| {
         let start = axis.t(column as f64 * step);
         let end = axis.t((column + 1) as f64 * step);
-        let skip = remaining.partition_point(|clip| clip.end() <= start);
+        let expired = |clip: &crate::Clip| clip.end() <= start;
+        let skip = if nearby {
+            // Around one clip per column, check the next few intervals before
+            // searching the tail. A discontinuous pan can still jump by index.
+            let prefix = remaining.len().min(3);
+            let near = remaining[..prefix]
+                .iter()
+                .take_while(|clip| expired(clip))
+                .count();
+            if near == prefix {
+                near + remaining[near..].partition_point(expired)
+            } else {
+                near
+            }
+        } else {
+            remaining.partition_point(expired)
+        };
         remaining = &remaining[skip..];
         remaining
             .first()
@@ -770,7 +787,7 @@ mod tests {
 
     #[test]
     fn overview_emits_one_mark_per_occupied_column_at_any_density() {
-        for count in [10_000, 100_000] {
+        for count in [100, 10_000, 100_000] {
             let axis = Axis::new(0., count as f64 * 0.001, 100.);
             let mut track = Track::default();
             for index in 0..count {
