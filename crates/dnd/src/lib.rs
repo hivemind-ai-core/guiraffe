@@ -357,4 +357,5 @@ pub fn init(cx: &mut gpui_kit::App) {
         guiraffe_core::init(cx);
     }
     board::document::register(cx);
+    dock::document::register(cx);
 }

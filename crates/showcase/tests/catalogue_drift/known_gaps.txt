@@ -158,10 +158,6 @@ components::fn close_button
 core::TextMenuLayer
 devtools::DevtoolsPanel
 devtools::DevtoolsRoot
-dnd::BoardDragOverlay
-dnd::DockDragOverlay
-dnd::fn new_dock
-dnd::fn new_native_dock
 flow-core::LayoutOptions::field affected
 flow-core::LayoutOptions::field constraints
 flow-core::LayoutOptions::field crossing_weight

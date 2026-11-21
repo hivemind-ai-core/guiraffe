@@ -480,7 +480,17 @@ impl Validation<'_> {
                             && calendar_value(&preset["value"])
                     })
                 }),
-                "integer" => got.as_u64().is_some(),
+                "integer" => got.as_u64().is_some_and(|number| {
+                    prop.range
+                        .is_none_or(|(min, max)| (min..=max).contains(&(number as f64)))
+                }),
+                "dock-state" => matches_data_schema(got, &crate::widget_spec::dock_state_schema()),
+                "dock-panels" => got.as_array().is_some_and(|panels| {
+                    let schema = crate::widget_spec::dock_panel_schema();
+                    panels
+                        .iter()
+                        .all(|panel| matches_data_schema(panel, &schema))
+                }),
                 "number" => got.as_f64().is_some_and(|number| {
                     prop.range
                         .is_none_or(|(min, max)| (min..=max).contains(&number))

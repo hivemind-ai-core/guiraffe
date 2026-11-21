@@ -1214,3 +1214,41 @@ fn ui_macro_accepts_a_native_flow_canvas() {
     }
     let _ = example;
 }
+
+#[gpui_kit::test]
+fn dock_document_validates_and_mounts_native_panels(cx: &mut TestAppContext) {
+    cx.update(guiraffe_dnd::init);
+    let doc = Document::new(
+        Node::new("dock")
+            .prop(
+                "panels",
+                serde_json::json!([
+                    {"title":"Workspace","text":"Main panel","closable":false,"zoomable":false},
+                    {"title":"Tools","placement":"left","text":"Side panel","visible":true}
+                ]),
+            )
+            .prop("version", 2)
+            .prop("native-drag", false)
+            .prop("persist-key", "document-dock")
+            .prop("left-size", 220)
+            .prop("right-size", 180)
+            .prop("bottom-size", 160)
+            .on("layout-change", "layout")
+            .on("error", "error"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let template = Arc::new(Template::compile(&doc, &registry).expect("dock document"));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{:?}",
+            template.diagnostics()
+        );
+        Shell {
+            ui: DataUi::from_template(template, registry, NoLogic, cx),
+        }
+    });
+    window.run_until_parked();
+}

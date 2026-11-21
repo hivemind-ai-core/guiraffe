@@ -29,42 +29,11 @@ pub(crate) fn register(cx: &mut App) {
     );
 }
 
-fn json(value: &Value) -> serde_json::Value {
-    match value {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(value) => (*value).into(),
-        Value::Num(value)
-            if (0.0..(1_u64 << 53) as f64).contains(value) && value.fract() == 0.0 =>
-        {
-            (*value as u64).into()
-        }
-        Value::Num(value)
-            if (-(1_i64 << 53) as f64..0.0).contains(value) && value.fract() == 0.0 =>
-        {
-            (*value as i64).into()
-        }
-        Value::Num(value) => (*value).into(),
-        Value::Str(value) => value.as_ref().into(),
-        Value::Record(value) => serde_json::Value::Object(
-            value
-                .iter()
-                .map(|(key, value)| (key.to_string(), json(value)))
-                .collect(),
-        ),
-        Value::List(_) | Value::Sequence(_) => serde_json::Value::Array(
-            (0..value.list_len().unwrap_or_default())
-                .filter_map(|i| value.list_get(i))
-                .map(json)
-                .collect(),
-        ),
-    }
-}
-
 fn editor(value: &Value) -> Result<Editor, String> {
     let graph = if matches!(value, Value::Null) {
         Graph::default()
     } else {
-        serde_json::from_value::<Graph>(json(value)).map_err(|error| error.to_string())?
+        serde_json::from_value::<Graph>(value.to_json()).map_err(|error| error.to_string())?
     };
     editor_for_view(graph).map_err(|error| error.to_string())
 }

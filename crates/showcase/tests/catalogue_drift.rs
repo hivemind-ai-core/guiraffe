@@ -12,6 +12,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "code::CodeViewer" | "code::CodeOptions" => "code-viewer",
         "datagrid::DataGrid" | "datagrid::GridOptions" => "data-grid",
         "dnd::SortableBoard" => "sortable-board",
+        "dnd::fn new_dock" | "dnd::fn new_native_dock" => "dock",
         "flamegraph::FlameGraph" => "flame-graph",
         "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
         | "flow::FlowOptions" => "flow",
@@ -396,6 +397,14 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "flow::FlowGesture",
         "Native pointer gesture layer mounted by the flow canvas.",
+    ),
+    (
+        "dnd::DockDragOverlay",
+        "Native drag surface mounted by a managed dock.",
+    ),
+    (
+        "dnd::BoardDragOverlay",
+        "Native drag surface mounted by a sortable board.",
     ),
 ];
 

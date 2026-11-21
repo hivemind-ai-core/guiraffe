@@ -39,6 +39,38 @@ impl PartialEq for Value {
 }
 
 impl Value {
+    /// Convert document values back to JSON, preserving safely representable integers.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Null => serde_json::Value::Null,
+            Self::Bool(value) => (*value).into(),
+            Self::Num(value)
+                if (0.0..(1_u64 << 53) as f64).contains(value) && value.fract() == 0.0 =>
+            {
+                (*value as u64).into()
+            }
+            Self::Num(value)
+                if (-(1_i64 << 53) as f64..0.0).contains(value) && value.fract() == 0.0 =>
+            {
+                (*value as i64).into()
+            }
+            Self::Num(value) => (*value).into(),
+            Self::Str(value) => value.as_ref().into(),
+            Self::Record(value) => serde_json::Value::Object(
+                value
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_json()))
+                    .collect(),
+            ),
+            Self::List(values) => {
+                serde_json::Value::Array(values.iter().map(Self::to_json).collect())
+            }
+            Self::Sequence(values) => {
+                serde_json::Value::Array(values.iter().map(Self::to_json).collect())
+            }
+        }
+    }
+
     pub fn list_len(&self) -> Option<usize> {
         match self {
             Self::List(v) => Some(v.len()),

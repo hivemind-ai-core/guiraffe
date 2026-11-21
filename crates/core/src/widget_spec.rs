@@ -55,7 +55,7 @@ pub const FORMAT_VERSION: u32 = 1;
 impl PropSpec {
     /// Whether the compiler accepts a JSON record as a literal value for this property.
     pub fn accepts_record(&self) -> bool {
-        matches!(self.type_name, "object" | "flow-graph")
+        matches!(self.type_name, "object" | "flow-graph" | "dock-state")
     }
 
     fn default_value(&self) -> Value {
@@ -68,13 +68,14 @@ impl PropSpec {
             | "range-value" | "grid-rows" | "grid-columns" | "flame-frames" | "timeline-tracks"
             | "track-selection" | "board-columns" | "chart-layers" | "chart-axes"
             | "chart-labels" | "chat-messages" | "chat-attachments" | "chat-commands"
-            | "calendar-presets" => "array",
+            | "calendar-presets" | "dock-panels" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
             "range-value" => range_schema(),
             "calendar-value" => calendar_value_schema(),
             "flow-graph" => flow_graph_schema(),
+            "dock-state" => dock_state_schema(),
             "iso-time" => json!({"type":"string","pattern":ISO_TIME}),
             "iso-date" => json!({"type":"string","pattern":ISO_DATE}),
             _ => json!({"type": ty}),
@@ -101,6 +102,7 @@ impl PropSpec {
             "chart-labels" => schema["items"] = chart_label_schema(),
             "chat-messages" => schema["items"] = chat_message_schema(),
             "calendar-presets" => schema["items"] = calendar_preset_schema(),
+            "dock-panels" => schema["items"] = dock_panel_schema(),
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => {
@@ -182,6 +184,7 @@ impl EventSpec {
             }),
             "calendar-value" => calendar_value_schema(),
             "flow-graph" => flow_graph_schema(),
+            "dock-state" => dock_state_schema(),
             "flow-selection" => {
                 let ids = json!({"type":"array","items":{"type":"integer","minimum":0}});
                 json!({"type":"object","required":["nodes","edges"],"additionalProperties":false,
@@ -693,6 +696,41 @@ pub fn flow_graph_schema() -> Value {
             "nodes":{"type":"object","additionalProperties":node},
             "edges":{"type":"object","additionalProperties":edge},
             "edge_id_high_water":id
+        }
+    })
+}
+
+pub fn dock_state_schema() -> Value {
+    let panel = json!({
+        "type":"object","required":["panel_name","children","info"],
+        "properties":{
+            "panel_name":{"type":"string"},"children":{"type":"array","items":{"type":"object"}},
+            "info":{"type":"object"}
+        }
+    });
+    let dock = json!({
+        "type":"object","required":["panel","placement","size","open"],
+        "properties":{
+            "panel":panel,"placement":{"enum":["left","right","bottom"]},
+            "size":{"type":"number","minimum":0},"open":{"type":"boolean"}
+        }
+    });
+    json!({
+        "type":"object","required":["center"],"additionalProperties":false,
+        "properties":{
+            "version":{"type":["integer","null"],"minimum":1},"center":panel,
+            "left_dock":dock,"right_dock":dock,"bottom_dock":dock
+        }
+    })
+}
+
+pub fn dock_panel_schema() -> Value {
+    json!({
+        "type":"object","required":["title"],"additionalProperties":false,
+        "properties":{
+            "title":{"type":"string"},"text":{"type":"string"},
+            "placement":{"enum":["center","left","right","bottom"]},
+            "visible":{"type":"boolean"},"closable":{"type":"boolean"},"zoomable":{"type":"boolean"}
         }
     })
 }
