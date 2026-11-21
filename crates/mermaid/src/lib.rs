@@ -21,6 +21,7 @@
 pub mod engine;
 #[cfg(test)]
 mod host;
+mod preview;
 pub mod sizing;
 pub mod source;
 #[cfg(test)]
