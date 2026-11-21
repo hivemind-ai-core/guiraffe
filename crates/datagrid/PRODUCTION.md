@@ -165,3 +165,6 @@ and interaction tests still exercise the normal cell semantics.
 | Instructions at 10M rows | 29,025,842 | 28,007,635 |
 | Allocation requests | 10,482 | 10,022 |
 | Requested bytes | 2,649,388 | 2,409,034 |
+
+With gpui-fast and the retained header, the same fixture requested 5,019
+allocations and 1,202,424 bytes at both sizes in the debug workspace gate.
