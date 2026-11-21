@@ -244,6 +244,7 @@ pub(super) fn compute_ranks_subset(
         }
     }
 
+    let mut internal_edges = vec![Vec::new(); components.len()];
     let mut comp_adj: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut comp_rev: HashMap<usize, Vec<usize>> = HashMap::new();
     for edge in &subset_edges {
@@ -254,6 +255,9 @@ pub(super) fn compute_ranks_subset(
             continue;
         };
         if from_comp == to_comp {
+            if components[from_comp].len() > 1 {
+                internal_edges[from_comp].push(edge);
+            }
             continue;
         }
         comp_adj.entry(from_comp).or_default().push(to_comp);
@@ -284,21 +288,23 @@ pub(super) fn compute_ranks_subset(
     let mut local_ranks_by_component: Vec<HashMap<String, usize>> =
         vec![HashMap::new(); components.len()];
     for (comp_idx, component) in components.iter().enumerate() {
-        let internal_order = stable_component_node_order(component, &subset_edges, &order_key);
-        let component_set: HashSet<&str> = component.iter().map(String::as_str).collect();
-        let mut internal_adj: HashMap<String, Vec<String>> = HashMap::new();
-        for edge in &subset_edges {
-            if component_set.contains(edge.from.as_str())
-                && component_set.contains(edge.to.as_str())
-            {
-                internal_adj
-                    .entry(edge.from.clone())
-                    .or_default()
-                    .push(edge.to.clone());
-            }
+        if component.len() == 1 {
+            // A self-loop cannot advance its own rank.
+            continue;
         }
-        local_ranks_by_component[comp_idx] =
-            layered_ranks_from_order(&internal_order, &internal_adj);
+        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        let mut rev: HashMap<String, Vec<String>> = HashMap::new();
+        for edge in &internal_edges[comp_idx] {
+            adj.entry(edge.from.clone())
+                .or_default()
+                .push(edge.to.clone());
+            rev.entry(edge.to.clone())
+                .or_default()
+                .push(edge.from.clone());
+        }
+        let internal_order =
+            stable_topology_order(component, &adj, &rev, |id| order_key(id.as_str()));
+        local_ranks_by_component[comp_idx] = layered_ranks_from_order(&internal_order, &adj);
     }
 
     let mut weighted_comp_edges: HashMap<usize, Vec<(usize, isize)>> = HashMap::new();
@@ -378,31 +384,6 @@ fn layered_ranks_from_order(
         }
     }
     ranks
-}
-
-fn stable_component_node_order<F>(
-    component: &[String],
-    edges: &[crate::ir::Edge],
-    order_key: &F,
-) -> Vec<String>
-where
-    F: Fn(&str) -> usize,
-{
-    let component_set: HashSet<&str> = component.iter().map(String::as_str).collect();
-    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
-    let mut rev: HashMap<String, Vec<String>> = HashMap::new();
-    for edge in edges {
-        if component_set.contains(edge.from.as_str()) && component_set.contains(edge.to.as_str()) {
-            adj.entry(edge.from.clone())
-                .or_default()
-                .push(edge.to.clone());
-            rev.entry(edge.to.clone())
-                .or_default()
-                .push(edge.from.clone());
-        }
-    }
-
-    stable_topology_order(component, &adj, &rev, |node_id| order_key(node_id.as_str()))
 }
 
 fn stable_topology_order<T, F>(
