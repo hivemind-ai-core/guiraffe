@@ -332,7 +332,6 @@ pub(crate) fn prepare(
         (options.margin_chars as f32 * cell).min((bounds.size.width.as_f32() * 0.4).max(0.));
     let mut geometry = shared.geometry.borrow_mut();
     geometry.bounds = bounds;
-    geometry.layout_epoch = shared.layout_epoch.get();
     geometry.font_size = font_size;
     geometry.line_height = lh;
     geometry.gutter = gutter;
@@ -393,7 +392,8 @@ pub(crate) fn prepare(
                 // Short, unstyled lines can share shaping across source rows.
                 let (hash, context_line) = if text.len() <= 64
                     && !highlighted.has_parser()
-                    && shared.annotations.borrow().is_empty()
+                    && !shared.has_range_styling.get()
+                    && !hints.contains_key(&line)
                 {
                     (content_hash(text.as_bytes()), usize::MAX)
                 } else {
@@ -519,7 +519,7 @@ pub(crate) fn prepare(
                     });
                 }
             }
-            None => {}
+            Some(Row::Block { .. }) | None => {}
         }
     }
     cache.gutter_label = label;
@@ -825,7 +825,8 @@ fn paint_decorations(shared: &Shared, theme: &GuiraffeTheme, window: &mut Window
                         DecorationStyle::Blame(_)
                         | DecorationStyle::Gutter { .. }
                         | DecorationStyle::Inline { .. }
-                        | DecorationStyle::Review { .. } => {}
+                        | DecorationStyle::Review { .. }
+                        | DecorationStyle::Block { .. } => {}
                         DecorationStyle::Unnecessary => {
                             window.paint_quad(fill(
                                 bounds,

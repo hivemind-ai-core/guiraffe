@@ -446,7 +446,7 @@ mod mounted {
         use guiraffe_code::{
             AnchorBias, Annotation, AnnotationKind, BlameCommit, CodeDocument, CodeHandle,
             CodeViewer, DecorationInput, DecorationStyle, Decorations, GutterMark, HighlightShape,
-            Position, PreparedAnalysis, Severity, SourceRange, UnderlinePattern,
+            InlineWidget, Position, Severity, SourceRange, UnderlinePattern,
         };
         use guiraffe_core::ColorName;
 
@@ -501,6 +501,38 @@ mod mounted {
         ] {
             let count = scaled(count);
             let payload: Arc<str> = text.into();
+            if kind == AnnotationKind::Bubble {
+                let style = decorations.intern_style(DecorationStyle::Block {
+                    estimated_rows: 2,
+                    payload,
+                })?;
+                decorations.update_layer(
+                    5,
+                    Default::default(),
+                    &[],
+                    (0..count).map(|i| {
+                        let at = Position::new(i * lines / count, 4);
+                        decoration(i as u64, at, at, style)
+                    }),
+                )?;
+                continue;
+            }
+            if kind == AnnotationKind::InlineHint {
+                let style = decorations.intern_style(DecorationStyle::Inline {
+                    widget: InlineWidget::Inlay,
+                    label: payload,
+                })?;
+                decorations.update_layer(
+                    6,
+                    Default::default(),
+                    &[],
+                    (0..count).map(|i| {
+                        let at = Position::new(i % lines.min(40), i / 40 % 25);
+                        decoration(i as u64, at, at, style)
+                    }),
+                )?;
+                continue;
+            }
             if matches!(kind, AnnotationKind::Highlight | AnnotationKind::Underline) {
                 let (layer, style) = if kind == AnnotationKind::Underline {
                     (
@@ -593,7 +625,7 @@ mod mounted {
         }
         decorations.update_layer(4, Default::default(), &[], blame)?;
         let decorations = Arc::new(decorations);
-        let prepared = PreparedAnalysis::new(doc.clone(), annotations.into(), Vec::new());
+        let prepared = decorations.prepare_analysis(annotations, Vec::new());
         let (mut window, view) = mount(
             "code_annotations_soak",
             |_| {},

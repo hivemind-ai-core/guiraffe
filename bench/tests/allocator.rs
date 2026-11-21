@@ -655,3 +655,84 @@ fn layered_code_viewport_queries_allocate_nothing_at_both_scales() -> anyhow::Re
     }
     Ok(())
 }
+
+#[gpui_kit::test]
+fn cached_annotated_code_viewer_reuses_its_render(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{
+        App, AppContext, Context, Entity, IntoElement, Render, StyleRefinement, Styled, Window, px,
+    };
+    use guiraffe_code::{
+        AnchorBias, CodeDocument, CodeHandle, CodeViewer, DecorationInput, DecorationStyle,
+        Decorations, Position, Severity, SourceRange, UnderlinePattern,
+    };
+    use std::sync::Arc;
+
+    struct Viewer(CodeHandle, Arc<Decorations>);
+    impl Render for Viewer {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            CodeViewer::new(&self.0)
+        }
+    }
+
+    struct CachedRoot(Entity<Viewer>);
+    impl Render for CachedRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().w(px(600.)).h(px(400.)))
+        }
+    }
+
+    let (view, window) = cx.add_window_view(|_, cx| {
+        let document = Arc::new(CodeDocument::new("reference\n".repeat(10_000)));
+        let code = CodeHandle::new(1, document.clone(), cx);
+        let mut decorations = Decorations::new(document).expect("compact document");
+        let style = decorations
+            .intern_style(DecorationStyle::Diagnostic {
+                severity: Severity::Error,
+                pattern: UnderlinePattern::Wavy,
+                message: "Test diagnostic".into(),
+            })
+            .expect("interned style");
+        decorations
+            .update_layer(
+                0,
+                Default::default(),
+                &[],
+                [DecorationInput {
+                    id: 1,
+                    range: SourceRange::new(Position::new(0, 0), Position::new(0, 8)),
+                    style,
+                    start_bias: AnchorBias::Left,
+                    end_bias: AnchorBias::Right,
+                }],
+            )
+            .expect("prepared layer");
+        CachedRoot(cx.new(|_| Viewer(code, Arc::new(decorations))))
+    });
+    window.run_until_parked();
+    let (code, decorations) = window.update(|_, cx| {
+        let viewer = view.read(cx).0.read(cx);
+        (viewer.0.clone(), viewer.1.clone())
+    });
+    let warm = |window: &mut Window, cx: &mut App| {
+        for _ in 0..8 {
+            window.draw(cx).clear(cx);
+        }
+        let before = code.stats();
+        let (_, counts) = count_allocations(|| {
+            for _ in 0..8 {
+                window.draw(cx).clear(cx);
+            }
+        })
+        .expect("measured cached viewer draw");
+        assert_eq!(code.stats(), before);
+        counts
+    };
+    let plain = window.update(warm);
+    window.update(|_, cx| assert!(code.set_decorations(Some(decorations), cx)));
+    window.run_until_parked();
+    let annotated = window.update(warm);
+    eprintln!("eight warm draws: plain {plain:?}, annotated {annotated:?}");
+    assert_eq!(plain, annotated);
+}

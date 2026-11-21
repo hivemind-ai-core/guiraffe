@@ -118,6 +118,11 @@ pub enum DecorationStyle {
     Review {
         markdown: Arc<str>,
     },
+    /// A hosted element after the anchor line. The estimate is used until first layout.
+    Block {
+        estimated_rows: u16,
+        payload: Arc<str>,
+    },
     Unnecessary,
     Deprecated,
 }
@@ -174,7 +179,7 @@ impl std::error::Error for DecorationError {}
 
 /// Source revision and its ordered decoration layers. Construct large updates on a worker
 /// and publish the completed snapshot with the same document revision.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Decorations {
     document: Arc<CodeDocument>,
     layers: BTreeMap<DecorationLayerId, DecorationLayer>,
@@ -269,40 +274,51 @@ impl Decorations {
         remove: &[DecorationId],
         upsert: impl IntoIterator<Item = DecorationInput>,
     ) -> Result<(), DecorationError> {
-        let previous = self.layers.get(&id);
-        let mut changes = BTreeMap::new();
-        changes.extend(remove.iter().map(|&id| (id, None)));
-        for input in upsert {
-            if self.style(input.style).is_none() {
-                return Err(DecorationError::UnknownStyle);
-            }
-            let range = self
-                .document
-                .range(input.range)
-                .ok_or(DecorationError::InvalidRange)?;
-            changes.insert(
-                input.id,
-                Some(Decoration {
+        let mut records: Vec<_> = upsert
+            .into_iter()
+            .map(|input| {
+                if self.style(input.style).is_none() {
+                    return Err(DecorationError::UnknownStyle);
+                }
+                let range = self
+                    .document
+                    .range(input.range)
+                    .ok_or(DecorationError::InvalidRange)?;
+                Ok(Decoration {
                     id: input.id,
                     start: range.start as u32,
                     end: range.end as u32,
                     style: input.style,
                     start_bias: input.start_bias,
                     end_bias: input.end_bias,
-                }),
-            );
-        }
-        let unchanged = previous.into_iter().flat_map(|layer| {
-            layer
-                .records
-                .iter()
-                .copied()
-                .filter(|record| !changes.contains_key(&record.id))
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        records.sort_by_key(|record| record.id);
+        records.dedup_by(|later, earlier| {
+            if later.id == earlier.id {
+                *earlier = *later;
+                true
+            } else {
+                false
+            }
         });
-        let mut records: Vec<_> = unchanged
-            .chain(changes.values().filter_map(|record| *record))
-            .collect();
-        records.sort_unstable_by_key(|record| record.id);
+
+        if let Some(previous) = self.layers.get(&id) {
+            let remove: std::collections::BTreeSet<_> = remove.iter().copied().collect();
+            let mut unchanged = Vec::new();
+            for &record in previous.records() {
+                if !remove.contains(&record.id)
+                    && records
+                        .binary_search_by_key(&record.id, |record| record.id)
+                        .is_err()
+                {
+                    unchanged.push(record);
+                }
+            }
+            records.append(&mut unchanged);
+            records.sort_unstable_by_key(|record| record.id);
+        }
         let layer = DecorationLayer::build(records, options, false, &self.styles, &self.document)?;
         self.layers.insert(id, layer);
         self.update_paint_order();
@@ -320,9 +336,12 @@ impl Decorations {
         let existing_ids: std::collections::HashSet<_> =
             legacy.iter().map(|annotation| annotation.id).collect();
         let mut available_ids = (0..=u64::MAX).filter(|id| !existing_ids.contains(id));
-        for (_, layer) in self.layers() {
+        let mut block_rows = BTreeMap::new();
+        let mut block_keys = BTreeMap::new();
+        for (layer_id, layer) in self.layers().filter(|(_, layer)| layer.index.has_widgets) {
             for mark in layer.records() {
-                let (kind, payload, color, end_of_line) = match self.style(mark.style) {
+                let style = self.style(mark.style);
+                let (kind, payload, color, end_of_line) = match style {
                     Some(DecorationStyle::Inline { widget, label }) => {
                         let kind = if *widget == InlineWidget::CodeLens {
                             AnnotationKind::Lens
@@ -344,6 +363,9 @@ impl Decorations {
                     Some(DecorationStyle::Review { markdown }) => {
                         (AnnotationKind::Bubble, markdown, ColorName::Blue, false)
                     }
+                    Some(DecorationStyle::Block { payload, .. }) => {
+                        (AnnotationKind::Block, payload, ColorName::Gray, false)
+                    }
                     _ => continue,
                 };
                 let Some(start) = self.document.position(mark.start as usize) else {
@@ -360,6 +382,10 @@ impl Decorations {
                 let Some(id) = available_ids.next() else {
                     break;
                 };
+                if let Some(DecorationStyle::Block { estimated_rows, .. }) = style {
+                    block_rows.insert(id, usize::from((*estimated_rows).max(1)));
+                    block_keys.insert(id, (layer_id, mark.id));
+                }
                 legacy.push(Annotation {
                     id,
                     range: SourceRange::new(start, end),
@@ -369,7 +395,16 @@ impl Decorations {
                 });
             }
         }
-        PreparedAnalysis::new(self.document.clone(), legacy.into(), folds)
+        let mut prepared = PreparedAnalysis::new(self.document.clone(), legacy.into(), folds);
+        prepared.rows = crate::RowMap::with_blocks(
+            self.document.line_count(),
+            &prepared.folds,
+            &prepared.annotations,
+            &block_rows,
+        );
+        prepared.block_rows = block_rows;
+        prepared.block_keys = block_keys;
+        prepared
     }
 
     /// Move endpoints through one splice, retain stable IDs and mark the layers stale.
@@ -417,7 +452,7 @@ impl Decorations {
         };
         let mut next = BTreeMap::new();
         for (&id, layer) in &self.layers {
-            let mut records = layer.records.clone();
+            let mut records = layer.records().to_vec();
             for record in &mut records {
                 record.start = translate(record.start, record.start_bias);
                 record.end = translate(record.end, record.end_bias).max(record.start);
@@ -434,11 +469,16 @@ impl Decorations {
 }
 
 /// A compact interval index. Querying borrows records directly and requires no scratch allocation.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DecorationLayer {
-    records: Vec<Decoration>,
     options: DecorationLayerOptions,
     stale: bool,
+    index: Arc<DecorationIndex>,
+}
+
+#[derive(Debug)]
+struct DecorationIndex {
+    records: Vec<Decoration>,
     nodes: Vec<IntervalNode>,
     by_start: Vec<u32>,
     by_end: Vec<u32>,
@@ -447,6 +487,7 @@ pub struct DecorationLayer {
     overview: [bool; 256],
     disjoint: bool,
     has_blame: bool,
+    has_widgets: bool,
 }
 
 const EMPTY: u32 = u32::MAX;
@@ -470,10 +511,8 @@ impl DecorationLayer {
     ) -> Result<Self, DecorationError> {
         let count = u32::try_from(records.len()).map_err(|_| DecorationError::Capacity)?;
         records.shrink_to_fit();
-        let mut layer = Self {
+        let mut data = DecorationIndex {
             records,
-            options,
-            stale,
             nodes: Vec::new(),
             by_start: Vec::new(),
             by_end: Vec::new(),
@@ -482,18 +521,24 @@ impl DecorationLayer {
             overview: [false; 256],
             disjoint: false,
             has_blame: false,
+            has_widgets: false,
         };
         let mut indices: Vec<u32> = (0..count).collect();
-        indices.sort_unstable_by_key(|&i| layer.records[i as usize].start);
+        indices.sort_unstable_by_key(|&i| data.records[i as usize].start);
         for &index in &indices {
-            let record = layer.records[index as usize];
+            let record = data.records[index as usize];
             match styles.get(record.style as usize) {
-                Some(DecorationStyle::Blame(_)) => layer.has_blame = true,
-                Some(DecorationStyle::Diagnostic { .. }) => layer.diagnostics.push(index),
+                Some(DecorationStyle::Blame(_)) => data.has_blame = true,
+                Some(
+                    DecorationStyle::Inline { .. }
+                    | DecorationStyle::Review { .. }
+                    | DecorationStyle::Block { .. },
+                ) => data.has_widgets = true,
+                Some(DecorationStyle::Diagnostic { .. }) => data.diagnostics.push(index),
                 Some(DecorationStyle::Gutter {
                     mark: GutterMark::Added | GutterMark::Modified | GutterMark::Deleted,
                     ..
-                }) => layer.changes.push(index),
+                }) => data.changes.push(index),
                 _ => {}
             }
         }
@@ -503,35 +548,173 @@ impl DecorationLayer {
                 ((position.line as u128 * 256) / document.line_count() as u128) as usize
             })
         };
-        for record in &layer.records {
+        for record in &data.records {
             let first = bin(record.start);
-            let last = bin(record.end).max(first);
+            let source = document.source();
+            let mut tail = record.end.saturating_sub(1).max(record.start) as usize;
+            while !source.is_char_boundary(tail) {
+                tail -= 1;
+            }
+            let last = bin(tail as u32).max(first);
             bins[first] += 1;
             bins[last + 1] -= 1;
         }
         let mut active = 0;
-        for (visible, starts) in layer.overview.iter_mut().zip(bins) {
+        for (visible, starts) in data.overview.iter_mut().zip(bins) {
             active += starts;
             *visible = active > 0;
         }
-        layer.disjoint = indices.windows(2).all(|pair| {
-            let earlier = layer.records[pair[0] as usize];
-            let later = layer.records[pair[1] as usize];
+        data.disjoint = indices.windows(2).all(|pair| {
+            let earlier = data.records[pair[0] as usize];
+            let later = data.records[pair[1] as usize];
             earlier.effective_end() <= u64::from(later.start)
         });
-        if layer.disjoint {
-            layer.by_start = indices;
+        if data.disjoint {
+            data.by_start = indices;
         } else {
-            layer.by_start.reserve_exact(count as usize);
-            layer.by_end.reserve_exact(count as usize);
-            layer.build_node(&mut indices);
-            layer.nodes.shrink_to_fit();
+            data.by_start.reserve_exact(count as usize);
+            data.by_end.reserve_exact(count as usize);
+            data.build_node(&mut indices);
+            data.nodes.shrink_to_fit();
         }
-        layer.diagnostics.shrink_to_fit();
-        layer.changes.shrink_to_fit();
-        Ok(layer)
+        data.diagnostics.shrink_to_fit();
+        data.changes.shrink_to_fit();
+        Ok(Self {
+            options,
+            stale,
+            index: Arc::new(data),
+        })
     }
 
+    pub(crate) fn has_blame(&self) -> bool {
+        self.index.has_blame
+    }
+
+    /// Occupied rows in a fixed 256-bin overview of the source lines.
+    pub fn overview(&self) -> &[bool; 256] {
+        &self.index.overview
+    }
+
+    pub fn options(&self) -> DecorationLayerOptions {
+        self.options
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.stale
+    }
+
+    pub fn records(&self) -> &[Decoration] {
+        &self.index.records
+    }
+
+    pub fn get(&self, id: DecorationId) -> Option<&Decoration> {
+        self.index
+            .records
+            .binary_search_by_key(&id, |record| record.id)
+            .ok()
+            .map(|i| &self.index.records[i])
+    }
+
+    pub(crate) fn adjacent(
+        &self,
+        offset: Option<u32>,
+        reverse: bool,
+        change: bool,
+    ) -> Option<&Decoration> {
+        let indices = if change {
+            &self.index.changes
+        } else {
+            &self.index.diagnostics
+        };
+        let index = match (offset, reverse) {
+            (None, false) => 0,
+            (None, true) => indices.len().checked_sub(1)?,
+            (Some(offset), true) => indices
+                .partition_point(|&index| self.index.records[index as usize].start < offset)
+                .checked_sub(1)?,
+            (Some(offset), false) => {
+                indices.partition_point(|&index| self.index.records[index as usize].start <= offset)
+            }
+        };
+        indices
+            .get(index)
+            .map(|&index| &self.index.records[index as usize])
+    }
+
+    /// Visits overlapping records in O(log n + hits). Empty marks match the byte at
+    /// their anchor. The query itself is half-open. Visit order is unspecified.
+    pub fn query(&self, range: Range<u64>, visit: impl FnMut(&Decoration)) {
+        self.query_limited(range, usize::MAX, visit);
+    }
+
+    /// Query up to `limit` intersections. The returned count equals the number
+    /// of invocations, allowing a renderer to detect when its budget was reached.
+    pub fn query_limited(
+        &self,
+        range: Range<u64>,
+        limit: usize,
+        mut visit: impl FnMut(&Decoration),
+    ) -> usize {
+        if range.start >= range.end || limit == 0 {
+            return 0;
+        }
+        if self.index.disjoint {
+            let first = self.index.by_start.partition_point(|&i| {
+                self.index.records[i as usize].effective_end() <= range.start
+            });
+            let mut count = 0;
+            for &i in self.index.by_start[first..].iter().take(limit) {
+                let record = &self.index.records[i as usize];
+                if u64::from(record.start) >= range.end {
+                    break;
+                }
+                visit(record);
+                count += 1;
+            }
+            return count;
+        }
+        let mut remaining = limit;
+        self.visit(0, &range, &mut remaining, &mut visit);
+        limit - remaining
+    }
+
+    fn visit(
+        &self,
+        index: u32,
+        range: &Range<u64>,
+        remaining: &mut usize,
+        visit: &mut impl FnMut(&Decoration),
+    ) {
+        let Some(node) = self.index.nodes.get(index as usize) else {
+            return;
+        };
+        if *remaining == 0 {
+            return;
+        }
+        let split = u64::from(node.split);
+        let first = node.first as usize;
+        let last = first + node.count as usize;
+        let (indices, left, right) = if range.end <= split {
+            (&self.index.by_start[first..last], node.left, EMPTY)
+        } else if range.start > split {
+            (&self.index.by_end[first..last], EMPTY, node.right)
+        } else {
+            (&self.index.by_start[first..last], node.left, node.right)
+        };
+        for &i in indices.iter().take(*remaining) {
+            let record = &self.index.records[i as usize];
+            if u64::from(record.start) >= range.end || record.effective_end() <= range.start {
+                break;
+            }
+            visit(record);
+            *remaining -= 1;
+        }
+        self.visit(left, range, remaining, visit);
+        self.visit(right, range, remaining, visit);
+    }
+}
+
+impl DecorationIndex {
     fn build_node(&mut self, sorted: &mut [u32]) -> u32 {
         let Some(&median) = sorted.get(sorted.len() / 2) else {
             return EMPTY;
@@ -569,132 +752,6 @@ impl DecorationLayer {
         self.nodes[index as usize].left = left;
         self.nodes[index as usize].right = right;
         index
-    }
-
-    pub(crate) fn has_blame(&self) -> bool {
-        self.has_blame
-    }
-
-    /// Occupied rows in a fixed 256-bin overview of the source lines.
-    pub fn overview(&self) -> &[bool; 256] {
-        &self.overview
-    }
-
-    pub fn options(&self) -> DecorationLayerOptions {
-        self.options
-    }
-
-    pub fn is_stale(&self) -> bool {
-        self.stale
-    }
-
-    pub fn records(&self) -> &[Decoration] {
-        &self.records
-    }
-
-    pub fn get(&self, id: DecorationId) -> Option<&Decoration> {
-        self.records
-            .binary_search_by_key(&id, |record| record.id)
-            .ok()
-            .map(|i| &self.records[i])
-    }
-
-    pub(crate) fn adjacent(
-        &self,
-        offset: Option<u32>,
-        reverse: bool,
-        change: bool,
-    ) -> Option<&Decoration> {
-        let indices = if change {
-            &self.changes
-        } else {
-            &self.diagnostics
-        };
-        let index = match (offset, reverse) {
-            (None, false) => 0,
-            (None, true) => indices.len().checked_sub(1)?,
-            (Some(offset), true) => indices
-                .partition_point(|&index| self.records[index as usize].start < offset)
-                .checked_sub(1)?,
-            (Some(offset), false) => {
-                indices.partition_point(|&index| self.records[index as usize].start <= offset)
-            }
-        };
-        indices
-            .get(index)
-            .map(|&index| &self.records[index as usize])
-    }
-
-    /// Visits overlapping records in O(log n + hits). Empty marks match the byte at
-    /// their anchor. The query itself is half-open. Visit order is unspecified.
-    pub fn query(&self, range: Range<u64>, visit: impl FnMut(&Decoration)) {
-        self.query_limited(range, usize::MAX, visit);
-    }
-
-    /// Query up to `limit` intersections. The returned count equals the number
-    /// of invocations, allowing a renderer to detect when its budget was reached.
-    pub fn query_limited(
-        &self,
-        range: Range<u64>,
-        limit: usize,
-        mut visit: impl FnMut(&Decoration),
-    ) -> usize {
-        if range.start >= range.end || limit == 0 {
-            return 0;
-        }
-        if self.disjoint {
-            let first = self
-                .by_start
-                .partition_point(|&i| self.records[i as usize].effective_end() <= range.start);
-            let mut count = 0;
-            for &i in self.by_start[first..].iter().take(limit) {
-                let record = &self.records[i as usize];
-                if u64::from(record.start) >= range.end {
-                    break;
-                }
-                visit(record);
-                count += 1;
-            }
-            return count;
-        }
-        let mut remaining = limit;
-        self.visit(0, &range, &mut remaining, &mut visit);
-        limit - remaining
-    }
-
-    fn visit(
-        &self,
-        index: u32,
-        range: &Range<u64>,
-        remaining: &mut usize,
-        visit: &mut impl FnMut(&Decoration),
-    ) {
-        let Some(node) = self.nodes.get(index as usize) else {
-            return;
-        };
-        if *remaining == 0 {
-            return;
-        }
-        let split = u64::from(node.split);
-        let first = node.first as usize;
-        let last = first + node.count as usize;
-        let (indices, left, right) = if range.end <= split {
-            (&self.by_start[first..last], node.left, EMPTY)
-        } else if range.start > split {
-            (&self.by_end[first..last], EMPTY, node.right)
-        } else {
-            (&self.by_start[first..last], node.left, node.right)
-        };
-        for &i in indices.iter().take(*remaining) {
-            let record = &self.records[i as usize];
-            if u64::from(record.start) >= range.end || record.effective_end() <= range.start {
-                break;
-            }
-            visit(record);
-            *remaining -= 1;
-        }
-        self.visit(left, range, remaining, visit);
-        self.visit(right, range, remaining, visit);
     }
 }
 
@@ -737,6 +794,9 @@ mod tests {
             .apply_edit(Arc::new(CodeDocument::new("aXYb界d")), 1..1)
             .unwrap();
         let layer = decorations.layer(3).unwrap();
+        let mut next = decorations.clone();
+        next.mark_stale(3);
+        assert!(Arc::ptr_eq(&next.layer(3).unwrap().index, &layer.index));
         assert!(layer.is_stale());
         let anchored = layer.get(1).unwrap();
         assert_eq!((anchored.start, anchored.end), (1, 4));

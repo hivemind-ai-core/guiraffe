@@ -33,6 +33,26 @@ pub struct DecorationEvent {
 
 pub type DecorationHandler = Rc<dyn Fn(DecorationEvent, &mut App)>;
 
+/// Payload delivered when a visible inter-line widget needs content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockWidget {
+    pub layer: DecorationLayerId,
+    pub decoration: DecorationId,
+    pub payload: Arc<str>,
+}
+
+pub type BlockWidgetRenderer = Rc<dyn Fn(BlockWidget, &mut Window, &mut App) -> AnyElement>;
+
+#[derive(Default)]
+struct BlockLayout {
+    rows: BTreeMap<u64, usize>,
+    keys: BTreeMap<u64, (DecorationLayerId, DecorationId)>,
+    measured: std::collections::BTreeSet<u64>,
+    pending: BTreeMap<u64, usize>,
+    generation: u64,
+    size: Option<(u32, u32)>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DecorationTarget {
     Text,
@@ -118,7 +138,6 @@ pub(crate) struct Geometry {
     pub shaped: std::collections::HashMap<usize, Rc<ShapedLine>>,
     pub font: Font,
     pub content_width: f64,
-    pub layout_epoch: u64,
 }
 pub(crate) struct Shared {
     pub id: u64,
@@ -129,9 +148,14 @@ pub(crate) struct Shared {
     hover_decoration: Cell<Option<(DecorationLayerId, DecorationId)>>,
     hover_target: Cell<Option<DecorationTarget>>,
     text_annotations: RefCell<Arc<[Annotation]>>,
+    pub has_range_styling: Cell<bool>,
+    has_bubbles: Cell<bool>,
     pub hints: RefCell<BTreeMap<usize, DisplayLine>>,
     pub index: RefCell<IntervalIndex>,
     pub annotation_ids: RefCell<BTreeMap<u64, usize>>,
+    block_layout: RefCell<BlockLayout>,
+    block_renderer: RefCell<Option<BlockWidgetRenderer>>,
+    text_view: RefCell<Option<WeakEntity<TextLayer>>>,
     pub rows: RefCell<RowMap>,
     pub folds: RefCell<Vec<Fold>>,
     pub gutters: RefCell<Vec<GutterColumn>>,
@@ -157,7 +181,6 @@ pub(crate) struct Shared {
     analyzing: Cell<bool>,
     presentation: RefCell<Option<PendingPresentation>>,
     pub text_epoch: Cell<u64>,
-    pub(crate) layout_epoch: Cell<u64>,
     pub overlay_view: RefCell<Option<WeakEntity<OverlayLayer>>>,
     pub focus: FocusHandle,
     pub menu: guiraffe_core::TextMenu,
@@ -183,9 +206,14 @@ impl CodeHandle {
             hover_decoration: Cell::default(),
             hover_target: Cell::default(),
             text_annotations: RefCell::new(Arc::from([])),
+            has_range_styling: Cell::default(),
+            has_bubbles: Cell::default(),
             hints: RefCell::default(),
             index: RefCell::new(IntervalIndex::default()),
             annotation_ids: RefCell::default(),
+            block_layout: RefCell::default(),
+            block_renderer: RefCell::default(),
+            text_view: RefCell::default(),
             rows: RefCell::new(rows),
             folds: RefCell::default(),
             gutters: RefCell::default(),
@@ -210,7 +238,6 @@ impl CodeHandle {
             analyzing: Cell::default(),
             presentation: RefCell::default(),
             text_epoch: Cell::default(),
-            layout_epoch: Cell::default(),
             overlay_view: RefCell::new(None),
             focus: cx.focus_handle(),
             menu: guiraffe_core::TextMenu::new(),
@@ -223,6 +250,7 @@ impl CodeHandle {
             shared: shared.clone(),
         });
         *shared.overlay_view.borrow_mut() = Some(overlay.downgrade());
+        *shared.text_view.borrow_mut() = Some(text.downgrade());
         Self {
             shared,
             text,
@@ -266,9 +294,6 @@ impl CodeHandle {
         });
     }
     pub(crate) fn notify_all(&self, cx: &mut App) {
-        self.shared
-            .layout_epoch
-            .set(self.shared.layout_epoch.get().wrapping_add(1));
         cx.notify(self.text.entity_id());
         self.notify_overlay(cx);
     }
@@ -310,6 +335,18 @@ impl CodeHandle {
             self.notify_all(cx);
         }
         true
+    }
+
+    /// Set the renderer for inter-line block decorations. The default displays the payload
+    /// as text. Changing renderers remeasures visible widgets on their next layout.
+    pub fn on_block_widget(&self, renderer: Option<BlockWidgetRenderer>, cx: &mut App) {
+        *self.shared.block_renderer.borrow_mut() = renderer;
+        let mut layout = self.shared.block_layout.borrow_mut();
+        layout.generation = layout.generation.wrapping_add(1);
+        layout.measured.clear();
+        layout.pending.clear();
+        drop(layout);
+        self.notify_overlay(cx);
     }
 
     /// Register a callback for layered decoration hover and click actions.
@@ -427,24 +464,7 @@ impl CodeHandle {
         action: DecorationAction,
         cx: &mut App,
     ) {
-        let Some(handler) = self.shared.decoration_handler.borrow().clone() else {
-            return;
-        };
-        let style = self.shared.decorations.borrow().as_ref().and_then(|data| {
-            let mark = data.layer(key.0)?.get(key.1)?;
-            data.style(mark.style).cloned()
-        });
-        if let Some(style) = style {
-            handler(
-                DecorationEvent {
-                    action,
-                    layer: key.0,
-                    decoration: key.1,
-                    style,
-                },
-                cx,
-            );
-        }
+        emit_decoration_event(&self.shared, key, action, cx);
     }
 
     /// Move the caret to the adjacent diagnostic. Returns false at either end.
@@ -520,9 +540,23 @@ impl CodeHandle {
         if !Arc::ptr_eq(&self.document(), &prepared.document) {
             return false;
         }
-        let text_changed = *self.shared.text_annotations.borrow() != prepared.text
+        let mut blocks = self.shared.block_layout.borrow_mut();
+        let text_changed = blocks.rows != prepared.block_rows
+            || blocks.keys != prepared.block_keys
+            || *self.shared.text_annotations.borrow() != prepared.text
             || *self.shared.folds.borrow() != prepared.folds;
+        *blocks = BlockLayout {
+            rows: prepared.block_rows,
+            keys: prepared.block_keys,
+            generation: blocks.generation.wrapping_add(1),
+            ..Default::default()
+        };
+        drop(blocks);
         *self.shared.text_annotations.borrow_mut() = prepared.text;
+        self.shared
+            .has_range_styling
+            .set(prepared.has_range_styling);
+        self.shared.has_bubbles.set(prepared.has_bubbles);
         *self.shared.index.borrow_mut() = prepared.index;
         *self.shared.rows.borrow_mut() = prepared.rows;
         *self.shared.folds.borrow_mut() = prepared.folds;
@@ -531,9 +565,6 @@ impl CodeHandle {
         *self.shared.annotations.borrow_mut() = prepared.annotations;
         self.shared.bubbles.borrow_mut().clear();
         if text_changed {
-            self.shared
-                .layout_epoch
-                .set(self.shared.layout_epoch.get().wrapping_add(1));
             self.shared
                 .text_epoch
                 .set(self.shared.text_epoch.get().wrapping_add(1));
@@ -545,8 +576,8 @@ impl CodeHandle {
     pub fn set_folds(&self, mut folds: Vec<Fold>, cx: &mut App) {
         folds.sort_by_key(|f| f.start);
         if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
-            if let Some(prepared) = pending.prepared.take() {
-                pending.annotations = prepared.annotations;
+            if let Some(prepared) = pending.prepared.as_mut() {
+                prepared.replace_folds(folds.clone());
             }
             pending.folds = folds;
             return;
@@ -554,10 +585,11 @@ impl CodeHandle {
         if *self.shared.folds.borrow() == folds {
             return;
         }
-        *self.shared.rows.borrow_mut() = RowMap::new(
+        *self.shared.rows.borrow_mut() = RowMap::with_blocks(
             self.document().line_count(),
             &folds,
             &self.shared.annotations.borrow(),
+            &self.shared.block_layout.borrow().rows,
         );
         *self.shared.folds.borrow_mut() = folds;
         self.shared
@@ -955,6 +987,13 @@ impl CodeHandle {
             self.shared.folds.borrow_mut().clear();
             self.shared.hints.borrow_mut().clear();
             *self.shared.text_annotations.borrow_mut() = Arc::from([]);
+            self.shared.has_range_styling.set(false);
+            let generation = self.shared.block_layout.borrow().generation.wrapping_add(1);
+            *self.shared.block_layout.borrow_mut() = BlockLayout {
+                generation,
+                ..Default::default()
+            };
+            self.shared.has_bubbles.set(false);
             self.shared.traces.borrow_mut().clone_from(&Arc::from([]));
             *self.shared.index.borrow_mut() = IntervalIndex::default();
             *self.shared.rows.borrow_mut() = RowMap::new(self.document().line_count(), &[], &[]);
@@ -991,15 +1030,10 @@ impl Render for TextLayer {
             move |bounds, window, cx| {
                 let old = {
                     let g = shared.geometry.borrow();
-                    (
-                        g.bounds,
-                        g.line_height,
-                        g.gutter,
-                        g.margin,
-                        g.mini,
-                        g.layout_epoch,
-                    )
+                    (g.bounds, g.line_height, g.gutter, g.margin, g.mini)
                 };
+                let old_blame = inline_blame_anchor(&shared);
+                let truncated = shared.stats.get().last_truncated_rows > 0;
                 let frame = crate::paint::prepare(
                     &shared,
                     &mut cache.borrow_mut(),
@@ -1011,17 +1045,17 @@ impl Render for TextLayer {
                 );
                 let changed = {
                     let g = shared.geometry.borrow();
-                    old != (
-                        g.bounds,
-                        g.line_height,
-                        g.gutter,
-                        g.margin,
-                        g.mini,
-                        g.layout_epoch,
-                    )
+                    old != (g.bounds, g.line_height, g.gutter, g.margin, g.mini)
                 };
-                if changed {
-                    let dependents = shared.dependents.borrow().clone();
+                let overlay_changed = changed
+                    || old_blame != inline_blame_anchor(&shared)
+                    || truncated != (shared.stats.get().last_truncated_rows > 0);
+                if overlay_changed {
+                    let dependents = if changed {
+                        shared.dependents.borrow().clone()
+                    } else {
+                        Vec::new()
+                    };
                     let overlay = shared.overlay_view.borrow().clone();
                     cx.defer(move |cx| {
                         for weak in dependents {
@@ -1116,6 +1150,86 @@ fn accessible_lines(
     list
 }
 
+fn inline_blame_anchor(shared: &Shared) -> Option<(usize, Point<Pixels>)> {
+    let line = shared.selection.get()?.start.line;
+    let decorations = shared.decorations.borrow();
+    let decorations = decorations.as_ref().filter(|data| data.has_blame())?;
+    let column = decorations.document().line_range(line)?.len();
+    crate::paint::anchor(shared, Position::new(line, column)).map(|anchor| (line, anchor))
+}
+
+fn emit_decoration_event(
+    shared: &Shared,
+    key: (DecorationLayerId, DecorationId),
+    action: DecorationAction,
+    cx: &mut App,
+) {
+    let Some(handler) = shared.decoration_handler.borrow().clone() else {
+        return;
+    };
+    let style = shared.decorations.borrow().as_ref().and_then(|data| {
+        let mark = data.layer(key.0)?.get(key.1)?;
+        data.style(mark.style).cloned()
+    });
+    if let Some(style) = style {
+        handler(
+            DecorationEvent {
+                action,
+                layer: key.0,
+                decoration: key.1,
+                style,
+            },
+            cx,
+        );
+    }
+}
+
+fn measure_block(
+    shared: &Rc<Shared>,
+    id: u64,
+    generation: u64,
+    height: Pixels,
+    line_height: f32,
+    cx: &mut App,
+) {
+    let mut layout = shared.block_layout.borrow_mut();
+    if layout.generation != generation || !layout.measured.insert(id) {
+        return;
+    }
+    let rows = (height.as_f32() / line_height)
+        .ceil()
+        .clamp(1., f32::from(u16::MAX)) as usize;
+    if layout.rows.get(&id) == Some(&rows) {
+        return;
+    }
+    let schedule = layout.pending.is_empty();
+    layout.pending.insert(id, rows);
+    drop(layout);
+    if schedule {
+        let shared = shared.clone();
+        cx.defer(move |cx| {
+            let mut layout = shared.block_layout.borrow_mut();
+            if layout.generation != generation {
+                return;
+            }
+            let heights = std::mem::take(&mut layout.pending);
+            layout.rows.extend(heights);
+            *shared.rows.borrow_mut() = RowMap::with_blocks(
+                shared.highlighted.borrow().document.line_count(),
+                &shared.folds.borrow(),
+                &shared.annotations.borrow(),
+                &layout.rows,
+            );
+            if let Some(text) = shared.text_view.borrow().as_ref() {
+                cx.notify(text.entity_id());
+            }
+            if let Some(overlay) = shared.overlay_view.borrow().as_ref() {
+                cx.notify(overlay.entity_id());
+            }
+        });
+    }
+}
+
 impl Render for OverlayLayer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut stats = self.shared.stats.get();
@@ -1133,18 +1247,18 @@ impl Render for OverlayLayer {
         let annotations = self.shared.annotations.borrow();
         let rows = self.shared.rows.borrow();
         let viewport = self.shared.viewport.get();
-        let visible = viewport.visible(rows.len(), lh, h);
         let mut requests = Vec::new();
-        for row in visible {
-            if let Some(Row::Source(line)) = rows.row(row) {
-                let doc = self.shared.highlighted.borrow();
-                if let Some(range) = doc.document.line_range(line) {
-                    let mut hits = Vec::new();
-                    self.shared
-                        .index
-                        .borrow()
-                        .query(range.start..range.end.saturating_add(1), &mut hits);
-                    for id in hits {
+        if margin > 0. && self.shared.has_bubbles.get() {
+            let visible = viewport.visible(rows.len(), lh, h);
+            let mut hits = Vec::new();
+            let doc = self.shared.highlighted.borrow();
+            let index = self.shared.index.borrow();
+            for row in visible {
+                if let Some(Row::Source(line)) = rows.row(row)
+                    && let Some(range) = doc.document.line_range(line)
+                {
+                    index.query(range.start..range.end.saturating_add(1), &mut hits);
+                    for &id in &hits {
                         if let Some(a) = annotations.get(id)
                             && a.kind == AnnotationKind::Bubble
                         {
@@ -1160,11 +1274,7 @@ impl Render for OverlayLayer {
         }
         requests.sort_by_key(|(id, _, _)| *id);
         requests.dedup_by_key(|(id, _, _)| *id);
-        let placements = if margin > 0. {
-            place_bubbles(&requests, h, lh * 0.25)
-        } else {
-            Vec::new()
-        };
+        let placements = place_bubbles(&requests, h, lh * 0.25);
         self.shared
             .bubbles
             .borrow_mut()
@@ -1244,13 +1354,9 @@ impl Render for OverlayLayer {
                 }
             }
         }
-        if let Some(selection) = self.shared.selection.get()
+        if let Some((line, at)) = inline_blame_anchor(&self.shared)
             && let Some(decorations) = self.shared.decorations.borrow().as_ref()
-            && let Some(bytes) = decorations.document().line_range(selection.start.line)
-            && let Some(at) = crate::paint::anchor(
-                &self.shared,
-                Position::new(selection.start.line, bytes.len()),
-            )
+            && let Some(bytes) = decorations.document().line_range(line)
         {
             let mut blame = None;
             for (_, layer) in decorations.layers().filter(|(_, layer)| layer.has_blame()) {
@@ -1329,6 +1435,97 @@ impl Render for OverlayLayer {
                     .border_color(s.border.to_hsla())
                     .child(MarkdownView::new(format!("code-detail-{}", self.shared.id)).state(md)),
             );
+        }
+        let mut visible_widgets = Vec::new();
+        let left = self.shared.geometry.borrow().gutter;
+        let widget_width = (width - left - margin - mini).max(0.);
+        if lh > 0. && !self.shared.block_layout.borrow().keys.is_empty() {
+            let mut layout = self.shared.block_layout.borrow_mut();
+            let size = Some((widget_width.to_bits(), lh.to_bits()));
+            if layout.size != size {
+                layout.size = size;
+                layout.generation = layout.generation.wrapping_add(1);
+                layout.measured.clear();
+                layout.pending.clear();
+            }
+            let viewport_rows = viewport.visible(rows.len(), lh, h);
+            let first = viewport_rows.start;
+            for row in viewport_rows {
+                let Some(Row::Block {
+                    annotation, start, ..
+                }) = rows.row(row)
+                else {
+                    continue;
+                };
+                if row != start.max(first) {
+                    continue;
+                }
+                if let Some(item) = annotations.get(annotation)
+                    && let Some(&(layer, decoration)) = layout.keys.get(&item.id)
+                {
+                    let y = (start as f64 * f64::from(lh) - viewport.y) as f32;
+                    visible_widgets.push((
+                        item.id,
+                        y,
+                        layout.generation,
+                        !layout.measured.contains(&item.id),
+                        BlockWidget {
+                            layer,
+                            decoration,
+                            payload: item.payload.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+        drop(rows);
+        drop(annotations);
+        if !visible_widgets.is_empty() {
+            let renderer = self.shared.block_renderer.borrow().clone();
+            for (id, y, generation, needs_measure, widget) in visible_widgets {
+                let key = (widget.layer, widget.decoration);
+                let content = if let Some(renderer) = &renderer {
+                    renderer(widget, window, cx)
+                } else {
+                    div().child(widget.payload.to_string()).into_any_element()
+                };
+                let mut block = div()
+                    .absolute()
+                    .top(px(y))
+                    .left(px(left))
+                    .w(px(widget_width))
+                    .child(content);
+                if needs_measure {
+                    let shared = self.shared.clone();
+                    block = block.child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                measure_block(&shared, id, generation, bounds.size.height, lh, cx)
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    );
+                }
+                let hover = self.shared.clone();
+                let click = self.shared.clone();
+                root = root.child(
+                    block
+                        .id(("code-block", id as usize))
+                        .on_hover(move |is_hovered, _, cx| {
+                            let action = if *is_hovered {
+                                DecorationAction::Hover
+                            } else {
+                                DecorationAction::Leave
+                            };
+                            emit_decoration_event(&hover, key, action, cx);
+                        })
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            emit_decoration_event(&click, key, DecorationAction::Click, cx);
+                        }),
+                );
+            }
         }
         root.children(self.shared.menu.element())
     }
@@ -1612,6 +1809,81 @@ mod review_tests {
             color: guiraffe_core::ColorName::Blue,
         }
     }
+    #[gpui_kit::test]
+    fn block_widgets_measure_their_content_once_and_mount_only_when_visible(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::{AnchorBias, DecorationInput, DecorationStyle, Decorations};
+        use gpui_kit::{
+            Context, IntoElement, Render, Styled, Window, div, px, test::TestWindowExt,
+        };
+        use std::{cell::RefCell, rc::Rc};
+
+        struct Fixture(CodeHandle);
+        impl Render for Fixture {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                crate::CodeViewer::new(&self.0)
+            }
+        }
+
+        let called = Rc::new(RefCell::new(Vec::new()));
+        let capture = called.clone();
+        let (view, vcx) = cx.add_window_view(|_, cx| {
+            let document = Arc::new(CodeDocument::new("x\n".repeat(10_000)));
+            let code = CodeHandle::new(17, document.clone(), cx);
+            let mut data = Decorations::new(document).unwrap();
+            let style = data
+                .intern_style(DecorationStyle::Block {
+                    estimated_rows: 1,
+                    payload: "Review".into(),
+                })
+                .unwrap();
+            data.update_layer(
+                1,
+                Default::default(),
+                &[],
+                [0, 5_000].map(|line| {
+                    let at = Position::new(line, 0);
+                    DecorationInput {
+                        id: line as u64,
+                        range: SourceRange::new(at, at),
+                        style,
+                        start_bias: AnchorBias::Left,
+                        end_bias: AnchorBias::Right,
+                    }
+                }),
+            )
+            .unwrap();
+            code.set_analysis(data.prepare_analysis(Vec::new(), Vec::new()), cx);
+            code.set_decorations(Some(Arc::new(data)), cx);
+            code.on_block_widget(
+                Some(Rc::new(move |block, _, _| {
+                    capture.borrow_mut().push(block.decoration);
+                    div().h(px(70.)).into_any_element()
+                })),
+                cx,
+            );
+            Fixture(code)
+        });
+        let code = vcx.update(|_, cx| view.read(cx).0.clone());
+        for _ in 0..4 {
+            vcx.update(|window, cx| window.render_frame(cx));
+            vcx.run_until_parked();
+        }
+        assert_eq!(code.shared.block_layout.borrow().measured.len(), 1);
+        assert!(called.borrow().iter().all(|&id| id == 0));
+        let expected = (70. / code.shared.geometry.borrow().line_height).ceil() as usize;
+        assert_eq!(code.shared.rows.borrow().source_row(1), Some(1 + expected));
+
+        vcx.update(|_, cx| code.scroll_to_line(5_000, cx));
+        for _ in 0..3 {
+            vcx.update(|window, cx| window.render_frame(cx));
+            vcx.run_until_parked();
+        }
+        assert!(called.borrow().contains(&5_000));
+        assert_eq!(code.shared.block_layout.borrow().measured.len(), 2);
+    }
+
     #[gpui_kit::test]
     fn layered_diagnostics_navigate_emit_hover_and_reject_other_revisions(cx: &mut TestAppContext) {
         use crate::{
