@@ -95,6 +95,13 @@ impl Document {
             .rev()
             .find(|b| source.is_char_boundary(*b))
             .unwrap_or(0);
+        Self::merge_tail(prev, base, Self::analyze(&source[base..]))
+    }
+
+    pub(crate) fn merge_tail(prev: &Document, base: usize, tail: Document) -> Self {
+        if base == 0 {
+            return tail;
+        }
         let mut out = Document {
             headings: prev
                 .headings
@@ -115,7 +122,6 @@ impl Document {
                 .cloned()
                 .collect(),
         };
-        let tail = Document::analyze(&source[base..]);
         let shift = |r: &Range<usize>| r.start + base..r.end + base;
         let mut anchors = AnchorSlugs {
             seen: out.headings.iter().map(|h| h.anchor.clone()).collect(),
@@ -136,6 +142,20 @@ impl Document {
             ..t
         }));
         out
+    }
+
+    pub(crate) fn metadata_end(&self) -> usize {
+        self.headings
+            .iter()
+            .map(|heading| heading.range.end)
+            .chain(self.fences.iter().map(|fence| fence.range.end))
+            .chain(
+                self.tasks
+                    .iter()
+                    .map(|task| task.text.end.max(task.marker.end)),
+            )
+            .max()
+            .unwrap_or_default()
     }
 
     /// Whether the document has any heading.
