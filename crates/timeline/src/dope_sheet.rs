@@ -407,48 +407,35 @@ impl Render for DopeSheet {
             .get(start..end.min(self.model.rows().len()))
             .unwrap_or(&[]);
         let owner = cx.weak_entity();
-        let headers: Vec<_> = rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                let c = &self.model.channels[row.channel];
-                let current = self.headers.get_mut(index);
-                let name = current
-                    .as_ref()
-                    .map(|(old, _)| &old.name)
-                    .filter(|name| name.as_str() == c.name.as_str())
-                    .cloned()
-                    .unwrap_or_else(|| c.name.clone().into());
-                let header = ChannelHeader {
-                    channel: row.channel,
-                    depth: row.depth,
-                    name,
-                    color: c.color,
-                    group: c.group,
-                    collapsed: c.collapsed,
-                    muted: c.muted,
-                    locked: c.locked,
-                    visible: c.visible,
-                    owner: owner.clone(),
-                };
-                if let Some(entry) = current {
-                    if entry.0 != header {
-                        *entry = (header.clone(), cx.new(|_| header));
-                    }
-                } else {
-                    self.headers.push((header.clone(), cx.new(|_| header)));
+        for (index, row) in rows.iter().enumerate() {
+            let c = &self.model.channels[row.channel];
+            let current = self.headers.get_mut(index);
+            let name = current
+                .as_ref()
+                .map(|(old, _)| &old.name)
+                .filter(|name| name.as_str() == c.name.as_str())
+                .cloned()
+                .unwrap_or_else(|| c.name.clone().into());
+            let header = ChannelHeader {
+                channel: row.channel,
+                depth: row.depth,
+                name,
+                color: c.color,
+                group: c.group,
+                collapsed: c.collapsed,
+                muted: c.muted,
+                locked: c.locked,
+                visible: c.visible,
+                owner: owner.clone(),
+            };
+            if let Some(entry) = current {
+                if entry.0 != header {
+                    *entry = (header.clone(), cx.new(|_| header));
                 }
-                self.headers[index].1.clone().cached(
-                    gpui_kit::StyleRefinement::default()
-                        .absolute()
-                        .top(px(
-                            ((start + index) as f64 * f64::from(ROW_H) - self.offset) as f32,
-                        ))
-                        .w(px(NAME_W))
-                        .h(px(ROW_H)),
-                )
-            })
-            .collect();
+            } else {
+                self.headers.push((header.clone(), cx.new(|_| header)));
+            }
+        }
         self.headers.truncate(rows.len());
         let mut background = self.surface.clone();
         background.insert_layer(
@@ -625,7 +612,18 @@ impl Render for DopeSheet {
                             .w(px(NAME_W))
                             .flex_none()
                             .overflow_hidden()
-                            .children(headers),
+                            .children(self.headers.iter().enumerate().map(
+                                |(index, (_, entity))| {
+                                    let y = (start + index) as f64 * f64::from(ROW_H) - offset;
+                                    entity.clone().cached(
+                                        gpui_kit::StyleRefinement::default()
+                                            .absolute()
+                                            .top(px(y as f32))
+                                            .w(px(NAME_W))
+                                            .h(px(ROW_H)),
+                                    )
+                                },
+                            )),
                     )
                     .child(
                         div()
