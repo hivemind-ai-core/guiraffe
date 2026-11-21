@@ -194,19 +194,44 @@ impl TracksView {
         }
     }
 
-    fn all_clips(&self) -> Vec<(usize, u32)> {
-        self.tracks
-            .iter()
-            .enumerate()
-            .flat_map(|(i, (_, tr))| tr.clips().iter().map(move |c| (i, c.id)))
-            .collect()
-    }
-
     fn select_step(&mut self, dir: i32, cx: &mut Context<Self>) {
-        let all = self.all_clips();
-        let cur = self.selected.and_then(|s| all.iter().position(|x| *x == s));
-        let next = crate::edit::cycle(cur, all.len(), dir);
-        self.select(next.and_then(|i| all.get(i).copied()), cx);
+        let current = self
+            .selected
+            .zip(self.selected_index)
+            .map(|((row, _), index)| (row, index));
+        let next = if dir < 0 {
+            match current {
+                Some((row, index)) if index > 0 => Some((row, index - 1)),
+                _ => self
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .take(current.map_or(self.tracks.len(), |(row, _)| row))
+                    .rev()
+                    .find_map(|(row, (_, track))| {
+                        track.clips().len().checked_sub(1).map(|index| (row, index))
+                    })
+                    .or(current),
+            }
+        } else {
+            match current {
+                Some((row, index)) if index + 1 < self.tracks[row].1.clips().len() => {
+                    Some((row, index + 1))
+                }
+                _ => self
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .skip(current.map_or(0, |(row, _)| row + 1))
+                    .find_map(|(row, (_, track))| (!track.clips().is_empty()).then_some((row, 0)))
+                    .or(current),
+            }
+        };
+        if next != current {
+            self.selected = next.map(|(row, index)| (row, self.tracks[row].1.clips()[index].id));
+            self.selected_index = next.map(|(_, index)| index);
+            cx.notify();
+        }
     }
 
     pub fn tracks(&self) -> &[(String, Track)] {
