@@ -139,6 +139,28 @@ widgets! {
          "padding": "string" = "null", SIZE, None, false;
          "no-padding": "boolean" = "false", &[] as &[&str], None, false;
          "with-border": "boolean" = "false", &[] as &[&str], None, false], [];
+    INDICATOR: "indicator", "components", "Anchors a count or dot to its child content.", true, "stateless", "group",
+        ["control_size", "variant.background"],
+        ["label": "string" = "null", &[] as &[&str], None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "position": "string" = "\"top-end\"", &["top-end", "top-start", "bottom-end", "bottom-start"], None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false], [];
+    COLOR_SWATCH: "color-swatch", "components", "Palette or RGB swatch with an optional selection mark.", false, "stateless", "button",
+        ["control_size", "surfaces.border", "variant.foreground"],
+        ["color": "string" = "\"blue\"", COLOR, None, false;
+         "rgb": "integer" = "null", &[] as &[&str], Some((0.0, 0xff_ffff as f64)), false;
+         "label": "string" = "null", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "selected": "string" = "\"none\"", &["none", "check", "ring"], None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false], ["click": "null"];
+    AVATAR_GROUP: "avatar-group", "components", "Overlapping avatars with optional contents for the overflow chip.", true, "stateless", "group",
+        ["control_size", "surfaces.body", "surfaces.text"],
+        ["people": "avatar-people" = "[]", &[] as &[&str], None, false;
+         "limit": "integer" = "null", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "color": "string" = "null", COLOR, None, false;
+         "size": "string" = "null", SIZE, None, false], [];
     KBD_GROUP: "kbd-group", "components", "A keyboard chord or sequence of keycaps.", false, "stateless", "group",
         ["control_size", "variant.foreground", "variant.background"],
         ["keys": "array" = "[\"Ctrl\",\"K\"]", &[] as &[&str], None, true;

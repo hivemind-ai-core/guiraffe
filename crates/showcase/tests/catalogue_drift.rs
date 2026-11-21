@@ -16,9 +16,12 @@ fn kind(surface: &str) -> Option<&'static str> {
         "flamegraph::FlameGraph" => "flame-graph",
         "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
         | "flow::FlowOptions" => "flow",
+        "components::AvatarGroup" => "avatar-group",
         "components::Card" => "card",
         "components::Blockquote" => "blockquote",
+        "components::ColorSwatch" => "color-swatch",
         "components::Highlight" => "highlight",
+        "components::Indicator" => "indicator",
         "components::KbdGroup" => "kbd-group",
         "components::Mark" => "mark",
         "components::Paper" => "paper",
@@ -58,6 +61,10 @@ fn kind(surface: &str) -> Option<&'static str> {
 
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
+    (
+        "components::AvatarGroup::id",
+        "Set the document node id to identify the group.",
+    ),
     (
         "inputs::ChipGroup::selected",
         "Read the current selection from the value binding.",
@@ -591,6 +598,7 @@ fn covered(surface: &str) -> bool {
     match method {
         "new" => true, // Constructor parameters are declared by the kind's descriptor.
         "child" | "children" => spec.accepts_children,
+        "more" if owner == "components::AvatarGroup" => spec.accepts_children,
         _ => {
             let property = match (owner, method) {
                 ("dnd::SortableBoard", "with_grid") => "cards-per-row".into(),
@@ -614,6 +622,7 @@ fn covered(surface: &str) -> bool {
                 ("flow::FlowState" | "flow::FlowViewport", "set_viewport") => "zoom".into(),
                 ("flow::FlowState", "from_editor") => "graph".into(),
                 ("components::Card" | "components::Paper", "p") => "padding".into(),
+                ("components::ColorSwatch", "from_color") => "color".into(),
                 ("components::Paper", "p_0") => "no-padding".into(),
                 ("components::Text", "fw") => "font-weight".into(),
                 ("components::RingProgress", "section") => "sections".into(),

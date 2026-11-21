@@ -68,7 +68,8 @@ impl PropSpec {
             | "tree-nodes" | "range-value" | "grid-rows" | "grid-columns" | "flame-frames"
             | "timeline-tracks" | "track-selection" | "gantt-tasks" | "board-columns"
             | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
-            | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels" => "array",
+            | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels"
+            | "avatar-people" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -105,6 +106,7 @@ impl PropSpec {
             "chat-messages" => schema["items"] = chat_message_schema(),
             "calendar-presets" => schema["items"] = calendar_preset_schema(),
             "dock-panels" => schema["items"] = dock_panel_schema(),
+            "avatar-people" => schema["items"] = avatar_person_schema(),
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => {
@@ -779,6 +781,15 @@ pub fn dock_panel_schema() -> Value {
             "title":{"type":"string"},"text":{"type":"string"},
             "placement":{"enum":["center","left","right","bottom"]},
             "visible":{"type":"boolean"},"closable":{"type":"boolean"},"zoomable":{"type":"boolean"}
+        }
+    })
+}
+
+pub fn avatar_person_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["name"],
+        "properties":{
+            "name":{"type":"string"},"image":{"type":"string"}
         }
     })
 }

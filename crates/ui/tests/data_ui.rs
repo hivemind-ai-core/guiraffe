@@ -1516,3 +1516,71 @@ fn ui_macro_accepts_native_checkbox_and_switch_options() {
         }
     };
 }
+
+#[gpui_kit::test]
+fn native_indicator_swatch_and_avatar_documents_render(cx: &mut TestAppContext) {
+    let doc = Document::new(
+        Node::new("stack")
+            .child(
+                Node::new("indicator")
+                    .prop("label", "3")
+                    .prop("color", "green")
+                    .prop("size", "lg")
+                    .prop("position", "bottom-start")
+                    .prop("disabled", false)
+                    .child(Node::new("text").prop("text", "Inbox")),
+            )
+            .child(
+                Node::new("color-swatch")
+                    .prop("color", "green")
+                    .prop("rgb", 0x88_cc_aa)
+                    .prop("label", "Green")
+                    .prop("size", "sm")
+                    .prop("selected", "check")
+                    .prop("disabled", false)
+                    .prop("focusable", true)
+                    .on("click", "choose-color"),
+            )
+            .child(
+                Node::new("avatar-group")
+                    .prop(
+                        "people",
+                        serde_json::json!([
+                            {"name":"Ada Lovelace"}, {"name":"Grace Hopper"}
+                        ]),
+                    )
+                    .prop("limit", 1)
+                    .prop("color", "violet")
+                    .prop("size", "xs")
+                    .child(Node::new("text").prop("text", "+1")),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(compile(&doc).diagnostics().is_empty());
+    let _ = mount(cx, &doc);
+}
+
+#[test]
+fn ui_macro_accepts_native_indicator_swatch_and_avatar_builders() {
+    use guiraffe_components::{
+        AvatarGroup, ColorSwatch, Indicator, IndicatorPosition, Person, SwatchSelected,
+    };
+    use guiraffe_core::{ColorName, Rgb, Size};
+
+    let _ = ui! {
+        div {
+            Indicator("Inbox") {
+                label: "3"; color: ColorName::Green; size: Size::Lg;
+                position: IndicatorPosition::BottomStart; disabled: false
+            }
+            ColorSwatch("green", Rgb::hex(0x88_cc_aa)) {
+                label: "Green"; size: Size::Sm; selected: SwatchSelected::Check;
+                disabled: false; focusable: true
+            }
+            AvatarGroup([Person::new("Ada"), Person::new("Grace")]) {
+                id: "team"; color: ColorName::Violet; limit: 1; size: Size::Xs; more: "+1"
+            }
+        }
+    };
+}

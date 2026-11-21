@@ -495,6 +495,12 @@ impl Validation<'_> {
                     prop.range
                         .is_none_or(|(min, max)| (min..=max).contains(&number))
                 }),
+                "avatar-people" => got.as_array().is_some_and(|people| {
+                    let schema = crate::widget_spec::avatar_person_schema();
+                    people
+                        .iter()
+                        .all(|person| matches_data_schema(person, &schema))
+                }),
                 "integer-array" => got
                     .as_array()
                     .is_some_and(|items| items.iter().all(|item| item.as_u64().is_some())),

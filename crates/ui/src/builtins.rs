@@ -6,10 +6,10 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, component::button::Button, div, px,
 };
 use guiraffe_components::{
-    Blockquote, Card, Highlight, KbdGroup, KbdSeparator, Mark, Paper, Pill, RingProgress, Text,
-    Title,
+    AvatarGroup, Blockquote, Card, ColorSwatch, Highlight, Indicator, IndicatorPosition, KbdGroup,
+    KbdSeparator, Mark, Paper, Person, Pill, RingProgress, SwatchSelected, Text, Title,
 };
-use guiraffe_core::{Size, StyleContext, Variant};
+use guiraffe_core::{ColorName, Rgb, Size, StyleContext, Variant};
 use guiraffe_layout::{Align, Group, Justify, Stack};
 
 use crate::widget::{NodeView, Registry, widget};
@@ -301,6 +301,98 @@ pub fn register(r: &mut Registry) {
                 paper = paper.p_0();
             }
             paper.into_any_element()
+        }),
+    );
+    r.register(
+        INDICATOR.0.id,
+        widget(&INDICATOR.1, |n, kids, _, _| {
+            let position = match n.prop(n.prop_index("position")).as_str() {
+                Some("top-start") => IndicatorPosition::TopStart,
+                Some("bottom-start") => IndicatorPosition::BottomStart,
+                Some("bottom-end") => IndicatorPosition::BottomEnd,
+                _ => IndicatorPosition::TopEnd,
+            };
+            let mut indicator = Indicator::new(div().children(kids))
+                .position(position)
+                .disabled(n.bool(n.prop_index("disabled")));
+            if let Some(label) = n.prop(n.prop_index("label")).as_str() {
+                indicator = indicator.label(label.to_owned());
+            }
+            if let Some(color) = n.color(n.prop_index("color")) {
+                indicator = indicator.color(color);
+            }
+            if let Some(size) = n.size(n.prop_index("size")) {
+                indicator = indicator.size(size);
+            }
+            indicator.into_any_element()
+        }),
+    );
+    r.register(
+        COLOR_SWATCH.0.id,
+        widget(&COLOR_SWATCH.1, |n, _, _, cx| {
+            let id = n.element_id();
+            let mut swatch = match n.num(n.prop_index("rgb")) {
+                Some(rgb) => {
+                    ColorSwatch::new(id, Rgb::hex(rgb.clamp(0.0, 0xff_ffff as f64) as u32))
+                }
+                None => ColorSwatch::from_color(
+                    id,
+                    n.color(n.prop_index("color")).unwrap_or(ColorName::Blue),
+                    cx,
+                ),
+            };
+            let selected = match n.prop(n.prop_index("selected")).as_str() {
+                Some("check") => SwatchSelected::Check,
+                Some("ring") => SwatchSelected::Ring,
+                _ => SwatchSelected::None,
+            };
+            swatch = swatch
+                .selected(selected)
+                .disabled(n.bool(n.prop_index("disabled")));
+            if let Some(label) = n.prop(n.prop_index("label")).as_str() {
+                swatch = swatch.label(label.to_owned());
+            }
+            if let Some(size) = n.size(n.prop_index("size")) {
+                swatch = swatch.size(size);
+            }
+            if let Some(focusable) = n.prop(n.prop_index("focusable")).as_bool() {
+                swatch = swatch.focusable(focusable);
+            }
+            if let Some(click) = n.handler(n.event_index("click")) {
+                swatch =
+                    swatch.on_click(move |_, window, cx| click(crate::Value::Null, window, cx));
+            }
+            swatch.into_any_element()
+        }),
+    );
+    r.register(
+        AVATAR_GROUP.0.id,
+        widget(&AVATAR_GROUP.1, |n, kids, _, _| {
+            let data = n.prop(n.prop_index("people"));
+            let name = ["name".into()];
+            let image = ["image".into()];
+            let people = (0..data.list_len().unwrap_or_default()).filter_map(|index| {
+                let item = data.list_get(index)?;
+                let mut person = Person::new(item.field(&name).as_str()?.to_owned());
+                if let Some(image) = item.field(&image).as_str() {
+                    person = person.image(image.to_owned());
+                }
+                Some(person)
+            });
+            let mut group = AvatarGroup::new(people).id(n.element_id().to_string());
+            if let Some(limit) = n.num(n.prop_index("limit")) {
+                group = group.limit(limit.clamp(0.0, f64::from(u32::MAX)) as usize);
+            }
+            if let Some(color) = n.color(n.prop_index("color")) {
+                group = group.color(color);
+            }
+            if let Some(size) = n.size(n.prop_index("size")) {
+                group = group.size(size);
+            }
+            if !kids.is_empty() {
+                group = group.more(div().children(kids));
+            }
+            group.into_any_element()
         }),
     );
     r.register(
