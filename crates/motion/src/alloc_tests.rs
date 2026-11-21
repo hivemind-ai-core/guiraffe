@@ -22,6 +22,11 @@ use crate::*;
 /// next-frame callback list it takes every frame. The element state, the FLIP map, the key
 /// hash and the size tracks allocate nothing in steady state.
 const EXTRA_PER_FRAME: usize = 3;
+/// On gpui-fast an idle re-render reuses the retained layout and paint of unchanged subtrees;
+/// an animating frame changes geometry by definition, so the backend re-lays out and repaints
+/// the moving subtree (measured: +7 over idle). Our own state is still allocation-free, which
+/// `pure_steady_state_allocates_nothing` asserts directly on both backends.
+const EXTRA_PER_FRAME_RETAINED: usize = 8;
 
 struct Counting;
 
@@ -145,8 +150,50 @@ fn steady_animation_allocates_no_more_than_an_idle_rerender(cx: &mut TestAppCont
         })
         .max()
         .unwrap_or(0);
+    let bound = if gpui_kit::GPUI_FAST {
+        EXTRA_PER_FRAME_RETAINED
+    } else {
+        EXTRA_PER_FRAME
+    };
     assert!(
-        animating <= idle + EXTRA_PER_FRAME,
-        "animating frame allocated {animating}, idle re-render {idle} (bound +{EXTRA_PER_FRAME})"
+        animating <= idle + bound,
+        "animating frame allocated {animating}, idle re-render {idle} (bound +{bound})"
     );
+}
+
+#[test]
+fn pure_steady_state_allocates_nothing() {
+    use crate::layout::{FlipList, SizeTrack, keys_hash, offset};
+    let prefs = MotionPrefs::default();
+    let t = Timing::tween(Duration::from_secs(10), Easing::Linear);
+    let t0 = std::time::Instant::now();
+    let keys: Vec<gpui_kit::ElementId> = (0..64usize).map(Into::into).collect();
+    let mut list: FlipList<gpui_kit::ElementId> = FlipList::new(t);
+    let mut size = SizeTrack::new(10.0, t);
+    // Warm up: first layout, then a structural reorder that starts every item moving.
+    list.begin(keys_hash(&keys), t);
+    for (i, k) in keys.iter().enumerate() {
+        list.place(k, offset(0.0, i as f32 * 10.0), t0, &prefs);
+    }
+    list.end();
+    let reversed: Vec<_> = keys.iter().rev().cloned().collect();
+    list.begin(keys_hash(&reversed), t);
+    for (i, k) in reversed.iter().enumerate() {
+        list.place(k, offset(0.0, i as f32 * 10.0), t0, &prefs);
+    }
+    list.end();
+    size.observe(500.0, t0, &prefs);
+    let n = counted(|| {
+        for frame in 1..=60u64 {
+            let now = t0 + Duration::from_millis(frame * 16);
+            list.begin(keys_hash(&reversed), t);
+            for (i, k) in reversed.iter().enumerate() {
+                std::hint::black_box(list.place(k, offset(0.0, i as f32 * 10.0), now, &prefs));
+            }
+            list.end();
+            size.observe(500.0, now, &prefs);
+            std::hint::black_box(size.value_at(now, &prefs));
+        }
+    });
+    assert_eq!(n, 0, "steady FLIP + size tracking allocates nothing");
 }

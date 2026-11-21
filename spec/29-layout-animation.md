@@ -129,6 +129,8 @@ it does not request frames itself except when the measured height changes.
   same frame; no frame is requested at rest; FLIP offsets start at the old position and end at zero;
   an animating frame allocates no more than an idle re-render of the same view plus 3
   (`alloc_tests.rs`, counting allocator; the 3 are GPUI's frame scheduling: one boxed next-frame
-  callback per animating element and the callback list it re-creates; our state allocates 0).
+  callback per animating element and the callback list it re-creates; our state allocates 0;
+  on gpui-fast the bound is +8 because an idle re-render reuses retained layout/paint that a
+  moving frame cannot). A pure test asserts 0 allocations for 60 steady FLIP/size frames.
 - Tree: expanding a group with animation on shifts the following rows and settles; off by default.
 - Showcase goldens of the demo at rest, light and dark, both backends.
