@@ -29,6 +29,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// `SOAK_SCALE=n` divides every dataset size by `n` (profiling under callgrind).
 fn scaled(size: usize) -> usize {
+    if let Ok(size) = std::env::var("SOAK_ITEMS") {
+        return size.parse::<usize>().expect("validated limits size").max(1);
+    }
     let divisor = std::env::var("SOAK_SCALE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -37,13 +40,9 @@ fn scaled(size: usize) -> usize {
     (size / divisor).max(1)
 }
 
-fn flow(
-    no_minimap: bool,
-    mount_started: Instant,
-    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
-) -> Result<()> {
-    let nodes = scaled(50_000) as u64;
-    let graph = Graph::from_parts(
+fn flow_graph(nodes: u64) -> Result<Graph> {
+    let degree = nodes.saturating_sub(1).min(2);
+    Ok(Graph::from_parts(
         (0..nodes).map(|i| {
             Node::new(
                 i,
@@ -51,14 +50,26 @@ fn flow(
                 Point::new((i % 100) as f32 * 240., (i / 100) as f32 * 150.),
             )
         }),
-        (0..nodes * 2).map(|i| {
-            Edge::new(
-                i,
-                i % nodes,
-                ((i % nodes) + if i < nodes { 1 } else { 100 }) % nodes,
-            )
+        (0..nodes * degree).map(|i| {
+            let offset = if i < nodes {
+                1
+            } else if nodes > 100 {
+                100
+            } else {
+                2
+            };
+            Edge::new(i, i % nodes, ((i % nodes) + offset) % nodes)
         }),
-    )?;
+    )?)
+}
+
+fn flow(
+    no_minimap: bool,
+    mount_started: Instant,
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
+) -> Result<()> {
+    let nodes = scaled(50_000) as u64;
+    let graph = flow_graph(nodes)?;
     let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_stress"));
     let (window, view) = cx.update(|cx| {
         guiraffe_core::init(cx);
@@ -175,10 +186,15 @@ fn charts(
     run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
 ) -> Result<()> {
     const STREAM_RATE: u32 = 10_000;
+    let retained = if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+        scaled(STREAM_RATE as usize)
+    } else {
+        STREAM_RATE as usize
+    };
     const STREAM_BATCH: u32 = 500;
     let mut stream = Stream::default();
     if streaming {
-        stream.append((0..STREAM_RATE).collect());
+        stream.append((0..retained as u32).collect());
     }
     let mount_started = Instant::now();
     let cx = TestAppContext::build(TestDispatcher::new(0), Some("charts_soak"));
@@ -233,17 +249,18 @@ fn charts(
         );
     }
     let stream_started = Instant::now();
-    let mut next = STREAM_RATE;
-    let mut due = STREAM_RATE;
+    let initial = retained as u32;
+    let mut next = initial;
+    let mut due = initial;
     run(
         &mut |i| {
             if streaming {
-                due = STREAM_RATE
+                due = initial
                     + (stream_started.elapsed().as_secs_f64() * f64::from(STREAM_RATE)) as u32;
                 if due.saturating_sub(next) >= STREAM_BATCH {
                     let end = due - (due - next) % STREAM_BATCH;
                     stream.append((next..end).collect());
-                    stream.retain_last(STREAM_RATE as usize);
+                    stream.retain_last(retained);
                     next = end;
                     let spec = streaming_spec(stream.clone());
                     window
@@ -279,7 +296,7 @@ fn charts(
     );
     if streaming {
         let elapsed = stream_started.elapsed().as_secs_f64();
-        let points = next - STREAM_RATE;
+        let points = next - initial;
         let pending = due.saturating_sub(next);
         println!("stream_points={points} stream_seconds={elapsed:.3} stream_pending={pending}");
         if pending >= STREAM_BATCH {
@@ -294,13 +311,17 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <mixed|grid|code|empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
         "code-annotations" => mounted::code_annotations(mount_started, |frame, mount| {
             result = sample(frame, mount, short)
+        })?,
+        "mixed" => return mounted::mixed::run(short),
+        "grid" | "code" => mounted::mixed::run_data(component, mount_started, |frame, mount| {
+            result = sample(frame, mount, short);
         })?,
         "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         "flow" => flow(
@@ -357,6 +378,9 @@ fn main() -> Result<()> {
 }
 
 fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bool) -> Result<()> {
+    if let Some(component) = std::env::var_os("SOAK_LIMIT_PROBE") {
+        return limit_sample(frame, mount, component == "chart-stream");
+    }
     println!("setup_and_first_frame_us={}", mount.as_micros());
     let interval = Duration::from_secs(10);
     let mut index = 0;
@@ -410,10 +434,47 @@ fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bo
     Ok(())
 }
 
+fn limit_sample(
+    frame: &mut dyn FnMut(usize) -> Result<()>,
+    mount: Duration,
+    stream: bool,
+) -> Result<()> {
+    let mut times = Vec::with_capacity(120);
+    // Once mount fails there is no reason to run this dataset through the replay.
+    if mount <= Duration::from_millis(200) {
+        for index in 0..128 {
+            let start = Instant::now();
+            frame(index)?;
+            let elapsed = start.elapsed();
+            if index >= 8 {
+                times.push(elapsed.as_micros());
+            }
+            if stream {
+                std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
+            }
+        }
+    }
+    times.sort_unstable();
+    let p99 = times
+        .get((times.len() * 99).div_ceil(100usize).saturating_sub(1))
+        .copied()
+        .unwrap_or(0);
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    let hwm: u64 = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|value| value.split_whitespace().next())
+        .ok_or("missing VmHWM in /proc/self/status")?
+        .parse()?;
+    println!("LIMIT {} {p99} {hwm}", mount.as_micros());
+    Ok(())
+}
+
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
     use super::{Instant, Result, scaled};
+    pub mod mixed;
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
         ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, ScrollSource, Styled,
@@ -423,6 +484,12 @@ mod mounted {
     use std::{rc::Rc, sync::Arc, time::Duration};
 
     type Frame<'a> = &'a mut dyn FnMut(usize) -> Result<()>;
+
+    fn raw_bytes(bytes: usize) {
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            println!("RAW {bytes}");
+        }
+    }
 
     /// Simulated time per frame for timer-driven work (stream drains, coalescing, settles).
     const FRAME: Duration = Duration::from_millis(16);
@@ -776,10 +843,9 @@ mod mounted {
         Chain,
     }
 
-    pub fn gantt(graph: GanttGraph, run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_timeline::{GanttView, Task, TimeFormat, gantt_view::RULER_H};
-        let count = scaled(100_000) as u32;
-        let tasks = (0..count)
+    fn gantt_tasks(count: u32, graph: GanttGraph) -> Vec<guiraffe_timeline::Task> {
+        use guiraffe_timeline::Task;
+        (0..count)
             .map(|id| Task {
                 id,
                 name: format!("Task {id}"),
@@ -792,7 +858,13 @@ mod mounted {
                     _ => vec![],
                 },
             })
-            .collect();
+            .collect()
+    }
+
+    pub fn gantt(graph: GanttGraph, run: impl FnOnce(Frame)) -> Result<()> {
+        use guiraffe_timeline::{GanttView, TimeFormat, gantt_view::RULER_H};
+        let count = scaled(100_000) as u32;
+        let tasks = gantt_tasks(count, graph);
         let (mut window, _view) = mount("gantt_soak", guiraffe_timeline::init, |_, cx| {
             GanttView::new(tasks, TimeFormat::Seconds, cx)
         })?;
@@ -993,14 +1065,18 @@ mod mounted {
                 Sample {
                     id: index as u64,
                     parent: (depth > 0).then(|| index as u64 - 1),
-                    self_value: if depth == 499 { 1. } else { 0. },
+                    self_value: if depth == 499 || index + 1 == self.0 {
+                        1.
+                    } else {
+                        0.
+                    },
                     total: 1.,
                     label: LABELS[(depth + index / 500) % LABELS.len()],
                     package: "bench",
                 }
             }
         }
-        let frames = scaled(10_000_000).div_ceil(500) * 500;
+        let frames = scaled(10_000_000);
         let (mut window, view) = open("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
             cx.new(|cx| {
                 FlameGraph::from_source(Arc::new(Profile(frames)), cx)
@@ -1195,14 +1271,9 @@ mod mounted {
     }
 
     /// PropertyGrid: 100,000 groups of nine properties (1,000,001 rows) all expanded.
-    pub fn property_grid(run: impl FnOnce(Frame)) -> Result<()> {
+    fn settings(groups: usize) -> Rc<Settings> {
         use guiraffe_tree::Value;
-        let groups = scaled(100_000);
-        println!(
-            "property_groups={groups} visible_rows={}",
-            1 + groups * (1 + PROPERTIES_PER_GROUP)
-        );
-        let source = Rc::new(Settings {
+        Rc::new(Settings {
             groups: Forest::new(groups, PROPERTIES_PER_GROUP),
             values: [
                 Value::Number(0.75),
@@ -1217,7 +1288,16 @@ mod mounted {
                 Value::Enum("Multiply".into()),
             ],
             choices: vec!["Normal".into(), "Multiply".into(), "Screen".into()],
-        });
+        })
+    }
+
+    pub fn property_grid(run: impl FnOnce(Frame)) -> Result<()> {
+        let groups = scaled(100_000);
+        println!(
+            "property_groups={groups} visible_rows={}",
+            1 + groups * (1 + PROPERTIES_PER_GROUP)
+        );
+        let source = settings(groups);
         let (mut window, view) = mount(
             "property_grid_soak",
             |_| {},
@@ -1279,6 +1359,7 @@ mod mounted {
     /// appended every fourth frame.
     pub fn markdown(run: impl FnOnce(Frame)) -> Result<()> {
         let source = document(scaled(50_000));
+        raw_bytes(source.len());
         let (mut window, view) = mount(
             "markdown_soak",
             |_| {},
@@ -1332,6 +1413,7 @@ mod mounted {
                 source.push_str(&format!("  n{i} -.-> n{}\n", (i * 7) % nodes));
             }
         }
+        raw_bytes(source.len());
         let (mut window, view) = mount(
             "mermaid_soak",
             |_| {},
@@ -1427,6 +1509,16 @@ mod mounted {
             },
         )?;
         let state = window.update(|_, cx| view.read(cx).0.clone());
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            let total: usize = window.update(|_, cx| {
+                state
+                    .read(cx)
+                    .messages(cx)
+                    .map(|message| message.text.len())
+                    .sum()
+            });
+            raw_bytes(total + count as usize * 9);
+        }
         let history = require(&mut window, "chat-history")?;
         let mut producer = None;
         let mut tokens = 0usize;
