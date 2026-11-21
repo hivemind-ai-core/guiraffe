@@ -5,8 +5,11 @@ use gpui_kit::{
     AnyElement, FontWeight, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, component::button::Button, div, px,
 };
-use guiraffe_components::{Card, Highlight, Pill, RingProgress, Text, Title};
-use guiraffe_core::{Size, StyleContext};
+use guiraffe_components::{
+    Blockquote, Card, Highlight, KbdGroup, KbdSeparator, Mark, Paper, Pill, RingProgress, Text,
+    Title,
+};
+use guiraffe_core::{Size, StyleContext, Variant};
 use guiraffe_layout::{Align, Group, Justify, Stack};
 
 use crate::widget::{NodeView, Registry, widget};
@@ -258,6 +261,77 @@ pub fn register(r: &mut Registry) {
             Highlight::new(n.text(n.prop_index("text")))
                 .term(n.text(n.prop_index("term")))
                 .into_any_element()
+        }),
+    );
+    r.register(
+        MARK.0.id,
+        widget(&MARK.1, |n, _, _, _| {
+            Mark::new(n.text(n.prop_index("text"))).into_any_element()
+        }),
+    );
+    r.register(
+        BLOCKQUOTE.0.id,
+        widget(&BLOCKQUOTE.1, |n, kids, _, _| {
+            let mut quote = Blockquote::new().children(kids);
+            if let Some(color) = n.color(n.prop_index("color")) {
+                quote = quote.color(color);
+            }
+            if let Some(cite) = n.prop(n.prop_index("cite")).as_str() {
+                quote = quote.cite(cite.to_owned());
+            }
+            quote.into_any_element()
+        }),
+    );
+    r.register(
+        PAPER.0.id,
+        widget(&PAPER.1, |n, kids, _, _| {
+            let mut paper = Paper::new()
+                .with_border(n.bool(n.prop_index("with-border")))
+                .children(kids);
+            if let Some(shadow) = n.size(n.prop_index("shadow")) {
+                paper = paper.shadow(shadow);
+            }
+            if let Some(radius) = n.size(n.prop_index("radius")) {
+                paper = paper.radius(radius);
+            }
+            if let Some(padding) = n.size(n.prop_index("padding")) {
+                paper = paper.p(padding);
+            }
+            if n.bool(n.prop_index("no-padding")) {
+                paper = paper.p_0();
+            }
+            paper.into_any_element()
+        }),
+    );
+    r.register(
+        KBD_GROUP.0.id,
+        widget(&KBD_GROUP.1, |n, _, _, _| {
+            let keys = n.prop(n.prop_index("keys"));
+            let keys = (0..keys.list_len().unwrap_or_default())
+                .filter_map(|index| keys.list_get(index).and_then(crate::Value::as_str));
+            let mut group = KbdGroup::new(keys.map(str::to_owned));
+            if n.prop(n.prop_index("separator")).as_str() == Some("then") {
+                group = group.separator(KbdSeparator::Then);
+            }
+            if let Some(size) = n.size(n.prop_index("size")) {
+                group = group.size(size);
+            }
+            if let Some(color) = n.color(n.prop_index("color")) {
+                group = group.color(color);
+            }
+            if let Some(variant) = match n.prop(n.prop_index("variant")).as_str() {
+                Some("filled") => Some(Variant::Filled),
+                Some("light") => Some(Variant::Light),
+                Some("outline") => Some(Variant::Outline),
+                Some("subtle") => Some(Variant::Subtle),
+                Some("transparent") => Some(Variant::Transparent),
+                Some("white") => Some(Variant::White),
+                Some("default") => Some(Variant::Default),
+                _ => None,
+            } {
+                group = group.variant(variant);
+            }
+            group.into_any_element()
         }),
     );
     r.register(

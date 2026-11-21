@@ -17,7 +17,11 @@ fn kind(surface: &str) -> Option<&'static str> {
         "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
         | "flow::FlowOptions" => "flow",
         "components::Card" => "card",
+        "components::Blockquote" => "blockquote",
         "components::Highlight" => "highlight",
+        "components::KbdGroup" => "kbd-group",
+        "components::Mark" => "mark",
+        "components::Paper" => "paper",
         "components::Pill" => "pill",
         "components::RingProgress" => "ring",
         "components::Text" => "text",
@@ -568,7 +572,8 @@ fn covered(surface: &str) -> bool {
                 }
                 ("flow::FlowState" | "flow::FlowViewport", "set_viewport") => "zoom".into(),
                 ("flow::FlowState", "from_editor") => "graph".into(),
-                ("components::Card", "p") => "padding".into(),
+                ("components::Card" | "components::Paper", "p") => "padding".into(),
+                ("components::Paper", "p_0") => "no-padding".into(),
                 ("components::Text", "fw") => "font-weight".into(),
                 ("components::RingProgress", "section") => "sections".into(),
                 ("layout::Divider", "vertical") => "orientation".into(),

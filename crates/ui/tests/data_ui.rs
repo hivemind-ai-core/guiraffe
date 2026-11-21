@@ -493,8 +493,7 @@ fn chip_click_updates_a_bound_selection_and_delivers_an_event(cx: &mut TestAppCo
     assert_eq!(*payload.borrow(), Some(expected));
 }
 
-#[gpui_kit::test]
-fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
+fn init_document_widgets(cx: &mut TestAppContext) {
     cx.update(guiraffe_inputs::init);
     cx.update(guiraffe_layout::init);
     cx.update(guiraffe_code::init);
@@ -509,6 +508,11 @@ fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
     cx.update(guiraffe_overlays::init);
     cx.update(guiraffe_tree::init);
     cx.update(guiraffe_timeline::init);
+}
+
+#[gpui_kit::test]
+fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
+    init_document_widgets(cx);
     cx.update(|cx| {
         let registry = Registry::for_app(cx);
         assert_eq!(registry.kinds().count(), catalog::all_widgets().count());
@@ -520,6 +524,29 @@ fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
             assert_eq!(registered.schema().events, events, "{}", spec.id);
         }
     });
+}
+
+#[gpui_kit::test]
+fn every_catalogue_example_validates_compiles_and_renders(cx: &mut TestAppContext) {
+    init_document_widgets(cx);
+    let registry = cx.update(|cx| Arc::new(Registry::for_app(cx)));
+    for spec in catalog::all_widgets() {
+        let document = serde_json::from_value(spec.example()).expect(spec.id);
+        let issues = validation::Validation::default().check(&document);
+        assert!(issues.is_empty(), "{}: {issues:?}", spec.id);
+        let template = Arc::new(Template::compile(&document, &registry).expect(spec.id));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{}: {:?}",
+            spec.id,
+            template.diagnostics()
+        );
+        let registry = registry.clone();
+        let (_, window) = cx.add_window_view(|_, cx| Shell {
+            ui: DataUi::from_template(template, registry, NoLogic, cx),
+        });
+        window.run_until_parked();
+    }
 }
 
 #[gpui_kit::test]
@@ -1379,4 +1406,54 @@ fn ui_macro_accepts_a_native_gantt_view() {
         ui! { div { {GanttView::new(tasks, TimeFormat::Days, cx)} } }
     }
     let _ = example;
+}
+
+#[gpui_kit::test]
+fn document_surface_and_typography_components_use_native_builders(cx: &mut TestAppContext) {
+    let doc = Document::new(
+        Node::new("paper")
+            .prop("shadow", "sm")
+            .prop("radius", "lg")
+            .prop("padding", "xs")
+            .prop("no-padding", true)
+            .prop("with-border", true)
+            .child(
+                Node::new("blockquote")
+                    .prop("color", "teal")
+                    .prop("cite", "Engineering team")
+                    .child(Node::new("mark").prop("text", "Saved")),
+            )
+            .child(
+                Node::new("kbd-group")
+                    .prop("keys", serde_json::json!(["g", "s"]))
+                    .prop("separator", "then")
+                    .prop("size", "sm")
+                    .prop("color", "orange")
+                    .prop("variant", "outline"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(compile(&doc).diagnostics().is_empty());
+    let _ = mount(cx, &doc);
+}
+
+#[test]
+fn ui_macro_accepts_surface_and_typography_component_builders() {
+    use guiraffe_components::{Blockquote, KbdGroup, KbdSeparator, Mark, Paper};
+    use guiraffe_core::{ColorName, Size, Variant};
+
+    let _ = ui! {
+        Paper { shadow: Size::Sm; radius: Size::Lg; p: Size::Xs; p_0; with_border: true;
+            Blockquote { color: ColorName::Teal; cite: "Team";
+                Mark("Saved")
+            }
+            KbdGroup(["g", "s"]) {
+                separator: KbdSeparator::Then;
+                size: Size::Sm;
+                color: ColorName::Orange;
+                variant: Variant::Outline
+            }
+        }
+    };
 }

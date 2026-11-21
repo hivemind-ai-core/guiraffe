@@ -58,6 +58,15 @@ pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
 }
 
 const SIZE: &[&str] = &["xs", "sm", "md", "lg", "xl"];
+const VARIANT: &[&str] = &[
+    "filled",
+    "light",
+    "outline",
+    "subtle",
+    "transparent",
+    "white",
+    "default",
+];
 const ALIGN: &[&str] = &["start", "center", "end", "stretch", "baseline"];
 const JUSTIFY: &[&str] = &["start", "center", "end", "between", "around", "evenly"];
 const COLOR: &[&str] = &[
@@ -117,6 +126,26 @@ widgets! {
     HIGHLIGHT: "highlight", "components", "Text with matching terms highlighted.", false, "stateless", "text", ["surfaces.mark", "surfaces.text"],
         ["text": "string" = "\"\"", &[] as &[&str], None, true;
          "term": "string" = "\"\"", &[] as &[&str], None, false], [];
+    MARK: "mark", "components", "Marked text.", false, "stateless", "text", ["surfaces.mark", "surfaces.text"],
+        ["text": "string" = "\"Marked text\"", &[] as &[&str], None, true], [];
+    BLOCKQUOTE: "blockquote", "components", "Quoted content with an optional citation.", true, "stateless", "group",
+        ["variant.background", "surfaces.text"],
+        ["color": "string" = "null", COLOR, None, false;
+         "cite": "string" = "null", &[] as &[&str], None, false], [];
+    PAPER: "paper", "components", "Themed surface for grouped content.", true, "stateless", "group",
+        ["density.space", "default_radius", "surfaces.body", "surfaces.text", "surfaces.border"],
+        ["shadow": "string" = "null", SIZE, None, false;
+         "radius": "string" = "null", SIZE, None, false;
+         "padding": "string" = "null", SIZE, None, false;
+         "no-padding": "boolean" = "false", &[] as &[&str], None, false;
+         "with-border": "boolean" = "false", &[] as &[&str], None, false], [];
+    KBD_GROUP: "kbd-group", "components", "A keyboard chord or sequence of keycaps.", false, "stateless", "group",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["keys": "array" = "[\"Ctrl\",\"K\"]", &[] as &[&str], None, true;
+         "separator": "string" = "\"plus\"", &["plus", "then"], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "variant": "string" = "null", VARIANT, None, false], [];
     PILL: "pill", "components", "Compact label.", false, "stateless", "text", ["control_size", "surfaces.track", "surfaces.text"],
         ["label": "string" = "\"\"", &[] as &[&str], None, true;
          "size": "string" = "null", SIZE, None, false], ["remove": "string"];
