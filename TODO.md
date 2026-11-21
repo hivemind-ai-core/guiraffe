@@ -76,6 +76,10 @@ batches; nothing goes to main without the user.
 - [ ] Animate everything. An option to animate all layout changes, eg when something is added to a list,
       or a state is toggled, that causes the size to change (eg collapsing a property list group) it
       should (optionally) animate by lerping between the old and new size.
+- [ ] PropertyGrid options (user 2026-11-21): (a) `focus_row(bool)` — when disabled, a row is never
+      focused/highlighted, even while its value is being edited; (b) reset affordance configurable
+      (`reset_button(bool)` / per-property) — today "Reset" always shows when value ≠ default
+      (crates/tree/src/view.rs:1412). Bundle with the PropertyGrid editing items below.
 - [ ] The property tree component visual bugs: when editing text in the showcase text value, the textboxes
       bottom border spills below the rows space. Additionally, the input should default to a single line
       input where pressing enter saves it (save button, tick/x icons should be optional settings).
