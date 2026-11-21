@@ -38,10 +38,16 @@ pending quiet-window measurement.
 
 | Check | Before this change | After this change |
 |---|---|---|
-| Mixed short, 1,000× smaller fixtures | No mixed runner | Both intervals passed. Peak frame 28.68 ms. RSS 33,632 → 34,028 KiB (+1.18%). |
-| Mixed short, default fixture sizes | No mixed runner | Both intervals reported. Markdown-active frame 52.51 ms triggered the long-frame failure. RSS fell from 88,968 to 86,320 KiB. |
-| Isolated limits, start 16 and cap 32 | No geometric sweep | All 19 scenarios produced results. Four failed the p99 budget and the others reached the smoke cap. |
+| Mixed short, 1,000× smaller fixtures | No mixed runner | Peak frame 33.51 ms. RSS 33,036 → 34,216 KiB (+3.57%), triggering the drift check. |
+| Mixed short, default fixture sizes | No mixed runner | Both intervals reported. Markdown-active frame 64.47 ms triggered the long-frame check. RSS 88,824 → 89,492 KiB (+0.75%).. |
+| Isolated limits, start 16 and cap 32 | No geometric sweep | All 19 scenarios produced results. Three failed the p99 budget and the others reached the smoke cap. |
 | Instruction counts and repaint allocations | Existing component gates | Widget implementations were outside this change. No new comparison was collected. |
+
+During the scaled RSS increase, Chat retained one additional reply and accepted
+1,320 more token bytes. Markdown source grew 256 bytes. The chart retained
+10,000 points, the grid pool stayed at 23, and modal and toast counts were zero
+at both reports. These observations describe the logical state changes. They
+leave the remainder of the RSS increase unattributed.
 
 The scaled 360-frame baseline Flow profile attributed 17.18% of self samples
 to an unsymbolized function, 12.24% to path vertex cloning, and 10.35% to scaled

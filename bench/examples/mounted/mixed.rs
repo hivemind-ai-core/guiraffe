@@ -95,10 +95,7 @@ pub fn run_data(
     let data = window.update(|_, cx| view.read(cx).clone());
     run(
         &mut |i| {
-            window.update(|w, cx| {
-                data.step(count, i, cx);
-                w.render_frame(cx);
-            });
+            window.update(|_, cx| data.step(count, i, cx));
             settle(&mut window);
             Ok(())
         },
@@ -279,12 +276,14 @@ pub fn run(short: bool) -> Result<()> {
             let cycle = input / (STEPS_PER_PHASE * PHASES.len());
             let step = cycle * STEPS_PER_PHASE + input % STEPS_PER_PHASE;
             window.update(|w, cx| -> Result<()> {
+                // Test apps draw dirty windows when they flush effects, but
+                // have no platform frame loop to deliver animation callbacks.
+                w.simulate_next_frame(cx);
                 if input.is_multiple_of(STEPS_PER_PHASE) {
                     tabs.update(cx, |tabs, cx| {
                         tabs.active = active;
                         cx.notify();
                     });
-                    w.render_frame(cx);
                 }
                 let due = RATE + (clock.elapsed().as_secs_f64() * f64::from(RATE)) as u32;
                 if due - next >= 500 {
@@ -407,12 +406,6 @@ pub fn run(short: bool) -> Result<()> {
                     _ => wheel(&mut window, at, 0., 32. * sign(step, 8), false),
                 }
             }
-            window.update(|w, cx| {
-                // The test dispatcher does not deliver platform frame callbacks
-                // when drawing manually. Tick motion and discard each completed batch.
-                w.simulate_next_frame(cx);
-                w.render_frame(cx);
-            });
             settle(&mut window);
             let elapsed = started.elapsed();
             failed |= elapsed > Duration::from_millis(50);
