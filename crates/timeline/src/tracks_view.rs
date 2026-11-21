@@ -584,12 +584,15 @@ impl Render for TracksView {
                                 cx.listener(|this, e: &MouseDownEvent, window, cx| {
                                     // Claim focus only for a clicked item in an explicitly opted-in editor.
                                     window.prevent_default();
-                                    cx.notify();
+                                    let previous = (this.selected, this.drag);
                                     let (x, y) = this.local(e.position);
                                     if y >= 0.0 {
                                         let hit = this.press_item((y / TRACK_H) as usize, x);
                                         if hit && this.focusable == Some(true) {
                                             this.focus.focus(window, cx);
+                                        }
+                                        if previous != (this.selected, this.drag) {
+                                            cx.notify();
                                         }
                                     }
                                 }),
