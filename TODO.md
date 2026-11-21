@@ -73,7 +73,7 @@ batches; nothing goes to main without the user.
       that its harder to notice. Most pronounced when toggling the code viewer minimap on and off.
 - [ ] In the showcase, the code viewer minimap has a strange red line through the middle. If its meant
       to highlight the gutter icons, then it doesn't match the gutter colours and is oddly positioned.
-- [ ] Animate everything. An option to animate all layout changes, eg when something is added to a list,
+- [x] (spec/29, branch feat-layout-animation) Animate everything. An option to animate all layout changes, eg when something is added to a list,
       or a state is toggled, that causes the size to change (eg collapsing a property list group) it
       should (optionally) animate by lerping between the old and new size.
 - [ ] PropertyGrid options (user 2026-11-21): (a) `focus_row(bool)` — when disabled, a row is never
