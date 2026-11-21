@@ -415,32 +415,56 @@ fn rounded(corners: &[Point], radius: f32) -> Vec<Point> {
     }
     points
 }
+const BEZIER_SEGMENTS: usize = 32;
+const BEZIER_WEIGHTS: [[f32; 4]; BEZIER_SEGMENTS + 1] = {
+    let mut weights = [[0.; 4]; BEZIER_SEGMENTS + 1];
+    let mut index = 0;
+    while index <= BEZIER_SEGMENTS {
+        let t = index as f32 / BEZIER_SEGMENTS as f32;
+        let u = 1. - t;
+        weights[index] = [u * u * u, 3. * u * u * t, 3. * u * t * t, t * t * t];
+        index += 1;
+    }
+    weights
+};
+
 pub(crate) fn bezier(from: Point, outward: Point, to: Point, inward: Point) -> Vec<Point> {
     let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
     let c1 = from + outward * distance;
     let c2 = to + inward * distance;
-    (0..=32)
-        .map(|i| {
-            let t = i as f32 / 32.;
-            let u = 1. - t;
-            from * (u * u * u) + c1 * (3. * u * u * t) + c2 * (3. * u * t * t) + to * (t * t * t)
+    BEZIER_WEIGHTS
+        .iter()
+        .map(|&[start_weight, c1_weight, c2_weight, end_weight]| {
+            from * start_weight + c1 * c1_weight + c2 * c2_weight + to * end_weight
         })
         .collect()
 }
 
 fn midpoint(points: &[Point]) -> Point {
-    let length: f32 = points
-        .iter()
-        .zip(points.iter().skip(1))
-        .map(|(a, b)| a.distance(*b))
+    let segments = points.windows(2);
+    let count = segments.len();
+    let mut inline = [0.; BEZIER_SEGMENTS];
+    let mut overflow;
+    let lengths = if let Some(lengths) = inline.get_mut(..count) {
+        lengths
+    } else {
+        overflow = vec![0.; count];
+        &mut overflow
+    };
+    let length: f32 = segments
+        .clone()
+        .zip(lengths.iter_mut())
+        .map(|(pair, length)| {
+            *length = pair[0].distance(pair[1]);
+            *length
+        })
         .sum();
     let mut remaining = length * 0.5;
-    for (a, b) in points.iter().zip(points.iter().skip(1)) {
-        let d = a.distance(*b);
-        if d > 0. && remaining <= d {
-            return *a + (*b - *a) * (remaining / d);
+    for (pair, &distance) in segments.zip(lengths.iter()) {
+        if distance > 0. && remaining <= distance {
+            return pair[0] + (pair[1] - pair[0]) * (remaining / distance);
         }
-        remaining -= d;
+        remaining -= distance;
     }
     points.first().copied().unwrap_or_default()
 }
@@ -769,6 +793,36 @@ mod review_2_tests {
 #[cfg(test)]
 mod feedback_tests {
     use super::*;
+    #[test]
+    fn precomputed_bezier_weights_keep_the_sample_positions() {
+        let from = Point::new(-128., 240.);
+        let to = Point::new(384., 100.);
+        let outward = Point::new(1., 0.);
+        let inward = Point::new(0., 1.);
+        let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
+        let c1 = from + outward * distance;
+        let c2 = to + inward * distance;
+        let expected: Vec<_> = (0..=32)
+            .map(|index| {
+                let t = index as f32 / 32.;
+                let u = 1. - t;
+                from * (u * u * u)
+                    + c1 * (3. * u * u * t)
+                    + c2 * (3. * u * t * t)
+                    + to * (t * t * t)
+            })
+            .collect();
+        assert_eq!(bezier(from, outward, to, inward), expected);
+    }
+
+    #[test]
+    fn route_midpoint_uses_distance_and_preserves_long_polylines() {
+        let short = [Point::new(0., 0.), Point::new(3., 0.), Point::new(3., 7.)];
+        assert_eq!(midpoint(&short), Point::new(3., 2.));
+        let long: Vec<_> = (0..=48).map(|index| Point::new(index as f32, 0.)).collect();
+        assert_eq!(midpoint(&long), Point::new(24., 0.));
+    }
+
     #[test]
     fn forward_step_edges_do_not_backtrack_at_corners() {
         for kind in [EdgeType::Step, EdgeType::SmoothStep] {
