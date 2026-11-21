@@ -5,7 +5,7 @@ bound, eviction rule and the test (if any) that locks the bound in. Audited on `
 merging `release/0.2`, i.e. against the post-rewrite chat, code (incl. the new `decorations` module),
 datagrid, flamegraph, flow, markdown, mermaid, timeline and tree sources.
 
-References are **symbol-based** (`file.rs` plus the type or field name) rather than `file:line`: the
+References are **symbol-based** (the source file plus the type or field name) rather than line numbers: the
 release branch is still moving, and line numbers rot within hours. Grep the symbol.
 
 Method: scanned every `struct` field whose type is a collection or interior-mutable cell (`HashMap`,
