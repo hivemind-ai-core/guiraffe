@@ -13,7 +13,7 @@ batches; nothing goes to main without the user.
 - [ ] **Spotlight redesign** (Claude subagent, `feat-spotlight`).
 - [ ] **Desktop notifications + system tray** (Claude subagent, `feat-notify-tray`; Linux tested,
       macOS/Windows untested).
-- [ ] **DnD polish** (Claude subagent, `feat-dnd-polish`): Kanban columns are the drop zones
+- [x] **DnD polish** (merged; follow-ups: theme drag-preview token, ActionIcon toggled state + tooltip): Kanban columns are the drop zones
       (whole column body, insertion line, column highlight); IDE layout icon toggles.
 - [ ] **StyleContext lost on isolated re-render under gpui-fast** (Claude subagent,
       `fix-stylecontext-fast`): controls can drop out of Tab order after a click; fix in core.

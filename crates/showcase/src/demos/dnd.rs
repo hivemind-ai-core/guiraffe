@@ -5,6 +5,7 @@ use gpui_kit::{
     component::dock::{BasePanel, DockLayout},
     div, px,
 };
+use guiraffe_core::GuiraffeTheme;
 use guiraffe_dnd::{
     Card, SortableBoard,
     dock::{self, DockEvent, DockPlacement, Panel, PanelEvent},
@@ -30,7 +31,8 @@ impl Workspace {
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = GuiraffeTheme::global(cx);
         div()
             .w_full()
             .h(px(440.))
@@ -54,7 +56,12 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child("Event log")
+                    .text_sm()
+                    .child(
+                        div()
+                            .text_color(theme.surfaces().dimmed.to_hsla())
+                            .child("Event log"),
+                    )
                     .children(self.log.iter().cloned()),
             )
             .children(
@@ -217,7 +224,7 @@ fn kanban(cx: &mut Context<Workspace>) -> Workspace {
     Workspace {
         drag_overlay: Some(board.read(cx).drag_overlay().into()),
         content: board.into(),
-        log: vec!["Shift-click to select multiple cards".into()],
+        log: vec!["Shift-click cards to move several at once".into()],
         _subscriptions: vec![events],
     }
 }
