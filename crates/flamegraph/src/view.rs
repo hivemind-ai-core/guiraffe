@@ -44,8 +44,9 @@ struct LabelCache([Option<SharedString>; LABEL_SLOTS]);
 
 impl LabelCache {
     fn text(&mut self, label: &str) -> SharedString {
-        if label.len() > MAX_CACHED_LABEL_BYTES {
-            return SharedString::from(label.to_owned());
+        // Short strings fit inline in GPUI's SharedString.
+        if label.len() <= 16 || label.len() > MAX_CACHED_LABEL_BYTES {
+            return SharedString::from(label);
         }
         let mut hash = DefaultHasher::new();
         label.hash(&mut hash);
@@ -59,7 +60,7 @@ impl LabelCache {
         {
             return text.clone();
         }
-        let text = SharedString::from(label.to_owned());
+        let text = SharedString::from(label);
         *entry = Some(text.clone());
         text
     }
@@ -373,8 +374,7 @@ impl Render for FlameGraph {
                             .into_iter()
                             .flat_map(|event| event.path)
                             .filter_map(|id| {
-                                let label =
-                                    SharedString::from(self.layout.frame(id)?.label.to_owned());
+                                let label = SharedString::from(self.layout.frame(id)?.label);
                                 Some(
                                     Button::new(("frame", id as usize))
                                         .tab_stop(false)
@@ -675,12 +675,12 @@ mod tests {
     #[test]
     fn repeated_labels_reuse_storage_and_conflicts_replace_entries() {
         let mut labels = LabelCache(std::array::from_fn(|_| None));
-        let first = labels.text_in_slot("worker", 0);
-        let repeat = labels.text_in_slot("worker", 0);
+        let first = labels.text_in_slot("worker::process_background_task", 0);
+        let repeat = labels.text_in_slot("worker::process_background_task", 0);
         assert_eq!(first.as_ptr(), repeat.as_ptr());
 
-        let other = labels.text_in_slot("render", 0);
-        let repeat = labels.text_in_slot("render", 0);
+        let other = labels.text_in_slot("render::build_accessibility_tree", 0);
+        let repeat = labels.text_in_slot("render::build_accessibility_tree", 0);
         assert_eq!(other.as_ptr(), repeat.as_ptr());
         assert_eq!(labels.0.iter().flatten().count(), 1);
         labels.text(&"x".repeat(MAX_CACHED_LABEL_BYTES + 1));
