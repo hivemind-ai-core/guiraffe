@@ -26,7 +26,12 @@ impl Render for Probe {
         let diagram = self.diagram.read(cx);
         if !self.preview_seen && diagram.has_preview() {
             self.preview_seen = true;
-            println!("first useful frame: {:?}", self.started.elapsed());
+            let frame = if diagram.image().is_none() {
+                "native preview"
+            } else {
+                "raster preview"
+            };
+            println!("first useful frame: {:?} ({frame})", self.started.elapsed());
         }
         if !self.finished {
             match diagram.status() {

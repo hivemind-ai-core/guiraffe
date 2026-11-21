@@ -1035,9 +1035,18 @@ mod mounted {
             settle(&mut window);
         }
         let state = window.update(|_, cx| view.read(cx).0.clone());
-        if window.update(|_, cx| state.read(cx).image().is_none()) {
+        let first_frame = window.update(|_, cx| {
+            let diagram = state.read(cx);
+            match (diagram.has_preview(), diagram.image()) {
+                (true, None) => Some("native preview"),
+                (_, Some(_)) => Some("raster"),
+                (false, None) => None,
+            }
+        });
+        let Some(first_frame) = first_frame else {
             return Err("mermaid diagram did not render".into());
-        }
+        };
+        eprintln!("Mermaid first frame: {first_frame}");
         let center = point(px(640.), px(380.));
         run(&mut |i| {
             let at = center
