@@ -169,7 +169,9 @@ mod tests {
                             Ok(()) => break,
                             Err(PushError::Full(value)) => {
                                 text = value;
-                                std::thread::yield_now();
+                                // Back off with a short sleep: under heavy load yield_now can
+                                // spin without letting the consumer run (seen at load ~50).
+                                std::thread::sleep(std::time::Duration::from_micros(20));
                             }
                             Err(e) => panic!("unexpected {e:?}"),
                         }
@@ -182,7 +184,7 @@ mod tests {
                 if c.is_finished() {
                     break;
                 }
-                std::thread::yield_now();
+                std::thread::sleep(std::time::Duration::from_micros(20));
             }
             worker.join().expect("valid test input");
             let expected = (0..10_000).map(|n| format!("{n},")).collect::<String>();
