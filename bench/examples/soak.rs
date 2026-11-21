@@ -268,7 +268,7 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter|chart-stream|gantt|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
@@ -286,7 +286,16 @@ fn main() -> Result<()> {
         "chart-stream" => charts(false, true, |frame, mount| {
             result = sample(frame, mount, short)
         })?,
-        "gantt" => mounted::gantt(|frame| result = sample(frame, mount_started.elapsed(), short))?,
+        "gantt" | "gantt-fan-out" | "gantt-chain" => {
+            let graph = match component {
+                "gantt-fan-out" => mounted::GanttGraph::FanOut,
+                "gantt-chain" => mounted::GanttGraph::Chain,
+                _ => mounted::GanttGraph::Sparse,
+            };
+            mounted::gantt(graph, |frame| {
+                result = sample(frame, mount_started.elapsed(), short)
+            })?;
+        }
         "tracks" => {
             mounted::tracks(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
@@ -479,7 +488,13 @@ mod mounted {
     /// Gantt: 100,000 bars in chains of ten finish→start dependencies.
     /// The view lays out every row (no vertical virtualization or scrolling);
     /// vertical wheel input pans its time axis like horizontal input.
-    pub fn gantt(run: impl FnOnce(Frame)) -> Result<()> {
+    pub enum GanttGraph {
+        Sparse,
+        FanOut,
+        Chain,
+    }
+
+    pub fn gantt(graph: GanttGraph, run: impl FnOnce(Frame)) -> Result<()> {
         use guiraffe_timeline::{GanttView, Task, TimeFormat, gantt_view::RULER_H};
         let count = scaled(100_000) as u32;
         let tasks = (0..count)
@@ -488,7 +503,12 @@ mod mounted {
                 name: format!("Task {id}"),
                 not_before: f64::from((id / 10) % 100) * 3.,
                 duration: 1. + f64::from(id % 3),
-                after: if id % 10 == 0 { vec![] } else { vec![id - 1] },
+                after: match graph {
+                    GanttGraph::FanOut if id > 0 => vec![0],
+                    GanttGraph::Chain if id > 0 => vec![id - 1],
+                    GanttGraph::Sparse if id % 10 != 0 => vec![id - 1],
+                    _ => vec![],
+                },
             })
             .collect();
         let (mut window, _view) = mount("gantt_soak", guiraffe_timeline::init, |_, cx| {
