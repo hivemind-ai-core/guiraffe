@@ -60,7 +60,9 @@ impl PropSpec {
     pub fn schema(&self) -> Value {
         let ty = match self.type_name {
             "ring-sections" | "integer-array" | "code-annotations" | "tree-nodes"
-            | "range-value" => "array",
+            | "range-value" | "grid-rows" | "grid-columns" | "flame-frames" | "timeline-tracks"
+            | "track-selection" | "board-columns" | "chart-layers" | "chart-axes"
+            | "chart-labels" => "array",
             ty => ty,
         };
         let mut schema = if self.type_name == "range-value" {
@@ -80,6 +82,18 @@ impl PropSpec {
             "integer-array" => schema["items"] = json!({"type":"integer","minimum":0}),
             "code-annotations" => schema["items"] = code_annotation_schema(),
             "tree-nodes" => schema["items"] = tree_node_schema(),
+            "grid-rows" => schema["items"] = grid_row_schema(),
+            "grid-columns" => schema["items"] = grid_column_schema(),
+            "flame-frames" => schema["items"] = flame_frame_schema(),
+            "timeline-tracks" => schema["items"] = timeline_track_schema(),
+            "board-columns" => schema["items"] = board_column_schema(),
+            "chart-layers" => schema["items"] = chart_layer_schema(),
+            "chart-axes" => schema["items"] = chart_axis_schema(),
+            "chart-labels" => schema["items"] = chart_label_schema(),
+            "track-selection" => {
+                schema["items"] = json!({"type":"integer","minimum":0,"maximum":u32::MAX});
+                schema["oneOf"] = json!([{"maxItems":0},{"minItems":2,"maxItems":2}]);
+            }
             "ring-sections" => {
                 schema["items"] = json!({
                     "type":"object",
@@ -111,12 +125,46 @@ impl EventSpec {
                 }
             }),
             "range-value" => range_schema(),
+            "data-grid-event" => grid_event_schema(self.id),
             "string-array" => json!({"type":"array","items":{"type":"string"}}),
             "tag-rejection" => json!({
                 "type":"object","required":["tag","reason"],"additionalProperties":false,
                 "properties":{
                     "tag":{"type":"string"},
                     "reason":{"enum":["empty","duplicate","full","too-long"]}
+                }
+            }),
+            "flame-frame-click" => json!({
+                "type":"object","required":["id","path","value"],"additionalProperties":false,
+                "properties":{
+                    "id":{"type":"integer","minimum":0},
+                    "path":{"type":"array","items":{"type":"integer","minimum":0}},
+                    "value":{"type":"number","minimum":0}
+                }
+            }),
+            "chart-datum" | "chart-domain" | "chart-series-visibility" => {
+                chart_event_schema(self.payload_type)
+            }
+            "board-reorder" => {
+                let index = json!({"type":"integer","minimum":0});
+                let indices = json!({"type":"array","items":index});
+                json!({
+                    "type":"object","additionalProperties":false,
+                    "required":["source","destination","insertionIndex","originalIndices","lists"],
+                    "properties":{
+                        "source":index,"destination":index,"insertionIndex":index,
+                        "originalIndices":indices,"lists":{"type":"array","items":indices}
+                    }
+                })
+            }
+            "timeline-clip-change" => json!({
+                "type":"object","required":["track","clip"],"additionalProperties":false,
+                "properties":{
+                    "track":{"type":"integer","minimum":0},
+                    "clip":{"type":"integer","minimum":0},
+                    "start":{"type":"number"},
+                    "length":{"type":"number","minimum":0.001},
+                    "sourceOffset":{"type":"number","minimum":0}
                 }
             }),
             "tree-check" => tree_event_schema("checked", json!({"type":"boolean"})),
@@ -291,4 +339,196 @@ pub fn tree_node_schema() -> Value {
 
 fn range_schema() -> Value {
     json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}})
+}
+
+pub fn grid_row_schema() -> Value {
+    json!({"type":"array","items":{"type":["string","number","boolean","null"]}})
+}
+
+pub fn grid_column_schema() -> Value {
+    let width = json!({"type":"number","minimum":1,"maximum":4096});
+    let flag = json!({"type":"boolean"});
+    json!({
+        "type":"object","required":["id","title"],"additionalProperties":false,
+        "properties":{
+            "id":{"type":"string"},"title":{"type":"string"},
+            "source":{"type":"integer","minimum":0},
+            "width":width,"minWidth":width,"maxWidth":width,
+            "align":{"enum":["auto","start","center","end"]},
+            "pin":{"enum":["none","left","right"]},
+            "sortable":flag,"resizable":flag,"editable":flag,"visible":flag
+        }
+    })
+}
+
+fn grid_event_schema(event: &str) -> Value {
+    fn object(fields: &[(&str, Value)]) -> Value {
+        let names: Vec<_> = fields.iter().map(|(name, _)| *name).collect();
+        let fields: serde_json::Map<String, Value> = fields
+            .iter()
+            .map(|(name, kind)| ((*name).to_owned(), kind.clone()))
+            .collect();
+        json!({"type":"object","required":names,"properties":fields,"additionalProperties":false})
+    }
+    let index = json!({"type":"integer","minimum":0});
+    let nullable_index = json!({"type":["integer","null"],"minimum":0});
+    let flag = json!({"type":"boolean"});
+    let text = json!({"type":"string"});
+    let op = json!({"enum":["edit","paste","cut","clear","undo","redo"]});
+    match event {
+        "selection-change" => {
+            let cell = object(&[("row", index.clone()), ("column", index.clone())]);
+            object(&[
+                ("cursor", json!({"oneOf":[cell,{"type":"null"}]})),
+                ("selectedRows", index),
+            ])
+        }
+        "sort-change" => {
+            json!({"type":"array","items":object(&[("column",index),("direction",json!({"enum":["asc","desc"]}))])})
+        }
+        "cell-edit" => object(&[
+            ("row", index.clone()),
+            ("key", index.clone()),
+            ("column", index),
+            ("value", text),
+        ]),
+        "edit-cancel" => object(&[("row", index.clone()), ("column", index)]),
+        "copy" => object(&[("cells", index), ("truncated", flag)]),
+        "edit-reject" => object(&[("row", index.clone()), ("column", index), ("reason", text)]),
+        "row-activate" => object(&[("row", index.clone()), ("key", index)]),
+        "column-resize" => object(&[("column", index), ("width", json!({"type":"number"}))]),
+        "column-reorder" => object(&[
+            ("column", index.clone()),
+            ("order", json!({"type":"array","items":index})),
+        ]),
+        "cells-change" => object(&[("op", op), ("cells", index), ("truncated", flag)]),
+        "cells-reject" => object(&[
+            ("op", op),
+            ("rejected", index.clone()),
+            ("applied", index),
+            (
+                "first",
+                json!({"type":"array","items":object(&[
+                    ("row",nullable_index.clone()),("column",nullable_index),("reason",text)
+                ])}),
+            ),
+        ]),
+        _ => json!({"type":"object"}),
+    }
+}
+
+pub fn flame_frame_schema() -> Value {
+    let id = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    let size = json!({"type":"number","minimum":0});
+    json!({
+        "type":"object","required":["id","self","total","label"],"additionalProperties":false,
+        "properties":{
+            "id":id,"parent":{"type":["integer","null"],"minimum":0,"maximum":(1_u64<<53)-1},
+            "self":size,"total":size,"label":{"type":"string"},"package":{"type":"string"}
+        }
+    })
+}
+
+pub fn timeline_track_schema() -> Value {
+    json!({
+        "type":"object","required":["name","clips"],"additionalProperties":false,
+        "properties":{
+            "name":{"type":"string"},
+            "clips":{"type":"array","items":{
+                "type":"object","required":["id","start","length"],"additionalProperties":false,
+                "properties":{
+                    "id":{"type":"integer","minimum":0,"maximum":u32::MAX-1},
+                    "start":{"type":"number"},
+                    "length":{"type":"number","minimum":0.001},
+                    "sourceOffset":{"type":"number","minimum":0},
+                    "locked":{"type":"boolean"}
+                }
+            }}
+        }
+    })
+}
+
+pub fn board_column_schema() -> Value {
+    json!({
+        "type":"object","required":["title","cards"],"additionalProperties":false,
+        "properties":{
+            "title":{"type":"string"},
+            "cards":{"type":"array","items":{
+                "type":"object","required":["id","label"],"additionalProperties":false,
+                "properties":{
+                    "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+                    "label":{"type":"string"}
+                }
+            }}
+        }
+    })
+}
+
+pub fn chart_label_schema() -> Value {
+    json!({
+        "type":"object","required":["id","label"],"additionalProperties":false,
+        "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":u32::MAX},
+            "label":{"type":"string"}
+        }
+    })
+}
+
+pub fn chart_layer_schema() -> Value {
+    let number = json!({"type":"number"});
+    let index = json!({"type":"integer","minimum":0,"maximum":u32::MAX});
+    json!({
+        "type":"object","required":["mark","data"],"additionalProperties":false,
+        "properties":{
+            "mark":{"enum":["line","area","bar","point","bubble","rect","rule","text","error-bar","candlestick"]},
+            "arrangement":{"enum":["overlap","group","stack","normalize"]},
+            "orientation":{"enum":["vertical","horizontal"]},
+            "title":{"type":"string"},"secondary":{"type":"boolean"},
+            "groupLabels":{"type":"array","items":chart_label_schema()},
+            "data":{"type":"array","items":{
+                "type":"object","required":["x","y"],"additionalProperties":false,
+                "properties":{
+                    "key":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+                    "x":number,"y":number,"group":index,"facet":index,
+                    "colorCategory":index,"colorValue":{"type":"number","minimum":0,"maximum":1},
+                    "size":{"type":"number","minimum":0,"maximum":1024},
+                    "x2":number,"y2":number,"low":number,"open":number,"high":number,"close":number,
+                    "text":{"type":"string"}
+                }
+            }}
+        }
+    })
+}
+
+pub fn chart_axis_schema() -> Value {
+    json!({
+        "type":"object","required":["axis"],"additionalProperties":false,
+        "properties":{
+            "axis":{"enum":["x","y","right"]},
+            "scale":{"enum":["linear","log","seconds","days","frames","band","ordinal"]},
+            "title":{"type":"string"},"grid":{"type":"boolean"},"nice":{"type":"boolean"},
+            "domain":range_schema(),
+            "framesPerSecond":{"type":"number","minimum":1,"maximum":240},
+            "padding":{"type":"number","minimum":0,"maximum":1},
+            "labels":{"type":"array","items":{"type":"string"}}
+        }
+    })
+}
+
+fn chart_event_schema(payload: &str) -> Value {
+    let index = json!({"type":"integer","minimum":0});
+    match payload {
+        "chart-datum" => json!({
+            "type":"object","required":["layer","group","index","key","facet"],"additionalProperties":false,
+            "properties":{"layer":index,"group":index,"index":index,"key":index,"facet":index}
+        }),
+        "chart-domain" => json!({
+            "type":"object","required":["min","max"],"additionalProperties":false,
+            "properties":{"min":{"type":"number"},"max":{"type":"number"}}
+        }),
+        _ => json!({
+            "type":"object","required":["layer","group","visible"],"additionalProperties":false,
+            "properties":{"layer":index,"group":index,"visible":{"type":"boolean"}}
+        }),
+    }
 }

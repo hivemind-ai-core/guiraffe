@@ -8,8 +8,16 @@ pub const VERSION: &str = "1.2.0";
 
 use crate::widget_spec;
 
+#[path = "../../charts/src/widget_specs.rs"]
+mod charts;
 #[path = "../../code/src/widget_specs.rs"]
 mod code;
+#[path = "../../datagrid/src/widget_specs.rs"]
+mod datagrid;
+#[path = "../../dnd/src/widget_specs.rs"]
+mod dnd;
+#[path = "../../flamegraph/src/widget_specs.rs"]
+mod flamegraph;
 #[path = "../../inputs/src/widget_specs.rs"]
 mod inputs;
 #[path = "../../layout/src/widget_specs.rs"]
@@ -20,19 +28,26 @@ mod markdown;
 mod mermaid;
 #[path = "../../overlays/src/widget_specs.rs"]
 mod overlays;
+#[path = "../../timeline/src/widget_specs.rs"]
+mod timeline;
 #[path = "../../tree/src/widget_specs.rs"]
 mod tree;
 
 pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
     WIDGETS
         .iter()
+        .chain(charts::WIDGETS)
         .chain(code::WIDGETS)
+        .chain(datagrid::WIDGETS)
+        .chain(dnd::WIDGETS)
+        .chain(flamegraph::WIDGETS)
         .chain(inputs::WIDGETS)
         .chain(layout::WIDGETS)
         .chain(markdown::WIDGETS)
         .chain(mermaid::WIDGETS)
         .chain(overlays::WIDGETS)
         .chain(tree::WIDGETS)
+        .chain(timeline::WIDGETS)
         .copied()
 }
 

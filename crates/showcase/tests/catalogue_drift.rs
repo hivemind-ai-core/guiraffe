@@ -7,7 +7,11 @@ use std::{collections::BTreeSet, path::Path};
 
 fn kind(surface: &str) -> Option<&'static str> {
     Some(match surface {
+        "charts::ChartView" => "chart",
         "code::CodeViewer" => "code-viewer",
+        "datagrid::DataGrid" => "data-grid",
+        "dnd::SortableBoard" => "sortable-board",
+        "flamegraph::FlameGraph" => "flame-graph",
         "components::Card" => "card",
         "components::Highlight" => "highlight",
         "components::Pill" => "pill",
@@ -21,12 +25,18 @@ fn kind(surface: &str) -> Option<&'static str> {
         "inputs::TagsInput" => "tags-input",
         "layout::AspectRatio" => "aspect-ratio",
         "layout::Center" => "center",
+        "layout::Container" => "container",
+        "layout::Divider" => "divider",
+        "layout::Flex" => "flex",
+        "layout::ScrollArea" => "scroll-area",
+        "layout::SimpleGrid" => "simple-grid",
         "layout::Space" => "space",
         "markdown::MarkdownView" => "markdown",
         "mermaid::MermaidView" => "mermaid",
         "overlays::Affix" => "affix",
         "overlays::LoadingOverlay" => "loading-overlay",
         "tree::TreeView" => "property-grid",
+        "timeline::TracksView" => "tracks-view",
         _ => return None,
     })
 }
@@ -97,6 +107,110 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "inputs::TagsInput::remove",
         "Update the value list or use the remove control.",
     ),
+    (
+        "layout::ScrollArea::track_scroll",
+        "Host-owned native scroll handle. DataUi keeps scroll state by node identity.",
+    ),
+    (
+        "layout::SimpleGrid::container_width",
+        "Host-owned measurement entity. DataUi uses its grid's measured width.",
+    ),
+    (
+        "layout::SimpleGrid::cols_at",
+        "Read-only evaluation of column count at a supplied width.",
+    ),
+    (
+        "layout::SimpleGrid::spacing_at",
+        "Read-only evaluation of spacing at a supplied width.",
+    ),
+    (
+        "layout::SimpleGrid::vertical_spacing_at",
+        "Read-only evaluation of row spacing at a supplied width.",
+    ),
+    (
+        "flamegraph::FlameGraph::is_loading",
+        "Read-only state of the background indexing job.",
+    ),
+    (
+        "flamegraph::FlameGraph::load_failure",
+        "Read-only issue detail shown by the widget.",
+    ),
+    (
+        "flamegraph::FlameGraph::full_plot_height",
+        "Computed geometry for Rust hosts.",
+    ),
+    (
+        "flamegraph::FlameGraph::reset",
+        "The graph provides an interactive viewport reset command.",
+    ),
+    (
+        "timeline::TracksView::add_layer",
+        "A native plot-layer trait implementation is application-owned Rust code.",
+    ),
+    (
+        "timeline::TracksView::axis",
+        "Computed axis geometry for Rust callers.",
+    ),
+    (
+        "timeline::TracksView::drag_to",
+        "The rendered clip handles pointer dragging.",
+    ),
+    (
+        "timeline::TracksView::grab",
+        "The view computes its own hit target during input.",
+    ),
+    (
+        "timeline::TracksView::is_locked",
+        "The clip record supplies its lock state.",
+    ),
+    (
+        "timeline::TracksView::nudge",
+        "The timeline provides its own keyboard and pointer editing.",
+    ),
+    (
+        "timeline::TracksView::press",
+        "The rendered clip handles pointer interaction.",
+    ),
+    (
+        "timeline::TracksView::release",
+        "The rendered clip handles pointer interaction.",
+    ),
+    (
+        "dnd::SortableBoard::drag_overlay",
+        "A Rust host can mount an explicit overlay entity. Document boards mount their own drag layer.",
+    ),
+    (
+        "dnd::SortableBoard::lists",
+        "Read ordered card ids from the reorder event.",
+    ),
+    (
+        "charts::ChartView::canvas_paint_count",
+        "Diagnostic counter for native tests.",
+    ),
+    (
+        "charts::ChartView::hovered",
+        "Read-only state of the interactive pointer.",
+    ),
+    (
+        "charts::ChartView::replace",
+        "Accepts an application-owned prepared buffer. A document changes layers, axes, or labels.",
+    ),
+    (
+        "charts::ChartView::scene_build_count",
+        "Diagnostic counter for native tests.",
+    ),
+    (
+        "charts::ChartView::series_visible",
+        "Read the current state through series-visibility events.",
+    ),
+    (
+        "charts::ChartView::toggle_series",
+        "The interactive legend controls visibility.",
+    ),
+    (
+        "charts::ChartView::viewport",
+        "Read the current bounds through viewport-change events.",
+    ),
 ];
 
 fn covered(surface: &str) -> bool {
@@ -120,9 +234,17 @@ fn covered(surface: &str) -> bool {
         "child" | "children" => spec.accepts_children,
         _ => {
             let property = match (owner, method) {
+                ("dnd::SortableBoard", "with_grid") => "cards-per-row".into(),
+                ("flamegraph::FlameGraph", "from_source") => "frames".into(),
+                ("timeline::TracksView", "seek") => "playhead".into(),
+                ("timeline::TracksView", "select") => "selected".into(),
+                ("timeline::TracksView", "set_locked") => "tracks".into(),
+                ("charts::ChartView", "from_spec" | "replace_spec") => "layers".into(),
                 ("components::Card", "p") => "padding".into(),
                 ("components::Text", "fw") => "font-weight".into(),
                 ("components::RingProgress", "section") => "sections".into(),
+                ("layout::Divider", "vertical") => "orientation".into(),
+                ("layout::ScrollArea", "both") => "scroll-x".into(),
                 ("layout::Space", "h") => "height".into(),
                 ("layout::Space", "w") => "width".into(),
                 ("tree::TreeView", "inspector_controls") => "searchable".into(),

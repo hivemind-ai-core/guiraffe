@@ -18,13 +18,18 @@ serde_json.workspace = true
 im = "15.1"
 
 [dev-dependencies]
+guiraffe-charts.workspace = true
 guiraffe-code.workspace = true
+guiraffe-datagrid.workspace = true
+guiraffe-dnd.workspace = true
+guiraffe-flamegraph.workspace = true
 guiraffe-inputs.workspace = true
 guiraffe-layout.workspace = true
 guiraffe-markdown.workspace = true
 guiraffe-mermaid.workspace = true
 guiraffe-overlays.workspace = true
 guiraffe-tree.workspace = true
+guiraffe-timeline.workspace = true
 guiraffe-test = { workspace = true, features = ["render"] }
 guiraffe-ui = { path = ".", features = ["test-support"] }
 serde_json.workspace = true

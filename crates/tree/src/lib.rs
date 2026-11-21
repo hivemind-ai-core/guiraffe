@@ -1,4 +1,10 @@
 //! Virtualized tree views with a shared visible-row and navigation model.
+//!
+//! A Rust `ui!` example. Create shared entities before rendering when the host owns their state.
+//!
+//! ```ignore
+//! ui! { div { {cx.new(|cx| PropertyGrid::new(source.clone(), cx).split_ratio(0.55))} } }
+//! ```
 mod geometry;
 mod model;
 mod property;

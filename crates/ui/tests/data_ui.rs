@@ -498,10 +498,15 @@ fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
     cx.update(guiraffe_inputs::init);
     cx.update(guiraffe_layout::init);
     cx.update(guiraffe_code::init);
+    cx.update(guiraffe_charts::init);
+    cx.update(guiraffe_datagrid::init);
+    cx.update(guiraffe_dnd::init);
+    cx.update(guiraffe_flamegraph::init);
     cx.update(guiraffe_markdown::init);
     cx.update(guiraffe_mermaid::init);
     cx.update(guiraffe_overlays::init);
     cx.update(guiraffe_tree::init);
+    cx.update(guiraffe_timeline::init);
     cx.update(|cx| {
         let registry = Registry::for_app(cx);
         assert_eq!(registry.kinds().count(), catalog::all_widgets().count());
@@ -782,4 +787,237 @@ fn button_document_validates_and_renders_builder_options(cx: &mut TestAppContext
     assert!(validation::Validation::default().check(&doc).is_empty());
     assert!(compile(&doc).diagnostics().is_empty());
     let _ = mount(cx, &doc);
+}
+
+#[gpui_kit::test]
+fn expanded_layout_documents_validate_and_render(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let doc = Document::new(
+        Node::new("container")
+            .prop("size", "lg")
+            .prop("fluid", false)
+            .prop("padding", "sm")
+            .prop("padding-px", 8)
+            .child(
+                Node::new("scroll-area")
+                    .prop("scroll-x", true)
+                    .prop("scroll-y", true)
+                    .child(
+                        Node::new("flex")
+                            .prop("direction", "column")
+                            .prop("gap", "sm")
+                            .prop("gap-px", 10)
+                            .prop("align", "center")
+                            .prop("justify", "between")
+                            .prop("grow", false)
+                            .prop("wrap", true)
+                            .child(
+                                Node::new("divider")
+                                    .prop("orientation", "horizontal")
+                                    .prop("label", "Section")
+                                    .prop("label-position", "start")
+                                    .prop("color", "teal")
+                                    .prop("thickness", 2),
+                            )
+                            .child(
+                                Node::new("simple-grid")
+                                    .prop("cols", 3)
+                                    .prop("spacing", 12)
+                                    .prop("vertical-spacing", 8)
+                                    .prop("min-child-width", 120)
+                                    .child(Node::new("text").prop("text", "Cell")),
+                            ),
+                    ),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("layout document"),
+    });
+    window.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn datagrid_document_validates_and_renders_rows_and_columns(cx: &mut TestAppContext) {
+    cx.update(guiraffe_datagrid::init);
+    let doc = Document::new(
+        Node::new("data-grid")
+            .prop("rows", serde_json::json!([["Alice", true], ["Bob", false]]))
+            .bind("rows", "grid-rows")
+            .prop("columns", serde_json::json!([
+                {"id":"name","title":"Name","width":110,"minWidth":40,"maxWidth":200,"pin":"left","editable":true},
+                {"id":"ready","title":"Ready","source":1,"align":"center","sortable":false,"resizable":false,"visible":true}
+            ]))
+            .prop("selection", "range")
+            .prop("zebra", false)
+            .prop("size", "sm")
+            .prop("density", "compact")
+            .prop("focusable", true)
+            .prop("overscan", 2)
+            .prop("sync-below", 100)
+            .prop("label", "Status")
+            .on("cell-edit", "edited"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx).expect("grid document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_a_grid_handle() {
+    use gpui_kit::App;
+    use guiraffe_datagrid::{DataGrid, GridHandle, VecSource};
+
+    fn example(cx: &mut App) -> impl IntoElement {
+        let handle = GridHandle::new(VecSource::<()>::new(Vec::new()), Vec::new(), cx);
+        ui! { DataGrid(&handle) }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn flame_graph_document_validates_and_renders_profile(cx: &mut TestAppContext) {
+    cx.update(guiraffe_flamegraph::init);
+    let doc = Document::new(
+        Node::new("flame-graph")
+            .prop(
+                "frames",
+                serde_json::json!([
+                    {"id":1,"label":"main","package":"app","self":2,"total":10},
+                    {"id":2,"parent":1,"label":"render","package":"ui","self":8,"total":8}
+                ]),
+            )
+            .bind("frames", "profile")
+            .prop("orientation", "icicle")
+            .prop("colour-scheme", "heat")
+            .prop("search", "render")
+            .on("frame-click", "frame-selected"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("flame document"),
+    });
+    window.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn clip_timeline_document_validates_and_drives_tracks(cx: &mut TestAppContext) {
+    cx.update(guiraffe_timeline::init);
+    let doc = Document::new(
+        Node::new("tracks-view")
+            .prop("tracks", serde_json::json!([
+                {"name":"Video","clips":[{"id":12,"start":2,"length":3,"sourceOffset":1,"locked":true}]},
+                {"name":"Audio","clips":[{"id":5,"start":0,"length":2}]}
+            ]))
+            .bind("tracks", "tracks")
+            .prop("time-format", "frames")
+            .prop("frames-per-second", 24)
+            .prop("length", 12)
+            .prop("playhead", 3)
+            .prop("snap", 0.25)
+            .prop("resize-edges", "end")
+            .prop("editable", true)
+            .prop("focusable", true)
+            .prop("lock-style", "dimmed")
+            .prop("global-lock-style", "hatched")
+            .prop("selected", serde_json::json!([0, 12]))
+            .on("seek", "seek")
+            .on("clip-change", "clip-change"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("track document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_can_embed_the_timeline_entity() {
+    use gpui_kit::App;
+    use guiraffe_timeline::{TimeFormat, TracksView};
+    fn example(cx: &mut App) -> impl IntoElement {
+        ui! { div { {TracksView::new(vec![], TimeFormat::Seconds, 10.0, cx)} } }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn sortable_board_document_validates_and_renders(cx: &mut TestAppContext) {
+    cx.update(guiraffe_dnd::init);
+    let doc = Document::new(
+        Node::new("sortable-board")
+            .prop("columns", serde_json::json!([
+                {"title":"To do","cards":[{"id":1,"label":"Plan"},{"id":2,"label":"Implement"}]},
+                {"title":"Done","cards":[{"id":3,"label":"Research"}]}
+            ]))
+            .bind("columns", "columns")
+            .prop("cards-per-row", 2)
+            .on("reorder", "board-changed"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("board document"),
+    });
+    window.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn chart_document_validates_and_drives_layered_series(cx: &mut TestAppContext) {
+    cx.update(guiraffe_charts::init);
+    let doc = Document::new(
+        Node::new("chart")
+            .prop("summary", "Chart")
+            .prop("layers", serde_json::json!([
+                {"mark":"line","title":"Rates","groupLabels":[{"id":1,"label":"Measured"}],"data":[
+                    {"key":1,"x":0,"y":2,"group":1,"facet":1,"size":5,"colorValue":0.5},
+                    {"key":2,"x":1,"y":4,"group":1,"facet":1}
+                ]},
+                {"mark":"bar","arrangement":"group","orientation":"vertical","secondary":true,
+                 "data":[{"x":0,"y":1,"facet":1,"colorCategory":3}]}
+            ]))
+            .bind("layers", "layers")
+            .prop("axes", serde_json::json!([
+                {"axis":"x","scale":"linear","domain":[0,2],"title":"Time","grid":true,"nice":false},
+                {"axis":"y","scale":"log"}
+            ]))
+            .prop("facet-labels", serde_json::json!([{"id":1,"label":"Primary"}]))
+            .prop("height", 280)
+            .prop("legend", true)
+            .prop("crosshair", false)
+            .prop("tooltip", false)
+            .prop("navigation", true)
+            .prop("keyboard", true)
+            .on("select", "select")
+            .on("viewport-change", "view-change")
+            .on("brush", "brush")
+            .on("series-visibility", "series-change"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("chart document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_can_embed_a_chart_entity() {
+    use gpui_kit::App;
+    use guiraffe_charts::{ChartOptions, ChartSpec, ChartView};
+    fn example(cx: &mut App) -> impl IntoElement {
+        ui! { div { {ChartView::from_spec(ChartSpec::new("Chart"), ChartOptions::default(), cx)} } }
+    }
+    let _ = example;
 }

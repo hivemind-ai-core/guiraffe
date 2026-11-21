@@ -6,6 +6,12 @@
 //! - Sorting/filtering produce a `u32` permutation on the background executor.
 //! - Pure logic lives in [`window`], [`columns`], [`order`] and [`model`] (selection, clipboard
 //!   and undo, shared with the future Sheet); [`selection`] and [`tsv`] are aliases.
+//!
+//! A Rust `ui!` example. Create shared entities before rendering when the host owns their state.
+//!
+//! ```ignore
+//! ui! { DataGrid(&handle) }
+//! ```
 
 pub mod columns;
 pub mod model;
@@ -19,7 +25,10 @@ pub use order::{Filter, RowOrder, SortDir, SortKey};
 pub use selection::{CellPos, Nav, SelectionMode};
 pub use source::{ArcSource, CellRef, EditError, FnSource, GridSource, RowKey, VecSource};
 
+mod data_ui;
 mod grid;
+use guiraffe_core::widget_spec;
+mod widget_specs;
 pub use grid::{
     Activate, CONTEXT, CellRejection, ClearCells, CopySelection, Cut, DataGrid, EditCell, EditOp,
     EditRequest, GridEvent, GridEvents, GridHandle, GridOptions, GridStats, INLINE_COPY_CELLS,

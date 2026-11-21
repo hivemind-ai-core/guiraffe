@@ -28,7 +28,7 @@ pub struct NodeView<'a> {
     pub spec: &'a NodeSpec,
     pub slots: &'a SlotTable,
     pub emit: &'a Emit,
-    pub(crate) host_id: gpui_kit::EntityId,
+    pub(crate) widget_namespace: u64,
     pub generation: u32,
     pub index: u32,
     pub item: Option<&'a Value>,
@@ -345,10 +345,10 @@ impl guiraffe_core::widget_catalog::WidgetNode for NodeView<'_> {
     }
 
     fn state_id(&self) -> gpui_kit::ElementId {
-        let local = format!("data-ui:{}:{}:{}", self.generation, self.scope, self.index);
-        gpui_kit::ElementId::NamedChild(
-            Arc::new(gpui_kit::ElementId::View(self.host_id)),
-            local.into(),
-        )
+        let mut id = [0; 20];
+        id[..8].copy_from_slice(&self.widget_namespace.to_le_bytes());
+        id[8..16].copy_from_slice(&self.scope.to_le_bytes());
+        id[16..].copy_from_slice(&self.index.to_le_bytes());
+        gpui_kit::ElementId::OpaqueId(id)
     }
 }

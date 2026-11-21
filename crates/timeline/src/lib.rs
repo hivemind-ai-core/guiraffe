@@ -1,4 +1,10 @@
 //! GUIraffe timeline: time-based editors on one shared axis (spec/16 Foundation D).
+//!
+//! A Rust `ui!` example. Create shared entities before rendering when the host owns their state.
+//!
+//! ```ignore
+//! ui! { div { {TracksView::new(tracks, TimeFormat::Seconds, 10.0, cx)} } }
+//! ```
 
 pub mod axis;
 pub mod clips;
@@ -37,6 +43,10 @@ pub use edit::ResizeEdges;
 
 /// Register the keyboard bindings of the editable views (see [`edit::init`]).
 pub fn init(cx: &mut gpui_kit::App) {
+    if !cx.has_global::<gpui_kit::component::Theme>() {
+        guiraffe_core::init(cx);
+    }
+    tracks_view::document::register(cx);
     edit::init(cx);
 }
 
@@ -85,3 +95,6 @@ pub use curves::TangentMode;
 pub use curve_view::CurveSeries;
 
 pub mod channels;
+
+use guiraffe_core::widget_spec;
+mod widget_specs;

@@ -52,6 +52,88 @@ fn suggestion(got: &str, choices: &[&str]) -> String {
         )
 }
 
+fn check_timeline_tracks(value: &Value) -> bool {
+    let Some(tracks) = value.as_array() else {
+        return false;
+    };
+    let schema = crate::widget_spec::timeline_track_schema();
+    tracks.iter().all(|track| {
+        if !matches_data_schema(track, &schema) {
+            return false;
+        }
+        let mut ids = BTreeSet::new();
+        let Some(clips) = track["clips"].as_array() else {
+            return false;
+        };
+        let mut spans = Vec::with_capacity(clips.len());
+        for clip in clips {
+            let Some(id) = clip["id"].as_u64() else {
+                return false;
+            };
+            let Some((start, length)) = clip["start"].as_f64().zip(clip["length"].as_f64()) else {
+                return false;
+            };
+            let end = start + length;
+            if !ids.insert(id) || !end.is_finite() || end <= start {
+                return false;
+            }
+            spans.push((start, end));
+        }
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        spans.windows(2).all(|pair| pair[1].0 >= pair[0].1 - 1e-12)
+    })
+}
+
+fn check_flame_frames(value: &Value) -> bool {
+    let Some(frames) = value.as_array() else {
+        return false;
+    };
+    let schema = crate::widget_spec::flame_frame_schema();
+    let mut ids = BTreeSet::new();
+    let mut ancestors: Vec<(u64, f64, f64)> = Vec::new();
+    let mut extent = 0.0;
+    for frame in frames {
+        if !matches_data_schema(frame, &schema) {
+            return false;
+        }
+        let Some(id) = frame["id"].as_u64() else {
+            return false;
+        };
+        let parent = frame["parent"].as_u64();
+        let Some((own, total)) = frame["self"].as_f64().zip(frame["total"].as_f64()) else {
+            return false;
+        };
+        if !ids.insert(id) || own > total {
+            return false;
+        }
+        while ancestors.last().map(|(id, _, _)| *id) != parent {
+            if ancestors.pop().is_none() {
+                return false;
+            }
+        }
+        let (left, right) = if let Some((_, cursor, limit)) = ancestors.last_mut() {
+            let left = *cursor;
+            let right = left + total;
+            let tolerance = right.abs().max(limit.abs()) * (4.0 * f64::EPSILON);
+            if !right.is_finite() || right - *limit > tolerance {
+                return false;
+            }
+            let right = right.min(*limit);
+            *cursor = right;
+            (left, right)
+        } else {
+            let left = extent;
+            extent += total;
+            if !extent.is_finite() {
+                return false;
+            }
+            (left, extent)
+        };
+        ancestors.push((id, left, (right - own).max(left)));
+    }
+    true
+}
+
 fn check_tree_nodes(values: &Value) -> bool {
     let Some(values) = values.as_array() else {
         return false;
@@ -60,7 +142,7 @@ fn check_tree_nodes(values: &Value) -> bool {
     let mut ids = BTreeSet::new();
     let mut maximum_depth = 0;
     for value in values {
-        if !matches_tree_schema(value, &schema) {
+        if !matches_data_schema(value, &schema) {
             return false;
         }
         let Some(id) = value["id"].as_u64() else {
@@ -102,15 +184,16 @@ fn check_tree_nodes(values: &Value) -> bool {
     true
 }
 
-// This describes the subset used by tree_node_schema. Document links and bindings have already
+// Validate the JSON Schema subset used by structured authoring props. Document links and bindings have already
 // been resolved by the caller before checking a literal data shape.
-fn matches_tree_schema(value: &Value, schema: &Value) -> bool {
+fn matches_data_schema(value: &Value, schema: &Value) -> bool {
     let type_matches = |ty: &str| match ty {
         "array" => value.is_array(),
         "object" => value.is_object(),
         "boolean" => value.is_boolean(),
         "integer" => value.as_u64().is_some(),
         "number" => value.is_number(),
+        "null" => value.is_null(),
         "string" => value.is_string(),
         _ => false,
     };
@@ -136,7 +219,7 @@ fn matches_tree_schema(value: &Value, schema: &Value) -> bool {
     {
         return array
             .iter()
-            .all(|value| matches_tree_schema(value, item_schema));
+            .all(|value| matches_data_schema(value, item_schema));
     }
     if let Some(fields) = value.as_object() {
         return schema["required"]
@@ -148,7 +231,7 @@ fn matches_tree_schema(value: &Value, schema: &Value) -> bool {
             && fields.iter().all(|(key, value)| {
                 schema["properties"]
                     .get(key)
-                    .is_some_and(|field_schema| matches_tree_schema(value, field_schema))
+                    .is_some_and(|field_schema| matches_data_schema(value, field_schema))
             });
     }
     true
@@ -340,6 +423,51 @@ impl Validation<'_> {
                             .as_f64()
                             .zip(values[1].as_f64())
                             .is_some_and(|(low, high)| low <= high)
+                }),
+                "track-selection" => got.as_array().is_some_and(|values| {
+                    values.is_empty()
+                        || (values.len() == 2
+                            && values
+                                .iter()
+                                .all(|v| v.as_u64().is_some_and(|v| u32::try_from(v).is_ok())))
+                }),
+                "timeline-tracks" => check_timeline_tracks(got),
+                "flame-frames" => check_flame_frames(got),
+                "grid-rows" => got.as_array().is_some_and(|rows| {
+                    let schema = crate::widget_spec::grid_row_schema();
+                    rows.iter().all(|row| matches_data_schema(row, &schema))
+                }),
+                "chart-layers" | "chart-axes" | "chart-labels" => {
+                    let schema = match prop.type_name {
+                        "chart-layers" => crate::widget_spec::chart_layer_schema(),
+                        "chart-axes" => crate::widget_spec::chart_axis_schema(),
+                        _ => crate::widget_spec::chart_label_schema(),
+                    };
+                    got.as_array().is_some_and(|items| {
+                        items.iter().all(|item| matches_data_schema(item, &schema))
+                    })
+                }
+                "board-columns" => got.as_array().is_some_and(|columns| {
+                    let schema = crate::widget_spec::board_column_schema();
+                    let mut ids = BTreeSet::new();
+                    columns.iter().all(|column| {
+                        matches_data_schema(column, &schema)
+                            && column["cards"].as_array().is_some_and(|cards| {
+                                cards.iter().all(|card| {
+                                    card["id"].as_u64().is_some_and(|id| ids.insert(id))
+                                })
+                            })
+                    })
+                }),
+                "grid-columns" => got.as_array().is_some_and(|columns| {
+                    let schema = crate::widget_spec::grid_column_schema();
+                    let mut ids = BTreeSet::new();
+                    columns.iter().all(|column| {
+                        matches_data_schema(column, &schema)
+                            && column["id"]
+                                .as_str()
+                                .is_some_and(|id| !id.is_empty() && ids.insert(id))
+                    })
                 }),
                 "tree-nodes" => check_tree_nodes(got),
                 "ring-sections" => got.as_array().is_some_and(|sections| {
