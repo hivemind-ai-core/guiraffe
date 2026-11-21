@@ -6,7 +6,56 @@ use gpui_kit::{
     Window, canvas, div, prelude::*, px,
 };
 use guiraffe_core::{GuiraffeTheme, Variant};
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    rc::Rc,
+};
+#[derive(Default)]
+struct BarColumns {
+    extrema: Vec<(f64, f64)>,
+    count: usize,
+    dirty: Option<Range<usize>>,
+}
+
+impl BarColumns {
+    fn invalidate(&mut self, changed: Range<usize>) {
+        self.dirty = Some(match self.dirty.take() {
+            Some(dirty) => dirty.start.min(changed.start)..dirty.end.max(changed.end),
+            None => changed,
+        });
+    }
+
+    fn update(&mut self, values: &[f64], width: f32) {
+        let columns = (width.ceil() as usize).min(16_384).min(values.len());
+        if columns == 0 || columns == values.len() {
+            self.extrema.clear();
+            return;
+        }
+        if self.count != values.len() || self.extrema.len() != columns {
+            self.count = values.len();
+            self.extrema
+                .reserve_exact(columns.saturating_sub(self.extrema.len()));
+            self.extrema.resize(columns, (0., 0.));
+            self.dirty = Some(0..values.len());
+        }
+        let Some(dirty) = self.dirty.take() else {
+            return;
+        };
+        let first = dirty.start * columns / self.count;
+        let last = (dirty.end * columns).div_ceil(self.count);
+        for column in first..last {
+            let start = (column * self.count).div_ceil(columns);
+            let end = ((column + 1) * self.count).div_ceil(columns);
+            self.extrema[column] = values[start..end]
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &value| {
+                    (lo.min(value), hi.max(value))
+                });
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BarEvent {
     pub changed: std::ops::Range<usize>,
@@ -15,6 +64,7 @@ pub struct BarCurveView {
     model: BarCurve,
     surface: PlotSurface,
     body: Rc<Cell<Bounds<Pixels>>>,
+    columns: Rc<RefCell<BarColumns>>,
     drag: Option<(f64, f64)>,
     editable: bool,
     focus: FocusHandle,
@@ -37,6 +87,7 @@ impl BarCurveView {
             model,
             surface,
             body: Rc::default(),
+            columns: Rc::default(),
             drag: None,
             editable: true,
             focus: cx.focus_handle(),
@@ -57,6 +108,7 @@ impl BarCurveView {
     }
     pub fn set_model(&mut self, model: BarCurve, cx: &mut Context<Self>) {
         self.model = model;
+        self.columns.borrow_mut().dirty = Some(0..self.model.values().len());
         self.drag = None;
         let (lo, hi) = self.model.range();
         self.surface.range = Some(ValueRange::new(lo, hi, 200.));
@@ -73,6 +125,7 @@ impl BarCurveView {
         let to = (x, value);
         let from = self.drag.unwrap_or(to);
         if let Some(changed) = self.model.draw(from, to) {
+            self.columns.borrow_mut().invalidate(changed.clone());
             cx.emit(BarEvent { changed });
             cx.notify();
         }
@@ -104,7 +157,8 @@ impl Render for BarCurveView {
         }
         let body = self.body.clone();
         let owner = cx.entity_id();
-        let values = self.model.shared_values();
+        let view = cx.weak_entity();
+        let columns = self.columns.clone();
         let (lo, hi) = self.model.range();
         let bipolar = self.model.bipolar;
         let fill = theme.variant(None, Variant::Filled).background.to_hsla();
@@ -160,8 +214,22 @@ impl Render for BarCurveView {
             .child(
                 canvas(
                     |_, _, _| (),
-                    move |b, _, window, _| {
-                        let w = f32::from(b.size.width) / values.len().max(1) as f32;
+                    move |b, _, window, cx| {
+                        let Some(view) = view.upgrade() else { return };
+                        let values = view.read(cx).model.values();
+                        let mut columns = columns.borrow_mut();
+                        let width = f32::from(b.size.width);
+                        if width <= 0. {
+                            return;
+                        }
+                        columns.update(values, width);
+                        let dense = !columns.extrema.is_empty();
+                        let count = if dense {
+                            columns.extrema.len()
+                        } else {
+                            values.len()
+                        };
+                        let w = width / count.max(1) as f32;
                         let h = f64::from(f32::from(b.size.height));
                         let range = ValueRange::new(lo, hi, h);
                         let base = if bipolar {
@@ -169,17 +237,26 @@ impl Render for BarCurveView {
                         } else {
                             h
                         };
-                        for (i, v) in values.iter().enumerate() {
-                            let y = range.y(*v);
+                        let extrema = (0..count).map(|i| {
+                            if dense {
+                                columns.extrema[i]
+                            } else {
+                                (values[i], values[i])
+                            }
+                        });
+                        for (i, (low, high)) in extrema.enumerate() {
+                            let top = range.y(high).min(base);
+                            let bottom = range.y(low).max(base);
+                            let inset = if dense { 0. } else { 1. };
                             window.paint_quad(gpui_kit::fill(
                                 Bounds::new(
                                     gpui_kit::point(
-                                        b.origin.x + px(i as f32 * w + 1.),
-                                        b.origin.y + px(y.min(base) as f32),
+                                        b.origin.x + px(i as f32 * w + inset),
+                                        b.origin.y + px(top as f32),
                                     ),
                                     gpui_kit::size(
-                                        px((w - 2.).max(0.)),
-                                        px((base - y).abs().max(1.) as f32),
+                                        px((w - 2. * inset).max(0.)),
+                                        px((bottom - top).max(1.) as f32),
                                     ),
                                 ),
                                 fill,
@@ -192,5 +269,28 @@ impl Render for BarCurveView {
             )
             .child(self.surface.value_labels(theme));
         guiraffe_core::focus_ring(div().size_full().child(root), ring_on, px(0.), ring)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BarColumns;
+
+    #[test]
+    fn aggregation_keeps_extrema_and_recomputes_only_dirty_columns() {
+        for size in [10_000, 100_000, 10_000_000] {
+            let mut values = vec![0.; size];
+            let mut columns = BarColumns::default();
+            columns.update(&values, 100.);
+            assert_eq!(columns.extrema.len(), 100);
+            values[0] = -1.;
+            values[1] = 1.;
+            // Sentinel outside the reported dirty range detects full rebuilds.
+            values[size - 1] = 0.5;
+            columns.invalidate(0..2);
+            columns.update(&values, 100.);
+            assert_eq!(columns.extrema[0], (-1., 1.));
+            assert_eq!(columns.extrema[99], (0., 0.));
+        }
     }
 }

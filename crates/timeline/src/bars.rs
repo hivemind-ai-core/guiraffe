@@ -25,9 +25,6 @@ impl BarCurve {
             bipolar: false,
         }
     }
-    pub(crate) fn shared_values(&self) -> Rc<Vec<f64>> {
-        self.values.clone()
-    }
     pub fn values(&self) -> &[f64] {
         &self.values
     }
