@@ -365,6 +365,35 @@ mod tests {
     }
 
     #[test]
+    fn arithmetic_aggregates_and_conditional_use_latest_inputs() {
+        let a = CellPos::new(0, 0);
+        let b = CellPos::new(1, 0);
+        let c = CellPos::new(2, 0);
+        let result = CellPos::new(0, 1);
+        let mut graph = Graph::new(3, 2);
+        let engine = BuiltinEngine;
+        graph.update(
+            vec![
+                (a, Arc::from("1")),
+                (b, Arc::from("2")),
+                (c, Arc::from("=A2+1")),
+                (
+                    result,
+                    Arc::from(
+                        "=IF(COUNT(A1:A3)=3,SUM(A1:A3)+AVG(A1:A3)-MIN(A1:A3)+MAX(A1:A3),1/0)",
+                    ),
+                ),
+            ],
+            &engine,
+        );
+        assert!(graph.calculate(|| false).is_some());
+        assert_eq!(graph.values.get(&result), Some(&Ok(10.)));
+        graph.update(vec![(b, Arc::from("5"))], &engine);
+        assert!(graph.calculate(|| false).is_some());
+        assert_eq!(graph.values.get(&result), Some(&Ok(21.)));
+    }
+
+    #[test]
     fn cycles_break_and_ranges_update() {
         let a = CellPos::new(0, 0);
         let b = CellPos::new(1, 0);

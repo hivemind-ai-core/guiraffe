@@ -42,3 +42,43 @@ fn select_edit_and_undo(cx: &mut TestAppContext) {
         assert!(sheet.read(cx).model().cell(CellPos::new(1, 1)).is_none());
     });
 }
+
+#[gpui_kit::test]
+fn fill_handle_extends_series_as_one_transaction(cx: &mut TestAppContext) {
+    cx.update(guiraffe_core::init);
+    let (sheet, window) = cx.add_window_view(|_, cx| {
+        let mut model = SheetModel::from_cells(
+            1_000_000,
+            1_000,
+            [
+                (CellPos::new(0, 0), Cell::new("2")),
+                (CellPos::new(1, 0), Cell::new("4")),
+            ],
+        );
+        model.select(CellPos::new(0, 0), false);
+        model.select(CellPos::new(1, 0), true);
+        SheetState::new(model, cx)
+    });
+    window.simulate_resize(size(px(800.), px(600.)));
+    window.run_until_parked();
+    let from = point(px(170.), px(75.));
+    let to = point(px(170.), px(140.));
+    let button = gpui_kit::MouseButton::Left;
+    window.simulate_mouse_down(from, button, Modifiers::default());
+    window.simulate_mouse_move(to, Some(button), Modifiers::default());
+    window.simulate_mouse_up(to, button, Modifiers::default());
+    window.update(|_, cx| {
+        assert_eq!(
+            sheet
+                .read(cx)
+                .model()
+                .cell(CellPos::new(4, 0))
+                .map(|c| c.text.as_ref()),
+            Some("10")
+        );
+    });
+    window.simulate_keystrokes("ctrl-z");
+    window.update(|_, cx| {
+        assert_eq!(sheet.read(cx).model().cells().count(), 2);
+    });
+}
