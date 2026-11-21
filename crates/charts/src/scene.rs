@@ -47,6 +47,7 @@ pub(crate) enum Geometry {
     Segment(Position, Position),
     Box(Position, Position),
     Dot(Position, f32),
+    Dots(Vec<(Position, f32)>),
     Text(Position, Arc<str>),
 }
 
@@ -80,6 +81,7 @@ impl Scene {
             .flat_map(|panel| &panel.draws)
             .map(|draw| match &draw.geometry {
                 Geometry::Path { points, .. } => points.len(),
+                Geometry::Dots(dots) => dots.len(),
                 _ => 1,
             })
             .sum()
@@ -431,6 +433,20 @@ impl Run {
     }
 }
 
+fn scatter_candidates(visible: Range<usize>, budget: usize) -> impl Iterator<Item = usize> {
+    let len = visible.len();
+    let count = len.min(budget.max(1));
+    (0..count).map(move |slot| {
+        let width = len / count;
+        let extra = len % count;
+        let start = slot * width + slot.min(extra);
+        let width = width + usize::from(slot < extra);
+        // Decorrelate the stride from periodic input while keeping one point
+        // from each contiguous x interval.
+        visible.start + start + slot.wrapping_mul(41) % width
+    })
+}
+
 struct LinePick {
     range: Range<usize>,
     cursor: Position,
@@ -568,7 +584,13 @@ impl Projection<'_> {
             let columns = (self.rect.width() / cell_size).clamp(1., 128.) as usize;
             let rows = (self.rect.height() / cell_size).clamp(1., 64.) as usize;
             if visible.len() > 8_192 / scatter_runs.max(1) {
-                self.scatter(visible, columns, rows, out, cancelled);
+                self.scatter(
+                    visible,
+                    (columns, rows),
+                    8_192 / scatter_runs.max(1),
+                    out,
+                    cancelled,
+                );
                 return;
             }
         }
@@ -669,17 +691,17 @@ impl Projection<'_> {
     fn scatter(
         &self,
         visible: Range<usize>,
-        columns: usize,
-        rows: usize,
+        (columns, rows): (usize, usize),
+        budget: usize,
         out: &mut Vec<Draw>,
         cancelled: &impl Fn() -> bool,
     ) {
         // Share the viewport draw budget across visible series. Hit testing uses source points.
         let mut free_cells = columns * rows;
         let mut occupied = vec![false; columns * rows];
-        for index in visible {
+        for (slot, index) in scatter_candidates(visible, budget).enumerate() {
             let row = &self.run.rows.row(index);
-            if index.is_multiple_of(256) && cancelled() {
+            if slot.is_multiple_of(256) && cancelled() {
                 return;
             }
             let Some(point) = self.anchor(row).filter(|&p| self.rect.contains(p)) else {
@@ -692,11 +714,23 @@ impl Projection<'_> {
                 && let Some(radius) = self.dot_radius(row)
             {
                 occupied[cell] = true;
-                out.push(Draw {
-                    geometry: Geometry::Dot(point, radius),
-                    series: self.run.id,
-                    color: self.color(row),
-                });
+                let color = self.color(row);
+                if let Some(Draw {
+                    geometry: Geometry::Dots(dots),
+                    series,
+                    color: previous,
+                }) = out.last_mut()
+                    && *series == self.run.id
+                    && *previous == color
+                {
+                    dots.push((point, radius));
+                } else {
+                    out.push(Draw {
+                        geometry: Geometry::Dots(vec![(point, radius)]),
+                        series: self.run.id,
+                        color,
+                    });
+                }
                 free_cells -= 1;
                 if free_cells == 0 {
                     break;
@@ -851,6 +885,16 @@ impl Projection<'_> {
 mod tests {
     use super::*;
     use crate::{Channels, ChartSpec, Layer};
+
+    #[test]
+    fn dense_scatter_candidate_work_is_independent_of_total_size() {
+        for size in [10_000, 1_000_000, 10_000_000] {
+            let indices: Vec<_> = scatter_candidates(0..size, 8_192).collect();
+            assert_eq!(indices.len(), 8_192);
+            assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(indices.iter().all(|&index| index < size));
+        }
+    }
 
     #[test]
     fn dense_scatter_shares_screen_cells_across_series_budgets() {
