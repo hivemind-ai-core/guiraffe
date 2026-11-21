@@ -531,6 +531,21 @@ fn overlay_document_validates_compiles_and_renders(cx: &mut TestAppContext) {
             .prop("offset", "sm")
             .child(Node::new("text").prop("text", "Overlay content"))
             .child(
+                Node::new("floating-tooltip")
+                    .prop("text", "Details")
+                    .prop("x", 100)
+                    .prop("y", 80)
+                    .prop("width", 40)
+                    .prop("height", 20)
+                    .prop("side", "right")
+                    .prop("align", "start")
+                    .prop("gap", 6)
+                    .prop("padding", 10)
+                    .prop("arrow-padding", 5)
+                    .prop("flip", true)
+                    .prop("shift", false),
+            )
+            .child(
                 Node::new("loading-overlay")
                     .prop("visible", false)
                     .prop("size", "lg")
@@ -549,10 +564,17 @@ fn overlay_document_validates_compiles_and_renders(cx: &mut TestAppContext) {
 #[test]
 fn ui_macro_accepts_overlay_builders() {
     use guiraffe_core::{ColorName, Size, Variant};
-    use guiraffe_overlays::{Affix, LoadingOverlay, toast::ToastPosition};
+    use guiraffe_overlays::{
+        Affix, FloatingTooltip, LoadingOverlay,
+        position::{FloatingOptions, Rect, Side},
+        toast::ToastPosition,
+    };
     let overlay = ui! {
         Affix { position: ToastPosition::TopRight; offset: Size::Sm
             LoadingOverlay { visible: false; size: Size::Lg; color: ColorName::Orange; variant: Variant::Outline }
+            FloatingTooltip("help", "Details", Rect::default()) {
+                options: FloatingOptions { side: Side::Right, ..Default::default() }
+            }
         }
     };
     let _ = overlay.into_element();

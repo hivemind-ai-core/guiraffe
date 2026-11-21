@@ -6,7 +6,12 @@ use guiraffe_core::{
     widget_catalog::{WidgetRegistration, WidgetRegistry},
 };
 
-use crate::{Affix, LoadingOverlay, toast::ToastPosition, widget_specs};
+use crate::{
+    Affix, FloatingTooltip, LoadingOverlay,
+    position::{Align, FloatingOptions, Rect, Side},
+    toast::ToastPosition,
+    widget_specs,
+};
 
 pub(crate) fn register(cx: &mut App) {
     WidgetRegistry::install(
@@ -53,6 +58,45 @@ pub(crate) fn register(cx: &mut App) {
                         _ => Variant::Light,
                     };
                     overlay.variant(variant).into_any_element()
+                },
+            },
+            WidgetRegistration {
+                spec: widget_specs::WIDGETS[2],
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[2]),
+                render: |node, _, _, _| {
+                    let number =
+                        |index, default| node.prop(index).as_f64().unwrap_or(default) as f32;
+                    let anchor = Rect {
+                        x: number(1, 0.0),
+                        y: number(2, 0.0),
+                        width: number(3, 0.0),
+                        height: number(4, 0.0),
+                    };
+                    let options = FloatingOptions {
+                        side: match node.prop(5).as_str() {
+                            Some("top") => Side::Top,
+                            Some("left") => Side::Left,
+                            Some("right") => Side::Right,
+                            _ => Side::Bottom,
+                        },
+                        align: match node.prop(6).as_str() {
+                            Some("start") => Align::Start,
+                            Some("end") => Align::End,
+                            _ => Align::Center,
+                        },
+                        gap: number(7, 4.0),
+                        padding: number(8, 8.0),
+                        arrow_padding: number(9, 8.0),
+                        flip: node.prop(10).as_bool().unwrap_or(true),
+                        shift: node.prop(11).as_bool().unwrap_or(true),
+                    };
+                    FloatingTooltip::new(
+                        node.state_id(),
+                        node.prop(0).as_str().unwrap_or("Tooltip").to_owned(),
+                        anchor,
+                    )
+                    .options(options)
+                    .into_any_element()
                 },
             },
         ],

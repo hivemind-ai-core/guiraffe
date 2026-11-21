@@ -38,6 +38,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "markdown::MarkdownView" => "markdown",
         "mermaid::MermaidView" => "mermaid",
         "overlays::Affix" => "affix",
+        "overlays::FloatingTooltip" | "overlays::FloatingOptions" => "floating-tooltip",
         "overlays::LoadingOverlay" => "loading-overlay",
         "tree::TreeView" | "tree::PropertyGrid" | "tree::RowStyle" | "tree::PropertyOptions" => {
             "property-grid"
@@ -478,6 +479,7 @@ fn covered(surface: &str) -> bool {
                 ("layout::ScrollArea", "both") => "scroll-x".into(),
                 ("layout::Space", "h") => "height".into(),
                 ("layout::Space", "w") => "width".into(),
+                ("overlays::FloatingTooltip", "options") => "side".into(),
                 ("tree::TreeView", "inspector_controls") => "searchable".into(),
                 ("tree::TreeView", "row_style" | "set_row_style") => "density".into(),
                 ("tree::TreeView", "row_heights" | "set_row_heights" | "replace_source") => {

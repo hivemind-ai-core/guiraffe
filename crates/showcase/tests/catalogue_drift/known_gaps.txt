@@ -262,16 +262,6 @@ mermaid::MermaidViewState::svg
 mermaid::MermaidViewState::viewport
 mermaid::MermaidViewState::zoom_in
 mermaid::MermaidViewState::zoom_out
-overlays::FloatingOptions::field align
-overlays::FloatingOptions::field arrow_padding
-overlays::FloatingOptions::field flip
-overlays::FloatingOptions::field gap
-overlays::FloatingOptions::field padding
-overlays::FloatingOptions::field shift
-overlays::FloatingOptions::field side
-overlays::FloatingTooltip
-overlays::FloatingTooltip::new
-overlays::FloatingTooltip::options
 overlays::Modals
 overlays::OverlayHost
 overlays::OverlayHost::clear_toasts

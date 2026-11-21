@@ -82,4 +82,66 @@ pub static LOADING_OVERLAY: WidgetSpec = WidgetSpec {
     a11y_role: "progressbar",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&AFFIX, &LOADING_OVERLAY];
+const fn placement_px(name: &'static str, default_json: &'static str, minimum: f64) -> PropSpec {
+    PropSpec {
+        name,
+        type_name: "number",
+        default_json,
+        accepted: &[],
+        range: Some((minimum, f32::MAX as f64)),
+        token_backed: false,
+        required: false,
+    }
+}
+
+const fn placement_flag(name: &'static str) -> PropSpec {
+    PropSpec {
+        name,
+        type_name: "boolean",
+        default_json: "true",
+        accepted: &[],
+        range: None,
+        token_backed: false,
+        required: false,
+    }
+}
+
+pub static FLOATING_TOOLTIP: WidgetSpec = WidgetSpec {
+    id: "floating-tooltip",
+    krate: "overlays",
+    summary: "Controlled tooltip positioned at a rectangle in window logical pixels.",
+    props: &[
+        PropSpec {
+            required: true,
+            ..choice("text", "\"Tooltip\"", &[], false)
+        },
+        placement_px("x", "0", -(f32::MAX as f64)),
+        placement_px("y", "0", -(f32::MAX as f64)),
+        placement_px("width", "0", 0.0),
+        placement_px("height", "0", 0.0),
+        choice(
+            "side",
+            "\"bottom\"",
+            &["top", "right", "bottom", "left"],
+            false,
+        ),
+        choice("align", "\"center\"", &["start", "center", "end"], false),
+        placement_px("gap", "4", 0.0),
+        placement_px("padding", "8", 0.0),
+        placement_px("arrow-padding", "8", 0.0),
+        placement_flag("flip"),
+        placement_flag("shift"),
+    ],
+    accepts_children: false,
+    events: &[],
+    state: "controlled from the anchor coordinates and surrounding document conditions",
+    theme_tokens: &[
+        "surfaces.surface",
+        "surfaces.border",
+        "surfaces.text",
+        "default_radius",
+    ],
+    a11y_role: "tooltip",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[&AFFIX, &LOADING_OVERLAY, &FLOATING_TOOLTIP];
