@@ -852,10 +852,8 @@ mod tests {
         );
         cache.begin_edges((Viewport::default(), gpui_kit::Size::default()), &[1]);
         assert_eq!(cache.entries.len(), 1);
-        assert_eq!(
-            cache.mesh_bytes,
-            cache.get(1, &route).expect("retained").bytes()
-        );
+        let retained = cache.get(1, &route).expect("retained").bytes();
+        assert_eq!(cache.mesh_bytes, retained);
         cache.clear();
         assert_eq!(cache.mesh_bytes, 0);
         assert!(cache.entries.is_empty());
