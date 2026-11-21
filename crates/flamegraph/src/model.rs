@@ -93,9 +93,42 @@ impl Locations {
     }
 }
 
+#[derive(Default)]
+struct FlameRow {
+    spans: Vec<Span>,
+    widest: f64,
+    has_gap: bool,
+}
+
+impl FlameRow {
+    fn push(&mut self, span: Span) {
+        self.widest = self.widest.max(span.right - span.left);
+        self.has_gap |= self
+            .spans
+            .last()
+            .is_some_and(|last| last.right != span.left);
+        self.spans.push(span);
+    }
+
+    fn overview(&self, domain: &Range<f64>, width: f64) -> Option<Range<f64>> {
+        if !width.is_finite() || width <= 0. || domain.start >= domain.end {
+            return None;
+        }
+        let scale = width / (domain.end - domain.start);
+        if self.has_gap || !scale.is_finite() || scale <= 0. || self.widest * scale > 0.25 {
+            return None;
+        }
+        let pixel = |x: f64| ((x - domain.start) * scale).clamp(0., width);
+        let start = pixel(self.spans.first()?.left);
+        let end = pixel(self.spans.last()?.right);
+        // Keep the detailed path for tiny clipped fragments at either edge.
+        (end - start >= 1.).then_some(start..end)
+    }
+}
+
 pub struct FlameLayout {
     source: Arc<dyn FrameSource>,
-    rows: Vec<Vec<Span>>,
+    rows: Vec<FlameRow>,
     locations: Locations,
     extent: f64,
 }
@@ -153,10 +186,10 @@ impl FlameLayout {
             };
 
             if depth == result.rows.len() {
-                result.rows.push(Vec::new());
+                result.rows.push(FlameRow::default());
             }
             let row = &mut result.rows[depth];
-            result.locations.insert(frame.id, depth, row.len())?;
+            result.locations.insert(frame.id, depth, row.spans.len())?;
             row.push(Span { index, left, right });
             stack.push((frame.id, left, (right - frame.self_value).max(left)));
         }
@@ -173,7 +206,7 @@ impl FlameLayout {
 
     fn span(&self, id: FrameId) -> Option<&Span> {
         let (depth, offset) = self.locations.get(id)?;
-        self.rows.get(depth)?.get(offset)
+        self.rows.get(depth)?.spans.get(offset)
     }
 
     pub fn frame(&self, id: FrameId) -> Option<Frame<'_>> {
@@ -214,7 +247,7 @@ impl FlameLayout {
 
     pub(crate) fn adjacent_sibling(&self, id: FrameId, forward: bool) -> Option<FrameId> {
         let (depth, offset) = self.locations.get(id)?;
-        let row = self.rows.get(depth)?;
+        let row = &self.rows.get(depth)?.spans;
         let current = row.get(offset)?;
         let adjacent = if forward {
             self.hit(depth, current.right)?
@@ -232,7 +265,7 @@ impl FlameLayout {
     }
 
     pub fn hit(&self, depth: usize, x: f64) -> Option<FrameId> {
-        let row = self.rows.get(depth)?;
+        let row = &self.rows.get(depth)?.spans;
         let span = row.get(row.partition_point(|span| span.right <= x))?;
         (span.left <= x && x < span.right).then(|| self.source.frame(span.index).id)
     }
@@ -250,6 +283,7 @@ impl FlameLayout {
         let Some(row) = self.rows.get(depth) else {
             return;
         };
+        let row = &row.spans;
         if !width.is_finite() || width <= 0. || domain.start >= domain.end {
             return;
         }
@@ -296,6 +330,19 @@ impl FlameLayout {
         search: Option<&Search>,
         mut paint: impl FnMut(Segment),
     ) {
+        if search.is_none()
+            && let Some(x) = self
+                .rows
+                .get(depth)
+                .and_then(|row| row.overview(&domain, width))
+        {
+            paint(Segment {
+                id: None,
+                x,
+                highlighted: false,
+            });
+            return;
+        }
         let mut pending: Option<Segment> = None;
         self.visit_row(depth, domain, width, search, |segment| {
             if let Some(previous) = &mut pending
@@ -332,7 +379,8 @@ impl FlameLayout {
                 .rows
                 .iter()
                 .map(|row| {
-                    row.iter()
+                    row.spans
+                        .iter()
                         .enumerate()
                         .filter(|(_, span)| {
                             label.clear();
@@ -396,11 +444,15 @@ mod tests {
 
     #[test]
     fn overview_paints_one_contiguous_run_at_both_scales() -> Result<(), LayoutError> {
-        for count in [10_000, 10_000_000] {
+        for count in [10_000, 1_000_000, 10_000_000] {
             let layout = FlameLayout::new(Arc::new(Uniform(count)))?;
             assert!(matches!(&layout.locations, Locations::Sequential(index)
                 if index.len() == count && index.capacity() == count));
             let width = 1_000.;
+            assert_eq!(
+                layout.rows[0].overview(&layout.domain(), width),
+                Some(0. ..width)
+            );
             let mut painted = 0;
             layout.visit_paint_row(0, layout.domain(), width, None, |segment| {
                 painted += 1;
@@ -411,6 +463,37 @@ mod tests {
             assert_eq!(layout.hit(0, count as f64 - 0.5), Some(count as u64 - 1));
         }
         Ok(())
+    }
+
+    #[test]
+    fn overview_lod_preserves_gaps_and_skips_individually_visible_frames() {
+        let mut row = FlameRow::default();
+        row.push(Span {
+            index: 0,
+            left: 0.,
+            right: 1.,
+        });
+        row.push(Span {
+            index: 1,
+            left: 1.,
+            right: 2.,
+        });
+        assert_eq!(row.overview(&(0. ..2.), 100.), None);
+        assert_eq!(row.overview(&(0. ..10.), 2.), None);
+        for index in 2..10 {
+            row.push(Span {
+                index,
+                left: index as f64,
+                right: index as f64 + 1.,
+            });
+        }
+        assert_eq!(row.overview(&(0. ..10.), 2.), Some(0. ..2.));
+        row.push(Span {
+            index: 10,
+            left: 11.,
+            right: 12.,
+        });
+        assert_eq!(row.overview(&(0. ..12.), 2.), None);
     }
 
     #[test]
