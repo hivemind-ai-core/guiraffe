@@ -56,6 +56,8 @@ batches; nothing goes to main without the user.
 
 - [ ] DnD: dim/ghost the source card while it is being dragged (currently stays full-opacity in its column).
 
+- [ ] Remove the date pickers' "keep last non-default StyleContext" workaround (crates/inputs/src/dates/picker.rs) once fix-stylecontext-fast (b8ec14e) is merged.
+
 ## Release readiness
 - [ ] CHANGELOG 0.2; KNOWN_ISSUES.md current; API docs coverage.
 - [ ] Packaging notes: apps must copy the vendored `[patch.crates-io]` entries (vendor/README.md);
