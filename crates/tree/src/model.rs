@@ -206,22 +206,31 @@ impl TreeModel {
                 if let Children::Ready(children) = source.children(id)
                     && !children.is_empty()
                 {
+                    let at_end = start == self.rows.len();
                     let mut descendants = Vec::new();
                     let mut positions = Vec::new();
+                    let (rows, siblings) = if at_end {
+                        (&mut self.rows, &mut self.sibling_positions)
+                    } else {
+                        (&mut descendants, &mut positions)
+                    };
+                    let before_len = rows.len();
                     walk_visible(
                         source,
                         &self.expanded,
                         children,
                         Some(id),
                         depth + 1,
-                        |row, siblings| {
-                            descendants.push(row);
-                            positions.push(siblings);
+                        |row, position| {
+                            rows.push(row);
+                            siblings.push(position);
                         },
                     );
-                    let inserted = descendants.len();
-                    self.rows.splice(start..start, descendants);
-                    self.sibling_positions.splice(start..start, positions);
+                    let inserted = rows.len() - before_len;
+                    if !at_end {
+                        self.rows.splice(start..start, descendants);
+                        self.sibling_positions.splice(start..start, positions);
+                    }
                     self.indices.splice(start..start, inserted, &self.rows);
                 }
             } else {
