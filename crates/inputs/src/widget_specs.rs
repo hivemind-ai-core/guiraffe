@@ -30,7 +30,124 @@ pub const WIDGETS: &[&WidgetSpec] = &[
     &TAGS_INPUT,
     &DATE_PICKER,
     &TIME_FIELD,
+    &PICKER,
+    &INPUT_WRAPPER,
 ];
+
+const SIZES: &[&str] = &["xs", "sm", "md", "lg", "xl"];
+const COLORS: &[&str] = &[
+    "dark", "gray", "red", "pink", "grape", "violet", "indigo", "blue", "cyan", "teal", "green",
+    "lime", "yellow", "orange",
+];
+
+const fn choice(
+    name: &'static str,
+    default_json: &'static str,
+    accepted: &'static [&'static str],
+) -> PropSpec {
+    PropSpec {
+        accepted,
+        ..option(name, "string", default_json)
+    }
+}
+
+const fn token(name: &'static str, accepted: &'static [&'static str]) -> PropSpec {
+    PropSpec {
+        accepted,
+        token_backed: true,
+        ..option(name, "string", "null")
+    }
+}
+
+/// GUIraffe's own date and time picker ([`crate::dates::Picker`]); `mode` selects the value
+/// type. Values are local ISO strings: `2026-11-21`, `13:30`, `2026-11-21T13:30`, or a
+/// `[start, end]` pair for the range modes.
+pub static PICKER: WidgetSpec = WidgetSpec {
+    id: "picker",
+    krate: "inputs",
+    summary: "Themed date, date-range, time, date-time or date-time-range picker with presets and locale.",
+    props: &[
+        choice(
+            "mode",
+            "\"date\"",
+            &["date", "date-range", "time", "date-time", "date-time-range"],
+        ),
+        option("value", "picker-value", "null"),
+        option("default-value", "picker-value", "null"),
+        option("open", "boolean", "null"),
+        option("placeholder", "string", "null"),
+        option("label", "string", "null"),
+        option("description", "string", "null"),
+        option("error", "string", "null"),
+        option("required", "boolean", "false"),
+        option("min-date", "iso-date", "null"),
+        option("max-date", "iso-date", "null"),
+        option("exclude-date", "array", "[]"),
+        option("min-time", "iso-time", "null"),
+        option("max-time", "iso-time", "null"),
+        option("default-time", "iso-time", "\"00:00\""),
+        choice(
+            "first-day-of-week",
+            "null",
+            &["sun", "mon", "tue", "wed", "thu", "fri", "sat"],
+        ),
+        choice("locale", "\"en-US\"", &["en-US", "en-GB", "de", "fr"]),
+        choice("hour-format", "null", &["h12", "h24"]),
+        option("with-seconds", "boolean", "false"),
+        option("value-format", "string", "null"),
+        option("clearable", "boolean", "false"),
+        option("presets", "picker-presets", "[]"),
+        PropSpec {
+            range: Some((1.0, 12.0)),
+            ..option("number-of-months", "integer", "1")
+        },
+        token("size", SIZES),
+        choice("variant", "\"default\"", &["default", "filled", "unstyled"]),
+        token("radius", SIZES),
+        token("color", COLORS),
+        option("disabled", "boolean", "false"),
+        option("read-only", "boolean", "false"),
+        option("focusable", "boolean", "null"),
+        option("today", "iso-date", "null"),
+    ],
+    accepts_children: false,
+    events: &[
+        super::widget_spec::EventSpec {
+            id: "change",
+            payload_type: "picker-value",
+        },
+        super::widget_spec::EventSpec {
+            id: "open-change",
+            payload_type: "boolean",
+        },
+    ],
+    state: "keyed picker; value and open apply when the document changes them",
+    theme_tokens: &["surfaces.body", "surfaces.border", "control_size"],
+    a11y_role: "combobox",
+};
+
+/// Label, description, required marker and error around any child control.
+pub static INPUT_WRAPPER: WidgetSpec = WidgetSpec {
+    id: "input-wrapper",
+    krate: "inputs",
+    summary: "Label, description, required marker and error message around a child control.",
+    props: &[
+        option("label", "string", "null"),
+        option("description", "string", "null"),
+        option("error", "string", "null"),
+        option("required", "boolean", "false"),
+        PropSpec {
+            accepted: SIZES,
+            token_backed: true,
+            ..option("size", "string", "\"sm\"")
+        },
+    ],
+    accepts_children: true,
+    events: &[],
+    state: "stateless",
+    theme_tokens: &["surfaces.text"],
+    a11y_role: "group",
+};
 
 const fn option(
     name: &'static str,

@@ -104,6 +104,23 @@ fn valid_iso_time(text: &str) -> bool {
         && parts.next().is_none()
 }
 
+/// A picker value: `null`, a local ISO date, time or date-time, or a `[start, end]` pair.
+fn picker_value(value: &Value) -> bool {
+    let point = |value: &Value| {
+        value
+            .as_str()
+            .is_some_and(|text| match text.split_once('T') {
+                Some((date, time)) => valid_iso_date(date) && valid_iso_time(time),
+                None => valid_iso_date(text) || valid_iso_time(text),
+            })
+    };
+    value.is_null()
+        || point(value)
+        || value
+            .as_array()
+            .is_some_and(|pair| pair.len() == 2 && pair.iter().all(point))
+}
+
 fn calendar_value(value: &Value) -> bool {
     let endpoint = |value: &Value| {
         value.is_null()
@@ -549,7 +566,21 @@ impl Validation<'_> {
                         .iter()
                         .all(|action| matches_data_schema(action, &schema))
                 }),
-                "spotlight-labels" => matches_data_schema(got, &prop.schema()),
+                "picker-value" => picker_value(got),
+                "picker-presets" => got.as_array().is_some_and(|presets| {
+                    let schema = crate::widget_spec::picker_preset_schema();
+                    presets.iter().all(|preset| {
+                        matches_data_schema(preset, &schema)
+                            && ["start", "end"].into_iter().all(|end| {
+                                preset
+                                    .get(end)
+                                    .is_none_or(|date| date.as_str().is_some_and(valid_iso_date))
+                            })
+                    })
+                }),
+                "spotlight-labels" | "event-tracks" | "timeline-events" | "event-links" => {
+                    matches_data_schema(got, &prop.schema())
+                }
                 "menu-commands" => got.as_array().is_some_and(|commands| {
                     let schema = crate::widget_spec::menu_command_schema();
                     commands.iter().all(|command| {

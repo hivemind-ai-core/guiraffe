@@ -55,6 +55,14 @@ fn kind(surface: &str) -> Option<&'static str> {
         "inputs::Dropzone" => "dropzone",
         "inputs::RangeSlider" => "range-slider",
         "inputs::TagsInput" => "tags-input",
+        "inputs::InputWrapper" => "input-wrapper",
+        "inputs::Picker"
+        | "inputs::PickerProps"
+        | "inputs::DatePicker"
+        | "inputs::DateRangePicker"
+        | "inputs::TimePicker"
+        | "inputs::DateTimePicker"
+        | "inputs::DateTimeRangePicker" => "picker",
         "layout::AspectRatio" => "aspect-ratio",
         "layout::Center" => "center",
         "layout::Container" => "container",
@@ -90,6 +98,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "timeline::DopeSheet" => "dope-sheet",
         "timeline::BarCurveView" => "bar-curve",
         "timeline::CurveView" => "curve-editor",
+        "timeline::EventTimeline" | "timeline::EventTimelineState" => "event-timeline",
         _ => return None,
     })
 }
@@ -215,6 +224,142 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "overlays::SpotlightState::selected_action",
         "Read-only query. Documents receive selection-change.",
+    ),
+    (
+        "dnd::SortableBoard::is_dragging",
+        "Read-only drag state query for native callers.",
+    ),
+    (
+        "dnd::BoardDragOverlay::is_pointer_dragging",
+        "Read-only pointer drag state of the native drag surface.",
+    ),
+    (
+        "inputs::Picker::calendar_for_test",
+        "Test hook exposing the inner Kit calendar state.",
+    ),
+    (
+        "inputs::Picker::time_fields_for_test",
+        "Test hook exposing the inner Kit time field states.",
+    ),
+    (
+        "inputs::Picker::cursor",
+        "Read-only keyboard day cursor. Documents receive change.",
+    ),
+    (
+        "inputs::Picker::props",
+        "Read-only access to the applied native props.",
+    ),
+    (
+        "timeline::EventTimelineState::item_content",
+        "Takes a native element closure. Documents show each event's label, content and tags.",
+    ),
+    (
+        "timeline::EventTimelineState::selected",
+        "Read-only selection query. Documents receive select.",
+    ),
+    (
+        "overlays::NotificationCenter::event DesktopEvent",
+        "Platform notification daemon replies for the application process. Documents show in-window toasts through toast-tray.",
+    ),
+    (
+        "tray::TrayOptions::field badge_color",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayOptions::field double_click",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayOptions::field icon",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayOptions::field id",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayOptions::field menu",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayOptions::field title",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayOptions::field tooltip_body",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayOptions::field tooltip_title",
+        "Process-wide system tray icon registered with the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event Click",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event DoubleClick",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event Error",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event HostAvailable",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event MenuItem",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event MiddleClick",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event Ready",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "tray::TrayService::event Scroll",
+        "Process-wide system tray icon events from the desktop shell, not content of a document view.",
+    ),
+    (
+        "windows::NotificationCard",
+        "Content of a desktop notification window, mounted by the notification stack outside any document.",
+    ),
+    (
+        "windows::NotificationCard::height",
+        "Content of a desktop notification window, mounted by the notification stack outside any document.",
+    ),
+    (
+        "windows::NotificationCard::new",
+        "Content of a desktop notification window, mounted by the notification stack outside any document.",
+    ),
+    (
+        "windows::NotificationCard::on_action",
+        "Content of a desktop notification window, mounted by the notification stack outside any document.",
+    ),
+    (
+        "windows::NotificationCard::on_click",
+        "Content of a desktop notification window, mounted by the notification stack outside any document.",
+    ),
+    (
+        "windows::NotificationCard::on_close",
+        "Content of a desktop notification window, mounted by the notification stack outside any document.",
+    ),
+    (
+        "windows::NotificationCard::test_id",
+        "Content of a desktop notification window, mounted by the notification stack outside any document.",
+    ),
+    (
+        "windows::NotificationStack::event WindowNotificationEvent",
+        "Events of the application's desktop notification windows, outside any document.",
+    ),
+    (
+        "windows::StackView",
+        "Root view of a desktop notification window, outside any document.",
     ),
     (
         "core::TextMenuLayer",
@@ -920,6 +1065,9 @@ fn covered(surface: &str) -> bool {
             ("chat::ChatState", "AttachmentRequested") => "attachment-request",
             ("chat::ChatState", "Finished") => "finish",
             ("overlays::SpotlightState", "Activated") => "activate",
+            ("timeline::EventTimelineState", "Activated") => "activate",
+            ("inputs::Picker", "Change") => "change",
+            ("inputs::Picker", "OpenChange") => "open-change",
             ("overlays::SpotlightState", "QueryChanged") => "query-change",
             ("datagrid::GridEvents", "SortChanged") => "sort-change",
             ("datagrid::GridEvents", "CellEdited") => "cell-edit",
@@ -1130,6 +1278,11 @@ fn covered(surface: &str) -> bool {
                 ("overlays::FloatingTooltip", "options") => "side".into(),
                 ("tree::TreeView", "inspector_controls") => "searchable".into(),
                 ("overlays::SpotlightState", "group") => "actions".into(),
+                ("timeline::EventTimelineState", "replace") => "events".into(),
+                ("inputs::Picker", "apply_preset") => "presets".into(),
+                ("inputs::Picker", "clear") => "value".into(),
+                ("inputs::Picker", "is_open") => "open".into(),
+                ("inputs::Picker", "with_props" | "update_props") => "label".into(),
                 ("overlays::SpotlightState", "recent_ids") => "recents".into(),
                 ("tree::TreeView", "row_style" | "set_row_style") => "density".into(),
                 ("tree::TreeView", "row_heights" | "set_row_heights" | "replace_source") => {

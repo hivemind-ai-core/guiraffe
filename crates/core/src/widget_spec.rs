@@ -96,6 +96,10 @@ impl PropSpec {
             | "activity-items"
             | "disclosure-items"
             | "spotlight-actions"
+            | "event-tracks"
+            | "timeline-events"
+            | "event-links"
+            | "picker-presets"
             | "menu-commands"
             | "step-items"
             | "splitter-sizes"
@@ -153,6 +157,11 @@ impl PropSpec {
             "activity-items" => schema["items"] = activity_item_schema(),
             "disclosure-items" => schema["items"] = disclosure_item_schema(),
             "spotlight-actions" => schema["items"] = spotlight_action_schema(),
+            "event-tracks" => schema["items"] = event_track_schema(),
+            "timeline-events" => schema["items"] = timeline_event_schema(),
+            "event-links" => schema["items"] = event_link_schema(),
+            "picker-presets" => schema["items"] = picker_preset_schema(),
+            "picker-value" => schema = picker_value_schema(),
             "menu-commands" => schema["items"] = menu_command_schema(),
             "step-items" => schema["items"] = step_item_schema(),
             "splitter-sizes" => schema["items"] = splitter_size_schema(),
@@ -289,6 +298,7 @@ impl EventSpec {
                 }
             }),
             "number-array" => json!({"type":"array","items":{"type":"number"}}),
+            "picker-value" => picker_value_schema(),
             ty => json!({"type":ty}),
         }
     }
@@ -1128,6 +1138,77 @@ pub fn spotlight_action_schema() -> Value {
             "description":{"type":"string"},"group":{"type":"string"},
             "keywords":{"type":"string"},"icon":{"type":"string"},
             "shortcut":{"type":"string"},"disabled":{"type":"boolean"}
+        }
+    })
+}
+
+/// A picker value: a local ISO date, time or date-time, a `[start, end]` pair for the range
+/// modes, or `null` for no value.
+pub fn picker_value_schema() -> Value {
+    json!({
+        "type":["string","array","null"],
+        "items":{"type":"string"},"minItems":2,"maxItems":2
+    })
+}
+
+/// A labelled quick choice of a date-range picker. `days` counts `last-days`/`next-days`
+/// (today included); `start`/`end` bound a `fixed` range.
+pub fn picker_preset_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["label","range"],
+        "properties":{
+            "label":{"type":"string"},
+            "range":{"enum":[
+                "today","yesterday","tomorrow","last-days","next-days","this-week","last-week",
+                "this-month","last-month","this-year","fixed","custom"
+            ]},
+            "days":{"type":"integer","minimum":1,"maximum":36500},
+            "start":{"type":"string","pattern":ISO_DATE},
+            "end":{"type":"string","pattern":ISO_DATE}
+        }
+    })
+}
+
+fn color_name_schema() -> Value {
+    json!({"type":"string","enum":[
+        "dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal",
+        "green","lime","yellow","orange"
+    ]})
+}
+
+/// One lane of an event timeline, in display order.
+pub fn event_track_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["id","label"],
+        "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+            "label":{"type":"string"},"color":color_name_schema()
+        }
+    })
+}
+
+/// One event-timeline event. `position` orders events; equal positions share a slot.
+pub fn timeline_event_schema() -> Value {
+    let id = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    json!({
+        "type":"object","additionalProperties":false,"required":["id","track","position","label"],
+        "properties":{
+            "id":id,"track":id,
+            "position":{"type":"integer","minimum":-((1_i64<<53)-1),"maximum":(1_i64<<53)-1},
+            "label":{"type":"string"},"content":{"type":"string"},
+            "tags":{"type":"array","items":{"type":"string"}},"color":color_name_schema()
+        }
+    })
+}
+
+/// A cross-track connector between two event IDs.
+pub fn event_link_schema() -> Value {
+    let id = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    json!({
+        "type":"object","additionalProperties":false,"required":["source","destination","kind"],
+        "properties":{
+            "source":id,"destination":id,"kind":{"enum":["branch","merge"]},
+            "color":color_name_schema()
         }
     })
 }

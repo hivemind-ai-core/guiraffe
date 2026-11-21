@@ -66,6 +66,8 @@ struct ModalContent {
     ok: Option<SharedString>,
     cancel: Option<SharedString>,
     width: Option<f32>,
+    offset_top: Option<f32>,
+    label: Option<SharedString>,
     overlay: bool,
     close_button: bool,
     resizable: bool,
@@ -131,6 +133,8 @@ impl DocumentModal {
                     ok: None,
                     cancel: None,
                     width: None,
+                    offset_top: None,
+                    label: None,
                     close_button: false,
                     overlay: node.prop(7).as_bool().unwrap_or(true),
                     resizable: node.prop(8).as_bool().unwrap_or(true),
@@ -162,6 +166,12 @@ impl DocumentModal {
                 close_button: node.prop(8).as_bool().unwrap_or(true),
                 resizable: false,
                 width: node.prop(9).as_f64().map(|width| width as f32),
+                offset_top: node
+                    .prop(11)
+                    .as_f64()
+                    .filter(|top| top.is_finite() && *top >= 0.)
+                    .map(|top| top as f32),
+                label: text(12),
             },
             handlers: std::array::from_fn(|index| node.handler(index)),
             error: node.handler(3),
@@ -182,6 +192,12 @@ fn modal_contents(mut modal: Modal, content: &ModalContent, latest: SharedModalC
     }
     if let Some(width) = content.width {
         modal = modal.width(px(width));
+    }
+    if let Some(top) = content.offset_top {
+        modal = modal.offset_top(px(top));
+    }
+    if let Some(label) = content.label.clone() {
+        modal = modal.accessibility_label(label);
     }
     if content.ok.is_some() || content.cancel.is_some() {
         let mut footer = DialogFooter::new();

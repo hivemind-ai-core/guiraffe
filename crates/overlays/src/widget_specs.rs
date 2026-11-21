@@ -241,6 +241,11 @@ pub static MODAL: WidgetSpec = WidgetSpec {
             ..service_property("width", "number", "null")
         },
         service_property("context", "string", "null"),
+        PropSpec {
+            range: Some((0., f32::MAX as f64)),
+            ..service_property("offset-top", "number", "null")
+        },
+        service_property("accessibility-label", "string", "null"),
     ],
     accepts_children: false,
     events: &[

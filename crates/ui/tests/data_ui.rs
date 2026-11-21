@@ -2020,6 +2020,127 @@ fn spotlight_document_activates_a_native_search_result(cx: &mut TestAppContext) 
     });
 }
 
+#[gpui_kit::test]
+fn picker_wrapper_and_event_timeline_documents_validate_and_mount(cx: &mut TestAppContext) {
+    use gpui_kit::AppContext as _;
+    use std::{cell::RefCell, rc::Rc};
+
+    struct ErrorLogic {
+        error: Option<EventId>,
+        seen: Rc<RefCell<Vec<Value>>>,
+    }
+    impl Logic for ErrorLogic {
+        fn bind(&mut self, names: &Names, _: &mut PatchBuf) {
+            self.error = names.event("timeline-error");
+        }
+        fn on_event(&mut self, event: EventId, payload: &Value, _: &mut PatchBuf) {
+            if Some(event) == self.error {
+                self.seen.borrow_mut().push(payload.clone());
+            }
+        }
+    }
+
+    init_document_widgets(cx);
+    cx.update(guiraffe_timeline::init);
+    let document = |track: u64| {
+        Document::new(
+            Node::new("stack")
+                .child(
+                    Node::new("input-wrapper")
+                        .prop("label", "Notes")
+                        .prop("description", "Shown to reviewers")
+                        .prop("error", "Required")
+                        .prop("required", true)
+                        .prop("size", "md")
+                        .child(Node::new("text").prop("text", "Body")),
+                )
+                .child(
+                    Node::new("picker")
+                        .prop("mode", "date-range")
+                        .prop("value", serde_json::json!(["2026-11-01", "2026-11-07"]))
+                        .prop("label", "Period")
+                        .prop("clearable", true)
+                        .prop("locale", "en-GB")
+                        .prop("number-of-months", 2)
+                        .prop("exclude-date", serde_json::json!(["2026-11-03"]))
+                        .prop(
+                            "presets",
+                            serde_json::json!([
+                                {"label":"Last 7 days","range":"last-days","days":7},
+                                {"label":"Q4","range":"fixed","start":"2026-10-01","end":"2026-12-31"}
+                            ]),
+                        )
+                        .on("change", "period-changed")
+                        .on("open-change", "period-open"),
+                )
+                .child(
+                    Node::new("picker")
+                        .prop("mode", "date-time")
+                        .prop("default-value", "2026-11-21T09:30")
+                        .prop("hour-format", "h12")
+                        .prop("with-seconds", true),
+                )
+                .child(
+                    Node::new("event-timeline")
+                        .prop(
+                            "tracks",
+                            serde_json::json!([
+                                {"id":1,"label":"main"},
+                                {"id":2,"label":"feature","color":"teal"}
+                            ]),
+                        )
+                        .prop(
+                            "events",
+                            serde_json::json!([
+                                {"id":10,"track":1,"position":0,"label":"init"},
+                                {"id":11,"track":track,"position":1,"label":"branch",
+                                 "content":"Start the feature","tags":["wip"]}
+                            ]),
+                        )
+                        .prop(
+                            "links",
+                            serde_json::json!([{"source":10,"destination":11,"kind":"branch"}]),
+                        )
+                        .prop("orientation", "horizontal")
+                        .prop("label", "History")
+                        .on("select", "commit-selected")
+                        .on("error", "timeline-error"),
+                ),
+        )
+    };
+    for (track, errors) in [(2, 0), (9, 1)] {
+        let doc = document(track);
+        let issues = validation::Validation::default().check(&doc);
+        assert!(issues.is_empty(), "{issues:?}");
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let logic_seen = seen.clone();
+        cx.update(|cx| {
+            cx.open_window(gpui_kit::WindowOptions::default(), |window, cx| {
+                let registry = Arc::new(Registry::for_app(cx));
+                let template = Arc::new(Template::compile(&doc, &registry).expect("document"));
+                let ui = DataUi::from_template(
+                    template,
+                    registry,
+                    ErrorLogic {
+                        error: None,
+                        seen: logic_seen,
+                    },
+                    cx,
+                );
+                let view = cx.new(|_| Shell { ui });
+                guiraffe_overlays::root(view, window, cx)
+            })
+            .expect("window")
+        });
+        cx.run_until_parked();
+        assert_eq!(seen.borrow().len(), errors, "{:?}", seen.borrow());
+    }
+
+    // Picker values must be ISO dates, times or date-times.
+    let bad = Document::new(Node::new("picker").prop("value", "21/11/2026"));
+    assert_eq!(validation::Validation::default().check(&bad).len(), 1);
+}
+
 #[test]
 fn ui_macro_accepts_the_native_spotlight_entity() {
     use gpui_kit::{AppContext, Context, Window};
@@ -2297,6 +2418,8 @@ fn modal_and_toast_documents_use_the_native_window_overlay_stack(cx: &mut TestAp
                     .prop("ok-label", "Apply")
                     .prop("cancel-label", "Cancel")
                     .prop("width", 420)
+                    .prop("offset-top", 64)
+                    .prop("accessibility-label", "Apply settings")
                     .prop("overlay-closable", false)
                     .on("ok", "apply"),
             )
@@ -2559,6 +2682,9 @@ fn every_catalogue_property_validates_and_mounts_a_literal(cx: &mut TestAppConte
                 match (spec.id, prop.name) {
                     ("date-picker", "years") => json!([2020, 2030]),
                     ("date-picker", "date-format") => json!("%Y-%m-%d"),
+                    ("picker", "min-time") => json!("08:00"),
+                    ("picker", "max-time") => json!("18:30"),
+                    ("picker", "value-format") => json!("YYYY-MM-DD"),
                     ("dock", "layout") => json!({
                         "version":1,"center":{"panel_name":"StackPanel","children":[],"info":{}}
                     }),

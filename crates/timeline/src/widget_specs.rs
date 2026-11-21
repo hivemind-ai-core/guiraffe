@@ -224,4 +224,56 @@ pub static CURVE_EDITOR: WidgetSpec = WidgetSpec {
     a11y_role: "group",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&TRACKS, &GANTT, &DOPE_SHEET, &BAR_CURVE, &CURVE_EDITOR];
+pub static EVENT_TIMELINE: WidgetSpec = WidgetSpec {
+    id: "event-timeline",
+    krate: "timeline",
+    summary: "Events on parallel tracks in slot-aligned chronological order, with branch and merge connectors.",
+    props: &[
+        prop("tracks", "event-tracks", "[]"),
+        prop("events", "timeline-events", "[]"),
+        prop("links", "event-links", "[]"),
+        choice("orientation", "\"vertical\"", &["vertical", "horizontal"]),
+        PropSpec {
+            accepted: &[
+                "dark", "gray", "red", "pink", "grape", "violet", "indigo", "blue", "cyan", "teal",
+                "green", "lime", "yellow", "orange",
+            ],
+            token_backed: true,
+            ..prop("color", "string", "null")
+        },
+        PropSpec {
+            accepted: &["xs", "sm", "md", "lg", "xl"],
+            token_backed: true,
+            ..prop("size", "string", "null")
+        },
+        prop("label", "string", "\"Event timeline\""),
+        prop("focusable", "boolean", "null"),
+    ],
+    accepts_children: false,
+    events: &[
+        EventSpec {
+            id: "select",
+            payload_type: "integer",
+        },
+        EventSpec {
+            id: "activate",
+            payload_type: "integer",
+        },
+        EventSpec {
+            id: "error",
+            payload_type: "string",
+        },
+    ],
+    state: "keyed cursor, selection and viewport; the model is replaced when the data changes",
+    theme_tokens: &["surfaces.border", "control_size"],
+    a11y_role: "grid",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[
+    &TRACKS,
+    &GANTT,
+    &DOPE_SHEET,
+    &BAR_CURVE,
+    &CURVE_EDITOR,
+    &EVENT_TIMELINE,
+];
