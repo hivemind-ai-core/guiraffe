@@ -36,13 +36,23 @@ impl History {
         }
     }
     pub(crate) fn push(&mut self, row: Entity<MessageView>, cx: &mut Context<Self>) {
-        let index = self.rows.len();
+        let first_pending_insert = self.list.item_count() == self.rows.len();
         self.rows.push(row);
-        self.list.splice(index..index, 1);
         self.sticky.appended_message();
-        cx.notify();
+        if first_pending_insert {
+            cx.notify();
+        }
     }
+    // Register a burst of history inserts with the list in one splice.
+    fn sync_list(&self) {
+        let listed = self.list.item_count();
+        if listed < self.rows.len() {
+            self.list.splice(listed..listed, self.rows.len() - listed);
+        }
+    }
+
     pub(crate) fn jump(&mut self, cx: &mut Context<Self>) {
+        self.sync_list();
         self.sticky.jump();
         self.list.scroll_to_end();
         cx.notify();
@@ -52,6 +62,7 @@ impl Render for History {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.renders.set(self.renders.get() + 1);
+        self.sync_list();
         let owner = cx.entity();
         let sc = StyleContext::current();
         div()
