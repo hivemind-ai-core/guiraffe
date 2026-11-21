@@ -57,6 +57,7 @@ mod tab_stop;
 mod taffy;
 mod text_system;
 mod util;
+mod inherited;
 mod view;
 mod window;
 
@@ -147,6 +148,7 @@ pub use svg_renderer::*;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;
 pub use util::{FutureExt, Timeout};
+pub use inherited::{InheritedState, set_inherited_state};
 pub use view::*;
 pub use window::*;
 

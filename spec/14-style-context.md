@@ -33,6 +33,14 @@ hatches, not the normal way to style things.
   nothing per frame when cached.
 - Cached and retained subtrees: a context change (density or scheme switch) refreshes the window,
   which is rare and acceptable. Views take the context into their cache key.
+- **Isolated re-renders (gpui-fast).** A notified view is built again on its own, without running
+  the views and providers around it, so the stack is empty then. `Provide` therefore hands the
+  context to the backend as one word (`gpui_kit::InheritedState`, a vendored hook): gpui-fast captures
+  it where each view is laid out (beside the text style), pushes it back while the view is built
+  again, and lays a retained view out afresh when the word around it changed (so a provider whose
+  patch changes reaches retained child views, as on upstream). No allocation; one thread-local read
+  per retained layout. Widgets therefore never need to remember a "last good" context.
+  Verified by `crates/core/src/gpui_tests.rs::isolated_render` on both backends.
 - ✅ **Verified** (`crates/core/src/gpui_tests.rs::style_context`, on both backends). Context reaches stateless
   components, nested providers and child views, and the stack is restored after each provider and after the frame.
 - Providers carry a `Copy` **`StylePatch`** (optional fields) that is applied *at layout time* over the enclosing
