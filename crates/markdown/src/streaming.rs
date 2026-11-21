@@ -224,6 +224,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn incremental_metadata_matches_one_shot_at_every_character_boundary() {
+        use crate::document::Document;
+
+        let source = concat!(
+            "# Élan\n\n",
+            "Setext heading\n==============\n\n",
+            "- [ ] first task\n- [x] second task\n\n",
+            "```mermaid\ngraph TD; A-->B\n```\n\n",
+            "# Élan\nText and **markup**\n",
+        );
+        let expected = Document::analyze(source);
+        for (split, _) in source.char_indices() {
+            let first = &source[..split];
+            let base = settled_prefix(first);
+            let second = Document::merge_tail(
+                &Document::analyze(first),
+                base,
+                Document::analyze(&source[base..]),
+            );
+            assert_eq!(
+                base + settled_prefix(&source[base..]),
+                settled_prefix(source)
+            );
+            assert_eq!(second, expected, "split at byte {split}");
+        }
+    }
+
+    #[test]
     fn unfinished_mermaid_fence_reports_where_it_starts() {
         let open = "Intro\n\n```mermaid\ngraph TD; A-->";
         assert_eq!(unfinished_mermaid_fence(open), Some(7));
