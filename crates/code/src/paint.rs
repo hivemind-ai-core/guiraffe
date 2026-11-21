@@ -251,21 +251,38 @@ fn runs(
             }
         }
         if let Some(display) = display {
-            for (_, range) in display.insertions().filter(|(column, _)| *column == start) {
+            for ((_, range), ink) in display
+                .colored_insertions()
+                .filter(|((column, _), _)| *column == start)
+            {
                 if let Some(hint) = text.get(range.start..range.end.min(text.len())) {
-                    result.push(base_run(hint, theme.surfaces().dimmed.to_hsla(), font));
+                    result.push(base_run(
+                        hint,
+                        ink.map_or_else(
+                            || theme.surfaces().dimmed.to_hsla(),
+                            |name| color(name, theme),
+                        ),
+                        font,
+                    ));
                 }
             }
         }
         result.push(run);
     }
     if let Some(display) = display {
-        for (_, range) in display
-            .insertions()
-            .filter(|(column, _)| *column == source.len())
+        for ((_, range), ink) in display
+            .colored_insertions()
+            .filter(|((column, _), _)| *column == source.len())
         {
             if let Some(hint) = text.get(range.start..range.end.min(text.len())) {
-                result.push(base_run(hint, theme.surfaces().dimmed.to_hsla(), font));
+                result.push(base_run(
+                    hint,
+                    ink.map_or_else(
+                        || theme.surfaces().dimmed.to_hsla(),
+                        |name| color(name, theme),
+                    ),
+                    font,
+                ));
             }
         }
     }
@@ -449,6 +466,7 @@ pub(crate) fn prepare(
                     ));
                     if decorations.has_blame() {
                         let label_start = label.len();
+                        label.push_str("  ");
                         if let Some(range) = doc.line_range(line) {
                             let mut blame = None;
                             for (_, layer) in
@@ -822,10 +840,15 @@ fn paint_decorations(shared: &Shared, theme: &GuiraffeTheme, window: &mut Window
                                 );
                             }
                         }
+                        DecorationStyle::Review { .. } => paint_underline(
+                            bounds,
+                            UnderlinePattern::Dotted,
+                            color(ColorName::Blue, theme),
+                            window,
+                        ),
                         DecorationStyle::Blame(_)
                         | DecorationStyle::Gutter { .. }
                         | DecorationStyle::Inline { .. }
-                        | DecorationStyle::Review { .. }
                         | DecorationStyle::Block { .. } => {}
                         DecorationStyle::Unnecessary => {
                             window.paint_quad(fill(
@@ -882,7 +905,7 @@ fn paint_gutter_mark(
     );
 }
 
-fn severity_color(severity: Severity) -> ColorName {
+pub(crate) fn severity_color(severity: Severity) -> ColorName {
     match severity {
         Severity::Error => ColorName::Red,
         Severity::Warning => ColorName::Orange,

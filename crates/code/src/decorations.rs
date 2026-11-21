@@ -90,7 +90,10 @@ pub struct BlameCommit {
 pub enum InlineWidget {
     Inlay,
     Ghost,
+    /// End-of-line error text.
     EndOfLineDiagnostic,
+    /// End-of-line text coloured by diagnostic severity.
+    EndOfLineDiagnosticSeverity(Severity),
     CodeLens,
 }
 
@@ -115,6 +118,7 @@ pub enum DecorationStyle {
         widget: InlineWidget,
         label: Arc<str>,
     },
+    /// Markdown shown when the pointer hovers the annotated range.
     Review {
         markdown: Arc<str>,
     },
@@ -348,20 +352,17 @@ impl Decorations {
                         } else {
                             AnnotationKind::InlineHint
                         };
-                        let color = if *widget == InlineWidget::EndOfLineDiagnostic {
-                            ColorName::Red
-                        } else {
-                            ColorName::Gray
+                        let severity = match widget {
+                            InlineWidget::EndOfLineDiagnostic => Some(Severity::Error),
+                            InlineWidget::EndOfLineDiagnosticSeverity(severity) => Some(*severity),
+                            _ => None,
                         };
                         (
                             kind,
                             label,
-                            color,
-                            *widget == InlineWidget::EndOfLineDiagnostic,
+                            severity.map_or(ColorName::Gray, crate::paint::severity_color),
+                            severity.is_some(),
                         )
-                    }
-                    Some(DecorationStyle::Review { markdown }) => {
-                        (AnnotationKind::Bubble, markdown, ColorName::Blue, false)
                     }
                     Some(DecorationStyle::Block { payload, .. }) => {
                         (AnnotationKind::Block, payload, ColorName::Gray, false)
@@ -529,11 +530,9 @@ impl DecorationLayer {
             let record = data.records[index as usize];
             match styles.get(record.style as usize) {
                 Some(DecorationStyle::Blame(_)) => data.has_blame = true,
-                Some(
-                    DecorationStyle::Inline { .. }
-                    | DecorationStyle::Review { .. }
-                    | DecorationStyle::Block { .. },
-                ) => data.has_widgets = true,
+                Some(DecorationStyle::Inline { .. } | DecorationStyle::Block { .. }) => {
+                    data.has_widgets = true
+                }
                 Some(DecorationStyle::Diagnostic { .. }) => data.diagnostics.push(index),
                 Some(DecorationStyle::Gutter {
                     mark: GutterMark::Added | GutterMark::Modified | GutterMark::Deleted,

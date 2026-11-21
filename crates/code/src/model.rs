@@ -554,24 +554,37 @@ mod properties {
     }
 }
 
+type ColoredHint = (usize, Arc<str>, Option<ColorName>);
+
 /// A source line plus presentation-only hints. The mapping preserves byte positions for
 /// selection, symbol callbacks and traces; copied text always comes from CodeDocument.
 #[derive(Debug, Clone)]
 pub struct DisplayLine {
     pub text: Arc<str>,
     insertions: Vec<(usize, Range<usize>)>,
+    colors: Vec<Option<ColorName>>,
 }
 impl DisplayLine {
     pub fn new(source: &str, hints: &[(usize, Arc<str>)]) -> Self {
+        let hints: Vec<_> = hints
+            .iter()
+            .map(|(column, text)| (*column, text.clone(), None))
+            .collect();
+        Self::with_colors(source, &hints)
+    }
+
+    fn with_colors(source: &str, hints: &[ColoredHint]) -> Self {
         let mut hints: Vec<_> = hints
             .iter()
-            .filter(|(column, _)| *column <= source.len() && source.is_char_boundary(*column))
+            .filter(|(column, _, _)| *column <= source.len() && source.is_char_boundary(*column))
             .collect();
-        hints.sort_by_key(|(column, _)| *column);
+        hints.sort_by_key(|(column, _, _)| *column);
         let mut text = String::with_capacity(source.len());
         let mut insertions = Vec::new();
         let mut cursor = 0;
-        for (column, hint) in hints {
+        let mut colors = Vec::new();
+        for (column, hint, color) in hints {
+            colors.push(*color);
             if let Some(chunk) = source.get(cursor..*column) {
                 text.push_str(chunk);
             }
@@ -583,7 +596,9 @@ impl DisplayLine {
             // Pad only where the hint would otherwise touch a word: `x: u32 = 1`, not
             // `x : u32  = 1`.
             let before = source[..*column].chars().next_back();
-            if before.is_some_and(word) && hint.chars().next().is_some_and(word) {
+            if (color.is_some() && *column == source.len() && before.is_some())
+                || (before.is_some_and(word) && hint.chars().next().is_some_and(word))
+            {
                 text.push(' ');
             }
             text.push_str(hint);
@@ -602,6 +617,7 @@ impl DisplayLine {
         Self {
             text: text.into(),
             insertions,
+            colors,
         }
     }
     pub fn source_to_display(&self, byte: usize, after_hints: bool) -> usize {
@@ -625,6 +641,12 @@ impl DisplayLine {
         }
         byte.saturating_sub(inserted)
     }
+    pub(crate) fn colored_insertions(
+        &self,
+    ) -> impl Iterator<Item = (&(usize, Range<usize>), Option<ColorName>)> {
+        self.insertions.iter().zip(self.colors.iter().copied())
+    }
+
     pub fn insertions(&self) -> impl Iterator<Item = &(usize, Range<usize>)> {
         self.insertions.iter()
     }
@@ -632,6 +654,20 @@ impl DisplayLine {
 #[cfg(test)]
 mod display_tests {
     use super::*;
+    #[test]
+    fn colored_suffix_has_a_gap_and_preserves_source_positions() {
+        let display = DisplayLine::with_colors(
+            "let n = tax;",
+            &[(12, "Unknown rate".into(), Some(ColorName::Yellow))],
+        );
+        assert_eq!(&*display.text, "let n = tax; Unknown rate");
+        assert_eq!(display.display_to_source(15), 12);
+        assert_eq!(
+            display.colored_insertions().next().map(|(_, color)| color),
+            Some(Some(ColorName::Yellow))
+        );
+    }
+
     #[test]
     fn hints_preserve_unicode_source_coordinates() {
         let source = "let α = 1;";
@@ -699,22 +735,23 @@ impl PreparedAnalysis {
                 .into()
         };
         folds.sort_by_key(|f| f.start);
-        let mut hints = std::collections::BTreeMap::<usize, Vec<(usize, Arc<str>)>>::new();
+        let mut hints = std::collections::BTreeMap::<usize, Vec<ColoredHint>>::new();
         for a in annotations
             .iter()
             .filter(|a| a.kind == AnnotationKind::InlineHint)
         {
-            hints
-                .entry(a.range.end.line)
-                .or_default()
-                .push((a.range.end.column, a.payload.clone()));
+            hints.entry(a.range.end.line).or_default().push((
+                a.range.end.column,
+                a.payload.clone(),
+                (a.color != ColorName::Gray).then_some(a.color),
+            ));
         }
         let hints = hints
             .into_iter()
             .filter_map(|(line, hints)| {
                 document
                     .line(line)
-                    .map(|source| (line, DisplayLine::new(source, &hints)))
+                    .map(|source| (line, DisplayLine::with_colors(source, &hints)))
             })
             .collect();
         let index = IntervalIndex::new(&document, &annotations);
