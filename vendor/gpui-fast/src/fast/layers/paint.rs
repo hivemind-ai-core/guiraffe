@@ -686,12 +686,12 @@ fn clip_primitive(primitive: &mut Primitive, viewports: Viewports) {
         Primitive::Quad(p) => clip(&mut p.content_mask),
         Primitive::Path(p) => {
             clip(&mut p.content_mask);
-            // Ordinary paint paths have empty per-vertex masks. Only request
-            // mutable backing storage when clipping actually changes a mask.
-            if p.vertices.iter().any(|vertex| {
-                let bounds = vertex.content_mask.bounds;
-                !bounds.is_empty() && bounds.intersect(mask) != bounds
-            }) {
+            // Ordinary paint paths have empty per-vertex masks. Keep their
+            // backing shared and apply the original clipping to custom masks.
+            if p.vertices
+                .iter()
+                .any(|vertex| !vertex.content_mask.bounds.is_empty())
+            {
                 for vertex in &mut p.vertices {
                     if !vertex.content_mask.bounds.is_empty() {
                         clip(&mut vertex.content_mask);

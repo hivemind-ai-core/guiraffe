@@ -15,7 +15,7 @@ Registry extraction markers are omitted. The GPUI Kit pin is `=0.9.1`.
 | `gpui-pre/src/key_dispatch.rs` | Keeps the replay stack inline for up to 32 dispatch ancestors. Deeper trees spill into a temporary buffer. |
 | `gpui-pre/src/tab_stop.rs` | Clears existing frame buffers and keeps the empty tab-stop tree when no nodes were added. |
 | `gpui-pre/src/text_system/font_features.rs` | Shares one empty font feature vector across default styles. |
-| `gpui-fast/src/fast/layers/paint.rs` | Checks whether clipping changes any vertex mask before requesting mutable backing. |
+| `gpui-fast/src/fast/layers/paint.rs` | Keeps shared backing when all vertex masks are empty and preserves clipping for custom masks. |
 | `gpui-fast/src/fast/path_cache.rs` | Converts the path-cache test fixture from a vector to the wrapper. |
 
 Existing callers can borrow, index, reserve, extend and iterate by reference.
