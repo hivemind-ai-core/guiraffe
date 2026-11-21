@@ -473,7 +473,7 @@ impl Scene {
         drop(node_refs);
         let nodes = SpatialIndex::new(graph.nodes.values().map(|n| (n.id, n.rect())));
         let edges = SpatialIndex::new(paths.iter().map(|(id, path)| (*id, path.bounds)));
-        let bounds = graph.bounds();
+        let bounds = nodes.bounds();
         let mut incident: im::OrdMap<NodeId, Vec<EdgeId>> = im::OrdMap::new();
         for edge in graph.edges.values() {
             incident.entry(edge.source.node).or_default().push(edge.id);
