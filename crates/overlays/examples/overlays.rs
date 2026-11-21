@@ -5,8 +5,7 @@ use gpui_kit::{
 };
 use guiraffe_core::{GuiraffeTheme, Size};
 use guiraffe_overlays::{
-    Drawer, OverlayHost, Spotlight,
-    search::Command,
+    Drawer, OverlayHost, SpotlightAction, SpotlightState,
     toast::{Toast, ToastId},
 };
 use guiraffe_windows::{OpenMode, WindowConfig, WindowKey, WindowManager};
@@ -72,17 +71,19 @@ impl Render for Demo {
                     .label("Commands")
                     .on_click(|_, window, cx| {
                         let palette = cx.new(|cx| {
-                            Spotlight::new(
-                                vec![
-                                    Command::new("open", "Open document"),
-                                    Command::new("save", "Save document"),
-                                ],
-                                window,
-                                cx,
-                                |id, _, _| println!("Selected {id}"),
-                            )
+                            SpotlightState::new(window, cx)
+                                .group(
+                                    "Document",
+                                    [
+                                        SpotlightAction::new("open", "Open document")
+                                            .shortcut("Ctrl+O"),
+                                        SpotlightAction::new("save", "Save document")
+                                            .shortcut("Ctrl+S"),
+                                    ],
+                                )
+                                .on_activate(|id, _, _| println!("Selected {id}"))
                         });
-                        if let Err(error) = Spotlight::open(&palette, window, cx) {
+                        if let Err(error) = SpotlightState::open(&palette, window, cx) {
                             eprintln!("{error}");
                         }
                     }),

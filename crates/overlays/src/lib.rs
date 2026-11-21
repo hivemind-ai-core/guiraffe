@@ -18,8 +18,8 @@ mod widgets;
 pub use widgets::{Affix, LoadingOverlay};
 #[cfg(feature = "desktop")]
 pub mod desktop;
-mod spotlight;
-pub use spotlight::Spotlight;
+pub mod spotlight;
+pub use spotlight::{Spotlight, SpotlightAction, SpotlightEvent, SpotlightState};
 #[cfg(test)]
 mod gpui_tests;
 

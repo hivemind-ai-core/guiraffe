@@ -3651,6 +3651,7 @@ dependencies = [
  "guiraffe-motion",
  "guiraffe-windows",
  "notify-rust",
+ "proptest",
 ]
 
 [[package]]
