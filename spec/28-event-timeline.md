@@ -16,9 +16,9 @@ bullet, rail, label and secondary-content treatment using the shared core theme.
 
 - `EventTrack` has a stable ID, display label and optional `ColorName`.
 - `TimelineEvent` has a stable ID, track ID, signed integer position, label,
-  optional secondary text and optional `ColorName`. Callers can supply an index
+  optional secondary text, optional tags and optional `ColorName`. Callers can supply an index
   or an integer timestamp and format display labels in their own locale or zone.
-- `EventLink` has source and destination IDs and a branch or merge kind. A
+- `EventLink` has source and destination IDs and a branch or merge kind with an optional theme color. A
   checked model constructor validates IDs, track membership and links. Invalid
   replacements leave the previous model available. Links run forward in
   rendered order or laterally within a slot and connect distinct tracks.
