@@ -95,6 +95,10 @@ impl Document {
             .rev()
             .find(|b| source.is_char_boundary(*b))
             .unwrap_or(0);
+        Self::analyze_tail(prev, base, &source[base..])
+    }
+
+    pub(crate) fn analyze_tail(prev: &Document, base: usize, source: &str) -> Self {
         let mut out = Document {
             headings: prev
                 .headings
@@ -115,7 +119,7 @@ impl Document {
                 .cloned()
                 .collect(),
         };
-        let tail = Document::analyze(&source[base..]);
+        let tail = Document::analyze(source);
         let shift = |r: &Range<usize>| r.start + base..r.end + base;
         let mut anchors = AnchorSlugs {
             seen: out.headings.iter().map(|h| h.anchor.clone()).collect(),

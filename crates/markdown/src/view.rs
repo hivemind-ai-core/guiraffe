@@ -48,7 +48,7 @@ fn showable(source: &str) -> usize {
 /// State of one Markdown viewer.
 pub struct MarkdownState {
     text: Entity<TextViewState>,
-    source: SharedString,
+    source: String,
     /// How much of `source` the text view has (an unfinished mermaid fence is held back).
     pushed: usize,
     revision: u64,
@@ -91,7 +91,7 @@ pub const MERMAID_NODE: &str = "guiraffe-mermaid";
 impl MarkdownState {
     /// Create the state for `source`, parsed as GFM Markdown.
     pub fn new(source: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
-        let source = source.into();
+        let source = source.into().to_string();
         let pushed = showable(&source);
         let initial = source.get(..pushed).unwrap_or_default().to_owned();
         let text = cx.new(|cx| TextViewState::markdown(&initial, cx));
@@ -147,7 +147,7 @@ impl MarkdownState {
     /// A source that extends the current one is handled as an append, which
     /// is what makes a streamed reply cheap; anything else replaces the text.
     pub fn set_source(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let source = source.into();
+        let source = source.into().to_string();
         match classify(&self.source, &source) {
             Change::None => return,
             Change::Append { .. } => {
@@ -168,16 +168,13 @@ impl MarkdownState {
         cx.notify();
     }
 
-    /// Append one chunk of streamed Markdown. Costs O(chunk) for the text view and
-    /// O(unsettled tail) for analysis, never O(document).
+    /// Append one chunk of streamed Markdown and schedule analysis of the
+    /// unsettled tail.
     pub fn append(&mut self, chunk: &str, cx: &mut Context<Self>) {
         if chunk.is_empty() {
             return;
         }
-        let mut source = String::with_capacity(self.source.len() + chunk.len());
-        source.push_str(&self.source);
-        source.push_str(chunk);
-        self.source = source.into();
+        self.source.push_str(chunk);
         self.sync_text(false, cx);
         self.revision += 1;
         self.reanalyze(cx);
@@ -238,17 +235,17 @@ impl MarkdownState {
         self.dirty = false;
         let revision = self.revision;
         let replaced = self.replaced;
-        let source = self.source.to_string();
         let prev = self.document.clone();
-        let base = self.settled.min(source.len());
+        let base = self.settled;
+        let tail = self.source[base..].to_owned();
         self.stats.analyses += 1;
-        self.stats.analyzed_bytes += (source.len() - base) as u64;
+        self.stats.analyzed_bytes += tail.len() as u64;
         cx.spawn(async move |this, cx| {
             let (document, settled) = cx
                 .background_executor()
                 .spawn(async move {
-                    let doc = Document::analyze_incremental(&prev, base, &source);
-                    (doc, crate::streaming::settled_prefix(&source))
+                    let doc = Document::analyze_tail(&prev, base, &tail);
+                    (doc, base + crate::streaming::settled_prefix(&tail))
                 })
                 .await;
             this.update(cx, |this, cx| {
