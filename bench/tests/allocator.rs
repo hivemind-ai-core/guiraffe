@@ -124,6 +124,32 @@ fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Flow rendering
+
+#[test]
+fn flow_default_short_label_uses_only_the_element_allocation() -> anyhow::Result<()> {
+    use gpui_kit::{AppContext, EmptyView, TestAppContext, TestDispatcher, WindowOptions};
+    use guiraffe_flow::{
+        DefaultNodeRenderer, NodeRenderer,
+        core::{Node, Point},
+    };
+
+    let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_default_label"));
+    let (window, _) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| EmptyView))
+    })?;
+    let node = Node::new(1, "Flow node", Point::default());
+    let (_, counts) = window.update(&mut cx, |_, window, cx| {
+        drop(DefaultNodeRenderer.render(&node, 1., window, cx));
+        count_allocations(|| {
+            std::hint::black_box(DefaultNodeRenderer.render(&node, 1., window, cx))
+        })
+    })??;
+    assert_eq!(counts.allocations, 1, "{counts:?}");
+    Ok(())
+}
+
 #[test]
 fn production_flow_pan_and_hit_reuse_storage() -> anyhow::Result<()> {
     use guiraffe_bench::suites::flow_pan_hit_50k;
@@ -399,5 +425,147 @@ fn ui_macro_matches_builder_allocations_for_a_thousand_nodes() -> anyhow::Result
     let (_, builder) = count_allocations(ui_builder_tree)?;
     let (_, declarative) = count_allocations(ui_macro_tree)?;
     assert_eq!(declarative, builder);
+    Ok(())
+}
+
+// Charts
+
+#[inline(never)]
+fn draw_cached_chart(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    window.draw(cx).clear(cx);
+}
+
+#[gpui_kit::test]
+fn warmed_chart_replays_cached_ink(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{Context, Entity, IntoElement, Render, StyleRefinement, Styled, Window, px};
+    use guiraffe_charts::{Channels, ChartOptions, ChartSpec, ChartView, Layer, Mark};
+
+    struct CachedChart(Entity<ChartView>);
+    impl Render for CachedChart {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().w_full().h(px(290.)))
+        }
+    }
+
+    cx.update(|cx| {
+        gpui_kit::base::init(cx);
+        gpui_kit::component::init(cx);
+        guiraffe_core::apply(Default::default(), cx);
+    });
+    let (root, window) = cx.add_window_view(|_, cx| {
+        let spec = ChartSpec::new("Cached scatter").layer(Layer::new(
+            Mark::Point,
+            (0..10_000).collect::<Vec<_>>(),
+            Channels::new(|i| f64::from(*i), |i| (f64::from(*i) * 0.01).sin())
+                .group(|i| (i % 100) as u32),
+        ));
+        let options = ChartOptions {
+            legend: false,
+            navigation: false,
+            ..Default::default()
+        };
+        CachedChart(ChartView::new(spec.prepare(), options, cx))
+    });
+    window.run_until_parked();
+    window.update(|window, cx| {
+        for _ in 0..4 {
+            window.draw(cx).clear(cx);
+        }
+        let chart = root.read(cx).0.clone();
+        let paints = chart.read(cx).canvas_paint_count();
+        let builds = chart.read(cx).scene_build_count();
+        assert!(paints > 0 && builds > 0, "chart never mounted");
+        let (_, counts) =
+            count_allocations(|| draw_cached_chart(window, cx)).expect("count frame allocations");
+        eprintln!("cached chart frame: {counts:?}");
+        // GPUI duplicates the vertex buffers during cached scene replay.
+        // Bound the full draw until the backend shares those buffers.
+        let (allocations, bytes) = if gpui_kit::GPUI_FAST {
+            (80, 24 * 1024)
+        } else {
+            (100, 96 * 1024)
+        };
+        assert!(counts.allocations <= allocations, "{counts:?}");
+        assert!(counts.bytes <= bytes, "{counts:?}");
+        assert_eq!(chart.read(cx).canvas_paint_count(), paints);
+        assert_eq!(chart.read(cx).scene_build_count(), builds);
+    });
+}
+
+// Mermaid
+
+#[test]
+fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> anyhow::Result<()> {
+    use gpui_kit::{
+        AppContext, Context, Entity, HeadlessAppContext, IntoElement, Render, Window, px, size,
+    };
+    use guiraffe_bench::allocator::Counts;
+    use guiraffe_mermaid::{MermaidView, MermaidViewState, view::Status};
+    use std::{fmt::Write as _, sync::Arc};
+
+    const FRAMES: u64 = 8;
+
+    struct Diagram(Entity<MermaidViewState>);
+
+    impl Render for Diagram {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            MermaidView::new("allocation-diagram").state(&self.0)
+        }
+    }
+
+    fn measure(nodes: usize) -> anyhow::Result<Counts> {
+        let mut source = String::from("flowchart TD\n");
+        for i in (0..nodes).step_by(2) {
+            writeln!(source, "  n{i} --> n{}", i + 1)?;
+        }
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut app =
+            HeadlessAppContext::with_platform(text, Arc::new(gpui_kit::assets::Assets), || {
+                Ok(None)
+            });
+        app.update(guiraffe_core::init);
+        let window = app.open_window(size(px(1200.), px(800.)), |_, cx| {
+            let diagram = MermaidView::create_state("allocation-diagram", cx);
+            diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+            cx.new(|_| Diagram(diagram))
+        })?;
+        app.run_until_parked();
+        for _ in 0..FRAMES {
+            app.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+            app.run_until_parked();
+        }
+        app.update_window(window.into(), |host, window, cx| {
+            let diagram = host
+                .downcast::<Diagram>()
+                .expect("Mermaid test host")
+                .read(cx)
+                .0
+                .clone();
+            let state = diagram.read(cx);
+            assert_eq!(state.status(), &Status::Ready);
+            let image = state.image().expect("refined diagram").image.clone();
+            let (_, counts) = count_allocations(|| {
+                for _ in 0..FRAMES {
+                    window.draw(cx).clear(cx);
+                }
+            })?;
+            assert!(Arc::ptr_eq(
+                &image,
+                &diagram.read(cx).image().expect("unchanged diagram").image
+            ));
+            Ok(counts)
+        })?
+    }
+
+    let small = measure(50)?;
+    let large = measure(500)?;
+    eprintln!("Mermaid allocations over eight draws: 50 nodes {small:?}, 500 nodes {large:?}");
+    assert_eq!(small, large);
+    assert!(
+        large.allocations <= FRAMES * 12,
+        "warm redraw must reuse the Mermaid view: {large:?}"
+    );
     Ok(())
 }

@@ -206,3 +206,23 @@ and still reported its original upstream failure. An exact rerun of the
 upstream workspace test stage after the correction exited 0. The focused
 Gantt showcase and timeline snapshots passed on both backends with no
 golden changes.
+
+## Viewport rendering bounds
+
+- The bar editor retains up to 16,384 pairs of `f64` extrema (256 KiB of
+  entries) and one dirty index range. The first dense render and a column
+  count change scan the model. A stroke recomputes only columns intersecting
+  its changed range. One GPUI paint layer groups the dense view's quads,
+  with at most one quad per column.
+- Tracks overview uses the sorted, disjoint clip intervals already in the model
+  and retains no overview geometry. Each visible lane emits at most one mark
+  per logical pixel column, capped at 16,384 columns, with adjacent runs of the
+  same color combined in one paint layer. The selected clip keeps its individual element.
+  When assistive technology is active, individual visible clip elements expose
+  their names, roles and selection state.
+- The dope sheet retains one cached header view per visible row (including
+  partially visible rows). The header cache reuses the same controls across
+  pan, zoom and key edits. The key canvas uses four-pixel spacing for dense
+  undecorated rows without selection. Decorated, summary and selected rows
+  retain their individual marks. Plain channels store only the sorted key
+  times, with no parallel decoration array.

@@ -12,10 +12,10 @@ use std::sync::{
 
 use futures_channel::oneshot;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, CursorStyle, Div, ElementId, Entity, ImageSource,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    AnyElement, AnyView, App, AppContext as _, Context, CursorStyle, Div, ElementId, Entity,
+    ImageSource, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement as _, Render, RenderOnce, ScrollDelta, ScrollEvent, SharedString,
-    Styled as _, TestSupportExt as _, WeakEntity, Window, div, img, px,
+    StyleRefinement, Styled as _, TestSupportExt as _, WeakEntity, Window, div, img, px,
 };
 use guiraffe_core::{GuiraffeTheme, Scheme};
 
@@ -659,8 +659,7 @@ impl RenderOnce for MermaidView {
                 state.set_source(source, dark, cx);
             });
         }
-        // The state paints itself; wrapping keeps this element's own size
-        // under the host's layout.
-        div().size_full().child(state)
+        // The state fills the slot and can reuse its paint when the host redraws.
+        AnyView::from(state).cached(StyleRefinement::default().size_full())
     }
 }

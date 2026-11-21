@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    ops::Range,
-    time::Instant,
-};
+use std::{collections::HashSet, ops::Range, sync::OnceLock, time::Instant};
 
 pub type NodeId = u64;
 
@@ -36,93 +32,12 @@ pub enum Navigation {
     End,
 }
 
-// Keep the public row slice contiguous while indexing IDs relative to a
-// block. A splice shifts block starts instead of rehashing every trailing row.
-const ROW_BLOCK: usize = 512;
-
-struct Block {
-    start: usize,
-    key: usize,
-}
-
-#[derive(Default)]
-struct RowIndex {
-    ids: HashMap<NodeId, usize>,
-    blocks: Vec<Block>,
-    starts: Vec<usize>,
-    free: Vec<usize>,
-    #[cfg(test)]
-    indexed_rows: usize,
-}
-
-impl RowIndex {
-    fn rebuild(&mut self, rows: &[Row]) {
-        self.ids.clear();
-        self.blocks.clear();
-        self.starts.clear();
-        self.free.clear();
-        self.ids.reserve(rows.len());
-        self.replace_blocks(0..0, 0, rows);
-    }
-
-    fn get(&self, id: NodeId) -> Option<usize> {
-        let &location = self.ids.get(&id)?;
-        Some(self.starts[location / ROW_BLOCK] + location % ROW_BLOCK)
-    }
-
-    fn block_containing(&self, row: usize) -> usize {
-        self.blocks.partition_point(|block| block.start <= row) - 1
-    }
-
-    fn replace_blocks(&mut self, range: Range<usize>, start: usize, rows: &[Row]) {
-        #[cfg(test)]
-        {
-            self.indexed_rows = rows.len();
-        }
-        self.free
-            .extend(self.blocks[range.clone()].iter().map(|block| block.key));
-        let count = rows.len().div_ceil(ROW_BLOCK);
-        // Divide evenly so repeated edits never leave a trail of tiny blocks.
-        let chunk = rows.len().div_ceil(count.max(1)).max(1);
-        let replacement = rows.chunks(chunk).enumerate().map(|(index, rows)| {
-            let start = start + index * chunk;
-            let key = self.free.pop().unwrap_or_else(|| {
-                self.starts.push(0);
-                self.starts.len() - 1
-            });
-            self.starts[key] = start;
-            for (offset, row) in rows.iter().enumerate() {
-                self.ids.insert(row.id, key * ROW_BLOCK + offset);
-            }
-            Block { start, key }
-        });
-        self.blocks.splice(range, replacement);
-    }
-
-    fn splice(&mut self, before: Range<usize>, inserted: usize, rows: &[Row]) {
-        // Edits always follow a visible parent, so the previous row exists.
-        let first = self.block_containing(before.start - 1);
-        let last = self.block_containing(before.end);
-        let start = self.blocks[first].start;
-        let old_len = rows.len() + before.len() - inserted;
-        let old_end = self
-            .blocks
-            .get(last + 1)
-            .map_or(old_len, |block| block.start);
-        let end = old_end - before.len() + inserted;
-        for block in &mut self.blocks[last + 1..] {
-            block.start = block.start - before.len() + inserted;
-            self.starts[block.key] = block.start;
-        }
-        self.replace_blocks(first..last + 1, start, &rows[start..end]);
-    }
-}
+use crate::rows::Rows;
 
 #[derive(Default)]
 pub struct TreeModel {
-    rows: Vec<Row>,
-    sibling_positions: Vec<(usize, usize)>,
-    indices: RowIndex,
+    rows: Rows,
+    snapshot: OnceLock<Vec<Row>>,
     expanded: HashSet<NodeId>,
     pending: HashSet<NodeId>,
     selected: HashSet<NodeId>,
@@ -140,34 +55,39 @@ impl TreeModel {
 
     /// Apply a new source snapshot, including results delivered by async loaders.
     pub fn refresh(&mut self, source: &dyn TreeSource) {
-        self.rows.clear();
-        self.sibling_positions.clear();
+        self.rows = Rows::default();
+        self.snapshot.take();
         self.pending
             .retain(|&id| source.children(id) == Children::Unloaded);
-        walk_visible(
-            source,
-            &self.expanded,
-            source.roots(),
-            None,
-            0,
-            |row, siblings| {
-                self.rows.push(row);
-                self.sibling_positions.push(siblings);
-            },
-        );
-        self.indices.rebuild(&self.rows);
+        self.rows.splice(0..0, |append| {
+            walk_visible(source, &self.expanded, source.roots(), None, 0, append);
+        });
         if self.cursor.is_some_and(|id| self.row_index(id).is_none()) {
-            self.cursor = self.rows.first().map(|row| row.id);
+            self.cursor = self.row(0).map(|row| row.id);
         }
     }
 
+    /// Materialize a contiguous snapshot after the most recent structural edit.
+    /// Use [Self::row] and [Self::row_count] to access a viewport without a copy.
     pub fn rows(&self) -> &[Row] {
-        &self.rows
+        self.snapshot.get_or_init(|| self.rows.iter().collect())
+    }
+
+    pub fn row(&self, index: usize) -> Option<Row> {
+        self.rows.get(index)
+    }
+
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
     }
 
     /// One-based position and total count within the row's sibling set.
     pub fn sibling_position(&self, index: usize) -> Option<(usize, usize)> {
-        self.sibling_positions.get(index).copied()
+        self.row_and_siblings(index)?.1
+    }
+
+    pub(crate) fn row_and_siblings(&self, index: usize) -> Option<(Row, Option<(usize, usize)>)> {
+        self.rows.row_and_siblings(index)
     }
 
     pub fn expanded(&self, id: NodeId) -> bool {
@@ -183,7 +103,7 @@ impl TreeModel {
     }
 
     pub fn row_index(&self, id: NodeId) -> Option<usize> {
-        self.indices.get(id)
+        self.rows.rank(id)
     }
 
     /// Toggle a branch in the current snapshot. Call [Self::refresh] when the
@@ -199,57 +119,38 @@ impl TreeModel {
         } else {
             self.expanded.remove(&id)
         };
-        if changed && let Some(index) = self.row_index(id) {
-            let depth = self.rows[index].depth;
+        if changed
+            && let Some(index) = self.row_index(id)
+            && let Some(row) = self.row(index)
+        {
+            let depth = row.depth;
             let start = index + 1;
             if open {
                 if let Children::Ready(children) = source.children(id)
                     && !children.is_empty()
                 {
-                    let at_end = start == self.rows.len();
-                    let mut descendants = Vec::new();
-                    let mut positions = Vec::new();
-                    let (rows, siblings) = if at_end {
-                        (&mut self.rows, &mut self.sibling_positions)
-                    } else {
-                        (&mut descendants, &mut positions)
-                    };
-                    let before_len = rows.len();
-                    walk_visible(
-                        source,
-                        &self.expanded,
-                        children,
-                        Some(id),
-                        depth + 1,
-                        |row, position| {
-                            rows.push(row);
-                            siblings.push(position);
-                        },
-                    );
-                    let inserted = rows.len() - before_len;
-                    if !at_end {
-                        self.rows.splice(start..start, descendants);
-                        self.sibling_positions.splice(start..start, positions);
-                    }
-                    self.indices.splice(start..start, inserted, &self.rows);
+                    self.snapshot.take();
+                    self.rows.splice(start..start, |append| {
+                        walk_visible(
+                            source,
+                            &self.expanded,
+                            children,
+                            Some(id),
+                            depth + 1,
+                            append,
+                        );
+                    });
                 }
             } else {
-                let end = start
-                    + self.rows[start..]
-                        .iter()
-                        .take_while(|row| row.depth > depth)
-                        .count();
+                let end = self.rows.descendants_end(start, depth);
                 if end != start {
                     if let Some(cursor) = self.cursor.and_then(|id| self.row_index(id))
                         && (start..end).contains(&cursor)
                     {
                         self.cursor = Some(id);
                     }
-                    self.sibling_positions.drain(start..end);
-                    for row in self.rows.drain(start..end) {
-                        self.indices.ids.remove(&row.id);
-                    }
-                    self.indices.splice(start..end, 0, &self.rows);
+                    self.snapshot.take();
+                    self.rows.splice(start..end, |_| {});
                 }
             }
         }
@@ -257,7 +158,7 @@ impl TreeModel {
             .cursor
             .is_some_and(|cursor| self.row_index(cursor).is_none())
         {
-            self.cursor = self.rows.first().map(|row| row.id);
+            self.cursor = self.row(0).map(|row| row.id);
         }
         (open && source.children(id) == Children::Unloaded && self.pending.insert(id)).then_some(id)
     }
@@ -280,19 +181,21 @@ impl TreeModel {
         let current = self.cursor.and_then(|id| self.row_index(id));
         let Some(index) = current else {
             self.cursor = if direction == Navigation::End {
-                self.rows.last()
+                self.row(self.row_count().saturating_sub(1))
             } else {
-                self.rows.first()
+                self.row(0)
             }
             .map(|row| row.id);
             return None;
         };
-        let row = self.rows[index];
+        let row = self.row(index)?;
         let next = match direction {
-            Navigation::Up => self.rows.get(index.saturating_sub(1)).map(|row| row.id),
-            Navigation::Down => self.rows.get(index + 1).map(|row| row.id),
-            Navigation::Home => self.rows.first().map(|row| row.id),
-            Navigation::End => self.rows.last().map(|row| row.id),
+            Navigation::Up => self.row(index.saturating_sub(1)).map(|row| row.id),
+            Navigation::Down => self.row(index + 1).map(|row| row.id),
+            Navigation::Home => self.row(0).map(|row| row.id),
+            Navigation::End => self
+                .row(self.row_count().saturating_sub(1))
+                .map(|row| row.id),
             Navigation::Left if self.expanded(row.id) => {
                 return self.set_expanded(row.id, false, source);
             }
@@ -303,8 +206,7 @@ impl TreeModel {
                 return self.set_expanded(row.id, true, source);
             }
             Navigation::Right => self
-                .rows
-                .get(index + 1)
+                .row(index + 1)
                 .filter(|child| child.parent == Some(row.id))
                 .map(|row| row.id),
         };
@@ -389,79 +291,49 @@ fn walk_visible(
 }
 
 #[cfg(test)]
-mod index_tests {
+mod tests {
     use super::*;
 
-    #[test]
-    fn replacement_across_block_boundaries_keeps_all_ranks() {
-        let row = |id| Row {
-            id,
-            depth: 0,
-            parent: None,
-        };
-        let mut rows: Vec<_> = (0..4_000).map(row).collect();
-        let mut index = RowIndex::default();
-        index.rebuild(&rows);
+    struct Forest(Vec<NodeId>);
 
-        for (before, inserted) in [
-            (511..1_537, 1_200),
-            (512..512, 206),
-            (1_024..2_048, 0),
-            (2..3_182, 0),
-            (1..1, 2_000),
-        ] {
-            for entry in &rows[before.clone()] {
-                index.ids.remove(&entry.id);
-            }
-            let first_id = rows.iter().map(|entry| entry.id).max().unwrap_or(0) + 1;
-            rows.splice(
-                before.clone(),
-                (first_id..first_id + inserted as u64).map(row),
-            );
-            index.splice(before, inserted, &rows);
-            assert_eq!(index.ids.len(), rows.len());
-            for (position, row) in rows.iter().enumerate() {
-                assert_eq!(index.get(row.id), Some(position));
-            }
+    impl TreeSource for Forest {
+        fn roots(&self) -> &[NodeId] {
+            &self.0
+        }
+
+        fn children(&self, id: NodeId) -> Children<'_> {
+            Children::Ready(if id == 0 { &[u64::MAX] } else { &[] })
+        }
+
+        fn label(&self, _: NodeId) -> &str {
+            "row"
         }
     }
 
     #[test]
-    fn local_splice_keeps_trailing_id_locations() {
-        for count in [ROW_BLOCK * 4, 1_000_000] {
-            let mut rows: Vec<_> = (0..count)
-                .map(|index| Row {
-                    id: index as u64,
-                    depth: 0,
-                    parent: None,
-                })
-                .collect();
-            let mut index = RowIndex::default();
-            index.rebuild(&rows);
-            let tail = count as u64 - 1;
-            let packed = index.ids[&tail];
+    fn local_expansion_rewrites_the_same_rows_at_each_scale() {
+        let mut counts = Vec::new();
+        for size in [10_000, 1_000_000] {
+            let source = Forest((0..size).collect());
+            let mut tree = TreeModel::new(&source);
+            for _ in 0..8 {
+                tree.set_expanded(0, true, &source);
+                assert_eq!(tree.row_index(u64::MAX), Some(1));
+                assert_eq!(tree.row_index(size - 1), Some(size as usize));
+                let expanded = tree.rows.rewritten;
 
-            let child = Row {
-                id: u64::MAX,
-                depth: 1,
-                parent: Some(0),
-            };
-            rows.insert(1, child);
-            index.splice(1..1, 1, &rows);
-            assert_eq!(index.indexed_rows, ROW_BLOCK + 1);
-            assert_eq!(index.get(child.id), Some(1));
-            assert_eq!(index.get(tail), Some(count));
-            assert_eq!(index.ids[&tail], packed);
-
-            rows.remove(1);
-            index.ids.remove(&child.id);
-            index.splice(1..2, 0, &rows);
-            assert_eq!(index.indexed_rows, ROW_BLOCK / 2);
-            assert_eq!(index.get(child.id), None);
-            assert_eq!(index.ids[&tail], packed);
-            for (position, row) in rows.iter().enumerate() {
-                assert_eq!(index.get(row.id), Some(position));
+                tree.set_expanded(0, false, &source);
+                assert_eq!(tree.row_index(u64::MAX), None);
+                assert_eq!(tree.row_index(size - 1), Some(size as usize - 1));
+                counts.push((expanded, tree.rows.rewritten));
+            }
+            assert_eq!(tree.rows().len(), size as usize);
+            for (index, row) in tree.rows().iter().enumerate() {
+                assert_eq!(tree.row(index), Some(*row));
+                assert_eq!(tree.row_index(row.id), Some(index));
             }
         }
+        assert!(counts.iter().all(|&count| count == counts[0]));
+        assert!(counts[0].0 <= 1024 && counts[0].1 <= 1024);
     }
 }
