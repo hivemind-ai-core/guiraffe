@@ -102,6 +102,7 @@ impl PropSpec {
             | "app-shell-slots"
             | "grid-placements"
             | "card-section-borders"
+            | "overlay-toasts"
             | "dial-actions" => "array",
             ty => ty,
         };
@@ -125,6 +126,7 @@ impl PropSpec {
         match self.type_name {
             "array" => schema["items"] = json!({"type": "string"}),
             "integer-array" => schema["items"] = json!({"type":"integer","minimum":0}),
+            "overlay-toasts" => schema["items"] = overlay_toast_schema(),
             "code-annotations" => schema["items"] = code_annotation_schema(),
             "code-decoration-layers" => schema["items"] = code_decoration_layer_schema(),
             "code-folds" => schema["items"] = code_fold_schema(),
@@ -468,6 +470,20 @@ pub fn code_decoration_layer_schema() -> Value {
                     "end":coordinate,"startBias":side,"endBias":side,"style":style
                 }
             }}
+        }
+    })
+}
+
+pub fn overlay_toast_schema() -> Value {
+    json!({
+        "type":"object","required":["id","message"],"additionalProperties":false,
+        "properties":{
+            "id":{"type":"string","minLength":1},
+            "message":{"type":"string"},
+            "position":{"type":"string","enum":["top-left","top-center","top-right","bottom-left","bottom-center","bottom-right"]},
+            "persistent":{"type":"boolean"},
+            "durationMs":{"type":"integer","minimum":0,"maximum":600000},
+            "revision":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1}
         }
     })
 }

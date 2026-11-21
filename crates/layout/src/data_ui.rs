@@ -332,7 +332,7 @@ fn responsive<T>(
     if let Some(constant) = parse(value) {
         return Responsive::value(constant);
     }
-    let at = |name: &str| parse(&value.field(&[name.into()]));
+    let at = |name: &str| parse(value.field(&[name.into()]));
     let mut result = Responsive::base(at("base").unwrap_or(fallback));
     for (name, breakpoint) in [
         ("xs", Breakpoint::Xs),

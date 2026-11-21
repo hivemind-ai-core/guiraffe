@@ -2196,3 +2196,152 @@ fn ui_macro_accepts_native_responsive_grid_card_and_scoped_button() {
 
     let _ = example;
 }
+
+#[gpui_kit::test]
+fn modal_and_toast_documents_use_the_native_window_overlay_stack(cx: &mut TestAppContext) {
+    use gpui_kit::{AppContext as _, WindowOptions, test::TestWindowExt};
+    use guiraffe_overlays::{OverlayHost, stack::OverlayKind, toast::ToastPosition};
+    use std::{cell::Cell, rc::Rc};
+
+    struct DialogLogic {
+        ok: Option<EventId>,
+        accepted: Rc<Cell<bool>>,
+        show_drawer: Option<SlotId>,
+    }
+
+    impl Logic for DialogLogic {
+        fn bind(&mut self, names: &Names, _: &mut PatchBuf) {
+            self.ok = names.event("apply");
+            self.show_drawer = names.slot("show-drawer");
+        }
+
+        fn on_event(&mut self, event: EventId, _: &Value, patch: &mut PatchBuf) {
+            if self.ok == Some(event) {
+                self.accepted.set(true);
+                if let Some(slot) = self.show_drawer {
+                    patch.set(slot, true);
+                }
+            }
+        }
+    }
+
+    cx.update(guiraffe_overlays::init);
+    let doc = Document::new(
+        Node::new("toast-tray")
+            .prop("toast-limit", 3)
+            .prop(
+                "toasts",
+                serde_json::json!([
+                    {"id":"accepted","message":"Ready","position":"bottom-left","persistent":true}
+                ]),
+            )
+            .child(
+                Node::new("modal")
+                    .prop("open", true)
+                    .prop("title", "Apply settings?")
+                    .prop("message", "The current document will be updated.")
+                    .prop("ok-label", "Apply")
+                    .prop("cancel-label", "Cancel")
+                    .prop("width", 420)
+                    .prop("overlay-closable", false)
+                    .on("ok", "apply"),
+            )
+            .child(
+                Node::new("drawer")
+                    .bind("open", "show-drawer")
+                    .prop("title", "Results")
+                    .prop("position", "left")
+                    .prop("size", "sm")
+                    .prop("close-on-escape", false)
+                    .prop("resizable", false)
+                    .on("close", "close-results"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let accepted = Rc::new(Cell::new(false));
+    let handle = cx.update(|cx| {
+        cx.open_window(WindowOptions::default(), |window, cx| {
+            let registry = Arc::new(Registry::for_app(cx));
+            let logic = DialogLogic {
+                ok: None,
+                show_drawer: None,
+                accepted: accepted.clone(),
+            };
+            let ui = DataUi::new(&doc, registry, logic, cx).expect("overlay services");
+            let screen = cx.new(|_| Shell { ui });
+            guiraffe_overlays::root(screen, window, cx)
+        })
+        .expect("window with overlay root")
+    });
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        let host = OverlayHost::entity(window, cx).expect("installed host");
+        let state = host.read(cx);
+        assert_eq!(state.toasts().limit(), 3);
+        let visible = state.toasts().visible();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].message, "Ready");
+        assert_eq!(visible[0].position, ToastPosition::BottomLeft);
+        let top = state.stack().top().expect("native dialog");
+        assert_eq!(top.kind, OverlayKind::Modal);
+        assert!(!top.policy.outside);
+        window.click("document-modal-ok", cx);
+    })
+    .expect("live window");
+    cx.run_until_parked();
+    assert!(accepted.get());
+    cx.update_window(handle.into(), |_, window, cx| {
+        let host = OverlayHost::entity(window, cx).expect("installed host");
+        let top = host.read(cx).stack().top().expect("native sheet");
+        assert_eq!(top.kind, OverlayKind::Drawer);
+        assert!(!top.policy.escape);
+    })
+    .expect("live window");
+}
+
+#[test]
+fn ui_macro_accepts_tree_board_flame_graph_and_disclosure_state() {
+    use gpui_kit::{App, AppContext as _, SharedString, assets::IconName};
+    use guiraffe_components::{DialAction, DialLayout, SpeedDial, Spoiler};
+    use guiraffe_dnd::{Card, SortableBoard};
+    use guiraffe_flamegraph::{FlameGraph, FlameLayout};
+    use guiraffe_tree::{PropertyGrid, RowStyle, TreeData, TreeList};
+    use std::rc::Rc;
+
+    fn example(
+        layout: Arc<FlameLayout>,
+        tree: Rc<dyn TreeData>,
+        columns: Vec<(SharedString, Vec<Card>)>,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        let properties = cx.new(|cx| {
+            ui! {
+                PropertyGrid(tree.clone(), cx) { split_ratio: 0.55; focusable: true }
+            }
+        });
+        let list = cx.new(|cx| {
+            ui! {
+                TreeList(tree, cx) { focusable: false; row_style: RowStyle::default() }
+            }
+        });
+        let board = cx.new(|cx| ui! { SortableBoard(columns, cx) { with_grid: 3 } });
+        let flame = cx.new(|_| ui! { FlameGraph(layout) });
+        let spoiler = ui! { Spoiler(cx) };
+        spoiler.update(cx, |spoiler, cx| {
+            spoiler.set_collapsed_lines(2, cx);
+            spoiler.set_focusable(Some(true), cx);
+        });
+        let dial = ui! {
+            SpeedDial(
+                IconName::Plus, "Create",
+                vec![DialAction { icon: IconName::Check, label: "Finish".into() }],
+                DialLayout::Vertical { spacing: 40. }, cx
+            )
+        };
+        dial.update(cx, |dial, cx| dial.set_show_labels(true, cx));
+        ui! { div { {properties} {list} {board} {flame} {spoiler} {dial} } }
+    }
+
+    let _ = example;
+}

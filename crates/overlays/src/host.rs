@@ -62,6 +62,7 @@ pub struct OverlayHost {
     cards: HashMap<ToastId, ToastCard>,
     timer: Option<Task<()>>,
     next_generation: u64,
+    next_document_toast: u64,
     requested_toast_limit: Option<usize>,
     owned_notes: HashSet<gpui_kit::EntityId>,
     native_snapshot: Vec<gpui_kit::EntityId>,
@@ -128,6 +129,37 @@ impl OverlayHost {
             .and_then(|r| r.read(cx).plugin::<Self>())
             .ok_or(OverlayError::MissingRoot)
     }
+    pub(crate) fn refresh_document_modal(window: &Window, cx: &mut App, id: OverlayId) {
+        if let Ok(host) = Self::entity(window, cx) {
+            let dialog = host.read(cx).dialogs.get(&id).cloned();
+            if let Some(dialog) = dialog {
+                dialog.update(cx, |_, cx| cx.notify());
+            }
+        }
+    }
+
+    pub(crate) fn allocate_document_toast(
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<ToastId, OverlayError> {
+        let host = Self::entity(window, cx)?;
+        Ok(host.update(cx, |host, _| {
+            loop {
+                let id = ToastId(u64::MAX - host.next_document_toast);
+                host.next_document_toast = host.next_document_toast.wrapping_add(1);
+                if !host
+                    .toasts
+                    .visible()
+                    .iter()
+                    .chain(host.toasts.queued())
+                    .any(|toast| toast.id == id)
+                {
+                    break id;
+                }
+            }
+        }))
+    }
+
     pub fn stack(&self) -> &OverlayStack {
         &self.stack
     }
@@ -722,6 +754,7 @@ pub fn init(cx: &mut App) {
     guiraffe_motion::init(cx);
     crate::spotlight::init(cx);
     crate::data_ui::register(cx);
+    crate::document_services::register(cx);
     crate::spotlight::document::register(cx);
     cx.set_global(Initialized);
 }
@@ -793,6 +826,21 @@ impl Drawer {
         ) -> gpui_kit::component::sheet::Sheet
         + 'static,
     ) -> Result<OverlayId, OverlayError> {
+        self.open_with_close(window, cx, build, |_, _| {})
+    }
+
+    pub(crate) fn open_with_close(
+        self,
+        window: &mut Window,
+        cx: &mut App,
+        build: impl Fn(
+            gpui_kit::component::sheet::Sheet,
+            &mut Window,
+            &mut App,
+        ) -> gpui_kit::component::sheet::Sheet
+        + 'static,
+        close: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Result<OverlayId, OverlayError> {
         let host = OverlayHost::entity(window, cx)?;
         if !host.read(cx).stack.entries().is_empty() {
             return Err(OverlayError::DrawerRequiresEmptyStack);
@@ -809,6 +857,7 @@ impl Drawer {
             crate::position::Side::Right => gpui_kit::component::Placement::Right,
         };
         let previous = window.focused(cx).map(|focus| focus.downgrade());
+        let close = std::rc::Rc::new(close);
         window.open_sheet_at(placement, cx, move |sheet, window, cx| {
             let theme = GuiraffeTheme::global(cx);
             let surface = theme.surfaces();
@@ -822,7 +871,13 @@ impl Drawer {
                 cx,
             )
             .overlay_closable(self.policy.outside)
-            .on_close(move |_, window, cx| OverlayHost::settled(window, cx, id, false))
+            .on_close({
+                let close = std::rc::Rc::clone(&close);
+                move |_, window, cx| {
+                    OverlayHost::settled(window, cx, id, false);
+                    close(window, cx);
+                }
+            })
         });
         if let Some(focus) = window.focused(cx) {
             host.update(cx, |host, _| {

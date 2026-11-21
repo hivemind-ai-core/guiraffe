@@ -68,6 +68,9 @@ fn kind(surface: &str) -> Option<&'static str> {
         "layout::Stack" => "stack",
         "markdown::MarkdownView" | "markdown::MarkdownState" => "markdown",
         "mermaid::Host" | "mermaid::MermaidView" | "mermaid::MermaidViewState" => "mermaid",
+        "overlays::Modals" | "overlays::Modal" => "modal",
+        "overlays::Drawer" => "drawer",
+        "overlays::OverlayHost" => "toast-tray",
         "overlays::Affix" => "affix",
         "overlays::FloatingTooltip" | "overlays::FloatingOptions" => "floating-tooltip",
         "overlays::LoadingOverlay" => "loading-overlay",
@@ -87,6 +90,34 @@ fn kind(surface: &str) -> Option<&'static str> {
 
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
+    (
+        "layout::AppShellState::toggle_navbar",
+        "Imperative toggle of local state. Documents drive navbar-collapsed.",
+    ),
+    (
+        "layout::AppShellState::toggle_aside",
+        "Imperative toggle of local state. Documents drive aside-collapsed.",
+    ),
+    (
+        "overlays::OverlayHost::close_all",
+        "Cross-document window operation. Documents toggle each owned modal request.",
+    ),
+    (
+        "overlays::OverlayHost::entity",
+        "Window-local native state handle used by Rust hosts.",
+    ),
+    (
+        "overlays::OverlayHost::register_context",
+        "Requires a native Modal factory. Documents open previously registered factories by context ID.",
+    ),
+    (
+        "overlays::OverlayHost::stack",
+        "Read-only query of the entire native overlay stack.",
+    ),
+    (
+        "overlays::OverlayHost::toasts",
+        "Read-only query of the entire native notification queue.",
+    ),
     (
         "layout::Grid::layout",
         "Pure placement query for Rust. Documents configure placement records.",
@@ -768,6 +799,18 @@ fn covered(surface: &str) -> bool {
     {
         return true;
     }
+    if let Some((kind, prop)) = match surface {
+        "overlays::OverlayHost::close" | "overlays::OverlayHost::open" => Some(("modal", "open")),
+        "overlays::OverlayHost::confirm" => Some(("modal", "ok-label")),
+        "overlays::OverlayHost::open_context" => Some(("modal", "context")),
+        "overlays::OverlayHost::clear_toasts"
+        | "overlays::OverlayHost::notify"
+        | "overlays::OverlayHost::dismiss_toast" => Some(("toast-tray", "toasts")),
+        _ => None,
+    } {
+        return guiraffe_ui::catalog::lookup(kind)
+            .is_some_and(|spec| spec.props.iter().any(|property| property.name == prop));
+    }
     if let Some(kind) = kind(surface) {
         return guiraffe_ui::catalog::lookup(kind).is_some();
     }
@@ -949,6 +992,12 @@ fn covered(surface: &str) -> bool {
                     "slots".into()
                 }
                 ("flow::FlowState", "arrange") => "layout".into(),
+                ("overlays::Modal", "content") => "message".into(),
+                ("overlays::Modal", "footer") => "ok-label".into(),
+                ("overlays::Modal", "w") => "width".into(),
+                ("layout::AppShellState", "collapse_navbar" | "expand_navbar") => {
+                    "navbar-collapsed".into()
+                }
                 ("commands::Menu", "props") => "show-categories".into(),
                 ("components::ActionIcon" | "components::ThemeIcon", "from_asset") => "icon".into(),
                 ("layout::Splitter", "pane_size") => "pane-sizes".into(),
@@ -1006,13 +1055,8 @@ fn public_document_surface_does_not_regress() {
         .filter(|api| !covered(api))
         .map(String::as_str)
         .collect();
-    let known_debt: BTreeSet<_> = include_str!("catalogue_drift/known_gaps.txt")
-        .lines()
-        .collect();
-    let missing: Vec<_> = uncovered.difference(&known_debt).collect();
-    let stale: Vec<_> = known_debt.difference(&uncovered).collect();
     assert!(
-        missing.is_empty() && stale.is_empty(),
-        "Unclassified public DataUi APIs: {missing:#?}\nRemove resolved debt: {stale:#?}"
+        uncovered.is_empty(),
+        "Unclassified public DataUi APIs: {uncovered:#?}"
     );
 }

@@ -70,6 +70,17 @@ impl Inventory {
             .public_types
             .intersection(&self.renders)
             .cloned()
+            .chain(
+                self.public_types
+                    .iter()
+                    .filter(|name| {
+                        matches!(
+                            (krate, name.as_str()),
+                            ("layout", "AppShellState") | ("overlays", "Drawer" | "Modal")
+                        )
+                    })
+                    .cloned(),
+            )
             .collect();
         let mut result = BTreeSet::new();
         for ty in &render_types {

@@ -44,6 +44,12 @@ the layer ID, decoration ID and `hover`, `leave` or `click` action. A `flow` doc
 can request a built-in layout through `layout`. Change its `revision` to rerun the same
 configuration. The graph returned by `change` includes the laid-out positions.
 
+A window with the overlay root supports `modal`, `drawer` and `toast-tray`. Bind
+`open` to your view data and update it from the close event before opening again.
+A modal can refer to a Rust-registered factory through its `context` name. A toast tray
+owns its notifications and matches them by document-local ID. Remove a record to
+dismiss it. Change a record or its optional `revision` to publish it again.
+
 The host resolves event and data ids against its logic:
 ```rust
 trait Logic {

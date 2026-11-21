@@ -2219,6 +2219,25 @@ mod review_tests {
         cx.update(|cx| {
             code.set_source("a\nb\nc\n".into(), "text".into(), cx);
             code.set_annotations(Arc::from([annotation()]), cx);
+            code.set_document_decorations(
+                |document| {
+                    let mut decorations =
+                        Decorations::new(document).expect("source fits decorations");
+                    decorations
+                        .update_layer(
+                            23,
+                            crate::DecorationLayerOptions {
+                                z_index: -2,
+                                merge_identical: true,
+                            },
+                            &[],
+                            [],
+                        )
+                        .expect("empty decoration layer");
+                    Some(Arc::new(decorations))
+                },
+                cx,
+            );
             code.set_folds(
                 vec![Fold {
                     start: 0,
@@ -2248,6 +2267,12 @@ mod review_tests {
         assert_eq!(code.shared.folds.borrow().len(), 1);
         assert_eq!(code.shared.traces.borrow().len(), 1);
         assert_eq!(code.shared.rows.borrow().len(), 2);
+        let stored = code.shared.decorations.borrow();
+        let decorations = stored.as_ref().expect("presentation kept its decorations");
+        assert!(Arc::ptr_eq(decorations.document(), &code.document()));
+        let layer = decorations.layer(23).expect("presented layer");
+        assert_eq!(layer.options().z_index, -2);
+        assert!(layer.options().merge_identical);
     }
     #[gpui_kit::test]
     fn pending_prepared_analysis_is_tied_to_its_source(cx: &mut TestAppContext) {

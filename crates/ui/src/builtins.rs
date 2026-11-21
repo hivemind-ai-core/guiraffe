@@ -726,10 +726,10 @@ pub fn register(r: &mut Registry) {
             let b = if n.bool(n.prop_index("inherit-focus-scope")) {
                 let mut scoped = ScopedButton::new(b);
                 let tab_stop = n.prop_index("tab-stop");
-                if guiraffe_core::widget_catalog::WidgetNode::is_set(n, tab_stop) {
-                    if let Some(focusable) = n.prop(tab_stop).as_bool() {
-                        scoped = scoped.focusable(focusable);
-                    }
+                if guiraffe_core::widget_catalog::WidgetNode::is_set(n, tab_stop)
+                    && let Some(focusable) = n.prop(tab_stop).as_bool()
+                {
+                    scoped = scoped.focusable(focusable);
                 }
                 scoped.into_any_element()
             } else {

@@ -578,7 +578,9 @@ impl Validation<'_> {
                                 .is_some_and(|(start, end)| end > start + 1)
                     })
                 }),
-                "code-decoration-layers" => matches_data_schema(got, &prop.schema()),
+                "overlay-toasts" | "code-decoration-layers" => {
+                    matches_data_schema(got, &prop.schema())
+                }
                 "code-annotations" => got.as_array().is_some_and(|annotations| {
                     let schema = crate::widget_spec::code_annotation_schema();
                     annotations.iter().all(|annotation| {

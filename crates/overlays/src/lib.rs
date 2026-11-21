@@ -12,6 +12,7 @@
 //! ```
 mod confirm;
 mod data_ui;
+mod document_services;
 mod host;
 pub mod position;
 pub mod search;
