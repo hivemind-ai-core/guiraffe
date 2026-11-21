@@ -32,3 +32,36 @@ allocations. The fast synthetic numbers use a standalone build of the same
 fixture against the Cargo-built GPUI artifact. The loaded means subtract a
 one-frame process run from the 4,000-frame run. Quiet-window latency
 percentiles and interaction-specific budgets require the component soaks.
+
+## Matched component draws
+
+The component sources were pinned at worker merge `b770a06`, which includes
+release base `5978237`. The unpatched runs override only the two GPUI Cargo
+patch paths with the published crate sources. Each cell shows allocator calls
+and requested bytes per warmed draw.
+
+| Component fixture | Upstream before | Upstream after | Fast before | Fast after |
+| --- | ---: | ---: | ---: | ---: |
+| Charts, layered scatter with 10,000 points and 100 series | 74 / 79,500 B | 6 / 57,680 B | 59 / 11,160 B | 0 / 0 B |
+| Flow, 256 nodes and 248 edges, minimap disabled | 44 / 5,403,204 B | 26 / 336,880 B | 7 / 5,062,680 B | 0 / 0 B |
+| Gantt, 1,000 tasks in dependency chains | 515 / 454,348 B | 150 / 235,688 B | 569 / 270,984 B | 43 / 528 B |
+| Mermaid, same counts at 50 and 500 nodes | 9 / 4,088 B | 1 / 56 B | 1 / 24 B | 0 / 0 B |
+
+Charts checks that its cached ink and scene build counters stay fixed. Flow
+and Gantt use a sized cached host whose render count stays fixed. Mermaid
+checks that the refined image remains shared and reports the per-draw
+average over eight draws. These probes exercise ordinary warm draws.
+
+DHAT attributes the remaining upstream Flow traffic to quad sort scratch
+and tab stops. Upstream Gantt also allocates for tab stops, quad sort scratch,
+debug bounds and key context. Fast Gantt has 42 debug-bounds allocations
+and one key-context clone in its test-support build. The measurements cover
+steady cached draws and leave cold layout and interaction performance to
+the component soaks.
+
+`scripts/gate.sh` passed at `a5b429a`, with 1,272 workspace tests on each
+backend, per-crate doctests, strict workspace Clippy and formatting. At
+`b770a06`, both backends passed the two cached-path tests and 25 allocator
+tests. The tracked golden images match their release base at both revisions.
+The local measurement logs and the Flow and Gantt probe source are in
+`target/gpui-profiles/`.
