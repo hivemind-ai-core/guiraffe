@@ -898,7 +898,8 @@ mod tests {
                 .map(|level| level.capacity())
                 .sum::<usize>()
                 * size_of::<usize>()
-            + run.line_breaks.capacity() * size_of::<usize>();
+            + run.line_breaks.capacity() * size_of::<usize>()
+            + run.pick_bounds.capacity() * size_of::<(f64, f64)>();
         assert!(
             bytes <= POINTS * 24,
             "prepared line buffers: {} bytes per point",
