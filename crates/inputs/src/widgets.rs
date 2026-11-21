@@ -649,7 +649,7 @@ pub enum DropEvent {
 /// emits [`DropEvent::BrowseRequested`] on click or Enter/Space. It never takes focus on
 /// pointer press; it is a tab stop inside a focus scope or with [`Dropzone::set_focusable`].
 pub struct Dropzone {
-    accept: Vec<&'static str>,
+    accept: Vec<SharedString>,
     label: SharedString,
     disabled: bool,
     focusable: Option<bool>,
@@ -666,7 +666,7 @@ impl Dropzone {
     ) -> Entity<Self> {
         let label = label.into();
         cx.new(|cx| Self {
-            accept,
+            accept: accept.into_iter().map(Into::into).collect(),
             label,
             disabled: false,
             focusable: None,
@@ -691,10 +691,11 @@ impl Dropzone {
         if self.disabled {
             return;
         }
+        let accepted: Vec<_> = self.accept.iter().map(SharedString::as_ref).collect();
         let (ok, bad): (Vec<_>, Vec<_>) = paths.iter().cloned().partition(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| accepts(&self.accept, n))
+                .is_some_and(|n| accepts(&accepted, n))
         });
         if !ok.is_empty() {
             cx.emit(DropEvent::Accepted(ok));

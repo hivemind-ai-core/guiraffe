@@ -497,7 +497,11 @@ fn chip_click_updates_a_bound_selection_and_delivers_an_event(cx: &mut TestAppCo
 fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
     cx.update(guiraffe_inputs::init);
     cx.update(guiraffe_layout::init);
+    cx.update(guiraffe_code::init);
+    cx.update(guiraffe_markdown::init);
+    cx.update(guiraffe_mermaid::init);
     cx.update(guiraffe_overlays::init);
+    cx.update(guiraffe_tree::init);
     cx.update(|cx| {
         let registry = Registry::for_app(cx);
         assert_eq!(registry.kinds().count(), catalog::all_widgets().count());
@@ -545,4 +549,204 @@ fn ui_macro_accepts_overlay_builders() {
         }
     };
     let _ = overlay.into_element();
+}
+
+#[gpui_kit::test]
+fn markdown_document_drives_source_and_view_options(cx: &mut TestAppContext) {
+    cx.update(guiraffe_markdown::init);
+    let doc = Document::new(
+        Node::new("markdown")
+            .prop("source", "# Title\n\n- [ ] Task")
+            .bind("source", "body")
+            .prop("selectable", false)
+            .prop("scrollable", true)
+            .prop("min-height", 120)
+            .prop("max-height", 240)
+            .prop("code-copy", false)
+            .on("link-click", "navigate")
+            .on("task-toggle", "toggle"),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("markdown document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_markdown_builders() {
+    use guiraffe_markdown::MarkdownView;
+    let view = ui! {
+        MarkdownView("example") {
+            source: "# Title"; selectable: false; scrollable: true;
+            min_height: px(120.0); max_height: px(240.0); code_copy: false;
+            .on_link_click(|_, _, _| {})
+            .on_task_toggle(|_, _, _, _| {})
+        }
+    };
+    let _ = view.into_element();
+}
+
+#[gpui_kit::test]
+fn mermaid_document_validates_compiles_and_renders(cx: &mut TestAppContext) {
+    cx.update(guiraffe_mermaid::init);
+    let doc = Document::new(
+        Node::new("mermaid")
+            .prop("source", "flowchart LR\n  A --> B")
+            .bind("source", "diagram"),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("mermaid document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_mermaid_builders() {
+    use guiraffe_mermaid::MermaidView;
+    let view = ui! { MermaidView("example") { source: "flowchart LR\n  A --> B" } };
+    let _ = view.into_element();
+}
+
+#[gpui_kit::test]
+fn code_document_drives_view_options_and_annotations(cx: &mut TestAppContext) {
+    cx.update(guiraffe_code::init);
+    let doc = Document::new(
+        Node::new("code-viewer")
+            .prop("source", "let x = 42;")
+            .bind("source", "code")
+            .prop("language", "rust")
+            .prop("size", "sm")
+            .prop("line-numbers", false)
+            .prop("minimap", true)
+            .prop("margin-chars", 20)
+            .prop("annotations", serde_json::json!([
+                {"id":1,"line":0,"start":4,"end":5,"kind":"underline","payload":"A binding","color":"orange"}
+            ])),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx).expect("code document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_a_code_viewer_handle() {
+    use gpui_kit::App;
+    use guiraffe_code::{CodeDocument, CodeHandle, CodeViewer};
+
+    fn example(cx: &mut App) -> impl IntoElement {
+        let handle = CodeHandle::new(1, Arc::new(CodeDocument::new("let x = 42;")), cx);
+        ui! { CodeViewer(&handle) }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn tree_documents_validate_and_render_property_grid_and_tree_list(cx: &mut TestAppContext) {
+    cx.update(guiraffe_tree::init);
+    let nodes = serde_json::json!([
+        {"id":11,"label":"Group","height":40},
+        {"id":12,"depth":1,"label":"Width","checked":true,"badge":"Px","icon":"#",
+         "property":{"type":"number","value":24,"default":16,"min":1,"max":100,"step":1,"units":"px"}}
+    ]);
+    let doc = Document::new(
+        Node::new("group")
+            .child(
+                Node::new("tree-list")
+                    .prop("nodes", nodes.clone())
+                    .prop("expanded", serde_json::json!([11])),
+            )
+            .child(
+                Node::new("property-grid")
+                    .prop("nodes", nodes)
+                    .prop("expanded", serde_json::json!([11]))
+                    .prop("focusable", true)
+                    .prop("density", "compact")
+                    .prop("alternating", true)
+                    .prop("grid-lines", true)
+                    .prop("indent-guides", true)
+                    .prop("group-headers", true)
+                    .prop("sticky-headers", true)
+                    .prop("searchable", true)
+                    .prop("split-ratio", 0.55)
+                    .prop("persist-key", "properties")
+                    .on("edit", "property-edited"),
+            ),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx).expect("tree document"),
+    });
+    window.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn range_tags_and_dropzone_documents_validate_and_render(cx: &mut TestAppContext) {
+    cx.update(guiraffe_inputs::init);
+    let doc = Document::new(
+        Node::new("stack")
+            .child(
+                Node::new("range-slider")
+                    .prop("min", 1)
+                    .prop("max", 20)
+                    .prop("step", 0.5)
+                    .prop("min-distance", 2)
+                    .prop("value", serde_json::json!([4, 12]))
+                    .bind("value", "range")
+                    .prop("label", "Range")
+                    .prop("disabled", false)
+                    .prop("focusable", true),
+            )
+            .child(
+                Node::new("tags-input")
+                    .prop("value", serde_json::json!(["Rust"]))
+                    .bind("value", "tags")
+                    .prop("placeholder", "Add tag")
+                    .prop("allow-duplicates", false)
+                    .prop("split-chars", ",;")
+                    .prop("max-tags", 3)
+                    .prop("max-len", 10)
+                    .on("reject", "invalid-tag"),
+            )
+            .child(
+                Node::new("dropzone")
+                    .prop("accept", serde_json::json!([".png", "text/*"]))
+                    .prop("label", "Drop files here")
+                    .prop("disabled", false)
+                    .prop("focusable", true)
+                    .on("accept", "accept")
+                    .on("reject", "reject")
+                    .on("browse", "browse"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("input document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_can_embed_stateful_input_builders() {
+    use gpui_kit::App;
+    use guiraffe_inputs::{ChipGroup, Dropzone, Range2, RangeSlider, TagRules, TagsInput};
+
+    fn example(window: &mut Window, cx: &mut App) -> impl IntoElement {
+        ui! {
+            div {
+                {ChipGroup::new(["Rust", "Zig"], true, cx)}
+                {RangeSlider::new(Range2::new(0.0, 100.0, 1.0, 20.0, 40.0), cx)}
+                {TagsInput::new(TagRules::default(), "Add tags", window, cx)}
+                {Dropzone::new(vec![".png"], "Drop images", cx)}
+            }
+        }
+    }
+    let _ = example;
 }

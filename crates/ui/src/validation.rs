@@ -52,6 +52,108 @@ fn suggestion(got: &str, choices: &[&str]) -> String {
         )
 }
 
+fn check_tree_nodes(values: &Value) -> bool {
+    let Some(values) = values.as_array() else {
+        return false;
+    };
+    let schema = crate::widget_spec::tree_node_schema();
+    let mut ids = BTreeSet::new();
+    let mut maximum_depth = 0;
+    for value in values {
+        if !matches_tree_schema(value, &schema) {
+            return false;
+        }
+        let Some(id) = value["id"].as_u64() else {
+            return false;
+        };
+        let depth = value["depth"].as_u64().unwrap_or_default();
+        if depth > maximum_depth || !ids.insert(id) {
+            return false;
+        }
+        maximum_depth = depth + 1;
+        let property = &value["property"];
+        if let Some(kind) = property["type"].as_str() {
+            let matches_value = |value: &Value| match kind {
+                "number" => value.is_number(),
+                "bool" => value.is_boolean(),
+                "text" | "enum" | "path" => value.is_string(),
+                "colour" => value
+                    .as_str()
+                    .and_then(|text| text.strip_prefix('#'))
+                    .is_some_and(|hex| {
+                        hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+                    }),
+                "vector" | "rect" => value.as_array().is_some_and(|array| {
+                    array.len() == if kind == "vector" { 2 } else { 4 }
+                        && array.iter().all(Value::is_number)
+                }),
+                "flags" => value
+                    .as_array()
+                    .is_some_and(|array| array.iter().all(Value::is_string)),
+                _ => false,
+            };
+            if !matches_value(&property["value"])
+                || property.get("default").is_some_and(|v| !matches_value(v))
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+// This describes the subset used by tree_node_schema. Document links and bindings have already
+// been resolved by the caller before checking a literal data shape.
+fn matches_tree_schema(value: &Value, schema: &Value) -> bool {
+    let type_matches = |ty: &str| match ty {
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        "boolean" => value.is_boolean(),
+        "integer" => value.as_u64().is_some(),
+        "number" => value.is_number(),
+        "string" => value.is_string(),
+        _ => false,
+    };
+    let ty = &schema["type"];
+    if ty.as_str().is_some_and(|ty| !type_matches(ty))
+        || ty
+            .as_array()
+            .is_some_and(|types| !types.iter().filter_map(Value::as_str).any(type_matches))
+        || schema["enum"]
+            .as_array()
+            .is_some_and(|choices| !choices.contains(value))
+    {
+        return false;
+    }
+    if let Some(number) = value.as_f64()
+        && (schema["minimum"].as_f64().is_some_and(|min| number < min)
+            || schema["maximum"].as_f64().is_some_and(|max| number > max))
+    {
+        return false;
+    }
+    if let Some(array) = value.as_array()
+        && let Some(item_schema) = schema.get("items")
+    {
+        return array
+            .iter()
+            .all(|value| matches_tree_schema(value, item_schema));
+    }
+    if let Some(fields) = value.as_object() {
+        return schema["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .all(|name| fields.contains_key(name))
+            && fields.iter().all(|(key, value)| {
+                schema["properties"]
+                    .get(key)
+                    .is_some_and(|field_schema| matches_tree_schema(value, field_schema))
+            });
+    }
+    true
+}
+
 impl Validation<'_> {
     pub fn check(&self, document: &Document) -> Vec<Issue> {
         self.check_with_specs(document, all_widgets())
@@ -202,6 +304,44 @@ impl Validation<'_> {
                 "integer-array" => got
                     .as_array()
                     .is_some_and(|items| items.iter().all(|item| item.as_u64().is_some())),
+                "code-annotations" => got.as_array().is_some_and(|annotations| {
+                    let schema = crate::widget_spec::code_annotation_schema();
+                    annotations.iter().all(|annotation| {
+                        annotation.as_object().is_some_and(|fields| {
+                            let integer = |name: &str| {
+                                annotation[name].as_u64().filter(|v| *v < (1_u64 << 53))
+                            };
+                            let enum_member = |name: &str| {
+                                schema["properties"][name]["enum"]
+                                    .as_array()
+                                    .is_some_and(|choices| choices.contains(&annotation[name]))
+                            };
+                            let start = integer("line").zip(integer("start"));
+                            let end_line = if fields.contains_key("endLine") {
+                                integer("endLine")
+                            } else {
+                                integer("line")
+                            };
+                            let end = end_line.zip(integer("end"));
+                            integer("id").is_some()
+                                && start.zip(end).is_some_and(|(start, end)| start <= end)
+                                && enum_member("kind")
+                                && fields.get("payload").is_none_or(Value::is_string)
+                                && (!fields.contains_key("color") || enum_member("color"))
+                                && fields
+                                    .keys()
+                                    .all(|key| schema["properties"].get(key).is_some())
+                        })
+                    })
+                }),
+                "range-value" => got.as_array().is_some_and(|values| {
+                    values.len() == 2
+                        && values[0]
+                            .as_f64()
+                            .zip(values[1].as_f64())
+                            .is_some_and(|(low, high)| low <= high)
+                }),
+                "tree-nodes" => check_tree_nodes(got),
                 "ring-sections" => got.as_array().is_some_and(|sections| {
                     sections.iter().all(|section| {
                         section.as_object().is_some_and(|fields| {

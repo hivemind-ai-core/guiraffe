@@ -8,13 +8,17 @@ pub struct Schema {
 }
 
 impl Schema {
+    pub fn prop_index(&self, name: &str) -> Option<usize> {
+        self.props.iter().position(|prop| *prop == name)
+    }
+
     pub const EMPTY: Schema = Schema {
         props: &[],
         events: &[],
     };
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct PropSpec {
     pub name: &'static str,
     pub type_name: &'static str,
@@ -25,7 +29,7 @@ pub struct PropSpec {
     pub required: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct EventSpec {
     pub id: &'static str,
     pub payload_type: &'static str,
@@ -55,10 +59,15 @@ impl PropSpec {
 
     pub fn schema(&self) -> Value {
         let ty = match self.type_name {
-            "ring-sections" | "integer-array" => "array",
+            "ring-sections" | "integer-array" | "code-annotations" | "tree-nodes"
+            | "range-value" => "array",
             ty => ty,
         };
-        let mut schema = json!({"type": ty});
+        let mut schema = if self.type_name == "range-value" {
+            range_schema()
+        } else {
+            json!({"type": ty})
+        };
         if !self.accepted.is_empty() && ty == "string" {
             schema["enum"] = json!(self.accepted);
         }
@@ -69,6 +78,8 @@ impl PropSpec {
         match self.type_name {
             "array" => schema["items"] = json!({"type": "string"}),
             "integer-array" => schema["items"] = json!({"type":"integer","minimum":0}),
+            "code-annotations" => schema["items"] = code_annotation_schema(),
+            "tree-nodes" => schema["items"] = tree_node_schema(),
             "ring-sections" => {
                 schema["items"] = json!({
                     "type":"object",
@@ -89,6 +100,28 @@ impl PropSpec {
 impl EventSpec {
     pub fn schema(&self) -> Value {
         match self.payload_type {
+            "markdown-task-toggle" => json!({
+                "type":"object",
+                "required":["checked","start","end"],
+                "additionalProperties":false,
+                "properties":{
+                    "checked":{"type":"boolean"},
+                    "start":{"type":"integer","minimum":0},
+                    "end":{"type":"integer","minimum":0}
+                }
+            }),
+            "range-value" => range_schema(),
+            "string-array" => json!({"type":"array","items":{"type":"string"}}),
+            "tag-rejection" => json!({
+                "type":"object","required":["tag","reason"],"additionalProperties":false,
+                "properties":{
+                    "tag":{"type":"string"},
+                    "reason":{"enum":["empty","duplicate","full","too-long"]}
+                }
+            }),
+            "tree-check" => tree_event_schema("checked", json!({"type":"boolean"})),
+            "tree-reorder" => tree_event_schema("before", json!({"type":"integer","minimum":0})),
+            "tree-edit" => tree_event_schema("value", tree_value_schema()),
             "selection" => json!({"type":["string","null"]}),
             "integer-array" => json!({"type":"array","items":{"type":"integer","minimum":0}}),
             ty => json!({"type":ty}),
@@ -184,4 +217,78 @@ impl WidgetSpec {
         }
         schema
     }
+}
+
+pub fn code_annotation_schema() -> Value {
+    let coordinate = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    json!({
+        "type":"object",
+        "additionalProperties":false,
+        "required":["id","line","start","end","kind"],
+        "properties":{
+            "id":coordinate,
+            "line":coordinate,
+            "endLine":coordinate,
+            "start":coordinate,
+            "end":coordinate,
+            "kind":{"enum":["highlight","underline","inline-hint","lens","bubble","symbol"]},
+            "payload":{"type":"string"},
+            "color":{"enum":["dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal","green","lime","yellow","orange"]}
+        }
+    })
+}
+
+fn tree_value_schema() -> Value {
+    json!({"type":["string","number","boolean","array"],"items":{"type":["number","string"]}})
+}
+
+fn tree_event_schema(field: &str, schema: Value) -> Value {
+    json!({
+        "type":"object",
+        "required":["id",field],
+        "additionalProperties":false,
+        "properties":{"id":{"type":"integer","minimum":0},field:schema}
+    })
+}
+
+pub fn tree_node_schema() -> Value {
+    json!({
+        "type":"object",
+        "required":["id","label"],
+        "additionalProperties":false,
+        "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+            "label":{"type":"string"},
+            "depth":{"type":"integer","minimum":0,"maximum":4096},
+            "unloaded":{"type":"boolean"},
+            "checked":{"type":"boolean"},
+            "icon":{"type":"string"},
+            "badge":{"type":"string"},
+            "height":{"type":"number","minimum":1,"maximum":4096},
+            "property":{
+                "type":"object",
+                "required":["type","value"],
+                "additionalProperties":false,
+                "properties":{
+                    "type":{"enum":["text","number","bool","enum","colour","vector","rect","flags","path"]},
+                    "value":tree_value_schema(),
+                    "default":tree_value_schema(),
+                    "readOnly":{"type":"boolean"},
+                    "choices":{"type":"array","items":{"type":"string"}},
+                    "description":{"type":"string"},
+                    "units":{"type":"string"},
+                    "min":{"type":"number"},
+                    "max":{"type":"number"},
+                    "step":{"type":"number","minimum":0},
+                    "mixed":{"type":"boolean"},
+                    "advanced":{"type":"boolean"},
+                    "multilineRows":{"type":"integer","minimum":1,"maximum":8}
+                }
+            }
+        }
+    })
+}
+
+fn range_schema() -> Value {
+    json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}})
 }

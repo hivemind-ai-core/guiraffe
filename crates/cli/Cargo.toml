@@ -18,9 +18,13 @@ gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-components.workspace = true
 guiraffe-ui.workspace = true
+guiraffe-code.workspace = true
 guiraffe-inputs.workspace = true
 guiraffe-layout.workspace = true
+guiraffe-markdown.workspace = true
+guiraffe-mermaid.workspace = true
 guiraffe-overlays.workspace = true
+guiraffe-tree.workspace = true
 guiraffe-mocket.workspace = true
 guiraffe-icons.workspace = true
 guiraffe-test = { workspace = true, features = ["inspect"] }

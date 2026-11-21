@@ -23,12 +23,6 @@ pub type Emit = Rc<dyn Fn(EventId, Value, u64, u32, &mut Window, &mut App)>;
 
 pub use crate::catalog::Schema;
 
-impl Schema {
-    pub(crate) fn prop_index(&self, name: &str) -> Option<usize> {
-        self.props.iter().position(|prop| *prop == name)
-    }
-}
-
 /// Everything a widget needs to render one node.
 pub struct NodeView<'a> {
     pub spec: &'a NodeSpec,

@@ -18,6 +18,12 @@
 //!     MermaidView::new("flow").source("flowchart LR\n  A --> B")
 //! }
 //! ```
+//! Use the same builder from `ui!`:
+//!
+//! ```ignore
+//! ui! { MermaidView("flow") { source: "flowchart LR\n  A --> B" } }
+//! ```
+
 pub mod engine;
 #[cfg(test)]
 mod host;
@@ -38,3 +44,34 @@ pub use source::{
 pub use theme::{DIAGRAM_FONT_SIZE, background_for, theme_for};
 pub use view::{MermaidView, MermaidViewState};
 pub use viewport::{MAX_ZOOM, MIN_ZOOM, Point, Viewport, ZOOM_STEP};
+
+use guiraffe_core::widget_spec;
+mod widget_specs;
+
+/// Register MermaidView for document authoring.
+pub fn init(cx: &mut gpui_kit::App) {
+    if !cx.has_global::<guiraffe_core::GuiraffeTheme>() {
+        guiraffe_core::init(cx);
+    }
+    use gpui_kit::IntoElement;
+    use guiraffe_core::{
+        widget_catalog::{WidgetRegistration, WidgetRegistry},
+        widget_spec::Schema,
+    };
+
+    WidgetRegistry::install(
+        cx,
+        &[WidgetRegistration {
+            spec: widget_specs::WIDGETS[0],
+            schema: &Schema {
+                props: &["source"],
+                events: &[],
+            },
+            render: |node, _, _, _| {
+                MermaidView::new(node.state_id())
+                    .source(node.prop(0).display())
+                    .into_any_element()
+            },
+        }],
+    );
+}

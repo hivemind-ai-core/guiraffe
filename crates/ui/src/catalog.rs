@@ -8,19 +8,31 @@ pub const VERSION: &str = "1.2.0";
 
 use crate::widget_spec;
 
+#[path = "../../code/src/widget_specs.rs"]
+mod code;
 #[path = "../../inputs/src/widget_specs.rs"]
 mod inputs;
 #[path = "../../layout/src/widget_specs.rs"]
 mod layout;
+#[path = "../../markdown/src/widget_specs.rs"]
+mod markdown;
+#[path = "../../mermaid/src/widget_specs.rs"]
+mod mermaid;
 #[path = "../../overlays/src/widget_specs.rs"]
 mod overlays;
+#[path = "../../tree/src/widget_specs.rs"]
+mod tree;
 
 pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
     WIDGETS
         .iter()
+        .chain(code::WIDGETS)
         .chain(inputs::WIDGETS)
         .chain(layout::WIDGETS)
+        .chain(markdown::WIDGETS)
+        .chain(mermaid::WIDGETS)
         .chain(overlays::WIDGETS)
+        .chain(tree::WIDGETS)
         .copied()
 }
 

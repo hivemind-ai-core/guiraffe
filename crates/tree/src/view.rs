@@ -2472,3 +2472,5 @@ mod tests {
         }
     }
 }
+
+pub(crate) mod document;

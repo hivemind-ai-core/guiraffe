@@ -22,7 +22,13 @@ pub static PASSWORD_STRENGTH: WidgetSpec = WidgetSpec {
     a11y_role: "meter",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&PASSWORD_STRENGTH, &CHIP_GROUP];
+pub const WIDGETS: &[&WidgetSpec] = &[
+    &PASSWORD_STRENGTH,
+    &CHIP_GROUP,
+    &RANGE_SLIDER,
+    &DROPZONE,
+    &TAGS_INPUT,
+];
 
 const fn option(
     name: &'static str,
@@ -69,6 +75,94 @@ pub static CHIP_GROUP: WidgetSpec = WidgetSpec {
         payload_type: "integer-array",
     }],
     state: "controlled or uncontrolled selection",
+    theme_tokens: &[],
+    a11y_role: "group",
+};
+
+pub static RANGE_SLIDER: WidgetSpec = WidgetSpec {
+    id: "range-slider",
+    krate: "inputs",
+    summary: "Two-thumb slider. The value is an array of low and high bounds.",
+    props: &[
+        option("min", "number", "0"),
+        option("max", "number", "100"),
+        option("step", "number", "1"),
+        option("min-distance", "number", "0"),
+        option("value", "range-value", "[0,100]"),
+        option("label", "string", "\"Range\""),
+        option("disabled", "boolean", "false"),
+        option("focusable", "boolean", "null"),
+    ],
+    accepts_children: false,
+    events: &[super::widget_spec::EventSpec {
+        id: "change",
+        payload_type: "range-value",
+    }],
+    state: "controlled or uncontrolled range",
+    theme_tokens: &[],
+    a11y_role: "slider",
+};
+
+pub static DROPZONE: WidgetSpec = WidgetSpec {
+    id: "dropzone",
+    krate: "inputs",
+    summary: "File-drop target with extension or MIME-family filters and a browse event.",
+    props: &[
+        option("accept", "array", "[]"),
+        option("label", "string", "\"Drop files\""),
+        option("disabled", "boolean", "false"),
+        option("focusable", "boolean", "null"),
+    ],
+    accepts_children: false,
+    events: &[
+        super::widget_spec::EventSpec {
+            id: "accept",
+            payload_type: "string-array",
+        },
+        super::widget_spec::EventSpec {
+            id: "reject",
+            payload_type: "string-array",
+        },
+        super::widget_spec::EventSpec {
+            id: "browse",
+            payload_type: "null",
+        },
+    ],
+    state: "keyed focus and drag target",
+    theme_tokens: &[],
+    a11y_role: "button",
+};
+
+pub static TAGS_INPUT: WidgetSpec = WidgetSpec {
+    id: "tags-input",
+    krate: "inputs",
+    summary: "Editable string tags with duplicate and length rules.",
+    props: &[
+        option("value", "array", "[]"),
+        option("placeholder", "string", "\"\""),
+        option("allow-duplicates", "boolean", "false"),
+        option("split-chars", "string", "\",\""),
+        PropSpec {
+            range: Some((0.0, 65536.0)),
+            ..option("max-tags", "number", "null")
+        },
+        PropSpec {
+            range: Some((0.0, 65536.0)),
+            ..option("max-len", "number", "64")
+        },
+    ],
+    accepts_children: false,
+    events: &[
+        super::widget_spec::EventSpec {
+            id: "change",
+            payload_type: "string-array",
+        },
+        super::widget_spec::EventSpec {
+            id: "reject",
+            payload_type: "tag-rejection",
+        },
+    ],
+    state: "controlled or uncontrolled tags",
     theme_tokens: &[],
     a11y_role: "group",
 };

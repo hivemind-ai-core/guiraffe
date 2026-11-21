@@ -238,7 +238,11 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
         .run(move |cx: &mut App| {
             guiraffe_inputs::init(cx);
             guiraffe_layout::init(cx);
+            guiraffe_code::init(cx);
+            guiraffe_markdown::init(cx);
+            guiraffe_mermaid::init(cx);
             guiraffe_overlays::init(cx);
+            guiraffe_tree::init(cx);
             let title = format!("GUIraffe preview — {}", path.display());
             let opened = cx.open_window(
                 gpui_kit::WindowOptions {

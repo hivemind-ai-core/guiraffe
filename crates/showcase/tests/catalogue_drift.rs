@@ -7,6 +7,7 @@ use std::{collections::BTreeSet, path::Path};
 
 fn kind(surface: &str) -> Option<&'static str> {
     Some(match surface {
+        "code::CodeViewer" => "code-viewer",
         "components::Card" => "card",
         "components::Highlight" => "highlight",
         "components::Pill" => "pill",
@@ -15,11 +16,17 @@ fn kind(surface: &str) -> Option<&'static str> {
         "components::Title" => "title",
         "inputs::ChipGroup" => "chip-group",
         "inputs::PasswordStrength" => "password-strength",
+        "inputs::Dropzone" => "dropzone",
+        "inputs::RangeSlider" => "range-slider",
+        "inputs::TagsInput" => "tags-input",
         "layout::AspectRatio" => "aspect-ratio",
         "layout::Center" => "center",
         "layout::Space" => "space",
+        "markdown::MarkdownView" => "markdown",
+        "mermaid::MermaidView" => "mermaid",
         "overlays::Affix" => "affix",
         "overlays::LoadingOverlay" => "loading-overlay",
+        "tree::TreeView" => "property-grid",
         _ => return None,
     })
 }
@@ -37,6 +44,58 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "inputs::PasswordStrength::strength",
         "The meter derives this read-only score from its password.",
+    ),
+    (
+        "markdown::MarkdownView::state",
+        "A document supplies source data. An application-owned MarkdownState entity is a Rust API.",
+    ),
+    (
+        "mermaid::MermaidView::state",
+        "The document owns keyed state and supplies diagram source through a property.",
+    ),
+    (
+        "mermaid::MermaidView::create_state",
+        "Allocates an application-owned entity for callers building a view in Rust.",
+    ),
+    (
+        "tree::TreeView::expand_loaded",
+        "An imperative batch command. Documents name the desired expanded row ids.",
+    ),
+    (
+        "tree::TreeView::collapse_all",
+        "An imperative command. Setting expanded to an empty list closes every row.",
+    ),
+    (
+        "inputs::Dropzone::disabled",
+        "Read-only accessor for the disabled property.",
+    ),
+    (
+        "inputs::Dropzone::receive",
+        "Host-side delivery of native paths. Document users receive accept or reject events from the drop surface.",
+    ),
+    (
+        "inputs::RangeSlider::values",
+        "Read current bounds through the value binding.",
+    ),
+    (
+        "inputs::RangeSlider::set",
+        "Drive either thumb through the value pair.",
+    ),
+    (
+        "inputs::TagsInput::input_for_test",
+        "Test-only native editor reference.",
+    ),
+    (
+        "inputs::TagsInput::tags",
+        "Read the current list through the value binding.",
+    ),
+    (
+        "inputs::TagsInput::add",
+        "Update the value list or use the input.",
+    ),
+    (
+        "inputs::TagsInput::remove",
+        "Update the value list or use the remove control.",
     ),
 ];
 
@@ -66,6 +125,11 @@ fn covered(surface: &str) -> bool {
                 ("components::RingProgress", "section") => "sections".into(),
                 ("layout::Space", "h") => "height".into(),
                 ("layout::Space", "w") => "width".into(),
+                ("tree::TreeView", "inspector_controls") => "searchable".into(),
+                ("tree::TreeView", "row_style" | "set_row_style") => "density".into(),
+                ("tree::TreeView", "row_heights" | "set_row_heights" | "replace_source") => {
+                    "nodes".into()
+                }
                 (_, name) => name.strip_prefix("set_").unwrap_or(name).replace('_', "-"),
             };
             let event = method
