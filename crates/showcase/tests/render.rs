@@ -64,6 +64,117 @@ fn every_entry_renders_in_both_themes() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Kanban mid-drag: "Create demo" lifted from Done and held between the two Backlog cards.
+/// The golden shows the elevated preview, the highlighted target column and the insertion
+/// line, which a static render cannot reach.
+#[test]
+fn kanban_mid_drag() {
+    use gpui_kit::{
+        AnyWindowHandle, HeadlessAppContext, InputEvent, MouseButton, MouseDownEvent,
+        MouseMoveEvent, PlatformInput, point, test::TestWindowExt,
+    };
+    if std::env::var("SHOWCASE_ONLY").is_ok_and(|only| !"kanban".contains(only.as_str())) {
+        return;
+    }
+    let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    let mut failures = Vec::new();
+    for scheme in [Scheme::Light, Scheme::Dark] {
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut cx = HeadlessAppContext::with_platform(
+            text,
+            std::sync::Arc::new(guiraffe_icons::GuiraffeAssets),
+            gpui_kit::platform::current_headless_renderer,
+        );
+        let window = cx
+            .open_window(size(px(1100.), px(760.)), move |window, cx| {
+                guiraffe_showcase::init(cx);
+                apply(
+                    GuiraffeTheme {
+                        scheme,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                guiraffe_showcase::snapshot_window_root(Some("Kanban"), window, cx)
+            })
+            .unwrap_or_else(|err| panic!("{err:#}"));
+        let handle: AnyWindowHandle = window.into();
+        let frame = |cx: &mut HeadlessAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                let _ = window.draw(cx);
+            })
+            .unwrap_or_else(|err| panic!("{err:#}"));
+            cx.run_until_parked();
+        };
+        let send = |cx: &mut HeadlessAppContext, event: PlatformInput| {
+            cx.update_window(handle, |_, window, cx| {
+                window.dispatch_event(event, cx);
+            })
+            .unwrap_or_else(|err| panic!("{err:#}"));
+            cx.run_until_parked();
+        };
+        let held = |position| {
+            MouseMoveEvent {
+                position,
+                pressed_button: Some(MouseButton::Left),
+                ..Default::default()
+            }
+            .to_platform_input()
+        };
+        frame(&mut cx);
+        frame(&mut cx);
+        let (from, to) = cx
+            .update_window(handle, |_, window, _| {
+                let card = window.find(("card", 3_usize)).bounds().center();
+                let below = window.find(("card", 1_usize)).bounds();
+                (
+                    card,
+                    point(below.center().x - px(40.), below.top() + px(6.)),
+                )
+            })
+            .unwrap_or_else(|err| panic!("{err:#}"));
+        send(
+            &mut cx,
+            MouseMoveEvent {
+                position: from,
+                ..Default::default()
+            }
+            .to_platform_input(),
+        );
+        send(
+            &mut cx,
+            MouseDownEvent {
+                button: MouseButton::Left,
+                position: from,
+                click_count: 1,
+                ..Default::default()
+            }
+            .to_platform_input(),
+        );
+        send(&mut cx, held(from + point(px(-20.), px(-10.))));
+        frame(&mut cx);
+        send(&mut cx, held(to));
+        frame(&mut cx);
+        frame(&mut cx);
+        let img = cx
+            .capture_screenshot(handle)
+            .unwrap_or_else(|err| panic!("capture: {err:#}"));
+        let tag = format!(
+            "kanban/dragging-{}",
+            if scheme == Scheme::Light {
+                "light"
+            } else {
+                "dark"
+            }
+        );
+        if let Err(err) = assert_snapshot(&tag, &img, &cfg) {
+            failures.push(format!("{tag}: {err:#}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn recipes_match_the_generated_screen_schema() {
     let schema = serde_json::from_str(guiraffe_ui::catalogue_artifacts::SCREEN_SCHEMA)

@@ -41,6 +41,4 @@
 - [x] palette polish: light-mode tinted and subtle text preserves the palette hue when contrast requires going beyond its darkest shade.
 
 ## DnD showcase polish (foreman golden review, 2026-11-18)
-- Kanban: the "Drop at end" target renders like a real card in every column; make it a subtle dashed drop zone shown only while dragging (or when the column is empty).
-- IDE layout: "Left / Bottom / Right" panel toggles are bare text; use ActionIcon/segmented toggles.
 - Tree/flame demo polish landed in feat-flame-tree; DataGrid/CodeViewer, Flow/Timeline/Charts wall-clock budgets pending the quiet-machine run.
