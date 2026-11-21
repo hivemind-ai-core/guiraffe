@@ -322,13 +322,13 @@ impl PreparedChart {
                 _ => run.visible(min, max, false),
             };
             if !run.pick_bounds.is_empty() {
-                let mut search = LinePick {
+                let mut search = PointPick {
                     range,
                     cursor,
                     distance,
                     hit: None,
                 };
-                projection.pick_line(1, 0..run.pick_bounds.len() / 2 * PICK_BLOCK, &mut search);
+                projection.pick_points(1, 0..run.pick_bounds.len() / 2 * PICK_BLOCK, &mut search);
                 if search.hit.is_some() {
                     best = search.hit;
                     distance = search.distance;
@@ -371,7 +371,9 @@ impl PreparedChart {
 
 impl Run {
     pub(crate) fn build_pick_bounds(&mut self, cancelled: &impl Fn() -> bool) {
-        if self.mark != Mark::Line || self.rows.len() <= PICK_BLOCK {
+        if !matches!(self.mark, Mark::Line | Mark::Point | Mark::Bubble)
+            || self.rows.len() <= PICK_BLOCK
+        {
             return;
         }
         let leaves = self.rows.len().div_ceil(PICK_BLOCK).next_power_of_two();
@@ -447,7 +449,7 @@ fn scatter_candidates(visible: Range<usize>, budget: usize) -> impl Iterator<Ite
     })
 }
 
-struct LinePick {
+struct PointPick {
     range: Range<usize>,
     cursor: Position,
     distance: f32,
@@ -462,7 +464,7 @@ struct Projection<'a> {
 }
 
 impl Projection<'_> {
-    fn pick_line(&self, node: usize, block: Range<usize>, search: &mut LinePick) {
+    fn pick_points(&self, node: usize, block: Range<usize>, search: &mut PointPick) {
         let start = block.start.max(search.range.start);
         let end = block.end.min(search.range.end);
         if start >= end {
@@ -494,8 +496,8 @@ impl Projection<'_> {
         // Descending index preserves the linear scan's last-wins tie rule.
         if block.len() > PICK_BLOCK {
             let mid = block.start + block.len() / 2;
-            self.pick_line(2 * node + 1, mid..block.end, search);
-            self.pick_line(2 * node, block.start..mid, search);
+            self.pick_points(2 * node + 1, mid..block.end, search);
+            self.pick_points(2 * node, block.start..mid, search);
             return;
         }
         for index in (start..end).rev() {
@@ -1025,15 +1027,16 @@ mod tests {
 
     proptest::proptest! {
         #[test]
-        fn indexed_line_pick_matches_linear_scan(
+        fn indexed_pick_matches_linear_scan(
             values in proptest::collection::vec((1u16..80, 1u16..80), 257..800),
             x in 0f32..600.,
             y in 0f32..300.,
             radius in 0f32..100.,
             log_scale in proptest::bool::ANY,
+            scatter in proptest::bool::ANY,
         ) {
             let mut spec = ChartSpec::new("hover").layer(Layer::new(
-                Mark::Line,
+                if scatter { Mark::Point } else { Mark::Line },
                 values,
                 Channels::new(|row: &(u16, u16)| f64::from(row.0), |row| f64::from(row.1)),
             ));
