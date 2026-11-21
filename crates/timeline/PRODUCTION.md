@@ -119,3 +119,16 @@ An upstream probe used the bench counting allocator around one
 This includes the entire GPUI window refresh. The measured repaint traffic
 stayed flat as the source grew, and the zero-allocation criterion remains
 open.
+
+Regression tests cover viewport row counts through 10M rows, pixel-accurate
+coordinates near row 9M, horizontal interval culling, two-pixel milestones,
+and dependency endpoint culling with each shared edge emitted once
+([Gantt view tests](src/gantt_view.rs)). The scheduler tests check ordered
+adjacency and reuse of a plan after timing edits ([scheduler tests](src/gantt.rs)).
+A mounted interaction test scrolls a 10k-task chart to its last row and
+selects the bar in the scrolled coordinate system ([interaction tests](tests/interactions.rs)).
+
+The eight refreshed timeline and showcase goldens were inspected in both
+themes on both GPUI backends. Pixel changes were confined to Gantt rendering
+around its borders and dependency paths. Lock badges, critical-path colors
+and coincident arrowheads remain visible.
