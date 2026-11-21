@@ -73,10 +73,62 @@ fn geometry(tasks: &[Task]) -> Rc<Geometry> {
     })
 }
 
+const BAR_LABEL_CACHE_SIZE: usize = 128;
+
+struct BarLabel {
+    row: usize,
+    start: u64,
+    finish: u64,
+    text: gpui_kit::SharedString,
+}
+
+#[derive(Default)]
+struct BarLabels(Vec<Option<BarLabel>>);
+
+impl BarLabels {
+    fn get(
+        &mut self,
+        row: usize,
+        name: &str,
+        scheduled: Scheduled,
+        format: TimeFormat,
+    ) -> gpui_kit::SharedString {
+        if self.0.is_empty() {
+            self.0.resize_with(BAR_LABEL_CACHE_SIZE, || None);
+        }
+        let start = scheduled.early_start.to_bits();
+        let finish = scheduled.early_finish.to_bits();
+        let slot = &mut self.0[row % BAR_LABEL_CACHE_SIZE];
+        if let Some(hit) = slot
+            && (hit.row, hit.start, hit.finish) == (row, start, finish)
+        {
+            return hit.text.clone();
+        }
+        let text: gpui_kit::SharedString = format!(
+            "{name}: {} – {}",
+            label(scheduled.early_start, format),
+            label(scheduled.early_finish, format)
+        )
+        .into();
+        *slot = Some(BarLabel {
+            row,
+            start,
+            finish,
+            text: text.clone(),
+        });
+        text
+    }
+
+    fn clear(&mut self) {
+        self.0.fill_with(|| None);
+    }
+}
+
 pub struct GanttView {
     geometry: Rc<Geometry>,
     tasks: Vec<Task>,
     schedule: Rc<Result<HashMap<u32, Scheduled>, ScheduleError>>,
+    bar_labels: BarLabels,
     surface: crate::PlotSurface,
     format: TimeFormat,
     lock_style: crate::LockStyle,
@@ -118,6 +170,7 @@ impl GanttView {
         let axis = Axis::new(lo, hi, 800.0);
         cx.new(|cx| Self {
             geometry,
+            bar_labels: BarLabels::default(),
             tasks,
             schedule: Rc::new(schedule),
             surface: crate::PlotSurface::timeline(axis, format),
@@ -233,6 +286,7 @@ impl GanttView {
     }
 
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
+        self.bar_labels.clear();
         self.tasks = tasks;
         self.geometry = geometry(&self.tasks);
         self.schedule = Rc::new(self.geometry.schedule(&self.tasks));
@@ -719,7 +773,8 @@ impl Render for GanttView {
         let geo = self.geometry.clone();
         let schedule = self.schedule.clone();
         let paint_schedule = schedule.clone();
-        let scheduled = self.schedule().as_ref().ok();
+        let scheduled = self.schedule.as_ref().as_ref().ok();
+        let bar_labels = &mut self.bar_labels;
         let editable = self.editable;
         let item_style = self.lock_style;
         let global_style = self.global_lock_style;
@@ -971,11 +1026,7 @@ impl Render for GanttView {
                                         .id(("gantt-bar", i))
                                         .test_support()
                                         .role(Role::ListBoxOption)
-                                        .aria_label(format!(
-                                            "{name}: {} – {}",
-                                            label(sc.early_start, format),
-                                            label(sc.early_finish, format)
-                                        ))
+                                        .aria_label(bar_labels.get(i, name.as_ref(), sc, format))
                                         .aria_selected(on)
                                         .aria_position_in_set(i + 1)
                                         .aria_size_of_set(row_count)
@@ -1072,6 +1123,35 @@ mod tests {
         assert_eq!(bar_interval(axis, bar(100.0, 102.0)), None);
         assert_eq!(bar_interval(axis, bar(-12.0, 8.0)), Some((-12.0, 20.0)));
         assert_eq!(bar_interval(axis, bar(10.0, 10.01)), Some((10.0, 2.0)));
+    }
+
+    #[test]
+    fn bar_labels_reuse_shared_text_until_timing_or_row_changes() {
+        let mut labels = BarLabels::default();
+        let mut scheduled = Scheduled {
+            early_start: 1.0,
+            early_finish: 2.0,
+            late_start: 1.0,
+            late_finish: 2.0,
+        };
+        let original = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
+        let reused = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
+        assert_eq!(original.as_ptr(), reused.as_ptr());
+        scheduled.early_finish = 3.0;
+        let updated = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
+        assert_ne!(original, updated);
+        labels.get(
+            BAR_LABEL_CACHE_SIZE,
+            "Other",
+            scheduled,
+            TimeFormat::Seconds,
+        );
+        let restored = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
+        assert_eq!(restored, updated);
+        assert_ne!(restored.as_ptr(), updated.as_ptr());
+        labels.clear();
+        let renamed = labels.get(0, "Renamed", scheduled, TimeFormat::Seconds);
+        assert!(renamed.starts_with("Renamed"));
     }
 
     #[test]
