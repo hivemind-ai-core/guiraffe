@@ -145,7 +145,14 @@ impl Inventory {
                         }
                     }
                 }
-                Item::Macro(item) if item.mac.path.is_ident("props") => {
+                Item::Macro(item)
+                    if item
+                        .mac
+                        .path
+                        .segments
+                        .last()
+                        .is_some_and(|name| name.ident == "props") =>
+                {
                     // GUIraffe's props! DSL is Type { setter: ValueType => field, ... }.
                     let mut tokens = item.mac.tokens.clone().into_iter();
                     if let (
@@ -216,6 +223,7 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
             pub fn new_prop(self) -> Self { self }
         }
         props!(ButtonView { macro_prop: Size => size });
+        crate::props!(ButtonView { qualified_prop: bool => flag });
         pub type Alias = ButtonView;
         pub struct ViewOptions { pub newer: bool, internal: bool }
         pub fn factory() -> (Entity<DockArea>, Entity<ButtonView>) { todo!() }
@@ -236,6 +244,7 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
             "fixture::ButtonView".into(),
             "fixture::ButtonView::macro_prop".into(),
             "fixture::ButtonView::new_prop".into(),
+            "fixture::ButtonView::qualified_prop".into(),
             "fixture::fn factory".into(),
             "fixture::ViewOptions::field newer".into(),
         ])
