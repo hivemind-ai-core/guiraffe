@@ -367,7 +367,7 @@ pub fn run(short: bool) -> Result<()> {
                         }
                     }
                     Phase::Theme if step.is_multiple_of(4) => guiraffe_core::set_scheme(
-                        if step % 8 == 0 {
+                        if step.is_multiple_of(8) {
                             guiraffe_core::Scheme::Dark
                         } else {
                             guiraffe_core::Scheme::Light
