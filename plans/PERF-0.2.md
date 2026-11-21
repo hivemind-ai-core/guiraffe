@@ -22,14 +22,26 @@ timing, merges). Workers never merge, push or create branches other than their o
 - Wall-clock numbers only count from the foreman's quiet-window runs. Workers iterate with profiles,
   instruction counts, allocation counts and scaling tests, and may take rough local timings.
 
-## Baseline (quiet machine, 2026-11-21, release, upstream backend)
-| scenario | mount | p50 / p95 / p99 / max frame | RSS | RSS limit | verdict |
-|---|---|---|---|---|---|
-| timeline (dope sheet 100×1000 keys) | 25 ms | 6.0 / 12.0 / 13.5 / 17.2 ms | 45 MiB | ~66 MiB | p99 ❌ |
-| chart-line (10M pts) | 6 ms | 2.3 / 5.2 / 5.8 / 8.2 ms | 1.86 GiB | ~255 MiB | memory ❌ (7×) |
-| chart-scatter (1M pts) | 12 ms | 7.1 / 15.9 / 17.6 / 18.7 ms | 216 MiB | ~84 MiB | p99 ❌, memory ❌ |
-| flow (50k nodes) | 226 ms | 4.0 / 5.6 / 6.7 / 8.5 ms | 314→409 MiB in 10 s | tbd | mount ❌, drift ❌ |
-| grid / code / flamegraph / tree / gantt / tracks / curve+bar editors / markdown / mermaid / chat | — | — | — | — | not yet probed mounted |
+## Baseline (quiet machine, 2026-11-21 01:19, release, upstream backend; `soak <x> --short`, `production_soak`)
+| scenario (scale) | mount | p50 / p95 / p99 / max frame | RSS | verdict |
+|---|---|---|---|---|
+| curve-editor (100k keys) | 17 ms | 1.9 / 3.9 / 4.6 / 6.4 ms | 27 MiB | ✅ |
+| property-grid (110k rows) | 11 ms | 1.4 / 4.7 / 6.1 / 9.3 ms | 29 MiB | ✅ (max > 8) |
+| chart-stream (10k pts/s) | 4 ms | 0.4 / 2.2 / 2.9 / 4.2 ms | 26 MiB | ✅ |
+| grid (production_soak) | 36 ms | 5.1 / 5.6 / 7.3 / 7.3 ms | 178 MiB | ✅ tight |
+| code (production_soak) | 26 ms | 0.3 / 0.3 / 0.5 / 0.5 ms | 345 MiB | ❌ memory (raw 20 MB) |
+| timeline / dope sheet (100×1000 keys) | 22 ms | 5.6 / 11.0 / 13.5 / 16.1 ms | 48 MiB | ❌ p99 |
+| chart-line (10M pts) | 7 ms | 2.4 / 5.2 / 6.0 / 7.8 ms | 1.82 GiB | ❌ memory (limit ~255 MiB) |
+| chart-scatter (1M pts) | 11 ms | 7.4 / 20.0 / 21.6 / 23.3 ms | 219 MiB | ❌ p99, memory (~84 MiB) |
+| flow (50k / 100k) | 221 ms | 4.1 / 5.5 / 6.9 / 9.5 ms | 316→412 MiB | ❌ mount, drift |
+| bar-editor (100k bars) | 18 ms | 0.02 / 22.5 / 24.2 / 25.4 ms | 19 MiB | ❌ p99 (strokes) |
+| tree (1M nodes, 100k expanded) | 81 ms | 0.8 / 61.1 / 64.0 / 82.8 ms | 124 MiB | ❌ p99 |
+| flamegraph (10M frames) | 1.47 s | 56 / 336 / 343 / 343 ms | 729 MiB | ❌ all |
+| tracks (100k clips) | 2.41 s | 330–487 / 724–1055 / 746–1055 ms | 721 MiB | ❌ all |
+| markdown (50k lines + streaming) | 4.69 s | 2.3 / 46.8 / 48.9 / 51.7 ms | 799 MiB | ❌ all |
+| mermaid (500 nodes) | 31.8 s | 0.04 / 0.5 / 15.7 / 17.2 ms | 33 MiB | ❌ mount, zoom spike |
+| gantt (100k bars + deps) | 26.7 s | 6.7 / 6.97 s / – | 6.66 GiB | ❌ all, catastrophic |
+| chat (100k messages + streaming) | 130.5 s | 1.4 / 2.8 / 3.3 / 16.2 ms | 4.49 GiB | ❌ mount, memory |
 
 ## Diagnoses (from samply profiles in perf-run/, reviewed by foreman)
 - **Charts scatter**: 56 % `Projection::generate` — every zoom step re-projects all 1M points and rebuilds the
