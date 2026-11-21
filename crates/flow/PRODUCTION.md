@@ -6,7 +6,7 @@ Audited against [spec/23](../../spec/23-production-readiness.md) at source revis
 | --- | --- | --- |
 | §1 Scale | ⚠️ Open | 50k nodes / 100k edges exercised by `flow-build-50k`, `flow-pan-hit-50k` and the headless soak. The zoomed-out view uses coarse regions from the node BVH. [Coverage and primitive-count check](../flow-core/tests/review_2.rs). |
 | §2 Latency | ⚠️ Open | Core build median 213.26 ms. Three viewport queries plus hits took 18.67 µs median. The tested headless camera path had significant tail latency. The [headless replay](../../bench/examples/soak.rs) exercises initial overview and detailed camera motion. Scene construction on the UI thread and native input-to-frame evidence remain open. |
-| §3 Memory | ⚠️ Open | Zero warm allocations in the scale core pan/hit test. A default node payload fits 256 B including handles and type strings. The test excludes scene/index/map overhead and arbitrary host data. Dense minimaps now submit at most 8,100 vertices per layer. Native rendering allocates and caches meshes as nodes/edges enter view. |
+| §3 Memory | ⚠️ Open | Zero warm allocations in the scale core pan/hit test. Default nodes share their handle list and type name, so a default node payload is its inline struct (gate: ≤160 B). The 50k-node / 100k-edge soak document, its BVHs and incidence lists stay inside a live-heap byte budget ([memory.rs](../flow-core/tests/memory.rs)); see [Document storage](#document-storage). The probe's peak RSS delta is 36.4 MiB upstream and 46.3 MiB on gpui-fast, inside the 68.4 MiB limit. Dense minimaps now submit at most 8,100 vertices per layer. Native rendering allocates and caches meshes as nodes/edges enter view. |
 | §4 Correctness and robustness | ⚠️ Open | Randomized editor operations match a reference undo/redo history, and BVH updates match a linear scan. [Property tests](../flow-core/tests/review_2.rs). Flow retains existing native selection, gesture and reduced-motion coverage. Parser fuzz, the complete input/viewport matrix and background-cancellation verification remain open. |
 | §5 Long-session and stress | ⚠️ Open | The shared headless soak runner supports camera pan/zoom, 10-second RSS/PSS samples and a short CI mode. The full 30-minute run, native inspect/drive replay and editing workload remain open. |
 | §6 Accessibility and UX | ⚠️ Open | Keyboard canvas commands exist. Audit handle navigation and announcement. Capture scale viewport positions on both themes and backends. |
@@ -40,6 +40,57 @@ The zoom regression measures arrow proportions and handle contact at 0.25×,
 snapshots on both GPUI backends. Arrowheads, handles, open-marker strokes,
 animated markers and connection previews share the camera scale.
 
+
+## Document storage
+
+The memory limit for the `soak flow` probe (50,000 nodes, 100,000 edges) is
+1.25 × raw data + 64 MiB = 68.4 MiB of peak RSS over an empty window.
+Release runs on a loaded host, with the replay forced even when mount exceeded
+200 ms:
+
+| Backend | Peak RSS delta before | After |
+| --- | ---: | ---: |
+| upstream | 73.5 MiB | 36.4 MiB |
+| gpui-fast | 83.5 MiB | 46.3 MiB |
+
+Most of the saving is in the `Graph` document. Its requested live bytes
+went from 43.4 MB to 17.3 MB:
+
+| Storage | Bytes |
+| --- | ---: |
+| Node map entry, including the `Node {i}` label | 133 B per node |
+| Edge map entry | 106 B per edge |
+| Immutable node and edge BVHs | 4.1 MB, about 28 B per entry |
+| Incident-edge lists (built on first use) | 2.4 MB, 8 B per endpoint + 16 B per node |
+
+Three changes produce these numbers:
+
+- Handle ids, endpoint handles and node types are `Name`s (shared `Arc<str>`).
+  `"in"`, `"out"`, `"default"` and `""` are interned, so default nodes and
+  edges store no string bytes for them.
+- `Node::handles` is a copy-on-write `Handles` list. Every node built by
+  `Node::new` shares one default `in`/`out` list. Mutable access copies it.
+- `Graph::from_parts` bulk-loads both `im::OrdMap`s with full leaves.
+  Ascending inserts split 64-entry nodes at the median and leave every node half
+  full, which doubles the per-entry cost. The loader inserts a spaced
+  ascending subset first, then fills the gaps without splitting. Edits after
+  load copy only the touched path, as before. Maps built by repeated
+  `insert` or by deserialization keep the half-full layout.
+
+The `memory.rs` test fails if the soak document exceeds 20,000,000 B
+(400 B per node with its two edges). It also fails if the document plus
+indexes and incidence lists exceeds 27,000,000 B. Before these changes the
+document alone took 43.4 MB.
+
+Retained caches have fixed bounds that do not depend on graph size:
+
+| Cache | Bound |
+| --- | --- |
+| Eager edge meshes | 8,192 routes and 16 MiB of vertex data |
+| Deferred route meshes (edge, half-octave zoom bucket) | 1,024 entries and 1 MiB |
+| Dense minimap | 8,100 vertices per layer, one retained representation |
+| Grid | one retained mesh per canvas size, spacing and background |
+| Zoomed-out preview before index publication | 4,096 occupied cells |
 
 ## Retained paint geometry
 

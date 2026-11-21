@@ -65,6 +65,27 @@ batches; nothing goes to main without the user.
 - [ ] Startup study: per-phase warm/cold breakdown, floor vs empty GPUI / bare wgpu window, levers
       (EGL deferral, shader cache, parallel init, lazy init, linking); cold start needs a page-cache
       drop (sudo).
+- [ ] Flicker free component property changes. Many components flicker when chaninging their properties 
+      (eg code viewer, toggling marks/inlays being enabled/disabled, property tree toggling alternating
+      row colors, etc), likely because they paint an "empty state" before painting the new state. This
+      flicker needs to be eliminated. Most pronounced in debug builds, but it seems to be because it
+      paints an empty frame before the updated frame and in release builds the empty frame is so fast
+      that its harder to notice. Most pronounced when toggling the code viewer minimap on and off.
+- [ ] In the showcase, the code viewer minimap has a strange red line through the middle. If its meant
+      to highlight the gutter icons, then it doesn't match the gutter colours and is oddly positioned.
+- [ ] Animate everything. An option to animate all layout changes, eg when something is added to a list,
+      or a state is toggled, that causes the size to change (eg collapsing a property list group) it
+      should (optionally) animate by lerping between the old and new size.
+- [ ] PropertyGrid options (user 2026-11-21): (a) `focus_row(bool)` — when disabled, a row is never
+      focused/highlighted, even while its value is being edited; (b) reset affordance configurable
+      (`reset_button(bool)` / per-property) — today "Reset" always shows when value ≠ default
+      (crates/tree/src/view.rs:1412). Bundle with the PropertyGrid editing items below.
+- [ ] The property tree component visual bugs: when editing text in the showcase text value, the textboxes
+      bottom border spills below the rows space. Additionally, the input should default to a single line
+      input where pressing enter saves it (save button, tick/x icons should be optional settings).
+      Need to be able to tab to the next property value (and shift+tab) to the previous.
+      Multiline text should make the row expand to multiple lines, look at other GUI property lists for
+      inspiration (godot, unity, blender, etc).
 
 ## Later / out of scope for now
 - macOS/Windows CI and testing; crates.io publishing; multi-window docking (0.3).
