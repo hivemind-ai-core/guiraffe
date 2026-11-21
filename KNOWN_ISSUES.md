@@ -33,3 +33,36 @@ uses shared state with targeted row/view notifications, and CodeViewer uses
 targeted text/overlay notifications. Their strict render-count assertions
 also apply on gpui-fast. TreeList and PropertyGrid retain a strict
 gpui-fast assertion for expansion and scrolling.
+
+### Desktop notifications and system tray (0.2)
+
+| Feature | Linux (Wayland/niri) | Linux X11 | macOS | Windows |
+|---|---|---|---|---|
+| System notifications (`overlays::desktop`, notify-rust) | Tested: delivery errors surface as `Failed(Unavailable)` events when no daemon runs; actions/close/replace covered by mock-backend tests (no daemon on the dev machine) | same D-Bus path, untested | **Untested, not compiled here**: delivery only, no action/close events | **Untested, not compiled here**: delivery only |
+| Notification windows (`windows::notify`) | Tested: wlr-layer-shell overlay surface, anchored to the corner | Positioned `PopUp` window, untested | **Untested** | **Untested** |
+| System tray (`guiraffe-tray`, feature `native`) | Tested: ksni StatusNotifierItem registers with waybar's watcher | same (SNI is display-server independent) | **Untested, not compiled here** (tray-icon 0.26) | **Untested, not compiled here** (tray-icon 0.26) |
+
+- **No cross-target build.** This machine has no macOS/Windows Rust targets or SDKs; the `cfg(macos/windows)` code
+  in `overlays/src/desktop/platform.rs` and `tray/src/native.rs` was written against the notify-rust 4.19 and
+  tray-icon 0.26 / muda 0.21 sources but has never been compiled. Build it on those platforms before relying on it.
+- **macOS/Windows system notifications report nothing back.** notify-rust delivers them but exposes no click,
+  action or close callbacks there (`Capabilities::NONE`). GPUI's own `show_system_notification` API could fill
+  this gap later.
+- **freedesktop: after an action the close reason is not reported.** notify-rust stops listening at the first
+  signal, so an `Action` event is terminal and the server's following `NotificationClosed` is not seen.
+- **Notification windows on Wayland need wlr-layer-shell.** niri, sway, Hyprland, KDE have it. GNOME/Mutter does
+  not: the surface falls back to a regular pop-up window whose position and stacking the compositor decides
+  (`PlacementUsed::CompositorPlaced`). Prefer system notifications there.
+- **Notification windows on X11/macOS/Windows:** GPUI cannot move a window, so a bottom-corner stack whose height
+  changes is closed and re-opened at its new origin (a brief flicker); top corners resize in place. Untested.
+- **Card bodies are clamped to two lines** so every card has a fixed, pure-computable height (no measuring
+  loop); a one-line body leaves the second line empty.
+- **Hover pause in tests:** the GPUI test platform reports the pointer at the window origin, so tests move it
+  out first; real platforms report the real pointer.
+- **Tray double-click** is synthesized from two activations within 400 ms on SNI and macOS (only Windows reports a
+  native double click); the first click is still delivered as `Click`.
+- **Minimize-to-tray closes the window** (`HideMode::Close`, re-opened through `WindowManager` with its saved
+  bounds): Wayland has no hidden-window state, and niri/sway have no minimized state either. It sets
+  `QuitPolicy::Never`; provide a Quit menu item. Without a tray host, closing works normally.
+- **Accessibility:** cards expose `Status`/`Alert` roles with a label; the notification surface never takes
+  keyboard focus, so its buttons are pointer-only (system notifications are the accessible path).

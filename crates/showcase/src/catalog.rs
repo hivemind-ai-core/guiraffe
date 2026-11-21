@@ -49,6 +49,11 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
         "the devtools overlay's own panel leaf; snapshot-tested in guiraffe-devtools",
     ),
     (
+        "windows",
+        "StackView",
+        "root view of the notification surface window; shown by the Notification windows entry's buttons",
+    ),
+    (
         "mermaid",
         "Host",
         "private test host in a non-public module (`mermaid::host`)",
@@ -65,6 +70,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::dates::entries());
     v.extend(crate::demos::overlays::entries());
     v.extend(crate::demos::commands::entries());
+    v.extend(crate::demos::desktop::entries());
     v.extend(crate::demos::code::entries());
     v.extend(crate::demos::markdown::entries());
     v.extend(crate::demos::mermaid::entries());

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "bench", "examples/ui-macro-demo", "examples/getting-started"]
+members = ["crates/*", "bench", "examples/ui-macro-demo", "examples/getting-started", "examples/desktop-integration"]
 exclude = ["vendor/gpui-base", "vendor/gpui-component", "vendor/gpui-fast-linux", "vendor/mermaid-rs-renderer", "vendor/taffy"]
 resolver = "3"
 
@@ -19,6 +19,7 @@ guiraffe-layout = { path = "crates/layout" }
 guiraffe-components = { path = "crates/components" }
 guiraffe-overlays = { path = "crates/overlays" }
 guiraffe-windows = { path = "crates/windows" }
+guiraffe-tray = { path = "crates/tray" }
 guiraffe-markdown = { path = "crates/markdown" }
 guiraffe-mermaid = { path = "crates/mermaid" }
 guiraffe-flow-core = { path = "crates/flow-core" }

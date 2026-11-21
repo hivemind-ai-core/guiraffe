@@ -12,6 +12,8 @@ workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-motion.workspace = true
+futures = { version = "0.3", optional = true, default-features = false, features = ["std", "async-await"] }
+thiserror = { version = "2", optional = true }
 
 [dev-dependencies]
 guiraffe-windows.workspace = true
@@ -19,7 +21,10 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 
 [features]
 default = []
-desktop = ["dep:notify-rust"]
+# System notifications through the OS notification service (freedesktop D-Bus on Linux/BSD,
+# NSUserNotificationCenter on macOS, toast notifications on Windows). No network access.
+desktop = ["dep:notify-rust", "dep:futures", "dep:thiserror"]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-motion/gpui-fast"]
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android", target_family = "wasm")))'.dependencies]
 notify-rust = { version = "4.18", optional = true }

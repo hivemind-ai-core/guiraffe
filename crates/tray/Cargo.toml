@@ -1,0 +1,33 @@
+[package]
+name = "guiraffe-tray"
+description = "System tray icon: menus from the commands registry, click/double-click events, badges, minimize-to-tray."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-commands.workspace = true
+guiraffe-windows.workspace = true
+serde.workspace = true
+thiserror = "2"
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+# StatusNotifierItem over D-Bus; async-io runtime (no tokio), no GTK.
+ksni = { version = "0.3.7", optional = true, default-features = false, features = ["async-io"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = { version = "0.26", optional = true, default-features = false }
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[features]
+default = []
+# The platform tray backends (SNI on Linux/BSD, tray-icon on macOS/Windows).
+native = ["dep:ksni", "dep:tray-icon"]
+gpui-fast = ["gpui-kit/gpui-fast"]
