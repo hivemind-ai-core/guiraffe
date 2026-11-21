@@ -2169,7 +2169,7 @@ mod tests {
         window.run_until_parked();
         let grip =
             window.update(|window, _| window.find(("property-scrub", 1usize)).bounds().center());
-        let end = grip + point(px(12.), px(0.));
+        let end = grip + point(px(-12.), px(0.));
         window.simulate_mouse_down(grip, MouseButton::Left, Modifiers::default());
         window.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
         window.run_until_parked();
@@ -2178,7 +2178,7 @@ mod tests {
                 .scrub
                 .as_ref()
                 .map(|scrub| scrub.preview)),
-            Some(13.)
+            Some(7.)
         );
         assert!(events.borrow().is_empty());
         window.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
@@ -2186,7 +2186,7 @@ mod tests {
         assert!(
             events
                 .borrow()
-                .contains(&TreeEvent::Edited(1, Value::Number(13.)))
+                .contains(&TreeEvent::Edited(1, Value::Number(7.)))
         );
     }
 
