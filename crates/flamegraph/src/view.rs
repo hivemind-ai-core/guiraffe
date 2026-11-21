@@ -11,8 +11,10 @@ use gpui_kit::{
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, Variant};
 use std::{
+    cell::RefCell,
     hash::{DefaultHasher, Hash, Hasher},
     ops::Range,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -34,6 +36,35 @@ pub enum ColourScheme {
     Heat,
 }
 
+const LABEL_SLOTS: usize = 128;
+const MAX_CACHED_LABEL_BYTES: usize = 256;
+
+/// Retain the text handles passed to GPUI's line layout cache between paints.
+struct LabelCache([Option<SharedString>; LABEL_SLOTS]);
+
+impl LabelCache {
+    fn text(&mut self, label: &str) -> SharedString {
+        if label.len() > MAX_CACHED_LABEL_BYTES {
+            return SharedString::from(label.to_owned());
+        }
+        let mut hash = DefaultHasher::new();
+        label.hash(&mut hash);
+        self.text_in_slot(label, hash.finish() as usize % LABEL_SLOTS)
+    }
+
+    fn text_in_slot(&mut self, label: &str, slot: usize) -> SharedString {
+        let entry = &mut self.0[slot];
+        if let Some(text) = entry
+            && text.as_ref() == label
+        {
+            return text.clone();
+        }
+        let text = SharedString::from(label.to_owned());
+        *entry = Some(text.clone());
+        text
+    }
+}
+
 /// Flame and icicle plot. Tab into the plot, use the arrows to move among
 /// frames, Enter or Space to activate a frame, and Home or Escape to reset.
 pub struct FlameGraph {
@@ -52,6 +83,7 @@ pub struct FlameGraph {
     colour: ColourScheme,
     bounds: Bounds<Pixels>,
     first_row: usize,
+    labels: Rc<RefCell<LabelCache>>,
 }
 
 impl EventEmitter<FrameClicked> for FlameGraph {}
@@ -74,6 +106,7 @@ impl FlameGraph {
             colour: ColourScheme::Name,
             bounds: Bounds::default(),
             first_row: 0,
+            labels: Rc::new(RefCell::new(LabelCache(std::array::from_fn(|_| None)))),
         }
     }
 
@@ -150,9 +183,11 @@ impl FlameGraph {
             let dx = f64::from(f32::from(event.position.x - previous.x));
             if self.width() > 0. && (moved || dx.abs() >= 3.) {
                 let span = self.domain.end - self.domain.start;
-                self.set_domain(self.domain.start - dx * span / self.width(), span);
+                let changed = self.set_domain(self.domain.start - dx * span / self.width(), span);
                 self.drag = Some((event.position, true));
-                cx.notify();
+                if changed {
+                    cx.notify();
+                }
             }
         }
         self.set_hover(self.hit(event.position), cx);
@@ -179,13 +214,18 @@ impl FlameGraph {
         self.layout.hit(self.first_row + row, x)
     }
 
-    fn set_domain(&mut self, start: f64, span: f64) {
+    fn set_domain(&mut self, start: f64, span: f64) -> bool {
         let total = self.layout.domain().end;
         if total > 0. && span.is_finite() && start.is_finite() {
             let span = span.clamp(total * 1e-12, total);
             let start = start.clamp(0., total - span);
-            self.domain = start..start + span;
+            let next = start..start + span;
+            if next != self.domain {
+                self.domain = next;
+                return true;
+            }
         }
+        false
     }
 
     fn key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
@@ -310,6 +350,7 @@ impl Render for FlameGraph {
         let orientation = self.orientation;
         let first_row = self.first_row;
         let colour = self.colour;
+        let labels = self.labels.clone();
         div()
             .flex()
             .flex_col()
@@ -388,13 +429,15 @@ impl Render for FlameGraph {
                             * (-f64::from(f32::from(delta.y))
                                 / if event.modifiers.control { 90. } else { 260. })
                             .exp();
-                        this.set_domain(
+                        let changed = this.set_domain(
                             this.domain.start + anchor * (span - next)
                                 - f64::from(f32::from(delta.x)) * span / this.width(),
                             next,
                         );
                         this.set_hover(this.hit(event.position), cx);
-                        cx.notify();
+                        if changed {
+                            cx.notify();
+                        }
                         cx.stop_propagation();
                     }))
                     .child(
@@ -403,6 +446,7 @@ impl Render for FlameGraph {
                                 let _ = prepare.update(cx, |this, _| this.bounds = bounds);
                             },
                             move |bounds, _, window, cx| {
+                                let mut labels = labels.borrow_mut();
                                 let height = f64::from(f32::from(bounds.size.height));
                                 let width = f64::from(f32::from(bounds.size.width));
                                 let slots = (height / ROW_HEIGHT).ceil() as usize;
@@ -458,13 +502,13 @@ impl Render for FlameGraph {
                                             if let Some(frame) =
                                                 frame.filter(|_| rect.size.width >= px(32.))
                                             {
-                                                let text =
-                                                    SharedString::from(frame.label.to_owned());
+                                                let text = labels.text(frame.label);
+                                                let len = text.len();
                                                 let line = window.text_system().shape_line(
-                                                    text.clone(),
+                                                    text,
                                                     px(11.),
                                                     &[gpui_kit::TextRun {
-                                                        len: text.len(),
+                                                        len,
                                                         font: gpui_kit::Font::default(),
                                                         color: style.foreground.to_hsla(),
                                                         background_color: None,
@@ -626,6 +670,32 @@ mod tests {
                     .cached(StyleRefinement::default().size_full()),
             )
         }
+    }
+
+    #[test]
+    fn repeated_labels_reuse_storage_and_conflicts_replace_entries() {
+        let mut labels = LabelCache(std::array::from_fn(|_| None));
+        let first = labels.text_in_slot("worker", 0);
+        let repeat = labels.text_in_slot("worker", 0);
+        assert_eq!(first.as_ptr(), repeat.as_ptr());
+
+        let other = labels.text_in_slot("render", 0);
+        let repeat = labels.text_in_slot("render", 0);
+        assert_eq!(other.as_ptr(), repeat.as_ptr());
+        assert_eq!(labels.0.iter().flatten().count(), 1);
+        labels.text(&"x".repeat(MAX_CACHED_LABEL_BYTES + 1));
+        assert_eq!(labels.0.iter().flatten().count(), 1);
+    }
+
+    #[test]
+    fn clamped_pan_or_zoom_leaves_domain_unchanged() -> Result<(), crate::LayoutError> {
+        let layout = Arc::new(FlameLayout::new(Arc::new(Profile))?);
+        let mut graph = FlameGraph::new(layout);
+        assert!(!graph.set_domain(-20., 150.));
+        assert_eq!(graph.domain, 0. ..100.);
+        assert!(graph.set_domain(20., 20.));
+        assert!(!graph.set_domain(20., 20.));
+        Ok(())
     }
 
     #[gpui_kit::test]
