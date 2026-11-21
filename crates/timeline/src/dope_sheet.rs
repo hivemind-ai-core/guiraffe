@@ -1,4 +1,5 @@
 //! Hierarchical, frame-snapped dope sheet with viewport-culling and explicit selection.
+use crate::plot::append_diamond;
 use crate::{
     Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
@@ -404,27 +405,6 @@ fn key_indices(
         };
         (next < end).then_some(next)
     })
-}
-
-// Append both triangles and extend the bounds once per diamond. GPUI's
-// general-purpose triangle method extends the bounds once per vertex.
-fn append_diamond(
-    mesh: &mut gpui_kit::Path<Pixels>,
-    [top, right, bottom, left]: [gpui_kit::Point<Pixels>; 4],
-) {
-    use gpui_kit::{PathVertex, point, size};
-
-    mesh.bounds = mesh.bounds.union(&Bounds::new(
-        point(left.x, top.y),
-        size(right.x - left.x, bottom.y - top.y),
-    ));
-    mesh.vertices.extend(
-        [top, right, bottom, top, bottom, left].map(|xy_position| PathVertex {
-            xy_position,
-            st_position: point(0., 1.),
-            content_mask: Default::default(),
-        }),
-    );
 }
 
 struct KeyMark {

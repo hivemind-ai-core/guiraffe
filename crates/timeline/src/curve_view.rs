@@ -12,6 +12,13 @@ use guiraffe_core::{ColorName, GuiraffeTheme, Variant};
 
 use crate::{axis::Axis, curves::Curve};
 
+// Include the same margin as key picking so partially visible handles do not pop.
+fn visible_key_indices(keys: &[crate::Key], axis: Axis) -> std::ops::Range<usize> {
+    let margin = KEY_GRAB * axis.scale;
+    keys.partition_point(|key| key.t < axis.start - margin)
+        ..keys.partition_point(|key| key.t <= axis.end() + margin)
+}
+
 /// Vertical value mapping: `hi` at y = 0, `lo` at y = height.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ValueRange {
@@ -547,17 +554,18 @@ impl Render for CurveView {
                                 window.paint_path(path, stroke);
                             }
                             let keys = series.curve.keys();
-                            let lo =
-                                keys.partition_point(|k| k.t < axis.start - KEY_GRAB * axis.scale);
-                            let hi =
-                                keys.partition_point(|k| k.t <= axis.end() + KEY_GRAB * axis.scale);
-                            for (offset, key) in keys.get(lo..hi).unwrap_or(&[]).iter().enumerate()
-                            {
-                                let k = lo + offset;
+                            let visible = visible_key_indices(keys, axis);
+                            let batch = visible.len() > 512;
+                            let mut diamonds = None;
+                            for k in visible {
+                                let key = &keys[k];
                                 let chosen = selected == Some((c, k));
                                 let x = axis.x(key.t);
                                 let y = range.y(key.v);
                                 if chosen {
+                                    if let Some(mesh) = diamonds.take() {
+                                        window.paint_path(mesh, stroke);
+                                    }
                                     for (_, handle) in
                                         tangent_handles(&series.curve, k).into_iter().flatten()
                                     {
@@ -578,6 +586,20 @@ impl Render for CurveView {
                                         ));
                                     }
                                 }
+                                if batch && !chosen {
+                                    let mesh = diamonds
+                                        .get_or_insert_with(|| gpui_kit::Path::new(at(x, y)));
+                                    crate::plot::append_diamond(
+                                        mesh,
+                                        [
+                                            at(x, y - 4.),
+                                            at(x + 4., y),
+                                            at(x, y + 4.),
+                                            at(x - 4., y),
+                                        ],
+                                    );
+                                    continue;
+                                }
                                 let r = if chosen { 6. } else { 4. };
                                 let mut path = PathBuilder::fill();
                                 path.move_to(at(x, y - r));
@@ -595,6 +617,9 @@ impl Render for CurveView {
                                         },
                                     );
                                 }
+                            }
+                            if let Some(mesh) = diamonds {
+                                window.paint_path(mesh, stroke);
                             }
                         }
                     },
@@ -617,6 +642,17 @@ mod tests {
         c.set(Key::new(1.0, 1.0, Interp::Linear));
         c.set(Key::new(2.0, 0.0, Interp::Linear));
         c
+    }
+
+    #[test]
+    fn curve_marker_work_depends_on_viewport_not_offscreen_keys() {
+        let axis = Axis::new(80., 160., 800.);
+        for count in [10_000, 100_000] {
+            let keys: Vec<_> = (0..count)
+                .map(|i| crate::Key::new(i as f64, 0., crate::Interp::Linear))
+                .collect();
+            assert_eq!(visible_key_indices(&keys, axis), 80..161);
+        }
     }
 
     #[test]
