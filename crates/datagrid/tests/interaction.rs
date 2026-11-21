@@ -1223,4 +1223,3 @@ fn dragging_the_horizontal_thumb_scrolls_the_center_band(cx: &mut TestAppContext
     );
     assert!((grid.scroll_offset().0 - sx).abs() < 0.5);
 }
-
