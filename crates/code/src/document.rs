@@ -126,16 +126,25 @@ impl CodeDocument {
             };
             LineStarts::Wide(starts)
         };
-        for line in 0..self.line_count() {
-            if line % 256 == 0 && cancelled() {
-                return false;
+        let mut start = 0;
+        for bucket in 0..self.minimap.len() {
+            let end = ((bucket as u128 + 1) * line_count as u128)
+                .div_ceil(self.minimap.len() as u128) as usize;
+            let mut longest = 0;
+            for line in start..end {
+                if line % 256 == 0 && cancelled() {
+                    return false;
+                }
+                let text = self.line(line).unwrap_or_default();
+                if text.len() > longest {
+                    longest = longest.max(text.trim().len());
+                    if longest >= 120 {
+                        break;
+                    }
+                }
             }
-            let text = self.line(line).unwrap_or_default();
-            let density = text.trim().len().min(120) as f32 / 120.;
-            let bucket = line.saturating_mul(256) / self.line_count();
-            if let Some(bin) = self.minimap.get_mut(bucket) {
-                *bin = bin.max(density);
-            }
+            self.minimap[bucket] = longest.min(120) as f32 / 120.;
+            start = end;
         }
         true
     }
@@ -262,6 +271,34 @@ mod tests {
         });
         assert!(document.is_none());
         assert_eq!(calls.get(), 4);
+    }
+
+    #[test]
+    fn minimap_matches_per_line_density_for_sparse_and_dense_buckets() {
+        for count in [1, 31, 256, 1025] {
+            let source = (0..count)
+                .map(|i| match i % 11 {
+                    0 => "x".repeat(130),
+                    1 => " ".repeat(130),
+                    _ => format!("  文{}  ", "x".repeat(i % 120)),
+                })
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            let doc = CodeDocument::new(source);
+            let mut expected = [0_f32; 256];
+            for line in 0..doc.line_count() {
+                let density = doc
+                    .line(line)
+                    .expect("indexed line exists")
+                    .trim()
+                    .len()
+                    .min(120) as f32
+                    / 120.;
+                let bucket = line * expected.len() / doc.line_count();
+                expected[bucket] = expected[bucket].max(density);
+            }
+            assert_eq!(doc.minimap(), &expected);
+        }
     }
 
     #[test]

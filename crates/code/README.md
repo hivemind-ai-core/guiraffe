@@ -43,3 +43,27 @@ Current bounds: vertical virtualization is implemented; each visible logical lin
 Viewport offsets use f64 to retain subpixel precision in million-line documents. Horizontal scrolling is bounded by the widest shaped line seen in the current document. Logical lines are previewed up to 16 KiB at a UTF-8 boundary, with a visible notice for truncation; selection and copy still refer to the full original source.
 
 Annotations, folds and traces set after `set_source` belong to that pending source revision. A newer `set_source` discards that revision’s queued presentation. Prepared analysis may be queued when its document shares the requested source handle; `highlight` refreshes the pending source without replacing it with the older visible document.
+
+### Layered decorations
+
+Build a `Decorations` snapshot against the same `Arc<CodeDocument>` that the
+viewer displays. Intern repeated `DecorationStyle` values by calling
+`intern_style` and batch layer changes through `update_layer`. IDs are stable
+within each layer and ranges use UTF-8 source coordinates. Layer options
+control z-order and permit merging identical visible marks. Use `apply_edit`
+to shift anchored ranges to a replacement revision, then refresh stale
+analysis layers with a new batch.
+
+Publish the finished snapshot with `CodeHandle::set_decorations`. The call
+rejects an obsolete document revision. For display text, lens rows and
+Markdown review cards, call `prepare_analysis` on the worker and publish the
+result with `set_analysis` alongside the decorations. Hosts can receive
+hover and click payloads with `on_decoration`. F8 and Shift+F8 navigate
+diagnostics. F7 and Shift+F7 navigate diff marks.
+
+For inter-line content use `DecorationStyle::Block` with an estimated row
+height and a payload, then supply a renderer with `CodeHandle::on_block_widget`
+to embed a custom GPUI element. The viewer mounts visible widgets and caches
+the measured height for the current layout. The default renders the payload
+as text. Cloning a decoration snapshot shares unchanged interval indexes,
+so a worker can refresh a layer while the previous snapshot is displayed.
