@@ -572,7 +572,9 @@ fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> any
         app.update(guiraffe_core::init);
         let window = app.open_window(size(px(1200.), px(800.)), |_, cx| {
             let diagram = MermaidView::create_state("allocation-diagram", cx);
-            diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+            if nodes != 0 {
+                diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+            }
             cx.new(|_| Diagram(diagram))
         })?;
         app.run_until_parked();
@@ -588,24 +590,34 @@ fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> any
                 .0
                 .clone();
             let state = diagram.read(cx);
-            assert_eq!(state.status(), &Status::Ready);
-            let image = state.image().expect("refined diagram").image.clone();
+            if nodes == 0 {
+                assert_eq!(state.status(), &Status::Empty);
+            } else {
+                assert_eq!(state.status(), &Status::Ready);
+            }
+            let image = state.image().map(|image| image.image.clone());
             let (_, counts) = count_allocations(|| {
                 for _ in 0..FRAMES {
                     window.draw(cx).clear(cx);
                 }
             })?;
-            assert!(Arc::ptr_eq(
-                &image,
-                &diagram.read(cx).image().expect("unchanged diagram").image
-            ));
+            if let Some(image) = image {
+                assert!(Arc::ptr_eq(
+                    &image,
+                    &diagram.read(cx).image().expect("unchanged diagram").image
+                ));
+            }
             Ok(counts)
         })?
     }
 
+    let empty = measure(0)?;
     let small = measure(50)?;
     let large = measure(500)?;
-    eprintln!("Mermaid allocations over eight draws: 50 nodes {small:?}, 500 nodes {large:?}");
+    eprintln!(
+        "Mermaid allocations over eight draws: empty {empty:?}, 50 nodes {small:?}, 500 nodes {large:?}"
+    );
+    assert_eq!(empty, small, "painting a diagram adds no warm allocations");
     assert_eq!(small, large);
     assert!(
         large.allocations <= FRAMES * 12,
