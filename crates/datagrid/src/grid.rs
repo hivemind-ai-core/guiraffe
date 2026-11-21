@@ -1204,6 +1204,7 @@ impl Core {
                     core,
                     slot,
                     renders: 0,
+                    labels: Default::default(),
                 }));
             }
         }
@@ -3023,11 +3024,98 @@ impl Render for GridView {
     }
 }
 
+struct CellLabel {
+    text: SharedString,
+    x: Pixels,
+    width: Pixels,
+    align: Align,
+}
+
+fn paint_cell_labels(
+    labels: &[CellLabel],
+    bounds: Bounds<Pixels>,
+    pad: Pixels,
+    row_height: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let style = window.text_style();
+    let font_size = style.font_size.to_pixels(window.rem_size());
+    let line_height = window.pixel_snap(window.line_height());
+    let text_system = window.text_system().clone();
+    for label in labels {
+        let width = (label.width - pad * 2.).max(px(0.));
+        let mut run = style.to_run(label.text.len());
+        let mut layout = text_system.layout_line(
+            label.text.as_ref(),
+            font_size,
+            std::slice::from_ref(&run),
+            None,
+        );
+        if layout.width > width {
+            let (text, _) = cx
+                .text_system()
+                .line_wrapper(style.font(), font_size)
+                .truncate_line(
+                    label.text.clone(),
+                    width,
+                    "…",
+                    std::slice::from_ref(&run),
+                    gpui_kit::TruncateFrom::End,
+                );
+            run.len = text.len();
+            layout =
+                text_system.layout_line(text.as_ref(), font_size, std::slice::from_ref(&run), None);
+        }
+        let measured_width = layout.width.ceil().min(width);
+        let align_offset = match label.align {
+            Align::End => width - measured_width,
+            Align::Center => (width - measured_width) / 2.,
+            _ => px(0.),
+        };
+        let origin = window.pixel_snap_point(
+            bounds.origin
+                + gpui_kit::point(
+                    label.x + pad + align_offset,
+                    (row_height - line_height) / 2.,
+                ),
+        );
+        let decorations = [gpui_kit::DecorationRun {
+            len: run.len as u32,
+            color: run.color,
+            background_color: run.background_color,
+            underline: run.underline,
+            strikethrough: run.strikethrough,
+        }];
+        if run.background_color.is_some() {
+            let _ = layout.paint_background(
+                origin,
+                line_height,
+                style.text_align,
+                Some(measured_width),
+                &decorations,
+                window,
+                cx,
+            );
+        }
+        let _ = layout.paint(
+            origin,
+            line_height,
+            style.text_align,
+            Some(measured_width),
+            &decorations,
+            window,
+            cx,
+        );
+    }
+}
+
 /// One recycled row view; shows whichever visible view row maps to its slot.
 pub(crate) struct RowView {
     core: Weak<Core>,
     slot: usize,
     renders: u64,
+    labels: Rc<RefCell<[Vec<CellLabel>; 3]>>,
 }
 
 impl Render for RowView {
@@ -3075,7 +3163,11 @@ impl Render for RowView {
         let mut text = std::mem::take(&mut m.text);
         let mut cells = 0usize;
         let weak_core = self.core.clone();
-        let mut cell = |p: &crate::columns::Placed, x: f32, m: &Model| -> AnyElement {
+        let mut cell = |p: &crate::columns::Placed,
+                        x: f32,
+                        m: &Model,
+                        labels: &mut Vec<CellLabel>|
+         -> AnyElement {
             cells += 1;
             let def = m.defs.get(p.def);
             let value = def.map_or(CellRef::Empty, |d| m.source.cell(src_row, d.source));
@@ -3118,16 +3210,16 @@ impl Render for RowView {
                 .left(px(x))
                 .w(px(p.width))
                 .h(px(row_h))
-                .px(px(m.pad))
-                .flex()
-                .items_center()
-                .when(end, |el| el.justify_end())
-                .when(center, |el| el.justify_center())
                 .when(in_rect && cell_mode, |el| el.bg(hsla(pal.selected)));
             if let Some((col, input, error)) = editing.as_ref().filter(|e| e.0 == p.def) {
                 let _ = col;
                 let core = weak_core.clone();
                 return el
+                    .px(px(m.pad))
+                    .flex()
+                    .items_center()
+                    .when(end, |el| el.justify_end())
+                    .when(center, |el| el.justify_center())
                     .child(
                         div()
                             .id("editor")
@@ -3224,14 +3316,55 @@ impl Render for RowView {
                     .when_some(error.clone(), |el, e| el.aria_description(e))
                     .into_any_element();
             }
-            el.whitespace_nowrap()
-                .text_ellipsis()
-                .child(label)
-                .when(is_cursor && cell_mode, |el| {
-                    el.child(cursor_box(hsla(pal.accent)))
-                })
-                .into_any_element()
+            let el = if label.contains('\n') {
+                el.px(px(m.pad))
+                    .flex()
+                    .items_center()
+                    .when(end, |el| el.justify_end())
+                    .when(center, |el| el.justify_center())
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label)
+            } else if !label.is_empty() {
+                labels.push(CellLabel {
+                    text: label,
+                    x: px(x),
+                    width: px(p.width),
+                    align: if end {
+                        Align::End
+                    } else if center {
+                        Align::Center
+                    } else {
+                        Align::Start
+                    },
+                });
+                el
+            } else {
+                el
+            };
+            el.when(is_cursor && cell_mode, |el| {
+                el.child(cursor_box(hsla(pal.accent)))
+            })
+            .into_any_element()
         };
+        let pad = px(m.pad);
+        // Cell divs retain semantic bounds. One canvas per band paints their labels.
+        let text_band = |band: usize| {
+            let labels = self.labels.clone();
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    paint_cell_labels(&labels.borrow()[band], bounds, pad, px(row_h), window, cx);
+                },
+            )
+            .absolute()
+            .size_full()
+        };
+        let mut bands = self.labels.borrow_mut();
+        let [center_labels, left_labels, right_labels] = &mut *bands;
+        center_labels.clear();
+        left_labels.clear();
+        right_labels.clear();
         let mut center = div()
             .absolute()
             .top_0()
@@ -3240,7 +3373,7 @@ impl Render for RowView {
             .h_full()
             .overflow_hidden();
         for p in m.layout.center.get(vis_c).into_iter().flatten() {
-            center = center.child(cell(p, (p.x - m.scroll_x) as f32, &m));
+            center = center.child(cell(p, (p.x - m.scroll_x) as f32, &m, center_labels));
         }
         let mut el = div()
             .id(("row", self.slot))
@@ -3255,7 +3388,7 @@ impl Render for RowView {
             .border_b_1()
             .border_color(hsla(pal.border))
             .when(!selected, |el| el.hover(move |s| s.bg(hsla(pal.hover))))
-            .child(center);
+            .child(center.child(text_band(0)));
         if !m.layout.left.is_empty() {
             let mut band = div()
                 .absolute()
@@ -3267,9 +3400,9 @@ impl Render for RowView {
                 .border_r_1()
                 .border_color(hsla(pal.border));
             for p in &m.layout.left {
-                band = band.child(cell(p, p.x as f32, &m));
+                band = band.child(cell(p, p.x as f32, &m, left_labels));
             }
-            el = el.child(band);
+            el = el.child(band.child(text_band(1)));
         }
         if !m.layout.right.is_empty() {
             let mut band = div()
@@ -3282,9 +3415,9 @@ impl Render for RowView {
                 .border_l_1()
                 .border_color(hsla(pal.border));
             for p in &m.layout.right {
-                band = band.child(cell(p, p.x as f32 - 0., &m));
+                band = band.child(cell(p, p.x as f32, &m, right_labels));
             }
-            el = el.child(band);
+            el = el.child(band.child(text_band(2)));
         }
         if selected {
             // Shape cue besides color (spec/00 §12.1): an accent bar, overlaid.

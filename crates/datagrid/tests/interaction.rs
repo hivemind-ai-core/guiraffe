@@ -116,11 +116,11 @@ fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
         let before = grid.stats();
         reads.store(0, Ordering::Relaxed);
         vcx.update(|window, cx| {
-            grid.scroll_to_row(42_000, cx);
+            grid.scroll_to_row(4_200, cx);
             window.render_frame(cx);
         });
         let after = grid.stats();
-        assert!(grid.visible_rows().contains(&42_000));
+        assert!(grid.visible_rows().contains(&4_200));
         (
             reads.load(Ordering::Relaxed),
             after.row_renders - before.row_renders,
@@ -129,7 +129,7 @@ fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
         )
     };
 
-    let smaller = measure(100_000);
+    let smaller = measure(10_000);
     let larger = measure(10_000_000);
     assert!(smaller.0 > 0);
     assert_eq!(smaller, larger);
