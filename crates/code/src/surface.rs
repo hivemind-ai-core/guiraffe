@@ -532,7 +532,7 @@ impl CodeHandle {
     }
     /// Move precomputed buffers onto the UI thread. False means source was replaced while
     /// the analysis was running; no state is changed in that case.
-    pub fn set_analysis(&self, prepared: PreparedAnalysis, cx: &mut App) -> bool {
+    pub fn set_analysis(&self, mut prepared: PreparedAnalysis, cx: &mut App) -> bool {
         if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
             if !Arc::ptr_eq(prepared.document.source(), &pending.source) {
                 return false;
@@ -544,6 +544,45 @@ impl CodeHandle {
             return false;
         }
         let mut blocks = self.shared.block_layout.borrow_mut();
+        let previous_annotations = self.shared.annotations.borrow();
+        let previous_ids = self.shared.annotation_ids.borrow();
+        let same_payload = |id: &u64| {
+            let old = previous_ids
+                .get(id)
+                .and_then(|&i| previous_annotations.get(i));
+            let new = prepared
+                .ids
+                .get(id)
+                .and_then(|&i| prepared.annotations.get(i));
+            matches!((old, new), (Some(old), Some(new)) if old.payload == new.payload)
+        };
+        let mut reused_rows = false;
+        // An unrelated decoration update must not jump back to estimated widget heights.
+        // The next layout still measures the widgets at their current width.
+        for (id, rows) in &mut prepared.block_rows {
+            if blocks.keys.get(id) == prepared.block_keys.get(id)
+                && same_payload(id)
+                && let Some(previous) = blocks.rows.get(id)
+                && rows != previous
+            {
+                *rows = *previous;
+                reused_rows = true;
+            }
+        }
+        if reused_rows {
+            prepared.rows = RowMap::with_blocks(
+                prepared.document.line_count(),
+                &prepared.folds,
+                &prepared.annotations,
+                &prepared.block_rows,
+            );
+        }
+        self.shared
+            .bubbles
+            .borrow_mut()
+            .retain(|id, _| same_payload(id));
+        drop(previous_ids);
+        drop(previous_annotations);
         let text_changed = blocks.rows != prepared.block_rows
             || blocks.keys != prepared.block_keys
             || *self.shared.text_annotations.borrow() != prepared.text
@@ -566,7 +605,6 @@ impl CodeHandle {
         *self.shared.hints.borrow_mut() = prepared.hints;
         *self.shared.annotation_ids.borrow_mut() = prepared.ids;
         *self.shared.annotations.borrow_mut() = prepared.annotations;
-        self.shared.bubbles.borrow_mut().clear();
         if text_changed {
             self.shared
                 .text_epoch
