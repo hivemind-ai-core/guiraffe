@@ -49,11 +49,17 @@ struct Drag {
 /// with render closures by `Rc` (no per-frame copies).
 #[derive(Default)]
 struct Geometry {
-    rows: Vec<(gpui_kit::SharedString, Option<Scheduled>)>,
+    rows: Vec<Row>,
     /// (predecessor row, successor row)
     successors: Vec<Vec<usize>>,
     predecessors: Vec<Vec<usize>>,
     index: HashMap<u32, usize>,
+}
+
+struct Row {
+    id: u32,
+    name: gpui_kit::SharedString,
+    scheduled: Option<Scheduled>,
 }
 
 fn geometry(
@@ -73,7 +79,11 @@ fn geometry(
     Rc::new(Geometry {
         rows: tasks
             .iter()
-            .map(|t| (t.name.clone().into(), m.and_then(|m| m.get(&t.id)).copied()))
+            .map(|t| Row {
+                id: t.id,
+                name: t.name.clone().into(),
+                scheduled: m.and_then(|m| m.get(&t.id)).copied(),
+            })
             .collect(),
         successors,
         predecessors,
@@ -91,12 +101,12 @@ pub struct GanttView {
     global_lock_style: crate::LockStyle,
     drag: Option<Drag>,
     body: Rc<std::cell::Cell<Bounds<Pixels>>>,
-    /// Range to fit once the real width is known.
     scroll_y: f32,
+    /// Range to fit once the real width is known.
     pending_fit: Option<(f64, f64)>,
     resize: ResizeEdges,
     /// Tasks that cannot be moved or resized.
-    locked: std::collections::HashSet<u32>,
+    locked: Rc<std::collections::HashSet<u32>>,
     /// When false, nothing can be edited.
     editable: bool,
     /// What the pointer is over, for the cursor.
@@ -249,9 +259,10 @@ impl GanttView {
         // Predecessors bound the earliest start: clamp so the constraint never drifts below
         // what is visible.
         let bound = self.predecessor_bound(id);
-        let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) else {
+        let Some(&row) = self.geometry.index.get(&id) else {
             return;
         };
+        let t = &mut self.tasks[row];
         let not_before = not_before.max(bound);
         if t.not_before == not_before {
             return;
@@ -276,7 +287,10 @@ impl GanttView {
     fn predecessor_bound(&self, id: u32) -> f64 {
         let (Ok(m), Some(t)) = (
             self.schedule.as_ref(),
-            self.tasks.iter().find(|t| t.id == id),
+            self.geometry
+                .index
+                .get(&id)
+                .and_then(|&i| self.tasks.get(i)),
         ) else {
             return f64::NEG_INFINITY;
         };
@@ -370,9 +384,10 @@ impl GanttView {
                 (start, sc.early_finish - start)
             }
         };
-        let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) else {
+        let Some(&row) = self.geometry.index.get(&id) else {
             return;
         };
+        let task = &mut self.tasks[row];
         let not_before = if edge == Edge::Start {
             start
         } else {
@@ -402,9 +417,9 @@ impl GanttView {
     /// Lock or unlock one task's position and size.
     pub fn set_locked(&mut self, id: u32, locked: bool, cx: &mut Context<Self>) {
         let changed = if locked {
-            self.locked.insert(id)
+            Rc::make_mut(&mut self.locked).insert(id)
         } else {
-            self.locked.remove(&id)
+            Rc::make_mut(&mut self.locked).remove(&id)
         };
         if changed {
             cx.notify();
@@ -472,6 +487,14 @@ impl GanttView {
     }
 }
 
+fn bar_interval(axis: Axis, scheduled: Scheduled) -> Option<(f32, f32)> {
+    let start = axis.x(scheduled.early_start) as f32;
+    let end = axis.x(scheduled.early_finish) as f32;
+    // Preserve a two-pixel milestone when the interval projects below one pixel.
+    let width = (end - start).max(2.0);
+    (start + width > 0.0 && start < axis.width as f32).then_some((start, width))
+}
+
 fn visible_rows(count: usize, offset: f32, height: f32) -> std::ops::Range<usize> {
     let first = (offset / ROW_H) as usize;
     let end = ((offset + height) / ROW_H).ceil() as usize;
@@ -533,10 +556,15 @@ impl Render for GanttView {
             .and_then(|id| self.geometry.index.get(&id).copied());
         self.scroll_y = self.scroll_y.min(self.max_scroll());
         let scroll_y = self.scroll_y;
-        let height = f32::from(self.body.get().size.height);
+        let height = if self.body.get().size.height > px(0.0) {
+            f32::from(self.body.get().size.height)
+        } else {
+            (f32::from(window.viewport_size().height) - RULER_H).max(0.0)
+        };
         let visible = visible_rows(self.tasks.len(), scroll_y, height);
         let header_rows = visible.clone();
         let bar_rows = visible.clone();
+        let row_count = self.tasks.len();
         if let Some(w) = crate::measure::width(&self.body) {
             self.surface.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
@@ -552,6 +580,19 @@ impl Render for GanttView {
         let item_style = self.lock_style;
         let global_style = self.global_lock_style;
         let locked_ids = &self.locked;
+        let paint_locks = self.locked.clone();
+        let paint_geo = geo.clone();
+        let paint_rows = visible.clone();
+        let selected_color = s.text.to_hsla();
+        let lock_style = move |locked: bool| {
+            if locked {
+                item_style
+            } else if !editable {
+                global_style
+            } else {
+                crate::LockStyle::None
+            }
+        };
         let body = self.body.clone();
         let owner = cx.entity_id();
         let line = s.border.to_hsla();
@@ -630,10 +671,14 @@ impl Render for GanttView {
                                 .border_r_1()
                                 .border_color(line)
                                 .children(header_rows.map(|i| {
-                                    let (name, sc) = &geo.rows[i];
-                                    let id = self.tasks[i].id;
+                                    let Row {
+                                        id,
+                                        name,
+                                        scheduled,
+                                    } = &geo.rows[i];
+                                    let id = *id;
                                     let locked = self.locked.contains(&id);
-                                    let crit = sc.is_some_and(|x| x.critical());
+                                    let crit = scheduled.is_some_and(|x| x.critical());
                                     div()
                                         .absolute()
                                         .left_0()
@@ -672,6 +717,7 @@ impl Render for GanttView {
                         .child(
                             div()
                                 .id("gantt-body")
+                                .debug_selector(|| "gantt-body".into())
                                 .cursor(cursor_for(self.drag.map(|d| d.grab).or(self.hover)))
                                 .relative()
                                 .flex_1()
@@ -681,7 +727,9 @@ impl Render for GanttView {
                                     cx.listener(|this, e: &MouseDownEvent, window, cx| {
                                         // Claim focus only for a clicked item in an explicitly opted-in editor.
                                         window.prevent_default();
-                                        cx.notify();
+                                        let selected = this.selected;
+                                        let cursor =
+                                            cursor_for(this.drag.map(|d| d.grab).or(this.hover));
                                         let b = this.body.get();
                                         let y = f32::from(e.position.y - b.origin.y);
                                         if y >= 0.0 {
@@ -692,6 +740,14 @@ impl Render for GanttView {
                                             );
                                             if hit && this.focusable == Some(true) {
                                                 this.focus.focus(window, cx);
+                                            }
+                                            if selected != this.selected
+                                                || cursor
+                                                    != cursor_for(
+                                                        this.drag.map(|d| d.grab).or(this.hover),
+                                                    )
+                                            {
+                                                cx.notify();
                                             }
                                         }
                                     }),
@@ -723,60 +779,110 @@ impl Render for GanttView {
                                     .size_full(),
                                 )
                                 .child(self.surface.element(t.clone(), false, 32., 0.))
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |b, _, window, _| {
+                                            for i in paint_rows {
+                                                let row = &paint_geo.rows[i];
+                                                let Some(sc) = row.scheduled else {
+                                                    continue;
+                                                };
+                                                if lock_style(paint_locks.contains(&row.id))
+                                                    != crate::LockStyle::None
+                                                {
+                                                    continue;
+                                                }
+                                                let Some((x, width)) = bar_interval(axis, sc)
+                                                else {
+                                                    continue;
+                                                };
+                                                let bounds = Bounds {
+                                                    origin: b.origin
+                                                        + point(
+                                                            px(x),
+                                                            px(i as f32 * ROW_H - scroll_y + 6.0),
+                                                        ),
+                                                    size: gpui_kit::size(
+                                                        px(width),
+                                                        px(ROW_H - 12.0),
+                                                    ),
+                                                };
+                                                let colors =
+                                                    if sc.critical() { critical } else { normal };
+                                                window.paint_quad(gpui_kit::quad(
+                                                    bounds,
+                                                    gpui_kit::Corners::all(px(4.0)),
+                                                    colors.background.to_hsla(),
+                                                    gpui_kit::Edges::all(px(1.0)),
+                                                    colors.foreground.to_hsla(),
+                                                    gpui_kit::BorderStyle::Solid,
+                                                ));
+                                                if selected_row == Some(i) {
+                                                    window.paint_quad(gpui_kit::quad(
+                                                        bounds,
+                                                        gpui_kit::Corners::all(px(4.0)),
+                                                        gpui_kit::transparent_black(),
+                                                        gpui_kit::Edges::all(px(2.0)),
+                                                        selected_color,
+                                                        gpui_kit::BorderStyle::Solid,
+                                                    ));
+                                                }
+                                            }
+                                        },
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
                                 .children(bar_rows.filter_map(|i| {
-                                    let (name, sc) = &geo.rows[i];
-                                    let item_locked = locked_ids.contains(&self.tasks[i].id);
-                                    let locked = !editable || item_locked;
-                                    sc.and_then(|x| {
-                                        let (x0, x1) = (
-                                            axis.x(x.early_start) as f32,
-                                            axis.x(x.early_finish) as f32,
-                                        );
-                                        let v = if x.critical() { critical } else { normal };
-                                        let on = selected_row == Some(i);
-                                        if x1.max(x0 + 2.0) <= 0.0 || x0 >= axis.width as f32 {
-                                            return None;
-                                        }
-                                        Some(
-                                            div()
-                                                .id(("gantt-bar", i))
-                                                .test_support()
-                                                .role(Role::ListBoxOption)
-                                                .aria_label(format!(
-                                                    "{name}: {} – {}",
-                                                    label(x.early_start, format),
-                                                    label(x.early_finish, format)
-                                                ))
-                                                .aria_selected(on)
-                                                .absolute()
-                                                .top(px(i as f32 * ROW_H - scroll_y + 6.0))
-                                                .left(px(x0))
-                                                .w(px((x1 - x0).max(2.0)))
-                                                .h(px(ROW_H - 12.0))
-                                                .rounded(px(4.))
-                                                .border_1()
-                                                .bg(v.background.to_hsla())
-                                                .border_color(v.foreground.to_hsla())
-                                                .when(locked, |el| {
-                                                    if item_locked {
-                                                        item_style.decorate(el, t)
-                                                    } else {
-                                                        global_style.decorate(el, t)
-                                                    }
-                                                })
-                                                // Selection: a 2px overlay outline, no layout change.
-                                                .when(on, |el| {
+                                    let Row {
+                                        id,
+                                        name,
+                                        scheduled,
+                                    } = &geo.rows[i];
+                                    let sc = (*scheduled)?;
+                                    let (x, width) = bar_interval(axis, sc)?;
+                                    let colors = if sc.critical() { critical } else { normal };
+                                    let on = selected_row == Some(i);
+                                    let lock = lock_style(locked_ids.contains(id));
+                                    Some(
+                                        div()
+                                            .id(("gantt-bar", i))
+                                            .test_support()
+                                            .role(Role::ListBoxOption)
+                                            .aria_label(format!(
+                                                "{name}: {} – {}",
+                                                label(sc.early_start, format),
+                                                label(sc.early_finish, format)
+                                            ))
+                                            .aria_selected(on)
+                                            .aria_position_in_set(i + 1)
+                                            .aria_size_of_set(row_count)
+                                            .absolute()
+                                            .top(px(i as f32 * ROW_H - scroll_y + 6.0))
+                                            .left(px(x))
+                                            .w(px(width))
+                                            .h(px(ROW_H - 12.0))
+                                            .when(lock != crate::LockStyle::None, |el| {
+                                                let el = lock.decorate(
+                                                    el.rounded(px(4.))
+                                                        .border_1()
+                                                        .bg(colors.background.to_hsla())
+                                                        .border_color(colors.foreground.to_hsla()),
+                                                    t,
+                                                );
+                                                el.when(on, |el| {
                                                     el.child(
                                                         div()
                                                             .absolute()
                                                             .inset_0()
                                                             .rounded(px(4.))
                                                             .border_2()
-                                                            .border_color(s.text.to_hsla()),
+                                                            .border_color(selected_color),
                                                     )
-                                                }),
-                                        )
-                                    })
+                                                })
+                                            }),
+                                    )
                                 }))
                                 .child(
                                     canvas(
@@ -786,9 +892,10 @@ impl Render for GanttView {
                                             let visible_end =
                                                 |row, x| visible.contains(&row) && in_x(x);
                                             let mut draw = |from: usize, to: usize, outgoing| {
-                                                let (Some(a), Some(c)) =
-                                                    (geo.rows[from].1, geo.rows[to].1)
-                                                else {
+                                                let (Some(a), Some(c)) = (
+                                                    geo.rows[from].scheduled,
+                                                    geo.rows[to].scheduled,
+                                                ) else {
                                                     return;
                                                 };
                                                 let x0 = axis.x(a.early_finish) as f32;
