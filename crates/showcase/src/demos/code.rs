@@ -509,7 +509,7 @@ impl Render for RichAnnotationsDemo {
 }
 
 fn rich_annotations(_: &mut Window, cx: &mut App) -> AnyView {
-    let source = "fn total(cart: &Cart) -> u64 {\n    let subtotal = cart.subtotal();\n    let shipping = cart.shipping();\n    subtotal + shiping\n}\n";
+    let source = "fn total(cart: &Cart) -> u64 {\n    let subtotal = cart.net;\n    let shipping = cart.fee;\n    subtotal + shiping\n}\n";
     let code = handle(212, source, "rust", cx);
     let document = code.document();
     let setup = || {
@@ -551,7 +551,7 @@ fn rich_annotations(_: &mut Window, cx: &mut App) -> AnyView {
                 2,
                 span(source, 1, "subtotal", 0),
                 DecorationStyle::Review {
-                    markdown: "**Review**  \nAdd a checkout total test with free shipping.".into(),
+                    markdown: "**Review**  \nTest free shipping.".into(),
                 },
             ),
             (
