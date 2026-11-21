@@ -91,6 +91,19 @@ pub struct PropertyOptions<'a> {
 }
 
 impl PropertyOptions<'_> {
+    pub(crate) fn scrub_value(self, initial: f64, delta: f32) -> Option<f64> {
+        let step = self.step.filter(|step| step.is_finite() && *step > 0.)?;
+        let increments = (f64::from(delta) / 4.).trunc();
+        let mut value = initial + increments * step;
+        if let Some(min) = self.min {
+            value = value.max(min);
+        }
+        if let Some(max) = self.max {
+            value = value.min(max);
+        }
+        value.is_finite().then_some(value)
+    }
+
     pub(crate) fn slider_range(self) -> Option<(f32, f32, f32)> {
         let (min, max) = (self.min? as f32, self.max? as f32);
         if self.mixed || !min.is_finite() || !max.is_finite() || min >= max {
@@ -120,6 +133,19 @@ mod tests {
             assert_eq!(value.parse("1, 2, NaN, 4"), None);
             assert_eq!(value.parse("1"), None);
         }
+    }
+
+    #[test]
+    fn scrub_quantizes_motion_and_clamps_to_property_bounds() {
+        let options = PropertyOptions {
+            min: Some(0.),
+            max: Some(10.),
+            step: Some(2.),
+            ..Default::default()
+        };
+        assert_eq!(options.scrub_value(5., 3.), Some(5.));
+        assert_eq!(options.scrub_value(5., -5.), Some(3.));
+        assert_eq!(options.scrub_value(5., 100.), Some(10.));
     }
 
     #[test]

@@ -174,7 +174,7 @@ pub struct TreeView<const PROPERTIES: bool> {
     expand_task: Option<gpui_kit::Task<()>>,
     colour_picker: Option<(NodeId, Entity<ColorPickerState>, gpui_kit::Subscription)>,
     slider: Option<(NodeId, Entity<SliderState>, gpui_kit::Subscription)>,
-    scrub: Option<(NodeId, f32, f64)>,
+    scrub: Option<Scrub>,
     drag: Option<(NodeId, gpui_kit::Point<gpui_kit::Pixels>)>,
     edit: Option<Edit>,
     error: Option<(NodeId, String)>,
@@ -185,6 +185,13 @@ struct Filter {
     ranks: Vec<usize>,
     task: Option<gpui_kit::Task<()>>,
     pending: bool,
+}
+
+struct Scrub {
+    id: NodeId,
+    start: f32,
+    initial: f64,
+    preview: f64,
 }
 
 struct Split {
@@ -574,9 +581,7 @@ impl<const P: bool> TreeView<P> {
                 if self.tab_stop {
                     window.focus(&self.focus, cx);
                 }
-                if picker || slider {
-                    cx.notify();
-                }
+                cx.notify();
                 cx.stop_propagation();
                 return;
             }
@@ -1023,31 +1028,59 @@ impl<const P: bool> TreeView<P> {
         cx.notify();
     }
 
-    fn finish_scrub(&mut self, x: f32, cx: &mut Context<Self>) {
-        let Some((id, start, initial)) = self.scrub.take() else {
-            return;
-        };
-        let options = self.source.property_options(id);
-        let Some(step) = options.step.filter(|step| step.is_finite() && *step > 0.) else {
-            return;
-        };
-        let increments = (f64::from(x - start) / 4.).trunc();
-        if increments == 0. {
-            return;
+    fn dragging_property(&self) -> bool {
+        self.scrub.is_some() || self.split.as_ref().is_some_and(|split| split.dragging)
+    }
+
+    fn move_property_drag(&mut self, x: f32, cx: &mut Context<Self>) {
+        if let Some(scrub) = &mut self.scrub
+            && let Some(value) = self
+                .source
+                .property_options(scrub.id)
+                .scrub_value(scrub.initial, x - scrub.start)
+            && scrub.preview != value
+        {
+            scrub.preview = value;
+            cx.notify();
         }
-        let mut value = initial + increments * step;
-        if let Some(min) = options.min {
-            value = value.max(min);
+        if let Some(split) = &self.split
+            && split.dragging
+        {
+            self.resize_split(
+                (x - self.split_origin) / split.width.get().max(1.),
+                false,
+                cx,
+            );
         }
-        if let Some(max) = options.max {
-            value = value.min(max);
+    }
+
+    fn finish_property_drag(&mut self, x: Option<f32>, cx: &mut Context<Self>) {
+        if let Some(scrub) = self.scrub.take() {
+            if let Some(x) = x
+                && let Some(value) = self
+                    .source
+                    .property_options(scrub.id)
+                    .scrub_value(scrub.initial, x - scrub.start)
+                && value != scrub.initial
+            {
+                self.edit_value(scrub.id, Value::Number(value), cx);
+            }
+            if scrub.preview != scrub.initial {
+                cx.notify();
+            }
         }
-        self.edit_value(id, Value::Number(value), cx);
+        self.finish_split(cx);
     }
 
     fn property_cell(&self, id: NodeId, row_height: f32, cx: &Context<Self>) -> Option<AnyElement> {
         let size = row_control_size(row_height);
         let property = self.source.property(id)?;
+        let text = || {
+            self.scrub
+                .as_ref()
+                .filter(|scrub| scrub.id == id)
+                .map_or_else(|| property.value.text(), |scrub| scrub.preview.to_string())
+        };
         let options = self.source.property_options(id);
         let editing = self.edit.as_ref().is_some_and(|edit| edit.id == id);
         let value =
@@ -1180,13 +1213,13 @@ impl<const P: bool> TreeView<P> {
                         Button::new(("property-value", id as usize))
                             .with_size(size)
                             .tab_stop(true)
-                            .label(property.value.text())
+                            .label(text())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.start_edit(id, window, cx)
                             }))
                             .into_any_element()
                     } else {
-                        let text = SharedString::from(property.value.text());
+                        let text = SharedString::from(text());
                         div()
                             .id(("property-value", id as usize))
                             .test_support()
@@ -1267,8 +1300,12 @@ impl<const P: bool> TreeView<P> {
                                 MouseButton::Left,
                                 cx.listener(
                                     move |this, event: &gpui_kit::MouseDownEvent, _, cx| {
-                                        this.scrub =
-                                            Some((id, f32::from(event.position.x), number));
+                                        this.scrub = Some(Scrub {
+                                            id,
+                                            start: f32::from(event.position.x),
+                                            initial: number,
+                                            preview: number,
+                                        });
                                         cx.stop_propagation();
                                     },
                                 ),
@@ -1594,6 +1631,9 @@ impl<const P: bool> Render for TreeView<P> {
                     }),
             )
         });
+        let moving = cx.weak_entity();
+        let dropped = moving.clone();
+        let cancelled = moving.clone();
         let mut tree = div()
             .id("virtual-tree")
             .role(Role::Tree)
@@ -1602,16 +1642,35 @@ impl<const P: bool> Render for TreeView<P> {
             .overflow_hidden()
             .h(px(self.height))
             .w_full()
+            .on_mouse_move(move |event: &gpui_kit::MouseMoveEvent, _, cx| {
+                if event.pressed_button == Some(MouseButton::Left)
+                    && let Some(view) = moving.upgrade()
+                    && view.read(cx).dragging_property()
+                {
+                    view.update(cx, |this, cx| {
+                        this.move_property_drag(f32::from(event.position.x), cx)
+                    });
+                }
+            })
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, event: &gpui_kit::MouseUpEvent, _, cx| {
-                    this.finish_scrub(f32::from(event.position.x), cx);
-                }),
+                move |event: &gpui_kit::MouseUpEvent, _, cx| {
+                    if let Some(view) = dropped.upgrade()
+                        && view.read(cx).dragging_property()
+                    {
+                        view.update(cx, |this, cx| {
+                            this.finish_property_drag(Some(f32::from(event.position.x)), cx)
+                        });
+                    }
+                },
             )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.scrub = None),
-            )
+            .on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
+                if let Some(view) = cancelled.upgrade()
+                    && view.read(cx).dragging_property()
+                {
+                    view.update(cx, |this, cx| this.finish_property_drag(None, cx));
+                }
+            })
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 let before = this.scroll;
                 this.scroll -= f64::from(f32::from(event.delta.pixel_delta(px(24.)).y));
@@ -1657,25 +1716,6 @@ impl<const P: bool> Render for TreeView<P> {
                     .top_0()
                     .w_full()
                     .h_0(),
-                )
-                .on_mouse_move(
-                    cx.listener(|this, event: &gpui_kit::MouseMoveEvent, _, cx| {
-                        if let Some(split) = &this.split
-                            && split.dragging
-                            && event.pressed_button == Some(MouseButton::Left)
-                        {
-                            let delta = f32::from(event.position.x) - this.split_origin;
-                            this.resize_split(delta / split.width.get().max(1.), false, cx);
-                        }
-                    }),
-                )
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| this.finish_split(cx)),
-                )
-                .on_mouse_up_out(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| this.finish_split(cx)),
                 )
                 .child(
                     div()
@@ -1815,6 +1855,12 @@ mod tests {
                 choices: &[],
                 read_only: id == 2,
             })
+        }
+        fn property_options(&self, id: NodeId) -> PropertyOptions<'_> {
+            PropertyOptions {
+                step: (id == 1 && matches!(self.1, Value::Number(_))).then_some(1.),
+                ..Default::default()
+            }
         }
         fn validate(&self, _: NodeId, value: &Value) -> Result<(), String> {
             if matches!(value, Value::Number(n) if *n < 0.) {
@@ -2092,6 +2138,55 @@ mod tests {
         assert_eq!(
             restored.read_with(cx, |view, _| view.split.as_ref().map(|s| s.ratio)),
             moved
+        );
+    }
+
+    #[gpui_kit::test]
+    fn number_scrub_previews_until_pointer_release(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        cx.update(|cx| {
+            gpui_kit::base::init(cx);
+            gpui_kit::component::init(cx);
+            guiraffe_core::apply(Default::default(), cx);
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let view = cx.new(|cx| {
+            let mut grid = PropertyGrid::new(
+                Rc::new(Data(vec![1], Value::Number(10.), Value::Number(10.))),
+                cx,
+            );
+            grid.set_expanded(0, true, cx);
+            grid
+        });
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let events = events.clone();
+            cx.subscribe(&view, move |_, _, event: &TreeEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach();
+            gpui_kit::base::Root::new(view.clone(), window, cx)
+        });
+        window.run_until_parked();
+        let grip =
+            window.update(|window, _| window.find(("property-scrub", 1usize)).bounds().center());
+        let end = grip + point(px(12.), px(0.));
+        window.simulate_mouse_down(grip, MouseButton::Left, Modifiers::default());
+        window.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+        window.run_until_parked();
+        assert_eq!(
+            view.read_with(window, |view, _| view
+                .scrub
+                .as_ref()
+                .map(|scrub| scrub.preview)),
+            Some(13.)
+        );
+        assert!(events.borrow().is_empty());
+        window.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        window.run_until_parked();
+        assert!(
+            events
+                .borrow()
+                .contains(&TreeEvent::Edited(1, Value::Number(13.)))
         );
     }
 
