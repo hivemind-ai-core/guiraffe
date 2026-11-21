@@ -1653,7 +1653,8 @@ impl InlineNode {
 #[derive(Debug, Clone, Default)]
 pub struct Paragraph {
     pub(super) span: Option<Span>,
-    pub(super) children: Vec<InlineNode>,
+    // Parsed snapshots share unchanged runs across streaming appends.
+    pub(super) children: Arc<Vec<InlineNode>>,
     /// The link references in this paragraph, used for reference links.
     ///
     /// The key is the identifier, the value is the url.
@@ -1719,7 +1720,7 @@ impl Paragraph {
     pub(crate) fn new(text: String) -> Self {
         Self {
             span: None,
-            children: vec![InlineNode::new(&text)],
+            children: Arc::new(vec![InlineNode::new(&text)]),
             link_refs: HashMap::new(),
             state: Arc::new(Mutex::new(InlineState::default())),
             render_cache: ParagraphRenderCache::default(),
@@ -1761,7 +1762,7 @@ impl Paragraph {
         let mut highlights: Vec<(Range<usize>, InlineHighlight)> = vec![];
         let mut links: Vec<(Range<usize>, LinkMark)> = vec![];
         let mut offset = 0;
-        for inline_node in &self.children {
+        for inline_node in self.children.iter() {
             let text_len = inline_node.text.len();
             text.push_str(&inline_node.text);
             let mut node_highlights = vec![];
@@ -1881,7 +1882,7 @@ impl Paragraph {
             }
         };
 
-        for child in &self.children {
+        for child in self.children.iter() {
             if child.custom.is_some() {
                 let (run_range, run_selection) = include_run(&child.state, &run);
                 if run_selection.emitted && run_selection.at_start {
@@ -2379,7 +2380,7 @@ impl Paragraph {
             self,
             Paragraph {
                 span: None,
-                children: vec![],
+                children: Arc::default(),
                 link_refs: Default::default(),
                 state: Arc::new(Mutex::new(InlineState::default())),
                 render_cache: ParagraphRenderCache::default(),
@@ -2396,21 +2397,28 @@ impl Paragraph {
     }
 
     pub(crate) fn push_str(&mut self, text: &str) {
-        self.children.push(
+        self.push(
             InlineNode::new(text.to_string()).marks(vec![(0..text.len(), TextMark::default())]),
         );
-        self.invalidate_render_cache();
     }
 
     /// Appends an inline run.
     pub fn push(&mut self, text: InlineNode) {
-        self.children.push(text);
-        self.invalidate_render_cache();
+        self.children_mut().push(text);
     }
 
     /// The inline runs.
     pub fn children(&self) -> &[InlineNode] {
         &self.children
+    }
+
+    pub(super) fn children_mut(&mut self) -> &mut Vec<InlineNode> {
+        self.invalidate_render_cache();
+        Arc::make_mut(&mut self.children)
+    }
+
+    pub(super) fn into_children(self) -> Vec<InlineNode> {
+        Arc::unwrap_or_clone(self.children)
     }
 
     /// Marks this paragraph as a leaf of an external editor: while a
@@ -2423,8 +2431,7 @@ impl Paragraph {
     }
 
     pub(crate) fn push_image(&mut self, image: ImageNode) {
-        self.children.push(InlineNode::image(image));
-        self.invalidate_render_cache();
+        self.push(InlineNode::image(image));
     }
 
     /// The children changed, so what was derived from them is stale.
@@ -2455,8 +2462,7 @@ impl Paragraph {
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
-        self.children.extend(other.children);
-        self.invalidate_render_cache();
+        self.children_mut().extend(other.into_children());
     }
 }
 
@@ -2975,7 +2981,7 @@ impl Paragraph {
     ) -> Vec<(Range<usize>, InlineHighlight)> {
         let mut highlights = vec![];
         let mut offset = 0;
-        for inline_node in &self.children {
+        for inline_node in self.children.iter() {
             let node_highlights = inline_node
                 .marks
                 .iter()
@@ -3250,7 +3256,7 @@ impl Paragraph {
         // is the byte space the fade and background ranges use.
         let mut consumed = 0;
 
-        for inline_node in &self.children {
+        for inline_node in self.children.iter() {
             if let Some(node) = &inline_node.custom {
                 if let Ok(mut state) = inline_node.state.lock() {
                     state.set_text(text.clone().into());
@@ -3706,7 +3712,7 @@ impl Paragraph {
     fn to_markdown(&self) -> String {
         if self.children.iter().any(|node| node.custom.is_some()) {
             let mut source = MarkdownSource::default();
-            for node in &self.children {
+            for node in self.children.iter() {
                 if node.custom.is_some() {
                     source.push_object(node);
                 } else {
@@ -4770,6 +4776,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn paragraph_clones_share_runs_until_the_next_edit() {
+        let paragraph = Paragraph::new("stable prefix".to_owned());
+        let mut edited = paragraph.clone();
+        assert!(Arc::ptr_eq(&paragraph.children, &edited.children));
+        edited.push_str(" suffix");
+        assert_eq!(paragraph.text(), "stable prefix");
+        assert_eq!(edited.text(), "stable prefix suffix");
+        assert!(!Arc::ptr_eq(&paragraph.children, &edited.children));
+    }
+
+    #[test]
     fn paragraph_highlights_preserve_overlaps_and_utf8_boundaries() {
         let mut app = gpui::TestApp::new();
         let mut window = app.open_window(|_, _| gpui::Empty);
@@ -4781,7 +4798,7 @@ mod tests {
                 ..Default::default()
             };
             let paragraph = Paragraph {
-                children: vec![
+                children: Arc::new(vec![
                     InlineNode::new("a中😀").marks(vec![
                         (0..8, TextMark::default().bold()),
                         (1..8, TextMark::default().italic()),
@@ -4791,7 +4808,7 @@ mod tests {
                         (0..4, TextMark::default().link(link.clone())),
                         (0..3, TextMark::default().bold()),
                     ]),
-                ],
+                ]),
                 ..Default::default()
             };
             let measured = paragraph.inline_highlights(&context, cx);
@@ -4839,10 +4856,10 @@ mod tests {
 
             // Public callers can supply marks extending into the next node.
             let paragraph = Paragraph {
-                children: vec![
+                children: Arc::new(vec![
                     InlineNode::new("a").marks(vec![(0..2, TextMark::default().bold())]),
                     InlineNode::new("bc").marks(vec![(0..2, TextMark::default().italic())]),
-                ],
+                ]),
                 ..Default::default()
             };
             let highlights = paragraph.inline_highlights(&context, cx);
@@ -4871,15 +4888,17 @@ mod tests {
             let inputs = || COMBINED_HIGHLIGHT_INPUTS.with(|inputs| inputs.get());
             for node_count in [64, 128] {
                 let paragraph = Paragraph {
-                    children: (0..node_count)
-                        .map(|_| {
-                            InlineNode::new("a中😀").marks(vec![
-                                (0..8, TextMark::default().bold()),
-                                (1..8, TextMark::default().italic()),
-                                (4..8, TextMark::default().code()),
-                            ])
-                        })
-                        .collect(),
+                    children: Arc::new(
+                        (0..node_count)
+                            .map(|_| {
+                                InlineNode::new("a中😀").marks(vec![
+                                    (0..8, TextMark::default().bold()),
+                                    (1..8, TextMark::default().italic()),
+                                    (4..8, TextMark::default().code()),
+                                ])
+                            })
+                            .collect(),
+                    ),
                     ..Default::default()
                 };
                 let before = inputs();
@@ -5168,7 +5187,7 @@ mod tests {
             }
             *formula.custom_selection.lock().unwrap() = true;
             let paragraph = Paragraph {
-                children: vec![before, formula, after],
+                children: Arc::new(vec![before, formula, after]),
                 ..Default::default()
             };
             {
@@ -5188,7 +5207,7 @@ mod tests {
         *first.custom_selection.lock().unwrap() = true;
         *second.custom_selection.lock().unwrap() = true;
         let paragraph = Paragraph {
-            children: vec![first, second],
+            children: Arc::new(vec![first, second]),
             ..Default::default()
         };
         assert_eq!(paragraph.selected_text(), "甲²b");
@@ -5214,7 +5233,7 @@ mod tests {
         }
         *formula.custom_selection.lock().unwrap() = true;
         let paragraph = Paragraph {
-            children: vec![before, formula, after],
+            children: Arc::new(vec![before, formula, after]),
             ..Default::default()
         };
         {
@@ -5278,10 +5297,10 @@ mod tests {
         window.update(|_, _, cx| {
             cx.set_global(crate::Theme::default());
             let paragraph = Paragraph {
-                children: vec![InlineNode::new("mark").marks(vec![(
+                children: Arc::new(vec![InlineNode::new("mark").marks(vec![(
                     0..4,
                     TextMark::default().highlight(gpui::rgba(0x00000033).into()),
-                )])],
+                )])]),
                 ..Default::default()
             };
             let context = NodeContext::default();
@@ -5317,10 +5336,10 @@ mod tests {
                 },
             );
             let paragraph = Paragraph {
-                children: vec![
+                children: Arc::new(vec![
                     InlineNode::custom(MarkdownNode::new("test", ()).text("x"))
                         .marks(vec![(0..1, mark)]),
-                ],
+                ]),
                 ..Default::default()
             };
             let items = paragraph.inline_flow_items(None, &[], &[], &node_cx, cx);
@@ -5367,7 +5386,9 @@ mod tests {
                 vec![plain_cell("ordinary text")],
                 vec![TableCell {
                     children: Paragraph {
-                        children: vec![InlineNode::custom(MarkdownNode::new("test", ()).text("x"))],
+                        children: Arc::new(vec![InlineNode::custom(
+                            MarkdownNode::new("test", ()).text("x"),
+                        )]),
                         ..Default::default()
                     },
                     width: None,
@@ -5920,7 +5941,7 @@ mod tests {
         let combined: String = children.iter().map(|c| c.text.to_string()).collect();
         let paragraph = Paragraph {
             span: None,
-            children,
+            children: Arc::new(children),
             link_refs: HashMap::new(),
             state: Arc::new(Mutex::new(InlineState::default())),
             render_cache: ParagraphRenderCache::default(),
@@ -6103,7 +6124,7 @@ mod tests {
         let formula = InlineNode::custom(MarkdownNode::new("math", ()).text("x").markdown("$x$"));
         *formula.custom_selection.lock().unwrap() = true;
         let paragraph = Paragraph {
-            children: vec![formula],
+            children: Arc::new(vec![formula]),
             ..Default::default()
         };
         assert_eq!(
@@ -6585,7 +6606,7 @@ mod tests {
         };
         Paragraph {
             span: None,
-            children: vec![InlineNode::image(image)],
+            children: Arc::new(vec![InlineNode::image(image)]),
             link_refs: HashMap::new(),
             state: Arc::new(Mutex::new(InlineState::default())),
             render_cache: ParagraphRenderCache::default(),

@@ -486,7 +486,7 @@ fn merge_children_with_mark(
         };
         text.push_str(&child_text);
 
-        for mut node in child_paragraph.children {
+        for mut node in child_paragraph.into_children() {
             if node.custom.is_some() {
                 push_merged(
                     paragraph,
@@ -855,7 +855,7 @@ fn append_inline_html_blocks(paragraph: &mut Paragraph, blocks: Vec<BlockNode>) 
             }
             BlockNode::Paragraph(html_paragraph) => {
                 text.push_str(&html_paragraph.text());
-                for child in html_paragraph.children {
+                for child in html_paragraph.into_children() {
                     paragraph.push(child);
                 }
             }

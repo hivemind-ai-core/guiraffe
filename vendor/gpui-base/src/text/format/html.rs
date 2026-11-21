@@ -741,14 +741,14 @@ fn trim_trailing_break(paragraph: &mut Paragraph) {
     {
         return;
     }
-    let Some(last) = paragraph.children.last_mut() else {
+    let Some(last) = paragraph.children_mut().last_mut() else {
         return;
     };
     let Some(text) = last.text.strip_suffix('\n').map(str::to_string) else {
         return;
     };
     if text.is_empty() {
-        paragraph.children.pop();
+        paragraph.children_mut().pop();
         return;
     }
     let len = text.len();
@@ -1026,7 +1026,7 @@ mod tests {
                     _ => panic!("expected text block: {html}"),
                 };
                 assert_eq!(paragraph.text(), expected, "{html}");
-                for node in &paragraph.children {
+                for node in paragraph.children() {
                     assert!(
                         node.marks
                             .iter()
@@ -1058,14 +1058,14 @@ mod tests {
                 source: html.to_string().into(),
                 blocks: Arc::new(vec![BlockNode::Paragraph(Paragraph {
                     span: None,
-                    children: vec![InlineNode::image(ImageNode {
+                    children: Arc::new(vec![InlineNode::image(ImageNode {
                         url: "https://example.com/image.png".to_string().into(),
                         alt: Some("Example".to_string().into()),
                         width: Some(px(100.).into()),
                         height: Some(px(200.).into()),
                         title: Some("Example Image".to_string().into()),
                         ..Default::default()
-                    })],
+                    })]),
                     ..Default::default()
                 })])
             }
@@ -1079,14 +1079,14 @@ mod tests {
                 source: html.to_string().into(),
                 blocks: Arc::new(vec![BlockNode::Paragraph(Paragraph {
                     span: None,
-                    children: vec![InlineNode::image(ImageNode {
+                    children: Arc::new(vec![InlineNode::image(ImageNode {
                         url: "https://example.com/image.png".to_string().into(),
                         alt: Some("Example".to_string().into()),
                         width: Some(relative(0.8)),
                         height: None,
                         title: Some("Example Image".to_string().into()),
                         ..Default::default()
-                    })],
+                    })]),
                     ..Default::default()
                 })])
             }

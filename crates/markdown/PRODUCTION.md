@@ -17,7 +17,9 @@ single large block may still use memory proportional to its content.
 The renderer parses eligible documents in sections, using unindented ATX
 headings as boundaries. When the first complete section is at most 32 KiB,
 the initial view can show it while the background parser works. The parser
-checks for source replacement and view teardown between sections. Documents
+checks for source replacement and view teardown between sections. Streaming versions
+share existing paragraph runs and copy them only when edited. The append
+path still copies the raw source and top-level block vector. Documents
 with link definitions, footnotes, or ambiguous blocks use the one-shot
 parser. The background renderer and metadata pass consume one raw AST section at a
 time. The published background result still holds the entire render tree.

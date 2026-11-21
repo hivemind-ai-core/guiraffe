@@ -36,6 +36,14 @@ selections currently refer to entity IDs. A future range snapshot API must
 preserve source mapping, direction, copy format and cross-renderer selection
 before hosts can recycle those selected entities.
 
+## Share static paragraph runs across Markdown appends
+
+The live viewer and parser both hold a snapshot during an append. Let
+cloned paragraphs share their inline runs and copy them only on edit.
+Keep the existing parsed-node API and selection pointers. Test copy-on-write
+with text and selection projections, then profile the remaining source
+and top-level block vector copies.
+
 ## Share immutable Tree-sitter queries across highlighters
 
 Cache compiled queries by canonical language and query purpose, checking
