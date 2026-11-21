@@ -93,6 +93,14 @@ pub fn run_data(
     )?;
     let elapsed = started.elapsed();
     let data = window.update(|_, cx| view.read(cx).clone());
+    if crate::warm_repaint::enabled() {
+        if let Data::Grid(grid) = &data
+            && grid.stats().row_renders == 0
+        {
+            return Err("DataGrid did not render any rows".into());
+        }
+        return window.update(crate::warm_repaint::measure);
+    }
     run(
         &mut |i| {
             window.update(|_, cx| data.step(count, i, cx));

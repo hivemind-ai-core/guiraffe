@@ -3353,6 +3353,7 @@ name = "guiraffe-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "clap",
  "criterion",
  "ctrlc",
