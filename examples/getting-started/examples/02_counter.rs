@@ -41,7 +41,7 @@ struct Counter {
 impl Counter {
     fn change(&mut self, delta: i64, cx: &mut Context<Self>) {
         self.count = self.count.saturating_add(delta);
-        // Ask GPUI to render this view again. Nothing else re-renders.
+        // Ask GPUI to render this view again on the next frame.
         cx.notify();
     }
 }

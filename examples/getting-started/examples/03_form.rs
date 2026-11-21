@@ -15,7 +15,7 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use guiraffe_components::{Card, Text, Title};
+use guiraffe_components::{Card, ScopedButton, Text, Title};
 use guiraffe_core::{ColorName, GuiraffeTheme, Size, StateKind, Variant, focus_scope};
 use guiraffe_inputs::{PasswordStrength, logic::password_strength};
 use guiraffe_ui::{component, ui};
@@ -184,11 +184,12 @@ impl Render for SignupForm {
                 }
                 FieldError(errors.terms)
 
-                Button("submit") {
-                    label: "Sign up";
-                    .primary()
-                    on_click: cx.listener(|this, _, _, cx| this.submit(cx))
-                }
+                ScopedButton(
+                    Button::new("submit")
+                        .label("Sign up")
+                        .primary()
+                        .on_click(cx.listener(|this, _, _, cx| this.submit(cx)))
+                )
                 if let Some(message) = submitted { Text(message) { color: ColorName::Teal } }
             }
         };
@@ -196,7 +197,8 @@ impl Render for SignupForm {
         ui! {
             div {
                 size_full flex items_center justify_center
-                // A focus scope opts the checkbox and button into Tab navigation.
+                // Inside a focus scope, GUIraffe's opt-in controls such as ScopedButton
+                // become Tab stops. (Kit inputs and checkboxes are Tab stops anyway.)
                 Card { {focus_scope(form)} }
             }
         }
