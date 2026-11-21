@@ -109,6 +109,8 @@ presentation timing requires a compositor trace. The default duration is 30 minu
 for a shorter diagnostic run.
 
 ```sh
+mkdir -p target/event-tmp
+export TMPDIR="$PWD/target/event-tmp"
 CARGO_BUILD_JOBS=4 cargo test --release -p guiraffe-timeline --test event_timeline soak_100k -- --ignored --nocapture
 CARGO_BUILD_JOBS=4 cargo test --release -p guiraffe-timeline --features gpui-fast --test event_timeline soak_100k -- --ignored --nocapture
 ```
