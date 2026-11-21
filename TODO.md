@@ -52,6 +52,8 @@ batches; nothing goes to main without the user.
 - [ ] gpui-fast quirks: picker popover open/close re-renders the host once; host picks up popover
       reads after a forced frame.
 
+- [ ] DnD: dim/ghost the source card while it is being dragged (currently stays full-opacity in its column).
+
 ## Release readiness
 - [ ] CHANGELOG 0.2; KNOWN_ISSUES.md current; API docs coverage.
 - [ ] Packaging notes: apps must copy the vendored `[patch.crates-io]` entries (vendor/README.md);
