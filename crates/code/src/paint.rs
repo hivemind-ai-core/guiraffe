@@ -553,19 +553,20 @@ pub(crate) fn anchor(shared: &Shared, position: Position) -> Option<Point<Pixels
     }
     Some(anchor)
 }
-fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
+fn visit_range_rects(shared: &Shared, range: SourceRange, mut visit: impl FnMut(Bounds<Pixels>)) {
     let g = shared.geometry.borrow();
     let viewport = shared.viewport.get();
-    let mut result = Vec::new();
     let doc = shared.highlighted.borrow();
     if doc.document.range(range).is_none() {
-        return result;
+        return;
     }
+    let rows = shared.rows.borrow();
+    let hints = shared.hints.borrow();
     for (line, shape) in &g.shaped {
         if *line < range.start.line || *line > range.end.line {
             continue;
         }
-        let Some(row) = shared.rows.borrow().source_row(*line) else {
+        let Some(row) = rows.source_row(*line) else {
             continue;
         };
         let start = if *line == range.start.line {
@@ -578,7 +579,6 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
         } else {
             doc.document.line(*line).map(str::len).unwrap_or_default()
         };
-        let hints = shared.hints.borrow();
         let start = hints
             .get(line)
             .map(|d| d.source_to_display(start, true))
@@ -593,7 +593,7 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
             .min(g.bounds.right() - px(g.margin + g.mini));
         let left = x.max(g.bounds.origin.x + px(g.gutter));
         if right > left {
-            result.push(Bounds::new(
+            visit(Bounds::new(
                 point(
                     left,
                     g.bounds.origin.y
@@ -603,22 +603,19 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
             ));
         }
     }
-    result
 }
 pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut App) {
     let owned_theme = GuiraffeTheme::global(cx).clone();
     let theme = &owned_theme;
     let surfaces = theme.surfaces();
     if let Some(selection) = shared.selection.get() {
-        for rect in range_rects(shared, selection) {
-            window.paint_quad(fill(rect, color(ColorName::Blue, theme).opacity(0.22)));
-        }
+        let ink = color(ColorName::Blue, theme).opacity(0.22);
+        visit_range_rects(shared, selection, |rect| window.paint_quad(fill(rect, ink)));
     }
     if let Some(symbol) = shared.symbol.borrow().as_ref() {
+        let ink = color(ColorName::Yellow, theme).opacity(0.25);
         for range in symbol.occurrences.iter() {
-            for rect in range_rects(shared, *range) {
-                window.paint_quad(fill(rect, color(ColorName::Yellow, theme).opacity(0.25)));
-            }
+            visit_range_rects(shared, *range, |rect| window.paint_quad(fill(rect, ink)));
         }
     }
     paint_local_traces(shared, &shared.traces.borrow(), theme, window);
