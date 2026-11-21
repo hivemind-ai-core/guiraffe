@@ -17,7 +17,7 @@ use crate::{
         EndEarlier, EndLater, Grab, KEY_CONTEXT, MoveEarlier, MoveLater, Nudge, ResizeEdges,
         SelectNextItem, SelectPrevItem, StartEarlier, StartLater, cursor_for, grab_at, key_step,
     },
-    gantt::{ScheduleError, Scheduled, Task, schedule},
+    gantt::{ScheduleError, SchedulePlan, Scheduled, Task, task_index},
 };
 
 pub const ROW_H: f32 = 32.0;
@@ -46,11 +46,9 @@ struct Drag {
 }
 
 /// Static display metadata and dependency adjacency, rebuilt only on task replacement.
-#[derive(Default)]
 struct Geometry {
     rows: Vec<Row>,
-    successors: AdjacentRows,
-    predecessors: AdjacentRows,
+    plan: Result<SchedulePlan, ScheduleError>,
     index: HashMap<u32, usize>,
 }
 
@@ -59,48 +57,9 @@ struct Row {
     name: gpui_kit::SharedString,
 }
 
-/// Two contiguous arrays replace a heap allocation per nonempty adjacency list.
-#[derive(Default)]
-struct AdjacentRows {
-    offsets: Vec<usize>,
-    rows: Vec<usize>,
-}
-
-impl AdjacentRows {
-    fn new(count: usize, edges: impl Iterator<Item = (usize, usize)> + Clone) -> Self {
-        let mut offsets = vec![0; count + 1];
-        for (from, _) in edges.clone() {
-            offsets[from + 1] += 1;
-        }
-        for row in 0..count {
-            offsets[row + 1] += offsets[row];
-        }
-        let mut rows = vec![0; offsets[count]];
-        // Use each start offset as a write cursor and then restore the starts.
-        for (from, to) in edges {
-            rows[offsets[from]] = to;
-            offsets[from] += 1;
-        }
-        offsets.rotate_right(1);
-        offsets[0] = 0;
-        Self { offsets, rows }
-    }
-
-    fn get(&self, row: usize) -> &[usize] {
-        &self.rows[self.offsets[row]..self.offsets[row + 1]]
-    }
-}
-
 fn geometry(tasks: &[Task]) -> Rc<Geometry> {
-    let index: HashMap<u32, usize> = tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
-    let by_id = &index;
-    let edges = tasks.iter().enumerate().flat_map(|(to, task)| {
-        task.after
-            .iter()
-            .filter_map(move |id| by_id.get(id).map(|&from| (from, to)))
-    });
-    let successors = AdjacentRows::new(tasks.len(), edges.clone());
-    let predecessors = AdjacentRows::new(tasks.len(), edges.map(|(from, to)| (to, from)));
+    let index = task_index(tasks);
+    let plan = SchedulePlan::new(tasks, &index);
     Rc::new(Geometry {
         rows: tasks
             .iter()
@@ -109,8 +68,7 @@ fn geometry(tasks: &[Task]) -> Rc<Geometry> {
                 name: t.name.clone().into(),
             })
             .collect(),
-        successors,
-        predecessors,
+        plan,
         index,
     })
 }
@@ -154,11 +112,12 @@ impl Focusable for GanttView {
 
 impl GanttView {
     pub fn new(tasks: Vec<Task>, format: TimeFormat, cx: &mut App) -> Entity<Self> {
-        let schedule = schedule(&tasks);
+        let geometry = geometry(&tasks);
+        let schedule = geometry.schedule(&tasks);
         let (lo, hi) = span(&schedule);
         let axis = Axis::new(lo, hi, 800.0);
         cx.new(|cx| Self {
-            geometry: geometry(&tasks),
+            geometry,
             tasks,
             schedule: Rc::new(schedule),
             surface: crate::PlotSurface::timeline(axis, format),
@@ -275,8 +234,8 @@ impl GanttView {
 
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
         self.tasks = tasks;
-        self.schedule = Rc::new(schedule(&self.tasks));
         self.geometry = geometry(&self.tasks);
+        self.schedule = Rc::new(self.geometry.schedule(&self.tasks));
         self.pending_fit = Some(span(&self.schedule));
         cx.notify();
     }
@@ -305,7 +264,7 @@ impl GanttView {
         };
         let before = start(&self.schedule);
         t.not_before = not_before;
-        self.schedule = Rc::new(schedule(&self.tasks));
+        self.schedule = Rc::new(self.geometry.schedule(&self.tasks));
         if before != start(&self.schedule) {
             cx.emit(GanttEvent::Rescheduled { id, not_before });
         }
@@ -427,7 +386,7 @@ impl GanttView {
         }
         task.duration = duration;
         task.not_before = not_before;
-        self.schedule = Rc::new(schedule(&self.tasks));
+        self.schedule = Rc::new(self.geometry.schedule(&self.tasks));
         cx.emit(GanttEvent::Resized {
             id,
             not_before,
@@ -552,6 +511,13 @@ fn span(s: &Result<HashMap<u32, Scheduled>, ScheduleError>) -> (f64, f64) {
 }
 
 impl Geometry {
+    fn schedule(&self, tasks: &[Task]) -> Result<HashMap<u32, Scheduled>, ScheduleError> {
+        self.plan
+            .as_ref()
+            .map(|plan| plan.schedule(tasks))
+            .map_err(Clone::clone)
+    }
+
     fn visible_arrows(
         &self,
         schedule: &HashMap<u32, Scheduled>,
@@ -560,6 +526,9 @@ impl Geometry {
         height: f32,
         mut draw: impl FnMut((f32, f32), (f32, f32)),
     ) {
+        let Ok(plan) = &self.plan else {
+            return;
+        };
         let row_y = |row: usize| (row_top(row) - scroll_y) as f32 + ROW_H / 2.0;
         let visible = |x: f32, y: f32| x >= 0.0 && x < axis.width as f32 && y >= 0.0 && y < height;
         for row in visible_rows(self.rows.len(), scroll_y, height) {
@@ -569,7 +538,7 @@ impl Geometry {
             let y = row_y(row);
             let finish = axis.x(sc.early_finish) as f32;
             if visible(finish, y) {
-                for &to in self.successors.get(row) {
+                for &to in plan.successors.get(row) {
                     if let Some(target) = schedule.get(&self.rows[to].id) {
                         let start = axis.x(target.early_start) as f32;
                         if start.is_finite() {
@@ -580,7 +549,7 @@ impl Geometry {
             }
             let start = axis.x(sc.early_start) as f32;
             if visible(start, y) {
-                for &from in self.predecessors.get(row) {
+                for &from in plan.predecessors.get(row) {
                     if let Some(source) = schedule.get(&self.rows[from].id) {
                         let finish = axis.x(source.early_finish) as f32;
                         let source_y = row_y(from);
@@ -986,17 +955,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn adjacency_indexes_preserve_direction_order_and_duplicate_edges() {
-        let edges = [(0, 4), (3, 2), (0, 4), (0, 2)];
-        let outgoing = AdjacentRows::new(5, edges.into_iter());
-        let incoming = AdjacentRows::new(5, edges.into_iter().map(|(a, b)| (b, a)));
-        assert_eq!(outgoing.get(0), &[4, 4, 2]);
-        assert!(outgoing.get(1).is_empty());
-        assert_eq!(incoming.get(2), &[3, 0]);
-        assert_eq!(incoming.get(4), &[0, 0]);
-    }
-
-    #[test]
     fn viewport_rows_are_independent_of_total_rows() {
         assert_eq!(visible_rows(10_000, 45.0, 640.0), 1..22);
         assert_eq!(visible_rows(10_000_000, 45.0, 640.0), 1..22);
@@ -1020,9 +978,10 @@ mod tests {
                     after: id.checked_sub(1).into_iter().collect(),
                 })
                 .collect();
-            let schedule = schedule(&tasks).expect("acyclic chain");
+            let geometry = geometry(&tasks);
+            let schedule = geometry.schedule(&tasks).expect("acyclic chain");
             let mut edges = Vec::new();
-            geometry(&tasks).visible_arrows(
+            geometry.visible_arrows(
                 &schedule,
                 Axis::new(-1.0, 1.0, 100.0),
                 f64::from(ROW_H),

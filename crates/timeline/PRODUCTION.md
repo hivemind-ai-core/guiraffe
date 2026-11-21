@@ -44,9 +44,10 @@ check that views without an explicit opt-in preserve pointer focus.
 
 The view retains one schedule keyed by task ID, one ID-to-row index, and one
 shared display label per task. Forward and reverse dependency indexes each
-store (N+1) row offsets and (E) row numbers, where (N) is task count and
-(E) is dependency count. Drag and resize replace the schedule without
-rebuilding labels or dependency indexes. No scroll history or zoom buckets
+store N+1 row offsets and E row numbers, where N is task count and E is
+dependency count. The schedule plan also holds N row numbers in topological
+order. Drag and resize replace the schedule without rebuilding labels,
+dependency indexes or topological order. No scroll history or zoom buckets
 are retained.
 
 A frame visits the intersecting rows plus their incident edges. Task bars
@@ -56,3 +57,19 @@ with very high degree on a visible row can still require work proportional
 to its incident edges. Visible accessibility items and lock controls
 remain GPUI elements. Plot command generation and arrow path construction
 still allocate, so the warm repaint allocation gate remains open.
+
+
+The standalone scheduler check used the 100k-task soak fixture, optimized
+Rust binaries and the pre-change revision `65e854a`. Both executables reported
+the same sum of earliest finish times. Callgrind and Memcheck counts cover the
+entire process, including fixture creation and output. Timing is the median
+of five alternating runs on a shared machine. RSS is the child process peak
+and excludes GPUI.
+
+| Standalone scheduler measurement | Before | After |
+| --- | ---: | ---: |
+| Callgrind instructions | 259,177,812 | 190,809,476 |
+| Heap allocation calls | 280,050 | 190,023 |
+| Heap bytes allocated | 29,771,368 | 24,005,868 |
+| Median schedule build | 183.6 ms | 99.0 ms |
+| Median peak RSS | 33.3 MiB | 28.9 MiB |
