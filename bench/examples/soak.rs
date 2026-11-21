@@ -27,8 +27,18 @@ fn memory_kib() -> Result<[u64; 2]> {
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// `SOAK_SCALE=n` divides every dataset size by `n` (profiling under callgrind).
+fn scaled(size: usize) -> usize {
+    let divisor = std::env::var("SOAK_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
+    (size / divisor).max(1)
+}
+
 fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) -> Result<()> {
-    let nodes = 50_000;
+    let nodes = scaled(50_000) as u64;
     let graph = Graph::from_parts(
         (0..nodes).map(|i| {
             Node::new(
@@ -92,7 +102,7 @@ fn timeline(run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
             .map(|i| {
                 Channel::new(
                     format!("Lane {i} · عربي 日本語 🎵"),
-                    (0..1_000).map(f64::from).collect(),
+                    (0..scaled(1_000)).map(|k| k as f64).collect(),
                 )
             })
             .collect();
@@ -160,9 +170,9 @@ fn charts(
         };
         gpui_kit::open_window(options, cx, |_, cx| {
             let (mark, count) = if scatter {
-                (Mark::Point, 1_000_000)
+                (Mark::Point, scaled(1_000_000) as u32)
             } else {
-                (Mark::Line, 10_000_000)
+                (Mark::Line, scaled(10_000_000) as u32)
             };
             let options = ChartOptions {
                 legend: false,
@@ -287,6 +297,17 @@ fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bo
     let mut index = 0;
     let mut times = Vec::with_capacity(1_200);
     let mut warmed_memory = None;
+    // `SOAK_FRAMES=n`: run exactly n frames and stop (profiling; no timing verdict).
+    if let Some(frames) = std::env::var("SOAK_FRAMES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        for index in 0..frames {
+            frame(index)?;
+        }
+        println!("profiled_frames={frames}");
+        return Ok(());
+    }
     let mut failed = !short && mount > Duration::from_millis(200);
     // The first interval warms caches. The following 180 intervals measure drift.
     for sample in 0..if short { 2 } else { 181 } {

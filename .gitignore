@@ -6,3 +6,6 @@ bench/history/
 *.diff.png
 Refactoring_UI_-_Complete_Package/
 /target-*/
+
+/perf-run/
+/bench-run/
