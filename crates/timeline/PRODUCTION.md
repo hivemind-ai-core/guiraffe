@@ -73,3 +73,30 @@ and excludes GPUI.
 | Heap bytes allocated | 29,771,368 | 24,005,868 |
 | Median schedule build | 183.6 ms | 99.0 ms |
 | Median peak RSS | 33.3 MiB | 28.9 MiB |
+
+The mounted upstream probe at `ce4b8b1` ran the unchanged Gantt fixture and
+interaction sequence extracted from `bench/examples/soak.rs`. Timeline code
+and the probe were compiled at opt-level 3 and linked against the upstream
+dev-build GPUI dependencies. The after measurements were taken on the
+shared machine. The before measurements are the quiet release baseline
+recorded in `plans/PERF-0.2.md`.
+
+| 100k-task mounted Gantt | Before | After, indicative |
+| --- | ---: | ---: |
+| Setup and first frame | 26.7 s | 170.3 ms |
+| Warm median frame | 6.7 s | 4.3 ms |
+| Warm p99 frame | Unavailable | 13.6 ms |
+| Warm maximum frame | Unavailable | 16.2 ms |
+| Sampled RSS | 6.66 GiB | 49.4 MiB |
+
+Five separate 500-frame replays of the same fixture produced busy-machine
+p99s of 19.3 ms for pan, 15.0 ms for vertical scrolling, 15.2 ms for zoom,
+13.1 ms for hover, and 24.6 ms for selection. Quiet release latency and the
+30-minute drift limit remain open.
+
+The self-time share for the profile's unsymbolized layout-copy hotspot
+was 18.58% in the baseline and 15.21% in the 400-frame optimized mounted
+probe. Flex layout was 3.83% and 2.66%, respectively. Bounds-tree insertion
+was 5.96% in the latter capture. These are shares from different captures
+and build profiles. Standalone scheduler instruction counts above provide
+the like-for-like CPU comparison.
