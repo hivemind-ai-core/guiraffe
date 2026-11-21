@@ -19,7 +19,7 @@ and reasoning disclosures survived. The
 [Linux RSS test](../../bench/examples/soak.rs) compares fresh processes
 with an empty window and with 100,000 messages. On the shared development
 machine, its upstream backend delta fell from 105,368 KiB to 57,356 KiB
-against a 77,033 KiB budget. The same-harness dev scroll probe mounted in
+against a 77,033 KiB budget. GPUI Fast measured a 56,344 KiB delta. The same-harness dev scroll probe mounted in
 119 ms and measured 3.2–3.9 ms p99, with a 58,556 KiB process peak delta
 over the empty window. Peak RSS during a selection spanning history and
 warm repaint allocations remain open.
