@@ -1,7 +1,7 @@
 # Calendar views
 
 Owner: OMP. New crate: `crates/calendar`, package `guiraffe-calendar`.
-Status: **proposed — foreman review required before implementation**.
+Status: **approved by the foreman (2026-11-21), including the review additions below**.
 
 ## Scope
 
@@ -28,6 +28,7 @@ semantic feedback, and light/dark themes on both GPUI backends.
 - Recurrence expansion, calendar-server synchronization, reminders, invitations, or a built-in
   event editor dialog. Hosts expand recurrence into ordinary items and own persistence/dialogs.
 - Implicit system-locale or system-time-zone discovery. Applications supply these policies.
+- A Schedule/Agenda list view, which is a follow-up outside this implementation scope.
 
 ## Public shape
 
@@ -41,13 +42,16 @@ Primary names:
 | API | Responsibility |
 | --- | --- |
 | `CalendarViewKind::{Year, Month, Week, Day}` | Visible projection; navigation step is year, month, week, or day respectively. |
-| `CalendarItem` | Immutable host event with `EventId`, title, `ItemTime`, optional color, and lock flag. |
-| `EventId(u64)` | Stable identity used for selection, editing, focus restoration, and callbacks. |
+| `CalendarItem` | Immutable host event with `EventId`, `SourceId`, title, `ItemTime`, optional color override, and lock flag. |
+| `EventId(u64)` / `SourceId(u64)` | Stable item/source identities for selection, editing, visibility, focus restoration, and callbacks. |
+| `CalendarSource` | Named source with a theme `ColorName` and visibility toggle. Item colors default to their source. |
 | `ItemTime` | Validated timed or all-day range, defined below. |
-| `CalendarModel` | Shared, revisioned item collection and its indexed lookup snapshot. |
-| `CalendarLocale` | Localized labels plus the locale's first weekday; `week_start` can override only that policy. |
-| `CalendarState` | Visible date, view kind, model, display zone, selected date/item, focused cursor, transient drag, and injectable now value. |
-| `Calendar` | Element builder for props and convenience callbacks. |
+| `CalendarModel` | Shared, revisioned item/source collection and its indexed lookup snapshot. |
+| `CalendarLocale` | Localized labels, 12h/24-hour preference, and the locale's first weekday; explicit props can override format/week start. |
+| `TimeFormat::{Locale, Hours12, Hours24}` | Hour labels and accessible event times. |
+| `CalendarState` | Visible date, view kind, model, display zone, selected date/item, focused cursor, transient drag, initial hour scroll, and now policy. |
+| `Calendar` | Element builder for props, custom content renderers, and convenience callbacks. |
+| `BusinessHours` | Optional per-weekday working range; shading marks non-working hours without affecting event placement. |
 | `CalendarEvent` | Typed emitted navigation, selection, overflow, and edit-request events. |
 | `CalendarChange` | Proposed create/move/resize payload. Hosts validate and apply it; a preview is not persistence. |
 
@@ -56,6 +60,17 @@ Navigation is observable through `CalendarEvent::Navigated`. Editing is controll
 new arrangement only after the host supplies the changed model. `CalendarState` also exposes
 model/navigation mutators for applications that keep this state as their source of truth.
 Read-only mode and per-item locks suppress edits without disabling navigation.
+
+Every item names a source. `CalendarModel::set_source_visible` changes the immutable source/index
+revision; hidden sources are excluded from lookup, counts, overlap layout, overflow, selection,
+and keyboard traversal. Hiding a selected source restores focus to the nearest remaining date or
+item. Source controls use the source `ColorName` plus a visible checked/label cue.
+
+Optional `month_chip_renderer` and `event_block_renderer` callbacks receive the item, resolved
+source color, localized title/time text, and an optional icon slot. They return custom content or
+`None` to use the compact default renderer. Custom content stays inside the calendar-owned event
+button/drag/focus/accessibility wrapper; it cannot replace editing semantics or event identity.
+Callbacks are view-builder configuration and are not serialized into `CalendarProps`.
 
 Time inputs use `chrono`. Named IANA zones use `chrono_tz::Tz`; UTC and fixed-offset values are
 accepted through one display-zone enum. `serde` support on data types is opt-in through the same
@@ -80,26 +95,31 @@ instant timeline: repeated local times display both occurrences in chronological
 nonexistent hour is skipped. Rendering never interprets a local `NaiveDateTime` ambiguously.
 All-day events continue to mean the same civil dates when the zone changes.
 
-`now` is an injectable `DateTime<Utc>` value. Applications may advance it on their own timer;
-pure tests and showcase fixtures supply fixed values. The now-line is computed only for visible
-dates and does not cause a background notify loop while unchanged.
+`now` is an injectable `DateTime<Utc>` value for pure tests and showcase fixtures. In live mode a
+weak-entity timer wakes once at the next minute boundary, updates now, and notifies only the
+calendar. The timer runs only while the now-line is enabled and intersects the visible date/hour
+range. It stops when hidden, scrolled outside its time range, switched to an injected value, or
+unmounted; there is no idle work. The line is computed only for visible dates.
 
-The locale supplies translated month/day/accessibility labels and the default first weekday.
-The explicit week-start override accepts every `chrono::Weekday`. Month grids and week navigation
-use the resolved start consistently, including weeks that cross month/year boundaries.
+The locale supplies translated month/day/accessibility labels, the default 12h/24-hour format,
+and the default first weekday. Explicit time-format and week-start props accept
+`TimeFormat`/`chrono::Weekday`. Month grids and week navigation use the resolved start consistently,
+including weeks that cross month/year boundaries. Month and Year can optionally display ISO-8601
+week numbers, always computed using ISO week rules rather than the configured display week start.
 
 ## Model lookup and pure layout
 
 The model owns events once. An immutable index snapshot is rebuilt/published only when the model,
-visible zone, or relevant range changes; `render` does not scan or sort all events. Sorted ranges
-and day bucketing provide bounded lookup by visible range. Multi-day bucket storage is proportional
+visible zone, source-visibility revision, or relevant range changes; `render` does not scan or sort
+all events. Sorted ranges and day bucketing provide bounded lookup by visible range. Multi-day bucket storage is proportional
 to event-day intersections, not to the duration of unbounded recurrence. The host must expand only
 the recurrence window it wants to display.
 
 Pure modules own and test:
 
-- Week/month/year calendar arithmetic, adjacent-month cells, leap years, and week-start overrides.
-- Zone conversion, midnight spanning, and DST fold/gap behavior.
+- Week/month/year calendar arithmetic, adjacent-month cells, leap years, week-start overrides,
+  ISO week numbers, 12h/24-hour labels, and initial-scroll clamping.
+- Zone conversion, midnight spanning, DST fold/gap behavior, and per-weekday business-hour shading.
 - Visible-range lookup and stable event ordering (`start`, longer duration, then `EventId`).
 - Month chip capacity and `+N` calculations at zero/small/variable cell sizes.
 - Overlap clustering and lanes: connected overlapping intervals form one cluster; assign the first
@@ -142,6 +162,13 @@ create/move/resize rules as Month; bounded chips/overflow keep its height indepe
 count. The hour grid virtualizes rows with bounded overscan and draws only visible hour lines,
 labels, day intersections, and event blocks. Day reuses exactly the Week controller with one
 visible day, not a separate editing implementation.
+
+`BusinessHours` configures a working range independently for each weekday (including none for
+non-working days). Non-working intervals receive theme-resolved background shading; event
+placement and edit snapping remain unchanged. Week/Day initial scroll defaults to minute 480
+(08:00), clamped to the scrollable range, and is applied only when a new state/view is mounted.
+Later navigation preserves the user's scroll position; applications can explicitly scroll to a
+time. Hour labels and event time text use the resolved locale/override time format.
 
 Timed blocks show title and accessible start/end text; content reduces to a compact label before
 it becomes illegible. Zero-height rendering is not allowed: short valid events receive a minimum
@@ -241,8 +268,9 @@ showcase content.
 
 Add four showcase entries (Year, Month, Week, Day) using one deterministic fixture and fixed now:
 
-- Knobs: editable/read-only, locale/first weekday, display zone including DST fixtures, density,
-  event density/overlap, all-day items, now-line on/off, and selected/view date.
+- Knobs: editable/read-only, source visibility, default/custom item content, locale/first weekday,
+  12h/24-hour format, ISO week numbers, business hours, initial hour scroll, display zone including
+  DST fixtures, density, event density/overlap, all-day items, now-line on/off, and view date.
 - Default, empty, overflow, locked, midnight-spanning, DST fold/gap, and dense-overlap states.
 - Light and dark goldens for every view on upstream GPUI and GPUI Fast: at least sixteen images.
   Inspect every generated PNG; include focused, overflow-open, drag-preview, and dense cases needed
@@ -256,10 +284,9 @@ Add four showcase entries (Year, Month, Week, Day) using one deterministic fixtu
 
 ## Implementation order
 
-1. Foreman approves this specification.
-2. Pure model/index/calendar arithmetic and property tests.
-3. Shared Control/navigation and static Year/Month views.
-4. Virtualized Week/Day grid, overlap layout, all-day lane, now-line, and editing previews.
-5. Keyboard/accessibility completion, showcase knobs, snapshots, and render-count gates.
-6. Ten-thousand-event probes/soak, performance fixes with before/after evidence, full gate,
+1. Pure model/index/calendar arithmetic, sources, and property tests.
+2. Shared Control/navigation and static Year/Month views.
+3. Virtualized Week/Day grid, overlap layout, business hours, all-day lane, now timer, and editing previews.
+4. Keyboard/accessibility completion, custom content, showcase knobs, snapshots, and render-count gates.
+5. Ten-thousand-event probes/soak, performance fixes with before/after evidence, full gate,
    PNG review, and report to the foreman. Never merge or push from the implementation worktree.
