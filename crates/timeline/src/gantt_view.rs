@@ -125,7 +125,7 @@ pub struct GanttView {
     global_lock_style: crate::LockStyle,
     drag: Option<Drag>,
     body: Rc<std::cell::Cell<Bounds<Pixels>>>,
-    scroll_y: f32,
+    scroll_y: f64,
     /// Range to fit once the real width is known.
     pending_fit: Option<(f64, f64)>,
     resize: ResizeEdges,
@@ -238,9 +238,11 @@ impl GanttView {
             .and_then(|id| self.geometry.index.get(&id).copied());
         let next = crate::edit::cycle(cur, self.tasks.len(), dir);
         if let Some(row) = next {
-            let top = row as f32 * ROW_H;
-            let height = f32::from(self.body.get().size.height).max(ROW_H);
-            let offset = self.scroll_y.clamp((top + ROW_H - height).max(0.0), top);
+            let top = row_top(row);
+            let height = f64::from(f32::from(self.body.get().size.height).max(ROW_H));
+            let offset = self
+                .scroll_y
+                .clamp((top + f64::from(ROW_H) - height).max(0.0), top);
             if offset != self.scroll_y {
                 self.scroll_y = offset;
                 cx.notify();
@@ -479,8 +481,8 @@ impl GanttView {
         self.drag = None;
     }
 
-    fn max_scroll(&self) -> f32 {
-        (self.tasks.len() as f32 * ROW_H - f32::from(self.body.get().size.height)).max(0.0)
+    fn max_scroll(&self) -> f64 {
+        (row_top(self.tasks.len()) - f64::from(f32::from(self.body.get().size.height))).max(0.0)
     }
 
     fn on_wheel(&mut self, e: &ScrollEvent, cx: &mut Context<Self>) {
@@ -491,7 +493,7 @@ impl GanttView {
         let vertical =
             !zoom && !e.modifiers.shift && f32::from(d.y) != 0.0 && self.max_scroll() > 0.0;
         if vertical {
-            let next = (self.scroll_y - f32::from(d.y)).clamp(0.0, self.max_scroll());
+            let next = (self.scroll_y - f64::from(f32::from(d.y))).clamp(0.0, self.max_scroll());
             if self.scroll_y != next {
                 self.scroll_y = next;
                 cx.notify();
@@ -522,9 +524,13 @@ fn bar_interval(axis: Axis, scheduled: Scheduled) -> Option<(f32, f32)> {
         .then_some((start, width))
 }
 
-fn visible_rows(count: usize, offset: f32, height: f32) -> std::ops::Range<usize> {
-    let first = (offset / ROW_H) as usize;
-    let end = ((offset + height) / ROW_H).ceil() as usize;
+fn row_top(row: usize) -> f64 {
+    row as f64 * f64::from(ROW_H)
+}
+
+fn visible_rows(count: usize, offset: f64, height: f32) -> std::ops::Range<usize> {
+    let first = (offset / f64::from(ROW_H)) as usize;
+    let end = ((offset + f64::from(height)) / f64::from(ROW_H)).ceil() as usize;
     first.min(count)..end.min(count)
 }
 
@@ -550,11 +556,11 @@ impl Geometry {
         &self,
         schedule: &HashMap<u32, Scheduled>,
         axis: Axis,
-        scroll_y: f32,
+        scroll_y: f64,
         height: f32,
         mut draw: impl FnMut((f32, f32), (f32, f32)),
     ) {
-        let row_y = |row: usize| row as f32 * ROW_H - scroll_y + ROW_H / 2.0;
+        let row_y = |row: usize| (row_top(row) - scroll_y) as f32 + ROW_H / 2.0;
         let visible = |x: f32, y: f32| x >= 0.0 && x < axis.width as f32 && y >= 0.0 && y < height;
         for row in visible_rows(self.rows.len(), scroll_y, height) {
             let Some(sc) = schedule.get(&self.rows[row].id) else {
@@ -748,7 +754,7 @@ impl Render for GanttView {
                                     .absolute()
                                     .left_0()
                                     .right_0()
-                                    .top(px(i as f32 * ROW_H - scroll_y))
+                                    .top(px((row_top(i) - scroll_y) as f32))
                                     .h(px(ROW_H))
                                     .px(px(8.))
                                     .flex()
@@ -794,8 +800,11 @@ impl Render for GanttView {
                                     let y = f32::from(e.position.y - b.origin.y);
                                     if y >= 0.0 {
                                         let x = f64::from(f32::from(e.position.x - b.origin.x));
-                                        let hit = this
-                                            .press_item(((y + this.scroll_y) / ROW_H) as usize, x);
+                                        let hit = this.press_item(
+                                            ((f64::from(y) + this.scroll_y) / f64::from(ROW_H))
+                                                as usize,
+                                            x,
+                                        );
                                         if hit && this.focusable == Some(true) {
                                             this.focus.focus(window, cx);
                                         }
@@ -817,7 +826,12 @@ impl Render for GanttView {
                                 if e.pressed_button == Some(MouseButton::Left) {
                                     this.drag_to(x, cx);
                                 } else if y >= 0.0 {
-                                    this.hover_at(((y + this.scroll_y) / ROW_H) as usize, x, cx);
+                                    this.hover_at(
+                                        ((f64::from(y) + this.scroll_y) / f64::from(ROW_H))
+                                            as usize,
+                                        x,
+                                        cx,
+                                    );
                                 }
                             }))
                             .on_mouse_up(
@@ -836,7 +850,7 @@ impl Render for GanttView {
                                 t.clone(),
                                 false,
                                 f64::from(ROW_H),
-                                f64::from(scroll_y),
+                                scroll_y,
                             ))
                             .child(
                                 canvas(
@@ -862,7 +876,7 @@ impl Render for GanttView {
                                                 origin: b.origin
                                                     + point(
                                                         px(x),
-                                                        px(i as f32 * ROW_H - scroll_y + 6.0),
+                                                        px((row_top(i) - scroll_y) as f32 + 6.0),
                                                     ),
                                                 size: gpui_kit::size(px(width), px(ROW_H - 12.0)),
                                             };
@@ -913,7 +927,7 @@ impl Render for GanttView {
                                         .aria_position_in_set(i + 1)
                                         .aria_size_of_set(row_count)
                                         .absolute()
-                                        .top(px(i as f32 * ROW_H - scroll_y + 6.0))
+                                        .top(px((row_top(i) - scroll_y) as f32 + 6.0))
                                         .left(px(x))
                                         .w(px(width))
                                         .h(px(ROW_H - 12.0))
@@ -987,6 +1001,11 @@ mod tests {
         assert_eq!(visible_rows(10_000, 45.0, 640.0), 1..22);
         assert_eq!(visible_rows(10_000_000, 45.0, 640.0), 1..22);
         assert_eq!(visible_rows(5, 128.0, 640.0), 4..5);
+        let deep_offset = row_top(9_000_000) + 31.0;
+        assert_eq!(
+            visible_rows(10_000_000, deep_offset, 2.0),
+            9_000_000..9_000_002
+        );
     }
 
     #[test]
@@ -1006,7 +1025,7 @@ mod tests {
             geometry(&tasks).visible_arrows(
                 &schedule,
                 Axis::new(-1.0, 1.0, 100.0),
-                ROW_H,
+                f64::from(ROW_H),
                 ROW_H * 2.0,
                 |(_, from), (_, to)| edges.push((from, to)),
             );
