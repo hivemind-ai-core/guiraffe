@@ -1457,3 +1457,62 @@ fn ui_macro_accepts_surface_and_typography_component_builders() {
         }
     };
 }
+
+#[gpui_kit::test]
+fn document_toggles_accept_native_focus_accessibility_and_tooltip_options(cx: &mut TestAppContext) {
+    let doc = Document::new(
+        Node::new("stack")
+            .child(
+                Node::new("checkbox")
+                    .prop("label", "Confirm")
+                    .prop("size", "xl")
+                    .prop("accessibility-label", "Confirm selection")
+                    .prop("tooltip", "Use space to toggle")
+                    .prop("tooltip-show-delay-ms", 500)
+                    .prop("tab-stop", false)
+                    .prop("tab-index", -1)
+                    .prop("focus-ring", false)
+                    .prop("role", "radio")
+                    .on("change", "confirm"),
+            )
+            .child(
+                Node::new("switch")
+                    .prop("label", "Enable")
+                    .prop("size", "sm")
+                    .prop("accessibility-label", "Enable notifications")
+                    .prop("tooltip", "Toggle notifications")
+                    .prop("tooltip-show-delay-ms", 300)
+                    .prop("tab-stop", true)
+                    .prop("tab-index", 2)
+                    .prop("focus-ring", true)
+                    .prop("color", "green")
+                    .on("change", "enable"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(compile(&doc).diagnostics().is_empty());
+    let _ = mount(cx, &doc);
+}
+
+#[test]
+fn ui_macro_accepts_native_checkbox_and_switch_options() {
+    use gpui_kit::component::{FocusableExt, Sizable, checkbox::Checkbox, switch::Switch};
+    use gpui_kit::{Role, px};
+    use std::time::Duration;
+
+    let _ = ui! {
+        div {
+            Checkbox("confirm") {
+                with_size: px(42.); accessibility_label: "Confirm selection";
+                tooltip: "Confirm"; tooltip_show_delay: Duration::from_millis(500);
+                tab_stop: false; tab_index: -1; focus_ring: false; role: Role::RadioButton
+            }
+            Switch("enable") {
+                with_size: px(36.); accessibility_label: "Enable notifications";
+                tooltip: "Enable"; tooltip_show_delay: Duration::from_millis(300);
+                tab_stop: true; tab_index: 2; focus_ring: true
+            }
+        }
+    };
+}

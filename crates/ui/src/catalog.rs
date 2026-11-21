@@ -201,13 +201,29 @@ widgets! {
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
-         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "boolean"];
+         "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "accessibility-label": "string" = "null", &[] as &[&str], None, false;
+         "tooltip": "string" = "null", &[] as &[&str], None, false;
+         "tooltip-show-delay-ms": "number" = "null", &[] as &[&str], Some((0.0, 60_000.0)), false;
+         "tab-stop": "boolean" = "true", &[] as &[&str], None, false;
+         "tab-index": "number" = "0", &[] as &[&str], Some((i32::MIN as f64, i32::MAX as f64)), false;
+         "focus-ring": "boolean" = "true", &[] as &[&str], None, false;
+         "role": "string" = "null", &["checkbox", "radio", "switch"], None, false], ["change": "boolean"];
     SWITCH: "switch", "gpui-kit", "Boolean switch.", false, "controlled or uncontrolled value", "switch", ["control_size", "kit.primary", "kit.switch"],
         ["value": "boolean" = "false", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
-         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "boolean"];
+         "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "accessibility-label": "string" = "null", &[] as &[&str], None, false;
+         "tooltip": "string" = "null", &[] as &[&str], None, false;
+         "tooltip-show-delay-ms": "number" = "null", &[] as &[&str], Some((0.0, 60_000.0)), false;
+         "tab-stop": "boolean" = "true", &[] as &[&str], None, false;
+         "tab-index": "number" = "0", &[] as &[&str], Some((i32::MIN as f64, i32::MAX as f64)), false;
+         "focus-ring": "boolean" = "true", &[] as &[&str], None, false;
+         "color": "string" = "null", COLOR, None, false], ["change": "boolean"];
     SELECT: "select", "gpui-kit", "Select one of a list of labels.", false, "controlled or uncontrolled value", "combobox", ["control_size", "kit.input", "kit.foreground", "scale", "state.focus_ring"],
         ["value": "string" = "null", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
