@@ -37,7 +37,11 @@ fn scaled(size: usize) -> usize {
     (size / divisor).max(1)
 }
 
-fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) -> Result<()> {
+fn flow(
+    no_minimap: bool,
+    mount_started: Instant,
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
+) -> Result<()> {
     let nodes = scaled(50_000) as u64;
     let graph = Graph::from_parts(
         (0..nodes).map(|i| {
@@ -71,23 +75,33 @@ fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>))
         .expect("window")
     });
     window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
-    run(&mut |i| {
-        let zoom = if i % 31 < 15 { 1.25 } else { 1. };
-        view.update(&mut cx, |v, cx| {
-            v.set_viewport(
-                Viewport {
-                    pan: Point::new(
-                        -((i % 97) as f32) * 240. * zoom,
-                        -((i % 490) as f32) * 150. * zoom,
-                    ),
-                    zoom,
-                },
-                cx,
-            )
-        })?;
-        window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
-        Ok(())
-    });
+    let mount = mount_started.elapsed();
+    // The test dispatcher needs to be pumped explicitly to publish the spatial index.
+    cx.run_until_parked();
+    println!(
+        "background_ready_us={}",
+        mount_started.elapsed().as_micros()
+    );
+    run(
+        &mut |i| {
+            let zoom = if i % 31 < 15 { 1.25 } else { 1. };
+            view.update(&mut cx, |v, cx| {
+                v.set_viewport(
+                    Viewport {
+                        pan: Point::new(
+                            -((i % 97) as f32) * 240. * zoom,
+                            -((i % 490) as f32) * 150. * zoom,
+                        ),
+                        zoom,
+                    },
+                    cx,
+                )
+            })?;
+            window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
+            Ok(())
+        },
+        mount,
+    );
     Ok(())
 }
 
@@ -273,9 +287,11 @@ fn main() -> Result<()> {
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
-        "flow" => flow(args.iter().any(|arg| arg == "--no-minimap"), |frame| {
-            result = sample(frame, mount_started.elapsed(), short);
-        })?,
+        "flow" => flow(
+            args.iter().any(|arg| arg == "--no-minimap"),
+            mount_started,
+            |frame, mount| result = sample(frame, mount, short),
+        )?,
         "timeline" => timeline(|frame| result = sample(frame, mount_started.elapsed(), short)),
         "chart-line" => charts(false, false, |frame, mount| {
             result = sample(frame, mount, short)
