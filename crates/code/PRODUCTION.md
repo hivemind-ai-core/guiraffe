@@ -103,6 +103,8 @@ The same fixture linked against cached GPUI-fast dependencies requested
 | Index bytes requested | 160,000,000 | 40,000,000 |
 | Isolated peak RSS (KiB) | 178,204 | 60,808 |
 | Isolated index construction (ms, one loaded-host sample) | 166.326 | 77.696 |
+| Isolated instructions, including identical source generation | 1,669,895,840 | 1,379,895,455 |
+| Mounted renderer-backed RSS (KiB) | 351,796 | 237,816 |
 
 The isolated probe constructs the document from a shared source and excludes
 GPUI and the headless renderer. The before mounted Samply capture attributed
@@ -112,3 +114,9 @@ styled lines key by source row and avoid hashing source text during paint.
 Each viewer's shape cache retains at most 2,048 entries in insertion order,
 with at most 256 KiB of UTF-8 input across all entries and 16 KiB per entry.
 GPUI owns its own glyph and layout caches.
+
+
+The same 10M-line mounted CPU-only fixture observed 87,740 KiB RSS when
+GPUI's WGPU renderer callback was disabled. The full mounted probe still
+exceeds the process-wide RSS budget. The renderer-backed and CPU-only
+runs both use GPUI event handling, layout and scene construction.
