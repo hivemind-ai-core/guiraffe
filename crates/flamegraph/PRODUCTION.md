@@ -57,14 +57,14 @@ available for callers that load or build the layout themselves.
 | Setup and first full draw | 1.47 s | 2.07 s |
 | p99 interaction | 343 ms | 1.76–2.63 ms |
 | Max interaction | 343 ms | 14.49 ms |
-| Resident memory | 729 MiB | 345 MiB |
+| Steady resident memory | 729 MiB | 345 MiB |
 | BoundsTree insertion, sampled self time | 80.37% | 0.69% |
 
 The short soak uses the prepared full-layout API. A separate 10M headless
 test of the deferred constructor reached a labelled preview at 150 ms
 with a warm window and 478 ms including a cold window. Full publication
-took over two seconds under contention. Forced warm redraws before the
-constant-work LOD still allocated 224 times on the UI thread. That
+took over two seconds under contention. A separate 256-frame run peaked at 345 MiB. Five forced warm redraws each
+made 224 allocation calls and requested 86,633 bytes on the UI thread. That
 measurement includes a full GPUI window refresh and should not be treated as
 an allocation-free repaint result. The 30-minute drift and cold/full-load
 budgets remain unverified or outside target.

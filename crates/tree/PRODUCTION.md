@@ -36,10 +36,11 @@ The existing warm scroll allocator gate covers model traversal.
 | PropertyGrid p99 / max | 6.1 / 9.3 ms | 15.86–24.27 / 39.67 ms |
 | PropertyGrid RSS | 29 MiB | 30 MiB |
 
-The TreeList reprofile attributed 11.86% of sampled self time to replacing
+Separate 256-frame runs peaked at 140 MiB for TreeList and 29 MiB for
+PropertyGrid. The TreeList reprofile attributed 11.86% of sampled self time to replacing
 affected block index entries. The warm forced window redraw still made
-894 UI-thread allocation calls for TreeList and 1,294 for PropertyGrid
-under the mounted fixtures. The results leave the mounted repaint
+894 UI-thread allocation calls (357,995 bytes) for TreeList and 1,294
+(576,768 bytes) for PropertyGrid under the mounted fixtures. The results leave the mounted repaint
 allocation, TreeList suffix-copy scaling, memory and latency budgets open.
 The short PropertyGrid workload has approximately 110,000 rows and leaves
 the million-row PropertyGrid check open.
