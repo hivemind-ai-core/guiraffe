@@ -2,7 +2,8 @@
 //! Spacing comes from the inherited style context (spec/14), not from the document.
 
 use gpui_kit::{
-    AnyElement, FontWeight, IntoElement, ParentElement, Styled, component::button::Button, div, px,
+    AnyElement, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled, component::button::Button, div, px,
 };
 use guiraffe_components::{Card, Highlight, Pill, RingProgress, Text, Title};
 use guiraffe_core::{Size, StyleContext};
@@ -122,9 +123,6 @@ fn button(n: &NodeView<'_>) -> Button {
         button = button.tooltip_show_delay(std::time::Duration::from_millis(
             delay.clamp(0.0, 60_000.0) as u64,
         ));
-    }
-    if let Some(hover) = n.handler(n.event_index("hover")) {
-        button = button.on_hover(move |entered, window, cx| hover((*entered).into(), window, cx));
     }
     button
 }
@@ -307,17 +305,39 @@ pub fn register(r: &mut Registry) {
     r.register(
         BUTTON.0.id,
         widget(&BUTTON.1, |n, children, _, _| {
-            let b = button(n).children(children);
+            let mut b = button(n).children(children);
+            let hover = if n.bool(n.prop_index("disabled")) || n.bool(n.prop_index("loading")) {
+                None
+            } else {
+                n.handler(n.event_index("hover"))
+            };
+            let hover = match hover {
+                Some(hover) if n.prop(n.prop_index("tooltip")).as_str().is_none() => {
+                    b = b.on_hover(move |entered, window, cx| hover((*entered).into(), window, cx));
+                    None
+                }
+                hover => hover,
+            };
             let b = match n.handler(n.event_index("click")) {
                 Some(h) => b
                     .on_click(move |_, w, cx| h(crate::Value::Null, w, cx))
                     .into_any_element(),
                 None => b.into_any_element(),
             };
+            // Kit's managed tooltip owns the button's hover listener when present.
+            let b = if let Some(hover) = hover {
+                div()
+                    .id((n.element_id(), "hover"))
+                    .flex()
+                    .on_hover(move |entered, window, cx| hover((*entered).into(), window, cx))
+                    .child(b)
+                    .into_any_element()
+            } else {
+                b
+            };
             // Document ids double as test/automation selectors in `test-support` builds.
             #[cfg(feature = "test-support")]
             if let Some(id) = n.selector() {
-                use gpui_kit::InteractiveElement as _;
                 return div()
                     .debug_selector(move || id.to_string())
                     .child(b)
