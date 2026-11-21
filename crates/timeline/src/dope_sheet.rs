@@ -406,6 +406,27 @@ fn key_indices(
     })
 }
 
+// Append both triangles and extend the bounds once per diamond. GPUI's
+// general-purpose triangle method extends the bounds once per vertex.
+fn append_diamond(
+    mesh: &mut gpui_kit::Path<Pixels>,
+    [top, right, bottom, left]: [gpui_kit::Point<Pixels>; 4],
+) {
+    use gpui_kit::{PathVertex, point, size};
+
+    mesh.bounds = mesh.bounds.union(&Bounds::new(
+        point(left.x, top.y),
+        size(right.x - left.x, bottom.y - top.y),
+    ));
+    mesh.vertices.extend(
+        [top, right, bottom, top, bottom, left].map(|xy_position| PathVertex {
+            xy_position,
+            st_position: point(0., 1.),
+            content_mask: Default::default(),
+        }),
+    );
+}
+
 impl Render for DopeSheet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
@@ -806,18 +827,14 @@ impl Render for DopeSheet {
                                                 let (_, mesh) = diamonds.get_or_insert_with(|| {
                                                     (ink, gpui_kit::Path::new(at(*x, cy)))
                                                 });
-                                                let top = at(*x, cy - radius);
-                                                let right = at(x + radius, cy);
-                                                let bottom = at(*x, cy + radius);
-                                                let left = at(x - radius, cy);
-                                                let uv = gpui_kit::point(0., 1.);
-                                                mesh.push_triangle(
-                                                    (top, right, bottom),
-                                                    (uv, uv, uv),
-                                                );
-                                                mesh.push_triangle(
-                                                    (top, bottom, left),
-                                                    (uv, uv, uv),
+                                                append_diamond(
+                                                    mesh,
+                                                    [
+                                                        at(*x, cy - radius),
+                                                        at(x + radius, cy),
+                                                        at(*x, cy + radius),
+                                                        at(x - radius, cy),
+                                                    ],
                                                 );
                                                 continue;
                                             }
@@ -895,6 +912,32 @@ impl Render for DopeSheet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diamond_batch_matches_generic_triangle_vertices_and_bounds() {
+        use gpui_kit::{Path, point};
+
+        let origin = point(px(2.), px(7.));
+        let mut batch = Path::new(origin);
+        let mut reference = Path::new(origin);
+        let uv = point(0., 1.);
+        for x in [-4., 20., 13.] {
+            let top = point(px(x), px(4.));
+            let right = point(px(x + 3.), px(7.));
+            let bottom = point(px(x), px(10.));
+            let left = point(px(x - 3.), px(7.));
+            append_diamond(&mut batch, [top, right, bottom, left]);
+            reference.push_triangle((top, right, bottom), (uv, uv, uv));
+            reference.push_triangle((top, bottom, left), (uv, uv, uv));
+        }
+        assert_eq!(batch.bounds, reference.bounds);
+        assert_eq!(batch.vertices.len(), reference.vertices.len());
+        for (actual, expected) in batch.vertices.iter().zip(&reference.vertices) {
+            assert_eq!(actual.xy_position, expected.xy_position);
+            assert_eq!(actual.st_position, expected.st_position);
+            assert_eq!(actual.content_mask, expected.content_mask);
+        }
+    }
 
     #[test]
     fn dense_plain_keys_emit_the_same_marks_across_input_scales() {
