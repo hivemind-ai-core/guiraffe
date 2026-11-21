@@ -28,6 +28,7 @@ guiraffe-inputs.workspace = true
 chrono.workspace = true
 guiraffe-markdown = { workspace = true, features = ["mermaid", "syntect"] }
 guiraffe-mermaid.workspace = true
+guiraffe-motion.workspace = true
 guiraffe-overlays.workspace = true
 guiraffe-ui.workspace = true
 serde_json.workspace = true
