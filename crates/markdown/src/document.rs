@@ -69,6 +69,22 @@ pub struct Document {
     pub tasks: Vec<TaskItem>,
 }
 
+#[derive(Default)]
+pub(crate) struct DocumentAnalysis {
+    document: Document,
+    anchors: AnchorSlugs,
+}
+
+impl DocumentAnalysis {
+    pub(crate) fn visit(&mut self, source: &str, node: &mdast::Node) {
+        walk(node, source, &mut self.document, &mut self.anchors);
+    }
+
+    pub(crate) fn finish(self) -> Document {
+        self.document
+    }
+}
+
 impl Document {
     /// Parse `source` and collect headings, Mermaid fences and task items.
     ///
@@ -77,13 +93,12 @@ impl Document {
     /// text view still renders what it can, so this returns an empty document
     /// rather than failing the whole view.
     pub fn analyze(source: &str) -> Self {
-        let mut document = Self::default();
-        let mut anchors = AnchorSlugs::default();
+        let mut analysis = DocumentAnalysis::default();
         let result = visit_markdown_sections(source, &ParseOptions::gfm(), |root| {
-            walk(&root, source, &mut document, &mut anchors);
+            analysis.visit(source, &root);
         });
         if result.is_ok() {
-            document
+            analysis.finish()
         } else {
             Self::default()
         }

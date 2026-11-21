@@ -57,6 +57,8 @@ pub enum BlockNode {
         span: Option<Span>,
     },
     Paragraph(Paragraph),
+    #[doc(hidden)]
+    ColdParagraph(ColdParagraph),
     Heading {
         level: u8,
         children: Paragraph,
@@ -118,6 +120,174 @@ pub enum BlockNode {
         span: Option<Span>,
     },
     Unknown,
+}
+
+/// The cold description of a text-only paragraph. Its exact parsed
+/// metadata survives eviction. Rendered runs are retained only while nearby,
+/// and the selection handle outlives those runs.
+#[derive(Clone)]
+pub struct ColdParagraph(Arc<ColdParagraphData>);
+
+struct ColdParagraphData {
+    span: Option<Span>,
+    source: SharedString,
+    runs: Box<[ColdInline]>,
+    selection: Arc<Mutex<InlineState>>,
+    cached: Mutex<Option<Arc<Paragraph>>>,
+}
+
+#[derive(PartialEq)]
+struct ColdInline {
+    text: ColdText,
+    marks: Vec<(Range<usize>, TextMark)>,
+    source_segments: Box<[SourceSegment]>,
+}
+
+#[derive(PartialEq)]
+enum ColdText {
+    Source(Range<usize>),
+    Transformed(SharedString),
+}
+
+impl ColdText {
+    fn as_str<'a>(&'a self, source: &'a str) -> &'a str {
+        match self {
+            Self::Source(range) => &source[range.clone()],
+            Self::Transformed(text) => text,
+        }
+    }
+}
+
+impl std::fmt::Debug for ColdParagraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ColdParagraph")
+            .field("span", &self.0.span)
+            .field("run_count", &self.0.runs.len())
+            .finish()
+    }
+}
+
+impl PartialEq for ColdParagraph {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+            || (self.0.span == other.0.span
+                && self.0.runs == other.0.runs
+                && self.0.runs.iter().all(|run| match &run.text {
+                    ColdText::Source(range) => {
+                        self.0.source.get(range.clone()) == other.0.source.get(range.clone())
+                    }
+                    ColdText::Transformed(_) => true,
+                }))
+    }
+}
+
+impl ColdParagraph {
+    fn new(paragraph: Paragraph, source: &SharedString, base: usize) -> Self {
+        let span = paragraph.span;
+        let selection = paragraph.state.clone();
+        let runs = paragraph
+            .into_children()
+            .into_iter()
+            .map(|inline| {
+                let source_slice = match inline.source_segments.as_ref() {
+                    [segment] if segment.linear && segment.rendered == (0..inline.text.len()) => {
+                        segment
+                            .source
+                            .start
+                            .checked_sub(base)
+                            .zip(segment.source.end.checked_sub(base))
+                    }
+                    _ => None,
+                }
+                .map(|(start, end)| start..end)
+                .filter(|range| source.get(range.clone()) == Some(inline.text.as_ref()));
+                ColdInline {
+                    text: source_slice.map_or(ColdText::Transformed(inline.text), ColdText::Source),
+                    marks: inline.marks,
+                    source_segments: inline.source_segments,
+                }
+            })
+            .collect();
+        Self(Arc::new(ColdParagraphData {
+            span,
+            source: source.clone(),
+            runs,
+            selection,
+            cached: Mutex::new(None),
+        }))
+    }
+
+    pub(super) fn materialize(&self, retain: bool) -> Arc<Paragraph> {
+        if let Ok(cache) = self.0.cached.lock()
+            && let Some(paragraph) = cache.as_ref()
+        {
+            return paragraph.clone();
+        }
+        let children = self
+            .0
+            .runs
+            .iter()
+            .map(|run| {
+                let text = match &run.text {
+                    ColdText::Source(range) => self.0.source[range.clone()].to_string().into(),
+                    ColdText::Transformed(text) => text.clone(),
+                };
+                let mut inline = InlineNode::new(text).marks(run.marks.clone());
+                inline.source_segments = run.source_segments.clone();
+                inline
+            })
+            .collect();
+        let paragraph = Arc::new(Paragraph {
+            span: self.0.span,
+            children: Arc::new(children),
+            state: self.0.selection.clone(),
+            ..Default::default()
+        });
+        if retain && let Ok(mut cache) = self.0.cached.lock() {
+            *cache = Some(paragraph.clone());
+        }
+        paragraph
+    }
+
+    fn copy_text(&self, kind: BlockTextKind) -> String {
+        match kind {
+            BlockTextKind::All => self
+                .0
+                .runs
+                .iter()
+                .map(|run| run.text.as_str(&self.0.source))
+                .collect(),
+            BlockTextKind::Selected => self.0.selection.lock().map_or_else(
+                |_| String::new(),
+                |state| {
+                    state
+                        .selection
+                        .as_ref()
+                        .map(|selection| state.text[selection.start..selection.end].to_string())
+                        .unwrap_or_default()
+                },
+            ),
+            BlockTextKind::SelectedSource if self.has_selection() => {
+                self.materialize(false).selected_source()
+            }
+            BlockTextKind::SelectedSource => String::new(),
+        }
+    }
+
+    fn evict(&self) {
+        if let Ok(mut cache) = self.0.cached.lock()
+            && let Some(paragraph) = cache.take()
+        {
+            paragraph.clear_render_cache();
+        }
+    }
+
+    fn has_selection(&self) -> bool {
+        self.0
+            .selection
+            .lock()
+            .is_ok_and(|state| state.selection.is_some())
+    }
 }
 
 /// Retained block interaction state, shared with its rendered element.
@@ -456,6 +626,21 @@ impl BlockNode {
         matches!(self, Self::ListItem { .. })
     }
 
+    pub(super) fn into_cold_paragraph(self, source: &SharedString, base: usize) -> Self {
+        match self {
+            Self::Paragraph(paragraph)
+                if paragraph.span.is_some()
+                    && paragraph.link_refs.is_empty()
+                    && paragraph.children().iter().all(|inline| {
+                        inline.as_image().is_none() && inline.as_custom().is_none()
+                    }) =>
+            {
+                Self::ColdParagraph(ColdParagraph::new(paragraph, source, base))
+            }
+            block => block,
+        }
+    }
+
     /// Whether this block shows nothing: a link definition, a comment, a `<br>`.
     fn draws_nothing(&self) -> bool {
         match self {
@@ -483,6 +668,7 @@ impl BlockNode {
         match self {
             BlockNode::Root { span, .. } => *span,
             BlockNode::Paragraph(paragraph) => paragraph.span,
+            BlockNode::ColdParagraph(paragraph) => paragraph.0.span,
             BlockNode::Heading { span, .. } => *span,
             BlockNode::Blockquote { span, .. } => *span,
             BlockNode::Surface { span, .. } => *span,
@@ -529,6 +715,10 @@ impl BlockNode {
                 }
             }
             BlockNode::Paragraph(paragraph) => styles = paragraph.selection_styles(),
+            BlockNode::ColdParagraph(paragraph) if paragraph.has_selection() => {
+                styles = paragraph.materialize(false).selection_styles();
+            }
+            BlockNode::ColdParagraph(_) => {}
             BlockNode::Heading { children, .. } => styles = children.selection_styles(),
             BlockNode::Table(table) => {
                 for row in &table.children {
@@ -569,6 +759,10 @@ impl BlockNode {
                 }
             }
             BlockNode::Paragraph(paragraph) => selected = paragraph.selected_source_range(),
+            BlockNode::ColdParagraph(paragraph) if paragraph.has_selection() => {
+                selected = paragraph.materialize(false).selected_source_range();
+            }
+            BlockNode::ColdParagraph(_) => {}
             BlockNode::Heading { children, .. } => selected = children.selected_source_range(),
             BlockNode::Table(table) => {
                 for row in &table.children {
@@ -609,6 +803,13 @@ impl BlockNode {
                     BlockTextKind::Selected => paragraph.selected_text(),
                     BlockTextKind::SelectedSource => paragraph.selected_source(),
                 };
+                if !block_text.is_empty() {
+                    text.push_str(&block_text);
+                    text.push('\n');
+                }
+            }
+            BlockNode::ColdParagraph(paragraph) => {
+                let block_text = paragraph.copy_text(kind);
                 if !block_text.is_empty() {
                     text.push_str(&block_text);
                     text.push('\n');
@@ -773,6 +974,7 @@ impl BlockNode {
                 children.iter().any(|child| child.has_selection())
             }
             BlockNode::Paragraph(paragraph) => paragraph.has_selection(),
+            BlockNode::ColdParagraph(paragraph) => paragraph.has_selection(),
             BlockNode::Heading { children, .. } => children.has_selection(),
             BlockNode::Table(table) => table.children.iter().any(|row| {
                 row.children
@@ -803,6 +1005,7 @@ impl BlockNode {
                     child.clear_render_caches();
                 }
             }
+            Self::ColdParagraph(paragraph) => paragraph.evict(),
             Self::Heading { children, .. } | Self::Paragraph(children) => {
                 children.clear_render_cache();
             }
@@ -840,6 +1043,11 @@ impl BlockNode {
                 }
             }
             BlockNode::Paragraph(paragraph) => paragraph.clear_selection(),
+            BlockNode::ColdParagraph(paragraph) => {
+                if let Ok(mut state) = paragraph.0.selection.lock() {
+                    state.selection = None;
+                }
+            }
             BlockNode::Heading { children, .. } => children.clear_selection(),
             BlockNode::Table(table) => {
                 for row in table.children.iter() {
@@ -1098,13 +1306,14 @@ fn source_range_for_segments(
 pub struct InlineNode {
     /// The text content.
     pub(crate) text: SharedString,
-    pub(crate) image: Option<ImageNode>,
-    pub(crate) custom: Option<MarkdownNode>,
+    // Most runs are text. Keep object payloads out of their inline footprint.
+    pub(crate) image: Option<Box<ImageNode>>,
+    pub(crate) custom: Option<Arc<MarkdownNode>>,
     custom_selection: Arc<Mutex<bool>>,
     /// The text styles, each tuple contains the range of the text and the style.
     pub(crate) marks: Vec<(Range<usize>, TextMark)>,
     /// Rendered UTF-8 byte spans paired with their exact Markdown source spans.
-    pub(crate) source_segments: Vec<SourceSegment>,
+    pub(crate) source_segments: Box<[SourceSegment]>,
 
     pub(super) state: Arc<Mutex<InlineState>>,
 }
@@ -1591,7 +1800,7 @@ impl InlineNode {
             custom: None,
             custom_selection: Arc::default(),
             marks: vec![],
-            source_segments: vec![],
+            source_segments: Box::default(),
             state: Arc::new(Mutex::new(InlineState::default())),
         }
     }
@@ -1599,14 +1808,14 @@ impl InlineNode {
     /// A custom inline node, an atomic object in the flow.
     pub fn custom(node: MarkdownNode) -> Self {
         let mut this = Self::new(node.as_text().to_string());
-        this.custom = Some(node);
+        this.custom = Some(Arc::new(node));
         this
     }
 
     /// An inline image, an atomic object in the flow.
     pub fn image(image: ImageNode) -> Self {
         let mut this = Self::new("");
-        this.image = Some(image);
+        this.image = Some(Box::new(image));
         this
     }
 
@@ -1623,12 +1832,12 @@ impl InlineNode {
 
     /// The image, when this run is an image.
     pub fn as_image(&self) -> Option<&ImageNode> {
-        self.image.as_ref()
+        self.image.as_deref()
     }
 
     /// The custom node, when this run is one.
     pub fn as_custom(&self) -> Option<&MarkdownNode> {
-        self.custom.as_ref()
+        self.custom.as_deref()
     }
 
     /// The marks, each a byte range of the text and its style.
@@ -1637,7 +1846,7 @@ impl InlineNode {
     }
 
     pub(crate) fn source_segments(mut self, source_segments: Vec<SourceSegment>) -> Self {
-        self.source_segments = source_segments;
+        self.source_segments = source_segments.into_boxed_slice();
         self
     }
 
@@ -1898,7 +2107,7 @@ impl Paragraph {
                         selected.merge(
                             child
                                 .custom
-                                .as_ref()
+                                .as_deref()
                                 .and_then(MarkdownNode::source_range)
                                 .map(SourceRangeSelection::Mapped)
                                 .unwrap_or(SourceRangeSelection::Unmapped),
@@ -2405,6 +2614,13 @@ impl Paragraph {
     /// Appends an inline run.
     pub fn push(&mut self, text: InlineNode) {
         self.children_mut().push(text);
+    }
+
+    pub(super) fn trim_child_capacity(&mut self) {
+        let len = self.children.len();
+        if self.children.capacity() > len + len / 4 {
+            self.children_mut().shrink_to_fit();
+        }
     }
 
     /// The inline runs.
@@ -3784,6 +4000,7 @@ impl BlockNode {
                 .collect::<Vec<_>>()
                 .join("\n\n"),
             BlockNode::Paragraph(paragraph) => paragraph.to_markdown(),
+            BlockNode::ColdParagraph(paragraph) => paragraph.materialize(false).to_markdown(),
             BlockNode::Heading {
                 level, children, ..
             } => {
@@ -4142,6 +4359,7 @@ impl BlockNode {
                                     }
                                 }
                                 BlockNode::ListItem { .. }
+                                | BlockNode::ColdParagraph(_)
                                 | BlockNode::Break { .. }
                                 | BlockNode::Definition { .. }
                                 | BlockNode::Unknown => {}
@@ -4504,7 +4722,7 @@ impl BlockNode {
                     // A nested root (an HTML block container) continues the
                     // flow around it: until it shows a block of its own, it
                     // stands where the container stands.
-                    let (is_first, prev) = match flow_position(children, ix) {
+                    let (is_first, prev) = match flow_position(ix, |i| &children[i]) {
                         (true, _) => (options.is_first, options.prev),
                         (false, prev) => (false, prev),
                     };
@@ -4531,6 +4749,18 @@ impl BlockNode {
                 ),
                 mb,
             ),
+            BlockNode::ColdParagraph(paragraph) => {
+                let paragraph = paragraph.materialize(options.retain_materialization);
+                gapped(
+                    paragraph.render(
+                        paragraph.span.map(|span| TextLeafKey::block(span.start)),
+                        node_cx,
+                        window,
+                        cx,
+                    ),
+                    mb,
+                )
+            }
             BlockNode::Heading {
                 level,
                 children,
@@ -4595,7 +4825,7 @@ impl BlockNode {
                         let children_len = children.len();
                         children.into_iter().enumerate().map(move |(index, c)| {
                             let is_last = index == children_len - 1;
-                            let (is_first, prev) = flow_position(children, index);
+                            let (is_first, prev) = flow_position(index, |i| &children[i]);
                             window.with_text_style(
                                 Some(node_cx.style.blockquote_style().text.clone()),
                                 |window| {
@@ -4643,7 +4873,7 @@ impl BlockNode {
                         .iter()
                         .enumerate()
                         .map(|(ix, child)| {
-                            let (is_first, prev) = flow_position(children, ix);
+                            let (is_first, prev) = flow_position(ix, |i| &children[i]);
                             child.render_block(
                                 NodeRenderOptions {
                                     is_first,
@@ -4774,6 +5004,14 @@ impl BlockNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn text_only_inline_run_keeps_a_compact_footprint() {
+        let bytes = std::mem::size_of::<InlineNode>();
+        eprintln!("inline_node_size_bytes={bytes}");
+        assert!(bytes <= 104, "inline run occupies {bytes} bytes");
+    }
 
     #[test]
     fn paragraph_clones_share_runs_until_the_next_edit() {
@@ -5081,7 +5319,7 @@ mod tests {
         };
         let document = crate::text::document::ParsedDocument {
             source: source.into(),
-            blocks: Arc::new(vec![block.clone()]),
+            blocks: Arc::new(im::vector![block.clone()]),
         };
         assert!(!block.has_selection());
         state.set_selection(Some(BlockSelection::Full));
@@ -5121,7 +5359,7 @@ mod tests {
         let after = CodeBlock::from_code("after", None::<SharedString>);
         after.set_selection(0..5);
         let document = crate::text::document::ParsedDocument {
-            blocks: Arc::new(vec![block, BlockNode::CodeBlock(after)]),
+            blocks: Arc::new(im::vector![block, BlockNode::CodeBlock(after)]),
             ..Default::default()
         };
         assert!(
@@ -5996,7 +6234,7 @@ mod tests {
     /// does, with every block painted.
     fn copy_across_styles(blocks: Vec<BlockNode>) -> String {
         let document = crate::text::document::ParsedDocument {
-            blocks: blocks.into(),
+            blocks: Arc::new(blocks.into()),
             ..Default::default()
         };
         document.selected_text(SelectionFormat::SourceAcrossStyles, None)
@@ -6656,7 +6894,7 @@ mod tests {
 
         let document = ParsedDocument {
             source: source.into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Paragraph(selected_paragraph("start")),
                 BlockNode::List {
                     ordered: true,
@@ -6674,8 +6912,7 @@ mod tests {
                     }),
                 },
                 BlockNode::Paragraph(selected_paragraph("end")),
-            ]
-            .into(),
+            ]),
         };
 
         assert_eq!(
@@ -6702,12 +6939,11 @@ mod tests {
 
         let document = ParsedDocument {
             source: source.into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Paragraph(selected_paragraph("before")),
                 BlockNode::Paragraph(image),
                 BlockNode::Paragraph(selected_paragraph("after")),
-            ]
-            .into(),
+            ]),
         };
         assert_eq!(
             document.selected_text(SelectionFormat::Source, None),
@@ -6723,11 +6959,10 @@ mod tests {
         // it, is not enclosed and is dropped.
         let document = ParsedDocument {
             source: String::new().into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Paragraph(selected_paragraph("before")),
                 BlockNode::Paragraph(image_paragraph("alt", "u")),
-            ]
-            .into(),
+            ]),
         };
         assert_eq!(
             document.selected_text(SelectionFormat::Source, None),
@@ -6793,7 +7028,7 @@ mod tests {
         // copied Markdown re-renders with the same structure.
         let document = ParsedDocument {
             source: String::new().into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Heading {
                     level: 1,
                     children: selected_paragraph("Title"),
@@ -6822,8 +7057,7 @@ mod tests {
                         },
                     ],
                 },
-            ]
-            .into(),
+            ]),
         };
 
         assert_eq!(

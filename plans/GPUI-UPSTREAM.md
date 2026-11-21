@@ -25,6 +25,20 @@ features.
 
 # Draft pull request for longbridge/gpui-fast
 
+## Pace callback-only Wayland ticks from the compositor
+
+The Wayland loop arms a 16.667 ms local timer when a tick consumes a
+next-frame callback, schedules another, and leaves the current buffer in
+place. That interleaves software timers with native callback delivery.
+Request a `wl_surface.frame` on a mapped surface and commit its current
+state instead, reusing the one pending callback slot. Preserve the timer
+retry before the first successful presentation and preserve parking when
+demand ends. An obscured mapped surface can pause on the compositor callback,
+as it already can after a buffer submission.
+
+The state transition tests cover callback demand before and after the first
+present, idle parking, and both presentation failure states.
+
 ## Share tessellated path vertices through retained replay and gather
 
 The cached scene replays paths into its paint operations and gathers them
@@ -43,3 +57,15 @@ survive the clear, and retain the existing invalidation for escaped boxes.
 
 Verify with the same cached 1,000-path canvas and copy-on-write checks. The
 API migration for a direct vector assignment is `Vec::into`.
+
+## Keep the list measurement tree on unchanged layout
+
+Apply the same change to both published GPUI backends. Visible rows still
+layout normally, and the measurement update still runs when a size, size
+hint, or readiness changes. An unchanged viewport skips the persistent
+tree splice and preserves its existing height index.
+
+The mounted plain-list allocation test draws equal viewports over 10,000
+and 100,000 items. It asserts both layout calls and allocation traffic
+after warmup. The Markdown and Chat soak checks also compare normal
+mounted repaint traffic at two history sizes.

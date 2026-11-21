@@ -71,7 +71,7 @@ pub struct ChatState {
     props: ChatProps,
     history: Entity<history::History>,
     composer: Entity<Composer>,
-    messages: HashMap<MessageId, Entity<message::MessageView>>,
+    messages: HashMap<MessageId, usize>,
     last_user: Option<MessageId>,
     editing: Option<MessageId>,
     next_id: u64,
@@ -89,7 +89,7 @@ impl ChatState {
         let owner = cx.weak_entity();
         Self {
             props,
-            history: cx.new(history::History::new),
+            history: cx.new(|cx| history::History::new(owner.clone(), cx)),
             composer: cx.new(|cx| Composer::new(owner, window, cx)),
             messages: HashMap::new(),
             last_user: None,
@@ -117,16 +117,28 @@ impl ChatState {
         self.active.is_some()
     }
     pub fn message<'a>(&self, id: MessageId, cx: &'a App) -> Option<&'a Message> {
-        self.messages.get(&id).map(|row| &row.read(cx).data)
+        let index = *self.messages.get(&id)?;
+        Some(self.history.read(cx).rows.get(index)?.data(cx))
     }
+
     /// Conversation order, borrowed without cloning complete message documents.
     pub fn messages<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Message> {
         self.history
             .read(cx)
             .rows
             .iter()
-            .map(move |row| &row.read(cx).data)
+            .map(move |row| row.data(cx))
     }
+
+    fn mounted_message<'a>(
+        &self,
+        id: MessageId,
+        cx: &'a App,
+    ) -> Option<&'a Entity<message::MessageView>> {
+        let index = *self.messages.get(&id)?;
+        self.history.read(cx).rows.get(index)?.mounted()
+    }
+
     pub fn message_count(&self) -> usize {
         self.messages.len()
     }
@@ -147,27 +159,20 @@ impl ChatState {
         if self.messages.contains_key(&id) {
             return false;
         }
-        let user = data.role == Role::User;
-        if user {
-            if let Some(old) = self.last_user.and_then(|id| self.messages.get(&id)) {
-                old.update(cx, |row, cx| {
-                    row.editable = false;
-                    if row.markdown.is_some() {
-                        cx.notify();
-                    }
-                });
-            }
-            self.last_user = Some(id);
-        }
-        let owner = cx.weak_entity();
-        let h = self.history.read(cx);
-        let layout = message::RowLayout {
-            list: h.list.clone(),
-            index: h.rows.len(),
+        let previous_editable = if data.role == Role::User {
+            self.last_user
+                .replace(id)
+                .and_then(|old| self.messages.get(&old).copied())
+        } else {
+            None
         };
-        let row = cx.new(|cx| message::MessageView::new(data, owner, animate, layout, cx));
-        self.messages.insert(id, row.clone());
-        self.history.update(cx, |history, cx| history.push(row, cx));
+        let index = self.history.update(cx, |history, cx| {
+            if let Some(previous) = previous_editable {
+                history.disable_editing(previous, cx);
+            }
+            history.push(data, animate, cx)
+        });
+        self.messages.insert(id, index);
         true
     }
     pub fn submit(&mut self, text: String, attachments: Vec<Attachment>, cx: &mut Context<Self>) {
@@ -175,29 +180,35 @@ impl ChatState {
             return;
         }
         let id = if let Some(id) = self.editing.take().filter(|id| Some(*id) == self.last_user) {
-            let rows = self.history.update(cx, |history, cx| {
-                let Some(index) = history
-                    .rows
-                    .iter()
-                    .position(|row| row.read(cx).data.id == id)
-                else {
-                    return Vec::new();
-                };
-                let removed = history.rows.split_off(index + 1);
-                let listed = history.list.item_count();
-                if index + 1 < listed {
-                    history.list.splice(index + 1..listed, 0);
-                }
-                cx.notify();
-                removed
-            });
-            for row in rows {
-                self.messages.remove(&row.read(cx).data.id);
-            }
-            if let Some(row) = self.messages.get(&id) {
-                row.update(cx, |row, cx| {
-                    row.replace_user(text.clone(), attachments.clone(), cx)
+            if let Some(&index) = self.messages.get(&id) {
+                let rows = self.history.update(cx, |history, cx| {
+                    if index >= history.rows.len() {
+                        return Vec::new();
+                    }
+                    let removed = history.rows.split_off(index + 1);
+                    let listed = history.list.item_count();
+                    if index + 1 < listed {
+                        history.list.splice(index + 1..listed, 0);
+                    }
+                    match history.rows.get_mut(index) {
+                        Some(history::Row::Cold { data, .. }) => {
+                            data.text.clone_from(&text);
+                            data.attachments.clone_from(&attachments);
+                            if index < history.list.item_count() {
+                                history.list.remeasure_items(index..index + 1);
+                            }
+                        }
+                        Some(history::Row::Mounted(view)) => view.update(cx, |row, cx| {
+                            row.replace_user(text.clone(), attachments.clone(), cx);
+                        }),
+                        None => {}
+                    }
+                    cx.notify();
+                    removed
                 });
+                for row in rows {
+                    self.messages.remove(&row.data(cx).id);
+                }
             }
             id
         } else {
@@ -266,10 +277,21 @@ impl ChatState {
     /// Begin a reply, cancelling the previous producer. Drop the returned producer to finish.
     /// Empty frames perform no entity writes; only the active message receives token batches.
     pub fn begin_reply(&mut self, cx: &mut Context<Self>) -> (MessageId, Producer) {
+        self.unpin_active(cx);
         self.cancel_active();
         let id = self.allocate_id();
         self.insert(Message::new(id, Role::Assistant, ""), true, cx);
         let (producer, consumer) = stream::channel(64);
+        let Some(&index) = self.messages.get(&id) else {
+            return (id, producer);
+        };
+        let Some(row) = self
+            .history
+            .update(cx, |history, cx| history.materialize(index, cx))
+        else {
+            return (id, producer);
+        };
+        row.update(cx, |row, _| row.streaming = true);
         self.active = Some((id, consumer.cancellation()));
         self.composer.update(cx, |composer, cx| {
             if !composer.busy || composer.editing {
@@ -278,7 +300,6 @@ impl ChatState {
                 cx.notify();
             }
         });
-        let row = self.messages[&id].clone();
         let layout = row.read(cx).layout.clone();
         self.stream_task = Some(cx.spawn(async move |chat, cx| {
             loop {
@@ -307,6 +328,7 @@ impl ChatState {
         if self.active.as_ref().map(|(active, _)| *active) != Some(id) {
             return;
         }
+        self.unpin_active(cx);
         self.active = None;
         self.composer.update(cx, |composer, cx| {
             composer.busy = false;
@@ -314,6 +336,14 @@ impl ChatState {
         });
         cx.emit(ChatEvent::Finished(id));
     }
+    fn unpin_active(&self, cx: &mut Context<Self>) {
+        if let Some((id, _)) = self.active.as_ref()
+            && let Some(row) = self.mounted_message(*id, cx).cloned()
+        {
+            row.update(cx, |row, _| row.streaming = false);
+        }
+    }
+
     fn cancel_active(&mut self) {
         if let Some((_, cancellation)) = self.active.take() {
             cancellation.cancel();
@@ -322,6 +352,7 @@ impl ChatState {
     }
     pub fn stop(&mut self, cx: &mut Context<Self>) {
         let id = self.active.as_ref().map(|(id, _)| *id);
+        self.unpin_active(cx);
         self.cancel_active();
         if let Some(id) = id {
             self.composer.update(cx, |composer, cx| {
@@ -338,26 +369,76 @@ impl ChatState {
         text: impl Into<String>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(row) = self.messages.get(&id) else {
+        let Some(&index) = self.messages.get(&id) else {
             return false;
         };
         let text = text.into();
-        if row.read(cx).data.reasoning != text {
-            row.update(cx, |row, cx| row.set_reasoning(text, cx));
-        }
-        true
-    }
-    pub fn update_tool(&mut self, id: MessageId, tool: ToolCall, cx: &mut Context<Self>) -> bool {
-        let Some(row) = self.messages.get(&id) else {
-            return false;
-        };
-        if row.read(cx).data.tools.contains(&tool) {
+        if self
+            .message(id, cx)
+            .is_some_and(|data| data.reasoning == text)
+        {
             return true;
         }
-        row.update(cx, |row, cx| row.set_tool(tool, cx));
-        row.read(cx).layout.changed();
+        if let Some(row) = self.mounted_message(id, cx).cloned() {
+            row.update(cx, |row, cx| row.set_reasoning(text, cx));
+        } else {
+            self.history.update(cx, |history, _| {
+                if let Some(history::Row::Cold {
+                    data, disclosures, ..
+                }) = history.rows.get_mut(index)
+                {
+                    if text.is_empty()
+                        && let Some(state) = disclosures.as_mut()
+                    {
+                        state.clear_reasoning();
+                        if state.is_empty() {
+                            *disclosures = None;
+                        }
+                    }
+                    data.reasoning = text;
+                    if index < history.list.item_count() {
+                        history.list.remeasure_items(index..index + 1);
+                    }
+                }
+            });
+        }
         true
     }
+
+    pub fn update_tool(&mut self, id: MessageId, tool: ToolCall, cx: &mut Context<Self>) -> bool {
+        let Some(&index) = self.messages.get(&id) else {
+            return false;
+        };
+        if self
+            .message(id, cx)
+            .is_some_and(|data| data.tools.contains(&tool))
+        {
+            return true;
+        }
+        if let Some(row) = self.mounted_message(id, cx).cloned() {
+            row.update(cx, |row, cx| row.set_tool(tool, cx));
+            row.read(cx).layout.changed();
+        } else {
+            self.history.update(cx, |history, _| {
+                if let Some(history::Row::Cold { data, .. }) = history.rows.get_mut(index) {
+                    if let Some(previous) = data
+                        .tools
+                        .iter_mut()
+                        .find(|previous| previous.id == tool.id)
+                    {
+                        *previous = tool;
+                    } else {
+                        data.tools.push(tool);
+                    }
+                    if index < history.list.item_count() {
+                        history.list.remeasure_items(index..index + 1);
+                    }
+                }
+            });
+        }
+        true
+    }
+
     pub(crate) fn request_retry(&mut self, id: MessageId, cx: &mut Context<Self>) {
         if !self.is_streaming() {
             cx.emit(ChatEvent::Retry(id));
@@ -367,8 +448,9 @@ impl ChatState {
         if self.is_streaming() {
             return;
         }
-        if let Some(id) = self.last_user {
-            let data = &self.messages[&id].read(cx).data;
+        if let Some(id) = self.last_user
+            && let Some(data) = self.message(id, cx)
+        {
             let text = data.text.clone();
             let attachments = data.attachments.clone();
             self.editing = Some(id);

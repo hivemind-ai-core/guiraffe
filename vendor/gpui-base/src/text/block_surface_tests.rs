@@ -34,7 +34,7 @@ fn parsed(source: &str, extensions: MarkdownExtensions) -> Vec<BlockNode> {
         ..NodeContext::default()
     };
     let document = markdown::parse(source, &mut cx).unwrap();
-    document.blocks.as_ref().clone()
+    document.blocks.iter().cloned().collect()
 }
 
 /// The surface `source` parses to, as its name and its children's Markdown,

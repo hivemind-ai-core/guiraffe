@@ -163,6 +163,15 @@ impl TreeModel {
         (open && source.children(id) == Children::Unloaded && self.pending.insert(id)).then_some(id)
     }
 
+    pub(crate) fn collapse_all(&mut self, source: &dyn TreeSource) -> bool {
+        if self.expanded.is_empty() {
+            return false;
+        }
+        self.expanded.clear();
+        self.refresh(source);
+        true
+    }
+
     pub fn retry_children(&mut self, id: NodeId) {
         self.pending.remove(&id);
     }

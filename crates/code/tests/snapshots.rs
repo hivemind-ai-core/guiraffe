@@ -421,6 +421,7 @@ fn layered_annotations_in_light_and_dark() -> Result<(), Box<dyn std::error::Err
             let code = CodeHandle::new(1, data.document().clone(), cx);
             code.set_analysis(analysis, cx);
             code.set_decorations(Some(data), cx);
+            code.set_hover(Some(Position::new(1, 9)), cx);
             code.on_block_widget(
                 Some(Rc::new(|widget, _, cx| {
                     let surface = GuiraffeTheme::global(cx).surfaces();
