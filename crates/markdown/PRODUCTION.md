@@ -16,7 +16,8 @@ single large block may still use memory proportional to its content.
 
 The renderer parses eligible documents in sections, using unindented ATX
 headings as boundaries. When the first complete section is at most 32 KiB,
-the initial view can show it while the background parser works. Documents
+the initial view can show it while the background parser works. The parser
+checks for source replacement and view teardown between sections. Documents
 with link definitions, footnotes, or ambiguous blocks use the one-shot
 parser. The published background result holds the entire parsed document.
 [AST equivalence tests](../../vendor/gpui-base/src/text/format/markdown.rs)

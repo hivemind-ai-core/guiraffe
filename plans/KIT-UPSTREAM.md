@@ -21,7 +21,8 @@ shift mdast positions back into the original source, and pass the combined
 AST to the existing renderer. Use the canonical parser for link definitions,
 footnotes, and constructs whose scope is uncertain. Publish one complete
 initial section for the estimated-height viewer while the background parser
-produces the full document. Exercise AST equality and UTF-8 source
+produces the full document. Check for replacement or teardown between
+sections. Exercise AST equality and UTF-8 source
 positions. Extend coverage for document-wide constructs before widening
 the fast path or claiming progressive publication for every document.
 

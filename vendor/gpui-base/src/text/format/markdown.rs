@@ -17,10 +17,21 @@ use crate::text::{
 };
 
 /// Parse Markdown into a tree of nodes.
+#[cfg(test)]
 pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument, SharedString> {
+    parse_with_cancel(source, cx, || false)
+}
+
+pub(in crate::text) fn parse_with_cancel(
+    source: &str,
+    cx: &mut NodeContext,
+    cancelled: impl Fn() -> bool,
+) -> Result<ParsedDocument, SharedString> {
     let options = cx.markdown_extensions.parse_options();
-    let mut root =
-        parse_markdown_ast(source, &options).map_err(|e| SharedString::from(e.to_string()))?;
+    let mut root = parse_ast_with_cancel(source, &options, &cancelled)?;
+    if cancelled() {
+        return Err("Markdown parse superseded".into());
+    }
     let mut prose = options;
     prose.constructs.math_text = false;
     prose.constructs.math_flow = false;
@@ -104,25 +115,36 @@ pub(in crate::text) fn first_chunk_end(source: &str, options: &ParseOptions) -> 
 
 /// Parse Markdown using independent sections when their boundaries are safe.
 /// All positions address the original source.
-pub fn parse_markdown_ast(
+pub fn parse_markdown_ast(source: &str, options: &ParseOptions) -> Result<Node, SharedString> {
+    parse_ast_with_cancel(source, options, &|| false)
+}
+
+fn parse_ast_with_cancel(
     source: &str,
     options: &ParseOptions,
-) -> Result<Node, markdown::message::Message> {
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Node, SharedString> {
+    let section = |text| {
+        if cancelled() {
+            return Err("Markdown parse superseded".into());
+        }
+        markdown::to_mdast(text, options).map_err(|error| SharedString::from(error.to_string()))
+    };
     let starts = chunk_starts(source, options);
     let Some(first) = starts.first() else {
-        return markdown::to_mdast(source, options);
+        return section(source);
     };
-    let Node::Root(mut root) = markdown::to_mdast(&source[..first.offset], options)? else {
-        return markdown::to_mdast(source, options);
+    let Node::Root(mut root) = section(&source[..first.offset])? else {
+        return section(source);
     };
     for (index, origin) in starts.iter().enumerate() {
         let end = starts
             .get(index + 1)
             .map_or(source.len(), |point| point.offset);
-        let mut chunk = markdown::to_mdast(&source[origin.offset..end], options)?;
+        let mut chunk = section(&source[origin.offset..end])?;
         shift_positions(&mut chunk, origin);
         let Node::Root(mut chunk) = chunk else {
-            return markdown::to_mdast(source, options);
+            return section(source);
         };
         if let (Some(document), Some(position)) = (&mut root.position, chunk.position.take()) {
             document.end = position.end;
@@ -2984,6 +3006,23 @@ mod chunk_tests {
                 markdown::to_mdast(&source, &options).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn superseded_parse_stops_between_sections() {
+        use std::cell::Cell;
+
+        let section = format!("# Heading\n\n{}", "prose\n\n".repeat(1500));
+        let source = section.repeat(8);
+        let options = ParseOptions::gfm();
+        assert_eq!(chunk_starts(&source, &options).len(), 7);
+        let checks = Cell::new(0);
+        let result = parse_ast_with_cancel(&source, &options, &|| {
+            checks.set(checks.get() + 1);
+            checks.get() == 2
+        });
+        assert!(result.is_err());
+        assert_eq!(checks.get(), 2);
     }
 
     #[test]

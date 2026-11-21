@@ -4,7 +4,10 @@ use std::time::Instant;
 use std::{
     ops::{Range, RangeInclusive},
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     task::Poll,
     time::Duration,
 };
@@ -115,6 +118,7 @@ pub struct TextViewState {
     pub(super) list_state: ListState,
     estimated_block_height: Option<Pixels>,
     viewport_blocks: ViewportBlockCache,
+    latest_replacement: Arc<AtomicUsize>,
 
     /// The bounds of the text view
     bounds: Bounds<Pixels>,
@@ -232,7 +236,13 @@ impl TextViewState {
             }
         });
 
-        let _parse_task = cx.background_spawn(UpdateFuture::new(format, rx, tx_result));
+        let latest_replacement = Arc::new(AtomicUsize::new(0));
+        let _parse_task = cx.background_spawn(UpdateFuture::new(
+            format,
+            rx,
+            tx_result,
+            latest_replacement.clone(),
+        ));
 
         let mut this = Self {
             entity_id: cx.entity_id(),
@@ -257,6 +267,7 @@ impl TextViewState {
             },
             estimated_block_height,
             viewport_blocks: ViewportBlockCache::default(),
+            latest_replacement,
             text_view_style: Arc::default(),
             code_block_actions: None,
             code_block_highlighter: None,
@@ -553,6 +564,8 @@ impl TextViewState {
         self.revision += 1;
         if !append {
             self.full_update_revision = self.revision;
+            self.latest_replacement
+                .store(self.revision, Ordering::Relaxed);
             self.viewport_blocks.clear();
             self.selection_revision = self.selection_revision.wrapping_add(1);
             // Old native layouts must not project a still-active gesture back
@@ -1297,11 +1310,18 @@ pub(crate) struct ParsedContent {
     pub(crate) node_cx: node::NodeContext,
 }
 
+impl Drop for TextViewState {
+    fn drop(&mut self) {
+        self.latest_replacement.store(usize::MAX, Ordering::Relaxed);
+    }
+}
+
 struct UpdateFuture {
     format: TextViewFormat,
     content: ParsedContent,
     rx: Pin<Box<Receiver<UpdateOptions>>>,
     tx_result: Sender<ParsedUpdate>,
+    latest_replacement: Arc<AtomicUsize>,
 }
 
 impl UpdateFuture {
@@ -1309,12 +1329,14 @@ impl UpdateFuture {
         format: TextViewFormat,
         rx: Receiver<UpdateOptions>,
         tx_result: Sender<ParsedUpdate>,
+        latest_replacement: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             format,
             content: Default::default(),
             rx: Box::pin(rx),
             tx_result,
+            latest_replacement,
         }
     }
 }
@@ -1329,17 +1351,26 @@ impl Future for UpdateFuture {
                     let hit_coalesce_budget =
                         merge_pending_options(&mut options, self.rx.as_ref().get_ref());
 
-                    let res = parse_content(self.format, self.content.clone(), &options);
-                    if let Ok(content) = &res {
-                        self.content = content.clone();
+                    let cancelled =
+                        || self.latest_replacement.load(Ordering::Relaxed) > options.revision;
+                    let res = parse_content_with_cancel(
+                        self.format,
+                        self.content.clone(),
+                        &options,
+                        cancelled,
+                    );
+                    if !cancelled() {
+                        if let Ok(content) = &res {
+                            self.content = content.clone();
+                        }
+                        _ = self.tx_result.try_send(ParsedUpdate {
+                            revision: options.revision,
+                            full_parse: !options.append,
+                            selection_compatible: options.mode == ParseMode::Compatible,
+                            baseline_ack: options.mode == ParseMode::BaselineAck,
+                            result: res,
+                        });
                     }
-                    _ = self.tx_result.try_send(ParsedUpdate {
-                        revision: options.revision,
-                        full_parse: !options.append,
-                        selection_compatible: options.mode == ParseMode::Compatible,
-                        baseline_ack: options.mode == ParseMode::BaselineAck,
-                        result: res,
-                    });
                     if hit_coalesce_budget {
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
@@ -1409,9 +1440,21 @@ fn merge_pending_options(options: &mut UpdateOptions, rx: &Receiver<UpdateOption
 
 fn parse_content(
     format: TextViewFormat,
-    mut content: ParsedContent,
+    content: ParsedContent,
     options: &UpdateOptions,
 ) -> Result<ParsedContent, SharedString> {
+    parse_content_with_cancel(format, content, options, || false)
+}
+
+fn parse_content_with_cancel(
+    format: TextViewFormat,
+    mut content: ParsedContent,
+    options: &UpdateOptions,
+    cancelled: impl Fn() -> bool,
+) -> Result<ParsedContent, SharedString> {
+    if cancelled() {
+        return Err("Text parse superseded".into());
+    }
     let mut node_cx = NodeContext {
         markdown_extensions: options.markdown_extensions.clone(),
         ..NodeContext::default()
@@ -1447,7 +1490,9 @@ fn parse_content(
     }
 
     let new_document = match format {
-        TextViewFormat::Markdown => format::markdown::parse(&source, &mut node_cx),
+        TextViewFormat::Markdown => {
+            format::markdown::parse_with_cancel(&source, &mut node_cx, cancelled)
+        }
         TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
     }?;
 
@@ -2293,7 +2338,12 @@ mod tests {
             .unwrap();
         }
 
-        let mut future = Box::pin(UpdateFuture::new(TextViewFormat::Markdown, rx, tx_result));
+        let mut future = Box::pin(UpdateFuture::new(
+            TextViewFormat::Markdown,
+            rx,
+            tx_result,
+            Arc::default(),
+        ));
         let waker = futures::task::noop_waker();
         let mut task_cx = std::task::Context::from_waker(&waker);
 
