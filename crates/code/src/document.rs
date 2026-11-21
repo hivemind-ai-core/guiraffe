@@ -23,15 +23,49 @@ impl SourceRange {
         Self { start, end }
     }
 }
-/// Source bytes are shared with the caller. Only the line index, hashes and minimap summary
+/// Source bytes are shared with the caller. Only the line index and minimap summary
 /// are constructed. Build large documents on a background executor before publishing them.
 #[derive(Debug)]
 pub struct CodeDocument {
     source: Arc<str>,
-    starts: Vec<usize>,
-    hashes: Vec<u64>,
+    starts: LineStarts,
     minimap: [f32; 256],
 }
+#[derive(Debug)]
+enum LineStarts {
+    Uniform { stride: usize, count: usize },
+    Compact(Vec<u32>),
+    Wide(Vec<usize>),
+}
+
+impl LineStarts {
+    fn len(&self) -> usize {
+        match self {
+            Self::Uniform { count, .. } => *count,
+            Self::Compact(starts) => starts.len(),
+            Self::Wide(starts) => starts.len(),
+        }
+    }
+
+    fn get(&self, line: usize) -> Option<usize> {
+        match self {
+            Self::Uniform { stride, count } => (line < *count).then(|| line * stride),
+            Self::Compact(starts) => starts.get(line).map(|&start| start as usize),
+            Self::Wide(starts) => starts.get(line).copied(),
+        }
+    }
+
+    fn partition_point(&self, offset: usize) -> usize {
+        match self {
+            Self::Uniform { stride, count } => (offset / stride).min(count - 1) + 1,
+            Self::Compact(starts) => starts.partition_point(|&start| start as usize <= offset),
+            Self::Wide(starts) => starts.partition_point(|&start| start <= offset),
+        }
+    }
+}
+
+const INDEX_CHUNK: usize = 16 * 1024;
+
 pub fn content_hash(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325, |h, b| {
         (h ^ u64::from(*b)).wrapping_mul(0x100000001b3)
@@ -41,8 +75,7 @@ impl CodeDocument {
     pub fn new(source: impl Into<Arc<str>>) -> Self {
         let mut document = Self {
             source: source.into(),
-            starts: Vec::new(),
-            hashes: Vec::new(),
+            starts: LineStarts::Compact(Vec::new()),
             minimap: [0.; 256],
         };
         document.build_index(|| false);
@@ -52,46 +85,53 @@ impl CodeDocument {
     pub(crate) fn build(source: Arc<str>, cancelled: impl Fn() -> bool) -> Option<Self> {
         let mut document = Self {
             source,
-            starts: Vec::new(),
-            hashes: Vec::new(),
+            starts: LineStarts::Compact(Vec::new()),
             minimap: [0.; 256],
         };
         document.build_index(cancelled).then_some(document)
     }
 
     fn build_index(&mut self, cancelled: impl Fn() -> bool) -> bool {
-        const CHUNK: usize = 16 * 1024;
         let mut line_count = 1;
-        for chunk in self.source.as_bytes().chunks(CHUNK) {
+        let mut stride = None;
+        for (index, chunk) in self.source.as_bytes().chunks(INDEX_CHUNK).enumerate() {
             if cancelled() {
                 return false;
+            }
+            if stride.is_none() {
+                stride = chunk
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .map(|first| index * INDEX_CHUNK + first + 1);
             }
             line_count += chunk.iter().filter(|&&b| b == b'\n').count();
         }
-        let mut starts = Vec::with_capacity(line_count);
-        starts.push(0);
-        for (chunk_index, chunk) in self.source.as_bytes().chunks(CHUNK).enumerate() {
-            if cancelled() {
-                return false;
+        let Some(uniform) = self.uniform_stride(line_count, stride.unwrap_or(1), &cancelled) else {
+            return false;
+        };
+        self.starts = if let Some(stride) = uniform {
+            LineStarts::Uniform {
+                stride,
+                count: line_count,
             }
-            let base = chunk_index * CHUNK;
-            starts.extend(
-                chunk
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &b)| (b == b'\n').then_some(base + i + 1)),
-            );
-        }
-        self.starts = starts;
-        self.hashes = Vec::with_capacity(line_count);
+        } else if u32::try_from(self.source.len()).is_ok() {
+            let Some(starts) = self.collect_starts(line_count, &cancelled, |start| start as u32)
+            else {
+                return false;
+            };
+            LineStarts::Compact(starts)
+        } else {
+            let Some(starts) = self.collect_starts(line_count, &cancelled, |start| start) else {
+                return false;
+            };
+            LineStarts::Wide(starts)
+        };
         for line in 0..self.line_count() {
             if line % 256 == 0 && cancelled() {
                 return false;
             }
             let text = self.line(line).unwrap_or_default();
-            let hash = content_hash(text.as_bytes());
             let density = text.trim().len().min(120) as f32 / 120.;
-            self.hashes.push(hash);
             let bucket = line.saturating_mul(256) / self.line_count();
             if let Some(bin) = self.minimap.get_mut(bucket) {
                 *bin = bin.max(density);
@@ -99,6 +139,53 @@ impl CodeDocument {
         }
         true
     }
+    fn uniform_stride(
+        &self,
+        line_count: usize,
+        stride: usize,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<Option<usize>> {
+        // The first scan counted all newlines. If each expected separator
+        // exists, no additional separators can occur between them.
+        let bytes = self.source.as_bytes();
+        if (line_count - 1) > bytes.len() / stride {
+            return Some(None);
+        }
+        for line in 1..line_count {
+            if line % INDEX_CHUNK == 0 && cancelled() {
+                return None;
+            }
+            if bytes.get(line * stride - 1) != Some(&b'\n') {
+                return Some(None);
+            }
+        }
+        Some(Some(stride))
+    }
+
+    fn collect_starts<T>(
+        &self,
+        line_count: usize,
+        cancelled: impl Fn() -> bool,
+        convert: impl Fn(usize) -> T,
+    ) -> Option<Vec<T>> {
+        let mut starts = Vec::with_capacity(line_count);
+        starts.push(convert(0));
+        for (chunk_index, chunk) in self.source.as_bytes().chunks(INDEX_CHUNK).enumerate() {
+            if cancelled() {
+                return None;
+            }
+            let base = chunk_index * INDEX_CHUNK;
+            starts.extend(
+                chunk
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &byte)| byte == b'\n')
+                    .map(|(index, _)| convert(base + index + 1)),
+            );
+        }
+        Some(starts)
+    }
+
     pub fn source(&self) -> &Arc<str> {
         &self.source
     }
@@ -106,12 +193,8 @@ impl CodeDocument {
         self.starts.len()
     }
     pub fn line_range(&self, line: usize) -> Option<Range<usize>> {
-        let start = *self.starts.get(line)?;
-        let mut end = self
-            .starts
-            .get(line + 1)
-            .copied()
-            .unwrap_or(self.source.len());
+        let start = self.starts.get(line)?;
+        let mut end = self.starts.get(line + 1).unwrap_or(self.source.len());
         if end > start && self.source.as_bytes().get(end - 1) == Some(&b'\n') {
             end -= 1;
         }
@@ -124,7 +207,7 @@ impl CodeDocument {
         self.source.get(self.line_range(line)?)
     }
     pub fn line_hash(&self, line: usize) -> Option<u64> {
-        self.hashes.get(line).copied()
+        self.line(line).map(|text| content_hash(text.as_bytes()))
     }
     pub fn offset(&self, position: Position) -> Option<usize> {
         let line = self.line_range(position.line)?;
@@ -136,10 +219,7 @@ impl CodeDocument {
         if offset > self.source.len() || !self.source.is_char_boundary(offset) {
             return None;
         }
-        let line = self
-            .starts
-            .partition_point(|start| *start <= offset)
-            .saturating_sub(1);
+        let line = self.starts.partition_point(offset).saturating_sub(1);
         let bytes = self.line_range(line)?;
         Some(Position::new(line, offset.min(bytes.end) - bytes.start))
     }
@@ -184,6 +264,31 @@ mod tests {
         assert_eq!(calls.get(), 4);
     }
 
+    #[test]
+    fn uniform_index_handles_crlf_and_a_long_final_line() {
+        let doc = CodeDocument::new("a\r\nb\r\nlong final line");
+        assert!(matches!(
+            doc.starts,
+            LineStarts::Uniform {
+                stride: 3,
+                count: 3
+            }
+        ));
+        assert_eq!(doc.line(1), Some("b"));
+        assert_eq!(doc.position(5), Some(Position::new(1, 1)));
+        assert_eq!(doc.position(15), Some(Position::new(2, 9)));
+        assert_eq!(doc.offset(Position::new(2, 9)), Some(15));
+        assert_eq!(doc.line(3), None);
+    }
+
+    #[test]
+    fn irregular_newlines_keep_individual_starts() {
+        let doc = CodeDocument::new("a\nb\nc longer\nd");
+        assert!(matches!(doc.starts, LineStarts::Compact(_)));
+        assert_eq!(doc.line(2), Some("c longer"));
+        assert_eq!(doc.position(13), Some(Position::new(3, 0)));
+    }
+
     proptest::proptest! {
         #[test]
         fn positions_match_split_lines(lines in proptest::collection::vec("[a-zאב界🙂]{0,16}", 1..40)) {
@@ -216,9 +321,11 @@ mod tests {
     }
     #[test]
     fn retained_line_index_has_no_spare_slots() {
-        let doc = CodeDocument::new("x\n".repeat(20_000) + "x");
-        assert_eq!(doc.starts.capacity(), doc.line_count());
-        assert_eq!(doc.hashes.capacity(), doc.line_count());
+        let doc = CodeDocument::new("x\nyz\n".repeat(10_000) + "x");
+        let LineStarts::Compact(starts) = &doc.starts else {
+            panic!("small files must use compact offsets");
+        };
+        assert_eq!(starts.capacity(), doc.line_count());
     }
     #[test]
     fn positions_at_crlf_and_terminal_cr_are_selectable() {

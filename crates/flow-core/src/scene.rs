@@ -1,10 +1,12 @@
 //! Immutable render geometry with independent node and edge BVHs.
 //! Inspired by graph-core's immutable RenderData hierarchy; edge bounds include
 //! every cached sample, including backtracking curves and self loops.
-use crate::{Edge, EdgeId, EdgeType, FlowError, Graph, NodeId, Point, Rect};
+use crate::{
+    Edge, EdgeId, EdgeType, FlowError, Graph, LayoutCancellation, LayoutError, NodeId, Point, Rect,
+};
 use std::collections::BTreeMap;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Debug)]
 struct Branch {
@@ -38,22 +40,63 @@ impl SpatialIndex {
         index.baseline_quality = index.quality();
         index
     }
+    fn read_only(
+        mut entries: Vec<(u64, Rect)>,
+        cancel: &LayoutCancellation,
+    ) -> Result<Self, LayoutError> {
+        let root = if entries.is_empty() {
+            None
+        } else {
+            Some(Self::build_with(
+                &mut entries,
+                1,
+                64,
+                &mut || cancel.check(),
+                &mut |_, _| {},
+            )?)
+        };
+        Ok(Self {
+            root,
+            ..Self::default()
+        })
+    }
     fn build(
         entries: &mut [(u64, Rect)],
         path: u64,
         locations: &mut BTreeMap<u64, u64>,
     ) -> Arc<Branch> {
+        match Self::build_with(
+            entries,
+            path,
+            8,
+            &mut || Ok::<_, std::convert::Infallible>(()),
+            &mut |id, path| {
+                locations.insert(id, path);
+            },
+        ) {
+            Ok(root) => root,
+            Err(never) => match never {},
+        }
+    }
+    fn build_with<E>(
+        entries: &mut [(u64, Rect)],
+        path: u64,
+        leaf_size: usize,
+        check: &mut impl FnMut() -> Result<(), E>,
+        locate: &mut impl FnMut(u64, u64),
+    ) -> Result<Arc<Branch>, E> {
+        check()?;
         let bounds = entries.iter().map(|(_, r)| *r).reduce(Rect::union);
-        if entries.len() <= 8 {
+        if entries.len() <= leaf_size {
             for (id, _) in entries.iter() {
-                locations.insert(*id, path);
+                locate(*id, path);
             }
-            return Arc::new(Branch {
+            return Ok(Arc::new(Branch {
                 bounds,
                 cost: Self::measure(bounds),
                 entries: entries.to_vec(),
                 children: None,
-            });
+            }));
         }
         let x = bounds.is_none_or(|b| b.size.x >= b.size.y);
         let mid = entries.len() / 2;
@@ -62,14 +105,14 @@ impl SpatialIndex {
             coord(a.1).total_cmp(&coord(b.1)).then(a.0.cmp(&b.0))
         });
         let (left, right) = entries.split_at_mut(mid);
-        let left = Self::build(left, path << 1, locations);
-        let right = Self::build(right, (path << 1) | 1, locations);
-        Arc::new(Branch {
+        let left = Self::build_with(left, path << 1, leaf_size, check, locate)?;
+        let right = Self::build_with(right, (path << 1) | 1, leaf_size, check, locate)?;
+        Ok(Arc::new(Branch {
             bounds,
             cost: Self::measure(bounds) + left.cost + right.cost,
             entries: Vec::new(),
             children: Some((left, right)),
-        })
+        }))
     }
     fn measure(bounds: Option<Rect>) -> f64 {
         bounds.map_or(0., |b| f64::from(b.size.x) + f64::from(b.size.y))
@@ -213,6 +256,30 @@ impl SpatialIndex {
                 .as_ref()
                 .map_or(0., |(l, r)| l.cost + r.cost);
     }
+    fn count_exceeds(&self, area: Rect, mut limit: usize) -> bool {
+        fn visit(branch: &Branch, area: Rect, remaining: &mut usize) -> bool {
+            if branch.bounds.is_none_or(|bounds| !bounds.intersects(area)) {
+                return false;
+            }
+            if let Some((left, right)) = &branch.children {
+                return visit(left, area, remaining) || visit(right, area, remaining);
+            }
+            for (_, bounds) in &branch.entries {
+                if bounds.intersects(area) {
+                    if *remaining == 0 {
+                        return true;
+                    }
+                    *remaining -= 1;
+                }
+            }
+            false
+        }
+
+        self.root
+            .as_ref()
+            .is_some_and(|root| visit(root, area, &mut limit))
+    }
+
     pub fn query(&self, area: Rect, output: &mut Vec<u64>) -> usize {
         output.clear();
         if !area.valid() {
@@ -391,32 +458,56 @@ fn rounded(corners: &[Point], radius: f32) -> Vec<Point> {
     }
     points
 }
+const BEZIER_SEGMENTS: usize = 32;
+const BEZIER_WEIGHTS: [[f32; 4]; BEZIER_SEGMENTS + 1] = {
+    let mut weights = [[0.; 4]; BEZIER_SEGMENTS + 1];
+    let mut index = 0;
+    while index <= BEZIER_SEGMENTS {
+        let t = index as f32 / BEZIER_SEGMENTS as f32;
+        let u = 1. - t;
+        weights[index] = [u * u * u, 3. * u * u * t, 3. * u * t * t, t * t * t];
+        index += 1;
+    }
+    weights
+};
+
 pub(crate) fn bezier(from: Point, outward: Point, to: Point, inward: Point) -> Vec<Point> {
     let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
     let c1 = from + outward * distance;
     let c2 = to + inward * distance;
-    (0..=32)
-        .map(|i| {
-            let t = i as f32 / 32.;
-            let u = 1. - t;
-            from * (u * u * u) + c1 * (3. * u * u * t) + c2 * (3. * u * t * t) + to * (t * t * t)
+    BEZIER_WEIGHTS
+        .iter()
+        .map(|&[start_weight, c1_weight, c2_weight, end_weight]| {
+            from * start_weight + c1 * c1_weight + c2 * c2_weight + to * end_weight
         })
         .collect()
 }
 
 fn midpoint(points: &[Point]) -> Point {
-    let length: f32 = points
-        .iter()
-        .zip(points.iter().skip(1))
-        .map(|(a, b)| a.distance(*b))
+    let segments = points.windows(2);
+    let count = segments.len();
+    let mut inline = [0.; BEZIER_SEGMENTS];
+    let mut overflow;
+    let lengths = if let Some(lengths) = inline.get_mut(..count) {
+        lengths
+    } else {
+        overflow = vec![0.; count];
+        &mut overflow
+    };
+    let length: f32 = segments
+        .clone()
+        .zip(lengths.iter_mut())
+        .map(|(pair, length)| {
+            *length = pair[0].distance(pair[1]);
+            *length
+        })
         .sum();
     let mut remaining = length * 0.5;
-    for (a, b) in points.iter().zip(points.iter().skip(1)) {
-        let d = a.distance(*b);
-        if d > 0. && remaining <= d {
-            return *a + (*b - *a) * (remaining / d);
+    for (pair, &distance) in segments.zip(lengths.iter()) {
+        if distance > 0. && remaining <= distance {
+            return pair[0] + (pair[1] - pair[0]) * (remaining / distance);
         }
-        remaining -= d;
+        remaining -= distance;
     }
     points.first().copied().unwrap_or_default()
 }
@@ -436,12 +527,98 @@ pub struct Visible {
     pub edges: Vec<EdgeId>,
     pub visited: usize,
 }
+// Controls extend by at most 300 world units. The remaining two units
+// cover the exact route's bounds padding.
+const ROUTE_OVERSCAN: f32 = 302.;
+
+#[derive(Debug, Default)]
+struct DeferredIndex {
+    spatial: OnceLock<(SpatialIndex, SpatialIndex)>,
+    incident: OnceLock<Arc<Incidence>>,
+}
+
+#[derive(Debug)]
+struct Incidence {
+    starts: Vec<(NodeId, usize)>,
+    edges: Vec<EdgeId>,
+}
+
+impl Incidence {
+    fn build(graph: &Graph) -> Self {
+        let mut pairs = Vec::with_capacity(graph.edges.len().saturating_mul(2));
+        for edge in graph.edges.values() {
+            pairs.push((edge.source.node, edge.id));
+            if edge.source.node != edge.target.node {
+                pairs.push((edge.target.node, edge.id));
+            }
+        }
+        pairs.sort_unstable();
+        let mut starts = Vec::with_capacity(graph.nodes.len().min(pairs.len()));
+        let mut edges = Vec::with_capacity(pairs.len());
+        for (node, edge) in pairs {
+            if starts.last().is_none_or(|(previous, _)| *previous != node) {
+                starts.push((node, edges.len()));
+            }
+            edges.push(edge);
+        }
+        Self { starts, edges }
+    }
+
+    fn get(&self, node: NodeId) -> &[EdgeId] {
+        let Ok(slot) = self.starts.binary_search_by_key(&node, |(id, _)| *id) else {
+            return &[];
+        };
+        let start = self.starts[slot].1;
+        let end = self
+            .starts
+            .get(slot + 1)
+            .map_or(self.edges.len(), |pair| pair.1);
+        &self.edges[start..end]
+    }
+}
+
+fn edge_envelope(
+    edge: &Edge,
+    source: &crate::Node,
+    target: &crate::Node,
+) -> Result<Rect, FlowError> {
+    let source_rect = source.rect();
+    let target_rect = target.rect();
+    if matches!(
+        edge.edge_type,
+        EdgeType::OrthogonalHorizontal | EdgeType::OrthogonalVertical
+    ) {
+        // Orthogonal side channels extend the node envelope by at most eight units.
+        return Ok(source_rect.union(target_rect).expand(10.));
+    }
+    let source_handle = Graph::node_handle(source, &edge.source)?;
+    let target_handle = Graph::node_handle(target, &edge.target)?;
+    let from = source_handle.position(source_rect);
+    let to = target_handle.position(target_rect);
+    let endpoint_bounds = Rect::between(from, to);
+    if edge.edge_type == EdgeType::Straight {
+        return Ok(endpoint_bounds.expand(2.));
+    }
+    let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
+    let control_from = from + source_handle.side.direction() * distance;
+    let control_to = to + target_handle.side.direction() * distance;
+    let hull = endpoint_bounds.union(Rect::between(control_from, control_to));
+    let max = hull.max();
+    let roundoff = [hull.origin.x, hull.origin.y, max.x, max.y]
+        .into_iter()
+        .map(f32::abs)
+        .fold(0., f32::max)
+        * (f32::EPSILON * 4.);
+    Ok(hull.expand(2. + roundoff))
+}
+
 #[derive(Clone, Debug)]
 pub struct Scene {
     graph: Graph,
     paths: im::OrdMap<EdgeId, Arc<EdgePath>>,
     nodes: SpatialIndex,
     edges: SpatialIndex,
+    deferred_edges: Option<Arc<DeferredIndex>>,
     bounds: Option<Rect>,
     incident: im::OrdMap<NodeId, Vec<EdgeId>>,
     depths: im::OrdMap<NodeId, usize>,
@@ -451,34 +628,74 @@ pub struct Scene {
 }
 impl Scene {
     pub fn new(graph: Graph) -> Result<Self, FlowError> {
-        graph.validate()?;
-        let node_refs: BTreeMap<_, _> = graph.nodes.iter().map(|(id, node)| (*id, node)).collect();
-        let paths: im::OrdMap<EdgeId, Arc<EdgePath>> = graph
-            .edges
-            .values()
-            .map(|e| {
-                EdgePath::from_nodes(
-                    e,
-                    node_refs
-                        .get(&e.source.node)
-                        .ok_or(FlowError::MissingNode(e.source.node))?,
-                    node_refs
-                        .get(&e.target.node)
-                        .ok_or(FlowError::MissingNode(e.target.node))?,
-                    None,
-                    None,
-                )
-                .map(|p| (e.id, Arc::new(p)))
-            })
-            .collect::<Result<_, _>>()?;
-        let nodes = SpatialIndex::new(graph.nodes.values().map(|n| (n.id, n.rect())));
+        Self::with_routes(graph, false)
+    }
+
+    /// Prepare exact routes on demand and fill the spatial indexes in the background.
+    /// The first frame uses a node preview and edges incident to nearby nodes.
+    pub fn new_deferred(graph: Graph) -> Result<Self, FlowError> {
+        Self::with_routes(graph, true)
+    }
+
+    fn with_routes(graph: Graph, defer_edges: bool) -> Result<Self, FlowError> {
+        let node_refs = graph.validated_node_index()?;
+        let preview_bounds = if defer_edges { graph.bounds() } else { None };
+        // Fallback to exact eager validation for extreme coordinates, where
+        // derived route operations can overflow even for valid endpoint rectangles.
+        let safe_coordinate = f32::MAX.sqrt() / 8.;
+        let deferred_edges = (defer_edges
+            && preview_bounds.is_some_and(|bounds| {
+                [
+                    bounds.origin.x,
+                    bounds.origin.y,
+                    bounds.max().x,
+                    bounds.max().y,
+                ]
+                .iter()
+                .all(|value| value.abs() <= safe_coordinate)
+            }))
+        .then(Arc::<DeferredIndex>::default);
+        let paths: im::OrdMap<EdgeId, Arc<EdgePath>> = if deferred_edges.is_some() {
+            im::OrdMap::new()
+        } else {
+            graph
+                .edges
+                .values()
+                .map(|e| {
+                    EdgePath::from_nodes(
+                        e,
+                        node_refs
+                            .get(&e.source.node)
+                            .ok_or(FlowError::MissingNode(e.source.node))?,
+                        node_refs
+                            .get(&e.target.node)
+                            .ok_or(FlowError::MissingNode(e.target.node))?,
+                        None,
+                        None,
+                    )
+                    .map(|p| (e.id, Arc::new(p)))
+                })
+                .collect::<Result<_, _>>()?
+        };
+        drop(node_refs);
+        let nodes = if deferred_edges.is_some() {
+            SpatialIndex::default()
+        } else {
+            SpatialIndex::new(graph.nodes.values().map(|n| (n.id, n.rect())))
+        };
+        let bounds = if deferred_edges.is_some() {
+            preview_bounds
+        } else {
+            nodes.bounds()
+        };
         let edges = SpatialIndex::new(paths.iter().map(|(id, path)| (*id, path.bounds)));
-        let bounds = graph.bounds();
         let mut incident: im::OrdMap<NodeId, Vec<EdgeId>> = im::OrdMap::new();
-        for edge in graph.edges.values() {
-            incident.entry(edge.source.node).or_default().push(edge.id);
-            if edge.source.node != edge.target.node {
-                incident.entry(edge.target.node).or_default().push(edge.id);
+        if deferred_edges.is_none() {
+            for edge in graph.edges.values() {
+                incident.entry(edge.source.node).or_default().push(edge.id);
+                if edge.source.node != edge.target.node {
+                    incident.entry(edge.target.node).or_default().push(edge.id);
+                }
             }
         }
         let mut children: im::OrdMap<NodeId, Vec<NodeId>> = im::OrdMap::new();
@@ -501,13 +718,87 @@ impl Scene {
             paths,
             nodes,
             edges,
+            deferred_edges,
             bounds,
             incident,
         })
     }
+    /// The prepared route table for eager scenes. Deferred scenes use
+    /// [Self::edge_route] to read a route without retaining the whole table.
     pub fn paths(&self) -> &im::OrdMap<EdgeId, Arc<EdgePath>> {
         &self.paths
     }
+
+    pub fn has_deferred_edges(&self) -> bool {
+        self.deferred_edges.is_some()
+    }
+
+    pub fn edge_route(&self, id: EdgeId) -> Option<Arc<EdgePath>> {
+        if self.has_deferred_edges() {
+            let edge = self.graph.edges.get(&id)?;
+            EdgePath::new(&self.graph, edge, None, None)
+                .ok()
+                .map(Arc::new)
+        } else {
+            self.paths.get(&id).cloned()
+        }
+    }
+
+    pub fn index_pending(&self) -> bool {
+        self.deferred_edges
+            .as_ref()
+            .is_some_and(|deferred| deferred.spatial.get().is_none())
+    }
+
+    /// Install immutable spatial indexes. A cancelled build leaves the
+    /// initial local endpoint preview available.
+    pub fn prepare_indexes(&self, cancel: &LayoutCancellation) -> Result<bool, LayoutError> {
+        let Some(deferred) = self
+            .deferred_edges
+            .as_ref()
+            .filter(|data| data.spatial.get().is_none())
+        else {
+            return Ok(false);
+        };
+        cancel.check()?;
+        let node_refs: BTreeMap<_, _> = self
+            .graph
+            .nodes
+            .iter()
+            .map(|(id, node)| (*id, node))
+            .collect();
+        let mut entries = Vec::with_capacity(self.graph.edges.len());
+        for (offset, edge) in self.graph.edges.values().enumerate() {
+            if offset % 256 == 0 {
+                cancel.check()?;
+            }
+            let source = node_refs
+                .get(&edge.source.node)
+                .ok_or(FlowError::MissingNode(edge.source.node))
+                .map_err(LayoutError::Document)?;
+            let target = node_refs
+                .get(&edge.target.node)
+                .ok_or(FlowError::MissingNode(edge.target.node))
+                .map_err(LayoutError::Document)?;
+            let bounds = edge_envelope(edge, source, target).map_err(LayoutError::Document)?;
+            if bounds.valid() {
+                entries.push((edge.id, bounds));
+            }
+        }
+        drop(node_refs);
+        let edges = SpatialIndex::read_only(entries, cancel)?;
+        let nodes = SpatialIndex::read_only(
+            self.graph
+                .nodes
+                .values()
+                .map(|n| (n.id, n.rect()))
+                .collect(),
+            cancel,
+        )?;
+        cancel.check()?;
+        Ok(deferred.spatial.set((nodes, edges)).is_ok())
+    }
+
     pub fn bounds(&self) -> Option<Rect> {
         self.bounds
     }
@@ -515,7 +806,54 @@ impl Scene {
         self.children.get(&id).map_or(&[], Vec::as_slice)
     }
     pub fn incident_edges(&self, id: NodeId) -> &[EdgeId] {
+        if let Some(deferred) = &self.deferred_edges {
+            return deferred
+                .incident
+                .get_or_init(|| Arc::new(Incidence::build(&self.graph)))
+                .get(id);
+        }
         self.incident.get(&id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Gather incident edges for the supplied nodes without preparing a cold index.
+    pub fn append_incident_edges(
+        &self,
+        ids: impl IntoIterator<Item = NodeId>,
+        output: &mut Vec<EdgeId>,
+    ) {
+        let Some(deferred) = self
+            .deferred_edges
+            .as_ref()
+            .filter(|data| data.incident.get().is_none())
+        else {
+            for id in ids {
+                output.extend(self.incident_edges(id));
+            }
+            return;
+        };
+        if let Some((_, edges)) = deferred.spatial.get() {
+            let mut candidates = Vec::new();
+            for id in ids {
+                if let Some(node) = self.graph.nodes.get(&id) {
+                    edges.query(node.rect(), &mut candidates);
+                    output.extend(candidates.iter().filter(|edge_id| {
+                        self.graph
+                            .edges
+                            .get(edge_id)
+                            .is_some_and(|edge| edge.source.node == id || edge.target.node == id)
+                    }));
+                }
+            }
+        } else {
+            let affected: std::collections::BTreeSet<_> = ids.into_iter().collect();
+            if affected.is_empty() {
+                return;
+            }
+            output.extend(self.graph.edges.values().filter_map(|edge| {
+                (affected.contains(&edge.source.node) || affected.contains(&edge.target.node))
+                    .then_some(edge.id)
+            }));
+        }
     }
     pub fn graph(&self) -> &Graph {
         &self.graph
@@ -563,18 +901,29 @@ impl Scene {
             })
             .map(|id| (*id, graph.nodes.get(id).map(|n| n.rect())))
             .collect();
-        next.nodes.update(&node_changes);
-        next.bounds = next.nodes.bounds();
+        if self.has_deferred_edges() {
+            if !node_changes.is_empty() {
+                next.bounds = graph.bounds();
+            }
+        } else {
+            next.nodes.update(&node_changes);
+            next.bounds = next.nodes.bounds();
+        }
         if next.bounds.is_some_and(|b| !b.valid()) {
             return Err(FlowError::InvalidGeometry);
         }
         let mut edges = changed_edges.clone();
+        let mut rerouted_nodes = Vec::new();
         for id in changed_nodes {
             let old = self.graph.nodes.get(id);
             let new = graph.nodes.get(id);
             if old.map(|n| (n.pos, n.size, &n.handles)) != new.map(|n| (n.pos, n.size, &n.handles))
             {
-                edges.extend(self.incident_edges(*id));
+                if self.has_deferred_edges() {
+                    rerouted_nodes.push(*id);
+                } else {
+                    edges.extend(self.incident_edges(*id));
+                }
             }
             if graph.nodes.contains_key(id) {
                 next.revisions.insert(*id, next.revision);
@@ -582,30 +931,50 @@ impl Scene {
                 next.revisions.remove(id);
             }
         }
+        let mut incident = Vec::new();
+        self.append_incident_edges(rerouted_nodes, &mut incident);
+        edges.extend(incident);
         let mut edge_changes = BTreeMap::new();
+        if let Some(deferred) = &self.deferred_edges
+            && (!edges.is_empty() || !node_changes.is_empty())
+        {
+            let indexes = DeferredIndex::default();
+            if changed_edges.is_empty()
+                && let Some(incident) = deferred.incident.get()
+            {
+                let _ = indexes.incident.set(incident.clone());
+            }
+            next.deferred_edges = Some(Arc::new(indexes));
+        }
         for id in edges {
             if let Some(edge) = graph.edges.get(&id) {
-                let path = Arc::new(EdgePath::new(&graph, edge, None, None)?);
-                edge_changes.insert(id, Some(path.bounds));
-                next.paths.insert(id, path);
-            } else {
+                let path = EdgePath::new(&graph, edge, None, None)?;
+                if !self.has_deferred_edges() {
+                    edge_changes.insert(id, Some(path.bounds));
+                    next.paths.insert(id, Arc::new(path));
+                }
+            } else if !self.has_deferred_edges() {
                 next.paths.remove(&id);
                 edge_changes.insert(id, None);
             }
         }
-        next.edges.update(&edge_changes);
-        for id in changed_edges {
-            if let Some(old) = self.graph.edges.get(id) {
-                for node in [old.source.node, old.target.node] {
-                    if let Some(ids) = next.incident.get_mut(&node) {
-                        ids.retain(|i| i != id);
+        if !edge_changes.is_empty() {
+            next.edges.update(&edge_changes);
+        }
+        if !self.has_deferred_edges() {
+            for id in changed_edges {
+                if let Some(old) = self.graph.edges.get(id) {
+                    for node in [old.source.node, old.target.node] {
+                        if let Some(ids) = next.incident.get_mut(&node) {
+                            ids.retain(|i| i != id);
+                        }
                     }
                 }
-            }
-            if let Some(edge) = graph.edges.get(id) {
-                next.incident.entry(edge.source.node).or_default().push(*id);
-                if edge.source.node != edge.target.node {
-                    next.incident.entry(edge.target.node).or_default().push(*id);
+                if let Some(edge) = graph.edges.get(id) {
+                    next.incident.entry(edge.source.node).or_default().push(*id);
+                    if edge.source.node != edge.target.node {
+                        next.incident.entry(edge.target.node).or_default().push(*id);
+                    }
                 }
             }
         }
@@ -653,8 +1022,38 @@ impl Scene {
         Ok(next)
     }
     pub fn visible(&self, area: Rect, output: &mut Visible) {
-        output.visited =
-            self.nodes.query(area, &mut output.nodes) + self.edges.query(area, &mut output.edges);
+        self.visible_candidates(area, output);
+        if self.has_deferred_edges() {
+            output.edges.retain(|id| {
+                self.edge_route(*id)
+                    .is_some_and(|route| route.bounds.intersects(area))
+            });
+        }
+    }
+
+    /// Collect node IDs and conservative edge candidates without building routes.
+    pub fn visible_candidates(&self, area: Rect, output: &mut Visible) {
+        output.visited = self.query_node_candidates(area, &mut output.nodes)
+            + self.query_edge_candidates(area, &mut output.edges);
+    }
+
+    fn query_edge_candidates(&self, area: Rect, output: &mut Vec<EdgeId>) -> usize {
+        let Some(deferred) = &self.deferred_edges else {
+            return self.edges.query(area, output);
+        };
+        if let Some((_, edges)) = deferred.spatial.get() {
+            return edges.query(area, output);
+        }
+
+        output.clear();
+        let mut endpoints = Vec::new();
+        let visits = self.query_node_candidates(area.expand(ROUTE_OVERSCAN), &mut endpoints);
+        if !endpoints.is_empty() {
+            self.append_incident_edges(endpoints, output);
+            output.sort_unstable();
+            output.dedup();
+        }
+        visits
     }
     /// Visit a coarse coverage map for zoomed-out drawing. Small BVH branches
     /// contribute one region and leaf entries retain their individual bounds.
@@ -676,17 +1075,99 @@ impl Scene {
                 }
             }
         }
-        if let Some(root) = self.nodes.root.as_ref().filter(|_| area.valid()) {
-            visit(root, area, detail, &mut emit);
+        if !area.valid() || !detail.is_finite() || detail <= 0. {
+            return;
+        }
+        if let Some(nodes) = self.node_index() {
+            if let Some(root) = &nodes.root {
+                visit(root, area, detail, &mut emit);
+            }
+        } else {
+            self.visit_preview_regions(area, detail, emit);
         }
     }
+
+    fn visit_preview_regions(&self, area: Rect, detail: f32, mut emit: impl FnMut(Rect)) {
+        const CELLS: usize = 64;
+        let cell = detail
+            .max(area.size.x / CELLS as f32)
+            .max(area.size.y / CELLS as f32);
+        let mut occupied = [[false; CELLS]; CELLS];
+        for node in self.graph.nodes.values() {
+            let bounds = node.rect();
+            if !bounds.intersects(area) {
+                continue;
+            }
+            let min = (bounds.origin - area.origin) * cell.recip();
+            let max = (bounds.max() - area.origin) * cell.recip();
+            let left = (min.x as usize).min(CELLS - 1);
+            let top = (min.y as usize).min(CELLS - 1);
+            let right = (max.x.ceil() as usize).clamp(left + 1, CELLS);
+            let bottom = (max.y.ceil() as usize).clamp(top + 1, CELLS);
+            for row in &mut occupied[top..bottom] {
+                row[left..right].fill(true);
+            }
+        }
+        for (row, spans) in occupied.into_iter().enumerate() {
+            for (column, covered) in spans.into_iter().enumerate() {
+                if covered {
+                    emit(Rect {
+                        origin: area.origin + Point::new(column as f32 * cell, row as f32 * cell),
+                        size: Point::new(cell, cell),
+                    });
+                }
+            }
+        }
+    }
+
+    fn node_index(&self) -> Option<&SpatialIndex> {
+        match &self.deferred_edges {
+            Some(deferred) => deferred.spatial.get().map(|(nodes, _)| nodes),
+            None => Some(&self.nodes),
+        }
+    }
+
+    /// Check viewport density without collecting IDs or visiting nodes beyond the limit.
+    pub fn node_count_exceeds(&self, area: Rect, limit: usize) -> bool {
+        self.node_index().map_or_else(
+            || {
+                self.graph
+                    .nodes
+                    .values()
+                    .filter(|n| n.rect().intersects(area))
+                    .take(limit.saturating_add(1))
+                    .count()
+                    > limit
+            },
+            |nodes| nodes.count_exceeds(area, limit),
+        )
+    }
+
+    fn query_node_candidates(&self, area: Rect, output: &mut Vec<NodeId>) -> usize {
+        if let Some(nodes) = self.node_index() {
+            return nodes.query(area, output);
+        }
+        output.clear();
+        if !area.valid() {
+            return 0;
+        }
+        output.extend(
+            self.graph
+                .nodes
+                .values()
+                .filter(|n| n.rect().intersects(area))
+                .map(|n| n.id),
+        );
+        self.graph.nodes.len()
+    }
+
     pub fn query_nodes(&self, area: Rect, output: &mut Vec<NodeId>) {
-        self.nodes.query(area, output);
+        self.query_node_candidates(area, output);
     }
     /// Structural picking only: parents before descendants, ID ties. This immutable
     /// scene has no selection; interactive clients must use `Editor::hit_node`.
     pub fn hit_node(&self, at: Point, scratch: &mut Vec<NodeId>) -> Option<NodeId> {
-        self.nodes.query(
+        self.query_nodes(
             Rect {
                 origin: at,
                 size: Point::default(),
@@ -699,7 +1180,7 @@ impl Scene {
         if !tolerance.is_finite() || tolerance < 0. {
             return None;
         }
-        self.edges.query(
+        self.query_edge_candidates(
             Rect {
                 origin: at,
                 size: Point::default(),
@@ -708,8 +1189,7 @@ impl Scene {
             scratch,
         );
         scratch.iter().rev().copied().find(|id| {
-            self.paths
-                .get(id)
+            self.edge_route(*id)
                 .is_some_and(|p| p.distance(at) <= tolerance)
         })
     }
@@ -740,6 +1220,36 @@ mod review_2_tests {
 #[cfg(test)]
 mod feedback_tests {
     use super::*;
+    #[test]
+    fn precomputed_bezier_weights_keep_the_sample_positions() {
+        let from = Point::new(-128., 240.);
+        let to = Point::new(384., 100.);
+        let outward = Point::new(1., 0.);
+        let inward = Point::new(0., 1.);
+        let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
+        let c1 = from + outward * distance;
+        let c2 = to + inward * distance;
+        let expected: Vec<_> = (0..=32)
+            .map(|index| {
+                let t = index as f32 / 32.;
+                let u = 1. - t;
+                from * (u * u * u)
+                    + c1 * (3. * u * u * t)
+                    + c2 * (3. * u * t * t)
+                    + to * (t * t * t)
+            })
+            .collect();
+        assert_eq!(bezier(from, outward, to, inward), expected);
+    }
+
+    #[test]
+    fn route_midpoint_uses_distance_and_preserves_long_polylines() {
+        let short = [Point::new(0., 0.), Point::new(3., 0.), Point::new(3., 7.)];
+        assert_eq!(midpoint(&short), Point::new(3., 2.));
+        let long: Vec<_> = (0..=48).map(|index| Point::new(index as f32, 0.)).collect();
+        assert_eq!(midpoint(&long), Point::new(24., 0.));
+    }
+
     #[test]
     fn forward_step_edges_do_not_backtrack_at_corners() {
         for kind in [EdgeType::Step, EdgeType::SmoothStep] {

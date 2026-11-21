@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    ops::Range,
-    time::Instant,
-};
+use std::{collections::HashSet, ops::Range, sync::OnceLock, time::Instant};
 
 pub type NodeId = u64;
 
@@ -36,11 +32,12 @@ pub enum Navigation {
     End,
 }
 
+use crate::rows::Rows;
+
 #[derive(Default)]
 pub struct TreeModel {
-    rows: Vec<Row>,
-    sibling_positions: Vec<(usize, usize)>,
-    indices: HashMap<NodeId, usize>,
+    rows: Rows,
+    snapshot: OnceLock<Vec<Row>>,
     expanded: HashSet<NodeId>,
     pending: HashSet<NodeId>,
     selected: HashSet<NodeId>,
@@ -58,35 +55,39 @@ impl TreeModel {
 
     /// Apply a new source snapshot, including results delivered by async loaders.
     pub fn refresh(&mut self, source: &dyn TreeSource) {
-        self.rows.clear();
-        self.sibling_positions.clear();
-        self.indices.clear();
+        self.rows = Rows::default();
+        self.snapshot.take();
         self.pending
             .retain(|&id| source.children(id) == Children::Unloaded);
-        walk_visible(
-            source,
-            &self.expanded,
-            source.roots(),
-            None,
-            0,
-            |row, siblings| {
-                self.indices.insert(row.id, self.rows.len());
-                self.rows.push(row);
-                self.sibling_positions.push(siblings);
-            },
-        );
+        self.rows.splice(0..0, |append| {
+            walk_visible(source, &self.expanded, source.roots(), None, 0, append);
+        });
         if self.cursor.is_some_and(|id| self.row_index(id).is_none()) {
-            self.cursor = self.rows.first().map(|row| row.id);
+            self.cursor = self.row(0).map(|row| row.id);
         }
     }
 
+    /// Materialize a contiguous snapshot after the most recent structural edit.
+    /// Use [Self::row] and [Self::row_count] to access a viewport without a copy.
     pub fn rows(&self) -> &[Row] {
-        &self.rows
+        self.snapshot.get_or_init(|| self.rows.iter().collect())
+    }
+
+    pub fn row(&self, index: usize) -> Option<Row> {
+        self.rows.get(index)
+    }
+
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
     }
 
     /// One-based position and total count within the row's sibling set.
     pub fn sibling_position(&self, index: usize) -> Option<(usize, usize)> {
-        self.sibling_positions.get(index).copied()
+        self.row_and_siblings(index)?.1
+    }
+
+    pub(crate) fn row_and_siblings(&self, index: usize) -> Option<(Row, Option<(usize, usize)>)> {
+        self.rows.row_and_siblings(index)
     }
 
     pub fn expanded(&self, id: NodeId) -> bool {
@@ -102,7 +103,7 @@ impl TreeModel {
     }
 
     pub fn row_index(&self, id: NodeId) -> Option<usize> {
-        self.indices.get(&id).copied()
+        self.rows.rank(id)
     }
 
     /// Toggle a branch in the current snapshot. Call [Self::refresh] when the
@@ -118,47 +119,38 @@ impl TreeModel {
         } else {
             self.expanded.remove(&id)
         };
-        if changed && let Some(index) = self.row_index(id) {
-            let depth = self.rows[index].depth;
+        if changed
+            && let Some(index) = self.row_index(id)
+            && let Some(row) = self.row(index)
+        {
+            let depth = row.depth;
             let start = index + 1;
             if open {
                 if let Children::Ready(children) = source.children(id)
                     && !children.is_empty()
                 {
-                    let mut descendants = Vec::new();
-                    let mut positions = Vec::new();
-                    walk_visible(
-                        source,
-                        &self.expanded,
-                        children,
-                        Some(id),
-                        depth + 1,
-                        |row, siblings| {
-                            descendants.push(row);
-                            positions.push(siblings);
-                        },
-                    );
-                    self.rows.splice(start..start, descendants);
-                    self.sibling_positions.splice(start..start, positions);
-                    self.reindex(start);
+                    self.snapshot.take();
+                    self.rows.splice(start..start, |append| {
+                        walk_visible(
+                            source,
+                            &self.expanded,
+                            children,
+                            Some(id),
+                            depth + 1,
+                            append,
+                        );
+                    });
                 }
             } else {
-                let end = start
-                    + self.rows[start..]
-                        .iter()
-                        .take_while(|row| row.depth > depth)
-                        .count();
+                let end = self.rows.descendants_end(start, depth);
                 if end != start {
                     if let Some(cursor) = self.cursor.and_then(|id| self.row_index(id))
                         && (start..end).contains(&cursor)
                     {
                         self.cursor = Some(id);
                     }
-                    self.sibling_positions.drain(start..end);
-                    for row in self.rows.drain(start..end) {
-                        self.indices.remove(&row.id);
-                    }
-                    self.reindex(start);
+                    self.snapshot.take();
+                    self.rows.splice(start..end, |_| {});
                 }
             }
         }
@@ -166,15 +158,9 @@ impl TreeModel {
             .cursor
             .is_some_and(|cursor| self.row_index(cursor).is_none())
         {
-            self.cursor = self.rows.first().map(|row| row.id);
+            self.cursor = self.row(0).map(|row| row.id);
         }
         (open && source.children(id) == Children::Unloaded && self.pending.insert(id)).then_some(id)
-    }
-
-    fn reindex(&mut self, start: usize) {
-        for (offset, row) in self.rows[start..].iter().enumerate() {
-            self.indices.insert(row.id, start + offset);
-        }
     }
 
     pub fn retry_children(&mut self, id: NodeId) {
@@ -195,19 +181,21 @@ impl TreeModel {
         let current = self.cursor.and_then(|id| self.row_index(id));
         let Some(index) = current else {
             self.cursor = if direction == Navigation::End {
-                self.rows.last()
+                self.row(self.row_count().saturating_sub(1))
             } else {
-                self.rows.first()
+                self.row(0)
             }
             .map(|row| row.id);
             return None;
         };
-        let row = self.rows[index];
+        let row = self.row(index)?;
         let next = match direction {
-            Navigation::Up => self.rows.get(index.saturating_sub(1)).map(|row| row.id),
-            Navigation::Down => self.rows.get(index + 1).map(|row| row.id),
-            Navigation::Home => self.rows.first().map(|row| row.id),
-            Navigation::End => self.rows.last().map(|row| row.id),
+            Navigation::Up => self.row(index.saturating_sub(1)).map(|row| row.id),
+            Navigation::Down => self.row(index + 1).map(|row| row.id),
+            Navigation::Home => self.row(0).map(|row| row.id),
+            Navigation::End => self
+                .row(self.row_count().saturating_sub(1))
+                .map(|row| row.id),
             Navigation::Left if self.expanded(row.id) => {
                 return self.set_expanded(row.id, false, source);
             }
@@ -218,8 +206,7 @@ impl TreeModel {
                 return self.set_expanded(row.id, true, source);
             }
             Navigation::Right => self
-                .rows
-                .get(index + 1)
+                .row(index + 1)
                 .filter(|child| child.parent == Some(row.id))
                 .map(|row| row.id),
         };
@@ -300,5 +287,53 @@ fn walk_visible(
         {
             stack.push((children.iter(), children.len(), Some(id)));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Forest(Vec<NodeId>);
+
+    impl TreeSource for Forest {
+        fn roots(&self) -> &[NodeId] {
+            &self.0
+        }
+
+        fn children(&self, id: NodeId) -> Children<'_> {
+            Children::Ready(if id == 0 { &[u64::MAX] } else { &[] })
+        }
+
+        fn label(&self, _: NodeId) -> &str {
+            "row"
+        }
+    }
+
+    #[test]
+    fn local_expansion_rewrites_the_same_rows_at_each_scale() {
+        let mut counts = Vec::new();
+        for size in [10_000, 1_000_000] {
+            let source = Forest((0..size).collect());
+            let mut tree = TreeModel::new(&source);
+            for _ in 0..8 {
+                tree.set_expanded(0, true, &source);
+                assert_eq!(tree.row_index(u64::MAX), Some(1));
+                assert_eq!(tree.row_index(size - 1), Some(size as usize));
+                let expanded = tree.rows.rewritten;
+
+                tree.set_expanded(0, false, &source);
+                assert_eq!(tree.row_index(u64::MAX), None);
+                assert_eq!(tree.row_index(size - 1), Some(size as usize - 1));
+                counts.push((expanded, tree.rows.rewritten));
+            }
+            assert_eq!(tree.rows().len(), size as usize);
+            for (index, row) in tree.rows().iter().enumerate() {
+                assert_eq!(tree.row(index), Some(*row));
+                assert_eq!(tree.row_index(row.id), Some(index));
+            }
+        }
+        assert!(counts.iter().all(|&count| count == counts[0]));
+        assert!(counts[0].0 <= 1024 && counts[0].1 <= 1024);
     }
 }

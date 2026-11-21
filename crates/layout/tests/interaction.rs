@@ -557,7 +557,6 @@ fn a_stack_keeps_its_gap(cx: &mut TestAppContext) {
 struct KeyedSplitterHarness {
     state: Entity<SplitterState>,
 }
-
 impl Render for KeyedSplitterHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().w(px(400.)).h(px(200.)).child(
@@ -1075,4 +1074,48 @@ fn a_toggle_the_user_made_is_not_undone_by_a_resize(cx: &mut TestAppContext) {
             "the toggle the user made is not undone by a resize"
         );
     });
+}
+
+/// A store that counts how often it is read.
+struct CountingPersist {
+    loads: Rc<Cell<usize>>,
+}
+
+impl LayoutPersist for CountingPersist {
+    fn load(&self, _key: &str) -> Option<String> {
+        self.loads.set(self.loads.get() + 1);
+        Some("[200.0, 200.0]".to_owned())
+    }
+
+    fn save(&self, _key: &str, _value: &str) {}
+}
+
+/// The store is read when the splitter is built, not for every frame: a frame
+/// that changes nothing does not read it again.
+#[gpui_kit::test]
+fn a_splitter_reads_the_store_once(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let loads = Rc::new(Cell::new(0));
+    let state = {
+        let loads = loads.clone();
+        cx.update(|cx| {
+            cx.set_global(LayoutStore::new(Box::new(CountingPersist { loads })));
+            SplitterState::new(cx)
+        })
+    };
+    let harness = KeyedSplitterHarness { state };
+    let cx = harness!(cx, harness);
+    let after_first = loads.get();
+    assert_eq!(
+        after_first, 1,
+        "the store was read when the splitter was built"
+    );
+    for _ in 0..5 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    assert_eq!(
+        loads.get(),
+        after_first,
+        "the store was read again on a frame that changed nothing"
+    );
 }

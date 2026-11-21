@@ -301,6 +301,58 @@ fn a_mermaid_fence_paints_a_diagram_in_place_of_its_code_block(cx: &mut TestAppC
     assert!(painted, "diagram block {id} painted into the document");
 }
 
+#[gpui_kit::test]
+fn first_layout_highlights_the_same_number_of_fences_at_both_scales(cx: &mut TestAppContext) {
+    use gpui_kit::base::text::TextViewDefaults;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let highlighted = Arc::new(AtomicUsize::new(0));
+    let mut counts = Vec::new();
+    for blocks in [100, 2_000] {
+        let count = highlighted.clone();
+        let source = "```text\nA line of code\n```\n\n".repeat(blocks);
+        let (window, _) = cx.update(|cx| {
+            guiraffe_core::init(cx);
+            TextViewDefaults::new()
+                .with_code_block_highlighter(move |_| {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    Vec::new()
+                })
+                .install(cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Point::default(),
+                        size(px(800.), px(900.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|cx| Host {
+                        markdown: cx.new(|cx| MarkdownState::new(source.clone(), cx)),
+                        source,
+                        collected: Default::default(),
+                    })
+                },
+            )
+            .expect("window")
+        });
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.remove_window();
+        })
+        .expect("render");
+        counts.push(highlighted.swap(0, Ordering::Relaxed));
+    }
+    assert!(counts[0] > 0 && counts[0] < 100);
+    assert_eq!(counts[0], counts[1]);
+}
+
 /// Syntax highlighting comes from the Kit's code-block highlighter. It is a
 /// compile-time choice (`guiraffe-markdown/syntect` forwards to
 /// `gpui-kit/syntect`), so this runs only where that is on.
@@ -329,6 +381,22 @@ mod streaming_cost {
 
     fn reply(paragraphs: usize) -> String {
         (0..paragraphs).map(|i| format!("## Section {i}\n\nSome streamed text for paragraph {i}, with *emphasis* and `code`.\n\n")).collect()
+    }
+
+    #[gpui_kit::test]
+    fn prose_appends_reuse_the_settled_metadata_snapshot(cx: &mut TestAppContext) {
+        let state = cx.new(|cx| MarkdownState::new("# Stable\n\n", cx));
+        cx.run_until_parked();
+        let before = cx.update(|cx| std::ptr::from_ref(state.read(cx).document()));
+        for chunk in ["A streamed ", "paragraph ", "with no headings."] {
+            cx.update(|cx| state.update(cx, |state, cx| state.append(chunk, cx)));
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let viewer = state.read(cx);
+                assert_eq!(std::ptr::from_ref(viewer.document()), before);
+                assert_eq!(viewer.headings()[0].text, "Stable");
+            });
+        }
     }
 
     #[gpui_kit::test]

@@ -1,4 +1,4 @@
-//! Controls' Tree-sitter parser runs on a worker, publishing one immutable snapshot.
+//! Parse on a worker. Resolve styles only for the source range being shaped.
 use crate::CodeDocument;
 use gpui_kit::{
     HighlightStyle,
@@ -6,27 +6,44 @@ use gpui_kit::{
 };
 use std::{ops::Range, sync::Arc, time::Duration};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Highlighted {
     pub(crate) document: Arc<CodeDocument>,
-    pub(crate) spans: Arc<[(Range<usize>, HighlightStyle)]>,
+    parser: Option<Arc<SyntaxHighlighter>>,
     pub error: Option<Arc<str>>,
-    alternate: Arc<[(Range<usize>, HighlightStyle)]>,
     dark: bool,
 }
+
+impl std::fmt::Debug for Highlighted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Highlighted")
+            .field("document", &self.document)
+            .field("has_parser", &self.has_parser())
+            .field("error", &self.error)
+            .field("dark", &self.dark)
+            .finish()
+    }
+}
+
 impl Highlighted {
     pub fn document(&self) -> &Arc<CodeDocument> {
         &self.document
     }
+
     pub fn plain(document: Arc<CodeDocument>) -> Self {
         Self {
             document,
-            spans: Arc::from([]),
+            parser: None,
             error: None,
-            alternate: Arc::from([]),
             dark: false,
         }
     }
+
+    pub(crate) fn has_parser(&self) -> bool {
+        self.parser.is_some()
+    }
+
     /// Call on a background executor. Unknown languages retain plain text; parser timeout or
     /// panic is reported without discarding source. Rust, JSON and JavaScript ship by default;
     /// hosts can register further Controls grammars.
@@ -53,41 +70,16 @@ impl Highlighted {
             if !parser.update(None, &rope, Some(Duration::from_secs(2))) {
                 return Err("Syntax analysis exceeded its time budget");
             }
-            let theme = if dark {
-                HighlightTheme::default_dark()
-            } else {
-                HighlightTheme::default_light()
-            };
-            let alternate = if dark {
-                HighlightTheme::default_light()
-            } else {
-                HighlightTheme::default_dark()
-            };
-            let clean = |spans: Vec<(Range<usize>, HighlightStyle)>| {
-                spans
-                    .into_iter()
-                    .filter(|(_, s)| s != &HighlightStyle::default())
-                    .collect::<Vec<_>>()
-            };
-            if cancelled() {
-                return Ok(None);
-            }
-            let spans = clean(parser.styles(&(0..document.source().len()), theme.as_ref()));
-            if cancelled() {
-                return Ok(None);
-            }
-            let alternate = clean(parser.styles(&(0..document.source().len()), alternate.as_ref()));
-            Ok(Some((spans, alternate)))
+            Ok(Some(parser))
         }));
         if cancelled() {
             return None;
         }
         Some(match result {
             Ok(Ok(None)) => return None,
-            Ok(Ok(Some((spans, alternate)))) => Self {
+            Ok(Ok(Some(parser))) => Self {
                 document,
-                spans: spans.into(),
-                alternate: alternate.into(),
+                parser: parser.tree().is_some().then(|| Arc::new(parser)),
                 dark,
                 error: None,
             },
@@ -101,47 +93,70 @@ impl Highlighted {
             },
         })
     }
+
     pub fn styles_for(
         &self,
         range: Range<usize>,
-    ) -> impl Iterator<Item = &(Range<usize>, HighlightStyle)> {
+    ) -> impl Iterator<Item = (Range<usize>, HighlightStyle)> {
         self.styles_for_scheme(range, self.dark)
     }
+
     pub fn styles_for_scheme(
         &self,
-        range: Range<usize>,
+        mut range: Range<usize>,
         dark: bool,
-    ) -> impl Iterator<Item = &(Range<usize>, HighlightStyle)> {
-        let spans = if dark == self.dark {
-            &self.spans
-        } else {
-            &self.alternate
-        };
-        let first = spans.partition_point(|(r, _)| r.end <= range.start);
-        spans
-            .get(first..)
-            .unwrap_or_default()
-            .iter()
-            .take_while(move |(r, _)| r.start < range.end)
+    ) -> impl Iterator<Item = (Range<usize>, HighlightStyle)> {
+        range.end = range.end.min(self.document.source().len());
+        let styles = self
+            .parser
+            .as_ref()
+            .filter(|_| !range.is_empty())
+            .map(|parser| {
+                let theme = if dark {
+                    HighlightTheme::default_dark()
+                } else {
+                    HighlightTheme::default_light()
+                };
+                parser.styles(&range, theme.as_ref())
+            })
+            .unwrap_or_default();
+        styles
+            .into_iter()
+            .filter(|(_, style)| style != &HighlightStyle::default())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn rust_highlighting_and_unknown_language_fallback_are_thread_safe() {
-        let doc = Arc::new(CodeDocument::new(Arc::<str>::from(
-            "fn main() { let value = 42; }",
-        )));
-        let cloned = doc.clone();
-        let result = std::thread::spawn(move || Highlighted::compute(cloned, "rust", false))
+    fn distant_window_preserves_multiline_syntax_and_new_source_replaces_it() {
+        let source = "/* opening\n".to_owned() + &"let first = 42;\n".repeat(10_000) + "*/\n";
+        let doc = Arc::new(CodeDocument::new(source));
+        let parsed = std::thread::spawn(move || Highlighted::compute(doc, "rust", false))
             .join()
-            .unwrap_or_else(|_| panic!("worker panic"));
-        assert!(Arc::ptr_eq(&doc, &result.document));
-        assert!(result.error.is_none());
-        assert!(result.spans.iter().any(|(_, s)| s.color.is_some()));
-        let plain = Highlighted::compute(doc, "unregistered-language", true);
-        assert!(plain.error.is_none());
-        assert!(plain.spans.iter().all(|(_, s)| s.color.is_none()));
+            .expect("parser worker");
+        assert!(parsed.error.is_none());
+        let window = parsed.document.line_range(9_999).expect("source line");
+        let near = parsed.document.line_range(1).expect("source line");
+        let styles = parsed.styles_for(window.clone()).collect::<Vec<_>>();
+        assert_eq!(styles.len(), 1);
+        assert_eq!(styles[0].0, window);
+        assert_eq!(
+            styles[0].1,
+            parsed.styles_for(near).next().expect("comment style").1
+        );
+
+        let edited = Arc::new(CodeDocument::new("let first = 42;\n".repeat(10_000)));
+        let edited = Highlighted::compute(edited, "rust", false);
+        let window = edited.document.line_range(9_999).expect("edited line");
+        assert_ne!(
+            edited.styles_for(window.clone()).collect::<Vec<_>>(),
+            styles
+        );
+        let plain = Highlighted::compute(edited.document.clone(), "unregistered-language", true);
+        assert!(!plain.has_parser());
+        assert!(plain.styles_for(window).next().is_none());
     }
 }

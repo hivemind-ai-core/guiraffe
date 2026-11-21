@@ -8,6 +8,7 @@
 
 use std::ops::Range;
 
+use gpui_kit::base::text::visit_markdown_sections;
 use markdown::{ParseOptions, mdast};
 
 /// A stable 64-bit content hash (FNV-1a), used for element ids that must not
@@ -76,13 +77,16 @@ impl Document {
     /// text view still renders what it can, so this returns an empty document
     /// rather than failing the whole view.
     pub fn analyze(source: &str) -> Self {
-        let Ok(root) = markdown::to_mdast(source, &ParseOptions::gfm()) else {
-            return Self::default();
-        };
         let mut document = Self::default();
         let mut anchors = AnchorSlugs::default();
-        walk(&root, source, &mut document, &mut anchors);
-        document
+        let result = visit_markdown_sections(source, &ParseOptions::gfm(), |root| {
+            walk(&root, source, &mut document, &mut anchors);
+        });
+        if result.is_ok() {
+            document
+        } else {
+            Self::default()
+        }
     }
 
     /// Analyze `source` reusing `prev` (the analysis of an earlier prefix of it) for
@@ -95,6 +99,13 @@ impl Document {
             .rev()
             .find(|b| source.is_char_boundary(*b))
             .unwrap_or(0);
+        Self::merge_tail(prev, base, Self::analyze(&source[base..]))
+    }
+
+    pub(crate) fn merge_tail(prev: &Document, base: usize, tail: Document) -> Self {
+        if base == 0 {
+            return tail;
+        }
         let mut out = Document {
             headings: prev
                 .headings
@@ -115,7 +126,6 @@ impl Document {
                 .cloned()
                 .collect(),
         };
-        let tail = Document::analyze(&source[base..]);
         let shift = |r: &Range<usize>| r.start + base..r.end + base;
         let mut anchors = AnchorSlugs {
             seen: out.headings.iter().map(|h| h.anchor.clone()).collect(),
@@ -136,6 +146,20 @@ impl Document {
             ..t
         }));
         out
+    }
+
+    pub(crate) fn metadata_end(&self) -> usize {
+        self.headings
+            .iter()
+            .map(|heading| heading.range.end)
+            .chain(self.fences.iter().map(|fence| fence.range.end))
+            .chain(
+                self.tasks
+                    .iter()
+                    .map(|task| task.text.end.max(task.marker.end)),
+            )
+            .max()
+            .unwrap_or_default()
     }
 
     /// Whether the document has any heading.

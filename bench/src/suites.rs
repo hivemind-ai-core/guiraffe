@@ -694,12 +694,12 @@ pub fn tree_scroll_million() {
             model.set_expanded(id, true, &source);
         }
         model.set_expanded(0, true, &source);
-        assert_eq!(model.rows().len(), 1_000_000);
+        assert_eq!(model.row_count(), 1_000_000);
         model
     });
     for scroll in [12_000_000.5, 30_000_123.5] {
-        for row in &model.rows()[model.window(black_box(scroll), 720., 36.)] {
-            black_box(row);
+        for index in model.window(black_box(scroll), 720., 36.) {
+            black_box(model.row(index));
         }
     }
 }
@@ -747,6 +747,7 @@ macro_rules! production_frame_suite {
     };
 }
 
+production_frame_suite!(datagrid_frame_10k, Grid, 10_000);
 production_frame_suite!(datagrid_frame_100k, Grid, 100_000);
 production_frame_suite!(datagrid_frame_10m, Grid, 10_000_000);
 production_frame_suite!(code_frame_100k, Code, 100_000);
@@ -799,11 +800,17 @@ macro_rules! make_registry {
                 Suite { name: "code-frame-10m", run: code_frame_10m },
                 Suite { name: "ui-macro-frame-1k", run: ui_macro_tree },
                 Suite { name: "ui-builder-frame-1k", run: ui_builder_tree },
-            ]
+                // Warm repaints of the crates every frame goes through.
+                Suite { name: "warm-components", run: crate::warm_repaint::warm_components },
+                Suite { name: "warm-inputs", run: crate::warm_repaint::warm_inputs },
+                Suite { name: "warm-layout", run: crate::warm_repaint::warm_layout },
+                Suite { name: "warm-overlays", run: crate::warm_repaint::warm_overlays },            ]
         }
     };
 }
 crate::with_production_suites!(make_registry);
+
+pub use crate::warm_repaint::{warm_components, warm_inputs, warm_layout, warm_overlays};
 
 /// A 1,000-node tree constructed in GPUI's active frame arena.
 pub fn ui_macro_tree() {

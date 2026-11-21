@@ -68,6 +68,23 @@ pub(crate) fn box_fill(
     window.paint_quad(fill(bounds, color).corner_radii(px(radius)));
 }
 
+fn paint_dot(
+    window: &mut Window,
+    origin: Point<Pixels>,
+    (x, y): Position,
+    radius: f32,
+    color: Hsla,
+) {
+    box_fill(
+        window,
+        origin,
+        (x - radius, y - radius),
+        (x + radius, y + radius),
+        color,
+        radius,
+    );
+}
+
 pub(crate) fn segment(
     window: &mut Window,
     origin: Point<Pixels>,
@@ -256,7 +273,9 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
         ] {
             segment(window, origin, (x, y), end, grid);
         }
-        window.with_content_mask(Some(mask(origin, r)), |window| {
+        let clip = mask(origin, r);
+        let plot_bounds = clip.bounds;
+        window.with_content_mask(Some(clip), |window| {
             for draw in &panel.draws {
                 let ink = match draw.color {
                     Color::Category(index) => palette[index as usize % palette.len()],
@@ -279,15 +298,17 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
                 match &draw.geometry {
                     Geometry::Segment(a, b) => segment(window, origin, *a, *b, color),
                     Geometry::Box(a, b) => box_fill(window, origin, *a, *b, color, 0.),
-                    Geometry::Dot((x, y), radius) => {
-                        box_fill(
-                            window,
-                            origin,
-                            (x - radius, y - radius),
-                            (x + radius, y + radius),
-                            color,
-                            *radius,
-                        );
+                    Geometry::Dot(point, radius) => {
+                        paint_dot(window, origin, *point, *radius, color)
+                    }
+                    Geometry::Dots(dots) => {
+                        // One bounds-tree entry for this batch. Quads remain
+                        // in draw order within the layer.
+                        window.paint_layer(plot_bounds, |window| {
+                            for &(point, radius) in dots {
+                                paint_dot(window, origin, point, radius, color);
+                            }
+                        });
                     }
                     Geometry::Text(pos, text) => label(
                         window,

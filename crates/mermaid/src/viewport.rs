@@ -113,6 +113,24 @@ impl Viewport {
         }
     }
 
+    /// Replace the preview geometry while keeping the same diagram-space
+    /// point at the same screen coordinate and preserving its scale.
+    pub(crate) fn replace_natural_aligned(
+        &mut self,
+        natural: (f32, f32),
+        old_anchor: (f32, f32),
+        new_anchor: (f32, f32),
+        scale_ratio: f32,
+    ) {
+        let previous_zoom = self.zoom;
+        self.natural = natural;
+        // Fit and pan limits apply on the next explicit interaction. Applying
+        // them during the swap could shift a centered diagram as edges widen it.
+        self.zoom *= scale_ratio;
+        self.offset.x += old_anchor.0 * previous_zoom - new_anchor.0 * self.zoom;
+        self.offset.y += old_anchor.1 * previous_zoom - new_anchor.1 * self.zoom;
+    }
+
     /// Set the viewport size in logical pixels.
     pub fn set_bounds(&mut self, width: f32, height: f32) {
         let size = (
@@ -258,6 +276,28 @@ mod tests {
         v.set_natural(natural.0, natural.1);
         v.set_bounds(bounds.0, bounds.1);
         v
+    }
+
+    #[test]
+    fn refinement_preserves_the_screen_origin_and_scale() {
+        let mut view = Viewport::default();
+        view.set_bounds(640.0, 480.0);
+        view.set_natural(560.0, 320.0);
+        view.zoom_in();
+        view.pan_by(-30.0, 0.0);
+        let original_zoom = view.zoom();
+        let original_offset = view.offset();
+        let old_anchor = (90.0, 120.0);
+        let new_anchor = (110.0, 48.0);
+        view.replace_natural_aligned((600.0, 500.0), old_anchor, new_anchor, 1.25);
+        let offset = view.offset();
+        let (x, y) = (
+            offset.x + new_anchor.0 * view.zoom(),
+            offset.y + new_anchor.1 * view.zoom(),
+        );
+        assert!((x - (original_offset.x + old_anchor.0 * original_zoom)).abs() < 0.001);
+        assert!((y - (original_offset.y + old_anchor.1 * original_zoom)).abs() < 0.001);
+        assert!((view.zoom() * 0.8 - original_zoom).abs() < 0.001);
     }
 
     #[test]

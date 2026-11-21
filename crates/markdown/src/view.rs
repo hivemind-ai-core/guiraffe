@@ -48,12 +48,13 @@ fn showable(source: &str) -> usize {
 /// State of one Markdown viewer.
 pub struct MarkdownState {
     text: Entity<TextViewState>,
-    source: SharedString,
+    source: String,
     /// How much of `source` the text view has (an unfinished mermaid fence is held back).
     pushed: usize,
     revision: u64,
     analyzed: u64,
     document: Arc<Document>,
+    metadata_end: usize,
     /// Settled prefix of the source the current `document` was computed from.
     settled: usize,
     analyzing: bool,
@@ -91,10 +92,15 @@ pub const MERMAID_NODE: &str = "guiraffe-mermaid";
 impl MarkdownState {
     /// Create the state for `source`, parsed as GFM Markdown.
     pub fn new(source: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
-        let source = source.into();
+        let source = source.into().to_string();
         let pushed = showable(&source);
-        let initial = source.get(..pushed).unwrap_or_default().to_owned();
-        let text = cx.new(|cx| TextViewState::markdown(&initial, cx));
+        let text = cx.new(|cx| {
+            TextViewState::markdown_with_estimated_block_height(
+                &source[..pushed],
+                gpui_kit::px(28.),
+                cx,
+            )
+        });
         let mut state = Self {
             text,
             source,
@@ -102,6 +108,7 @@ impl MarkdownState {
             revision: 0,
             analyzed: 0,
             document: Arc::default(),
+            metadata_end: 0,
             settled: 0,
             analyzing: false,
             dirty: false,
@@ -147,7 +154,7 @@ impl MarkdownState {
     /// A source that extends the current one is handled as an append, which
     /// is what makes a streamed reply cheap; anything else replaces the text.
     pub fn set_source(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let source = source.into();
+        let source = source.into().to_string();
         match classify(&self.source, &source) {
             Change::None => return,
             Change::Append { .. } => {
@@ -160,6 +167,7 @@ impl MarkdownState {
                 self.replaced += 1;
                 self.settled = 0;
                 self.document = Arc::default();
+                self.metadata_end = 0;
                 self.sync_text(true, cx);
             }
         }
@@ -168,16 +176,13 @@ impl MarkdownState {
         cx.notify();
     }
 
-    /// Append one chunk of streamed Markdown. Costs O(chunk) for the text view and
-    /// O(unsettled tail) for analysis, never O(document).
+    /// Append one chunk of streamed Markdown and schedule analysis of the
+    /// unsettled tail.
     pub fn append(&mut self, chunk: &str, cx: &mut Context<Self>) {
         if chunk.is_empty() {
             return;
         }
-        let mut source = String::with_capacity(self.source.len() + chunk.len());
-        source.push_str(&self.source);
-        source.push_str(chunk);
-        self.source = source.into();
+        self.source.push_str(chunk);
         self.sync_text(false, cx);
         self.revision += 1;
         self.reanalyze(cx);
@@ -188,16 +193,12 @@ impl MarkdownState {
     fn sync_text(&mut self, replace: bool, cx: &mut Context<Self>) {
         let target = showable(&self.source);
         if replace {
-            let shown = self.source.get(..target).unwrap_or_default().to_owned();
-            self.text.update(cx, |text, cx| text.set_text(&shown, cx));
+            let shown = &self.source[..target];
+            self.text.update(cx, |text, cx| text.set_text(shown, cx));
             self.stats.replacements += 1;
         } else if target > self.pushed {
-            let tail = self
-                .source
-                .get(self.pushed..target)
-                .unwrap_or_default()
-                .to_owned();
-            self.text.update(cx, |text, cx| text.push_str(&tail, cx));
+            let tail = &self.source[self.pushed..target];
+            self.text.update(cx, |text, cx| text.push_str(tail, cx));
             self.stats.appends += 1;
         }
         self.pushed = target;
@@ -238,32 +239,45 @@ impl MarkdownState {
         self.dirty = false;
         let revision = self.revision;
         let replaced = self.replaced;
-        let source = self.source.to_string();
         let prev = self.document.clone();
-        let base = self.settled.min(source.len());
+        let prev_metadata_end = self.metadata_end;
+        let base = self.settled;
+        let tail = self.source[base..].to_owned();
         self.stats.analyses += 1;
-        self.stats.analyzed_bytes += (source.len() - base) as u64;
+        self.stats.analyzed_bytes += tail.len() as u64;
         cx.spawn(async move |this, cx| {
-            let (document, settled) = cx
+            let (document, metadata_end, settled) = cx
                 .background_executor()
                 .spawn(async move {
-                    let doc = Document::analyze_incremental(&prev, base, &source);
-                    (doc, crate::streaming::settled_prefix(&source))
+                    let settled = base + crate::streaming::settled_prefix(&tail);
+                    let tail = Document::analyze(&tail);
+                    if prev_metadata_end <= base && tail.is_empty() {
+                        (prev, prev_metadata_end, settled)
+                    } else {
+                        let document = Document::merge_tail(&prev, base, tail);
+                        let metadata_end = document.metadata_end();
+                        (Arc::new(document), metadata_end, settled)
+                    }
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.analyzing = false;
+                let mut metadata_changed = false;
                 if this.replaced == replaced {
                     // Even a superseded *append* result analyses a prefix of the current text,
                     // so its settled point can seed the next incremental run.
-                    this.document = Arc::new(document);
+                    metadata_changed = !Arc::ptr_eq(&this.document, &document);
+                    this.document = document;
+                    this.metadata_end = metadata_end;
                     this.settled = settled;
                     this.analyzed = revision;
                 }
                 if this.dirty || this.revision != revision {
                     this.reanalyze(cx);
                 }
-                cx.notify();
+                if metadata_changed {
+                    cx.notify();
+                }
             })
             .ok();
         })

@@ -58,6 +58,7 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
             !s.name.starts_with("flow-")
                 && !matches!(s.name, "timeline-box-select-100k" | "timeline-draw-bars-100k")
                 && !s.name.starts_with("data-ui-")
+                && !s.name.starts_with("warm-")
                 && s.name != "datagrid-sort-1m"
                 && s.name != "code-index-10m"
                 // Compiling a chart scene for a new viewport builds its output geometry; it is
@@ -75,18 +76,63 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A warm repaint of an unchanged view may not grow: the same frame, drawn
+/// again, allocates the same. The budget is what one frame of each family
+/// costs today; a regression in a component's render path shows up here.
+#[test]
+fn warm_repaints_allocate_a_bounded_amount() -> anyhow::Result<()> {
+    for suite in guiraffe_bench::suites::registered()
+        .into_iter()
+        .filter(|s| s.name.starts_with("warm-"))
+    {
+        (suite.run)(); // Mount and warm the fixture.
+        (suite.run)();
+        (suite.run)();
+        let (_, counts) = count_allocations(suite.run)?;
+        let (_, again) = count_allocations(suite.run)?;
+        eprintln!("{}: {counts:?} then {again:?}", suite.name);
+        assert_eq!(
+            counts.allocations, again.allocations,
+            "{} allocates more on every repaint",
+            suite.name
+        );
+        // The budget is what one frame of the family costs today. It is the
+        // crates' own render paths that are counted here, so a component that
+        // starts allocating on every repaint shows up.
+        let budget = match suite.name {
+            "warm-components" => 400,
+            "warm-inputs" => 500,
+            "warm-layout" => 250,
+            "warm-overlays" => 100,
+            _ => 4_000,
+        };
+        assert!(
+            counts.allocations <= budget,
+            "{} allocates {} on a warm repaint, over its budget of {budget}",
+            suite.name,
+            counts.allocations
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()> {
     use guiraffe_bench::suites::{
-        code_frame_10m, code_frame_100k, datagrid_frame_10m, datagrid_frame_100k,
+        code_frame_10m, code_frame_100k, datagrid_frame_10k, datagrid_frame_10m,
+    };
+    let (grid_allocations, grid_bytes) = if gpui_kit::GPUI_FAST {
+        (1_900, 420 * 1024)
+    } else {
+        (1_050, 440 * 1024)
     };
     for (name, small, large, allocation_budget, byte_budget) in [
         (
             "datagrid",
-            datagrid_frame_100k as fn(),
+            datagrid_frame_10k as fn(),
             datagrid_frame_10m as fn(),
-            15_000,
-            7 * 1024 * 1024,
+            grid_allocations,
+            grid_bytes,
         ),
         (
             "code",
@@ -100,7 +146,7 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
         large();
         let (_, small_counts) = count_allocations(small)?;
         let (_, large_counts) = count_allocations(large)?;
-        eprintln!("{name}: 100k {small_counts:?}, 10M {large_counts:?}");
+        eprintln!("{name}: small {small_counts:?}, 10M {large_counts:?}");
         assert_eq!(small_counts.allocations, large_counts.allocations, "{name}");
         assert!(
             large_counts.bytes <= small_counts.bytes + 4096,
@@ -121,6 +167,32 @@ fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     guiraffe_bench::suites::flow_query();
     let (_, counts) = count_allocations(guiraffe_bench::suites::flow_query)?;
     assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+// Flow rendering
+
+#[test]
+fn flow_default_short_label_uses_only_the_element_allocation() -> anyhow::Result<()> {
+    use gpui_kit::{AppContext, EmptyView, TestAppContext, TestDispatcher, WindowOptions};
+    use guiraffe_flow::{
+        DefaultNodeRenderer, NodeRenderer,
+        core::{Node, Point},
+    };
+
+    let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_default_label"));
+    let (window, _) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| EmptyView))
+    })?;
+    let node = Node::new(1, "Flow node", Point::default());
+    let (_, counts) = window.update(&mut cx, |_, window, cx| {
+        drop(DefaultNodeRenderer.render(&node, 1., window, cx));
+        count_allocations(|| {
+            std::hint::black_box(DefaultNodeRenderer.render(&node, 1., window, cx))
+        })
+    })??;
+    assert_eq!(counts.allocations, 1, "{counts:?}");
     Ok(())
 }
 
@@ -197,10 +269,8 @@ fn code_document_index_allocations_are_bounded() -> anyhow::Result<()> {
     // Warm the shared source before measuring only index construction.
     guiraffe_bench::suites::code_index_ten_million();
     let (_, counts) = count_allocations(guiraffe_bench::suites::code_index_ten_million)?;
-    let lines = 10_000_000;
-    let index_bytes = lines * (size_of::<u64>() + size_of::<usize>());
-    assert_eq!(counts.allocations, 2, "{counts:?}");
-    assert_eq!(counts.bytes, index_bytes as u64, "{counts:?}");
+    assert_eq!(counts.allocations, 0, "{counts:?}");
+    assert_eq!(counts.bytes, 0, "{counts:?}");
     Ok(())
 }
 
@@ -356,6 +426,39 @@ fn production_flame_and_tree_model_traversals_allocate_nothing() -> anyhow::Resu
 }
 
 #[test]
+fn tree_tail_expansion_uses_one_visible_row_buffer() -> anyhow::Result<()> {
+    use guiraffe_tree::{Children, NodeId, TreeModel, TreeSource};
+
+    struct Source(Vec<NodeId>);
+
+    impl TreeSource for Source {
+        fn roots(&self) -> &[NodeId] {
+            &[0]
+        }
+
+        fn children(&self, id: NodeId) -> Children<'_> {
+            Children::Ready(if id == 0 { &self.0 } else { &[] })
+        }
+
+        fn label(&self, _: NodeId) -> &str {
+            "node"
+        }
+    }
+
+    for count in [125_000_u64, 1_000_000] {
+        let source = Source((1..=count).collect());
+        let mut model = TreeModel::new(&source);
+        let (_, counts) = count_allocations(|| model.set_expanded(0, true, &source))?;
+        assert!(
+            counts.bytes <= 185 * count,
+            "tail expansion allocated a second set of rows: {counts:?}"
+        );
+        assert_eq!(model.row_index(count), Some(count as usize));
+    }
+    Ok(())
+}
+
+#[test]
 fn ui_macro_matches_builder_allocations_for_a_thousand_nodes() -> anyhow::Result<()> {
     use guiraffe_bench::suites::{ui_builder_tree, ui_macro_tree};
 
@@ -366,5 +469,147 @@ fn ui_macro_matches_builder_allocations_for_a_thousand_nodes() -> anyhow::Result
     let (_, builder) = count_allocations(ui_builder_tree)?;
     let (_, declarative) = count_allocations(ui_macro_tree)?;
     assert_eq!(declarative, builder);
+    Ok(())
+}
+
+// Charts
+
+#[inline(never)]
+fn draw_cached_chart(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    window.draw(cx).clear(cx);
+}
+
+#[gpui_kit::test]
+fn warmed_chart_replays_cached_ink(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{Context, Entity, IntoElement, Render, StyleRefinement, Styled, Window, px};
+    use guiraffe_charts::{Channels, ChartOptions, ChartSpec, ChartView, Layer, Mark};
+
+    struct CachedChart(Entity<ChartView>);
+    impl Render for CachedChart {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().w_full().h(px(290.)))
+        }
+    }
+
+    cx.update(|cx| {
+        gpui_kit::base::init(cx);
+        gpui_kit::component::init(cx);
+        guiraffe_core::apply(Default::default(), cx);
+    });
+    let (root, window) = cx.add_window_view(|_, cx| {
+        let spec = ChartSpec::new("Cached scatter").layer(Layer::new(
+            Mark::Point,
+            (0..10_000).collect::<Vec<_>>(),
+            Channels::new(|i| f64::from(*i), |i| (f64::from(*i) * 0.01).sin())
+                .group(|i| (i % 100) as u32),
+        ));
+        let options = ChartOptions {
+            legend: false,
+            navigation: false,
+            ..Default::default()
+        };
+        CachedChart(ChartView::new(spec.prepare(), options, cx))
+    });
+    window.run_until_parked();
+    window.update(|window, cx| {
+        for _ in 0..4 {
+            window.draw(cx).clear(cx);
+        }
+        let chart = root.read(cx).0.clone();
+        let paints = chart.read(cx).canvas_paint_count();
+        let builds = chart.read(cx).scene_build_count();
+        assert!(paints > 0 && builds > 0, "chart never mounted");
+        let (_, counts) =
+            count_allocations(|| draw_cached_chart(window, cx)).expect("count frame allocations");
+        eprintln!("cached chart frame: {counts:?}");
+        // GPUI duplicates the vertex buffers during cached scene replay.
+        // Bound the full draw until the backend shares those buffers.
+        let (allocations, bytes) = if gpui_kit::GPUI_FAST {
+            (80, 24 * 1024)
+        } else {
+            (100, 96 * 1024)
+        };
+        assert!(counts.allocations <= allocations, "{counts:?}");
+        assert!(counts.bytes <= bytes, "{counts:?}");
+        assert_eq!(chart.read(cx).canvas_paint_count(), paints);
+        assert_eq!(chart.read(cx).scene_build_count(), builds);
+    });
+}
+
+// Mermaid
+
+#[test]
+fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> anyhow::Result<()> {
+    use gpui_kit::{
+        AppContext, Context, Entity, HeadlessAppContext, IntoElement, Render, Window, px, size,
+    };
+    use guiraffe_bench::allocator::Counts;
+    use guiraffe_mermaid::{MermaidView, MermaidViewState, view::Status};
+    use std::{fmt::Write as _, sync::Arc};
+
+    const FRAMES: u64 = 8;
+
+    struct Diagram(Entity<MermaidViewState>);
+
+    impl Render for Diagram {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            MermaidView::new("allocation-diagram").state(&self.0)
+        }
+    }
+
+    fn measure(nodes: usize) -> anyhow::Result<Counts> {
+        let mut source = String::from("flowchart TD\n");
+        for i in (0..nodes).step_by(2) {
+            writeln!(source, "  n{i} --> n{}", i + 1)?;
+        }
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut app =
+            HeadlessAppContext::with_platform(text, Arc::new(gpui_kit::assets::Assets), || {
+                Ok(None)
+            });
+        app.update(guiraffe_core::init);
+        let window = app.open_window(size(px(1200.), px(800.)), |_, cx| {
+            let diagram = MermaidView::create_state("allocation-diagram", cx);
+            diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+            cx.new(|_| Diagram(diagram))
+        })?;
+        app.run_until_parked();
+        for _ in 0..FRAMES {
+            app.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+            app.run_until_parked();
+        }
+        app.update_window(window.into(), |host, window, cx| {
+            let diagram = host
+                .downcast::<Diagram>()
+                .expect("Mermaid test host")
+                .read(cx)
+                .0
+                .clone();
+            let state = diagram.read(cx);
+            assert_eq!(state.status(), &Status::Ready);
+            let image = state.image().expect("refined diagram").image.clone();
+            let (_, counts) = count_allocations(|| {
+                for _ in 0..FRAMES {
+                    window.draw(cx).clear(cx);
+                }
+            })?;
+            assert!(Arc::ptr_eq(
+                &image,
+                &diagram.read(cx).image().expect("unchanged diagram").image
+            ));
+            Ok(counts)
+        })?
+    }
+
+    let small = measure(50)?;
+    let large = measure(500)?;
+    eprintln!("Mermaid allocations over eight draws: 50 nodes {small:?}, 500 nodes {large:?}");
+    assert_eq!(small, large);
+    assert!(
+        large.allocations <= FRAMES * 12,
+        "warm redraw must reuse the Mermaid view: {large:?}"
+    );
     Ok(())
 }

@@ -36,6 +36,24 @@ pub fn raster_size(width: f32, height: f32, density: f32) -> (u32, u32) {
     )
 }
 
+pub(crate) fn zoom_raster_size(width: f32, height: f32, zoom: f32, density: f32) -> (u32, u32) {
+    let scale = zoom.clamp(1.0, 4.0);
+    raster_size(width * scale, height * scale, density)
+}
+
+/// A temporary overview with subpixel labels needs at most one megapixel.
+pub(crate) fn overview_raster_size((width, height): (u32, u32)) -> (u32, u32) {
+    const MAX_EDGE: u32 = 1024;
+    let longest = width.max(height);
+    if longest <= MAX_EDGE {
+        return (width, height);
+    }
+    (
+        (width * MAX_EDGE / longest).max(1),
+        (height * MAX_EDGE / longest).max(1),
+    )
+}
+
 /// Whether natural diagram dimensions are usable for layout.
 pub fn dimensions_are_usable(width: f32, height: f32) -> bool {
     width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0
@@ -44,6 +62,14 @@ pub fn dimensions_are_usable(width: f32, height: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overview_raster_caps_area_and_preserves_aspect() {
+        assert_eq!(overview_raster_size((800, 600)), (800, 600));
+        assert_eq!(overview_raster_size((4096, 2048)), (1024, 512));
+        assert_eq!(overview_raster_size((32, 4096)), (8, 1024));
+        assert_eq!(overview_raster_size((1, 4096)), (1, 1024));
+    }
 
     #[test]
     fn small_diagrams_are_drawn_at_density() {
