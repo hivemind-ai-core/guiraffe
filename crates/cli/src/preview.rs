@@ -190,8 +190,9 @@ pub fn run_inspect(path: PathBuf, screen: Option<String>, socket: &Path) -> Resu
     );
     let window = cx.open_window(
         gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(800.)),
-        move |_, app| {
-            app.new(|cx| {
+        move |window, app| {
+            init_document_widgets(app);
+            let view = app.new(|cx| {
                 let mut preview = Preview {
                     path,
                     screen,
@@ -203,7 +204,8 @@ pub fn run_inspect(path: PathBuf, screen: Option<String>, socket: &Path) -> Resu
                 preview.apply(Ok(doc), cx);
                 preview.watch(cx);
                 preview
-            })
+            });
+            guiraffe_overlays::root(view, window, app)
         },
     )?;
     let calls = guiraffe_test::transport::CallSocket::start(socket)?;
@@ -229,6 +231,23 @@ pub fn run_inspect(path: PathBuf, screen: Option<String>, socket: &Path) -> Resu
     }
 }
 
+pub(crate) fn init_document_widgets(cx: &mut App) {
+    guiraffe_inputs::init(cx);
+    guiraffe_layout::init(cx);
+    guiraffe_code::init(cx);
+    guiraffe_charts::init(cx);
+    guiraffe_chat::init(cx);
+    guiraffe_datagrid::init(cx);
+    guiraffe_dnd::init(cx);
+    guiraffe_flamegraph::init(cx);
+    guiraffe_flow::init(cx);
+    guiraffe_markdown::init(cx);
+    guiraffe_mermaid::init(cx);
+    guiraffe_overlays::init(cx);
+    guiraffe_tree::init(cx);
+    guiraffe_timeline::init(cx);
+}
+
 pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
     // Fail fast on an unreadable file before opening a window.
     let stamp = Stamp::of(&path);
@@ -236,20 +255,7 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
     gpui_kit::application()
         .with_assets(guiraffe_icons::GuiraffeAssets)
         .run(move |cx: &mut App| {
-            guiraffe_inputs::init(cx);
-            guiraffe_layout::init(cx);
-            guiraffe_code::init(cx);
-            guiraffe_charts::init(cx);
-            guiraffe_chat::init(cx);
-            guiraffe_datagrid::init(cx);
-            guiraffe_dnd::init(cx);
-            guiraffe_flamegraph::init(cx);
-            guiraffe_flow::init(cx);
-            guiraffe_markdown::init(cx);
-            guiraffe_mermaid::init(cx);
-            guiraffe_overlays::init(cx);
-            guiraffe_tree::init(cx);
-            guiraffe_timeline::init(cx);
+            init_document_widgets(cx);
             let title = format!("GUIraffe preview — {}", path.display());
             let opened = cx.open_window(
                 gpui_kit::WindowOptions {
@@ -259,8 +265,8 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
                     }),
                     ..Default::default()
                 },
-                move |_, cx| {
-                    cx.new(|cx| {
+                move |window, cx| {
+                    let view = cx.new(|cx| {
                         let mut p = Preview {
                             path,
                             screen,
@@ -272,7 +278,8 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
                         p.apply(Ok(doc), cx);
                         p.watch(cx);
                         p
-                    })
+                    });
+                    guiraffe_overlays::root(view, window, cx)
                 },
             );
             if let Err(e) = opened {
