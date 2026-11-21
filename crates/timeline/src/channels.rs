@@ -12,8 +12,7 @@ pub struct Channel {
     pub name: String,
     pub color: guiraffe_core::ColorName,
     pub(crate) keys: Vec<f64>,
-    pub(crate) decor: Vec<(Option<f64>, KeyShape)>,
-    pub(crate) has_keyframe_values: bool,
+    pub(crate) decor: Option<Vec<(Option<f64>, KeyShape)>>,
     pub children: Vec<Channel>,
     pub parent: Option<usize>,
     pub group: bool,
@@ -37,13 +36,11 @@ impl Channel {
         }
         keys.sort_by(f64::total_cmp);
         keys.dedup();
-        let decor = vec![(None, KeyShape::Diamond); keys.len()];
         Self {
             name: name.into(),
             color: guiraffe_core::ColorName::Blue,
             keys,
-            decor,
-            has_keyframe_values: false,
+            decor: None,
             children: Vec::new(),
             parent: None,
             group: false,
@@ -71,8 +68,10 @@ impl Channel {
                 .keys
                 .binary_search_by(|t| t.total_cmp(&if k.t == 0. { 0. } else { k.t }))
             {
-                c.has_keyframe_values = true;
-                c.decor[i] = (
+                let decor = c
+                    .decor
+                    .get_or_insert_with(|| vec![(None, KeyShape::Diamond); c.keys.len()]);
+                decor[i] = (
                     Some(k.v),
                     match k.interp {
                         crate::Interp::Constant => KeyShape::Square,
@@ -97,25 +96,32 @@ impl Channel {
     }
     pub(crate) fn replace_times(&mut self, edits: &mut [(f64, f64)]) {
         edits.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut keys: Vec<_> = self
-            .keys
-            .iter()
-            .copied()
-            .zip(self.decor.iter().copied())
-            .map(|(t, d)| {
-                (
-                    edits
-                        .binary_search_by(|(from, _)| from.total_cmp(&t))
-                        .ok()
-                        .map(|i| edits[i].1)
-                        .unwrap_or(t),
-                    d,
-                )
-            })
-            .collect();
-        keys.sort_by(|a, b| a.0.total_cmp(&b.0));
-        self.keys = keys.iter().map(|p| p.0).collect();
-        self.decor = keys.into_iter().map(|p| p.1).collect();
+        let replacement = |t: f64| {
+            edits
+                .binary_search_by(|(from, _)| from.total_cmp(&t))
+                .ok()
+                .map(|i| edits[i].1)
+                .unwrap_or(t)
+        };
+        if let Some(decor) = &mut self.decor {
+            let mut keys: Vec<_> = self
+                .keys
+                .iter()
+                .copied()
+                .map(replacement)
+                .zip(decor.iter().copied())
+                .collect();
+            keys.sort_by(|a, b| a.0.total_cmp(&b.0));
+            for ((time, meta), (new_time, new_meta)) in self.keys.iter_mut().zip(decor).zip(keys) {
+                *time = new_time;
+                *meta = new_meta;
+            }
+        } else {
+            for time in &mut self.keys {
+                *time = replacement(*time);
+            }
+            self.keys.sort_unstable_by(f64::total_cmp);
+        }
     }
     pub(crate) fn insert_time(&mut self, t: f64) {
         if !t.is_finite() || self.keys.contains(&t) {
@@ -123,7 +129,9 @@ impl Channel {
         }
         let i = self.keys.partition_point(|k| *k < t);
         self.keys.insert(i, t);
-        self.decor.insert(i, (None, KeyShape::Diamond));
+        if let Some(decor) = &mut self.decor {
+            decor.insert(i, (None, KeyShape::Diamond));
+        }
     }
     pub(crate) fn restore_time(&mut self, source: &Channel, time: f64) {
         self.insert_time(time);
@@ -131,14 +139,21 @@ impl Channel {
             source.keys.iter().position(|t| *t == time),
             self.keys.iter().position(|t| *t == time),
         ) {
-            self.decor[to] = source.decor[from];
-            self.has_keyframe_values |= source.has_keyframe_values;
+            if let Some(source_decor) = &source.decor {
+                self.decor
+                    .get_or_insert_with(|| vec![(None, KeyShape::Diamond); self.keys.len()])[to] =
+                    source_decor[from];
+            } else if let Some(decor) = &mut self.decor {
+                decor[to] = (None, KeyShape::Diamond);
+            }
         }
     }
     pub(crate) fn remove_time(&mut self, t: f64) -> bool {
         if let Some(i) = self.keys.iter().position(|k| *k == t) {
             self.keys.remove(i);
-            self.decor.remove(i);
+            if let Some(decor) = &mut self.decor {
+                decor.remove(i);
+            }
             true
         } else {
             false

@@ -56,4 +56,5 @@ check that views without an explicit opt-in preserve pointer focus.
   partially visible rows). The header cache reuses the same controls across
   pan, zoom and key edits. The key canvas uses four-pixel spacing for dense
   undecorated rows without selection. Decorated, summary and selected rows
-  retain their individual marks.
+  retain their individual marks. Plain channels store only the sorted key
+  times, with no parallel decoration array.

@@ -478,7 +478,7 @@ impl Render for DopeSheet {
                 .next()
                 .is_some();
             let compact = !row.summary
-                && !c.has_keyframe_values
+                && c.decor.is_none()
                 && !has_selection
                 && end.saturating_sub(first) > (axis.width / 4.) as usize;
             let locked = !self.model.editable(channel);
@@ -958,7 +958,7 @@ mod hierarchy_regressions {
         assert_eq!(model.channels[2].keys(), &[0.5]);
         assert_eq!(
             model.channels[1].decor,
-            vec![(Some(1.), KeyShape::Square); 2]
+            Some(vec![(Some(1.), KeyShape::Square); 2])
         );
     }
     #[test]
@@ -967,5 +967,6 @@ mod hierarchy_regressions {
         model.select_all();
         assert!(model.translate(1., TimeFormat::Seconds));
         assert_eq!(model.channels[0].keys(), &[1., 2., 3.]);
+        assert!(model.channels[0].decor.is_none());
     }
 }
