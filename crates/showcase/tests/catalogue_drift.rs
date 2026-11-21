@@ -16,11 +16,13 @@ fn kind(surface: &str) -> Option<&'static str> {
         "flamegraph::FlameGraph" => "flame-graph",
         "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
         | "flow::FlowOptions" => "flow",
+        "components::Accordion" | "components::AccordionOptions" => "accordion",
         "components::AvatarGroup" => "avatar-group",
         "components::Burger" => "burger",
         "components::Card" => "card",
         "components::Blockquote" => "blockquote",
         "components::ColorSwatch" => "color-swatch",
+        "components::ExpandingList" => "expanding-list",
         "components::Highlight" => "highlight",
         "components::Indicator" => "indicator",
         "components::KbdGroup" => "kbd-group",
@@ -53,6 +55,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "overlays::Affix" => "affix",
         "overlays::FloatingTooltip" | "overlays::FloatingOptions" => "floating-tooltip",
         "overlays::LoadingOverlay" => "loading-overlay",
+        "overlays::Spotlight" => "spotlight",
         "tree::TreeView" | "tree::PropertyGrid" | "tree::RowStyle" | "tree::PropertyOptions" => {
             "property-grid"
         }
@@ -68,6 +71,10 @@ fn kind(surface: &str) -> Option<&'static str> {
 
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
+    (
+        "overlays::Spotlight::open",
+        "Opens a palette in the host window's overlay stack. The document mounts the search control inline and can bind its visibility.",
+    ),
     (
         "core::TextMenuLayer",
         "Window-owned menu layer shared by native text controls.",
@@ -741,6 +748,8 @@ fn covered(surface: &str) -> bool {
             ("inputs::Dropzone", "Accepted") => "accept",
             ("inputs::Dropzone", "BrowseRequested") => "browse",
             ("flamegraph::FlameGraph", "FrameClicked") => "frame-click",
+            ("components::Accordion", "AccordionChange")
+            | ("components::ExpandingList", "ExpandingListChange") => "change",
             ("timeline::TracksView", "ClipChanged") => "clip-change",
             ("timeline::TracksView", "Seek") => "seek",
             ("timeline::GanttView", "Rescheduled") => "reschedule",
@@ -842,6 +851,9 @@ fn covered(surface: &str) -> bool {
                 ("flow::FlowState", "from_editor") => "graph".into(),
                 ("components::Card" | "components::Paper", "p") => "padding".into(),
                 ("components::Loader", "set_period") => "period-ms".into(),
+                ("components::Accordion", "open" | "set_controlled") => "value".into(),
+                ("components::Accordion", "set_options") => "variant".into(),
+                ("components::ExpandingList", "open" | "set_open") => "value".into(),
                 ("components::Burger", "is_open" | "set_open" | "set_open_instant") => {
                     "value".into()
                 }

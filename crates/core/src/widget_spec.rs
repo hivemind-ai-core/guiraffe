@@ -70,7 +70,7 @@ impl PropSpec {
             | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
             | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels"
             | "avatar-people" | "dope-channels" | "number-array" | "curve-series"
-            | "activity-items" => "array",
+            | "activity-items" | "disclosure-items" | "spotlight-commands" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -112,6 +112,8 @@ impl PropSpec {
             "number-array" => schema["items"] = json!({"type":"number"}),
             "curve-series" => schema["items"] = curve_series_schema(),
             "activity-items" => schema["items"] = activity_item_schema(),
+            "disclosure-items" => schema["items"] = disclosure_item_schema(),
+            "spotlight-commands" => schema["items"] = spotlight_command_schema(),
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => schema = curve_selection_schema(),
@@ -227,6 +229,7 @@ impl EventSpec {
             "tree-reorder" => tree_event_schema("before", json!({"type":"integer","minimum":0})),
             "tree-edit" => tree_event_schema("value", tree_value_schema()),
             "selection" => json!({"type":["string","null"]}),
+            "nullable-integer" => json!({"type":["integer","null"],"minimum":0}),
             "integer-array" => json!({"type":"array","items":{"type":"integer","minimum":0}}),
             ty => json!({"type":ty}),
         }
@@ -915,6 +918,25 @@ pub fn activity_item_schema() -> Value {
             "description":{"type":"string"},
             "color":{"enum":["dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal","green","lime","yellow","orange"]},
             "bullet":{"type":"string"}
+        }
+    })
+}
+
+pub fn disclosure_item_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["title"],
+        "properties":{
+            "title":{"type":"string"},"body":{"type":"string"},"disabled":{"type":"boolean"}
+        }
+    })
+}
+
+pub fn spotlight_command_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["id","label"],
+        "properties":{
+            "id":{"type":"string"},"label":{"type":"string"},
+            "keywords":{"type":"string"},"disabled":{"type":"boolean"}
         }
     })
 }

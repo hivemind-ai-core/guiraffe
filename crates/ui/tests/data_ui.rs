@@ -1816,3 +1816,151 @@ fn ui_macro_accepts_activity_and_navigation_component_builders() {
     }
     let _ = example;
 }
+
+#[gpui_kit::test]
+fn native_disclosure_documents_drive_open_values_and_body_options(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let items = serde_json::json!([
+        {"title":"Details","body":"Notes for the selected entry"},
+        {"title":"History","body":"Earlier entries","disabled":true}
+    ]);
+    let doc = Document::new(
+        Node::new("stack")
+            .child(
+                Node::new("accordion")
+                    .prop("items", items.clone())
+                    .prop("value", serde_json::json!([0]))
+                    .prop("default-open", serde_json::json!([0]))
+                    .prop("variant", "separated")
+                    .prop("chevron", "start")
+                    .prop("multiple", true)
+                    .prop("focusable", true)
+                    .on("change", "update-disclosure"),
+            )
+            .child(
+                Node::new("expanding-list")
+                    .prop("items", items)
+                    .prop("value", 0)
+                    .prop("body-height", 120)
+                    .prop("focusable", true)
+                    .on("change", "open-detail"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("native disclosure"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_native_disclosure_controls() {
+    use guiraffe_components::{
+        Accordion, AccordionOptions, AccordionVariant, ChevronPosition, DisclosureItem,
+        ExpandingList,
+    };
+
+    fn example(cx: &mut gpui_kit::App) -> impl IntoElement {
+        let items = || {
+            vec![DisclosureItem::new("Details", || {
+                "Content".into_any_element()
+            })]
+        };
+        let accordion = Accordion::new(
+            items(),
+            AccordionOptions {
+                variant: AccordionVariant::Separated,
+                chevron: ChevronPosition::Start,
+                multiple: true,
+                focusable: Some(true),
+            },
+            vec![0],
+            cx,
+        );
+        let list = ExpandingList::new(items(), px(120.), cx);
+        ui! { div { {accordion} {list} } }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn spotlight_document_selects_a_native_search_result(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    use std::{cell::RefCell, rc::Rc};
+
+    struct SearchLogic {
+        selected: Option<EventId>,
+        result: Rc<RefCell<Option<Value>>>,
+    }
+    impl Logic for SearchLogic {
+        fn bind(&mut self, names: &Names, _: &mut PatchBuf) {
+            self.selected = names.event("run-command");
+        }
+        fn on_event(&mut self, event: EventId, payload: &Value, _: &mut PatchBuf) {
+            if Some(event) == self.selected {
+                self.result.replace(Some(payload.clone()));
+            }
+        }
+    }
+
+    cx.update(guiraffe_overlays::init);
+    let doc = Document::new(
+        Node::new("spotlight")
+            .prop(
+                "commands",
+                serde_json::json!([
+                    {"id":"validate","label":"Validate screen","keywords":"check linter"},
+                    {"id":"publish","label":"Publish screen","disabled":true}
+                ]),
+            )
+            .on("select", "run-command"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let result = Rc::default();
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let template = Arc::new(Template::compile(&doc, &registry).expect("command search"));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{:?}",
+            template.diagnostics()
+        );
+        Shell {
+            ui: DataUi::from_template(
+                template,
+                registry,
+                SearchLogic {
+                    selected: None,
+                    result: Rc::clone(&result),
+                },
+                cx,
+            ),
+        }
+    });
+    window.run_until_parked();
+    window.update(|window, cx| window.click(("command", 0usize), cx));
+    window.run_until_parked();
+    assert_eq!(*result.borrow(), Some("validate".into()));
+}
+
+#[test]
+fn ui_macro_accepts_the_native_spotlight_entity() {
+    use gpui_kit::{AppContext, Context, Window};
+    use guiraffe_overlays::{Spotlight, search::Command};
+
+    fn example(window: &mut Window, cx: &mut Context<Shell>) -> impl IntoElement {
+        let search = cx.new(|cx| {
+            Spotlight::new(
+                vec![Command::new("validate", "Validate screen")],
+                window,
+                cx,
+                |_, _, _| {},
+            )
+        });
+        ui! { div { {search} } }
+    }
+    let _ = example;
+}

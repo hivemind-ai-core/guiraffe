@@ -20,6 +20,7 @@ pub mod avatar_group;
 pub mod burger;
 pub mod color_swatch;
 pub mod copy_button;
+mod disclosure_data;
 mod disclosure_motion;
 pub mod expanding_list;
 pub mod focus;
@@ -68,4 +69,6 @@ pub fn init(cx: &mut gpui_kit::App) {
     segmented::init(cx);
     segmented::document::register(cx);
     burger::document::register(cx);
+    accordion::document::register(cx);
+    expanding_list::document::register(cx);
 }

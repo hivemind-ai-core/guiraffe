@@ -511,6 +511,16 @@ impl Validation<'_> {
                     let schema = crate::widget_spec::activity_item_schema();
                     items.iter().all(|item| matches_data_schema(item, &schema))
                 }),
+                "disclosure-items" => got.as_array().is_some_and(|items| {
+                    let schema = crate::widget_spec::disclosure_item_schema();
+                    items.iter().all(|item| matches_data_schema(item, &schema))
+                }),
+                "spotlight-commands" => got.as_array().is_some_and(|commands| {
+                    let schema = crate::widget_spec::spotlight_command_schema();
+                    commands
+                        .iter()
+                        .all(|command| matches_data_schema(command, &schema))
+                }),
                 "integer-array" => got
                     .as_array()
                     .is_some_and(|items| items.iter().all(|item| item.as_u64().is_some())),

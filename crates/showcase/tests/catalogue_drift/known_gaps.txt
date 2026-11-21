@@ -9,16 +9,6 @@ commands::Menu::show_categories
 commands::Menu::show_keybindings
 commands::MenuProps::field show_categories
 commands::MenuProps::field show_keybindings
-components::Accordion
-components::Accordion::event AccordionChange
-components::Accordion::new
-components::Accordion::open
-components::Accordion::set_controlled
-components::Accordion::set_options
-components::AccordionOptions::field chevron
-components::AccordionOptions::field focusable
-components::AccordionOptions::field multiple
-components::AccordionOptions::field variant
 components::ActionIcon
 components::ActionIcon::color
 components::ActionIcon::disabled
@@ -45,12 +35,6 @@ components::CopyButton::set_label
 components::CopyButton::set_size
 components::CopyButton::set_value
 components::CopyButton::value
-components::ExpandingList
-components::ExpandingList::event ExpandingListChange
-components::ExpandingList::new
-components::ExpandingList::open
-components::ExpandingList::set_focusable
-components::ExpandingList::set_open
 components::ScopedButton
 components::ScopedButton::focusable
 components::ScopedButton::new
@@ -168,7 +152,3 @@ overlays::OverlayHost::register_context
 overlays::OverlayHost::stack
 overlays::OverlayHost::toast_limit
 overlays::OverlayHost::toasts
-overlays::Spotlight
-overlays::Spotlight::new
-overlays::Spotlight::open
-overlays::Spotlight::set_commands

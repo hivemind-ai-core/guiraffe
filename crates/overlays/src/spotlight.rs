@@ -12,8 +12,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Subscription, Window, div, px,
+    App, AppContext, Context, ElementId, Entity, InteractiveElement, IntoElement, ParentElement,
+    Render, Styled, Subscription, Window, div, px,
 };
 use guiraffe_core::{GuiraffeTheme, Size};
 use std::rc::Rc;
@@ -42,6 +42,7 @@ pub struct Spotlight {
     matches: Vec<usize>,
     on_select: Handler,
     overlay: Option<OverlayId>,
+    inline_id: Option<ElementId>,
     _subscription: Subscription,
 }
 impl Spotlight {
@@ -77,6 +78,7 @@ impl Spotlight {
             selected: 0,
             on_select: Rc::new(on_select),
             overlay: None,
+            inline_id: None,
             _subscription: subscription,
         }
     }
@@ -139,13 +141,14 @@ impl Spotlight {
             .and_then(|index| self.commands.get(*index))
             .map(|command| command.id.clone());
         if let Some(id) = id {
-            let Some(overlay) = self.overlay else {
-                return;
-            };
-            if OverlayHost::close(window, cx, overlay).is_err() {
+            if let Some(overlay) = self.overlay {
+                if OverlayHost::close(window, cx, overlay).is_err() {
+                    return;
+                }
+                self.overlay = None;
+            } else if self.inline_id.is_none() {
                 return;
             }
-            self.overlay = None;
             let callback = self.on_select.clone();
             window.defer(cx, move |window, cx| callback(&id, window, cx));
         }
@@ -156,7 +159,10 @@ impl Render for Spotlight {
         let count = self.matches.len();
         let surface = GuiraffeTheme::global(cx).surfaces();
         div()
-            .id("guiraffe-spotlight")
+            .id(self
+                .inline_id
+                .clone()
+                .unwrap_or_else(|| "guiraffe-spotlight".into()))
             .test_support()
             .flex()
             .flex_col()
@@ -221,3 +227,5 @@ impl Render for Spotlight {
             )
     }
 }
+
+pub(crate) mod document;

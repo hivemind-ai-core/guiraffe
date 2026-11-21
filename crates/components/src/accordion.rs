@@ -275,3 +275,5 @@ impl Render for Accordion {
         element
     }
 }
+
+pub(crate) mod document;

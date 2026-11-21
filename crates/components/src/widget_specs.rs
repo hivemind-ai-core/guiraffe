@@ -75,4 +75,59 @@ pub static BURGER: WidgetSpec = WidgetSpec {
     a11y_role: "button",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&SEGMENTED, &BURGER];
+pub static ACCORDION: WidgetSpec = WidgetSpec {
+    id: "accordion",
+    krate: "components",
+    summary: "Disclosure sections with one or more bodies expanded.",
+    props: &[
+        prop("items", "disclosure-items", "[]"),
+        prop("value", "integer-array", "null"),
+        prop("default-open", "integer-array", "[]"),
+        PropSpec {
+            accepted: &["contained", "separated", "filled"],
+            ..prop("variant", "string", "\"contained\"")
+        },
+        PropSpec {
+            accepted: &["start", "end"],
+            ..prop("chevron", "string", "\"end\"")
+        },
+        prop("multiple", "boolean", "false"),
+        prop("focusable", "boolean", "null"),
+    ],
+    accepts_children: false,
+    events: &[EventSpec {
+        id: "change",
+        payload_type: "integer-array",
+    }],
+    state: "native disclosure state, controlled when the value is supplied",
+    theme_tokens: &["surfaces.body", "surfaces.border", "variant.foreground"],
+    a11y_role: "group",
+};
+
+pub static EXPANDING_LIST: WidgetSpec = WidgetSpec {
+    id: "expanding-list",
+    krate: "components",
+    summary: "Animated disclosure list with reserved space for one expanded card.",
+    props: &[
+        prop("items", "disclosure-items", "[]"),
+        PropSpec {
+            range: Some((0.0, u32::MAX as f64)),
+            ..prop("value", "integer", "null")
+        },
+        PropSpec {
+            range: Some((0.0, f32::MAX as f64)),
+            ..prop("body-height", "number", "100")
+        },
+        prop("focusable", "boolean", "null"),
+    ],
+    accepts_children: false,
+    events: &[EventSpec {
+        id: "change",
+        payload_type: "nullable-integer",
+    }],
+    state: "native open item and local transition progress",
+    theme_tokens: &["surfaces.body", "surfaces.border", "variant.foreground"],
+    a11y_role: "group",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[&SEGMENTED, &BURGER, &ACCORDION, &EXPANDING_LIST];

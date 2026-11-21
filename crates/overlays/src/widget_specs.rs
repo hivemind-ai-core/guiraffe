@@ -1,6 +1,6 @@
 //! Overlay metadata shared with the authoring catalogue generator.
 
-use super::widget_spec::{PropSpec, WidgetSpec};
+use super::widget_spec::{EventSpec, PropSpec, WidgetSpec};
 
 const SIZES: &[&str] = &["xs", "sm", "md", "lg", "xl"];
 const COLORS: &[&str] = &[
@@ -144,4 +144,27 @@ pub static FLOATING_TOOLTIP: WidgetSpec = WidgetSpec {
     a11y_role: "tooltip",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&AFFIX, &LOADING_OVERLAY, &FLOATING_TOOLTIP];
+pub static SPOTLIGHT: WidgetSpec = WidgetSpec {
+    id: "spotlight",
+    krate: "overlays",
+    summary: "Search and select commands from a document-provided list.",
+    props: &[PropSpec {
+        name: "commands",
+        type_name: "spotlight-commands",
+        default_json: "[]",
+        accepted: &[],
+        range: None,
+        required: false,
+        token_backed: false,
+    }],
+    accepts_children: false,
+    events: &[EventSpec {
+        id: "select",
+        payload_type: "string",
+    }],
+    state: "keyed search input and result selection",
+    theme_tokens: &["surfaces.hover", "control_size"],
+    a11y_role: "combobox",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[&AFFIX, &LOADING_OVERLAY, &FLOATING_TOOLTIP, &SPOTLIGHT];
