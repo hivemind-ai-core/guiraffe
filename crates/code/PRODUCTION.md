@@ -184,3 +184,20 @@ range/style pairs, since the snapshot has no persistent array to borrow.
 The same process samples the empty window after its first draw, before
 allocating the source. Peak uses Linux VmHWM. WGPU p99 was 2.010 ms and
 CPU-only p99 was 1.065 ms in these indicative, loaded-host runs.
+
+The CodeViewer memory gate uses the increase over the same harness's empty
+window. A repeated renderer-backed sample measured 97,984 KiB empty, 126,300
+KiB steady (28,316 KiB increase) and 135,952 KiB peak (37,968 KiB increase).
+The renderer-backed process exceeds the absolute budget before mount.
+Linux smaps attributed 32,512 KiB to LLVM, 23,672 KiB to Gallium and 7,148 KiB
+to the Radeon Vulkan driver in a separate run. The empty-window-subtracted
+peak passes the CodeViewer budget for this fixture.
+
+The density summary computes the same maximum trimmed byte length per bin
+as the per-line implementation. Bin boundaries are computed once per bin,
+and the scan can skip trimming shorter lines and stop at saturation. For the
+uniform 20 MB fixture, standalone optimized Callgrind measured 1,300,246,524
+→ 700,261,614 instructions including source construction. One loaded-host
+run measured document construction at 204 → 130 ms. The
+[construction benchmark](../../bench/benches/production_frames.rs) tracks
+indexing and summarization with source allocation outside the measured region.

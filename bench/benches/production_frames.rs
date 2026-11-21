@@ -32,6 +32,17 @@ mounted_frames!(
     code_frame_10m,
 );
 
+fn uniform_code_source() -> std::sync::Arc<str> {
+    ("x\n".repeat(9_999_999) + "x").into()
+}
+
+#[library_benchmark(setup = uniform_code_source)]
+fn code_document_uniform_10m(source: std::sync::Arc<str>) -> guiraffe_code::CodeDocument {
+    guiraffe_code::CodeDocument::new(source)
+}
+
+library_benchmark_group!(name = code_mount; benchmarks = code_document_uniform_10m);
+
 struct ExpansionSource(Vec<u64>);
 
 impl guiraffe_tree::TreeSource for ExpansionSource {
@@ -74,5 +85,5 @@ warm_repaints!(warm_components, warm_inputs, warm_layout, warm_overlays,);
 main!(
     config = LibraryBenchmarkConfig::default()
         .tool(Callgrind::default().soft_limits([(EventKind::Ir, 2.0)]));
-    library_benchmark_groups = frames, tree_updates, warm
+    library_benchmark_groups = frames, code_mount, tree_updates, warm
 );
