@@ -631,46 +631,51 @@ impl Render for TracksView {
                                         let normal = theme.variant(None, Variant::Light).background.to_hsla();
                                         let disabled = theme.state(StateKind::Disabled, Variant::Light, None).background.to_hsla();
                                         let dim = theme.state(StateKind::Dimmed, Variant::Light, None).background.to_hsla();
-                                        for (row, (_, track)) in view.tracks.iter().take(height).enumerate() {
-                                            if accessibility || !overview(track, &axis) {
-                                                continue;
-                                            }
-                                            let paint = |start: usize, end: usize, ink, window: &mut Window| {
-                                                window.paint_quad(gpui_kit::fill(
-                                                    Bounds::new(
-                                                        b.origin + gpui_kit::point(px(start as f32 * step), px(row as f32 * TRACK_H + 4.)),
-                                                        gpui_kit::size(px((end - start) as f32 * step), px(TRACK_H - 8.)),
-                                                    ),
-                                                    ink,
-                                                ));
-                                            };
-                                            let mut run = None;
-                                            for (column, clip) in overview_columns(track, axis) {
-                                                let style = if view.locked.contains(&(row, clip)) {
-                                                    item_style
-                                                } else if !editable {
-                                                    global_style
-                                                } else {
-                                                    crate::LockStyle::None
+                                        if accessibility {
+                                            return;
+                                        }
+                                        window.paint_layer(b, |window| {
+                                            for (row, (_, track)) in view.tracks.iter().take(height).enumerate() {
+                                                if !overview(track, &axis) {
+                                                    continue;
+                                                }
+                                                let paint = |start: usize, end: usize, ink, window: &mut Window| {
+                                                    window.paint_quad(gpui_kit::fill(
+                                                        Bounds::new(
+                                                            b.origin + gpui_kit::point(px(start as f32 * step), px(row as f32 * TRACK_H + 4.)),
+                                                            gpui_kit::size(px((end - start) as f32 * step), px(TRACK_H - 8.)),
+                                                        ),
+                                                        ink,
+                                                    ));
                                                 };
-                                                let ink = match style {
-                                                    crate::LockStyle::None => normal,
-                                                    crate::LockStyle::Badge => disabled,
-                                                    crate::LockStyle::Dimmed | crate::LockStyle::Hatched => dim,
-                                                };
-                                                if let Some((start, end, color)) = run {
-                                                    if end == column && color == ink {
-                                                        run = Some((start, column + 1, color));
-                                                        continue;
+                                                let mut run = None;
+                                                for (column, clip) in overview_columns(track, axis) {
+                                                    let style = if view.locked.contains(&(row, clip)) {
+                                                        item_style
+                                                    } else if !editable {
+                                                        global_style
+                                                    } else {
+                                                        crate::LockStyle::None
+                                                    };
+                                                    let ink = match style {
+                                                        crate::LockStyle::None => normal,
+                                                        crate::LockStyle::Badge => disabled,
+                                                        crate::LockStyle::Dimmed | crate::LockStyle::Hatched => dim,
+                                                    };
+                                                    if let Some((start, end, color)) = run {
+                                                        if end == column && color == ink {
+                                                            run = Some((start, column + 1, color));
+                                                            continue;
+                                                        }
+                                                        paint(start, end, color, window);
                                                     }
+                                                    run = Some((column, column + 1, ink));
+                                                }
+                                                if let Some((start, end, color)) = run {
                                                     paint(start, end, color, window);
                                                 }
-                                                run = Some((column, column + 1, ink));
                                             }
-                                            if let Some((start, end, color)) = run {
-                                                paint(start, end, color, window);
-                                            }
-                                        }
+                                        });
                                     }
                                 },
                             ).absolute().size_full())

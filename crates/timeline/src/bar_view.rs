@@ -245,23 +245,25 @@ impl Render for BarCurveView {
                                 (values[i], values[i])
                             }
                         });
-                        for (i, (low, high)) in extrema.enumerate() {
-                            let top = range.y(high).min(base);
-                            let bottom = range.y(low).max(base);
-                            window.paint_quad(gpui_kit::fill(
-                                Bounds::new(
-                                    gpui_kit::point(
-                                        b.origin.x + px(i as f32 * w + inset),
-                                        b.origin.y + px(top as f32),
+                        window.paint_layer(b, |window| {
+                            for (i, (low, high)) in extrema.enumerate() {
+                                let top = range.y(high).min(base);
+                                let bottom = range.y(low).max(base);
+                                window.paint_quad(gpui_kit::fill(
+                                    Bounds::new(
+                                        gpui_kit::point(
+                                            b.origin.x + px(i as f32 * w + inset),
+                                            b.origin.y + px(top as f32),
+                                        ),
+                                        gpui_kit::size(
+                                            px((w - 2. * inset).max(0.)),
+                                            px((bottom - top).max(1.) as f32),
+                                        ),
                                     ),
-                                    gpui_kit::size(
-                                        px((w - 2. * inset).max(0.)),
-                                        px((bottom - top).max(1.) as f32),
-                                    ),
-                                ),
-                                fill,
-                            ));
-                        }
+                                    fill,
+                                ));
+                            }
+                        });
                     },
                 )
                 .absolute()
