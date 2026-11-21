@@ -25,6 +25,9 @@ requests `wp_presentation` feedback for buffer submissions. Set
 | `gpui-pre/src/window.rs`, `gpui-pre/src/view.rs`, `gpui-base/src/root.rs` | Kit opts its viewport root into cached layout and paint. Refresh and child invalidation rebuild as usual. The root prepaints live when accessibility is active. |
 | `gpui-pre/src/window.rs`, `gpui-pre/src/element.rs` | Reuses exact global element ID paths from 64 direct-mapped slots per window. Collisions compare complete paths before reusing a value. IDs still use their original backing and equality. |
 | `gpui-pre/src/key_dispatch.rs` | Keeps the replay stack inline for up to 32 dispatch ancestors. Deeper trees spill into a temporary buffer. |
+| Both `src/keymap/context.rs` | Shares immutable key context entries during retained dispatch replay and detaches on mutation. |
+| Both `src/window.rs` and `src/elements/div.rs` | Shares test-only bounds selector strings across replay records and lookup maps. |
+| `gpui-fast/src/window.rs`, `gpui-fast/src/fast/rounded_clip*.rs` | Reuses the preceding compiled scene after a complete replay with matching layer metadata. |
 | Both `src/tab_stop.rs` | Reuses the tab-stop order buffer across frames and sorts it on the first keyboard traversal. Group paths and insertion order resolve ties. |
 | `gpui-pre/src/text_system/font_features.rs` | Shares one empty font feature vector across default styles. |
 | `gpui-fast/src/fast/layers/paint.rs` | Keeps shared backing when all vertex masks are empty and preserves clipping for custom masks. |

@@ -61,7 +61,65 @@ fn observe(pointer: *mut u8, size: usize) {
 }
 
 pub fn enabled() -> bool {
+    #[cfg(all(test, target_os = "linux"))]
+    if test_items().is_some() {
+        return true;
+    }
     std::env::var_os("SOAK_WARM_REPAINT").is_some()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[derive(Clone, Copy)]
+struct TestCase {
+    items: usize,
+    max_allocations: u64,
+    measured: bool,
+}
+
+#[cfg(all(test, target_os = "linux"))]
+thread_local! {
+    static TEST_CASE: std::cell::Cell<Option<TestCase>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(all(test, target_os = "linux"))]
+pub fn test_items() -> Option<usize> {
+    TEST_CASE.get().map(|case| case.items)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn verify(window: &mut Window, cx: &mut App, mut case: TestCase) -> super::Result<()> {
+    for frame in 0..8 {
+        let (_, counts) = count_allocations(|| draw(window, cx, false))?;
+        if counts.allocations > case.max_allocations {
+            if std::env::var_os("SOAK_ALLOC_STACKS").is_some() {
+                print_frame_sites(window, cx, false);
+            }
+            return Err(format!(
+                "retained frame {frame} exceeded {} allocations: {counts:?}",
+                case.max_allocations
+            )
+            .into());
+        }
+    }
+    case.measured = true;
+    TEST_CASE.set(Some(case));
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+pub fn test_fixture(component: &str, items: usize, max_allocations: u64) -> super::Result<()> {
+    TEST_CASE.set(Some(TestCase {
+        items,
+        max_allocations,
+        measured: false,
+    }));
+    let result = super::run_component(component, true, false);
+    let measured = TEST_CASE.take().is_some_and(|case| case.measured);
+    result?;
+    if !measured {
+        return Err(format!("{component} never drew a retained frame").into());
+    }
+    Ok(())
 }
 
 #[inline(never)]
@@ -73,6 +131,14 @@ fn draw(window: &mut Window, cx: &mut App, invalidate: bool) {
 }
 
 pub fn measure(window: &mut Window, cx: &mut App) -> super::Result<()> {
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(case) = TEST_CASE.get() {
+        for _ in 0..8 {
+            draw(window, cx, false);
+        }
+        return verify(window, cx, case);
+    }
+
     let frames = std::env::var("SOAK_FRAMES")
         .ok()
         .map_or(Ok(1), |value| value.parse::<usize>())?
@@ -90,12 +156,16 @@ pub fn measure(window: &mut Window, cx: &mut App) -> super::Result<()> {
     println!("warm repaint over {frames} draws: {counts:?}");
     println!("probe_elapsed_us={}", started.elapsed().as_micros());
     if std::env::var_os("SOAK_ALLOC_STACKS").is_some() {
-        STACKS.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
-        draw(window, cx, invalidate);
-        let stacks = STACKS.with(|slot| slot.borrow_mut().take().unwrap_or_default());
-        print_sites(stacks);
+        print_frame_sites(window, cx, invalidate);
     }
     Ok(())
+}
+
+fn print_frame_sites(window: &mut Window, cx: &mut App, invalidate: bool) {
+    STACKS.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+    draw(window, cx, invalidate);
+    let stacks = STACKS.with(|slot| slot.borrow_mut().take().unwrap_or_default());
+    print_sites(stacks);
 }
 
 fn print_sites(stacks: AllocationStacks) {

@@ -196,3 +196,8 @@ Set `SOAK_INVALIDATE_WINDOW=1` to call `Window::refresh` before every draw and
 measure whole-window invalidation separately. For CPU sampling, omit
 `SOAK_ALLOC_STACKS`, set `SOAK_FRAMES=10000`, and apply the documented
 `samply` workflow with `--filter warm_repaint::draw` in the summary.
+
+The mounted Linux allocator tests run with the bench suite and can be run
+directly with `cargo test -p guiraffe-bench --example soak`. Repeat with
+`--features gpui-fast` to exercise the second backend. Each fixture checks
+eight consecutive draws after warm-up.

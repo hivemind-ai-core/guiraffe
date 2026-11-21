@@ -1,9 +1,9 @@
 //! Headless CPU interaction timing. Samples include GPUI event dispatch and render/paint.
-#[cfg(feature = "warm-repaint-probe")]
+#[cfg(any(all(test, target_os = "linux"), feature = "warm-repaint-probe"))]
 #[path = "mounted/warm_repaint.rs"]
 mod warm_repaint;
 
-#[cfg(not(feature = "warm-repaint-probe"))]
+#[cfg(not(any(all(test, target_os = "linux"), feature = "warm-repaint-probe")))]
 mod warm_repaint {
     pub fn enabled() -> bool {
         false
@@ -84,6 +84,10 @@ fn finish_replay_frame(window: &mut VisualTestContext) {
 
 /// `SOAK_SCALE=n` divides every dataset size by `n` (profiling under callgrind).
 fn scaled(size: usize) -> usize {
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(items) = warm_repaint::test_items() {
+        return items;
+    }
     if let Ok(size) = std::env::var("SOAK_ITEMS") {
         return size.parse::<usize>().expect("validated limits size").max(1);
     }
@@ -384,7 +388,14 @@ fn main() -> Result<()> {
             return Err(format!("no warm repaint fixture for {component}").into());
         }
     }
-    let short = args.iter().any(|arg| arg == "--short");
+    run_component(
+        component,
+        args.iter().any(|arg| arg == "--short"),
+        args.iter().any(|arg| arg == "--no-minimap"),
+    )
+}
+
+fn run_component(component: &str, short: bool, no_minimap: bool) -> Result<()> {
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
@@ -396,11 +407,9 @@ fn main() -> Result<()> {
             result = sample(frame, mount, short);
         })?,
         "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
-        "flow" => flow(
-            args.iter().any(|arg| arg == "--no-minimap"),
-            mount_started,
-            |frame, mount| result = sample(frame, mount, short),
-        )?,
+        "flow" => flow(no_minimap, mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "timeline" => timeline(|frame| result = sample(frame, mount_started.elapsed(), short)),
         "chart-line" => charts(false, false, |frame, mount| {
             result = sample(frame, mount, short)
@@ -1915,11 +1924,8 @@ mod mounted {
             markdown, mount,
         };
         use gpui_kit::{AppContext as _, test::TestWindowExt as _};
-        use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
+        use guiraffe_bench::allocator::count_allocations;
         use std::{process::Command, time::Instant};
-
-        #[global_allocator]
-        static ALLOCATOR: CountingAllocator = CountingAllocator;
 
         const SCENARIO: &str = "GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO";
 
@@ -2097,5 +2103,40 @@ mod mounted {
             assert_eq!(chat_small, chat_large);
             Ok(())
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod warm_repaint_tests {
+    use super::{Result, warm_repaint::test_fixture};
+
+    #[test]
+    fn markdown_replays_within_budget() -> Result<()> {
+        test_fixture("markdown", 1_000, 0)
+    }
+
+    #[test]
+    fn datagrid_replays_within_budget() -> Result<()> {
+        test_fixture("grid", 1_000, 0)
+    }
+
+    #[test]
+    fn gantt_replays_within_budget() -> Result<()> {
+        test_fixture("gantt", 1_000, 0)
+    }
+
+    #[test]
+    fn flow_replays_within_budget() -> Result<()> {
+        test_fixture("flow", 1_000, 0)
+    }
+
+    #[test]
+    fn charts_replay_within_budget() -> Result<()> {
+        test_fixture("chart-scatter", 1_000, 0)
+    }
+
+    #[test]
+    fn mermaid_replays_within_budget() -> Result<()> {
+        test_fixture("mermaid", 200, 0)
     }
 }

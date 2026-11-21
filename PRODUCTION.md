@@ -23,3 +23,17 @@ Samply recorded 1,149 → 229 filtered frame samples for line and 5,789 → 599 
 | Streaming publication | The view retains the current model while one current spec request prepares a replacement. New requests cancel older work, and obsolete results cannot publish. The preparation still rebuilds the supplied rolling window. |
 
 The chart tests cover irregular ID and style preservation, storage capacity, indexed versus linear picks, constant dense scatter candidate count at 10k through 10M points, reuse of the previous scene, and superseded 500-point uploads. Mounted RSS, paint behavior, interaction timing, and warm repaint allocations require separate measurements. Scene compilation still allocates on viewport cache misses. Dense scatter samples each series within the viewport, so its screen-cell bound applies per series.
+
+## Shared GPUI repaint storage
+
+| Storage | Bound and invalidation |
+|---|---|
+| Tab-stop order | Two frame-local order buffers per window. Each retains capacity for its historical peak of focus registrations. Clearing a frame drops its entries. Group paths store up to six entries inline. |
+| Taffy layout scratch | Up to 768 KiB per layout tree, plus buffer headers. Three pools each retain up to sixteen buffers of at most 16 KiB. Returning a buffer clears its contents. |
+| Upstream stable scene sort | Up to 65,536 sort entries per scene, or 1 MiB on 64-bit systems. The two window scenes reuse their own scratch. A larger primitive batch uses the standard stable sort for that frame. |
+| Upstream Kit root | One cache record per window root for the preceding viewport render. View invalidation, refresh, and changes to the viewport or render context rebuild the record. An active accessibility tree uses live root prepaint. |
+| Key contexts | One shared entry buffer per live context value and one shared empty value per process. Mutations detach and released dispatch frames drop their references. |
+| Fast rounded-clip scene reuse | Uses the two existing frame scenes. A complete replay of the preceding scene with matching layer metadata can transfer the compiled scene to the new frame. |
+
+Mounted allocation measurements and validation limits are recorded in the
+[warm repaint audit](bench/measurements/warm-repaint.md).
