@@ -158,6 +158,10 @@ does. A fresh resolve can pick newer upstream patch releases that don't work wit
 `gpui-kit 0.9.1`. [examples/compare/guiraffe-app/Cargo.toml](../examples/compare/guiraffe-app/Cargo.toml)
 is a complete, working standalone manifest.
 
+Cargo warns that a patch "was not used in the crate graph" when your app doesn't depend on
+that crate (for example `mermaid-rs-renderer` without `guiraffe-markdown`). The warning is
+harmless, and keeping the full block means adding crates later needs no manifest changes.
+
 Then copy any example below into `src/main.rs` and run `cargo run`. Examples 1, 2 and 5 need
 only the crates above. Add `guiraffe-inputs` for example 3, `guiraffe-datagrid` for
 example 4, and `guiraffe-router` and `guiraffe-state` for example 6.
