@@ -4,7 +4,14 @@ The [streaming tests](src/streaming.rs) compare incremental metadata with a
 one-shot GFM analysis across every character split of a mixed document.
 After initial analysis the background worker receives the unsettled source
 tail. It holds one in-flight analysis and coalesces newer updates. Prose
-appends reuse settled metadata.
+appends reuse settled metadata. The [Mermaid fence scan](src/streaming.rs)
+resumes at the last completed line and rechecks only the unfinished line.
+The prior full scan accounted for 6.24% of samples in a mounted dev
+profile. For 128 appends after a 50,000-line prefix, an optimized isolated
+Callgrind run counted 1.770 billion instructions before and 17.09 million
+after, including the initial scan. Tests cover every three-chunk split of
+a mixed UTF-8 document and confirm equal suffix work after short and long
+prefixes.
 
 The scrollable viewer seeds Kit's list with 28 px per block. The list
 updates heights after measuring visible blocks and overscan. It stores one

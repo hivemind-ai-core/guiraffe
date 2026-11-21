@@ -19,7 +19,7 @@ use gpui_kit::{
 
 use crate::{
     document::{Document, Heading},
-    streaming::{Change, classify},
+    streaming::{Change, MermaidFenceScan, classify},
 };
 
 /// Work counters, for tests and devtools (proving streaming stays incremental).
@@ -35,11 +35,10 @@ pub struct MarkdownStats {
     pub appends: u64,
 }
 
-/// How much of `source` may be shown: everything except an unfinished mermaid fence,
-/// which would otherwise be laid out (and re-rendered) on every token.
-fn showable(source: &str) -> usize {
+/// How much can be shown while a Mermaid fence is incomplete.
+fn showable(source: &str, fence_scan: &mut MermaidFenceScan) -> usize {
     if cfg!(feature = "mermaid") {
-        crate::streaming::unfinished_mermaid_fence(source).unwrap_or(source.len())
+        fence_scan.update(source).unwrap_or(source.len())
     } else {
         source.len()
     }
@@ -51,6 +50,7 @@ pub struct MarkdownState {
     source: String,
     /// How much of `source` the text view has (an unfinished mermaid fence is held back).
     pushed: usize,
+    fence_scan: MermaidFenceScan,
     revision: u64,
     analyzed: u64,
     document: Arc<Document>,
@@ -93,7 +93,8 @@ impl MarkdownState {
     /// Create the state for `source`, parsed as GFM Markdown.
     pub fn new(source: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let source = source.into().to_string();
-        let pushed = showable(&source);
+        let mut fence_scan = MermaidFenceScan::default();
+        let pushed = showable(&source, &mut fence_scan);
         let text = cx.new(|cx| {
             TextViewState::markdown_with_estimated_block_height(
                 &source[..pushed],
@@ -105,6 +106,7 @@ impl MarkdownState {
             text,
             source,
             pushed,
+            fence_scan,
             revision: 0,
             analyzed: 0,
             document: Arc::default(),
@@ -191,7 +193,10 @@ impl MarkdownState {
 
     /// Hand the text view what it doesn't have yet (or everything, on `replace`).
     fn sync_text(&mut self, replace: bool, cx: &mut Context<Self>) {
-        let target = showable(&self.source);
+        if replace {
+            self.fence_scan = MermaidFenceScan::default();
+        }
+        let target = showable(&self.source, &mut self.fence_scan);
         if replace {
             let shown = &self.source[..target];
             self.text.update(cx, |text, cx| text.set_text(shown, cx));
