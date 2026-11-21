@@ -367,6 +367,32 @@ fn stroke(
     }
 }
 
+fn paint_caption(
+    window: &mut Window,
+    cx: &mut App,
+    bounds: Bounds<Pixels>,
+    text: SharedString,
+    font_size: Pixels,
+    style: &gpui_kit::TextStyle,
+) {
+    use gpui_kit::{TextAlign, TruncateFrom};
+
+    let text_system = window.text_system();
+    let mut wrapper = text_system.line_wrapper(style.font(), font_size);
+    let runs = [style.to_run(text.len())];
+    let (text, runs) =
+        wrapper.truncate_line(text, bounds.size.width, "…", &runs, TruncateFrom::End);
+    let shaped = text_system.shape_line(text, font_size, &runs, None);
+    let _ = shaped.paint(
+        bounds.origin,
+        bounds.size.height,
+        TextAlign::Left,
+        None,
+        window,
+        cx,
+    );
+}
+
 #[derive(Clone, Copy)]
 struct TrackColors {
     dot: gpui_kit::Hsla,
@@ -566,6 +592,70 @@ impl Render for EventTimelineState {
                     .when(current, |item| item.aria_active_descendant())
                     .aria_position_in_set(placement.row + 1)
                     .aria_size_of_set(lane.len())
+                    .press(&press, &self.item_focus, window)
+                    .on_press(false, move |_, _, cx| {
+                        let _ = listener.update(cx, |this, cx| this.select(placement, cx));
+                    });
+                let weight = if chosen {
+                    gpui_kit::FontWeight::BOLD
+                } else {
+                    gpui_kit::FontWeight::SEMIBOLD
+                };
+                let width = px(w as f32) - left - px(spacing * 1.15);
+                if self.content.is_none() && item.tags.is_empty() {
+                    let label: SharedString = item.label.clone().into();
+                    let detail: Option<SharedString> =
+                        item.content.as_ref().map(|text| text.clone().into());
+                    let font_size = px(size.font_size() * scale);
+                    let line_height = font_size * 1.12;
+                    let dimmed = surfaces.dimmed.to_hsla();
+                    items.push(
+                        title
+                            .absolute()
+                            .left(x + left)
+                            .top(y + top)
+                            .w(width)
+                            .h(line_height)
+                            .child(
+                                canvas(
+                                    |_, _, _| (),
+                                    move |bounds, (), window, cx| {
+                                        let mut style = window.text_style();
+                                        style.font_weight = weight;
+                                        paint_caption(
+                                            window,
+                                            cx,
+                                            bounds,
+                                            label.clone(),
+                                            font_size,
+                                            &style,
+                                        );
+                                        if let Some(detail) = &detail {
+                                            style.font_weight = gpui_kit::FontWeight::NORMAL;
+                                            style.color = dimmed;
+                                            let origin = bounds.origin
+                                                + point(px(0.0), line_height + px(spacing / 5.0));
+                                            paint_caption(
+                                                window,
+                                                cx,
+                                                Bounds {
+                                                    origin,
+                                                    size: bounds.size,
+                                                },
+                                                detail.clone(),
+                                                font_size,
+                                                &style,
+                                            );
+                                        }
+                                    },
+                                )
+                                .size_full(),
+                            )
+                            .into_any_element(),
+                    );
+                    continue;
+                }
+                let title = title
                     .flex()
                     .flex_none()
                     .items_center()
@@ -575,11 +665,7 @@ impl Render for EventTimelineState {
                     .child(
                         div()
                             .truncate()
-                            .font_weight(if chosen {
-                                gpui_kit::FontWeight::BOLD
-                            } else {
-                                gpui_kit::FontWeight::SEMIBOLD
-                            })
+                            .font_weight(weight)
                             .child(item.label.clone()),
                     )
                     .children(item.tags.iter().take(4).map(|tag| {
@@ -590,11 +676,7 @@ impl Render for EventTimelineState {
                             .bg(colors.badge_background)
                             .text_color(colors.badge_text)
                             .child(tag.clone())
-                    }))
-                    .press(&press, &self.item_focus, window)
-                    .on_press(false, move |_, _, cx| {
-                        let _ = listener.update(cx, |this, cx| this.select(placement, cx));
-                    });
+                    }));
                 let content = self
                     .content
                     .as_ref()
@@ -613,7 +695,7 @@ impl Render for EventTimelineState {
                         .absolute()
                         .left(x + left)
                         .top(y + top)
-                        .w(px(w as f32) - left - px(spacing * 1.15))
+                        .w(width)
                         .h(px(h as f32) - top - px(spacing * 0.2))
                         .flex()
                         .flex_col()
@@ -621,7 +703,8 @@ impl Render for EventTimelineState {
                         .overflow_hidden()
                         .bg(surfaces.body.to_hsla())
                         .child(title)
-                        .when_some(content, |card, content| card.child(content)),
+                        .when_some(content, |card, content| card.child(content))
+                        .into_any_element(),
                 );
             }
         }
