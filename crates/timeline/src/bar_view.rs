@@ -230,6 +230,7 @@ impl Render for BarCurveView {
                             values.len()
                         };
                         let w = width / count.max(1) as f32;
+                        let inset = if dense || w <= 2. { 0. } else { 1. };
                         let h = f64::from(f32::from(b.size.height));
                         let range = ValueRange::new(lo, hi, h);
                         let base = if bipolar {
@@ -247,7 +248,6 @@ impl Render for BarCurveView {
                         for (i, (low, high)) in extrema.enumerate() {
                             let top = range.y(high).min(base);
                             let bottom = range.y(low).max(base);
-                            let inset = if dense { 0. } else { 1. };
                             window.paint_quad(gpui_kit::fill(
                                 Bounds::new(
                                     gpui_kit::point(
