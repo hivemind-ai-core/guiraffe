@@ -355,7 +355,7 @@ fn parse_paragraph(paragraph: &mut HtmlParagraph, node: &Rc<Node>) {
             if !child_paragraph.content.is_empty() {
                 ends_with_break = Some(child_paragraph.ends_with_break);
             }
-            for node in child_paragraph.content.children {
+            for node in child_paragraph.content.into_children() {
                 let offset = merged_text.len();
                 merged_text.push_str(&node.text);
                 for (range, child_mark) in node.marks {

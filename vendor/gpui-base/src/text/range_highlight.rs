@@ -506,7 +506,7 @@ impl IndexBuilder {
         let start = self.text.len();
         let mut text = String::new();
         let mut objects = Vec::new();
-        for child in &paragraph.children {
+        for child in paragraph.children() {
             let offset = start + text.len();
             if let Some(custom) = &child.custom {
                 objects.push(text.len()..text.len() + child.text.len());
@@ -1341,7 +1341,7 @@ mod tests {
                             });
                     };
                     let (mut run_start, mut offset) = (0, 0);
-                    for child in &paragraph.children {
+                    for child in paragraph.children() {
                         assert!(child.custom.is_none(), "inline objects select on their own");
                         if child.image.is_some() {
                             select_run(&child.state, run_start..offset);
