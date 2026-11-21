@@ -110,4 +110,5 @@ GPUI and the headless renderer. The before mounted Samply capture attributed
 Source lines up to 64 bytes can share shapes across unstyled rows. Longer or
 styled lines key by source row and avoid hashing source text during paint.
 Each viewer's shape cache retains at most 2,048 entries in insertion order,
-with at most 16,384 UTF-8 bytes of input per entry.
+with at most 256 KiB of UTF-8 input across all entries and 16 KiB per entry.
+GPUI owns its own glyph and layout caches.

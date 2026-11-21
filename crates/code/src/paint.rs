@@ -28,10 +28,16 @@ fn bounded_runs(runs: Vec<TextRun>, len: usize) -> Vec<TextRun> {
         .collect()
 }
 
+const MAX_SHAPE_CACHE_ENTRIES: usize = 2_048;
+const MAX_SHAPE_CACHE_TEXT_BYTES: usize = 256 * 1024;
+
+type ShapeKey = (u64, u64, usize, u32, u32);
+
 #[derive(Default)]
 pub(crate) struct ShapeCache {
-    items: HashMap<(u64, u64, usize, u32, u32), Rc<ShapedLine>>,
-    order: VecDeque<(u64, u64, usize, u32, u32)>,
+    items: HashMap<ShapeKey, Rc<ShapedLine>>,
+    order: VecDeque<ShapeKey>,
+    text_bytes: usize,
     frame: Rc<std::cell::RefCell<Vec<PaintedRow>>>,
     gutter_label: String,
 }
@@ -39,7 +45,7 @@ impl ShapeCache {
     fn line(
         &mut self,
         text: &str,
-        key: (u64, u64, usize, u32, u32),
+        key: ShapeKey,
         runs: impl FnOnce() -> Vec<TextRun>,
         font_size: f32,
         window: &mut Window,
@@ -63,17 +69,29 @@ impl ShapeCache {
         ));
         stats.shaped_lines += 1;
         shared.stats.set(stats);
-        if !self.items.contains_key(&key)
-            && self.items.len() >= 2048
-            && let Some(old) = self.order.pop_front()
-        {
-            self.items.remove(&old);
-        }
-        if !self.items.contains_key(&key) {
-            self.order.push_back(key);
-        }
-        self.items.insert(key, shape.clone());
+        self.insert(key, shape.clone());
         shape
+    }
+
+    fn insert(&mut self, key: ShapeKey, shape: Rc<ShapedLine>) {
+        if let Some(old) = self.items.remove(&key) {
+            self.text_bytes -= old.text.len();
+            self.order.retain(|candidate| *candidate != key);
+        }
+        let bytes = shape.text.len();
+        while self.items.len() >= MAX_SHAPE_CACHE_ENTRIES
+            || self.text_bytes + bytes > MAX_SHAPE_CACHE_TEXT_BYTES
+        {
+            let Some(old_key) = self.order.pop_front() else {
+                return;
+            };
+            if let Some(old) = self.items.remove(&old_key) {
+                self.text_bytes -= old.text.len();
+            }
+        }
+        self.text_bytes += bytes;
+        self.order.push_back(key);
+        self.items.insert(key, shape);
     }
 }
 pub(crate) struct PaintedRow {
@@ -809,5 +827,33 @@ pub(crate) fn paint_traces(
         if let Ok(path) = path.build() {
             window.paint_path(path, c);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shape_cache_evicts_by_text_size_as_well_as_entry_count() {
+        let mut cache = ShapeCache::default();
+        let mut shape = ShapedLine::default();
+        shape.text = "x".repeat(MAX_SHAPED_LINE_BYTES).into();
+        let shape = Rc::new(shape);
+        let capacity = MAX_SHAPE_CACHE_TEXT_BYTES / MAX_SHAPED_LINE_BYTES;
+        for row in 0..=capacity {
+            cache.insert((0, 0, row, 0, 0), shape.clone());
+        }
+        assert_eq!(cache.items.len(), capacity);
+        assert_eq!(cache.text_bytes, MAX_SHAPE_CACHE_TEXT_BYTES);
+        assert!(!cache.items.contains_key(&(0, 0, 0, 0, 0)));
+
+        let empty = Rc::new(ShapedLine::default());
+        for row in 1..=MAX_SHAPE_CACHE_ENTRIES {
+            cache.insert((0, 0, row, 0, 0), empty.clone());
+        }
+        assert_eq!(cache.items.len(), MAX_SHAPE_CACHE_ENTRIES);
+        assert_eq!(cache.order.len(), cache.items.len());
+        assert_eq!(cache.text_bytes, 0);
     }
 }
