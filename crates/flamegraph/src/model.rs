@@ -243,6 +243,40 @@ impl FlameLayout {
         }
     }
 
+    /// Coalesce touching aggregate spans with the same paint style. Hit testing
+    /// and the public segment iterator retain the original frame boundaries.
+    pub(crate) fn visit_paint_row(
+        &self,
+        depth: usize,
+        domain: Range<f64>,
+        width: f64,
+        search: Option<&Search>,
+        mut paint: impl FnMut(Segment),
+    ) {
+        let mut pending: Option<Segment> = None;
+        self.visit_row(depth, domain, width, search, |segment| {
+            if let Some(previous) = &mut pending
+                && segment.id.is_none()
+                && previous.highlighted == segment.highlighted
+                && previous.x.end >= segment.x.start
+            {
+                previous.x.end = previous.x.end.max(segment.x.end);
+                return;
+            }
+            if let Some(previous) = pending.take() {
+                paint(previous);
+            }
+            if segment.id.is_none() {
+                pending = Some(segment);
+            } else {
+                paint(segment);
+            }
+        });
+        if let Some(previous) = pending {
+            paint(previous);
+        }
+    }
+
     /// Build on query changes, independently of the visible viewport.
     pub fn search(&self, query: &str) -> Option<Search> {
         if query.is_empty() {
@@ -297,6 +331,42 @@ fn skip_bucket(spans: &[Span], right: f64) -> usize {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    struct Uniform(usize);
+
+    impl FrameSource for Uniform {
+        fn len(&self) -> usize {
+            self.0
+        }
+
+        fn frame(&self, index: usize) -> Frame<'_> {
+            Frame {
+                id: index as u64,
+                parent: None,
+                self_value: 1.,
+                total: 1.,
+                label: "sample",
+                package: "",
+            }
+        }
+    }
+
+    #[test]
+    fn overview_paints_one_contiguous_run_at_both_scales() -> Result<(), LayoutError> {
+        for count in [10_000, 10_000_000] {
+            let layout = FlameLayout::new(Arc::new(Uniform(count)))?;
+            let width = 1_000.;
+            let mut painted = 0;
+            layout.visit_paint_row(0, layout.domain(), width, None, |segment| {
+                painted += 1;
+                assert_eq!(segment.id, None);
+                assert_eq!(segment.x, 0. ..width);
+            });
+            assert_eq!(painted, 1);
+            assert_eq!(layout.hit(0, count as f64 - 0.5), Some(count as u64 - 1));
+        }
+        Ok(())
+    }
 
     proptest! {
         #[test]

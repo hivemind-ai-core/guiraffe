@@ -413,7 +413,7 @@ impl Render for FlameGraph {
                                         }
                                         Orientation::Icicle => slot as f64 * ROW_HEIGHT,
                                     };
-                                    layout.visit_row(
+                                    layout.visit_paint_row(
                                         first_row + slot,
                                         domain.clone(),
                                         width,
