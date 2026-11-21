@@ -197,3 +197,12 @@ Five separate 500-iteration, 100k-task interaction probes measured p99s of
 6.4 ms for pan, 18.9 ms for vertical scroll, 13.6 ms for zoom, 11.6 ms for
 hover and 31.0 ms for selection. These shared-host replays used the same
 interaction probes as the earlier run, with independently varying load.
+
+The current code passed the full upstream and gpui-fast workspace test
+batches, per-crate doctests, workspace Clippy with warnings denied,
+formatting, and `cargo test -p guiraffe-bench`. The initial
+`scripts/gate.sh` invocation started before the label test fixture correction
+and still reported its original upstream failure. An exact rerun of the
+upstream workspace test stage after the correction exited 0. The focused
+Gantt showcase and timeline snapshots passed on both backends with no
+golden changes.
