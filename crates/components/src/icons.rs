@@ -1,9 +1,10 @@
 //! ThemeIcon, ActionIcon and CloseButton.
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px,
+    App, AppContext as _, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce,
+    SharedString, StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px,
 };
 use guiraffe_core::{
     A11yDisabledExt, ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant, keyed_focus,
@@ -84,7 +85,20 @@ type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 /// hover / pressed / disabled state tokens, pointer cursor, a press never takes focus,
 /// opt-in tab stop ([`guiraffe_core::focus_scope`] or [`ActionIcon::focusable`]) with a
 /// focus-visible ring and Enter/Space activation, and an AccessKit `Button` named by
-/// [`ActionIcon::label`] (defaults to the icon name).
+/// [`ActionIcon::label`] (defaults to the tooltip, then the icon name).
+///
+/// [`ActionIcon::toggled`] makes it a toggle button (panel switches, bold/italic): it is
+/// exposed as pressed (`aria-pressed`) and selected, paints the theme's Selected state and
+/// adds a bar along its bottom edge, so the state is never conveyed by colour alone.
+/// [`ActionIcon::tooltip`] shows a Kit tooltip on hover and is also the accessible
+/// description (or the name, when no label is set).
+///
+/// ```ignore
+/// ActionIcon::new("toggle-left", IconName::PanelLeft)
+///     .tooltip("Left panel")
+///     .toggled(left_open)
+///     .on_click(|_, window, cx| toggle_left(window, cx))
+/// ```
 #[derive(IntoElement)]
 pub struct ActionIcon {
     id: ElementId,
@@ -99,6 +113,9 @@ pub struct ActionIcon {
     loading: bool,
     focusable: Option<bool>,
     label: Option<SharedString>,
+    /// `Some`: a toggle button, pressed when `true`.
+    toggled: Option<bool>,
+    tooltip: Option<SharedString>,
     on_click: Option<OnClick>,
     style: StyleRefinement,
 }
@@ -115,6 +132,8 @@ impl ActionIcon {
             loading: false,
             focusable: None,
             label: None,
+            toggled: None,
+            tooltip: None,
             on_click: None,
             style: StyleRefinement::default(),
         }
@@ -126,6 +145,18 @@ impl ActionIcon {
     /// Accessible name (icon-only buttons need one).
     pub fn label(mut self, l: impl Into<SharedString>) -> Self {
         self.label = Some(l.into());
+        self
+    }
+    /// Make this a toggle button in the given state (exposed as pressed/selected, with a
+    /// non-colour cue when on). Callers flip the state in `on_click`.
+    pub fn toggled(mut self, on: bool) -> Self {
+        self.toggled = Some(on);
+        self
+    }
+    /// Tooltip text shown on hover; also the accessible description (or name, without a
+    /// [`label`](Self::label)).
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
     /// Opt into Tab navigation outside a focus scope (or out of it inside one).
@@ -152,8 +183,14 @@ impl RenderOnce for ActionIcon {
         let colors = GuiraffeTheme::global(cx).press_colors(v_kind, self.color);
         let side = px(icon_box(size));
         let focus = keyed_focus(self.id.clone(), window, cx);
+        let tooltip = self.tooltip;
+        // A tooltip that differs from the name is read after it as the description.
+        let description = tooltip
+            .clone()
+            .filter(|t| self.label.as_ref().is_some_and(|l| l != t));
         let label = self
             .label
+            .or_else(|| tooltip.clone())
             .unwrap_or_else(|| SharedString::from(format!("{:?}", self.icon)));
         let loading = self.loading;
         // Screen readers hear that the action is in progress.
@@ -163,11 +200,34 @@ impl RenderOnce for ActionIcon {
             label
         };
         let r = radius(None, cx);
-        let press = Press::new(colors)
+        let mut press = Press::new(colors)
             .radius(r)
             .disabled(self.disabled)
             .focusable(self.focusable)
             .label(label);
+        let toggled = self.toggled;
+        if let Some(on) = toggled {
+            press = press.toggled(on).selected(on);
+        }
+        let on = toggled == Some(true);
+        // Shape cue for "on" (spec/00 §12.4): an overlay bar along the bottom edge, so the
+        // box keeps its size (§12.2) and the state reads without colour.
+        let indicator = on.then(|| {
+            let bar = if self.disabled {
+                colors.disabled.foreground
+            } else {
+                colors.selected.foreground
+            };
+            div()
+                .debug_selector(|| "action-icon-toggled".into())
+                .absolute()
+                .bottom(px(2.))
+                .left(px(4.))
+                .right(px(4.))
+                .h(px(2.))
+                .rounded_full()
+                .bg(bar.to_hsla())
+        });
         let disabled = self.disabled;
         // Loading ignores presses without looking disabled.
         let inert = disabled || loading;
@@ -190,9 +250,28 @@ impl RenderOnce for ActionIcon {
                 ))
             })
             .when(!loading, |el| el.child(self.icon))
+            .when_some(description, |el, d| el.aria_description(d))
+            .children(indicator)
             .press(&press, &focus, window)
+            .when_some(tooltip, |el, text| {
+                el.tooltip(move |window, cx| {
+                    let inner = Tooltip::new(text.clone()).build(window, cx);
+                    cx.new(|_| TooltipHost(inner)).into()
+                })
+            })
             .when_some(on_click, |el, f| el.on_press(inert, f));
         crate::style::refine(el, &self.style)
+    }
+}
+
+/// Hosts the Kit tooltip under a stable debug selector, so tests can see it appear.
+struct TooltipHost(gpui_kit::AnyView);
+
+impl gpui_kit::Render for TooltipHost {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        div()
+            .debug_selector(|| "action-icon-tooltip".into())
+            .child(self.0.clone())
     }
 }
 
