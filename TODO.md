@@ -23,6 +23,8 @@ batches; nothing goes to main without the user.
       ui/windows/motion/commands/devtools/state/router/icons.
 
 ## Ready to integrate
+- [ ] DataUi catalogue coverage (`49dbc28`): 87 widget kinds, 549 props, 103 events; drift guard
+      maps 740/919 APIs with 179 documented Rust-only exceptions; gate passed on both backends.
 - [ ] Flow document memory (`bd882ba`, gating): 36/46 MiB delta vs 68 MiB limit. Public API
       change (`Name`, `Handles`) → CHANGELOG.
 - [ ] Date/time pickers (`961a46e`): Date/DateRange/Time/DateTime/DateTimeRange pickers.
@@ -97,7 +99,8 @@ batches; nothing goes to main without the user.
       `#[component(stateful)]`; the canonical structured path. The builder API stays for standalone UIs.
 - [ ] **Command ribbon** (spec/32): port of ../gui/research/cmd onto guiraffe-commands + the bus.
 - [ ] **Multi-window docking**: pop-out panels, cross-window drag, layout restore across monitors/DPI.
-- [ ] 0.2 prep: shape the DataUi catalogue contract so actions and snapshots can attach later.
+- [ ] spec/30 phase 1 starts by extending the Catalogue 1.2 descriptors (feat-catalog-coverage,
+      `49dbc28`) with optional actions and snapshot sections.
 
 ## Later / out of scope for now
 - macOS/Windows CI and testing; crates.io publishing.
