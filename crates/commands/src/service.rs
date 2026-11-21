@@ -59,6 +59,8 @@ pub struct RegistryState {
     /// Menu projections, built lazily on first render after a change.
     rows: OnceCell<Rc<Vec<MenuRow>>>,
     flat_rows: OnceCell<Rc<Vec<MenuRow>>>,
+    /// Recently run Spotlight commands, most recent first (kept across palette openings).
+    spotlight_recents: Vec<gpui_kit::SharedString>,
 }
 impl RegistryState {
     pub fn catalog(&self) -> &model::Registry<Handler> {
@@ -77,7 +79,12 @@ impl RegistryState {
             revision: 0,
             rows: OnceCell::new(),
             flat_rows: OnceCell::new(),
+            spotlight_recents: Vec::new(),
         }
+    }
+    /// Command ids recently run from Spotlight, most recent first.
+    pub fn spotlight_recents(&self) -> &[gpui_kit::SharedString] {
+        &self.spotlight_recents
     }
     fn changed(&mut self) {
         self.revision = self.revision.wrapping_add(1);
@@ -536,42 +543,91 @@ impl Commands {
             })
             .collect()
     }
+    /// Spotlight actions for the commands visible in `contexts`: the title, the category
+    /// as the group, keywords, and the platform's shortcut label as keycap chips.
+    pub fn spotlight_actions(
+        &self,
+        contexts: &ContextStack,
+        cx: &App,
+    ) -> Vec<guiraffe_overlays::SpotlightAction> {
+        let state = self.state.read(cx);
+        let platform = state.catalog.platform();
+        state
+            .catalog
+            .visible(contexts)
+            .map(|command| {
+                let mut action = guiraffe_overlays::SpotlightAction::new(
+                    command.id.to_string(),
+                    command.title.clone(),
+                )
+                .keywords(command.keywords.clone())
+                .disabled(!command.enabled);
+                if !command.category.is_empty() {
+                    action = action.group(command.category.clone());
+                }
+                if let Some(binding) = &command.keybinding {
+                    action = action.shortcut(&binding.label(platform));
+                }
+                action
+            })
+            .collect()
+    }
+    /// Open the command palette over the focused window. Commands run through
+    /// [`Commands::execute`] with the contexts focused when it opened, so a command that
+    /// became disabled or inactive meanwhile does not run. The palette follows registry
+    /// changes while open and remembers recently run commands.
     pub fn open_spotlight(
         &self,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<Entity<guiraffe_overlays::Spotlight>, guiraffe_overlays::OverlayError> {
+    ) -> Result<Entity<guiraffe_overlays::SpotlightState>, guiraffe_overlays::OverlayError> {
         let origin = native_contexts(window);
         let mut contexts = self.state.read(cx).contexts.clone();
         contexts.extend(&origin);
-        let commands = self.spotlight_commands(&contexts, cx);
+        let actions = self.spotlight_actions(&contexts, cx);
+        let recents = self.state.read(cx).spotlight_recents.clone();
         let weak = self.state.downgrade();
+        let recorded = self.state.downgrade();
         let observed = self.state.clone();
         let live_origin = origin.clone();
         let palette = cx.new(|cx| {
             // Keep an open palette in sync with the registry (add/remove/enable/rebind).
             cx.observe(
                 &observed,
-                move |palette: &mut guiraffe_overlays::Spotlight, state, cx| {
+                move |palette: &mut guiraffe_overlays::SpotlightState, state, cx| {
                     let service = Commands { state };
                     let mut contexts = service.state.read(cx).contexts.clone();
                     contexts.extend(&live_origin);
-                    let commands = service.spotlight_commands(&contexts, cx);
-                    palette.set_commands(commands, cx);
+                    let actions = service.spotlight_actions(&contexts, cx);
+                    palette.set_actions(actions, cx);
                 },
             )
             .detach();
-            guiraffe_overlays::Spotlight::new(commands, window, cx, move |value, window, cx| {
-                let (Some(state), Ok(id)) = (weak.upgrade(), CommandId::parse(value)) else {
-                    return;
-                };
-                let service = Commands { state };
-                let mut contexts = service.state.read(cx).contexts.clone();
-                contexts.extend(&origin);
-                let _ = service.execute(&id, &contexts, InvocationSource::Spotlight, window, cx);
+            // Remember recents on the registry (without notifying its observers).
+            cx.subscribe_self(move |palette, event, cx| {
+                if let guiraffe_overlays::SpotlightEvent::Activated(_) = event {
+                    let recents = palette.recent_ids().to_vec();
+                    if let Some(state) = recorded.upgrade() {
+                        state.update(cx, |state, _| state.spotlight_recents = recents);
+                    }
+                }
             })
+            .detach();
+            guiraffe_overlays::SpotlightState::new(window, cx)
+                .actions(actions)
+                .recents(recents)
+                .on_activate(move |value, window, cx| {
+                    let (Some(state), Ok(id)) = (weak.upgrade(), CommandId::parse(value)) else {
+                        return;
+                    };
+                    let service = Commands { state };
+                    let mut contexts = service.state.read(cx).contexts.clone();
+                    contexts.extend(&origin);
+                    let _ =
+                        service.execute(&id, &contexts, InvocationSource::Spotlight, window, cx);
+                })
         });
-        guiraffe_overlays::Spotlight::open(&palette, window, cx)?;
+        guiraffe_overlays::SpotlightState::open(&palette, window, cx)?;
         Ok(palette)
     }
 }

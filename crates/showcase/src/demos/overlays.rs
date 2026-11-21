@@ -3,6 +3,7 @@
 
 use std::{cell::Cell, rc::Rc, time::Duration};
 
+use gpui_kit::assets::IconName;
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Bounds, Context, Entity, InteractiveElement, IntoElement,
@@ -12,9 +13,9 @@ use gpui_kit::{
 use guiraffe_components::{Text, Title};
 use guiraffe_core::{ColorName, GuiraffeTheme, Size, Variant};
 use guiraffe_overlays::{
-    Affix, Drawer, FloatingTooltip, LoadingOverlay, OverlayHost, Spotlight,
+    Affix, Drawer, FloatingTooltip, LoadingOverlay, OverlayHost, Spotlight, SpotlightAction,
+    SpotlightEvent, SpotlightState,
     position::{Align as FloatAlign, FloatingOptions, Rect, Side},
-    search::Command,
     stack::Policy,
     toast::{Toast, ToastId, ToastPosition},
 };
@@ -38,9 +39,23 @@ pub fn entries() -> Vec<Entry> {
         Entry {
             krate: "overlays",
             name: "Spotlight",
-            summary: "Command palette with fuzzy search; arrows move, Enter runs. Shown inline here and as a modal layer.",
-            covers: &["Spotlight"],
+            summary: "Keyboard-first command bar: grouped results with icons, descriptions and shortcut chips; pinned and recent items; fuzzy search. ↑↓ move, Tab jumps between groups, Enter runs, Esc closes.",
+            covers: &["Spotlight", "SpotlightState"],
             demo: spotlight,
+        },
+        Entry {
+            krate: "overlays",
+            name: "Spotlight search",
+            summary: "The command bar while searching: fuzzy matches highlighted in each title, groups ordered by their best match, virtualised so 10k commands stay instant.",
+            covers: &["Spotlight"],
+            demo: spotlight_search,
+        },
+        Entry {
+            krate: "overlays",
+            name: "Spotlight states",
+            summary: "No results keeps the query visible and suggests a next step; an empty catalog explains itself instead of showing a blank list.",
+            covers: &["SpotlightState"],
+            demo: spotlight_states,
         },
         Entry {
             krate: "overlays",
@@ -260,57 +275,313 @@ fn host_preview(
 
 // ------------------------------------------------------------------ spotlight
 
-fn commands() -> Vec<Command> {
-    [
-        ("new-file", "New file", "create add"),
-        ("open-recent", "Open recent project", "history"),
-        ("toggle-theme", "Toggle dark mode", "scheme light"),
-        ("git-commit", "Git: Commit staged changes", "vcs"),
-        ("git-push", "Git: Push", "vcs remote"),
-        ("format", "Format document", "prettier rustfmt"),
-        ("settings", "Open settings", "preferences"),
-    ]
-    .into_iter()
-    .map(|(id, label, kw)| Command {
-        keywords: kw.into(),
-        ..Command::new(id, label)
-    })
-    .collect()
+/// (id, title, description, group, icon, shortcut, keywords)
+type ActionRow = (
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    &'static str,
+    IconName,
+    &'static str,
+    &'static str,
+);
+
+/// A small app's command set: groups, icons, descriptions and shortcut chips.
+fn spotlight_actions(groups: bool, shortcuts: bool) -> Vec<SpotlightAction> {
+    let rows: [ActionRow; 10] = [
+        (
+            "file.new",
+            "New file",
+            None,
+            "File",
+            IconName::FilePlus,
+            "Ctrl+N",
+            "create add",
+        ),
+        (
+            "file.open",
+            "Open recent project",
+            Some("~/work/giraffe-garden"),
+            "File",
+            IconName::FolderOpen,
+            "Ctrl+R",
+            "history",
+        ),
+        (
+            "file.save",
+            "Save all",
+            None,
+            "File",
+            IconName::Save,
+            "Ctrl+Alt+S",
+            "write",
+        ),
+        (
+            "git.commit",
+            "Git: Commit staged changes",
+            Some("3 files staged on main"),
+            "Git",
+            IconName::GitCommitHorizontal,
+            "Ctrl+Enter",
+            "vcs",
+        ),
+        (
+            "git.push",
+            "Git: Push",
+            Some("Upload commits to origin"),
+            "Git",
+            IconName::Upload,
+            "",
+            "vcs remote",
+        ),
+        (
+            "git.branch",
+            "Git: Create branch…",
+            None,
+            "Git",
+            IconName::GitBranch,
+            "",
+            "vcs checkout",
+        ),
+        (
+            "view.theme",
+            "Toggle dark mode",
+            None,
+            "View",
+            IconName::SunMoon,
+            "Ctrl+K Ctrl+T",
+            "scheme light",
+        ),
+        (
+            "view.sidebar",
+            "Toggle sidebar",
+            None,
+            "View",
+            IconName::PanelLeft,
+            "Ctrl+B",
+            "panel",
+        ),
+        (
+            "view.terminal",
+            "Show terminal",
+            Some("Disabled in this demo"),
+            "View",
+            IconName::SquareTerminal,
+            "Ctrl+`",
+            "shell console",
+        ),
+        (
+            "app.settings",
+            "Open settings",
+            None,
+            "Preferences",
+            IconName::Settings,
+            "Ctrl+,",
+            "preferences config",
+        ),
+    ];
+    rows.into_iter()
+        .map(
+            |(id, title, description, group, icon, shortcut, keywords)| {
+                let mut action = SpotlightAction::new(id, title)
+                    .icon(icon)
+                    .keywords(keywords)
+                    .disabled(id == "view.terminal");
+                if let Some(d) = description {
+                    action = action.description(d);
+                }
+                if groups {
+                    action = action.group(group);
+                }
+                if shortcuts {
+                    action = action.shortcut(shortcut);
+                }
+                action
+            },
+        )
+        .collect()
 }
 
+/// The panel as it appears over a window: the theme scrim behind, anchored near the top.
+fn spotlight_stage(panel: impl IntoElement, cx: &App) -> AnyElement {
+    let theme = GuiraffeTheme::global(cx);
+    let surfaces = theme.surfaces();
+    div()
+        .flex()
+        .justify_center()
+        .py(px(Size::Xl.spacing()))
+        .px(px(Size::Md.spacing()))
+        .rounded(px(Size::Sm.radius()))
+        .bg(theme.scrim().over(surfaces.body).to_hsla())
+        .child(panel)
+        .into_any_element()
+}
+
+const SPOTLIGHT_STATES: &[&str] = &["browse", "search", "no results", "empty", "loading"];
+
 struct SpotlightDemo {
-    inline: Entity<Spotlight>,
-    modal: Entity<Spotlight>,
+    inline: std::cell::RefCell<Option<Entity<SpotlightState>>>,
+    applied: Applied,
+    log: Entity<EventLog>,
 }
 
 fn spotlight(window: &mut Window, cx: &mut App) -> AnyView {
-    let inline = cx.new(|cx| Spotlight::new(commands(), window, cx, |_, _, _| {}));
-    let modal = cx.new(|cx| {
-        Spotlight::new(commands(), window, cx, |id, window, cx| {
-            let _ =
-                OverlayHost::notify(window, cx, Toast::new(ToastId(20_000), format!("Ran {id}")));
-        })
-    });
-    cx.new(|_| SpotlightDemo { inline, modal }).into()
+    playground_with(
+        "Live Spotlight (type, ↑↓, Tab, Enter)",
+        &[
+            Knob::toggle("Groups").default(1),
+            Knob::toggle("Recents & pinned").default(1),
+            Knob::toggle("Shortcuts").default(1),
+            Knob::new("State", SPOTLIGHT_STATES).default(0),
+        ],
+        |_, cx| SpotlightDemo {
+            inline: Default::default(),
+            applied: Applied::default(),
+            log: EventLog::new(cx),
+        },
+        spotlight_preview,
+        window,
+        cx,
+    )
 }
 
-impl Render for SpotlightDemo {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let modal = self.modal.clone();
-        column([
-            example(
-                "Open as a modal layer",
+fn build_spotlight(
+    v: &KnobValues,
+    log: &Entity<EventLog>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<SpotlightState> {
+    let (groups, recents, shortcuts) = (v.on(0), v.on(1), v.on(2));
+    let state = v.index(3);
+    let actions = if state == 3 {
+        Vec::new()
+    } else {
+        spotlight_actions(groups, shortcuts)
+    };
+    let spotlight = cx.new(|cx| {
+        let mut s = SpotlightState::new(window, cx)
+            .actions(actions)
+            .max_list_height(px(Size::Lg.control_height() * 5.))
+            .loading(state == 4)
+            .on_activate(move |id, window, cx| {
+                let _ = OverlayHost::notify(
+                    window,
+                    cx,
+                    Toast::new(ToastId(20_000), format!("Ran {id}")),
+                );
+            });
+        if recents {
+            s = s
+                .pinned(["git.commit"])
+                .recents(["view.theme", "file.open"]);
+        }
+        match state {
+            1 => s.set_query("gc", window, cx),
+            2 => s.set_query("xylophone", window, cx),
+            4 => s.set_actions(Vec::new(), cx),
+            _ => {}
+        }
+        s
+    });
+    EventLog::watch::<SpotlightEvent, _>(log, &spotlight, cx);
+    spotlight
+}
+
+fn spotlight_preview(
+    s: &SpotlightDemo,
+    v: &KnobValues,
+    window: &mut Window,
+    cx: &mut Context<Preview<SpotlightDemo>>,
+) -> AnyElement {
+    if s.applied.changed(v) || s.inline.borrow().is_none() {
+        let built = build_spotlight(v, &s.log, window, cx);
+        *s.inline.borrow_mut() = Some(built);
+    }
+    let Some(inline) = s.inline.borrow().clone() else {
+        return div().into_any_element();
+    };
+    let values = v.clone();
+    let log = s.log.clone();
+    column([
+        div()
+            .flex()
+            .items_center()
+            .gap(px(Size::Sm.spacing()))
+            .child(
                 Button::new("open-spotlight")
-                    .label("Open command palette")
+                    .label("Open as overlay")
                     .on_click(move |_, window, cx| {
-                        let _ = Spotlight::open(&modal, window, cx);
+                        let palette = build_spotlight(&values, &log, window, cx);
+                        let _ = SpotlightState::open(&palette, window, cx);
                     }),
-            ),
-            example(
-                "Inline preview",
-                div().w(px(420.)).child(self.inline.clone()),
-            ),
-        ])
+            )
+            .child(
+                Text::new("Escape or a click outside closes it and returns focus here.")
+                    .size(Size::Sm)
+                    .dimmed(true),
+            )
+            .into_any_element(),
+        spotlight_stage(Spotlight::new(&inline), cx),
+        div().h(px(120.)).child(s.log.clone()).into_any_element(),
+    ])
+}
+
+/// A fixed open state with highlighted fuzzy matches, for the visual review.
+struct SpotlightSearchDemo {
+    state: Entity<SpotlightState>,
+}
+
+fn spotlight_search(window: &mut Window, cx: &mut App) -> AnyView {
+    let state = cx.new(|cx| {
+        let mut s = SpotlightState::new(window, cx)
+            .actions(spotlight_actions(true, true))
+            .max_list_height(px(Size::Lg.control_height() * 7.));
+        s.set_query("tog", window, cx);
+        s
+    });
+    cx.new(|_| SpotlightSearchDemo { state }).into()
+}
+
+struct SpotlightStatesDemo {
+    no_results: Entity<SpotlightState>,
+    empty: Entity<SpotlightState>,
+}
+
+fn spotlight_states(window: &mut Window, cx: &mut App) -> AnyView {
+    let width = px(Size::Xs.container_width() * 0.65);
+    let no_results = cx.new(|cx| {
+        let mut s = SpotlightState::new(window, cx)
+            .actions(spotlight_actions(true, true))
+            .width(width);
+        s.set_query("xylophone", window, cx);
+        s
+    });
+    let empty = cx.new(|cx| SpotlightState::new(window, cx).width(width));
+    cx.new(|_| SpotlightStatesDemo { no_results, empty }).into()
+}
+
+impl Render for SpotlightStatesDemo {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .gap(px(Size::Md.spacing()))
+            .child(div().flex_1().min_w_0().child(example(
+                "No results",
+                spotlight_stage(Spotlight::new(&self.no_results), cx),
+            )))
+            .child(div().flex_1().min_w_0().child(example(
+                "Nothing registered yet",
+                spotlight_stage(Spotlight::new(&self.empty), cx),
+            )))
+    }
+}
+
+impl Render for SpotlightSearchDemo {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        column([example(
+            "Query “tog”: matched letters are highlighted, groups ranked by their best match",
+            spotlight_stage(Spotlight::new(&self.state), cx),
+        )])
     }
 }
 

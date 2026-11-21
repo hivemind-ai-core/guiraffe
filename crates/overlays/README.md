@@ -18,8 +18,21 @@ For managed windows, return the idempotent `root(content, window, cx)` helper fr
   Managed delivery is always InApp. Unmanaged notes reduce available admission
   capacity; hidden work queues without consuming its lifetime. Updates preserve
   native entity/order and hover state. Timers stop when all timed notes pause.
-- `Spotlight`: optimal subsequence DP with prepared Unicode text, reusable buffers,
-  cached query results, keyword matching, disabled commands, arrows/Enter/click.
+- `spotlight::{SpotlightState, Spotlight}`: the command bar. `SpotlightState` (Control)
+  holds `SpotlightAction`s (title, description, group, keywords, icon, shortcut chips,
+  disabled), pinned ids and recents, an optional filter override and labels; it emits
+  `SpotlightEvent::{Opened, Closed, QueryChanged, SelectionChanged, Activated}`.
+  `SpotlightState::open` shows it over the theme scrim in the upper third (Pop
+  transition, instant with reduced motion) and restores focus on close; `Spotlight::new`
+  embeds the same panel inline. Fuzzy matches are highlighted (color, weight,
+  underline). The result list is virtualised with exact row offsets; the pure
+  `SpotlightModel` prepares text once, narrows on extending queries and allocates
+  nothing per keystroke (10k actions: ~22 ms mount, ≤ 6.5 ms worst keystroke in
+  release, gated by `tests/spotlight_scale.rs`). `load(future)` installs an async
+  source and prepares its index on a background thread. Keys: ↑/↓, Ctrl+N/P,
+  PageUp/PageDown, Tab/Shift+Tab (groups), Enter; Escape and outside press close.
+- `search`: the shared fuzzy scorer (`fuzzy_score`, `match_ranges`, `SearchIndex`),
+  property-tested against an exhaustive reference.
 - `FloatingTooltip`: controlled, measured popup using the pure flip/shift/arrow
   solver. Shift adjusts only the cross axis, retaining the main-axis anchor gap.
   `Tooltip`, `Popover`, `HoverCard` and menu exports keep Controls' native behavior.

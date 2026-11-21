@@ -3698,6 +3698,7 @@ dependencies = [
  "guiraffe-motion",
  "guiraffe-windows",
  "notify-rust",
+ "proptest",
  "thiserror 2.0.21",
 ]
 

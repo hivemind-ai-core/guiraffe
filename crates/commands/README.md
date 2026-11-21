@@ -35,7 +35,7 @@ GPUI's keymap is application-global. Native routes are installed through `guiraf
 
 ## Spotlight compatibility and limits
 
-`spotlight_commands` returns the existing `guiraffe_overlays::search::Command` shape without changing overlays. `open_spotlight` snapshots the descriptors and originating native focus contexts, then rechecks the current registry, explicit host contexts, enabled state, and predicate before activation. Removed, disabled, or newly inactive commands cannot execute through a stale result. Displayed descriptors are a snapshot: observe the registry and call the existing `Spotlight::set_commands` with a fresh projection to update an already-open palette.
+`spotlight_actions` projects visible commands to `guiraffe_overlays::SpotlightAction`s: the category becomes the group and the platform shortcut label (`Keybinding::label`) becomes keycap chips. `spotlight_commands` still returns the plain `guiraffe_overlays::search::Command` shape for other search UIs. `open_spotlight` snapshots the originating native focus contexts, then rechecks the current registry, explicit host contexts, enabled state, and predicate before activation. Removed, disabled, or newly inactive commands cannot execute through a stale result. An open palette observes the registry and re-projects on every change; recently run commands are kept on `RegistryState::spotlight_recents` and listed under "Recent" the next time.
 
 The crate supplies an in-app menu and metadata access for future adapters. Platform menu bars, toolbar integration, gallery registration, and IR command consumers require follow-up changes in their owning crates.
 
