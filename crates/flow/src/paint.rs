@@ -1223,6 +1223,84 @@ mod tests {
         assert!(world.distance(bounds.center()) < 0.001);
     }
     #[gpui_kit::test]
+    #[ignore = "materializes and indexes 10 million nodes; run separately from the workspace gate"]
+    fn ten_million_nodes_keep_detailed_viewport_work_constant(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::{AppContext, WindowOptions, test::TestWindowExt};
+
+        let mut results = Vec::new();
+        for node_count in [10_000, 10_000_000] {
+            let graph = Graph::from_parts(
+                (0..node_count).map(|id| {
+                    Node::new(
+                        id,
+                        "",
+                        WorldPoint::new((id % 1000) as f32 * 240., (id / 1000) as f32 * 150.),
+                    )
+                }),
+                (0..100).map(|id| Edge::new(id, id, id + 1)),
+            )
+            .expect("graph");
+            let (window, view) = cx.update(|cx| {
+                guiraffe_core::init(cx);
+                gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                    cx.new(|cx| {
+                        crate::FlowViewport::new(graph, cx).expect("flow").options(
+                            crate::FlowOptions {
+                                fit_on_init: false,
+                                minimap: false,
+                                ..Default::default()
+                            },
+                        )
+                    })
+                })
+                .expect("window")
+            });
+            window
+                .update(cx, |_, w, cx| w.render_frame(cx))
+                .expect("mount");
+            cx.run_until_parked();
+            let mut counts = Vec::new();
+            for (pan, zoom) in [(0., 1.), (-240., 1.25), (-480., 1.)] {
+                view.update(cx, |view, cx| {
+                    view.set_viewport(
+                        Viewport {
+                            pan: WorldPoint::new(pan, 0.),
+                            zoom,
+                        },
+                        cx,
+                    )
+                    .expect("camera");
+                });
+                window
+                    .update(cx, |_, w, cx| w.render_frame(cx))
+                    .expect("frame");
+                counts.push(view.read_with(cx, |view, _| {
+                    assert!(!view.interaction.editor.scene().index_pending());
+                    let meshes = view.meshes.borrow();
+                    assert!(meshes.batch_capacity.0 > 0);
+                    eprintln!(
+                        "{node_count} nodes, pan={pan}, zoom={zoom}: {} BVH visits",
+                        view.visible.visited
+                    );
+                    (
+                        view.visible.nodes.clone(),
+                        view.visible_counts(),
+                        meshes.batch_capacity,
+                        meshes.batches,
+                        meshes.marker_batches,
+                    )
+                }));
+            }
+            results.push(counts);
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close");
+            cx.run_until_parked();
+        }
+        assert_eq!(results[0], results[1]);
+    }
+
+    #[gpui_kit::test]
     fn dense_minimap_bounds_submitted_vertices(cx: &mut gpui_kit::TestAppContext) {
         use gpui_kit::{AppContext, WindowOptions, test::TestWindowExt};
         let graph = Graph::from_parts(
