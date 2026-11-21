@@ -1,5 +1,5 @@
 use gpui_kit::{
-    AppContext, Context, Entity, IntoElement, Path, Render, StyleRefinement, Styled,
+    App, AppContext, Context, Entity, IntoElement, Path, Render, StyleRefinement, Styled,
     TestAppContext, Window, canvas, point, px, rgb,
 };
 use guiraffe_bench::allocator::{CountingAllocator, Counts, count_allocations};
@@ -49,6 +49,12 @@ impl Render for Root {
     }
 }
 
+// Keep a named boundary for Callgrind and samply after window warm-up.
+#[inline(never)]
+fn draw_cached_paths_frame(window: &mut Window, cx: &mut App) {
+    window.draw(cx).clear(cx);
+}
+
 #[gpui_kit::test]
 fn cached_paths_repaint_without_allocating(cx: &mut TestAppContext) {
     let paints = Rc::new(Cell::new(0));
@@ -68,7 +74,7 @@ fn cached_paths_repaint_without_allocating(cx: &mut TestAppContext) {
             .max(1);
         let (_, counts) = count_allocations(|| {
             for _ in 0..frames {
-                window.draw(cx).clear(cx);
+                draw_cached_paths_frame(window, cx);
             }
         })
         .expect("count cached repaints");
@@ -96,5 +102,8 @@ fn path_clones_share_vertices_until_mutated() {
 
     copy.vertices[0].xy_position.x = original.vertices[1].xy_position.x;
     assert_ne!(copy.vertices.as_ptr(), original.vertices.as_ptr());
-    assert_ne!(copy.vertices[0].xy_position, original.vertices[0].xy_position);
+    assert_ne!(
+        copy.vertices[0].xy_position,
+        original.vertices[0].xy_position
+    );
 }
