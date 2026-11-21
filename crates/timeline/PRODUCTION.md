@@ -169,9 +169,10 @@ host and needs quiet release measurement.
 | Forced warm whole-window refresh, allocation calls | 3,367 | 3,251 |
 | Forced warm whole-window refresh, requested bytes | 1,981,143 | 1,987,211 |
 | 10k-task fan-out, setup and first frame | 52.0 s | 68.1 ms |
-| 100k-task sparse, setup and first frame | 170.3 ms (earlier run) | 455.6 ms |
-| 100k-task sparse, warmed p99 | 13.6 ms (earlier run) | 29.2 ms |
-| 100k-task sparse, sampled RSS | 49.4 MiB | 49.6 MiB |
+| 100k-task sparse, setup and first frame | 748.4 ms | 455.6 ms |
+| 100k-task sparse, warmed p99 | 33.5 ms | 29.2 ms |
+| 100k-task sparse, sampled RSS | 47.2 MiB | 49.6 MiB |
+| 100k-task sparse, 64-frame process peak RSS | 47.3 MiB | 46.3 MiB |
 
 The 100k-task fan-out mounted in 165.1 ms, with a warmed p99 of 31.6 ms
 and 50.3 MiB sampled RSS. The 100k-task chain mounted in 469.9 ms, with
@@ -184,10 +185,10 @@ requested bytes for the forced repaint. Setup at that scale took 52.1 s
 on the busy host. The viewport test checks the same six projected peers
 at degrees of 10k and 10M. The mounted header test checks reuse after pan
 and invalidation after a lock change. A label test checks cache reuse,
-timing invalidation, eviction and task replacement. The zero-allocation
+timing invalidation, eviction and cache clearing. The zero-allocation
 budget remains open. GPUI forced refresh bypasses retained view caching,
 and GPUI's path submission consumes and rescales owned path vertices.
 A trial bounded tessellated-path cache increased the sparse replay from
 175.8M to 176.9M instructions and did not reduce forced-repaint allocations,
-so it was discarded. Quiet latency for every interaction, peak RSS and
-30-minute drift still need verification.
+so it was discarded. Quiet latency for every interaction and memory over a 30-minute run
+still need verification.
