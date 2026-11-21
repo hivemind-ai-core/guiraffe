@@ -630,8 +630,11 @@ impl TextViewState {
             && end <= 32 * 1024
         {
             let prefix = UpdateOptions {
+                revision: update_options.revision,
                 pending_text: text[..end].to_owned(),
-                ..update_options.clone()
+                append: false,
+                mode: update_options.mode,
+                markdown_extensions: update_options.markdown_extensions.clone(),
             };
             if let Ok(content) = parse_content(self.format, ParsedContent::default(), &prefix) {
                 self.parsed_content = content;
