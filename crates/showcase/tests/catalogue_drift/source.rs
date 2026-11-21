@@ -36,6 +36,13 @@ fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     for entry in fs::read_dir(dir).expect("source directory") {
         let path = entry.expect("source entry").path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "tests" | "tests.rs") || name.ends_with("_tests.rs"))
+        {
+            continue;
+        }
         if path.is_dir() {
             files.extend(rust_files(&path));
         } else if path.extension().is_some_and(|suffix| suffix == "rs") {
@@ -47,7 +54,7 @@ fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
 
 #[derive(Default)]
 struct Inventory {
-    structs: BTreeSet<String>,
+    public_types: BTreeSet<String>,
     renders: BTreeSet<String>,
     methods: BTreeSet<(String, String)>,
     aliases: Vec<(String, Type)>,
@@ -59,7 +66,11 @@ struct Inventory {
 
 impl Inventory {
     fn surface(&self, krate: &str) -> BTreeSet<String> {
-        let render_types: BTreeSet<_> = self.structs.intersection(&self.renders).cloned().collect();
+        let render_types: BTreeSet<_> = self
+            .public_types
+            .intersection(&self.renders)
+            .cloned()
+            .collect();
         let mut result = BTreeSet::new();
         for ty in &render_types {
             result.insert(format!("{krate}::{ty}"));
@@ -84,7 +95,7 @@ impl Inventory {
             }
         }
         for (owner, event) in &self.emitters {
-            if !self.structs.contains(owner) {
+            if !self.public_types.contains(owner) {
                 continue;
             }
             if let Some(variants) = self.event_types.get(event) {
@@ -93,7 +104,7 @@ impl Inventory {
                         .iter()
                         .map(|variant| format!("{krate}::{owner}::event {variant}")),
                 );
-            } else if self.structs.contains(event) {
+            } else if self.public_types.contains(event) {
                 result.insert(format!("{krate}::{owner}::event {event}"));
             }
         }
@@ -104,6 +115,7 @@ impl Inventory {
         for item in items {
             match item {
                 Item::Enum(item) if matches!(item.vis, Visibility::Public(_)) => {
+                    self.public_types.insert(item.ident.to_string());
                     self.event_types.insert(
                         item.ident.to_string(),
                         item.variants
@@ -125,7 +137,7 @@ impl Inventory {
                             Some((name.clone(), field.ident.as_ref()?.to_string()))
                         }));
                     }
-                    self.structs.insert(name);
+                    self.public_types.insert(name);
                 }
                 Item::Mod(item)
                     if !item.attrs.iter().any(|attr| {
@@ -262,6 +274,8 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
         crate::props!(ButtonView { qualified_prop: bool => flag });
         pub enum ButtonEvent { Clicked, Hovered(bool) }
         impl EventEmitter<ButtonEvent> for ButtonView {}
+        pub enum StatusView { Fresh, Stale }
+        impl RenderOnce for StatusView {}
         pub type Alias = ButtonView;
         pub struct ViewOptions { pub newer: bool, internal: bool }
         pub fn factory() -> (Entity<DockArea>, Entity<ButtonView>) { todo!() }
@@ -285,6 +299,7 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
             "fixture::ButtonView::macro_prop".into(),
             "fixture::ButtonView::new_prop".into(),
             "fixture::ButtonView::qualified_prop".into(),
+            "fixture::StatusView".into(),
             "fixture::fn factory".into(),
             "fixture::ViewOptions::field newer".into(),
         ])
