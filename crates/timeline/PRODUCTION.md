@@ -132,3 +132,8 @@ The eight refreshed timeline and showcase goldens were inspected in both
 themes on both GPUI backends. Pixel changes were confined to Gantt rendering
 around its borders and dependency paths. Lock badges, critical-path colors
 and coincident arrowheads remain visible.
+
+`scripts/gate.sh` reported `GATE-PASS` at `c1322f5` with four build jobs
+and separate targets for each backend. Both full workspace test stages,
+the per-crate doctest commands, workspace Clippy with warnings denied,
+and formatting checks passed.
