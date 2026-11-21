@@ -329,10 +329,7 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
         |entity, knobs, _, cx| {
             let demo = entity.read(cx);
             let open = knobs.on(0);
-            if demo.advanced.replace(open) != open {
-                let view = demo.view.clone();
-                cx.defer(move |cx| view.update(cx, |view, cx| view.set_expanded(6, open, cx)));
-            }
+            let change_advanced = demo.advanced.replace(open) != open;
             let style = RowStyle {
                 density: match knobs.index(1) {
                     0 => RowDensity::Compact,
@@ -345,16 +342,22 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
                 group_headers: knobs.on(5),
                 sticky_headers: knobs.on(6),
             };
-            if demo.style.replace(style) != style {
-                let view = demo.view.clone();
-                cx.defer(move |cx| view.update(cx, |view, cx| view.set_row_style(style, cx)));
-            }
+            let change_style = demo.style.replace(style) != style;
             let tall = knobs.on(7);
-            if demo.tall_header.replace(tall) != tall {
+            let change_height = demo.tall_header.replace(tall) != tall;
+            if change_advanced || change_style || change_height {
                 let view = demo.view.clone();
                 cx.defer(move |cx| {
                     view.update(cx, |view, cx| {
-                        view.set_row_heights(tall.then_some((0, 44.)), cx);
+                        if change_advanced {
+                            view.set_expanded(6, open, cx);
+                        }
+                        if change_style {
+                            view.set_row_style(style, cx);
+                        }
+                        if change_height {
+                            view.set_row_heights(tall.then_some((0, 44.)), cx);
+                        }
                     });
                 });
             }
