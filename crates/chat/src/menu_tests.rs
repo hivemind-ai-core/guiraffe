@@ -98,10 +98,18 @@ fn message_text_context_menu_copies_selection_and_message(cx: &mut TestAppContex
     settle(cx, handle);
     settle(cx, handle);
     let view = cx.update(|cx| chat.read(cx).messages[&MessageId(1)].clone());
-    let origin = cx.update(|cx| view.read(cx).markdown.read(cx).bounds().origin);
+    let origin = cx.update(|cx| {
+        view.read(cx)
+            .markdown
+            .as_ref()
+            .expect("rendered message")
+            .read(cx)
+            .bounds()
+            .origin
+    });
     let p = origin + point(px(6.), px(6.));
     right_click(cx, handle, p);
-    let menu = cx.update(|cx| view.read(cx).menu.clone());
+    let menu = cx.update(|cx| view.read(cx).menu.clone().expect("rendered message menu"));
     assert!(menu.is_open(), "right-click on message text opens the menu");
     assert_eq!(menu.position(), Some(p));
     let copy = |m: &guiraffe_core::TextMenu| {
@@ -121,7 +129,14 @@ fn message_text_context_menu_copies_selection_and_message(cx: &mut TestAppContex
         assert!(menu.activate("Copy", window, cx));
     })
     .expect("copy");
-    let selected = cx.update(|cx| view.read(cx).markdown.read(cx).selected_text());
+    let selected = cx.update(|cx| {
+        view.read(cx)
+            .markdown
+            .as_ref()
+            .expect("rendered message")
+            .read(cx)
+            .selected_text()
+    });
     assert!(selected.contains("menu"));
     assert_eq!(clipboard(cx), Some(selected));
     right_click(cx, handle, p);
