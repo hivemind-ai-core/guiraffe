@@ -28,6 +28,8 @@ requests `wp_presentation` feedback for buffer submissions. Set
 | `gpui-pre/src/text_system/font_features.rs` | Shares one empty font feature vector across default styles. |
 | `gpui-fast/src/fast/layers/paint.rs` | Keeps shared backing when all vertex masks are empty and preserves clipping for custom masks. |
 | `gpui-fast/src/fast/path_cache.rs` | Converts the path-cache test fixture from a vector to the wrapper. |
+| Both `src/inherited.rs`, `src/gpui.rs` | Add `InheritedState` / `set_inherited_state`: a one-word hook for state an embedder keeps outside the window while an element lays out its children (GUIraffe's style context stack). Upstream only declares it; it renders every view inside its ancestors. |
+| `gpui-fast/src/fast/retained.rs`, `fast/splice.rs`, `fast/layers/reuse.rs` | Capture the hook's word in each retained layout (beside the text style), carry it in `Rebuild`, enter/leave it around a view built again on its own in a splice gap, and refuse to reuse a retained or kept layout whose word changed. Without this, a notified view re-rendered in isolation read the default style context (losing `focus_scope` tab stops, provided size and density). Capture is one thread-local read; nothing allocates. |
 
 Existing callers can borrow, index, reserve, extend and iterate by reference.
 Use `vec.into()` when assigning a vector to the public field. The wrapper
