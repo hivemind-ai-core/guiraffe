@@ -83,9 +83,10 @@ impl Frame {
     }
 
     fn publish_scene(&mut self, domain: Domain, scene: Scene) {
-        self.previous_scene = self.scene.replace((domain, scene)).filter(|(_, previous)| {
-            previous.primitive_count() <= 8_192 && previous.vertex_count() <= 16_384
-        });
+        self.previous_scene = self
+            .scene
+            .replace((domain, scene))
+            .filter(|(_, previous)| previous.cacheable());
     }
 }
 

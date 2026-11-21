@@ -87,6 +87,26 @@ impl Scene {
             .sum()
     }
 
+    pub(crate) fn cacheable(&self) -> bool {
+        self.panels.len() <= 64
+            && self.primitive_count() <= 8_192
+            && self.vertex_count() <= 16_384
+            && self
+                .panels
+                .iter()
+                .map(|panel| {
+                    panel.label.len()
+                        + panel
+                            .ticks
+                            .iter()
+                            .flatten()
+                            .map(|tick| std::mem::size_of::<Tick>() + tick.label.len())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+                <= 65_536
+    }
+
     pub(crate) fn panel(&self, position: Position) -> Option<&Panel> {
         self.panels
             .iter()
