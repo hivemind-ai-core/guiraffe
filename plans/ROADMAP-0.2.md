@@ -116,6 +116,17 @@ Fewer re-renders, lower-latency frames, fewer copies, less memory. Measure first
   disabled dates, locale/week start), theme tokens and §12 focus/a11y; showcase entries for every
   variant (only the plain date picker is shown today); fill any gaps found.
 
+## F. Startup study (after section E is complete and committed to main)
+- Profile warm and cold start end to end, per phase (process start/dynamic linking, GPU/Vulkan
+  instance + device, window/surface, font discovery + first shaping, first layout/paint, first
+  present). Warm start today: 152.6 ms with font prewarm (176.7 ms before, same session).
+- Establish the floor: empty GPUI window and a bare wgpu/Vulkan clear-and-present window; the gap
+  is what GUIraffe can win. Try: deferring/skipping eager EGL when using Vulkan, pipeline/shader
+  caches, parallel init (fonts ∥ GPU ∥ app state), lazy crate init, fewer/smaller dynamic
+  libraries, first frame before non-visible work.
+- Cold start: measure with page-cache drop (needs sudo); check binary size/layout, bytes read,
+  font file loading, shader cache warm-up. Report realistic floor vs current.
+
 ## D. Docs and tooling (after the above)
 1. Static docs site (Rust→wasm live demos where feasible; otherwise screenshots/recordings), modelled on Mantine + TanStack docs.
 2. Tutorial: quick-start whirlwind tour.

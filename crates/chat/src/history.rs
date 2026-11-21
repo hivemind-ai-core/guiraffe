@@ -1,39 +1,49 @@
-use crate::{message::MessageView, scroll::Stickiness};
+use crate::{
+    ChatState, Message, Role,
+    message::{Disclosures, MessageView, RowLayout},
+    scroll::Stickiness,
+};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::{prelude::*, *};
 use guiraffe_core::{Size, StyleContext, Variant};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
-const RETAINED_TEXT_ROWS: usize = 64;
+const RETAINED_ROWS: usize = 64;
 
 #[derive(Default)]
-struct TextRows {
+struct RowCache {
     recent: BTreeMap<usize, WeakEntity<MessageView>>,
-    selected: BTreeMap<usize, WeakEntity<MessageView>>,
+    pinned: BTreeMap<usize, WeakEntity<MessageView>>,
 }
 
-impl TextRows {
-    fn use_row(cache: &Rc<RefCell<Self>>, index: usize, row: &Entity<MessageView>, cx: &mut App) {
+impl RowCache {
+    fn use_row(
+        cache: &Rc<RefCell<Self>>,
+        history: &Entity<History>,
+        index: usize,
+        row: &Entity<MessageView>,
+        cx: &mut App,
+    ) {
         let mut this = cache.borrow_mut();
         if this.recent.get(&index).is_some_and(|entry| entry == row) {
             return;
         }
         this.recent.insert(index, row.downgrade());
-        this.selected.remove(&index);
+        this.pinned.remove(&index);
 
         // Reconsider pins when entering a new row. Selection endpoints are
         // owned by the window and must keep their original entity IDs.
-        this.selected.retain(|&key, candidate| {
+        this.pinned.retain(|&key, candidate| {
             let Some(candidate) = candidate.upgrade() else {
                 return false;
             };
-            if candidate.read(cx).has_text_selection(cx) {
+            if candidate.read(cx).retain_offscreen(cx) {
                 return true;
             }
-            defer_evict(cache, key, candidate, cx);
+            defer_evict(cache, history, key, candidate, cx);
             false
         });
-        while this.recent.len() > RETAINED_TEXT_ROWS {
+        while this.recent.len() > RETAINED_ROWS {
             let extremes = [this.recent.first_key_value(), this.recent.last_key_value()];
             let Some((&victim, _)) = extremes
                 .into_iter()
@@ -46,10 +56,10 @@ impl TextRows {
             if let Some(candidate) = this.recent.remove(&victim)
                 && let Some(row) = candidate.upgrade()
             {
-                if row.read(cx).has_text_selection(cx) {
-                    this.selected.insert(victim, candidate);
+                if row.read(cx).retain_offscreen(cx) {
+                    this.pinned.insert(victim, candidate);
                 } else {
-                    defer_evict(cache, victim, row, cx);
+                    defer_evict(cache, history, victim, row, cx);
                 }
             }
         }
@@ -57,35 +67,64 @@ impl TextRows {
 }
 
 fn defer_evict(
-    cache: &Rc<RefCell<TextRows>>,
+    cache: &Rc<RefCell<RowCache>>,
+    history: &Entity<History>,
     index: usize,
     row: Entity<MessageView>,
     cx: &mut App,
 ) {
     let cache = cache.clone();
+    let history = history.downgrade();
     cx.defer(move |cx| {
         let mut cache = cache.borrow_mut();
         if cache.recent.contains_key(&index) {
             return;
         }
-        if row.read(cx).has_text_selection(cx) {
-            cache.selected.insert(index, row.downgrade());
-        } else {
-            row.update(cx, MessageView::evict_text);
+        if row.read(cx).retain_offscreen(cx) {
+            cache.pinned.insert(index, row.downgrade());
+        } else if let Some(history) = history.upgrade() {
+            history.update(cx, |history, cx| history.evict(index, &row, cx));
         }
     });
 }
 
+pub(crate) enum Row {
+    Cold {
+        data: Message,
+        editable: bool,
+        animate: bool,
+        disclosures: Option<Box<Disclosures>>,
+    },
+    Mounted(Entity<MessageView>),
+}
+
+impl Row {
+    pub(crate) fn data<'a>(&'a self, cx: &'a App) -> &'a Message {
+        match self {
+            Self::Cold { data, .. } => data,
+            Self::Mounted(view) => &view.read(cx).data,
+        }
+    }
+
+    pub(crate) fn mounted(&self) -> Option<&Entity<MessageView>> {
+        match self {
+            Self::Cold { .. } => None,
+            Self::Mounted(view) => Some(view),
+        }
+    }
+}
+
 pub(crate) struct History {
-    pub(crate) rows: Vec<Entity<MessageView>>,
+    pub(crate) rows: Vec<Row>,
+    owner: WeakEntity<ChatState>,
     pub(crate) list: ListState,
     pub(crate) sticky: Stickiness,
-    text_rows: Rc<RefCell<TextRows>>,
+    row_cache: Rc<RefCell<RowCache>>,
     #[cfg(test)]
     pub(crate) renders: std::rc::Rc<std::cell::Cell<usize>>,
 }
 impl History {
-    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(owner: WeakEntity<ChatState>, cx: &mut Context<Self>) -> Self {
         let list = ListState::new(0, ListAlignment::Top, px(Size::Xl.control_height() * 2.));
         list.set_follow_mode(FollowMode::Tail);
         let weak = cx.weak_entity();
@@ -103,21 +142,95 @@ impl History {
         });
         Self {
             rows: vec![],
+            owner,
             list,
             sticky: Stickiness::default(),
-            text_rows: Default::default(),
+            row_cache: Default::default(),
             #[cfg(test)]
             renders: Default::default(),
         }
     }
-    pub(crate) fn push(&mut self, row: Entity<MessageView>, cx: &mut Context<Self>) {
-        let first_pending_insert = self.list.item_count() == self.rows.len();
-        self.rows.push(row);
+    pub(crate) fn push(&mut self, data: Message, animate: bool, cx: &mut Context<Self>) -> usize {
+        let index = self.rows.len();
+        let first_pending_insert = self.list.item_count() == index;
+        self.rows.push(Row::Cold {
+            editable: data.role == Role::User,
+            animate: animate && self.sticky.following(),
+            data,
+            disclosures: None,
+        });
         self.sticky.appended_message();
         if first_pending_insert {
             cx.notify();
         }
+        index
     }
+
+    pub(crate) fn disable_editing(&mut self, index: usize, cx: &mut Context<Self>) {
+        match self.rows.get_mut(index) {
+            Some(Row::Cold { editable, .. }) => *editable = false,
+            Some(Row::Mounted(view)) => view.update(cx, |view, cx| {
+                view.editable = false;
+                if view.markdown.is_some() {
+                    cx.notify();
+                }
+            }),
+            None => {}
+        }
+    }
+
+    pub(crate) fn materialize(
+        &mut self,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<MessageView>> {
+        let row = self.rows.get_mut(index)?;
+        let Row::Cold {
+            data,
+            editable,
+            animate,
+            disclosures,
+        } = row
+        else {
+            return row.mounted().cloned();
+        };
+        let layout = RowLayout {
+            index,
+            list: self.list.clone(),
+        };
+        let view = cx.new(|cx| {
+            let mut view = MessageView::new(
+                data.clone(),
+                self.owner.clone(),
+                *animate,
+                layout,
+                disclosures.as_deref(),
+                cx,
+            );
+            view.editable = *editable;
+            view
+        });
+        *row = Row::Mounted(view.clone());
+        Some(view)
+    }
+
+    fn evict(&mut self, index: usize, candidate: &Entity<MessageView>, cx: &App) {
+        let Some(row) = self.rows.get_mut(index) else {
+            return;
+        };
+        if row.mounted() != Some(candidate) {
+            return;
+        }
+        let view = candidate.read(cx);
+        let disclosures = view.disclosures(cx);
+        *row = Row::Cold {
+            data: view.data.clone(),
+            editable: view.editable,
+            animate: false,
+            disclosures: (!disclosures.is_empty()).then(|| Box::new(disclosures)),
+        };
+    }
+
     // Register a burst of history inserts with the list in one splice.
     fn sync_list(&self) {
         let listed = self.list.item_count();
@@ -139,7 +252,7 @@ impl Render for History {
         self.renders.set(self.renders.get() + 1);
         self.sync_list();
         let owner = cx.entity();
-        let text_rows = self.text_rows.clone();
+        let row_cache = self.row_cache.clone();
         let sc = StyleContext::current();
         div()
             .id("chat-history")
@@ -149,10 +262,17 @@ impl Render for History {
             .relative()
             .child(
                 list(self.list.clone(), move |index, _, cx| {
-                    let Some(row) = owner.read(cx).rows.get(index).cloned() else {
+                    let row = owner
+                        .read(cx)
+                        .rows
+                        .get(index)
+                        .and_then(Row::mounted)
+                        .cloned()
+                        .or_else(|| owner.update(cx, |history, cx| history.materialize(index, cx)));
+                    let Some(row) = row else {
                         return div().into_any_element();
                     };
-                    TextRows::use_row(&text_rows, index, &row, cx);
+                    RowCache::use_row(&row_cache, &owner, index, &row, cx);
                     row.into_any_element()
                 })
                 .size_full()

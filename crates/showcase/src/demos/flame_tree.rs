@@ -8,7 +8,10 @@ use gpui_kit::{
     Window, assets::IconName, component::Icon, div, px,
 };
 use guiraffe_flamegraph::{ColourScheme, FlameGraph, Frame, FrameSource, Orientation};
-use guiraffe_tree::{Children, NodeId, Property, TreeData, TreeEvent, TreeSource, TreeView, Value};
+use guiraffe_tree::{
+    Children, NodeId, Property, PropertyOptions, RowDensity, RowStyle, TreeData, TreeEvent,
+    TreeSource, TreeView, Value,
+};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};
 
 pub fn entries() -> [Entry; 3] {
@@ -140,9 +143,13 @@ impl Settings {
             (4, Value::Enum("Auto".into())),
             (5, Value::Colour(0x397fc8)),
             (7, Value::Text("1.0".into())),
+            (9, Value::Vector([120., 80.])),
+            (10, Value::Rect([0., 0., 640., 480.])),
+            (11, Value::Flags(vec!["Auto".into()])),
+            (12, Value::Path("workspace/settings.toml".into())),
         ]);
         Self {
-            children: vec![1, 2, 3, 4, 5, 6],
+            children: vec![1, 2, 3, 4, 5, 6, 9, 10, 11, 12],
             checked: BTreeMap::from([(3, true)]),
             defaults: values.clone(),
             values,
@@ -173,6 +180,10 @@ impl TreeSource for Settings {
             "Advanced",
             "Format version",
             "Extensions",
+            "Origin",
+            "Bounds",
+            "Capabilities",
+            "Settings file",
         ]
         .get(id as usize)
         .copied()
@@ -203,6 +214,32 @@ impl TreeData for Settings {
             read_only: id == 7,
         })
     }
+    fn property_options(&self, id: NodeId) -> PropertyOptions<'_> {
+        match id {
+            2 => PropertyOptions {
+                description: Some("Maximum number of undo entries."),
+                units: Some("entries"),
+                min: Some(1.),
+                max: Some(100.),
+                step: Some(1.),
+                ..Default::default()
+            },
+            1 => PropertyOptions {
+                multiline_rows: Some(4),
+                ..Default::default()
+            },
+            7 => PropertyOptions {
+                advanced: true,
+                ..Default::default()
+            },
+            9 => PropertyOptions {
+                mixed: true,
+                ..Default::default()
+            },
+            _ => PropertyOptions::default(),
+        }
+    }
+
     fn validate(&self, _: NodeId, value: &Value) -> Result<(), String> {
         if matches!(value, Value::Number(n) if !(1. ..=100.).contains(n)) {
             return Err("History limit must be between 1 and 100".to_owned());
@@ -216,14 +253,19 @@ struct TreeDemo<const P: bool> {
     log: Entity<EventLog>,
     settings: Settings,
     advanced: Cell<bool>,
+    style: Cell<RowStyle>,
+    tall_header: Cell<bool>,
     _subscription: gpui_kit::Subscription,
 }
 
 impl<const P: bool> TreeDemo<P> {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = Settings::new();
         let view = cx.new(|cx| {
-            let mut view = TreeView::new(Rc::new(settings.clone()), cx).focusable(true);
+            let mut view = TreeView::new(Rc::new(settings.clone()), cx)
+                .focusable(true)
+                .row_heights([(0, 44.)])
+                .inspector_controls("showcase-property-grid", window, cx);
             view.set_expanded(0, true, cx);
             view
         });
@@ -259,6 +301,8 @@ impl<const P: bool> TreeDemo<P> {
             log,
             settings,
             advanced: Cell::new(false),
+            style: Cell::new(RowStyle::default()),
+            tall_header: Cell::new(true),
             _subscription: subscription,
         }
     }
@@ -271,14 +315,51 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
         } else {
             "Workspace tree"
         },
-        &[Knob::toggle("Expand advanced")],
-        |_, cx| cx.new(TreeDemo::<P>::new),
+        &[
+            Knob::toggle("Expand advanced"),
+            Knob::new("Row height", &["Compact", "Default", "Comfortable"]).default(1),
+            Knob::toggle("Alternating rows"),
+            Knob::toggle("Grid lines"),
+            Knob::toggle("Indent guides"),
+            Knob::toggle("Group styling"),
+            Knob::toggle("Sticky groups"),
+            Knob::toggle("Taller first group").default(1),
+        ],
+        |window, cx| cx.new(|cx| TreeDemo::<P>::new(window, cx)),
         |entity, knobs, _, cx| {
             let demo = entity.read(cx);
             let open = knobs.on(0);
-            if demo.advanced.replace(open) != open {
+            let change_advanced = demo.advanced.replace(open) != open;
+            let style = RowStyle {
+                density: match knobs.index(1) {
+                    0 => RowDensity::Compact,
+                    2 => RowDensity::Comfortable,
+                    _ => RowDensity::Default,
+                },
+                alternating: knobs.on(2),
+                grid_lines: knobs.on(3),
+                indent_guides: knobs.on(4),
+                group_headers: knobs.on(5),
+                sticky_headers: knobs.on(6),
+            };
+            let change_style = demo.style.replace(style) != style;
+            let tall = knobs.on(7);
+            let change_height = demo.tall_header.replace(tall) != tall;
+            if change_advanced || change_style || change_height {
                 let view = demo.view.clone();
-                cx.defer(move |cx| view.update(cx, |view, cx| view.set_expanded(6, open, cx)));
+                cx.defer(move |cx| {
+                    view.update(cx, |view, cx| {
+                        if change_advanced {
+                            view.set_expanded(6, open, cx);
+                        }
+                        if change_style {
+                            view.set_row_style(style, cx);
+                        }
+                        if change_height {
+                            view.set_row_heights(tall.then_some((0, 44.)), cx);
+                        }
+                    });
+                });
             }
             entity.clone().into_any_element()
         },

@@ -27,8 +27,18 @@ fn memory_kib() -> Result<[u64; 2]> {
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+fn finish_replay_frame(window: &mut VisualTestContext) {
+    window.run_until_parked();
+    // Text snapshots are test-only. A retained Fast root might not render
+    // to clear them, so discard them at the replay boundary ourselves.
+    window.update(|window, _| gpui_kit::base::test_support::begin_frame(window));
+}
+
 /// `SOAK_SCALE=n` divides every dataset size by `n` (profiling under callgrind).
 fn scaled(size: usize) -> usize {
+    if let Ok(size) = std::env::var("SOAK_ITEMS") {
+        return size.parse::<usize>().expect("validated limits size").max(1);
+    }
     let divisor = std::env::var("SOAK_SCALE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -37,13 +47,9 @@ fn scaled(size: usize) -> usize {
     (size / divisor).max(1)
 }
 
-fn flow(
-    no_minimap: bool,
-    mount_started: Instant,
-    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
-) -> Result<()> {
-    let nodes = scaled(50_000) as u64;
-    let graph = Graph::from_parts(
+fn flow_graph(nodes: u64) -> Result<Graph> {
+    let degree = nodes.saturating_sub(1).min(2);
+    Ok(Graph::from_parts(
         (0..nodes).map(|i| {
             Node::new(
                 i,
@@ -51,14 +57,26 @@ fn flow(
                 Point::new((i % 100) as f32 * 240., (i / 100) as f32 * 150.),
             )
         }),
-        (0..nodes * 2).map(|i| {
-            Edge::new(
-                i,
-                i % nodes,
-                ((i % nodes) + if i < nodes { 1 } else { 100 }) % nodes,
-            )
+        (0..nodes * degree).map(|i| {
+            let offset = if i < nodes {
+                1
+            } else if nodes > 100 {
+                100
+            } else {
+                2
+            };
+            Edge::new(i, i % nodes, ((i % nodes) + offset) % nodes)
         }),
-    )?;
+    )?)
+}
+
+fn flow(
+    no_minimap: bool,
+    mount_started: Instant,
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
+) -> Result<()> {
+    let nodes = scaled(50_000) as u64;
+    let graph = flow_graph(nodes)?;
     let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_stress"));
     let (window, view) = cx.update(|cx| {
         guiraffe_core::init(cx);
@@ -156,7 +174,7 @@ fn timeline(run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) {
                 source: ScrollSource::Pointer,
             });
         }
-        window.run_until_parked();
+        finish_replay_frame(window);
         Ok(())
     });
 }
@@ -175,10 +193,15 @@ fn charts(
     run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
 ) -> Result<()> {
     const STREAM_RATE: u32 = 10_000;
+    let retained = if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+        scaled(STREAM_RATE as usize)
+    } else {
+        STREAM_RATE as usize
+    };
     const STREAM_BATCH: u32 = 500;
     let mut stream = Stream::default();
     if streaming {
-        stream.append((0..STREAM_RATE).collect());
+        stream.append((0..retained as u32).collect());
     }
     let mount_started = Instant::now();
     let cx = TestAppContext::build(TestDispatcher::new(0), Some("charts_soak"));
@@ -233,17 +256,18 @@ fn charts(
         );
     }
     let stream_started = Instant::now();
-    let mut next = STREAM_RATE;
-    let mut due = STREAM_RATE;
+    let initial = retained as u32;
+    let mut next = initial;
+    let mut due = initial;
     run(
         &mut |i| {
             if streaming {
-                due = STREAM_RATE
+                due = initial
                     + (stream_started.elapsed().as_secs_f64() * f64::from(STREAM_RATE)) as u32;
                 if due.saturating_sub(next) >= STREAM_BATCH {
                     let end = due - (due - next) % STREAM_BATCH;
                     stream.append((next..end).collect());
-                    stream.retain_last(STREAM_RATE as usize);
+                    stream.retain_last(retained);
                     next = end;
                     let spec = streaming_spec(stream.clone());
                     window
@@ -272,14 +296,14 @@ fn charts(
                     });
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         },
         first_frame,
     );
     if streaming {
         let elapsed = stream_started.elapsed().as_secs_f64();
-        let points = next - STREAM_RATE;
+        let points = next - initial;
         let pending = due.saturating_sub(next);
         println!("stream_points={points} stream_seconds={elapsed:.3} stream_pending={pending}");
         if pending >= STREAM_BATCH {
@@ -294,11 +318,18 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <mixed|grid|code|empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
+        "code-annotations" => mounted::code_annotations(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
+        "mixed" => return mounted::mixed::run(short),
+        "grid" | "code" => mounted::mixed::run_data(component, mount_started, |frame, mount| {
+            result = sample(frame, mount, short);
+        })?,
         "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         "flow" => flow(
             args.iter().any(|arg| arg == "--no-minimap"),
@@ -341,50 +372,87 @@ fn main() -> Result<()> {
         "property-grid" => {
             mounted::property_grid(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "markdown" => {
-            mounted::markdown(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
-        "mermaid" => {
-            mounted::mermaid(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
+        "markdown" => mounted::markdown(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
+        "mermaid" => return mounted::mermaid(mount_started, short),
         "chat" => mounted::chat(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         _ => return Err("unknown soak component".into()),
     }
     result
 }
 
-fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bool) -> Result<()> {
-    println!("setup_and_first_frame_us={}", mount.as_micros());
-    let interval = Duration::from_secs(10);
-    let mut index = 0;
-    let mut times = Vec::with_capacity(1_200);
-    let mut warmed_memory = None;
-    // `SOAK_FRAMES=n`: run exactly n frames and stop (profiling; no timing verdict).
-    if let Some(frames) = std::env::var("SOAK_FRAMES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-    {
-        for index in 0..frames {
-            frame(index)?;
+struct Samples {
+    times: Vec<u128>,
+    index: usize,
+    interval: Instant,
+    sample: usize,
+    warmed_memory: Option<[u64; 2]>,
+    short: bool,
+    failed: bool,
+    profile_frames: Option<usize>,
+    /// `SOAK_LIMIT_PROBE` mode for loops that cannot use `sample` (Mermaid's
+    /// executor-driven probe): a fixed replay that reports one `LIMIT` line.
+    limit: Option<Duration>,
+}
+
+impl Samples {
+    fn new(mount: Duration, short: bool) -> Self {
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            return Self {
+                times: Vec::with_capacity(120),
+                index: 0,
+                interval: Instant::now(),
+                sample: 0,
+                warmed_memory: None,
+                short,
+                failed: false,
+                // Once mount fails there is no reason to run this dataset through the replay.
+                profile_frames: Some(if mount <= Duration::from_millis(200) {
+                    128
+                } else {
+                    0
+                }),
+                limit: Some(mount),
+            };
         }
-        println!("profiled_frames={frames}");
-        return Ok(());
+        println!("setup_and_first_frame_us={}", mount.as_micros());
+        Self {
+            times: Vec::with_capacity(1_200),
+            index: 0,
+            interval: Instant::now(),
+            sample: 0,
+            warmed_memory: None,
+            short,
+            failed: !short && mount > Duration::from_millis(200),
+            profile_frames: std::env::var("SOAK_FRAMES")
+                .ok()
+                .and_then(|n| n.parse().ok()),
+            limit: None,
+        }
     }
-    let mut failed = !short && mount > Duration::from_millis(200);
-    // The first interval warms caches. The following 180 intervals measure drift.
-    for sample in 0..if short { 2 } else { 181 } {
-        times.clear();
-        let start = Instant::now();
-        while start.elapsed() < interval {
-            let started = Instant::now();
-            frame(index)?;
-            let elapsed = started.elapsed();
-            index += 1;
-            times.push(elapsed.as_micros());
-            std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
+
+    fn done(&self) -> bool {
+        match self.profile_frames {
+            Some(frames) => self.index >= frames,
+            None => self.sample >= if self.short { 2 } else { 181 },
         }
-        times.sort_unstable();
-        let percentile = |p: usize| times[(times.len() * p).div_ceil(100) - 1];
+    }
+
+    fn record(&mut self, elapsed: Duration) {
+        self.index += 1;
+        // Limit replays skip the first eight warm-up frames, like `limit_sample`.
+        if self.profile_frames.is_none() || (self.limit.is_some() && self.index > 8) {
+            self.times.push(elapsed.as_micros());
+        }
+    }
+
+    fn finish_interval(&mut self) -> Result<()> {
+        if self.profile_frames.is_some() || self.interval.elapsed() < Duration::from_secs(10) {
+            return Ok(());
+        }
+        self.times.sort_unstable();
+        let percentile = |p: usize| self.times[(self.times.len() * p).div_ceil(100) - 1];
         let (p50, p95, p99, max) = (
             percentile(50),
             percentile(95),
@@ -392,25 +460,97 @@ fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bo
             percentile(100),
         );
         let [rss, pss] = memory_kib()?;
-        let [base_rss, base_pss] = *warmed_memory.get_or_insert([rss, pss]);
+        let [base_rss, base_pss] = *self.warmed_memory.get_or_insert([rss, pss]);
         let drifted = rss * 100 > base_rss * 102 || pss * 100 > base_pss * 102;
         println!(
-            "sample={sample} frames={} p50_us={p50} p95_us={p95} p99_us={p99} max_us={max} rss_kib={rss} pss_kib={pss} drifted={drifted}",
-            times.len()
+            "sample={} frames={} p50_us={p50} p95_us={p95} p99_us={p99} max_us={max} rss_kib={rss} pss_kib={pss} drifted={drifted}",
+            self.sample,
+            self.times.len()
         );
-        // A 16 ms frame maximum also enforces the 50 ms long-task limit inside measured frames.
-        failed |= !short && sample > 0 && (drifted || p99 > 8_000 || max > 16_000);
+        self.failed |= !self.short && self.sample > 0 && (drifted || p99 > 8_000 || max > 16_000);
+        self.sample += 1;
+        self.times.clear();
+        self.interval = Instant::now();
+        Ok(())
     }
-    if failed {
-        return Err("Headless soak exceeded a timing or memory budget".into());
+
+    fn result(&self) -> Result<()> {
+        if let Some(mount) = self.limit {
+            return limit_report(mount, self.times.clone());
+        }
+        if let Some(frames) = self.profile_frames {
+            println!("profiled_frames={frames}");
+        } else if self.failed {
+            return Err("Headless soak exceeded a timing or memory budget".into());
+        }
+        Ok(())
     }
+}
+
+fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bool) -> Result<()> {
+    if let Some(component) = std::env::var_os("SOAK_LIMIT_PROBE") {
+        return limit_sample(frame, mount, component == "chart-stream");
+    }
+    let mut samples = Samples::new(mount, short);
+    while !samples.done() {
+        let started = Instant::now();
+        frame(samples.index)?;
+        let elapsed = started.elapsed();
+        samples.record(elapsed);
+        if samples.profile_frames.is_none() {
+            std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
+        }
+        samples.finish_interval()?;
+    }
+    samples.result()
+}
+
+fn limit_sample(
+    frame: &mut dyn FnMut(usize) -> Result<()>,
+    mount: Duration,
+    stream: bool,
+) -> Result<()> {
+    let mut times = Vec::with_capacity(120);
+    // Once mount fails there is no reason to run this dataset through the replay.
+    if mount <= Duration::from_millis(200) {
+        for index in 0..128 {
+            let start = Instant::now();
+            frame(index)?;
+            let elapsed = start.elapsed();
+            if index >= 8 {
+                times.push(elapsed.as_micros());
+            }
+            if stream {
+                std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
+            }
+        }
+    }
+    limit_report(mount, times)
+}
+
+/// Print the `LIMIT <mount_us> <p99_us> <peak_rss_kib>` line `limits` parses.
+fn limit_report(mount: Duration, mut times: Vec<u128>) -> Result<()> {
+    times.sort_unstable();
+    let p99 = times
+        .get((times.len() * 99).div_ceil(100usize).saturating_sub(1))
+        .copied()
+        .unwrap_or(0);
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    let hwm: u64 = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|value| value.split_whitespace().next())
+        .ok_or("missing VmHWM in /proc/self/status")?
+        .parse()?;
+    println!("LIMIT {} {p99} {hwm}", mount.as_micros());
     Ok(())
 }
 
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
-    use super::{Instant, Result, scaled};
+    use super::{Instant, Result, finish_replay_frame, scaled};
+    pub mod mixed;
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
         ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, ScrollSource, Styled,
@@ -420,6 +560,12 @@ mod mounted {
     use std::{rc::Rc, sync::Arc, time::Duration};
 
     type Frame<'a> = &'a mut dyn FnMut(usize) -> Result<()>;
+
+    fn raw_bytes(bytes: usize) {
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            println!("RAW {bytes}");
+        }
+    }
 
     /// Simulated time per frame for timer-driven work (stream drains, coalescing, settles).
     const FRAME: Duration = Duration::from_millis(16);
@@ -434,6 +580,238 @@ mod mounted {
         } else {
             -1.
         }
+    }
+
+    pub fn code_annotations(
+        mount_started: Instant,
+        run: impl FnOnce(Frame, Duration),
+    ) -> Result<()> {
+        use guiraffe_code::{
+            AnchorBias, Annotation, AnnotationKind, BlameCommit, CodeDocument, CodeHandle,
+            CodeViewer, DecorationInput, DecorationStyle, Decorations, GutterMark, HighlightShape,
+            InlineWidget, Position, Severity, SourceRange, UnderlinePattern,
+        };
+        use guiraffe_core::ColorName;
+
+        struct CodeHost(CodeHandle);
+
+        impl Render for CodeHost {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                CodeViewer::new(&self.0)
+            }
+        }
+
+        let lines = scaled(1_000_000);
+        let doc = Arc::new(CodeDocument::new(
+            "let value = source(argument);\n".repeat(lines),
+        ));
+        let mut decorations = Decorations::new(doc.clone())?;
+        let mut annotations = Vec::new();
+        let decoration = |id, start, end, style| DecorationInput {
+            id,
+            range: SourceRange::new(start, end),
+            style,
+            start_bias: AnchorBias::Left,
+            end_bias: AnchorBias::Right,
+        };
+        for (kind, count, color, text) in [
+            (
+                AnnotationKind::Highlight,
+                100_000,
+                ColorName::Blue,
+                "reference",
+            ),
+            (
+                AnnotationKind::Underline,
+                20_000,
+                ColorName::Red,
+                "diagnostic",
+            ),
+            (
+                AnnotationKind::Bubble,
+                5_000,
+                ColorName::Blue,
+                "review comment",
+            ),
+            (
+                AnnotationKind::Highlight,
+                50_000,
+                ColorName::Yellow,
+                "search match",
+            ),
+            (AnnotationKind::InlineHint, 1_000, ColorName::Gray, "type"),
+            (AnnotationKind::Symbol, 1, ColorName::Blue, "symbol"),
+        ] {
+            let count = scaled(count);
+            let payload: Arc<str> = text.into();
+            if kind == AnnotationKind::Bubble {
+                let style = decorations.intern_style(DecorationStyle::Block {
+                    estimated_rows: 2,
+                    payload,
+                })?;
+                decorations.update_layer(
+                    5,
+                    Default::default(),
+                    &[],
+                    (0..count).map(|i| {
+                        let at = Position::new(i * lines / count, 4);
+                        decoration(i as u64, at, at, style)
+                    }),
+                )?;
+                continue;
+            }
+            if kind == AnnotationKind::InlineHint {
+                let style = decorations.intern_style(DecorationStyle::Inline {
+                    widget: InlineWidget::Inlay,
+                    label: payload,
+                })?;
+                decorations.update_layer(
+                    6,
+                    Default::default(),
+                    &[],
+                    (0..count).map(|i| {
+                        let at = Position::new(i % lines.min(40), i / 40 % 25);
+                        decoration(i as u64, at, at, style)
+                    }),
+                )?;
+                continue;
+            }
+            if matches!(kind, AnnotationKind::Highlight | AnnotationKind::Underline) {
+                let (layer, style) = if kind == AnnotationKind::Underline {
+                    (
+                        2,
+                        DecorationStyle::Diagnostic {
+                            severity: Severity::Error,
+                            pattern: UnderlinePattern::Wavy,
+                            message: payload,
+                        },
+                    )
+                } else {
+                    (
+                        if color == ColorName::Yellow { 1 } else { 0 },
+                        DecorationStyle::Highlight {
+                            shape: HighlightShape::Background,
+                            color,
+                        },
+                    )
+                };
+                let style = decorations.intern_style(style)?;
+                decorations.update_layer(
+                    layer,
+                    Default::default(),
+                    &[],
+                    (0..count).map(|i| {
+                        let line = i * lines / count;
+                        decoration(
+                            i as u64,
+                            Position::new(line, 4),
+                            Position::new(line, 5),
+                            style,
+                        )
+                    }),
+                )?;
+                continue;
+            }
+            for i in 0..count {
+                let (line, column) = match kind {
+                    AnnotationKind::InlineHint => (i % lines.min(40), i / 40 % 25),
+                    AnnotationKind::Symbol => (0, 0),
+                    _ => (i * lines / count, 4),
+                };
+                annotations.push(Annotation {
+                    id: annotations.len() as u64,
+                    range: SourceRange::new(
+                        Position::new(line, column),
+                        Position::new(line, column + 1),
+                    ),
+                    kind,
+                    color,
+                    payload: payload.clone(),
+                });
+            }
+        }
+        let mark = decorations.intern_style(DecorationStyle::Gutter {
+            lane: 0,
+            mark: GutterMark::Error,
+        })?;
+        let count = scaled(50_000);
+        decorations.update_layer(
+            3,
+            Default::default(),
+            &[],
+            (0..count).map(|i| {
+                let at = Position::new(i * lines / count, 0);
+                decoration(i as u64, at, at, mark)
+            }),
+        )?;
+        let commit_count = scaled(2_000);
+        let mut blame = Vec::with_capacity(commit_count);
+        for i in 0..commit_count {
+            let style =
+                decorations.intern_style(DecorationStyle::Blame(Arc::new(BlameCommit {
+                    author: format!("author {i:04}").into(),
+                    short_hash: format!("{i:07x}").into(),
+                    message: "Review fixture commit".into(),
+                    date: "2026-11-01".into(),
+                    age_days: 1 + i as u32 % 500,
+                    url: None,
+                })))?;
+            let start = i * lines / commit_count;
+            let end = (i + 1) * lines / commit_count - 1;
+            let end_column = doc.line(end).map_or(0, str::len);
+            blame.push(decoration(
+                i as u64,
+                Position::new(start, 0),
+                Position::new(end, end_column),
+                style,
+            ));
+        }
+        decorations.update_layer(4, Default::default(), &[], blame)?;
+        let decorations = Arc::new(decorations);
+        let prepared = decorations.prepare_analysis(annotations, Vec::new());
+        let (mut window, view) = mount(
+            "code_annotations_soak",
+            |_| {},
+            |_, cx| {
+                let code = CodeHandle::new(1, doc, cx);
+                code.set_analysis(prepared, cx);
+                code.set_decorations(Some(decorations.clone()), cx);
+                cx.new(|_| CodeHost(code))
+            },
+        )?;
+        let mount = mount_started.elapsed();
+        run(
+            &mut |step| {
+                let code = window.update(|_, cx| view.read(cx).0.clone());
+                window.update(|_, cx| match step % 8 {
+                    0 => code.scroll_to_line(0, cx),
+                    1 => code.set_hover(Some(Position::new(0, 4)), cx),
+                    2 | 3 => {
+                        code.set_hover(None, cx);
+                        let mut viewport = code.viewport();
+                        viewport.y += if step % 8 == 2 { 18. } else { 720. };
+                        code.scroll_to(viewport, cx);
+                    }
+                    4 => code.scroll_to_line((step * 997) % lines, cx),
+                    5 => code.select(
+                        Some(SourceRange::new(Position::new(0, 0), Position::new(0, 3))),
+                        cx,
+                    ),
+                    6 if step % 128 == 6 => {
+                        code.set_decorations(None, cx);
+                    }
+                    7 if step % 128 == 7 => {
+                        code.set_decorations(Some(decorations.clone()), cx);
+                    }
+                    _ => {}
+                });
+                window.update(|window, cx| window.render_frame(cx));
+                settle(&mut window);
+                Ok(())
+            },
+            mount,
+        );
+        Ok(())
     }
 
     /// Sample the process cost of the same window without fixture content.
@@ -488,7 +866,7 @@ mod mounted {
     fn settle(window: &mut VisualTestContext) {
         window.run_until_parked();
         window.executor().advance_clock(FRAME);
-        window.run_until_parked();
+        finish_replay_frame(window);
     }
 
     fn bounds(window: &mut VisualTestContext, id: impl Into<ElementId>) -> Option<Bounds<Pixels>> {
@@ -541,10 +919,9 @@ mod mounted {
         Chain,
     }
 
-    pub fn gantt(graph: GanttGraph, run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_timeline::{GanttView, Task, TimeFormat, gantt_view::RULER_H};
-        let count = scaled(100_000) as u32;
-        let tasks = (0..count)
+    fn gantt_tasks(count: u32, graph: GanttGraph) -> Vec<guiraffe_timeline::Task> {
+        use guiraffe_timeline::Task;
+        (0..count)
             .map(|id| Task {
                 id,
                 name: format!("Task {id}"),
@@ -557,7 +934,13 @@ mod mounted {
                     _ => vec![],
                 },
             })
-            .collect();
+            .collect()
+    }
+
+    pub fn gantt(graph: GanttGraph, run: impl FnOnce(Frame)) -> Result<()> {
+        use guiraffe_timeline::{GanttView, TimeFormat, gantt_view::RULER_H};
+        let count = scaled(100_000) as u32;
+        let tasks = gantt_tasks(count, graph);
         let (mut window, _view) = mount("gantt_soak", guiraffe_timeline::init, |_, cx| {
             GanttView::new(tasks, TimeFormat::Seconds, cx)
         })?;
@@ -577,7 +960,7 @@ mod mounted {
                     hover(&mut window, at);
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -647,7 +1030,7 @@ mod mounted {
                     body + point(px(((i * 37) % 400) as f32), px(((i * 13) % 300) as f32)),
                 ),
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -700,7 +1083,7 @@ mod mounted {
                     window.simulate_click(at.unwrap_or(center), Modifiers::default());
                 }
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -733,7 +1116,7 @@ mod mounted {
             } else {
                 hover(&mut window, point(x, y));
             }
-            window.run_until_parked();
+            finish_replay_frame(&mut window);
             Ok(())
         });
         Ok(())
@@ -758,14 +1141,18 @@ mod mounted {
                 Sample {
                     id: index as u64,
                     parent: (depth > 0).then(|| index as u64 - 1),
-                    self_value: if depth == 499 { 1. } else { 0. },
+                    self_value: if depth == 499 || index + 1 == self.0 {
+                        1.
+                    } else {
+                        0.
+                    },
                     total: 1.,
                     label: LABELS[(depth + index / 500) % LABELS.len()],
                     package: "bench",
                 }
             }
         }
-        let frames = scaled(10_000_000).div_ceil(500) * 500;
+        let frames = scaled(10_000_000);
         let (mut window, view) = open("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
             cx.new(|cx| {
                 FlameGraph::from_source(Arc::new(Profile(frames)), cx)
@@ -800,7 +1187,7 @@ mod mounted {
                     6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
                     _ => hover(&mut window, at),
                 }
-                window.run_until_parked();
+                finish_replay_frame(&mut window);
                 Ok(())
             },
             mount,
@@ -895,7 +1282,7 @@ mod mounted {
             }
             _ => hover(window, row + point(px(40.), px(0.))),
         }
-        window.run_until_parked();
+        finish_replay_frame(window);
     }
 
     /// TreeList: 1,000,000 nodes with all 100,000 branches expanded.
@@ -960,14 +1347,9 @@ mod mounted {
     }
 
     /// PropertyGrid: 100,000 groups of nine properties (1,000,001 rows) all expanded.
-    pub fn property_grid(run: impl FnOnce(Frame)) -> Result<()> {
+    fn settings(groups: usize) -> Rc<Settings> {
         use guiraffe_tree::Value;
-        let groups = scaled(100_000);
-        println!(
-            "property_groups={groups} visible_rows={}",
-            1 + groups * (1 + PROPERTIES_PER_GROUP)
-        );
-        let source = Rc::new(Settings {
+        Rc::new(Settings {
             groups: Forest::new(groups, PROPERTIES_PER_GROUP),
             values: [
                 Value::Number(0.75),
@@ -982,7 +1364,16 @@ mod mounted {
                 Value::Enum("Multiply".into()),
             ],
             choices: vec!["Normal".into(), "Multiply".into(), "Screen".into()],
-        });
+        })
+    }
+
+    pub fn property_grid(run: impl FnOnce(Frame)) -> Result<()> {
+        let groups = scaled(100_000);
+        println!(
+            "property_groups={groups} visible_rows={}",
+            1 + groups * (1 + PROPERTIES_PER_GROUP)
+        );
+        let source = settings(groups);
         let (mut window, view) = mount(
             "property_grid_soak",
             |_| {},
@@ -1042,9 +1433,10 @@ mod mounted {
 
     /// Markdown: a 50,000-line document, scrolled, with a streamed chunk
     /// appended every fourth frame.
-    pub fn markdown(run: impl FnOnce(Frame)) -> Result<()> {
+    pub fn markdown(started: Instant, run: impl FnOnce(Frame, Duration)) -> Result<()> {
         let source = document(scaled(50_000));
-        let (mut window, view) = mount(
+        raw_bytes(source.len());
+        let (mut window, view) = open(
             "markdown_soak",
             |_| {},
             |_, cx| {
@@ -1053,21 +1445,49 @@ mod mounted {
             },
         )?;
         let state = window.update(|_, cx| view.read(cx).0.clone());
-        let center = point(px(640.), px(400.));
-        run(&mut |i| {
-            if i % 4 == 0 {
-                let chunk = match (i / 4) % 64 {
-                    63 => format!("\n\n## Streamed {i}\n\n"),
-                    k if k % 16 == 15 => "\n\n".to_string(),
-                    _ => format!("token{i} "),
-                };
-                window.update(|_, cx| state.update(cx, |s, cx| s.append(&chunk, cx)));
-            } else {
-                wheel(&mut window, center, 0., -120. * sign(i, 256), false);
+        let published = |window: &mut VisualTestContext| {
+            window.update(|_, cx| {
+                state
+                    .read(cx)
+                    .text()
+                    .read(cx)
+                    .rendered_text()
+                    .source()
+                    .starts_with("# Chapter ")
+            })
+        };
+        window.update(|window, cx| window.render_frame(cx));
+        if !published(&mut window) {
+            window.run_until_parked();
+            window.update(|window, cx| window.render_frame(cx));
+            if !published(&mut window) {
+                return Err("Markdown document did not render".into());
             }
-            settle(&mut window);
-            Ok(())
-        });
+        }
+        let mount = started.elapsed();
+        settle(&mut window);
+        window.update(|window, cx| window.render_frame(cx));
+        window.run_until_parked();
+        println!("background_ready_us={}", started.elapsed().as_micros());
+
+        let center = point(px(640.), px(400.));
+        run(
+            &mut |i| {
+                if i % 4 == 0 {
+                    let chunk = match (i / 4) % 64 {
+                        63 => format!("\n\n## Streamed {i}\n\n"),
+                        k if k % 16 == 15 => "\n\n".to_string(),
+                        _ => format!("token{i} "),
+                    };
+                    window.update(|_, cx| state.update(cx, |s, cx| s.append(&chunk, cx)));
+                } else {
+                    wheel(&mut window, center, 0., -120. * sign(i, 256), false);
+                }
+                settle(&mut window);
+                Ok(())
+            },
+            mount,
+        );
         Ok(())
     }
 
@@ -1082,10 +1502,9 @@ mod mounted {
         }
     }
 
-    /// Mermaid: a ~500-node flowchart (tree plus cross links), zoomed and panned.
-    /// Each 32-frame cycle zooms, then pans, then idles so the zoom settle
-    /// re-rasterizes, as when a reader pauses.
-    pub fn mermaid(run: impl FnOnce(Frame)) -> Result<()> {
+    /// Sample Mermaid on the production executor with a window that draws to no display.
+    pub fn mermaid(started: Instant, short: bool) -> Result<()> {
+        use gpui_kit::{WindowingRequest, application};
         let nodes = scaled(500).max(2);
         let mut source = String::from("flowchart TD\n");
         for i in 0..nodes {
@@ -1097,54 +1516,216 @@ mod mounted {
                 source.push_str(&format!("  n{i} -.-> n{}\n", (i * 7) % nodes));
             }
         }
-        let (mut window, view) = mount(
-            "mermaid_soak",
-            |_| {},
-            |_, cx| {
-                let state = guiraffe_mermaid::MermaidView::create_state("diagram", cx);
-                state.update(cx, |s, cx| {
-                    let dark = guiraffe_core::GuiraffeTheme::global(cx).scheme
-                        == guiraffe_core::Scheme::Dark;
-                    s.set_source(source.into(), dark, cx)
-                });
-                cx.new(|_| MermaidHost(state))
-            },
-        )?;
-        for _ in 0..4 {
-            settle(&mut window);
-        }
-        let state = window.update(|_, cx| view.read(cx).0.clone());
-        let first_frame = window.update(|_, cx| {
-            let diagram = state.read(cx);
-            match (diagram.has_preview(), diagram.image()) {
-                (true, None) => Some("native preview"),
-                (_, Some(_)) => Some("raster"),
-                (false, None) => None,
-            }
-        });
-        let Some(first_frame) = first_frame else {
-            return Err("mermaid diagram did not render".into());
-        };
-        eprintln!("Mermaid first frame: {first_frame}");
-        let center = point(px(640.), px(380.));
-        run(&mut |i| {
-            let at = center
-                + point(
-                    px(((i * 37) % 200) as f32 - 100.),
-                    px(((i * 13) % 160) as f32 - 80.),
+        raw_bytes(source.len());
+        let result = Rc::new(std::cell::RefCell::new(None));
+        let output = result.clone();
+        application()
+            .with_windowing(WindowingRequest::Headless)
+            .run(move |cx| {
+                guiraffe_core::init(cx);
+                let window = gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            point(px(0.), px(0.)),
+                            size(px(1280.), px(800.)),
+                        ))),
+                        show: false,
+                        ..Default::default()
+                    },
+                    cx,
+                    |_, cx| {
+                        let state = guiraffe_mermaid::MermaidView::create_state("diagram", cx);
+                        state.update(cx, |s, cx| s.set_source(source.into(), false, cx));
+                        cx.new(|_| MermaidHost(state))
+                    },
                 );
-            match i % 32 {
-                0..4 => wheel(&mut window, at, 0., 40. * sign(i, 32), false),
-                8..16 => {
-                    let d = 20. * sign(i, 16);
-                    drag(&mut window, at, at + point(px(d), px(d * 0.5)));
-                }
-                _ => hover(&mut window, at),
+                let (window, view) = match window {
+                    Ok(window) => window,
+                    Err(error) => {
+                        *output.borrow_mut() = Some(Err(error.into()));
+                        cx.quit();
+                        return;
+                    }
+                };
+                cx.spawn(async move |cx| {
+                    let executor = cx.background_executor().clone();
+                    let result: Result<()> = async {
+                        let mut samples = None::<super::Samples>;
+                        let mut raster_size = None;
+                        let mut zoom_rasters = 0;
+                        let mut refined_index = 0;
+                        loop {
+                            let frame_started = Instant::now();
+                            if let Some(samples) = &samples
+                                && !samples.done()
+                            {
+                                cx.update(|cx| {
+                                    window.update(cx, |_, window, cx| {
+                                        mermaid_input(window, cx, samples.index - refined_index);
+                                    })
+                                })?;
+                            }
+                            let (frame, ready_size) = cx.update(|cx| {
+                                window.update(cx, |_, window, cx| {
+                                    window.draw(cx).clear(cx);
+                                    let diagram = view.read(cx).0.read(cx);
+                                    let frame = if diagram.has_preview() {
+                                        Some("preview")
+                                    } else if diagram.image().is_some() {
+                                        Some("raster")
+                                    } else {
+                                        None
+                                    };
+                                    match diagram.status() {
+                                        guiraffe_mermaid::view::Status::Failed(error) => {
+                                            Err(error.clone())
+                                        }
+                                        guiraffe_mermaid::view::Status::Ready => Ok((
+                                            frame,
+                                            diagram.image().map(|image| image.image.size(0)),
+                                        )),
+                                        _ => Ok((frame, None)),
+                                    }
+                                })
+                            })??;
+                            if let Some(size) = ready_size {
+                                match raster_size.replace(size) {
+                                    None => {
+                                        println!(
+                                            "refined_ready_us={}",
+                                            started.elapsed().as_micros()
+                                        );
+                                        refined_index = samples.as_ref().map_or(0, |s| s.index + 1);
+                                        // Start the refined interaction at 1× to exercise
+                                        // zoom-dependent raster sizes after the preview.
+                                        cx.update(|cx| {
+                                            let diagram = view.read(cx).0.clone();
+                                            diagram
+                                                .update(cx, |diagram, cx| diagram.reset_zoom(cx));
+                                        });
+                                    }
+                                    Some(previous) if previous != size => zoom_rasters += 1,
+                                    Some(_) => {}
+                                }
+                            } else if raster_size.is_none()
+                                && started.elapsed() >= Duration::from_secs(30)
+                            {
+                                break Err("Mermaid refinement timed out".into());
+                            }
+                            if let Some(samples) = &mut samples {
+                                let elapsed = frame_started.elapsed();
+                                if !samples.done() {
+                                    samples.record(elapsed);
+                                }
+                                executor
+                                    .timer(Duration::from_micros(8_334).saturating_sub(elapsed))
+                                    .await;
+                                if !samples.done() {
+                                    samples.finish_interval()?;
+                                }
+                                if samples.done()
+                                    && (raster_size.is_some() || samples.limit.is_some())
+                                {
+                                    println!("zoom_raster_changes={zoom_rasters}");
+                                    if samples.profile_frames.is_none() && zoom_rasters == 0 {
+                                        break Err(
+                                            "Mermaid soak did not exercise zoom re-rasterization"
+                                                .into(),
+                                        );
+                                    }
+                                    break samples.result();
+                                }
+                            } else if let Some(frame) = frame {
+                                eprintln!("Mermaid first frame: {frame}");
+                                samples = Some(super::Samples::new(started.elapsed(), short));
+                            } else {
+                                executor.timer(Duration::from_millis(1)).await;
+                            }
+                        }
+                    }
+                    .await;
+                    *output.borrow_mut() = Some(result);
+                    cx.update(|cx| cx.quit());
+                })
+                .detach();
+            });
+        result
+            .take()
+            .ok_or("Mermaid sample stopped before completion")?
+    }
+
+    fn mermaid_input(window: &mut Window, cx: &mut App, i: usize) {
+        use gpui_kit::{InputEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+        let at = point(px(640.), px(380.))
+            + point(
+                px(((i * 37) % 200) as f32 - 100.),
+                px(((i * 13) % 160) as f32 - 80.),
+            );
+        match i % 32 {
+            0..4 => {
+                // Inverse of the +40 px wheel step keeps the zoom cycling.
+                let dy = if sign(i, 32) > 0.0 {
+                    40.0
+                } else {
+                    40.0 * (1.0 / 1.15 - 1.0) / 0.15
+                };
+                window.dispatch_event(
+                    ScrollEvent {
+                        position: at,
+                        delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+                        modifiers: Modifiers::default(),
+                        touch_phase: TouchPhase::Moved,
+                        source: ScrollSource::Pointer,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
             }
-            settle(&mut window);
-            Ok(())
-        });
-        Ok(())
+            8..16 => {
+                let d = 20. * sign(i, 16);
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: at,
+                        button: MouseButton::Left,
+                        click_count: 1,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                for step in 1..=4 {
+                    window.dispatch_event(
+                        MouseMoveEvent {
+                            position: at + point(px(d), px(d * 0.5)) * (step as f32 / 4.),
+                            pressed_button: Some(MouseButton::Left),
+                            ..Default::default()
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                }
+                window.dispatch_event(
+                    MouseUpEvent {
+                        position: at + point(px(d), px(d * 0.5)),
+                        button: MouseButton::Left,
+                        click_count: 1,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+            _ => {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: at,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+        }
     }
 
     // -------------------------------------------------------------------- chat
@@ -1159,8 +1740,35 @@ mod mounted {
     /// Chat: 100,000-message history, scrolled while a reply streams one token
     /// per frame; each reply finishes after 400 tokens and the next begins.
     /// Reduced motion, as in the crate's own interaction tests.
+    fn chat_message(index: u64) -> guiraffe_chat::Message {
+        use guiraffe_chat::{Message, MessageId, Role};
+        let (role, text) = if index.is_multiple_of(2) {
+            (
+                Role::User,
+                format!(
+                    "Question {index}: how should the **cache** behave when entry {index} is evicted?"
+                ),
+            )
+        } else if index % 10 == 1 {
+            (
+                Role::Assistant,
+                format!(
+                    "Here is answer {index}.\n\n- keep the *hot* set\n- drop the cold tail\n\n```rust\nlet entry = cache.get({index});\n```\n"
+                ),
+            )
+        } else {
+            (
+                Role::Assistant,
+                format!(
+                    "Answer {index}: evict the least recently used entry and keep `stats` updated. See [docs](https://example.org/{index})."
+                ),
+            )
+        };
+        Message::new(MessageId(index + 1), role, text)
+    }
+
     pub fn chat(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_chat::{ChatState, Message, MessageId, Role};
+        use guiraffe_chat::ChatState;
         let count = scaled(100_000) as u64;
         let (mut window, view) = mount(
             "chat_soak",
@@ -1177,21 +1785,24 @@ mod mounted {
             |window, cx| {
                 let state = cx.new(|cx| ChatState::new(window, cx));
                 state.update(cx, |chat, cx| {
-                    for n in 0..count {
-                        let (role, text) = if n % 2 == 0 {
-                            (Role::User, format!("Question {n}: how should the **cache** behave when entry {n} is evicted?"))
-                        } else if n % 10 == 1 {
-                            (Role::Assistant, format!("Here is answer {n}.\n\n- keep the *hot* set\n- drop the cold tail\n\n```rust\nlet entry = cache.get({n});\n```\n"))
-                        } else {
-                            (Role::Assistant, format!("Answer {n}: evict the least recently used entry and keep `stats` updated. See [docs](https://example.org/{n})."))
-                        };
-                        chat.push_message(Message::new(MessageId(n + 1), role, text), cx);
+                    for index in 0..count {
+                        chat.push_message(chat_message(index), cx);
                     }
                 });
                 cx.new(|_| ChatHost(state))
             },
         )?;
         let state = window.update(|_, cx| view.read(cx).0.clone());
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            let total: usize = window.update(|_, cx| {
+                state
+                    .read(cx)
+                    .messages(cx)
+                    .map(|message| message.text.len())
+                    .sum()
+            });
+            raw_bytes(total + count as usize * 9);
+        }
         let history = require(&mut window, "chat-history")?;
         let mut producer = None;
         let mut tokens = 0usize;
@@ -1218,5 +1829,195 @@ mod mounted {
             Ok(())
         });
         Ok(())
+    }
+    #[cfg(all(test, target_os = "linux"))]
+    mod tests {
+        use super::{
+            ChatHost, MarkdownHost, chat, chat_message, document, empty, finish_replay_frame,
+            markdown, mount,
+        };
+        use gpui_kit::{AppContext as _, test::TestWindowExt as _};
+        use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
+        use std::{process::Command, time::Instant};
+
+        #[global_allocator]
+        static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+        const SCENARIO: &str = "GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO";
+
+        fn mounted_peak(test: &str, scenario: &str) -> u64 {
+            let output = Command::new(std::env::current_exe().expect("test executable"))
+                .args(["--exact", test, "--nocapture"])
+                .env(SCENARIO, scenario)
+                .env_remove("SOAK_SCALE")
+                .env_remove("SOAK_ITEMS")
+                .output()
+                .expect("run mount in isolated process");
+            assert!(
+                output.status.success(),
+                "scenario {scenario}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .find_map(|line| line.strip_prefix("mounted-test-rss-kib="))
+                .and_then(|value| value.parse().ok())
+                .expect("child peak RSS")
+        }
+
+        fn run_rss_child() -> bool {
+            if let Ok(scenario) = std::env::var(SCENARIO) {
+                match scenario.as_str() {
+                    "empty" => empty(|_| {}).expect("mount baseline"),
+                    "chat" => chat(|_| {}).expect("mount 100k chat history"),
+                    "markdown" => markdown(Instant::now(), |frame, _| {
+                        for index in 0..64 {
+                            frame(index).expect("scroll and append");
+                        }
+                    })
+                    .expect("mount 50k-line Markdown"),
+                    _ => panic!("unknown scenario {scenario}"),
+                }
+                let status = std::fs::read_to_string("/proc/self/status").expect("process status");
+                let peak = status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("VmHWM:"))
+                    .and_then(|value| value.split_whitespace().next())
+                    .expect("kernel peak RSS");
+                println!("mounted-test-rss-kib={peak}");
+                return true;
+            }
+            false
+        }
+
+        fn assert_rss_budget(test: &str, scenario: &str, raw_bytes: usize) {
+            let baseline = mounted_peak(test, "empty");
+            let loaded = mounted_peak(test, scenario);
+            let budget = (raw_bytes + raw_bytes / 4).div_ceil(1024) as u64 + 64 * 1024;
+            let delta = loaded.saturating_sub(baseline);
+            println!(
+                "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
+            );
+            assert!(
+                delta <= budget,
+                "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
+            );
+        }
+
+        #[test]
+        fn chat_history_rss_budget() {
+            if run_rss_child() {
+                return;
+            }
+            let raw_bytes: usize = (0..100_000)
+                .map(|index| chat_message(index).text.len())
+                .sum();
+            assert_rss_budget("mounted::tests::chat_history_rss_budget", "chat", raw_bytes);
+        }
+
+        #[test]
+        fn markdown_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget(
+                    "mounted::tests::markdown_rss_budget",
+                    "markdown",
+                    document(50_000).len(),
+                );
+            }
+        }
+
+        #[test]
+        fn replay_releases_test_text_at_the_frame_boundary() {
+            let (mut window, _) = mount(
+                "markdown-replay-text",
+                |_| {},
+                |_, cx| {
+                    let state = cx.new(|cx| guiraffe_markdown::MarkdownState::new("Text", cx));
+                    cx.new(|_| MarkdownHost(state))
+                },
+            )
+            .expect("Markdown mount");
+
+            window.update(|window, cx| {
+                window.render_frame(cx);
+                assert!(!gpui_kit::base::test_support::texts(window).is_empty());
+            });
+            finish_replay_frame(&mut window);
+            window.update(|window, _| {
+                assert!(gpui_kit::base::test_support::texts(window).is_empty());
+            });
+        }
+
+        #[test]
+        fn text_warm_repaint_work_does_not_grow_with_history() -> anyhow::Result<()> {
+            // Count the draw with caches enabled, outside test-window dispatch.
+            let count_draw = |window: &mut gpui_kit::VisualTestContext| {
+                window.update(|window, cx| {
+                    count_allocations(|| window.draw(cx).clear(cx)).map(|(_, counts)| counts)
+                })
+            };
+            let markdown_allocs = |lines| {
+                let (mut window, _) = mount(
+                    "markdown-warm-allocation",
+                    |_| {},
+                    |_, cx| {
+                        let state =
+                            cx.new(|cx| guiraffe_markdown::MarkdownState::new(document(lines), cx));
+                        cx.new(|_| MarkdownHost(state))
+                    },
+                )
+                .expect("Markdown mount");
+                for _ in 0..4 {
+                    window.update(|window, cx| window.draw(cx).clear(cx));
+                }
+                count_draw(&mut window)
+            };
+            let chat_allocs = |rows| {
+                let (mut window, _) = mount(
+                    "chat-warm-allocation",
+                    |cx| {
+                        guiraffe_chat::init(cx);
+                        guiraffe_motion::MotionPrefs::set(
+                            guiraffe_motion::MotionPrefs {
+                                reduced: true,
+                                ..guiraffe_motion::MotionPrefs::global(cx)
+                            },
+                            cx,
+                        );
+                    },
+                    |window, cx| {
+                        let state = cx.new(|cx| guiraffe_chat::ChatState::new(window, cx));
+                        state.update(cx, |chat, cx| {
+                            // The tail-following viewport sees the same message IDs.
+                            for id in (1..=rows).rev() {
+                                chat.push_message(
+                                    guiraffe_chat::Message::new(
+                                        guiraffe_chat::MessageId(id),
+                                        guiraffe_chat::Role::User,
+                                        "Same visible **message**",
+                                    ),
+                                    cx,
+                                );
+                            }
+                        });
+                        cx.new(|_| ChatHost(state))
+                    },
+                )
+                .expect("Chat mount");
+                for _ in 0..4 {
+                    window.update(|window, cx| window.draw(cx).clear(cx));
+                }
+                count_draw(&mut window)
+            };
+            let markdown_small = markdown_allocs(10_000)?;
+            let markdown_large = markdown_allocs(50_000)?;
+            let chat_small = chat_allocs(10_000)?;
+            let chat_large = chat_allocs(100_000)?;
+            eprintln!("Markdown: {markdown_small:?} -> {markdown_large:?}");
+            eprintln!("Chat: {chat_small:?} -> {chat_large:?}");
+            assert_eq!(markdown_small, markdown_large);
+            assert_eq!(chat_small, chat_large);
+            Ok(())
+        }
     }
 }

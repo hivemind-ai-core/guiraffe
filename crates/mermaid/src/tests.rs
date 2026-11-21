@@ -217,6 +217,13 @@ fn zooming_in_rerasterizes_sharp_once_zooming_settles(cx: &mut TestAppContext) {
         })
     };
     let (before, natural_before) = px_width(cx);
+    let current_image = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let state = host.read(cx).diagram.read(cx);
+            state.image().expect("paintable image").clone()
+        })
+    };
+    let original = current_image(cx);
     cx.update(|cx| {
         let state = host.read(cx).diagram.clone();
         state.update(cx, |s, cx| {
@@ -231,10 +238,18 @@ fn zooming_in_rerasterizes_sharp_once_zooming_settles(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_millis(50));
     cx.executor().run_until_parked();
     assert_eq!(px_width(cx).0, before, "no re-raster while zooming");
+    assert!(std::sync::Arc::ptr_eq(
+        &original.image,
+        &current_image(cx).image
+    ));
     settle(cx);
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.executor().run_until_parked();
     let (after, natural_after) = px_width(cx);
+    assert!(std::sync::Arc::ptr_eq(
+        &original.svg,
+        &current_image(cx).svg
+    ));
     assert!(
         after > before * 3 / 2,
         "denser raster after zoom: {before} -> {after}"

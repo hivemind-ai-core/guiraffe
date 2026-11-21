@@ -1,13 +1,21 @@
-use crate::{Children, Navigation, NodeId, TreeModel, TreeSource};
+use crate::geometry::RowGeometry;
+use crate::search::{SearchScan, match_range};
+use crate::{
+    Children, Navigation, NodeId, Property, PropertyOptions, TreeModel, TreeSource, Value,
+};
 use gpui_kit::base::Selectable;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
     ScrollEvent, SharedString, StatefulInteractiveElement, Styled, TestSupportExt, Window,
     component::{
+        Sizable, Size as ControlSize,
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
-        input::{Input, InputEvent, InputState},
+        color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
+        input::{Input, InputEvent, InputState, Textarea, TextareaState},
+        menu::{ContextMenuExt, PopupMenuItem},
+        slider::{Slider, SliderEvent, SliderState, SliderValue},
     },
     div, px,
 };
@@ -15,54 +23,40 @@ use guiraffe_core::{
     GuiraffeTheme, Variant,
     control::{focus_ring, ring_visible},
 };
-use std::{rc::Rc, time::Instant};
+use std::{cell::Cell, rc::Rc, time::Instant};
 
 const ROW: f64 = 36.;
+/// Nodes visited per search step before yielding to the UI thread.
+const SEARCH_BATCH: usize = 512;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Value {
-    Text(String),
-    Number(f64),
-    Bool(bool),
-    Enum(String),
-    Colour(u32),
+/// Default row height for a TreeList or PropertyGrid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowDensity {
+    Compact,
+    #[default]
+    Default,
+    Comfortable,
 }
 
-impl Value {
-    fn text(&self) -> String {
+impl RowDensity {
+    fn height(self) -> f64 {
         match self {
-            Self::Text(s) | Self::Enum(s) => s.clone(),
-            Self::Number(n) => n.to_string(),
-            Self::Bool(b) => b.to_string(),
-            Self::Colour(rgb) => format!("#{rgb:06x}"),
-        }
-    }
-
-    fn parse(&self, text: &str) -> Option<Self> {
-        match self {
-            Self::Text(_) => Some(Self::Text(text.to_owned())),
-            Self::Number(_) => text
-                .parse::<f64>()
-                .ok()
-                .filter(|n| n.is_finite())
-                .map(Self::Number),
-            Self::Colour(_) => {
-                let digits = text.strip_prefix('#')?;
-                (digits.len() == 6)
-                    .then(|| u32::from_str_radix(digits, 16).ok())
-                    .flatten()
-                    .map(Self::Colour)
-            }
-            _ => None,
+            Self::Compact => 28.,
+            Self::Default => ROW,
+            Self::Comfortable => 44.,
         }
     }
 }
 
-pub struct Property<'a> {
-    pub value: &'a Value,
-    pub default: &'a Value,
-    pub choices: &'a [String],
-    pub read_only: bool,
+/// Viewport decoration options shared by TreeList and PropertyGrid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RowStyle {
+    pub density: RowDensity,
+    pub alternating: bool,
+    pub grid_lines: bool,
+    pub indent_guides: bool,
+    pub group_headers: bool,
+    pub sticky_headers: bool,
 }
 
 pub trait TreeData: TreeSource {
@@ -84,6 +78,9 @@ pub trait TreeData: TreeSource {
     fn property(&self, _: NodeId) -> Option<Property<'_>> {
         None
     }
+    fn property_options(&self, _: NodeId) -> PropertyOptions<'_> {
+        PropertyOptions::default()
+    }
     fn validate(&self, _: NodeId, _: &Value) -> Result<(), String> {
         Ok(())
     }
@@ -96,12 +93,71 @@ pub enum TreeEvent {
     Checked(NodeId, bool),
     Reorder { node: NodeId, before: NodeId },
     Edited(NodeId, Value),
+    PickPath(NodeId),
+}
+
+fn row_control_size(height: f32) -> ControlSize {
+    if height <= 28. {
+        ControlSize::XSmall
+    } else {
+        ControlSize::Medium
+    }
+}
+
+fn text_height(text: &str, max_rows: usize) -> f64 {
+    (text.split('\n').take(max_rows).count().max(1) * 22 + 14) as f64
 }
 
 struct Edit {
     id: NodeId,
-    input: Entity<InputState>,
-    _subscription: gpui_kit::Subscription,
+    input: EditorInput,
+    height: Option<f64>,
+    _subscriptions: Vec<gpui_kit::Subscription>,
+}
+
+enum EditorInput {
+    Single(Entity<InputState>),
+    Multiline(Entity<TextareaState>),
+    Components(Vec<Entity<InputState>>),
+}
+
+impl EditorInput {
+    fn value(&self, cx: &gpui_kit::App) -> SharedString {
+        match self {
+            Self::Single(input) => input.read(cx).value(),
+            Self::Multiline(input) => input.read(cx).value(),
+            Self::Components(inputs) => inputs
+                .iter()
+                .map(|input| input.read(cx).value().to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+                .into(),
+        }
+    }
+
+    fn focus_adjacent(&self, reverse: bool, window: &mut Window, cx: &mut gpui_kit::App) -> bool {
+        let Self::Components(inputs) = self else {
+            return false;
+        };
+        let Some(current) = inputs
+            .iter()
+            .position(|input| input.read(cx).focus_handle(cx).is_focused(window))
+        else {
+            return false;
+        };
+        let next = if reverse {
+            current.checked_sub(1)
+        } else {
+            Some(current + 1)
+        };
+        if let Some(input) = next.and_then(|index| inputs.get(index)) {
+            let focus = input.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 pub struct TreeView<const PROPERTIES: bool> {
@@ -111,9 +167,119 @@ pub struct TreeView<const PROPERTIES: bool> {
     tab_stop: bool,
     scroll: f64,
     height: f32,
+    row_style: RowStyle,
+    geometry: RowGeometry,
+    split: Option<Split>,
+    split_origin: f32,
+    search: Option<(Entity<InputState>, gpui_kit::Subscription)>,
+    filter: Option<Filter>,
+    show_advanced: bool,
+    expand_task: Option<gpui_kit::Task<()>>,
+    colour_picker: Option<(NodeId, Entity<ColorPickerState>, gpui_kit::Subscription)>,
+    slider: Option<(NodeId, Entity<SliderState>, gpui_kit::Subscription)>,
+    scrub: Option<Scrub>,
     drag: Option<(NodeId, gpui_kit::Point<gpui_kit::Pixels>)>,
     edit: Option<Edit>,
-    error: Option<String>,
+    error: Option<(NodeId, String)>,
+}
+
+struct Filter {
+    query: String,
+    ranks: Vec<usize>,
+    task: Option<gpui_kit::Task<()>>,
+    pending: bool,
+}
+
+struct Scrub {
+    id: NodeId,
+    start: f32,
+    initial: f64,
+    preview: f64,
+}
+
+struct Split {
+    ratio: f32,
+    key: Option<String>,
+    width: Rc<Cell<f32>>,
+    dragging: bool,
+}
+
+impl Split {
+    fn clamp(&self, ratio: f32) -> f32 {
+        let margin = (96. / self.width.get().max(1.)).min(0.5);
+        ratio.clamp(margin, 1. - margin)
+    }
+}
+
+impl<const P: bool> TreeView<P> {
+    /// Enable the property inspector toolbar and persisted split together.
+    /// This builder leaves TreeList unchanged.
+    pub fn inspector_controls(
+        self,
+        key: impl Into<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        if P {
+            self.searchable(window, cx).persist_key(key, cx)
+        } else {
+            self
+        }
+    }
+
+    /// Show a search box that filters every loaded property, opening collapsed groups that
+    /// contain matches and keeping each match's ancestors as its path.
+    pub fn searchable(mut self, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        if !P {
+            return self;
+        }
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter properties"));
+        let subscription = cx.subscribe(&input, |this, input, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                let query = input.read(cx).value().trim().to_lowercase();
+                if this
+                    .filter
+                    .as_ref()
+                    .is_none_or(|filter| filter.query != query)
+                {
+                    this.filter_rows(query, true, cx);
+                }
+            }
+        });
+        self.search = Some((input, subscription));
+        self
+    }
+
+    /// Enable a draggable divider with an initial name-column fraction.
+    pub fn split_ratio(mut self, ratio: f32) -> Self {
+        if P && ratio.is_finite() {
+            self.split = Some(Split {
+                ratio: ratio.clamp(0.05, 0.95),
+                key: None,
+                width: Rc::new(Cell::new(0.)),
+                dragging: false,
+            });
+        }
+        self
+    }
+
+    /// Restore and save the split ratio through the application's layout store.
+    pub fn persist_key(self, key: impl Into<String>, cx: &mut Context<Self>) -> Self {
+        let key = key.into();
+        let initial = self.split.as_ref().map_or(0.5, |split| split.ratio);
+        if guiraffe_layout::layout_store(cx).is_none() {
+            cx.set_global(guiraffe_layout::LayoutStore::in_memory());
+        }
+        let ratio = guiraffe_layout::layout_store(cx)
+            .and_then(|store| store.splitter_sizes(&key))
+            .and_then(|sizes| sizes.get(0))
+            .unwrap_or(initial);
+        let mut this = self.split_ratio(ratio);
+        if let Some(split) = &mut this.split {
+            split.key = Some(key);
+        }
+        this
+    }
 }
 
 pub type TreeList = TreeView<false>;
@@ -130,6 +296,17 @@ impl<const P: bool> TreeView<P> {
             tab_stop: false,
             height: 288.,
             scroll: 0.,
+            row_style: RowStyle::default(),
+            geometry: RowGeometry::default(),
+            split: None,
+            split_origin: 0.,
+            search: None,
+            filter: None,
+            show_advanced: true,
+            expand_task: None,
+            colour_picker: None,
+            slider: None,
+            scrub: None,
             drag: None,
             edit: None,
             error: None,
@@ -141,30 +318,305 @@ impl<const P: bool> TreeView<P> {
         self
     }
 
+    pub fn row_style(mut self, style: RowStyle) -> Self {
+        self.row_style = style;
+        self.rebuild_geometry();
+        self
+    }
+
+    pub fn set_row_style(&mut self, style: RowStyle, cx: &mut Context<Self>) {
+        if self.row_style != style {
+            self.row_style = style;
+            self.rebuild_geometry();
+            self.clamp_scroll();
+            cx.notify();
+        }
+    }
+
+    /// Override heights by stable node ID. Heights are expressed in pixels.
+    pub fn row_heights(mut self, overrides: impl IntoIterator<Item = (NodeId, f32)>) -> Self {
+        self.geometry.set(overrides);
+        self.rebuild_geometry();
+        self
+    }
+
+    pub fn set_row_heights(
+        &mut self,
+        overrides: impl IntoIterator<Item = (NodeId, f32)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.geometry.set(overrides);
+        self.rebuild_geometry();
+        self.clamp_scroll();
+        cx.notify();
+    }
+
+    fn rebuild_geometry(&mut self) {
+        let model = &self.model;
+        let filter = &self.filter;
+        let editor = self
+            .edit
+            .as_ref()
+            .and_then(|edit| Some((edit.id, edit.height?)));
+        self.geometry
+            .rebuild(self.row_style.density.height(), editor, |id| {
+                let rank = model.row_index(id)?;
+                match filter {
+                    Some(filter) => filter.ranks.binary_search(&rank).ok(),
+                    None => Some(rank),
+                }
+            });
+    }
+
+    /// Open loaded branches in batches. Unloaded branches remain closed.
+    pub fn expand_loaded(&mut self, cx: &mut Context<Self>) {
+        if let Some(filter) = &mut self.filter {
+            filter.pending = true;
+            filter.ranks.clear();
+            filter.task = None;
+            self.clamp_scroll();
+            cx.notify();
+        }
+        let executor = cx.background_executor().clone();
+        self.expand_task = Some(cx.spawn(async move |view, cx| {
+            let mut start = 0;
+            loop {
+                executor.timer(std::time::Duration::from_millis(1)).await;
+                let Ok(next) = view.update(cx, |this, cx| {
+                    let viewport_end = this.window().end;
+                    let mut changed = false;
+                    let mut visible_change = false;
+                    let next = start + 32;
+                    for rank in start..next {
+                        let Some(row) = this.model.row(rank) else {
+                            break;
+                        };
+                        if !this.model.expanded(row.id)
+                            && let Children::Ready(children) = this.source.children(row.id)
+                            && !children.is_empty()
+                        {
+                            this.model.set_expanded(row.id, true, this.source.as_ref());
+                            changed = true;
+                            visible_change |= rank < viewport_end;
+                        }
+                    }
+                    if changed {
+                        this.rebuild_geometry();
+                    }
+                    if visible_change {
+                        cx.notify();
+                    }
+                    if next >= this.model.row_count() {
+                        this.restart_filter(cx);
+                        None
+                    } else {
+                        Some(next)
+                    }
+                }) else {
+                    break;
+                };
+                let Some(next) = next else { break };
+                start = next;
+            }
+        }));
+    }
+
+    pub fn collapse_all(&mut self, cx: &mut Context<Self>) {
+        self.expand_task = None;
+        if self.model.collapse_all(self.source.as_ref()) {
+            self.rebuild_geometry();
+            self.restart_filter(cx);
+            self.clamp_scroll();
+            cx.notify();
+        }
+    }
+
+    /// Replace the filter projection. A non-empty query searches every loaded node; with
+    /// `reveal`, collapsed branches that contain matches open when the scan completes. An empty
+    /// query only hides advanced rows of the current projection.
+    fn filter_rows(&mut self, query: String, reveal: bool, cx: &mut Context<Self>) {
+        if query.is_empty() && self.show_advanced {
+            if self.filter.take().is_some() {
+                self.scroll = 0.;
+                self.rebuild_geometry();
+                cx.notify();
+            }
+            return;
+        }
+        self.scroll = 0.;
+        let executor = cx.background_executor().clone();
+        let task = if query.is_empty() {
+            cx.spawn(async move |view, cx| {
+                let mut matches = Vec::new();
+                let mut start = 0;
+                loop {
+                    executor.timer(std::time::Duration::from_millis(1)).await;
+                    let Ok((end, done)) = view.read_with(cx, |this, _| {
+                        let count = this.model.row_count();
+                        let end = (start + SEARCH_BATCH).min(count);
+                        for rank in start..end {
+                            if let Some(row) = this.model.row(rank)
+                                && !this.source.property_options(row.id).advanced
+                            {
+                                matches.push(rank);
+                            }
+                        }
+                        (end, end == count)
+                    }) else {
+                        break;
+                    };
+                    if done {
+                        let _ = view.update(cx, |this, cx| this.finish_filter(matches, cx));
+                        break;
+                    }
+                    start = end;
+                }
+            })
+        } else {
+            let mut scan = SearchScan::new(query.clone(), reveal);
+            cx.spawn(async move |view, cx| {
+                loop {
+                    executor.timer(std::time::Duration::from_millis(1)).await;
+                    let Ok(done) = view.read_with(cx, |this, _| this.search_step(&mut scan)) else {
+                        break;
+                    };
+                    if done {
+                        let _ = view.update(cx, |this, cx| {
+                            let source = this.source.clone();
+                            let ranks = scan.finish(source.as_ref(), &mut this.model);
+                            this.finish_filter(ranks, cx);
+                        });
+                        break;
+                    }
+                }
+            })
+        };
+        self.filter = Some(Filter {
+            query,
+            ranks: Vec::new(),
+            task: Some(task),
+            pending: true,
+        });
+        self.rebuild_geometry();
+        cx.notify();
+    }
+
+    fn search_step(&self, scan: &mut SearchScan) -> bool {
+        let show_advanced = self.show_advanced;
+        let source = self.source.as_ref();
+        scan.step(source, &self.model, SEARCH_BATCH, |id| {
+            show_advanced || !source.property_options(id).advanced
+        })
+    }
+
+    fn finish_filter(&mut self, ranks: Vec<usize>, cx: &mut Context<Self>) {
+        if let Some(filter) = &mut self.filter {
+            filter.ranks = ranks;
+            filter.pending = false;
+            filter.task = None;
+            self.rebuild_geometry();
+            self.clamp_scroll();
+            cx.notify();
+        }
+    }
+
+    /// Type `query` into the search box and finish the search synchronously.
+    #[cfg(test)]
+    fn search_now(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let needle = query.trim().to_lowercase();
+        // Install the filter first so the input's change event sees an unchanged query.
+        self.filter = Some(Filter {
+            query: needle.clone(),
+            ranks: Vec::new(),
+            task: None,
+            pending: true,
+        });
+        if let Some((input, _)) = &self.search {
+            input.update(cx, |input, cx| input.set_value(query, window, cx));
+        }
+        let mut scan = SearchScan::new(needle, true);
+        while !self.search_step(&mut scan) {}
+        let source = self.source.clone();
+        let ranks = scan.finish(source.as_ref(), &mut self.model);
+        self.finish_filter(ranks, cx);
+    }
+
+    fn restart_filter(&mut self, cx: &mut Context<Self>) {
+        if let Some(filter) = &self.filter {
+            self.filter_rows(filter.query.clone(), false, cx);
+        }
+    }
+
+    fn row_count(&self) -> usize {
+        self.filter
+            .as_ref()
+            .map_or_else(|| self.model.row_count(), |filter| filter.ranks.len())
+    }
+
+    fn model_rank(&self, display: usize) -> Option<usize> {
+        match &self.filter {
+            Some(filter) => filter.ranks.get(display).copied(),
+            None => Some(display),
+        }
+    }
+
+    fn display_rank(&self, id: NodeId) -> Option<usize> {
+        let rank = self.model.row_index(id)?;
+        match &self.filter {
+            Some(filter) => filter.ranks.binary_search(&rank).ok(),
+            None => Some(rank),
+        }
+    }
+
+    fn row_top(&self, rank: usize) -> f64 {
+        self.geometry.top(rank, self.row_style.density.height())
+    }
+
+    fn window(&self) -> std::ops::Range<usize> {
+        self.geometry.window(
+            self.row_count(),
+            self.scroll,
+            f64::from(self.height),
+            self.row_style.density.height(),
+        )
+    }
+
     pub fn replace_source(&mut self, source: Rc<dyn TreeData>, cx: &mut Context<Self>) {
+        self.expand_task = None;
         self.source = source;
         self.model.refresh(self.source.as_ref());
+        if self.edit.as_ref().is_some_and(|edit| {
+            self.model.row_index(edit.id).is_none()
+                || self
+                    .source
+                    .property(edit.id)
+                    .is_none_or(|property| property.read_only)
+        }) {
+            self.edit = None;
+            self.error = None;
+        }
+        self.rebuild_geometry();
+        self.restart_filter(cx);
         self.clamp_scroll();
         cx.notify();
     }
 
     pub fn set_expanded(&mut self, id: NodeId, open: bool, cx: &mut Context<Self>) {
-        let rank = self
+        self.expand_task = None;
+        let previously_visible = self
             .model
             .row_index(id)
-            .filter(|_| self.model.expanded(id) != open);
-        let viewport_end = self
-            .model
-            .window(self.scroll, f64::from(self.height), ROW)
-            .end;
-        let cursor = self.model.cursor();
+            .filter(|_| self.model.expanded(id) != open)
+            .map(|rank| (rank < self.window().end, self.model.cursor()));
         if let Some(id) = self.model.set_expanded(id, open, self.source.as_ref()) {
             cx.emit(TreeEvent::LoadChildren(id));
         }
-        if let Some(rank) = rank {
+        if let Some((in_viewport, cursor)) = previously_visible {
+            self.rebuild_geometry();
+            self.restart_filter(cx);
             let scroll = self.scroll;
             self.clamp_scroll();
-            if rank < viewport_end || self.scroll != scroll || self.model.cursor() != cursor {
+            if in_viewport || self.scroll != scroll || self.model.cursor() != cursor {
                 cx.notify();
             }
         }
@@ -173,15 +625,38 @@ impl<const P: bool> TreeView<P> {
     fn clamp_scroll(&mut self) {
         self.scroll = self.scroll.clamp(
             0.,
-            (self.model.row_count() as f64 * ROW - f64::from(self.height)).max(0.),
+            (self.row_top(self.row_count()) - f64::from(self.height)).max(0.),
         );
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.as_str();
+        if key == "escape" && self.edit.is_none() {
+            let picker = self.colour_picker.take().is_some();
+            let slider = self.slider.take().is_some();
+            let scrub = self.scrub.take().is_some();
+            if picker || slider || scrub {
+                if self.tab_stop {
+                    window.focus(&self.focus, cx);
+                }
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+        }
+
+        if key == "tab"
+            && self.edit.is_some()
+            && self.tab_to_editor(event.keystroke.modifiers.shift, window, cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
         if self.edit.is_some() {
             if key == "escape" {
                 self.edit = None;
+                self.rebuild_geometry();
+                self.clamp_scroll();
                 self.error = None;
                 if self.tab_stop {
                     window.focus(&self.focus, cx);
@@ -189,6 +664,27 @@ impl<const P: bool> TreeView<P> {
                 cx.notify();
                 cx.stop_propagation();
             }
+            return;
+        }
+        let modifiers = event.keystroke.modifiers;
+        if P && (modifiers.control || modifiers.platform)
+            && let Some(id) = self
+                .model
+                .cursor()
+                .filter(|&id| self.display_rank(id).is_some())
+            && let Some(property) = self.source.property(id)
+        {
+            match key {
+                "c" => cx
+                    .write_to_clipboard(gpui_kit::ClipboardItem::new_string(property.value.text())),
+                "v" if !property.read_only => {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        self.commit_text(id, &text, cx);
+                    }
+                }
+                _ => return,
+            }
+            cx.stop_propagation();
             return;
         }
         let direction = match key {
@@ -201,17 +697,40 @@ impl<const P: bool> TreeView<P> {
             _ => None,
         };
         if let Some(direction) = direction {
-            if let Some(id) = self.model.navigate(direction, self.source.as_ref()) {
-                cx.emit(TreeEvent::LoadChildren(id));
+            if self.filter.is_some() {
+                let current = self.model.cursor().and_then(|id| self.display_rank(id));
+                let next = match direction {
+                    Navigation::Up => current.map_or(0, |i| i.saturating_sub(1)),
+                    Navigation::Down => current.map_or(0, |i| i.saturating_add(1)),
+                    Navigation::Home => 0,
+                    Navigation::End => self.row_count().saturating_sub(1),
+                    _ => return,
+                }
+                .min(self.row_count().saturating_sub(1));
+                if let Some(row) = self.model_rank(next).and_then(|rank| self.model.row(rank)) {
+                    self.model.select(row.id, false);
+                }
+            } else {
+                if matches!(direction, Navigation::Left | Navigation::Right) {
+                    self.expand_task = None;
+                }
+                if let Some(id) = self.model.navigate(direction, self.source.as_ref()) {
+                    cx.emit(TreeEvent::LoadChildren(id));
+                }
+                if matches!(direction, Navigation::Left | Navigation::Right) {
+                    self.rebuild_geometry();
+                }
             }
         } else if key == "enter"
             && P
-            && let Some(id) = self.model.cursor()
+            && let Some(id) = self
+                .model
+                .cursor()
+                .filter(|&id| self.display_rank(id).is_some())
             && let Some(property) = self.source.property(id).filter(|p| !p.read_only)
         {
             match property.value {
                 Value::Bool(value) => self.edit_value(id, Value::Bool(!value), cx),
-                Value::Enum(_) => return, // The individual choices are tab stops.
                 _ => self.start_edit(id, window, cx),
             }
         } else if matches!(key, "space" | "enter") {
@@ -230,34 +749,127 @@ impl<const P: bool> TreeView<P> {
             return;
         }
 
-        if let Some(index) = self.model.cursor().and_then(|id| self.model.row_index(id)) {
-            let top = index as f64 * ROW;
+        if let Some(index) = self.model.cursor().and_then(|id| self.display_rank(id)) {
+            let top = self.row_top(index);
+            let bottom = self.row_top(index + 1);
             self.scroll = self
                 .scroll
-                .clamp((top + ROW - f64::from(self.height)).max(0.), top);
+                .clamp((bottom - f64::from(self.height)).max(0.).min(top), top);
         }
         self.clamp_scroll();
         cx.notify();
         cx.stop_propagation();
     }
 
-    fn edit_value(&mut self, id: NodeId, value: Value, cx: &mut Context<Self>) {
-        if self
-            .source
-            .property(id)
-            .is_none_or(|property| property.read_only)
-        {
-            return;
+    fn tab_to_editor(
+        &mut self,
+        reverse: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(edit) = &self.edit else { return false };
+        let id = edit.id;
+        let Some(rank) = self.display_rank(id) else {
+            return false;
+        };
+        if edit.input.focus_adjacent(reverse, window, cx) {
+            return true;
         }
-        match self.source.validate(id, &value) {
-            Ok(()) => {
-                self.error = None;
-                self.edit = None;
-                cx.emit(TreeEvent::Edited(id, value));
+        let text = edit.input.value(cx);
+        self.commit_text(id, &text, cx);
+        if self.edit.is_some() {
+            return true;
+        }
+        let ranks = self.window();
+        let next = if reverse {
+            (ranks.start..rank)
+                .rev()
+                .find_map(|rank| self.inline_editor_at(rank))
+        } else {
+            (rank + 1..ranks.end).find_map(|rank| self.inline_editor_at(rank))
+        };
+        if let Some(next) = next {
+            self.model.select(next, false);
+            self.start_edit(next, window, cx);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn inline_editor_at(&self, rank: usize) -> Option<NodeId> {
+        let id = self.model.row(self.model_rank(rank)?)?.id;
+        let property = self.source.property(id)?;
+        (!property.read_only
+            && !matches!(
+                property.value,
+                Value::Bool(_) | Value::Enum(_) | Value::Flags(_)
+            ))
+        .then_some(id)
+    }
+
+    fn edit_value(&mut self, id: NodeId, value: Value, cx: &mut Context<Self>) {
+        let Some(property) = self.source.property(id).filter(|p| !p.read_only) else {
+            return;
+        };
+        let options = self.source.property_options(id);
+        let valid = match &value {
+            Value::Number(value) => {
+                value.is_finite()
+                    && options.min.is_none_or(|min| *value >= min)
+                    && options.max.is_none_or(|max| *value <= max)
             }
-            Err(error) => self.error = Some(error),
+            Value::Enum(value) => property.choices.contains(value),
+            Value::Flags(values) => values.iter().all(|value| property.choices.contains(value)),
+            _ => true,
+        };
+        let validation = if valid {
+            self.source.validate(id, &value)
+        } else {
+            Err("Value is outside the allowed range or choices".to_owned())
+        };
+        match validation {
+            Ok(()) => {
+                let mut redraw = self.error.take().is_some();
+                if self
+                    .colour_picker
+                    .as_ref()
+                    .is_some_and(|(row, _, _)| *row == id)
+                {
+                    self.colour_picker = None;
+                    redraw = true;
+                }
+                if self.slider.as_ref().is_some_and(|(row, _, _)| *row == id) {
+                    self.slider = None;
+                    redraw = true;
+                }
+                if self.edit.take().is_some() {
+                    redraw = true;
+                    self.rebuild_geometry();
+                    self.clamp_scroll();
+                }
+                cx.emit(TreeEvent::Edited(id, value));
+                if redraw {
+                    cx.notify();
+                }
+                return;
+            }
+            Err(error) => self.error = Some((id, error)),
         }
         cx.notify();
+    }
+
+    fn commit_text(&mut self, id: NodeId, text: &str, cx: &mut Context<Self>) {
+        if let Some(value) = self
+            .source
+            .property(id)
+            .and_then(|property| property.value.parse(text))
+        {
+            self.edit_value(id, value, cx);
+        } else {
+            self.error = Some((id, "Invalid value".to_owned()));
+            cx.notify();
+        }
     }
 
     fn start_edit(&mut self, id: NodeId, window: &mut Window, cx: &mut Context<Self>) {
@@ -268,101 +880,591 @@ impl<const P: bool> TreeView<P> {
         else {
             return;
         };
-        let text = property.value.text();
-        let input = cx.new(|cx| InputState::new(window, cx));
-        input.update(cx, |input, cx| input.set_value(text, window, cx));
-        let subscription = cx.subscribe_in(
-            &input,
-            window,
-            move |this, input, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    let text = input.read(cx).value();
-                    if let Some(value) = this
-                        .source
-                        .property(id)
-                        .and_then(|property| property.value.parse(&text))
-                    {
-                        this.edit_value(id, value, cx);
-                        if this.edit.is_none() && this.tab_stop {
-                            window.focus(&this.focus, cx);
-                        }
+        let options = self.source.property_options(id);
+        let text = if options.mixed {
+            String::new()
+        } else {
+            property.value.text()
+        };
+        let multiline = options
+            .multiline_rows
+            .filter(|_| matches!(property.value, Value::Text(_)))
+            .map(|rows| rows.clamp(2, 8));
+        let coordinates: &[f64] = match property.value {
+            Value::Vector(values) => values,
+            Value::Rect(values) => values,
+            _ => &[],
+        };
+        let (input, focus, height, subscriptions) = if !coordinates.is_empty() {
+            let values: Vec<_> = coordinates
+                .iter()
+                .map(|value| {
+                    if options.mixed {
+                        String::new()
                     } else {
-                        this.error = Some("Invalid value".to_owned());
+                        value.to_string()
+                    }
+                })
+                .collect();
+            let mut inputs = Vec::with_capacity(values.len());
+            let mut subscriptions = Vec::with_capacity(values.len());
+            for value in values {
+                let input = cx.new(|cx| InputState::new(window, cx));
+                input.update(cx, |input, cx| input.set_value(value, window, cx));
+                subscriptions.push(cx.subscribe_in(
+                    &input,
+                    window,
+                    move |this, _, event, window, cx| {
+                        if matches!(event, InputEvent::PressEnter { .. })
+                            && let Some(edit) = &this.edit
+                            && edit.id == id
+                        {
+                            let text = edit.input.value(cx);
+                            this.commit_text(id, &text, cx);
+                            if this.edit.is_none() && this.tab_stop {
+                                window.focus(&this.focus, cx);
+                            }
+                        }
+                    },
+                ));
+                inputs.push(input);
+            }
+            let Some(first) = inputs.first() else { return };
+            let focus = first.read(cx).focus_handle(cx);
+            (EditorInput::Components(inputs), focus, None, subscriptions)
+        } else if let Some(rows) = multiline {
+            let height = text_height(&text, rows);
+            let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, rows));
+            input.update(cx, |input, cx| input.set_value(text, window, cx));
+            let subscription = cx.subscribe(&input, move |this, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let height = text_height(&input.read(cx).value(), rows);
+                    if let Some(edit) = &mut this.edit
+                        && edit.id == id
+                        && edit.height != Some(height)
+                    {
+                        edit.height = Some(height);
+                        this.rebuild_geometry();
                         cx.notify();
                     }
                 }
-            },
-        );
-        let focus = input.read(cx).focus_handle(cx);
+            });
+            let focus = input.read(cx).focus_handle(cx);
+            (
+                EditorInput::Multiline(input),
+                focus,
+                Some(height),
+                vec![subscription],
+            )
+        } else {
+            let input = cx.new(|cx| InputState::new(window, cx));
+            input.update(cx, |input, cx| input.set_value(text, window, cx));
+            let subscription =
+                cx.subscribe_in(&input, window, move |this, input, event, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        this.commit_text(id, &input.read(cx).value(), cx);
+                        if this.edit.is_none() && this.tab_stop {
+                            window.focus(&this.focus, cx);
+                        }
+                    }
+                });
+            let focus = input.read(cx).focus_handle(cx);
+            (EditorInput::Single(input), focus, None, vec![subscription])
+        };
         window.focus(&focus, cx);
         self.error = None;
         self.edit = Some(Edit {
             id,
             input,
-            _subscription: subscription,
+            height,
+            _subscriptions: subscriptions,
         });
+        self.rebuild_geometry();
         cx.notify();
     }
 
-    fn property_cell(&self, id: NodeId, cx: &Context<Self>) -> Option<AnyElement> {
+    fn resize_split(&mut self, ratio: f32, save: bool, cx: &mut Context<Self>) {
+        if let Some(split) = &mut self.split {
+            let ratio = split.clamp(ratio);
+            if split.ratio != ratio {
+                split.ratio = ratio;
+                cx.notify();
+            }
+            if save
+                && let Some(key) = &split.key
+                && let Some(store) = guiraffe_layout::layout_store(cx)
+            {
+                store.save_splitter_sizes(
+                    key,
+                    &guiraffe_layout::SplitterSizes::from_pixels(&[px(ratio)]),
+                );
+            }
+        }
+    }
+
+    fn finish_split(&mut self, cx: &mut Context<Self>) {
+        if let Some(split) = &mut self.split
+            && split.dragging
+        {
+            split.dragging = false;
+            let ratio = split.ratio;
+            self.resize_split(ratio, true, cx);
+        }
+    }
+
+    fn fit_split(&mut self, cx: &mut Context<Self>) {
+        let Some(split) = &self.split else { return };
+        let longest = self
+            .window()
+            .filter_map(|display| {
+                self.model_rank(display)
+                    .and_then(|rank| self.model.row(rank))
+            })
+            .map(|row| {
+                let label = self.source.label(row.id);
+                44 + row.depth.min(45) * 16 + label.chars().take(256).count() * 8
+            })
+            .max()
+            .unwrap_or(96);
+        self.resize_split(longest as f32 / split.width.get().max(1.), true, cx);
+    }
+
+    fn open_colour_picker(&mut self, id: NodeId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Property {
+            value: Value::Colour(rgb),
+            read_only: false,
+            ..
+        }) = self.source.property(id)
+        else {
+            return;
+        };
+        let rgb = *rgb;
+        let state =
+            cx.new(|cx| ColorPickerState::new(window, cx).default_value(gpui_kit::rgb(rgb)));
+        state.update(cx, |state, cx| state.set_open(true, cx));
+        let subscription = cx.subscribe(&state, move |this, _, event, cx| {
+            if let ColorPickerEvent::Change(Some(colour)) = event {
+                let colour = gpui_kit::Rgba::from(*colour);
+                let rgb = |channel: f32| (channel.clamp(0., 1.) * 255.).round() as u32;
+                this.edit_value(
+                    id,
+                    Value::Colour(rgb(colour.r) << 16 | rgb(colour.g) << 8 | rgb(colour.b)),
+                    cx,
+                );
+            }
+        });
+        self.colour_picker = Some((id, state, subscription));
+        cx.notify();
+    }
+
+    fn open_slider(&mut self, id: NodeId, cx: &mut Context<Self>) {
+        let Some(Property {
+            value: Value::Number(number),
+            read_only: false,
+            ..
+        }) = self.source.property(id)
+        else {
+            return;
+        };
+        let Some((min, max, step)) = self.source.property_options(id).slider_range() else {
+            return;
+        };
+        let number = (*number as f32).clamp(min, max);
+        let state = cx.new(|_| {
+            SliderState::new()
+                .min(min)
+                .max(max)
+                .step(step)
+                .default_value(number)
+        });
+        let subscription = cx.subscribe(&state, move |this, _, event, cx| {
+            if let SliderEvent::Release(SliderValue::Single(value)) = event {
+                this.edit_value(id, Value::Number(f64::from(*value)), cx);
+            }
+        });
+        self.slider = Some((id, state, subscription));
+        cx.notify();
+    }
+
+    fn dragging_property(&self) -> bool {
+        self.scrub.is_some() || self.split.as_ref().is_some_and(|split| split.dragging)
+    }
+
+    fn move_property_drag(&mut self, x: f32, cx: &mut Context<Self>) {
+        if let Some(scrub) = &mut self.scrub
+            && let Some(value) = self
+                .source
+                .property_options(scrub.id)
+                .scrub_value(scrub.initial, x - scrub.start)
+            && scrub.preview != value
+        {
+            scrub.preview = value;
+            cx.notify();
+        }
+        if let Some(split) = &self.split
+            && split.dragging
+        {
+            self.resize_split(
+                (x - self.split_origin) / split.width.get().max(1.),
+                false,
+                cx,
+            );
+        }
+    }
+
+    fn finish_property_drag(&mut self, x: Option<f32>, cx: &mut Context<Self>) {
+        if let Some(scrub) = self.scrub.take() {
+            if let Some(x) = x
+                && let Some(value) = self
+                    .source
+                    .property_options(scrub.id)
+                    .scrub_value(scrub.initial, x - scrub.start)
+                && value != scrub.initial
+            {
+                self.edit_value(scrub.id, Value::Number(value), cx);
+            }
+            if scrub.preview != scrub.initial {
+                cx.notify();
+            }
+        }
+        self.finish_split(cx);
+    }
+
+    fn property_cell(&self, id: NodeId, row_height: f32, cx: &Context<Self>) -> Option<AnyElement> {
+        let size = row_control_size(row_height);
         let property = self.source.property(id)?;
-        let value = match property.value {
-            _ if property.read_only => div().child(property.value.text()).into_any_element(),
-            Value::Bool(value) => Checkbox::new(("property-bool", id as usize))
-                .accessibility_label(self.source.label(id).to_owned())
-                .tab_stop(self.tab_stop)
-                .checked(*value)
-                .on_change(cx.listener(move |this, value: &bool, _, cx| {
-                    this.edit_value(id, Value::Bool(*value), cx)
-                }))
-                .into_any_element(),
-            Value::Enum(value) => div()
-                .flex()
-                .gap(px(2.))
-                .children(property.choices.iter().map(|choice| {
-                    let selected = choice == value;
-                    let choice = choice.clone();
-                    Button::new(choice.clone())
-                        .tab_stop(self.tab_stop)
-                        .label(choice.clone())
-                        .selected(selected)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.edit_value(id, Value::Enum(choice.clone()), cx)
-                        }))
-                }))
-                .into_any_element(),
-            _ => match self.edit.as_ref().filter(|edit| edit.id == id) {
-                Some(edit) => Input::new(&edit.input)
-                    .aria_label(self.source.label(id).to_owned())
+        let text = || {
+            self.scrub
+                .as_ref()
+                .filter(|scrub| scrub.id == id)
+                .map_or_else(|| property.value.text(), |scrub| scrub.preview.to_string())
+        };
+        let options = self.source.property_options(id);
+        let editing = self.edit.as_ref().is_some_and(|edit| edit.id == id);
+        let value =
+            match property.value {
+                _ if property.read_only => div()
+                    .child(if options.mixed {
+                        "—".to_owned()
+                    } else {
+                        property.value.text()
+                    })
                     .into_any_element(),
-                None => Button::new(("property-value", id as usize))
+                _ if editing => {
+                    let label = self.source.label(id).to_owned();
+                    match &self.edit.as_ref()?.input {
+                        EditorInput::Single(input) => Input::new(input)
+                            .with_size(size)
+                            .aria_label(label)
+                            .w_full()
+                            .into_any_element(),
+                        EditorInput::Components(inputs) => div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .gap(px(4.))
+                            .children(inputs.iter().zip(["X", "Y", "W", "H"]).map(
+                                |(input, field)| {
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(2.))
+                                        .child(field)
+                                        .child(
+                                            Input::new(input)
+                                                .with_size(size)
+                                                .aria_label(format!("{label} {field}"))
+                                                .w_full(),
+                                        )
+                                },
+                            ))
+                            .into_any_element(),
+                        EditorInput::Multiline(input) => div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .child(Textarea::new(input).aria_label(label).w_full().flex_1())
+                            .child(
+                                Button::new(("property-text-save", id as usize))
+                                    .with_size(size)
+                                    .label("Save")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(Edit {
+                                            input: EditorInput::Multiline(input),
+                                            ..
+                                        }) = &this.edit
+                                        {
+                                            this.commit_text(id, &input.read(cx).value(), cx);
+                                        }
+                                    })),
+                            )
+                            .into_any_element(),
+                    }
+                }
+                _ if options.mixed => Button::new(("property-mixed", id as usize))
+                    .with_size(size)
                     .tab_stop(self.tab_stop)
-                    .label(property.value.text())
+                    .label("—")
+                    .accessibility_label(format!("{}: Mixed values", self.source.label(id)))
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.start_edit(id, window, cx)),
                     )
                     .into_any_element(),
-            },
-        };
-        let default = property.default.clone();
-        Some(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .w(px(240.))
-                .child(value)
-                .children(
-                    (!property.read_only && property.value != property.default).then(|| {
+                Value::Bool(value) => Checkbox::new(("property-bool", id as usize))
+                    .with_size(size)
+                    .accessibility_label(self.source.label(id).to_owned())
+                    .tab_stop(self.tab_stop)
+                    .checked(*value)
+                    .on_change(cx.listener(move |this, value: &bool, _, cx| {
+                        this.edit_value(id, Value::Bool(*value), cx)
+                    }))
+                    .into_any_element(),
+                Value::Enum(value) => div()
+                    .flex()
+                    .gap(px(2.))
+                    .children(property.choices.iter().map(|choice| {
+                        let selected = choice == value;
+                        let choice = choice.clone();
+                        let button = Button::new(choice.clone())
+                            .with_size(size)
+                            .tab_stop(self.tab_stop)
+                            .label(choice.clone())
+                            .selected(selected);
+                        // The kit's selected fill is too close to the default in dark themes.
+                        let button = if selected { button.primary() } else { button };
+                        button.on_click(cx.listener(move |this, _, _, cx| {
+                            this.edit_value(id, Value::Enum(choice.clone()), cx)
+                        }))
+                    }))
+                    .into_any_element(),
+                Value::Flags(flags) => {
+                    div()
+                        .flex()
+                        .gap(px(4.))
+                        .children(property.choices.iter().enumerate().map(
+                            |(choice_index, choice)| {
+                                Checkbox::new(("property-flag", choice_index))
+                                    .with_size(size)
+                                    .tab_stop(self.tab_stop)
+                                    .label(choice.clone())
+                                    .checked(flags.contains(choice))
+                                    .on_change(cx.listener(move |this, checked: &bool, _, cx| {
+                                        if let Some(property) = this.source.property(id)
+                                            && let Value::Flags(flags) = property.value
+                                            && let Some(choice) = property.choices.get(choice_index)
+                                        {
+                                            let mut flags = flags.clone();
+                                            flags.retain(|flag| flag != choice);
+                                            if *checked {
+                                                flags.push(choice.clone());
+                                            }
+                                            this.edit_value(id, Value::Flags(flags), cx);
+                                        }
+                                    }))
+                            },
+                        ))
+                        .into_any_element()
+                }
+                _ => {
+                    if self.tab_stop {
+                        Button::new(("property-value", id as usize))
+                            .with_size(size)
+                            .tab_stop(true)
+                            .label(text())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.start_edit(id, window, cx)
+                            }))
+                            .into_any_element()
+                    } else {
+                        let text = SharedString::from(text());
+                        div()
+                            .id(("property-value", id as usize))
+                            .test_support()
+                            .role(Role::Button)
+                            .aria_label(text.clone())
+                            .flex_1()
+                            .text_ellipsis()
+                            .pr(px(8.))
+                            .py(px(4.))
+                            .cursor_pointer()
+                            .child(text)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.start_edit(id, window, cx)
+                            }))
+                            .into_any_element()
+                    }
+                }
+            };
+        let cell = div()
+            .id(("property-cell", id as usize))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .w(self.split.as_ref().map_or_else(
+                || gpui_kit::Length::from(px(240.)),
+                |split| gpui_kit::relative(1. - split.ratio).into(),
+            ))
+            .flex_none()
+            .overflow_hidden()
+            // Keep controls clear of the divider line.
+            .pl(px(8.))
+            .pr(px(4.))
+            .child(value)
+            .children(options.units.map(str::to_owned))
+            .children(if let Value::Colour(rgb) = property.value {
+                let rgb = *rgb;
+                let swatch = div()
+                    .flex_none()
+                    .size(px(12.))
+                    .rounded_sm()
+                    .bg(gpui_kit::rgb(rgb));
+                if let Some((_, state, _)) =
+                    self.colour_picker.as_ref().filter(|(row, _, _)| *row == id)
+                {
+                    Some(ColorPicker::new(state).with_size(size).into_any_element())
+                } else if property.read_only {
+                    Some(swatch.into_any_element())
+                } else {
+                    Some(
+                        Button::new(("property-swatch", id as usize))
+                            .with_size(size)
+                            .compact()
+                            .tab_stop(self.tab_stop)
+                            .accessibility_label("Choose colour")
+                            .child(swatch)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_colour_picker(id, window, cx)
+                            }))
+                            .into_any_element(),
+                    )
+                }
+            } else {
+                None
+            })
+            .children(
+                if let Value::Number(number) = property.value
+                    && !property.read_only
+                    && !options.mixed
+                    && options.step.is_some()
+                {
+                    let number = *number;
+                    Some(
+                        div()
+                            .id(("property-scrub", id as usize))
+                            .test_support()
+                            .aria_label("Drag to adjust value")
+                            .cursor_col_resize()
+                            .px(px(4.))
+                            .child("↔")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(
+                                    move |this, event: &gpui_kit::MouseDownEvent, _, cx| {
+                                        this.scrub = Some(Scrub {
+                                            id,
+                                            start: f32::from(event.position.x),
+                                            initial: number,
+                                            preview: number,
+                                        });
+                                        cx.stop_propagation();
+                                    },
+                                ),
+                            ),
+                    )
+                } else {
+                    None
+                },
+            )
+            .children(
+                (!property.read_only
+                    && matches!(property.value, Value::Number(_))
+                    && options.slider_range().is_some())
+                .then(|| {
+                    if let Some((_, state, _)) =
+                        self.slider.as_ref().filter(|(row, _, _)| *row == id)
+                    {
+                        return Slider::new(state)
+                            .w(px(100.))
+                            .accessibility_label(self.source.label(id).to_owned())
+                            .into_any_element();
+                    }
+                    Button::new(("property-slider", id as usize))
+                        .with_size(size)
+                        .compact()
+                        .label("Range")
+                        .tab_stop(self.tab_stop)
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_slider(id, cx)))
+                        .into_any_element()
+                }),
+            )
+            .children(
+                (!property.read_only && matches!(property.value, Value::Path(_))).then(|| {
+                    Button::new(("property-path", id as usize))
+                        .with_size(size)
+                        .label("Browse")
+                        .tab_stop(self.tab_stop)
+                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(TreeEvent::PickPath(id))))
+                }),
+            )
+            .children(
+                (!property.read_only && (options.mixed || property.value != property.default))
+                    .then(|| {
+                        let default = property.default.clone();
                         Button::new(("property-reset", id as usize))
+                            .with_size(size)
                             .tab_stop(self.tab_stop)
                             .label("Reset")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.edit_value(id, default.clone(), cx);
                             }))
                     }),
-                )
-                .into_any_element(),
+            )
+            .children(
+                self.error
+                    .as_ref()
+                    .filter(|(row, _)| *row == id)
+                    .map(|(_, error)| {
+                        div()
+                            .id("tree-edit-error")
+                            .test_support()
+                            .role(Role::Alert)
+                            .aria_label(error.clone())
+                            .text_ellipsis()
+                            .child(error.clone())
+                    }),
+            );
+        if self.split.is_none() {
+            return Some(cell.into_any_element());
+        }
+        let view = cx.entity().downgrade();
+        Some(
+            cell.context_menu(move |menu, _, cx| {
+                let Some(view) = view.upgrade() else {
+                    return menu;
+                };
+                let this = view.read(cx);
+                let Some(property) = this.source.property(id) else {
+                    return menu;
+                };
+                let text = property.value.text();
+                let mut menu =
+                    menu.item(PopupMenuItem::new("Copy value").on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.clone()));
+                    }));
+                if !property.read_only {
+                    let value = property.default.clone();
+                    menu = menu.item(PopupMenuItem::new("Reset to default").on_click(
+                        move |_, _, cx| {
+                            view.update(cx, |this, cx| this.edit_value(id, value.clone(), cx));
+                        },
+                    ));
+                }
+                menu
+            })
+            .into_any_element(),
         )
     }
 }
@@ -371,13 +1473,56 @@ impl<const P: bool> Render for TreeView<P> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx);
         let colours = theme.press_colors(Variant::Light, None);
-        let range = self.model.window(self.scroll, f64::from(self.height), ROW);
-        let offset = range.start as f64 * ROW - self.scroll;
+        let range = self.window();
+        let row_height = self.row_style.density.height();
+        let offset = self.row_top(range.start) - self.scroll;
+        let surfaces = theme.surfaces();
+        let border = surfaces.border.to_hsla();
+        let alternate = surfaces.track.to_hsla();
+        let dimmed = surfaces.dimmed.to_hsla();
+        // Half the border over the body: distinct from alternate rows in both schemes.
+        let group = surfaces.border.alpha(0.5).over(surfaces.body).to_hsla();
+        let needle = self
+            .filter
+            .as_ref()
+            .map(|filter| filter.query.as_str())
+            .filter(|query| !query.is_empty());
+        let mark = gpui_kit::HighlightStyle {
+            background_color: Some(surfaces.mark.to_hsla()),
+            ..Default::default()
+        };
+        let sticky = self
+            .row_style
+            .sticky_headers
+            .then(|| {
+                if self.filter.is_some() {
+                    return None;
+                }
+                let first = self.model.row(range.start)?;
+                let header = if offset < 0. && self.model.expanded(first.id) {
+                    first
+                } else {
+                    let parent = self.model.row_index(first.parent?)?;
+                    self.model.row(parent)?
+                };
+                let next = range.clone().skip(1).find(|&rank| {
+                    self.model
+                        .row(rank)
+                        .is_some_and(|row| row.depth <= header.depth)
+                });
+                let top = next.map_or(0., |rank| {
+                    (self.row_top(rank) - self.scroll - row_height).min(0.)
+                });
+                Some((header.id, header.depth, top))
+            })
+            .flatten();
         let hover_background = colours.hover.background.to_hsla();
         let selection_background = colours.selected.background.to_hsla();
         let rows = range.filter_map(|index| {
-            let (row, siblings) = self.model.row_and_siblings(index)?;
+            let (row, siblings) = self.model.row_and_siblings(self.model_rank(index)?)?;
             let id = row.id;
+            let height = (self.row_top(index + 1) - self.row_top(index)) as f32;
+            let size = row_control_size(height);
             let open = self.model.expanded(id);
             let branch = self.source.children(id) != Children::Ready(&[]);
             let selected = self.model.selected(id);
@@ -396,12 +1541,11 @@ impl<const P: bool> Render for TreeView<P> {
                 .aria_label(label.clone())
                 .aria_selected(selected)
                 .aria_level(row.depth + 1)
-                .h(px(ROW as f32))
+                .h(px(height))
                 .w_full()
                 .flex()
                 .items_center()
                 .gap(px(4.))
-                .pl(px((row.depth.min(45) * 16) as f32))
                 .hover(|style| style.bg(hover_background));
             if let Some((position, count)) = siblings {
                 element = element
@@ -414,13 +1558,45 @@ impl<const P: bool> Render for TreeView<P> {
             if branch {
                 element = element.aria_expanded(open);
             }
+            if self.row_style.group_headers && branch {
+                element = element
+                    .bg(group)
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD);
+            } else if self.row_style.alternating && index % 2 == 1 {
+                element = element.bg(alternate);
+            }
+            if self.row_style.grid_lines {
+                element = element.border_b_1().border_color(border);
+            }
+            if self.row_style.indent_guides && row.depth > 0 {
+                element = element
+                    .relative()
+                    .children((0..row.depth.min(45)).map(|depth| {
+                        div()
+                            .absolute()
+                            .left(px((depth * 16 + 13) as f32))
+                            .top_0()
+                            .bottom_0()
+                            .w(px(1.))
+                            .bg(border)
+                    }));
+            }
             if selected || active {
                 element = element
                     .bg(selection_background)
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD);
             }
+            if P && let Some(description) = self.source.property_options(id).description {
+                let description = SharedString::from(description.to_owned());
+                element = element.tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(description.clone())
+                        .build(window, cx)
+                });
+            }
             if !P {
                 element = element
+                    // Keep the trailing badge and checkbox off the edge.
+                    .pr(px(8.))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &gpui_kit::MouseDownEvent, _, _| {
@@ -451,8 +1627,20 @@ impl<const P: bool> Render for TreeView<P> {
             }
             Some(
                 element
+                    .children((row.depth > 0).then(|| {
+                        div()
+                            .w(px((row.depth.min(45) * 16) as f32))
+                            .mr(px(-4.))
+                            .flex_none()
+                    }))
                     .child(div().w(px(28.)).flex_none().children(branch.then(|| {
                         Button::new(("tree-expand", id as usize))
+                            // Medium is wider than the 28px gutter and would touch the label.
+                            .with_size(if size == ControlSize::XSmall {
+                                size
+                            } else {
+                                ControlSize::Small
+                            })
                             .tab_stop(false)
                             .compact()
                             .w_full()
@@ -466,27 +1654,52 @@ impl<const P: bool> Render for TreeView<P> {
                             )
                     })))
                     .children((!P).then(|| self.source.icon_element(id)).flatten())
-                    .child(
-                        div().flex_1().overflow_hidden().child(
-                            Button::new(("tree-select", id as usize))
-                                .tab_stop(false)
-                                .ghost()
-                                .justify_start()
-                                .accessibility_label(label.clone())
-                                .child(div().w_full().text_left().child(label))
-                                .on_click(select),
-                        ),
-                    )
-                    .children(
-                        (!P).then(|| self.source.badge(id))
-                            .flatten()
-                            .map(str::to_owned),
-                    )
+                    .child(if P {
+                        div()
+                            .id(("tree-select", id as usize))
+                            .flex_1()
+                            .text_ellipsis()
+                            .py(px(6.))
+                            .cursor_pointer()
+                            .child(
+                                match needle.and_then(|needle| match_range(&label, needle)) {
+                                    Some(range) => gpui_kit::StyledText::new(label)
+                                        .with_highlights([(range, mark)])
+                                        .into_any_element(),
+                                    None => label.into_any_element(),
+                                },
+                            )
+                            .on_click(select)
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(
+                                Button::new(("tree-select", id as usize))
+                                    .with_size(size)
+                                    .tab_stop(false)
+                                    .ghost()
+                                    .justify_start()
+                                    .accessibility_label(label.clone())
+                                    .child(div().w_full().text_left().child(label))
+                                    .on_click(select),
+                            )
+                            .into_any_element()
+                    })
+                    .children((!P).then(|| self.source.badge(id)).flatten().map(|badge| {
+                        div()
+                            .flex_none()
+                            .text_sm()
+                            .text_color(dimmed)
+                            .child(badge.to_owned())
+                    }))
                     .children(
                         (!P).then(|| self.source.checked(id))
                             .flatten()
                             .map(|checked| {
                                 Checkbox::new(("tree-check", id as usize))
+                                    .with_size(size)
                                     .accessibility_label(format!("Check {}", self.source.label(id)))
                                     .tab_stop(false)
                                     .checked(checked)
@@ -495,9 +1708,16 @@ impl<const P: bool> Render for TreeView<P> {
                                     }))
                             }),
                     )
-                    .children(if P { self.property_cell(id, cx) } else { None }),
+                    .children(if P {
+                        self.property_cell(id, height, cx)
+                    } else {
+                        None
+                    }),
             )
         });
+        let moving = cx.weak_entity();
+        let dropped = moving.clone();
+        let cancelled = moving.clone();
         let mut tree = div()
             .id("virtual-tree")
             .role(Role::Tree)
@@ -506,6 +1726,35 @@ impl<const P: bool> Render for TreeView<P> {
             .overflow_hidden()
             .h(px(self.height))
             .w_full()
+            .on_mouse_move(move |event: &gpui_kit::MouseMoveEvent, _, cx| {
+                if event.pressed_button == Some(MouseButton::Left)
+                    && let Some(view) = moving.upgrade()
+                    && view.read(cx).dragging_property()
+                {
+                    view.update(cx, |this, cx| {
+                        this.move_property_drag(f32::from(event.position.x), cx)
+                    });
+                }
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                move |event: &gpui_kit::MouseUpEvent, _, cx| {
+                    if let Some(view) = dropped.upgrade()
+                        && view.read(cx).dragging_property()
+                    {
+                        view.update(cx, |this, cx| {
+                            this.finish_property_drag(Some(f32::from(event.position.x)), cx)
+                        });
+                    }
+                },
+            )
+            .on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
+                if let Some(view) = cancelled.upgrade()
+                    && view.read(cx).dragging_property()
+                {
+                    view.update(cx, |this, cx| this.finish_property_drag(None, cx));
+                }
+            })
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 let before = this.scroll;
                 this.scroll -= f64::from(f32::from(event.delta.pixel_delta(px(24.)).y));
@@ -524,28 +1773,148 @@ impl<const P: bool> Render for TreeView<P> {
                     .w_full()
                     .top(px(offset as f32))
                     .children(rows),
-            );
+            )
+            .children(sticky.map(|(parent, depth, top)| {
+                div()
+                    .absolute()
+                    .top(px(top as f32))
+                    .w_full()
+                    .h(px(row_height as f32))
+                    .flex()
+                    .items_center()
+                    // Line the label up with the row it stands in for (indent, gutter, gaps).
+                    .pl(px((depth.min(45) * 16 + 32) as f32))
+                    .pr(px(8.))
+                    .bg(group)
+                    .border_b_1()
+                    .border_color(border)
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .text_ellipsis()
+                    .child(self.source.label(parent).to_owned())
+            }));
+        if let Some(split) = &self.split {
+            let width = split.width.clone();
+            tree = tree
+                .child(
+                    gpui_kit::canvas(
+                        move |bounds, _, _| width.set(f32::from(bounds.size.width)),
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .w_full()
+                    .h_0(),
+                )
+                .child(
+                    div()
+                        .id("property-divider")
+                        .test_support()
+                        .role(Role::Splitter)
+                        .aria_label("Resize property columns")
+                        .focusable()
+                        .tab_stop(self.tab_stop)
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(gpui_kit::relative(split.ratio))
+                        .w(px(6.))
+                        .border_l_1()
+                        .border_color(border)
+                        .cursor_col_resize()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, event: &gpui_kit::MouseDownEvent, _, cx| {
+                                if let Some(split) = &mut this.split {
+                                    this.split_origin = f32::from(event.position.x)
+                                        - split.ratio * split.width.get();
+                                    split.dragging = true;
+                                }
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .on_click(cx.listener(|this, event: &gpui_kit::ClickEvent, _, cx| {
+                            if event.click_count() == 2 {
+                                this.fit_split(cx);
+                            }
+                        }))
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            let offset = match event.keystroke.key.as_str() {
+                                "left" => -0.025,
+                                "right" => 0.025,
+                                "enter" => {
+                                    this.fit_split(cx);
+                                    cx.stop_propagation();
+                                    return;
+                                }
+                                _ => return,
+                            };
+                            if let Some(split) = &this.split {
+                                this.resize_split(split.ratio + offset, true, cx);
+                            }
+                            cx.stop_propagation();
+                        })),
+                );
+        }
         if self.tab_stop {
             tree = tree.track_focus(&self.focus).tab_stop(true);
         }
         div()
             .w_full()
+            .children(self.search.as_ref().map(|(input, _)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(input).aria_label("Filter properties").w_full()),
+                    )
+                    .child(
+                        Checkbox::new("show-advanced-properties")
+                            .label("Advanced")
+                            .checked(self.show_advanced)
+                            .on_change(cx.listener(|this, show: &bool, _, cx| {
+                                if this.show_advanced != *show {
+                                    this.expand_task = None;
+                                    this.show_advanced = *show;
+                                    let query = this
+                                        .filter
+                                        .as_ref()
+                                        .map_or_else(String::new, |filter| filter.query.clone());
+                                    this.filter_rows(query, true, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("expand-properties")
+                            .label("Expand all")
+                            .on_click(cx.listener(|this, _, _, cx| this.expand_loaded(cx))),
+                    )
+                    .child(
+                        Button::new("collapse-properties")
+                            .label("Collapse all")
+                            .on_click(cx.listener(|this, _, _, cx| this.collapse_all(cx))),
+                    )
+            }))
+            .children(
+                self.filter
+                    .as_ref()
+                    .filter(|filter| filter.pending)
+                    .map(|_| div().child("Filtering properties…")),
+            )
             .child(focus_ring(
                 div().w_full().child(tree),
                 self.tab_stop && ring_visible(&self.focus, window),
                 px(0.),
                 colours.ring,
             ))
-            .children(self.error.clone().map(|error| {
-                div()
-                    .id("tree-edit-error")
-                    .test_support()
-                    .role(Role::Alert)
-                    .aria_label(error.clone())
-                    .child(error)
-            }))
     }
 }
+
+#[cfg(test)]
+#[path = "view/visual_tests.rs"]
+mod visual_tests;
 
 #[cfg(test)]
 mod tests {
@@ -578,6 +1947,12 @@ mod tests {
                 choices: &[],
                 read_only: id == 2,
             })
+        }
+        fn property_options(&self, id: NodeId) -> PropertyOptions<'_> {
+            PropertyOptions {
+                step: (id == 1 && matches!(self.1, Value::Number(_))).then_some(1.),
+                ..Default::default()
+            }
         }
         fn validate(&self, _: NodeId, value: &Value) -> Result<(), String> {
             if matches!(value, Value::Number(n) if *n < 0.) {
@@ -727,7 +2102,10 @@ mod tests {
         window.run_until_parked();
         let input = view
             .read_with(window, |view, _| {
-                view.edit.as_ref().map(|edit| edit.input.clone())
+                view.edit.as_ref().and_then(|edit| match &edit.input {
+                    EditorInput::Single(input) => Some(input.clone()),
+                    EditorInput::Multiline(_) | EditorInput::Components(_) => None,
+                })
             })
             .expect("Enter opens the number editor");
         window.update(|window, cx| input.update(cx, |input, cx| input.set_value("-1", window, cx)));
@@ -818,6 +2196,180 @@ mod tests {
         window.run_until_parked();
         assert!(events.borrow().contains(&TreeEvent::Checked(1, true)));
     }
+    #[gpui_kit::test]
+    fn divider_resizes_and_restores_from_layout_store(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        cx.update(|cx| {
+            gpui_kit::base::init(cx);
+            gpui_kit::component::init(cx);
+            guiraffe_core::apply(
+                GuiraffeTheme {
+                    scheme: guiraffe_core::Scheme::Dark,
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        let data = Rc::new(Data(vec![1], Value::Number(10.), Value::Number(5.)));
+        let view = cx.new(|cx| {
+            PropertyGrid::new(data.clone(), cx)
+                .focusable(true)
+                .split_ratio(0.5)
+                .persist_key("divider-test", cx)
+        });
+        let (_, window) =
+            cx.add_window_view(|window, cx| gpui_kit::base::Root::new(view.clone(), window, cx));
+        window.run_until_parked();
+        window.update(|_, cx| {
+            assert_eq!(
+                GuiraffeTheme::global(cx).scheme,
+                guiraffe_core::Scheme::Dark
+            );
+        });
+        let divider = window.update(|window, _| {
+            let divider = window.find_by_label("Resize property columns");
+            assert_eq!(divider.role(), Some(Role::Splitter));
+            divider.bounds().center()
+        });
+        let end = divider + point(px(60.), px(0.));
+        window.simulate_mouse_down(divider, MouseButton::Left, Modifiers::default());
+        window.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+        window.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        window.run_until_parked();
+        let moved = view.read_with(window, |view, _| view.split.as_ref().map(|s| s.ratio));
+        assert!(moved.is_some_and(|ratio| ratio > 0.5));
+        let restored = cx.new(|cx| PropertyGrid::new(data, cx).persist_key("divider-test", cx));
+        assert_eq!(
+            restored.read_with(cx, |view, _| view.split.as_ref().map(|s| s.ratio)),
+            moved
+        );
+    }
+
+    #[gpui_kit::test]
+    fn number_scrub_previews_until_pointer_release(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt;
+        cx.update(|cx| {
+            gpui_kit::base::init(cx);
+            gpui_kit::component::init(cx);
+            guiraffe_core::apply(Default::default(), cx);
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let view = cx.new(|cx| {
+            let mut grid = PropertyGrid::new(
+                Rc::new(Data(vec![1], Value::Number(10.), Value::Number(10.))),
+                cx,
+            );
+            grid.set_expanded(0, true, cx);
+            grid
+        });
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let events = events.clone();
+            cx.subscribe(&view, move |_, _, event: &TreeEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach();
+            gpui_kit::base::Root::new(view.clone(), window, cx)
+        });
+        window.run_until_parked();
+        let grip =
+            window.update(|window, _| window.find(("property-scrub", 1usize)).bounds().center());
+        let end = grip + point(px(-12.), px(0.));
+        window.simulate_mouse_down(grip, MouseButton::Left, Modifiers::default());
+        window.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+        window.run_until_parked();
+        assert_eq!(
+            view.read_with(window, |view, _| view
+                .scrub
+                .as_ref()
+                .map(|scrub| scrub.preview)),
+            Some(7.)
+        );
+        assert!(events.borrow().is_empty());
+        window.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        window.run_until_parked();
+        assert!(
+            events
+                .borrow()
+                .contains(&TreeEvent::Edited(1, Value::Number(7.)))
+        );
+    }
+
+    #[gpui_kit::test]
+    fn filter_replaces_pending_work_and_preserves_expansion(cx: &mut TestAppContext) {
+        let view = cx.new(|cx| {
+            PropertyGrid::new(
+                Rc::new(Data(
+                    (1..=800).collect(),
+                    Value::Number(10.),
+                    Value::Number(5.),
+                )),
+                cx,
+            )
+        });
+        view.update(cx, |view, cx| {
+            view.set_expanded(0, true, cx);
+            view.filter_rows("property".to_owned(), true, cx);
+            view.filter_rows("settings".to_owned(), true, cx);
+        });
+        cx.run_until_parked();
+        for _ in 0..3 {
+            cx.background_executor
+                .advance_clock(std::time::Duration::from_millis(2));
+            cx.run_until_parked();
+        }
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 1);
+        assert_eq!(view.read_with(cx, |view, _| view.model_rank(0)), Some(0));
+        view.update(cx, |view, cx| view.filter_rows(String::new(), true, cx));
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 801);
+    }
+
+    #[gpui_kit::test]
+    fn search_reveals_collapsed_matches_and_cancels_superseded_scans(cx: &mut TestAppContext) {
+        let view = cx.new(|cx| {
+            PropertyGrid::new(
+                Rc::new(Data(
+                    (1..=800).collect(),
+                    Value::Number(10.),
+                    Value::Number(5.),
+                )),
+                cx,
+            )
+        });
+        let settle = |cx: &mut TestAppContext| {
+            for _ in 0..4 {
+                cx.background_executor
+                    .advance_clock(std::time::Duration::from_millis(2));
+                cx.run_until_parked();
+            }
+        };
+        // A superseded scan never reveals: only the root matches "settings".
+        view.update(cx, |view, cx| {
+            view.filter_rows("property".to_owned(), true, cx);
+            view.filter_rows("settings".to_owned(), true, cx);
+        });
+        settle(cx);
+        assert!(!view.read_with(cx, |view, _| view.model.expanded(0)));
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 1);
+
+        // Children of the collapsed root match: the root opens and stays as their path.
+        view.update(cx, |view, cx| {
+            view.filter_rows("property".to_owned(), true, cx)
+        });
+        assert!(view.read_with(cx, |view, _| {
+            view.filter.as_ref().is_some_and(|f| f.pending)
+        }));
+        settle(cx);
+        assert!(view.read_with(cx, |view, _| view.model.expanded(0)));
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 801);
+        assert_eq!(view.read_with(cx, |view, _| view.model_rank(0)), Some(0));
+
+        // Collapsing during a search is respected by the rescan; the root stays as the path.
+        view.update(cx, |view, cx| view.set_expanded(0, false, cx));
+        settle(cx);
+        assert!(!view.read_with(cx, |view, _| view.model.expanded(0)));
+        assert_eq!(view.read_with(cx, |view, _| view.row_count()), 1);
+    }
+
     struct Editors {
         rows: [(Value, Value); 4],
         choices: [String; 2],
@@ -905,7 +2457,10 @@ mod tests {
             window.run_until_parked();
             let input = view
                 .read_with(window, |view, _| {
-                    view.edit.as_ref().map(|edit| edit.input.clone())
+                    view.edit.as_ref().and_then(|edit| match &edit.input {
+                        EditorInput::Single(input) => Some(input.clone()),
+                        EditorInput::Multiline(_) | EditorInput::Components(_) => None,
+                    })
                 })
                 .expect("value click opens the editor");
             window.update(|window, cx| {

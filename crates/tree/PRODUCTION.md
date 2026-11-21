@@ -87,3 +87,46 @@ measured TreeList at 2.07 ms p99 / 2.93 ms max and PropertyGrid at
 4.19 ms p99 / 5.00 ms max. The corresponding loaded wall p99 was
 29.49 ms and 31.72 ms. Quiet-window wall timing remains the acceptance
 measurement.
+
+## Inspector viewport options
+
+| Storage | Bound |
+| --- | --- |
+| Variable row heights | One ID/height pair per configured override and one prefix entry per visible override. An active multiline editor can add one temporary entry. Window lookup searches the sparse prefix entries, then visits only the viewport. |
+| Sticky header and indentation guides | One sticky ancestor and up to 45 guides per viewport row. No label or layout cache. |
+| Search projection | At most one visible rank per matching row or ancestor on a match path. One cancellable task walks every loaded node depth-first, 512 nodes per step, holding one frame per tree level, the matching IDs and the collapsed branches on match paths. A new query opens those branches (deepest first, so each revealed subtree is spliced once) when the walk completes; a rescan after a hierarchy mutation keeps the user's collapse and lists the collapsed branch as the path. A new query or mutation drops the running task. Labels are matched case-insensitively without allocation. |
+| Editors | One active input editor with at most four component fields, one colour picker, and one slider. Multiline editors grow to at most eight lines. |
+| Split | One ratio and measured width per view. Each keyed instance uses one application-managed layout-store entry. |
+
+The sparse geometry tests cover identical viewport output at 10k and 10M
+rows and zero allocations for warm viewport traversal at both scales.
+Auto-fit inspects the visible names. Revealing a match inside an extremely wide collapsed branch splices that branch synchronously, like a manual expand. Expand All stages loaded branches
+and leaves unloaded branches closed. Inserting or dropping one
+extremely wide branch still uses the underlying synchronous model splice.
+
+An early upstream measurement used the default inspector on the loaded
+development host. It compared the release baseline binary with the
+lightweight-row implementation before the final editor changes.
+
+| Probe | Baseline | Lightweight rows |
+| --- | ---: | ---: |
+| Samply samples over 1,024 steps, 100,001 rows | 2,184 | 1,471 |
+| Largest sampled self path, unsymbolized | 17.63% | 15.57% |
+| Flexbox layout, sampled self | 4.30% | 5.91% |
+| Callgrind instructions, setup and 64 frames at 10,001 rows | 405,094,957 | 303,714,634 |
+| Callgrind memcpy instructions | 90,887,281 | 58,064,349 |
+| Callgrind main flexbox routine instructions | 26,819,333 | 17,600,400 |
+| Callgrind calls to malloc, realloc and calloc | 149,183 | 113,174 |
+| Short-soak mount, 100,001 rows | 96.3 ms | 14.8 ms |
+| Short-soak p99, two intervals | 8.25–9.40 ms | 6.66–7.71 ms |
+| Largest short-soak frame | 16.42 ms | 15.50 ms |
+| Largest reported steady RSS | 22.9 MiB | 25.2 MiB |
+| Peak RSS at 1,000,001 rows, 256 scripted frames | 61.5 MiB | 61.8 MiB |
+| Loaded-host mount at 1,000,001 rows | 296 ms | 364 ms |
+| Warm sparse viewport geometry allocations | — | 0 |
+
+These runs did not activate the inspector toolbar or custom row styles.
+The Callgrind allocator calls cover setup and all 64 scripted frames.
+The geometry allocation check covers viewport traversal. Mounted
+unchanged-repaint allocations and release acceptance at one million
+rows still require separate end-to-end measurements.

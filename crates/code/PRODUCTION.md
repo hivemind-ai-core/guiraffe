@@ -184,3 +184,96 @@ range/style pairs, since the snapshot has no persistent array to borrow.
 The same process samples the empty window after its first draw, before
 allocating the source. Peak uses Linux VmHWM. WGPU p99 was 2.010 ms and
 CPU-only p99 was 1.065 ms in these indicative, loaded-host runs.
+
+The CodeViewer memory gate uses the increase over the same harness's empty
+window. A repeated renderer-backed sample measured 97,984 KiB empty, 126,300
+KiB steady (28,316 KiB increase) and 135,952 KiB peak (37,968 KiB increase).
+The renderer-backed process exceeds the absolute budget before mount.
+Linux smaps attributed 32,512 KiB to LLVM, 23,672 KiB to Gallium and 7,148 KiB
+to the Radeon Vulkan driver in a separate run. The empty-window-subtracted
+peak passes the CodeViewer budget for this fixture.
+
+The density summary computes the same maximum trimmed byte length per bin
+as the per-line implementation. Bin boundaries are computed once per bin,
+and the scan can skip trimming shorter lines and stop at saturation. For the
+uniform 20 MB fixture, standalone optimized Callgrind measured 1,300,246,524
+→ 700,261,614 instructions including source construction. One loaded-host
+run measured document construction at 204 → 130 ms. The
+[construction benchmark](../../bench/benches/production_frames.rs) tracks
+indexing and summarization with source allocation outside the measured region.
+
+The review bubble cache holds only Markdown entities with a placed card in
+the current viewport. A card occupies three line heights, so the cache
+holds at most `floor(viewport_height / (3 × line_height))` entries. Hiding
+the analysis margin clears the cache. The GPUI regression test scrolls to
+a different part of the same document and checks that the old card is gone.
+
+## Layered annotations
+
+| Retained structure | Bound |
+|---|---|
+| Layer interval index | 24 bytes per record, two 4-byte order entries per record, and at most one 20-byte node per record. Diagnostic and diff navigation adds a 4-byte index per navigable record. |
+| Style and blame tables | One interned entry per distinct style or commit in the published snapshot. Store consecutive lines from one commit as one range to avoid per-line author strings or indexes. |
+| Overview | 256 presence bins per layer. The minimap paints at most eight layers and coalesces adjacent occupied bins into strokes. |
+| Viewport paint | At most 64 detailed matches per visible row and layer, plus a density marker if more match. After eight detailed diagnostic strokes, the renderer paints a line-level diagnostic marker. |
+| Review Markdown | One active layered review card, released on hover exit or decoration replacement. Legacy annotation bubbles retain only the currently placed cards, using the viewport bound above. |
+| Inline hint colours | One colour entry per projected text insertion, created with prepared analysis. Warm shaping reuses the existing bounded shape cache. |
+
+The [stress probe](../../bench/examples/soak.rs) is `soak code-annotations`.
+`SOAK_FRAMES=1200` selects the profiling replay. For the original mounted
+fixture, GPUI's raster bounds and scene bounds insertions took 11.04% and
+8.59% self time. The per-line gutter map clone and drop took 5.35% combined.
+The probe now represents blame as 2,000 interned commit ranges spanning all
+one million lines and toggles the published snapshot by reference.
+
+The model tests compare the interval index against a linear oracle and verify
+that both 10k and 1M records report the same visible result. This checks
+visible output counts. Tree traversal still has a logarithmic setup cost,
+and the mounted repaint allocation and long-session gates remain open.
+
+| Loaded-host annotation replay | Legacy representations | Packed ranges and grouped blame |
+|---|---:|---:|
+| Setup and first frame, 20-second replay | 312 ms | 161 ms |
+| p99, two 10-second windows | 16.46 / 14.93 ms | 10.06 / 9.53 ms |
+| Steady RSS, two windows | 150,060 / 150,440 KiB | 74,984 / 75,328 KiB |
+| GPUI raster bounds, sampled self time | 11.04% | 8.42% |
+| GPUI scene bounds insert, sampled self time | 8.59% | 10.85% |
+| Legacy gutter map clone + drop, sampled self time | 5.35% | Below the printed top 16 |
+| Standalone Callgrind, index construction plus 1M viewport lookups | 1,766,887,884 Ir | 930,552,621 Ir |
+
+Packed replay measurements precede the disjoint-layer query fast path.
+The standalone instruction comparison includes the fast path and returned
+the same checksum for both algorithms. A disjoint layer retains one
+four-byte order entry per record in place of the general index's two order
+entries and nodes. The allocator test measures 40 viewport queries at
+10k and 1M records. It isolates the range index from window drawing.
+
+The final mounted replay includes 5,000 inter-line widgets and 1,000
+layered inlays. The loaded-host run measured 59.3 ms for setup and first
+frame, 2.05 / 2.35 ms p99, 3.28 ms maximum frame work, and
+68,432 / 68,640 KiB steady RSS. In the 1,200-frame samply run, GPUI scene
+bounds insertion accounted for 13.08% of main-thread samples and raster
+bounds for 12.74%. The faster replay spent about 879 main-thread samples
+versus 2,374 for the legacy fixture. These are indicative measurements.
+The 20 MB renderer-backed source measured 100,988 KiB empty, 132,152 KiB
+steady, and 139,748 KiB peak. The 38,760 KiB peak increase passed the
+same-harness incremental budget.
+
+Inter-line widgets mount only in the visible row range. The layout retains
+an estimated or measured height and a stable identity per projected
+widget, plus one measurement marker per visited widget for the current
+viewport width and line height. Related height changes in one frame share a
+single deferred row-map update. Changing renderer or source resets the
+measurement cache. A GPUI test verifies that the height is adopted and the
+offscreen widget mounts only after a jump.
+
+The mounted allocation check compares the same fixed-size cached viewport
+before and after adding a diagnostic. Eight upstream draws used 56
+allocations and 74,368 bytes in each case with unchanged CodeViewer render
+counters. The annotation queries allocate zero. Forcing a complete warm
+window draw still misses the zero-allocation acceptance criterion.
+
+DHAT located a recurring 1,840-byte allocation in the upstream
+`TabStopMap::clear` call from `Window::draw`, and recurring context clones
+in `DispatchTree::reuse_subtree`. These allocations occur while GPUI reuses
+the cached CodeViewer subtree.

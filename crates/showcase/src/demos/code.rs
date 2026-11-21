@@ -13,11 +13,13 @@ use gpui_kit::{
     Styled, Window, div, px,
 };
 use guiraffe_code::{
-    Anchor, Annotation, AnnotationKind, CodeDocument, CodeHandle, CodeOptions, CodeViewer, Fold,
-    GutterColumn, Position, SourceRange, SymbolInfo, Trace, TraceHandle,
+    Anchor, AnchorBias, Annotation, AnnotationKind, BlameCommit, CodeDocument, CodeHandle,
+    CodeOptions, CodeViewer, DecorationInput, DecorationStyle, Decorations, Fold, GutterColumn,
+    GutterMark, HighlightShape, InlineWidget, Position, Severity, SourceRange, SymbolInfo, Trace,
+    TraceHandle, UnderlinePattern,
 };
 use guiraffe_components::Text;
-use guiraffe_core::{ColorName, Size};
+use guiraffe_core::{ColorName, GuiraffeTheme, Size};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
 
 pub fn entries() -> Vec<Entry> {
@@ -35,6 +37,13 @@ pub fn entries() -> Vec<Entry> {
             summary: "Diagnostics (wavy underlines), highlights in every colour, inline type hints, code lenses, Markdown bubbles packed in the margin, and hover symbol cards with Go to definition.",
             covers: &[],
             demo: analysis,
+        },
+        Entry {
+            krate: "code",
+            name: "Code annotations",
+            summary: "Hover a blame author or the dotted review mark. F8 and Shift+F8 move between diagnostics.",
+            covers: &[],
+            demo: rich_annotations,
         },
         Entry {
             krate: "code",
@@ -489,6 +498,397 @@ fn js_annotations() -> Vec<Annotation> {
         ann(25, span(s, 2, "await", 0), Highlight, "", ColorName::Orange),
         ann(26, span(s, 1, "async", 0), Highlight, "", ColorName::Orange),
     ]
+}
+
+const CHECKOUT: &str = r#"use crate::cart::{Cart, Item};
+use crate::money::Money;
+
+const FREE_SHIPPING: u64 = 5_000;
+const BASE_SHIPPING: u64 = 495;
+
+pub fn quote(cart: &Cart) -> Quote {
+    let subtotal = cart.net();
+    let fee = shipping(cart);
+    let old = estimate_tax(cart);
+    let tax = cart.tax();
+    let total = shipping_fee + subtotal + tax;
+    Quote { subtotal, fee, tax, total }
+}
+
+fn shipping(cart: &Cart) -> Money {
+    if cart.is_empty() {
+        return Money::ZERO;
+    }
+    if cart.subtotal().cents() >= FREE_SHIPPING {
+        return Money::ZERO;
+    }
+    Money::from_cents(BASE_SHIPPING)
+}
+
+fn estimate_tax(cart: &Cart) -> Money {
+    cart.subtotal() / 10
+}
+
+pub struct Quote {
+    pub subtotal: Money,
+    pub fee: Money,
+    pub tax: Money,
+    pub total: Money,
+}
+
+impl Quote {
+    pub fn receipt(&self) -> String {
+        format!(
+            "Subtotal {}\\nShipping {}\\nTax {}\\nTotal {}",
+            self.subtotal, self.fee, self.tax, self.total
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cart_at(cents: u64) -> Cart {
+        let mut cart = Cart::default();
+        cart.add(Item::new("Coffee", Money::from_cents(cents)));
+        cart
+    }
+
+    #[test]
+    fn empty_cart_has_no_shipping() {
+        assert_eq!(shipping(&Cart::default()), Money::ZERO);
+    }
+
+    #[test]
+    fn below_threshold_pays_base_fee() {
+        let cart = cart_at(FREE_SHIPPING - 1);
+        assert_eq!(shipping(&cart), Money::from_cents(BASE_SHIPPING));
+    }
+
+    #[test]
+    fn threshold_qualifies_for_free_shipping() {
+        let cart = cart_at(FREE_SHIPPING);
+        assert_eq!(shipping(&cart), Money::ZERO);
+    }
+
+    #[test]
+    fn receipt_includes_shipping() {
+        let cart = cart_at(2_500);
+        let receipt = quote(&cart).receipt();
+        assert!(receipt.contains("Shipping"));
+    }
+}
+"#;
+
+struct RichAnnotationsDemo {
+    code: CodeHandle,
+    applied: RefCell<Option<KnobValues>>,
+}
+
+fn rich_annotations(window: &mut Window, cx: &mut App) -> AnyView {
+    playground_with(
+        "checkout.rs",
+        &[
+            Knob::toggle("Errors").default(1),
+            Knob::toggle("Marks").default(1),
+            Knob::toggle("Gutter").default(1),
+            Knob::toggle("Blame").default(1),
+            Knob::toggle("Inlays").default(1),
+            Knob::toggle("Reviews").default(1),
+            Knob::toggle("Minimap").default(1),
+        ],
+        |_, cx| {
+            let code = handle(212, CHECKOUT, "rust", cx);
+            code.select(Some(line_start(2)), cx);
+            code.on_block_widget(
+                Some(Rc::new(|widget, _, cx| {
+                    let s = GuiraffeTheme::global(cx).surfaces();
+                    let comment = widget.payload.clone();
+                    div()
+                        .py_1()
+                        .px_2()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .p_2()
+                                .bg(s.surface.to_hsla())
+                                .border_1()
+                                .border_color(s.border.to_hsla())
+                                .rounded_md()
+                                .text_size(px(Size::Sm.font_size()))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .rounded_full()
+                                                .bg(s.raised.to_hsla())
+                                                .px_2()
+                                                .child("AR"),
+                                        )
+                                        .child("Ada Rivera"),
+                                )
+                                .child(widget.payload.to_string())
+                                .child(
+                                    div().flex().gap_2().child(
+                                        Button::new(("copy-review", widget.decoration))
+                                            .label("Copy")
+                                            .on_click(move |_, _, cx| {
+                                                cx.write_to_clipboard(
+                                                    gpui_kit::ClipboardItem::new_string(
+                                                        comment.to_string(),
+                                                    ),
+                                                )
+                                            }),
+                                    ),
+                                ),
+                        )
+                        .into_any_element()
+                })),
+                cx,
+            );
+            RichAnnotationsDemo {
+                code,
+                applied: RefCell::new(None),
+            }
+        },
+        render_rich_annotations,
+        window,
+        cx,
+    )
+}
+
+fn render_rich_annotations(
+    state: &RichAnnotationsDemo,
+    values: &KnobValues,
+    _: &mut Window,
+    cx: &mut Context<Preview<RichAnnotationsDemo>>,
+) -> AnyElement {
+    if state.applied.borrow().as_ref() != Some(values) {
+        *state.applied.borrow_mut() = Some(values.clone());
+        state.code.set_options(
+            CodeOptions {
+                size: Some(Size::Xs),
+                minimap: values.on(6),
+                margin_chars: if values.on(0) || values.on(3) || values.on(5) {
+                    16
+                } else {
+                    0
+                },
+                ..Default::default()
+            },
+            cx,
+        );
+        if let Ok(decorations) = checkout_decorations(state.code.document(), values) {
+            state.code.set_analysis(
+                decorations.prepare_analysis(
+                    Vec::new(),
+                    vec![Fold {
+                        start: 47,
+                        end: 51,
+                        collapsed: false,
+                    }],
+                ),
+                cx,
+            );
+            state.code.set_decorations(Some(Arc::new(decorations)), cx);
+        }
+    }
+    div()
+        .h(px(510.))
+        .child(CodeViewer::new(&state.code))
+        .into_any_element()
+}
+
+fn line_start(line: usize) -> SourceRange {
+    let start = Position::new(line, 0);
+    SourceRange::new(start, start)
+}
+
+fn checkout_decorations(
+    document: Arc<CodeDocument>,
+    values: &KnobValues,
+) -> Result<Decorations, guiraffe_code::DecorationError> {
+    use DecorationStyle::*;
+    use HighlightShape::*;
+    use InlineWidget::*;
+    use Severity::{Error, Hint, Info, Warning};
+    use UnderlinePattern::*;
+    let mut decorations = Decorations::new(document)?;
+    let mut id = 0;
+    let mut add = |knob: usize, range, style| {
+        if values.on(knob) {
+            let style = decorations.intern_style(style)?;
+            // Review wins hit testing where it shares a token with a highlight.
+            decorations.update_layer(
+                knob as u32,
+                Default::default(),
+                &[],
+                [DecorationInput {
+                    id,
+                    range,
+                    style,
+                    start_bias: AnchorBias::Left,
+                    end_bias: AnchorBias::Right,
+                }],
+            )?;
+            id += 1;
+        }
+        Ok::<(), guiraffe_code::DecorationError>(())
+    };
+    let token = |line, needle| span(CHECKOUT, line, needle, 0);
+    for (line, text, severity, pattern, message) in [
+        (11, "shipping_fee", Error, Wavy, "Unknown value. Use fee."),
+        (9, "old", Warning, Dashed, "Unused tax estimate."),
+        (
+            10,
+            "cart.tax()",
+            Info,
+            Dotted,
+            "Tax uses the cart destination.",
+        ),
+        (
+            16,
+            "is_empty",
+            Hint,
+            Straight,
+            "Check empty carts before applying the threshold.",
+        ),
+        (
+            22,
+            "BASE_SHIPPING",
+            Warning,
+            Double,
+            "Confirm the updated shipping rate.",
+        ),
+    ] {
+        add(
+            0,
+            token(line, text),
+            Diagnostic {
+                severity,
+                pattern,
+                message: message.into(),
+            },
+        )?;
+    }
+    add(0, token(9, "let old"), Unnecessary)?;
+    add(0, token(9, "estimate_tax"), Deprecated)?;
+    for (line, needle, shape, color) in [
+        (7, "subtotal", Rounded, ColorName::Blue),
+        (8, "fee", Outline, ColorName::Teal),
+        (19, "FREE_SHIPPING", Background, ColorName::Yellow),
+        (12, "{", BracketPair, ColorName::Grape),
+        (12, "}", BracketPair, ColorName::Grape),
+    ] {
+        add(1, token(line, needle), Highlight { shape, color })?;
+    }
+    for (line, lane, mark) in [
+        (7, 0, GutterMark::Breakpoint),
+        (8, 1, GutterMark::Bookmark),
+        (11, 0, GutterMark::Error),
+        (7, 2, GutterMark::Added),
+        (8, 2, GutterMark::Modified),
+        (9, 2, GutterMark::Deleted),
+        (7, 3, GutterMark::Covered),
+        (8, 3, GutterMark::PartiallyCovered),
+        (11, 3, GutterMark::Uncovered),
+        (65, 3, GutterMark::Covered),
+    ] {
+        add(2, line_start(line), Gutter { lane, mark })?;
+    }
+    for (start, end, author, hash, date, age_days, message) in [
+        (
+            0,
+            6,
+            "Mina Park",
+            "430ea02",
+            "2026-08-15",
+            98,
+            "Add cart base",
+        ),
+        (
+            6,
+            15,
+            "Ada Rivera",
+            "af86a44",
+            "2026-11-18",
+            3,
+            "Apply shipping fee",
+        ),
+        (
+            15,
+            45,
+            "Sam Ortiz",
+            "7eaf642",
+            "2026-10-09",
+            43,
+            "Add quotes and receipts",
+        ),
+        (
+            45,
+            77,
+            "Ada Rivera",
+            "b840f76",
+            "2026-11-20",
+            1,
+            "Test checkout thresholds",
+        ),
+    ] {
+        add(
+            3,
+            SourceRange::new(Position::new(start, 0), Position::new(end, 0)),
+            Blame(Arc::new(BlameCommit {
+                author: author.into(),
+                short_hash: hash.into(),
+                date: date.into(),
+                age_days,
+                message: message.into(),
+                url: None,
+            })),
+        )?;
+    }
+    for (line, needle, widget, label) in [
+        (6, "pub fn", CodeLens, "3 references · 4 tests"),
+        (7, "subtotal", Inlay, ": Money"),
+        (20, "Money::ZERO;", Ghost, "// free shipping"),
+        (
+            10,
+            "cart.tax();",
+            EndOfLineDiagnosticSeverity(Info),
+            "Uses region",
+        ),
+    ] {
+        add(
+            4,
+            after(CHECKOUT, line, needle),
+            Inline {
+                widget,
+                label: label.into(),
+            },
+        )?;
+    }
+    add(
+        5,
+        token(7, "subtotal"),
+        Review {
+            markdown: "**Ada Rivera**\n\nTest free shipping.".into(),
+        },
+    )?;
+    add(
+        5,
+        token(4, "BASE_SHIPPING"),
+        Block {
+            estimated_rows: 5,
+            payload: "Test the threshold.".into(),
+        },
+    )?;
+    Ok(decorations)
 }
 
 struct AnalysisDemo {

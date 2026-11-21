@@ -572,7 +572,9 @@ fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> any
         app.update(guiraffe_core::init);
         let window = app.open_window(size(px(1200.), px(800.)), |_, cx| {
             let diagram = MermaidView::create_state("allocation-diagram", cx);
-            diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+            if nodes != 0 {
+                diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+            }
             cx.new(|_| Diagram(diagram))
         })?;
         app.run_until_parked();
@@ -588,28 +590,216 @@ fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> any
                 .0
                 .clone();
             let state = diagram.read(cx);
-            assert_eq!(state.status(), &Status::Ready);
-            let image = state.image().expect("refined diagram").image.clone();
+            if nodes == 0 {
+                assert_eq!(state.status(), &Status::Empty);
+            } else {
+                assert_eq!(state.status(), &Status::Ready);
+            }
+            let image = state.image().map(|image| image.image.clone());
             let (_, counts) = count_allocations(|| {
                 for _ in 0..FRAMES {
                     window.draw(cx).clear(cx);
                 }
             })?;
-            assert!(Arc::ptr_eq(
-                &image,
-                &diagram.read(cx).image().expect("unchanged diagram").image
-            ));
+            if let Some(image) = image {
+                assert!(Arc::ptr_eq(
+                    &image,
+                    &diagram.read(cx).image().expect("unchanged diagram").image
+                ));
+            }
             Ok(counts)
         })?
     }
 
+    let empty = measure(0)?;
     let small = measure(50)?;
     let large = measure(500)?;
-    eprintln!("Mermaid allocations over eight draws: 50 nodes {small:?}, 500 nodes {large:?}");
+    eprintln!(
+        "Mermaid allocations over eight draws: empty {empty:?}, 50 nodes {small:?}, 500 nodes {large:?}"
+    );
+    assert_eq!(empty, small, "painting a diagram adds no warm allocations");
     assert_eq!(small, large);
     assert!(
         large.allocations <= FRAMES * 12,
         "warm redraw must reuse the Mermaid view: {large:?}"
     );
     Ok(())
+}
+
+#[test]
+fn layered_code_viewport_queries_allocate_nothing_at_both_scales() -> anyhow::Result<()> {
+    use guiraffe_code::{
+        AnchorBias, CodeDocument, DecorationInput, DecorationStyle, Decorations, Position,
+        SourceRange,
+    };
+    use std::sync::Arc;
+
+    for count in [10_000, 1_000_000] {
+        let document = Arc::new(CodeDocument::new("x\n".repeat(count)));
+        let mut decorations = Decorations::new(document)?;
+        let style = decorations.intern_style(DecorationStyle::Deprecated)?;
+        decorations.update_layer(
+            0,
+            Default::default(),
+            &[],
+            (0..count).map(|line| DecorationInput {
+                id: line as u64,
+                range: SourceRange::new(Position::new(line, 0), Position::new(line, 1)),
+                style,
+                start_bias: AnchorBias::Left,
+                end_bias: AnchorBias::Right,
+            }),
+        )?;
+        let layer = decorations.layer(0).expect("published layer");
+        let (visible, counts) = count_allocations(|| {
+            let mut visible = 0;
+            for line in 100..140 {
+                layer.query((line * 2)..(line * 2 + 1), |mark| {
+                    std::hint::black_box(mark);
+                    visible += 1;
+                });
+            }
+            visible
+        })?;
+        assert_eq!(visible, 40);
+        assert_eq!(counts.allocations, 0, "{counts:?}");
+        assert_eq!(counts.bytes, 0, "{counts:?}");
+    }
+    Ok(())
+}
+
+#[gpui_kit::test]
+fn cached_annotated_code_viewer_reuses_its_render(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{
+        App, AppContext, Context, Entity, IntoElement, Render, StyleRefinement, Styled, Window, px,
+    };
+    use guiraffe_code::{
+        AnchorBias, CodeDocument, CodeHandle, CodeViewer, DecorationInput, DecorationStyle,
+        Decorations, Position, Severity, SourceRange, UnderlinePattern,
+    };
+    use std::sync::Arc;
+
+    struct Viewer(CodeHandle, Arc<Decorations>);
+    impl Render for Viewer {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            CodeViewer::new(&self.0)
+        }
+    }
+
+    struct CachedRoot(Entity<Viewer>);
+    impl Render for CachedRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().w(px(600.)).h(px(400.)))
+        }
+    }
+
+    let (view, window) = cx.add_window_view(|_, cx| {
+        let document = Arc::new(CodeDocument::new("reference\n".repeat(10_000)));
+        let code = CodeHandle::new(1, document.clone(), cx);
+        let mut decorations = Decorations::new(document).expect("compact document");
+        let style = decorations
+            .intern_style(DecorationStyle::Diagnostic {
+                severity: Severity::Error,
+                pattern: UnderlinePattern::Wavy,
+                message: "Test diagnostic".into(),
+            })
+            .expect("interned style");
+        decorations
+            .update_layer(
+                0,
+                Default::default(),
+                &[],
+                [DecorationInput {
+                    id: 1,
+                    range: SourceRange::new(Position::new(0, 0), Position::new(0, 8)),
+                    style,
+                    start_bias: AnchorBias::Left,
+                    end_bias: AnchorBias::Right,
+                }],
+            )
+            .expect("prepared layer");
+        CachedRoot(cx.new(|_| Viewer(code, Arc::new(decorations))))
+    });
+    window.run_until_parked();
+    let (code, decorations) = window.update(|_, cx| {
+        let viewer = view.read(cx).0.read(cx);
+        (viewer.0.clone(), viewer.1.clone())
+    });
+    let warm = |window: &mut Window, cx: &mut App| {
+        for _ in 0..8 {
+            window.draw(cx).clear(cx);
+        }
+        let before = code.stats();
+        let (_, counts) = count_allocations(|| {
+            for _ in 0..8 {
+                window.draw(cx).clear(cx);
+            }
+        })
+        .expect("measured cached viewer draw");
+        assert_eq!(code.stats(), before);
+        counts
+    };
+    let plain = window.update(warm);
+    window.update(|_, cx| assert!(code.set_decorations(Some(decorations), cx)));
+    window.run_until_parked();
+    let annotated = window.update(warm);
+    eprintln!("eight warm draws: plain {plain:?}, annotated {annotated:?}");
+    assert_eq!(plain, annotated);
+}
+
+#[gpui_kit::test]
+fn unchanged_list_draw_allocations_are_independent_of_list_length(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use gpui_kit::{
+        Context, IntoElement, ListAlignment, ListState, Render, Styled, Window, div, list, px,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    struct ListFixture {
+        list: ListState,
+        rows_rendered: Rc<Cell<usize>>,
+    }
+
+    impl Render for ListFixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rows_rendered = self.rows_rendered.clone();
+            list(self.list.clone(), move |_, _, _| {
+                rows_rendered.set(rows_rendered.get() + 1);
+                div().w_full().h(px(20.)).into_any_element()
+            })
+            .w(px(320.))
+            .h(px(200.))
+        }
+    }
+
+    let mut measure = |length| {
+        let rows_rendered = Rc::new(Cell::new(0));
+        let (_, window) = cx.add_window_view(|_, _| ListFixture {
+            list: ListState::new(length, ListAlignment::Top, px(40.))
+                .with_uniform_item_height(px(20.)),
+            rows_rendered: rows_rendered.clone(),
+        });
+        window.update(|window, cx| {
+            for _ in 0..4 {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            }
+            rows_rendered.set(0);
+            let (_, counts) = count_allocations(|| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+            .expect("count unchanged list draw");
+            (rows_rendered.get(), counts)
+        })
+    };
+
+    let small = measure(10_000);
+    let large = measure(100_000);
+    eprintln!("plain list: 10,000 items {small:?}, 100,000 items {large:?}");
+    assert!(small.0 > 0, "the warm draw must lay out visible rows");
+    assert_eq!(small, large, "list length changed warm viewport work");
 }

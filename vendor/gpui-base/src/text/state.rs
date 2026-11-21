@@ -182,10 +182,12 @@ pub struct TextViewState {
     _receive_task: Task<()>,
 }
 
+type InitialMarkdownObserver = Box<dyn FnMut(&str, Option<&markdown::mdast::Node>) + Send>;
+
 impl TextViewState {
     /// Create a Markdown TextViewState.
     pub fn markdown(text: &str, cx: &mut Context<Self>) -> Self {
-        Self::new(TextViewFormat::Markdown, text, None, cx)
+        Self::new(TextViewFormat::Markdown, text, None, None, cx)
     }
 
     /// Estimate unseen blocks in scrollable views and measure them near the viewport.
@@ -194,12 +196,38 @@ impl TextViewState {
         height: Pixels,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(TextViewFormat::Markdown, text, Some(height.max(px(1.))), cx)
+        Self::new(
+            TextViewFormat::Markdown,
+            text,
+            Some(height.max(px(1.))),
+            None,
+            cx,
+        )
+    }
+
+    /// Observe the raw AST of each section of the first background parse.
+    ///
+    /// The observer receives the complete source and coordinates relative to
+    /// that source. A final call with no section signals success. A replacement
+    /// or coalesced append can supersede this parse and drop the observer.
+    pub fn markdown_with_initial_sections(
+        text: &str,
+        height: Pixels,
+        observe: impl FnMut(&str, Option<&markdown::mdast::Node>) + Send + 'static,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new(
+            TextViewFormat::Markdown,
+            text,
+            Some(height.max(px(1.))),
+            Some(Box::new(observe)),
+            cx,
+        )
     }
 
     /// Create a HTML TextViewState.
     pub fn html(text: &str, cx: &mut Context<Self>) -> Self {
-        Self::new(TextViewFormat::Html, text, None, cx)
+        Self::new(TextViewFormat::Html, text, None, None, cx)
     }
 
     /// Create a new TextViewState.
@@ -207,6 +235,7 @@ impl TextViewState {
         format: TextViewFormat,
         text: &str,
         estimated_block_height: Option<Pixels>,
+        initial_observer: Option<InitialMarkdownObserver>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -242,6 +271,8 @@ impl TextViewState {
             rx,
             tx_result,
             latest_replacement.clone(),
+            estimated_block_height.is_some(),
+            initial_observer,
         ));
 
         let mut this = Self {
@@ -1325,6 +1356,8 @@ struct UpdateFuture {
     rx: Pin<Box<Receiver<UpdateOptions>>>,
     tx_result: Sender<ParsedUpdate>,
     latest_replacement: Arc<AtomicUsize>,
+    defer_paragraphs: bool,
+    initial_observer: Option<InitialMarkdownObserver>,
 }
 
 impl UpdateFuture {
@@ -1333,6 +1366,8 @@ impl UpdateFuture {
         rx: Receiver<UpdateOptions>,
         tx_result: Sender<ParsedUpdate>,
         latest_replacement: Arc<AtomicUsize>,
+        defer_paragraphs: bool,
+        initial_observer: Option<InitialMarkdownObserver>,
     ) -> Self {
         Self {
             format,
@@ -1340,6 +1375,8 @@ impl UpdateFuture {
             rx: Box::pin(rx),
             tx_result,
             latest_replacement,
+            defer_paragraphs,
+            initial_observer,
         }
     }
 }
@@ -1351,6 +1388,8 @@ impl Future for UpdateFuture {
         loop {
             match self.rx.as_mut().poll_next(cx) {
                 Poll::Ready(Some(mut options)) => {
+                    let initial_revision = options.revision;
+                    let observer = self.initial_observer.take();
                     let hit_coalesce_budget =
                         merge_pending_options(&mut options, self.rx.as_ref().get_ref());
 
@@ -1360,7 +1399,9 @@ impl Future for UpdateFuture {
                         self.format,
                         self.content.clone(),
                         &options,
+                        self.defer_paragraphs,
                         cancelled,
+                        observer.filter(|_| options.revision == initial_revision),
                     );
                     if !cancelled() {
                         if let Ok(content) = &res {
@@ -1446,14 +1487,16 @@ fn parse_content(
     content: ParsedContent,
     options: &UpdateOptions,
 ) -> Result<ParsedContent, SharedString> {
-    parse_content_with_cancel(format, content, options, || false)
+    parse_content_with_cancel(format, content, options, false, || false, None)
 }
 
 fn parse_content_with_cancel(
     format: TextViewFormat,
     mut content: ParsedContent,
     options: &UpdateOptions,
+    defer_paragraphs: bool,
     cancelled: impl Fn() -> bool,
+    mut observe: Option<InitialMarkdownObserver>,
 ) -> Result<ParsedContent, SharedString> {
     if cancelled() {
         return Err("Text parse superseded".into());
@@ -1481,7 +1524,7 @@ fn parse_content_with_cancel(
 
     let mut source = String::new();
     if let Some(span) = last_span {
-        Arc::make_mut(&mut content.document.blocks).pop();
+        Arc::make_mut(&mut content.document.blocks).pop_back();
         node_cx.offset = span.start;
         source.push_str(&content.document.source[span.start..]);
         source.push_str(&options.pending_text);
@@ -1493,11 +1536,23 @@ fn parse_content_with_cancel(
     }
 
     let new_document = match format {
-        TextViewFormat::Markdown => {
-            format::markdown::parse_with_cancel(&source, &mut node_cx, cancelled)
-        }
+        TextViewFormat::Markdown => format::markdown::parse_with_cancel(
+            &source,
+            &mut node_cx,
+            defer_paragraphs && !options.append,
+            &cancelled,
+            |root| {
+                if let Some(observe) = &mut observe {
+                    observe(&source, Some(root));
+                }
+            },
+        ),
         TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
     }?;
+
+    if !cancelled() && let Some(observe) = &mut observe {
+        observe(&source, None);
+    }
 
     if options.append {
         content.document.source =
@@ -2346,6 +2401,8 @@ mod tests {
             rx,
             tx_result,
             Arc::default(),
+            false,
+            None,
         ));
         let waker = futures::task::noop_waker();
         let mut task_cx = std::task::Context::from_waker(&waker);
@@ -2478,6 +2535,50 @@ mod tests {
         drop(state);
 
         assert_eq!(content.document.selected_source_range(), Some(17..22));
+    }
+
+    #[test]
+    fn streaming_append_shares_settled_prefix_at_both_document_sizes() {
+        for settled_blocks in [256, 4_096] {
+            let initial = parse_content(
+                TextViewFormat::Markdown,
+                ParsedContent::default(),
+                &UpdateOptions {
+                    revision: 1,
+                    pending_text: "settled paragraph\n\n".repeat(settled_blocks) + "tail",
+                    append: false,
+                    mode: ParseMode::Replace,
+                    markdown_extensions: Arc::default(),
+                },
+            )
+            .expect("initial parse");
+            let continued = parse_content(
+                TextViewFormat::Markdown,
+                initial.clone(),
+                &UpdateOptions {
+                    revision: 2,
+                    pending_text: " grows\n\nnew block".to_string(),
+                    append: true,
+                    mode: ParseMode::Compatible,
+                    markdown_extensions: Arc::default(),
+                },
+            )
+            .expect("incremental parse");
+            let old = &initial.document.blocks;
+            let new = &continued.document.blocks;
+            assert_eq!(old.len(), settled_blocks + 1);
+            assert_eq!(new.len(), settled_blocks + 2);
+            let copied = old
+                .iter()
+                .zip(new.iter())
+                .take(settled_blocks)
+                .filter(|(old, new)| !std::ptr::eq(*old, *new))
+                .count();
+            eprintln!("settled_blocks={settled_blocks} copied_blocks={copied}");
+            assert!(copied <= 64, "{copied} settled blocks copied");
+            assert_eq!(new[settled_blocks].text().trim(), "tail grows");
+            assert_eq!(new[0].span(), old[0].span());
+        }
     }
 
     #[test]

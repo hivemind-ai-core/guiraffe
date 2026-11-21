@@ -258,12 +258,7 @@ fn long_variable_history_virtualizes_and_jump_restores_tail(cx: &mut TestAppCont
                 0,
                 "list inserts are batched until layout"
             );
-            assert!(
-                history
-                    .rows
-                    .iter()
-                    .all(|row| row.read(cx).markdown.is_none())
-            );
+            assert!(history.rows.iter().all(|row| row.mounted().is_none()));
         });
     });
     draw(cx, handle);
@@ -273,11 +268,13 @@ fn long_variable_history_virtualizes_and_jump_restores_tail(cx: &mut TestAppCont
         let rendered = h
             .rows
             .iter()
+            .filter_map(|row| row.mounted())
             .filter(|r| r.read(cx).renders.get() > 0)
             .count();
         let parsed = h
             .rows
             .iter()
+            .filter_map(|row| row.mounted())
             .filter(|row| row.read(cx).markdown.is_some())
             .count();
         assert_eq!(parsed, rendered);
@@ -328,10 +325,24 @@ fn traversing_history_evicts_distant_text_and_restores_rows(cx: &mut TestAppCont
                     cx,
                 );
             }
+            assert!(chat.set_reasoning(MessageId(0), "Reasoning retained.", cx));
+            assert!(chat.update_tool(
+                MessageId(0),
+                ToolCall {
+                    id: "example".into(),
+                    name: "read_file".into(),
+                    status: ToolStatus::Succeeded,
+                    arguments: "fixture".into(),
+                    result: "complete".into(),
+                },
+                cx,
+            ));
+            assert!(chat.mounted_message(MessageId(0), cx).is_none());
             chat.history.clone()
         })
     });
     draw(cx, handle);
+    let mut initial_disclosures = None;
     for index in (0..400).step_by(8) {
         cx.update(|cx| {
             history.update(cx, |history, cx| {
@@ -344,16 +355,47 @@ fn traversing_history_evicts_distant_text_and_restores_rows(cx: &mut TestAppCont
             });
         });
         draw(cx, handle);
+        if index == 0 {
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.click("toggle-tool", cx);
+                window.click("toggle-reasoning", cx);
+            })
+            .expect("open message disclosures");
+            draw(cx, handle);
+            initial_disclosures = cx.update(|cx| {
+                history.read(cx).rows[0]
+                    .mounted()
+                    .map(|view| view.read(cx).disclosures(cx))
+            });
+            assert!(
+                initial_disclosures
+                    .as_ref()
+                    .is_some_and(|state| !state.is_empty())
+            );
+        }
+        cx.update(|cx| {
+            let retained = history
+                .read(cx)
+                .rows
+                .iter()
+                .filter(|row| row.mounted().is_some())
+                .count();
+            assert!(
+                retained <= 64,
+                "retained {retained} rows after scrolling to {index}"
+            );
+        });
     }
     cx.update(|cx| {
         let history = history.read(cx);
-        assert!(history.rows[0].read(cx).markdown.is_none());
-        assert!(history.rows[392].read(cx).markdown.is_some());
+        assert!(history.rows[0].mounted().is_none());
+        assert!(history.rows[392].mounted().is_some());
         assert!(
             history
                 .rows
                 .iter()
-                .filter(|row| row.read(cx).markdown.is_some())
+                .filter(|row| row.mounted().is_some())
                 .count()
                 <= 64
         );
@@ -368,7 +410,10 @@ fn traversing_history_evicts_distant_text_and_restores_rows(cx: &mut TestAppCont
         })
     });
     draw(cx, handle);
-    cx.update(|cx| assert!(history.read(cx).rows[0].read(cx).markdown.is_some()));
+    cx.update(|cx| {
+        let restored = history.read(cx).rows[0].mounted().expect("restored row");
+        assert_eq!(Some(restored.read(cx).disclosures(cx)), initial_disclosures);
+    });
 }
 
 // gpui-fast exposes its scroll-layer test switch; upstream has no scroll layers.
@@ -417,8 +462,16 @@ fn stream_render_counts(cx: &mut TestAppContext, composited_layers: bool) {
         let chat = chat.read(cx);
         (
             chat.renders.clone(),
-            chat.messages[&MessageId(1)].read(cx).renders.clone(),
-            chat.messages[&id].read(cx).renders.clone(),
+            chat.mounted_message(MessageId(1), cx)
+                .expect("previous row")
+                .read(cx)
+                .renders
+                .clone(),
+            chat.mounted_message(id, cx)
+                .expect("stream row")
+                .read(cx)
+                .renders
+                .clone(),
             chat.composer.read(cx).renders.clone(),
         )
     });

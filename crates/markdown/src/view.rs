@@ -18,8 +18,8 @@ use gpui_kit::{
 };
 
 use crate::{
-    document::{Document, Heading},
-    streaming::{Change, classify},
+    document::{Document, DocumentAnalysis, Heading},
+    streaming::{Change, MermaidFenceScan, classify},
 };
 
 /// Work counters, for tests and devtools (proving streaming stays incremental).
@@ -27,7 +27,7 @@ use crate::{
 pub struct MarkdownStats {
     /// Background analyses started (coalesced: at most one in flight).
     pub analyses: u64,
-    /// Bytes parsed by those analyses (incremental: only the unsettled tail).
+    /// Bytes parsed by standalone metadata analysis, excluding sections shared with rendering.
     pub analyzed_bytes: u64,
     /// Full text replacements handed to the text view.
     pub replacements: u64,
@@ -35,11 +35,10 @@ pub struct MarkdownStats {
     pub appends: u64,
 }
 
-/// How much of `source` may be shown: everything except an unfinished mermaid fence,
-/// which would otherwise be laid out (and re-rendered) on every token.
-fn showable(source: &str) -> usize {
+/// How much can be shown while a Mermaid fence is incomplete.
+fn showable(source: &str, fence_scan: &mut MermaidFenceScan) -> usize {
     if cfg!(feature = "mermaid") {
-        crate::streaming::unfinished_mermaid_fence(source).unwrap_or(source.len())
+        fence_scan.update(source).unwrap_or(source.len())
     } else {
         source.len()
     }
@@ -51,6 +50,7 @@ pub struct MarkdownState {
     source: String,
     /// How much of `source` the text view has (an unfinished mermaid fence is held back).
     pushed: usize,
+    fence_scan: MermaidFenceScan,
     revision: u64,
     analyzed: u64,
     document: Arc<Document>,
@@ -93,18 +93,47 @@ impl MarkdownState {
     /// Create the state for `source`, parsed as GFM Markdown.
     pub fn new(source: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let source = source.into().to_string();
-        let pushed = showable(&source);
-        let text = cx.new(|cx| {
-            TextViewState::markdown_with_estimated_block_height(
-                &source[..pushed],
-                gpui_kit::px(28.),
-                cx,
-            )
-        });
+        let mut fence_scan = MermaidFenceScan::default();
+        let pushed = showable(&source, &mut fence_scan);
+        // The renderer enables math constructs and can withhold an unfinished
+        // Mermaid fence. The metadata pass still needs canonical GFM in those cases.
+        let share_initial_parse =
+            source.len() > 32 * 1024 && pushed == source.len() && !source.contains('$');
+        let (text, initial_analysis) = if share_initial_parse {
+            let (sender, receiver) = gpui_kit::base::async_util::unbounded();
+            let mut analysis = DocumentAnalysis::default();
+            let text = cx.new(|cx| {
+                TextViewState::markdown_with_initial_sections(
+                    &source,
+                    gpui_kit::px(28.),
+                    move |source, section| {
+                        if let Some(section) = section {
+                            analysis.visit(source, section);
+                        } else {
+                            let document = std::mem::take(&mut analysis).finish();
+                            let settled = crate::streaming::settled_prefix(source);
+                            _ = sender.try_send((document, settled));
+                        }
+                    },
+                    cx,
+                )
+            });
+            (text, Some(receiver))
+        } else {
+            let text = cx.new(|cx| {
+                TextViewState::markdown_with_estimated_block_height(
+                    &source[..pushed],
+                    gpui_kit::px(28.),
+                    cx,
+                )
+            });
+            (text, None)
+        };
         let mut state = Self {
             text,
             source,
             pushed,
+            fence_scan,
             revision: 0,
             analyzed: 0,
             document: Arc::default(),
@@ -118,7 +147,28 @@ impl MarkdownState {
             #[cfg(feature = "mermaid")]
             extensions: Self::extensions(),
         };
-        state.reanalyze(cx);
+        if let Some(initial_analysis) = initial_analysis {
+            state.analyzing = true;
+            cx.spawn(async move |this, cx| {
+                let initial = initial_analysis.recv().await;
+                this.update(cx, |this, cx| match initial {
+                    Ok((document, settled)) => {
+                        this.stats.analyses += 1;
+                        let end = document.metadata_end();
+                        this.finish_analysis(0, 0, (Arc::new(document), end, settled), cx);
+                    }
+                    Err(_) => {
+                        // A replacement or coalesced append overtook the initial parse.
+                        this.analyzing = false;
+                        this.reanalyze(cx);
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        } else {
+            state.reanalyze(cx);
+        }
         state
     }
 
@@ -191,7 +241,10 @@ impl MarkdownState {
 
     /// Hand the text view what it doesn't have yet (or everything, on `replace`).
     fn sync_text(&mut self, replace: bool, cx: &mut Context<Self>) {
-        let target = showable(&self.source);
+        if replace {
+            self.fence_scan = MermaidFenceScan::default();
+        }
+        let target = showable(&self.source, &mut self.fence_scan);
         if replace {
             let shown = &self.source[..target];
             self.text.update(cx, |text, cx| text.set_text(shown, cx));
@@ -261,27 +314,36 @@ impl MarkdownState {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.analyzing = false;
-                let mut metadata_changed = false;
-                if this.replaced == replaced {
-                    // Even a superseded *append* result analyses a prefix of the current text,
-                    // so its settled point can seed the next incremental run.
-                    metadata_changed = !Arc::ptr_eq(&this.document, &document);
-                    this.document = document;
-                    this.metadata_end = metadata_end;
-                    this.settled = settled;
-                    this.analyzed = revision;
-                }
-                if this.dirty || this.revision != revision {
-                    this.reanalyze(cx);
-                }
-                if metadata_changed {
-                    cx.notify();
-                }
+                this.finish_analysis(revision, replaced, (document, metadata_end, settled), cx);
             })
             .ok();
         })
         .detach();
+    }
+
+    fn finish_analysis(
+        &mut self,
+        revision: u64,
+        replaced: u64,
+        (document, metadata_end, settled): (Arc<Document>, usize, usize),
+        cx: &mut Context<Self>,
+    ) {
+        self.analyzing = false;
+        let mut metadata_changed = false;
+        if self.replaced == replaced {
+            // A superseded append result still describes a prefix of the current source.
+            metadata_changed = !Arc::ptr_eq(&self.document, &document);
+            self.document = document;
+            self.metadata_end = metadata_end;
+            self.settled = settled;
+            self.analyzed = revision;
+        }
+        if self.dirty || self.revision != revision {
+            self.reanalyze(cx);
+        }
+        if metadata_changed {
+            cx.notify();
+        }
     }
 
     /// Markdown extensions, exposed so a test can drive a bare `TextView` with

@@ -57,6 +57,10 @@ harness = false
 required-features = ["instruction-counts"]
 
 [[example]]
+name = "soak"
+test = true
+
+[[example]]
 name = "production_soak"
 test = true
 
@@ -64,3 +68,7 @@ test = true
 name = "production_frames"
 harness = false
 required-features = ["instruction-counts"]
+
+[[example]]
+name = "limits"
+test = true

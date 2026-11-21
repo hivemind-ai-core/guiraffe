@@ -240,6 +240,10 @@ enum ListItem {
 }
 
 impl ListItem {
+    fn matches_measurement(&self, size: Size<Pixels>, ready: bool) -> bool {
+        self.size_hint() == Some(size) && self.size().is_some() == ready
+    }
+
     fn with_measurement(&self, size: Size<Pixels>, ready: bool) -> Self {
         if ready {
             Self::Measured {
@@ -1045,6 +1049,7 @@ impl StateInner {
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
+        let mut measurements_changed = false;
         let mut item_layouts = VecDeque::new();
         let mut rendered_height = padding.top;
         let mut max_item_width = px(0.);
@@ -1121,6 +1126,7 @@ impl StateInner {
             rendered_height += size.height;
             max_item_width = max_item_width.max(size.width);
             provisional |= !ready;
+            measurements_changed |= !item.matches_measurement(size, ready);
             measured_items.push_back(item.with_measurement(size, ready));
             if !ready && visible_height >= available_height {
                 break;
@@ -1145,6 +1151,7 @@ impl StateInner {
                     let ready = self.is_item_ready(item_index, cx);
                     provisional |= !ready;
                     rendered_height += element_size.height;
+                    measurements_changed |= !item.matches_measurement(element_size, ready);
                     measured_items.push_front(item.with_measurement(element_size, ready));
                     item_layouts.push_front(ItemLayout {
                         index: item_index,
@@ -1207,6 +1214,7 @@ impl StateInner {
 
                     leading_overdraw += size.height;
                     let ready = self.is_item_ready(cursor.start().0, cx);
+                    measurements_changed |= !item.matches_measurement(size, ready);
                     measured_items.push_front(item.with_measurement(size, ready));
                     if !ready {
                         break;
@@ -1217,13 +1225,15 @@ impl StateInner {
             }
         }
 
-        let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
-        let mut cursor = old_items.cursor::<Count>(());
-        let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right);
-        new_items.extend(measured_items, ());
-        cursor.seek(&Count(measured_range.end), Bias::Right);
-        new_items.append(cursor.suffix(), ());
-        self.items = new_items;
+        if measurements_changed {
+            let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
+            let mut cursor = old_items.cursor::<Count>(());
+            let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right);
+            new_items.extend(measured_items, ());
+            cursor.seek(&Count(measured_range.end), Bias::Right);
+            new_items.append(cursor.suffix(), ());
+            self.items = new_items;
+        }
 
         // If follow_tail mode is on but the user scrolled away
         // (is_following is false), check whether the current scroll
