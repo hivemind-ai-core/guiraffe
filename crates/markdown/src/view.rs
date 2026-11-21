@@ -94,7 +94,13 @@ impl MarkdownState {
     pub fn new(source: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let source = source.into().to_string();
         let pushed = showable(&source);
-        let text = cx.new(|cx| TextViewState::markdown(&source[..pushed], cx));
+        let text = cx.new(|cx| {
+            TextViewState::markdown_with_estimated_block_height(
+                &source[..pushed],
+                gpui_kit::px(28.),
+                cx,
+            )
+        });
         let mut state = Self {
             text,
             source,
