@@ -78,22 +78,45 @@ pub fn init(cx: &mut App) {
     cx.set_global(Bound);
     let scope = Some(CONTEXT);
     let mut keys = Vec::new();
-    for (key, direction, jump_direction) in [
-        ("up", Nav::Up, Nav::Up),
-        ("down", Nav::Down, Nav::Down),
-        ("left", Nav::Left, Nav::Left),
-        ("right", Nav::Right, Nav::Right),
-        ("home", Nav::Home, Nav::First),
-        ("end", Nav::End, Nav::Last),
+    for (bindings, direction, jump_direction) in [
+        (
+            ["up", "shift-up", "ctrl-up", "ctrl-shift-up"],
+            Nav::Up,
+            Nav::Up,
+        ),
+        (
+            ["down", "shift-down", "ctrl-down", "ctrl-shift-down"],
+            Nav::Down,
+            Nav::Down,
+        ),
+        (
+            ["left", "shift-left", "ctrl-left", "ctrl-shift-left"],
+            Nav::Left,
+            Nav::Left,
+        ),
+        (
+            ["right", "shift-right", "ctrl-right", "ctrl-shift-right"],
+            Nav::Right,
+            Nav::Right,
+        ),
+        (
+            ["home", "shift-home", "ctrl-home", "ctrl-shift-home"],
+            Nav::Home,
+            Nav::First,
+        ),
+        (
+            ["end", "shift-end", "ctrl-end", "ctrl-shift-end"],
+            Nav::End,
+            Nav::Last,
+        ),
     ] {
-        for (prefix, extend, jump) in [
-            ("", false, false),
-            ("shift-", true, false),
-            ("ctrl-", false, true),
-            ("ctrl-shift-", true, true),
-        ] {
+        for (key, (extend, jump)) in
+            bindings
+                .into_iter()
+                .zip([(false, false), (true, false), (false, true), (true, true)])
+        {
             keys.push(KeyBinding::new(
-                &format!("{prefix}{key}"),
+                key,
                 SheetCommand::Move {
                     direction: if jump { jump_direction } else { direction },
                     extend,
