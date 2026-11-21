@@ -317,13 +317,15 @@ pub(crate) fn prepare(
                     shared.stats.set(stats);
                 }
                 let text = prefix(text);
-                let hash = doc.line_hash(line).unwrap_or_default();
-                let context_line =
-                    if highlighted.spans.is_empty() && shared.annotations.borrow().is_empty() {
-                        usize::MAX
-                    } else {
-                        line
-                    };
+                // Short, unstyled lines can share shaping across source rows.
+                let (hash, context_line) = if text.len() <= 64
+                    && highlighted.spans.is_empty()
+                    && shared.annotations.borrow().is_empty()
+                {
+                    (content_hash(text.as_bytes()), usize::MAX)
+                } else {
+                    (0, line)
+                };
                 let shape = cache.line(
                     text,
                     (hash, epoch, context_line, font_size.to_bits(), appearance),
