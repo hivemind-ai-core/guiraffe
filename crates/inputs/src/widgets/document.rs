@@ -296,7 +296,7 @@ impl RenderOnce for RangeDocument {
                     slider.set_focusable(self.focusable, cx);
                 }
                 if slider.label != self.label {
-                    slider.set_label(self.label, cx);
+                    slider.set_label(self.label.clone(), cx);
                 }
             });
             state.handler = self.handler;
@@ -433,6 +433,7 @@ impl TagsDocument {
 }
 
 struct TagsDocumentState {
+    placeholder: SharedString,
     tags: Entity<TagsInput>,
     handlers: [Option<EventHandler>; 2],
     _subscription: Subscription,
@@ -476,6 +477,7 @@ impl RenderOnce for TagsDocument {
                 },
             );
             TagsDocumentState {
+                placeholder: self.placeholder.clone(),
                 tags,
                 handlers: [None, None],
                 _subscription: subscription,
@@ -483,11 +485,15 @@ impl RenderOnce for TagsDocument {
         });
         state.update(cx, |state, cx| {
             state.handlers = self.handlers;
+            let placeholder = (state.placeholder != self.placeholder).then(|| {
+                state.placeholder = self.placeholder;
+                state.placeholder.clone()
+            });
             state.tags.update(cx, |tags, cx| {
                 tags.rules = self.rules;
-                if tags.input.read(cx).placeholder() != &self.placeholder {
+                if let Some(placeholder) = placeholder {
                     tags.input.update(cx, |input, cx| {
-                        input.set_placeholder(self.placeholder, window, cx)
+                        input.set_placeholder(placeholder, window, cx)
                     });
                 }
                 if let Some(value) = self.value
@@ -499,9 +505,11 @@ impl RenderOnce for TagsDocument {
                             accepted.push(tag);
                         }
                     }
-                    tags.tags = accepted;
-                    tags.tag_labels = tags.tags.iter().map(|tag| tag.as_str().into()).collect();
-                    cx.notify();
+                    if tags.tags != accepted {
+                        tags.tags = accepted;
+                        tags.tag_labels = tags.tags.iter().map(|tag| tag.as_str().into()).collect();
+                        cx.notify();
+                    }
                 }
             });
             state.tags.clone()

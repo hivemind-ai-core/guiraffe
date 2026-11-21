@@ -419,7 +419,7 @@ impl Validation<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::WIDGETS;
+    use crate::catalog::{WIDGETS, lookup};
 
     #[test]
     fn emits_structured_issues_for_authoring_mistakes() {

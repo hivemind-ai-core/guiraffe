@@ -100,8 +100,32 @@ widgets! {
          "thickness": "number" = "12", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
          "sections": "ring-sections" = "[]", COLOR, None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false], [];
-    BUTTON: "button", "gpui-kit", "Clickable action.", false, "stateless", "button", ["kit.primary", "kit.primary_foreground"],
-        ["label": "string" = "\"\"", &[] as &[&str], None, true], ["click": "null"];
+    BUTTON: "button", "gpui-kit", "Clickable action.", true, "stateless", "button", ["kit.primary", "kit.primary_foreground"],
+        ["label": "string" = "\"\"", &[] as &[&str], None, true;
+         "size": "string" = "\"md\"", SIZE, None, false;
+         "variant": "string" = "\"default\"", &["default", "primary", "secondary", "danger", "info", "success", "warning", "ghost", "link", "text"], None, false;
+         "rounded": "string" = "\"md\"", &["none", "sm", "md", "lg"], None, false;
+         "rounding-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "loading": "boolean" = "false", &[] as &[&str], None, false;
+         "selected": "boolean" = "false", &[] as &[&str], None, false;
+         "open": "boolean" = "false", &[] as &[&str], None, false;
+         "outline": "boolean" = "false", &[] as &[&str], None, false;
+         "compact": "boolean" = "false", &[] as &[&str], None, false;
+         "toggled": "boolean" = "null", &[] as &[&str], None, false;
+         "dropdown-caret": "boolean" = "false", &[] as &[&str], None, false;
+         "focus-ring": "boolean" = "true", &[] as &[&str], None, false;
+         "tab-stop": "boolean" = "true", &[] as &[&str], None, false;
+         "tab-index": "number" = "0", &[] as &[&str], Some((i32::MIN as f64, i32::MAX as f64)), false;
+         "icon": "string" = "null", &[] as &[&str], None, false;
+         "loading-icon": "string" = "null", &[] as &[&str], None, false;
+         "role": "string" = "null", &["button", "check-box", "radio-button", "switch", "menu-item"], None, false;
+         "accessibility-id": "string" = "null", &[] as &[&str], None, false;
+         "accessibility-label": "string" = "null", &[] as &[&str], None, false;
+         "tooltip": "string" = "null", &[] as &[&str], None, false;
+         "tooltip-placement": "string" = "null", &["top", "bottom", "left", "right"], None, false;
+         "tooltip-show-delay-ms": "number" = "null", &[] as &[&str], Some((0.0, 60_000.0)), false],
+        ["click": "null", "hover": "boolean"];
     HUG: "hug", "ui", "Content-width container.", true, "stateless", "group", [], [], [];
     SPACER: "spacer", "ui", "Flexible empty space.", false, "stateless", "presentation", [], [], [];
     TEXT_INPUT: "text-input", "gpui-kit", "Single-line text editor.", false, "controlled or uncontrolled value", "textbox", ["control_size", "kit.input", "kit.foreground", "scale", "state.focus_ring"],

@@ -750,3 +750,36 @@ fn ui_macro_can_embed_stateful_input_builders() {
     }
     let _ = example;
 }
+
+#[gpui_kit::test]
+fn button_document_validates_and_renders_builder_options(cx: &mut TestAppContext) {
+    let doc = Document::new(
+        Node::new("button")
+            .prop("label", "Open")
+            .prop("accessibility-label", "Open item")
+            .prop("accessibility-id", "open-item")
+            .prop("size", "lg")
+            .prop("variant", "primary")
+            .prop("rounded", "lg")
+            .prop("rounding-px", 12)
+            .prop("disabled", false)
+            .prop("loading", false)
+            .prop("selected", true)
+            .prop("open", false)
+            .prop("outline", true)
+            .prop("compact", true)
+            .prop("toggled", true)
+            .prop("dropdown-caret", true)
+            .prop("focus-ring", true)
+            .prop("tab-stop", true)
+            .prop("tab-index", 1)
+            .prop("tooltip", "Open item")
+            .prop("tooltip-placement", "bottom")
+            .prop("tooltip-show-delay-ms", 250)
+            .on("hover", "hovered")
+            .child(Node::new("text").prop("text", "Item")),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    assert!(compile(&doc).diagnostics().is_empty());
+    let _ = mount(cx, &doc);
+}

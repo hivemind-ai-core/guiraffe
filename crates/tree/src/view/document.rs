@@ -31,6 +31,31 @@ const TREE_PROPS: &[&str] = &[
 ];
 const TREE_EVENTS: &[&str] = &["load-children", "select", "check", "reorder"];
 
+static PROPERTY_SCHEMA: Schema = Schema {
+    props: &[
+        TREE_PROPS[0],
+        TREE_PROPS[1],
+        TREE_PROPS[2],
+        TREE_PROPS[3],
+        TREE_PROPS[4],
+        TREE_PROPS[5],
+        TREE_PROPS[6],
+        TREE_PROPS[7],
+        TREE_PROPS[8],
+        "searchable",
+        "split-ratio",
+        "persist-key",
+    ],
+    events: &[
+        TREE_EVENTS[0],
+        TREE_EVENTS[1],
+        TREE_EVENTS[2],
+        TREE_EVENTS[3],
+        "edit",
+        "pick-path",
+    ],
+};
+
 pub(crate) fn register(cx: &mut App) {
     WidgetRegistry::install(
         cx,
@@ -45,30 +70,7 @@ pub(crate) fn register(cx: &mut App) {
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[1],
-                schema: &Schema {
-                    props: &[
-                        TREE_PROPS[0],
-                        TREE_PROPS[1],
-                        TREE_PROPS[2],
-                        TREE_PROPS[3],
-                        TREE_PROPS[4],
-                        TREE_PROPS[5],
-                        TREE_PROPS[6],
-                        TREE_PROPS[7],
-                        TREE_PROPS[8],
-                        "searchable",
-                        "split-ratio",
-                        "persist-key",
-                    ],
-                    events: &[
-                        TREE_EVENTS[0],
-                        TREE_EVENTS[1],
-                        TREE_EVENTS[2],
-                        TREE_EVENTS[3],
-                        "edit",
-                        "pick-path",
-                    ],
-                },
+                schema: &PROPERTY_SCHEMA,
                 render: |node, _, _, _| DocumentTree::<true>::from_node(node).into_any_element(),
             },
         ],
@@ -417,7 +419,7 @@ impl<const P: bool> RenderOnce for DocumentTree<P> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.key, cx, |window, cx| {
             let source = Rc::new(DocumentRows::parse(&self.rows));
-            let (node, subscription) = make_tree(source.clone(), &self.inspector, window, cx);
+            let (node, subscription) = make_tree::<P>(source.clone(), &self.inspector, window, cx);
             TreeDocumentState {
                 rows: self.rows.clone(),
                 source,

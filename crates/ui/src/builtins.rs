@@ -31,6 +31,104 @@ fn chunk_rows(kids: Vec<AnyElement>, cols: usize) -> Vec<Vec<AnyElement>> {
     rows
 }
 
+fn button(n: &NodeView<'_>) -> Button {
+    use gpui_kit::component::{
+        Disableable, FocusableExt, Icon, Placement, Selectable, Sizable,
+        button::{ButtonRounded, ButtonVariant, ButtonVariants},
+    };
+
+    let prop = |name| n.prop(n.prop_index(name));
+    let flag = |name| prop(name).as_bool().unwrap_or(false);
+    let variant = match prop("variant").as_str() {
+        Some("primary") => ButtonVariant::Primary,
+        Some("secondary") => ButtonVariant::Secondary,
+        Some("danger") => ButtonVariant::Danger,
+        Some("info") => ButtonVariant::Info,
+        Some("success") => ButtonVariant::Success,
+        Some("warning") => ButtonVariant::Warning,
+        Some("ghost") => ButtonVariant::Ghost,
+        Some("link") => ButtonVariant::Link,
+        Some("text") => ButtonVariant::Text,
+        _ => ButtonVariant::Default,
+    };
+    let rounding = match prop("rounded").as_str() {
+        Some("none") => ButtonRounded::None,
+        Some("sm") => ButtonRounded::Small,
+        Some("lg") => ButtonRounded::Large,
+        _ => ButtonRounded::Medium,
+    };
+    let rounding = prop("rounding-px")
+        .as_f64()
+        .map_or(rounding, |width| px(width.max(0.0) as f32).into());
+    let mut button = Button::new(n.element_id())
+        .label(n.text(n.prop_index("label")))
+        .with_variant(variant)
+        .rounded(rounding)
+        .disabled(flag("disabled"))
+        .loading(flag("loading"))
+        .selected(flag("selected"))
+        .open(flag("open"))
+        .dropdown_caret(flag("dropdown-caret"))
+        .focus_ring(prop("focus-ring").as_bool().unwrap_or(true))
+        .tab_stop(prop("tab-stop").as_bool().unwrap_or(true))
+        .tab_index(prop("tab-index").as_f64().unwrap_or_default() as isize);
+    if let Some(size) = n.size(n.prop_index("size")) {
+        button = button.with_size(px(size.control_height()));
+    }
+    if flag("outline") {
+        button = button.outline();
+    }
+    if flag("compact") {
+        button = button.compact();
+    }
+    if let Some(toggled) = prop("toggled").as_bool() {
+        button = button.toggled(toggled);
+    }
+    if let Some(path) = prop("icon").as_str() {
+        button = button.icon(Icon::default().path(path.to_owned()));
+    }
+    if let Some(path) = prop("loading-icon").as_str() {
+        button = button.loading_icon(Icon::default().path(path.to_owned()));
+    }
+    if let Some(role) = match prop("role").as_str() {
+        Some("button") => Some(gpui_kit::Role::Button),
+        Some("check-box") => Some(gpui_kit::Role::CheckBox),
+        Some("radio-button") => Some(gpui_kit::Role::RadioButton),
+        Some("switch") => Some(gpui_kit::Role::Switch),
+        Some("menu-item") => Some(gpui_kit::Role::MenuItem),
+        _ => None,
+    } {
+        button = button.role(role);
+    }
+    if let Some(id) = prop("accessibility-id").as_str() {
+        button = button.accessibility_id(id.to_owned());
+    }
+    if let Some(label) = prop("accessibility-label").as_str() {
+        button = button.accessibility_label(label.to_owned());
+    }
+    if let Some(tooltip) = prop("tooltip").as_str() {
+        button = button.tooltip(tooltip.to_owned());
+    }
+    if let Some(placement) = match prop("tooltip-placement").as_str() {
+        Some("top") => Some(Placement::Top),
+        Some("bottom") => Some(Placement::Bottom),
+        Some("left") => Some(Placement::Left),
+        Some("right") => Some(Placement::Right),
+        _ => None,
+    } {
+        button = button.tooltip_placement(placement);
+    }
+    if let Some(delay) = prop("tooltip-show-delay-ms").as_f64() {
+        button = button.tooltip_show_delay(std::time::Duration::from_millis(
+            delay.clamp(0.0, 60_000.0) as u64,
+        ));
+    }
+    if let Some(hover) = n.handler(n.event_index("hover")) {
+        button = button.on_hover(move |entered, window, cx| hover((*entered).into(), window, cx));
+    }
+    button
+}
+
 use crate::catalog::*;
 
 pub fn register(r: &mut Registry) {
@@ -208,8 +306,8 @@ pub fn register(r: &mut Registry) {
     );
     r.register(
         BUTTON.0.id,
-        widget(&BUTTON.1, |n, _, _, _| {
-            let b = Button::new(n.element_id()).label(n.text(n.prop_index("label")));
+        widget(&BUTTON.1, |n, children, _, _| {
+            let b = button(n).children(children);
             let b = match n.handler(n.event_index("click")) {
                 Some(h) => b
                     .on_click(move |_, w, cx| h(crate::Value::Null, w, cx))
