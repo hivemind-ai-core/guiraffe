@@ -19,7 +19,7 @@ use crate::text::{
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct ParsedDocument {
     pub(crate) source: SharedString,
-    pub(crate) blocks: Arc<Vec<BlockNode>>,
+    pub(crate) blocks: Arc<im::Vector<BlockNode>>,
 }
 
 const MAX_CACHED_BLOCKS: usize = 256;
@@ -28,7 +28,7 @@ const MAX_CACHED_BLOCKS: usize = 256;
 pub(super) struct ViewportBlockCache(Rc<RefCell<BTreeSet<usize>>>);
 
 impl ViewportBlockCache {
-    fn touch(&self, index: usize, blocks: &[BlockNode]) {
+    fn touch(&self, index: usize, blocks: &im::Vector<BlockNode>) {
         let mut cached = self.0.borrow_mut();
         if !cached.insert(index) || cached.len() <= MAX_CACHED_BLOCKS {
             return;
@@ -85,11 +85,11 @@ pub(crate) enum PrevBlock {
 /// that shows anything, and the visible block before it. Link definitions
 /// and other blocks that render nothing are skipped, so a document opening
 /// with `[ref]: url` still starts flush.
-pub(crate) fn flow_position<B: std::borrow::Borrow<BlockNode>>(
-    blocks: &[B],
+pub(crate) fn flow_position<'a>(
     ix: usize,
+    block_at: impl Fn(usize) -> &'a BlockNode,
 ) -> (bool, PrevBlock) {
-    let prev = blocks[..ix].iter().rev().map(B::borrow).find(|block| {
+    let prev = (0..ix).rev().map(block_at).find(|block| {
         !matches!(
             block,
             BlockNode::Definition { .. } | BlockNode::Break { .. } | BlockNode::Unknown
@@ -282,7 +282,7 @@ impl ParsedDocument {
             let blocks_len = self.blocks.len();
             return div().children(self.blocks.iter().enumerate().map(move |(ix, node)| {
                 let is_last = ix + 1 == blocks_len;
-                let (is_first, prev) = flow_position(&self.blocks, ix);
+                let (is_first, prev) = flow_position(ix, |i| &self.blocks[i]);
                 node.render_block(
                     NodeRenderOptions {
                         ix,
@@ -321,7 +321,7 @@ impl ParsedDocument {
                         cache.touch(ix, &blocks);
                     }
                     let is_last = ix + 1 == blocks.len();
-                    let (is_first, prev) = flow_position(&blocks, ix);
+                    let (is_first, prev) = flow_position(ix, |i| &blocks[i]);
                     blocks[ix]
                         .render_block(
                             NodeRenderOptions {
@@ -351,7 +351,7 @@ mod tests {
     fn positions(source: &str) -> Vec<(bool, PrevBlock)> {
         let document = markdown::parse(source, &mut NodeContext::default()).unwrap();
         (0..document.blocks.len())
-            .map(|ix| flow_position(&document.blocks, ix))
+            .map(|ix| flow_position(ix, |i| &document.blocks[i]))
             .collect()
     }
 

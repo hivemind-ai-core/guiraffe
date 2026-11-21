@@ -37,7 +37,7 @@ pub(in crate::text) fn parse_with_cancel(
     })?;
     Ok(ParsedDocument {
         source: source.to_owned().into(),
-        blocks: Arc::new(blocks),
+        blocks: Arc::new(blocks.into()),
     })
 }
 
@@ -1028,9 +1028,10 @@ fn parse_paragraph(
         }
         Node::Html(val) => match super::html::parse(&val.value, cx) {
             Ok(el) => {
-                if let Some(inline_text) =
-                    append_inline_html_blocks(paragraph, Arc::unwrap_or_clone(el.blocks))
-                {
+                if let Some(inline_text) = append_inline_html_blocks(
+                    paragraph,
+                    Arc::unwrap_or_clone(el.blocks).into_iter().collect(),
+                ) {
                     text = inline_text;
                 } else {
                     if cfg!(debug_assertions) {
@@ -1345,7 +1346,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
         }
         Node::Html(val) => match super::html::parse(&val.value, cx) {
             Ok(el) => BlockNode::Root {
-                children: Arc::unwrap_or_clone(el.blocks),
+                children: Arc::unwrap_or_clone(el.blocks).into_iter().collect(),
                 span: new_span(val.position, cx),
             },
             Err(err) => {
@@ -1912,8 +1913,9 @@ mod tests {
         let source = "mapped\n\nA &amp; B";
         let mut cx = NodeContext::default();
         let document = parse(source, &mut cx).unwrap();
-        let [BlockNode::Paragraph(mapped), BlockNode::Paragraph(entity)] =
-            document.blocks.as_slice()
+        assert_eq!(document.blocks.len(), 2);
+        let (BlockNode::Paragraph(mapped), BlockNode::Paragraph(entity)) =
+            (&document.blocks[0], &document.blocks[1])
         else {
             panic!("expected two paragraphs");
         };

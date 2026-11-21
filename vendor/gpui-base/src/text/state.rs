@@ -1481,7 +1481,7 @@ fn parse_content_with_cancel(
 
     let mut source = String::new();
     if let Some(span) = last_span {
-        Arc::make_mut(&mut content.document.blocks).pop();
+        Arc::make_mut(&mut content.document.blocks).pop_back();
         node_cx.offset = span.start;
         source.push_str(&content.document.source[span.start..]);
         source.push_str(&options.pending_text);
@@ -2478,6 +2478,50 @@ mod tests {
         drop(state);
 
         assert_eq!(content.document.selected_source_range(), Some(17..22));
+    }
+
+    #[test]
+    fn streaming_append_shares_settled_prefix_at_both_document_sizes() {
+        for settled_blocks in [256, 4_096] {
+            let initial = parse_content(
+                TextViewFormat::Markdown,
+                ParsedContent::default(),
+                &UpdateOptions {
+                    revision: 1,
+                    pending_text: "settled paragraph\n\n".repeat(settled_blocks) + "tail",
+                    append: false,
+                    mode: ParseMode::Replace,
+                    markdown_extensions: Arc::default(),
+                },
+            )
+            .expect("initial parse");
+            let continued = parse_content(
+                TextViewFormat::Markdown,
+                initial.clone(),
+                &UpdateOptions {
+                    revision: 2,
+                    pending_text: " grows\n\nnew block".to_string(),
+                    append: true,
+                    mode: ParseMode::Compatible,
+                    markdown_extensions: Arc::default(),
+                },
+            )
+            .expect("incremental parse");
+            let old = &initial.document.blocks;
+            let new = &continued.document.blocks;
+            assert_eq!(old.len(), settled_blocks + 1);
+            assert_eq!(new.len(), settled_blocks + 2);
+            let copied = old
+                .iter()
+                .zip(new.iter())
+                .take(settled_blocks)
+                .filter(|(old, new)| !std::ptr::eq(*old, *new))
+                .count();
+            eprintln!("settled_blocks={settled_blocks} copied_blocks={copied}");
+            assert!(copied <= 64, "{copied} settled blocks copied");
+            assert_eq!(new[settled_blocks].text().trim(), "tail grows");
+            assert_eq!(new[0].span(), old[0].span());
+        }
     }
 
     #[test]

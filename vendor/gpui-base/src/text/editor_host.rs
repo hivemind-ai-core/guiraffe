@@ -57,7 +57,7 @@ pub fn parse_markdown(
         ..Default::default()
     };
     let parsed = markdown::parse(source, &mut cx)?;
-    Ok(Arc::unwrap_or_clone(parsed.blocks))
+    Ok(Arc::unwrap_or_clone(parsed.blocks).into_iter().collect())
 }
 
 /// What [`BlockNode::render`] needs besides the node: the text style, code
@@ -195,7 +195,7 @@ impl FlowPosition {
     /// nothing (definitions, breaks) are skipped when looking for the block
     /// before it.
     pub fn at(blocks: &[&BlockNode], ix: usize, is_last: bool) -> Self {
-        let (is_first, prev) = flow_position(blocks, ix);
+        let (is_first, prev) = flow_position(ix, |i| blocks[i]);
         Self {
             is_first,
             is_last,
@@ -1622,7 +1622,7 @@ mod tests {
         let mut cx = NodeContext::default();
         let expected = markdown::parse(source, &mut cx).unwrap();
         let blocks = parse_markdown(source, Default::default()).unwrap();
-        assert_eq!(blocks, *expected.blocks);
+        assert!(blocks.iter().eq(expected.blocks.iter()));
     }
 
     #[test]

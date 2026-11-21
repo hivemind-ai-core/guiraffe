@@ -4504,7 +4504,7 @@ impl BlockNode {
                     // A nested root (an HTML block container) continues the
                     // flow around it: until it shows a block of its own, it
                     // stands where the container stands.
-                    let (is_first, prev) = match flow_position(children, ix) {
+                    let (is_first, prev) = match flow_position(ix, |i| &children[i]) {
                         (true, _) => (options.is_first, options.prev),
                         (false, prev) => (false, prev),
                     };
@@ -4595,7 +4595,7 @@ impl BlockNode {
                         let children_len = children.len();
                         children.into_iter().enumerate().map(move |(index, c)| {
                             let is_last = index == children_len - 1;
-                            let (is_first, prev) = flow_position(children, index);
+                            let (is_first, prev) = flow_position(index, |i| &children[i]);
                             window.with_text_style(
                                 Some(node_cx.style.blockquote_style().text.clone()),
                                 |window| {
@@ -4643,7 +4643,7 @@ impl BlockNode {
                         .iter()
                         .enumerate()
                         .map(|(ix, child)| {
-                            let (is_first, prev) = flow_position(children, ix);
+                            let (is_first, prev) = flow_position(ix, |i| &children[i]);
                             child.render_block(
                                 NodeRenderOptions {
                                     is_first,
@@ -5081,7 +5081,7 @@ mod tests {
         };
         let document = crate::text::document::ParsedDocument {
             source: source.into(),
-            blocks: Arc::new(vec![block.clone()]),
+            blocks: Arc::new(im::vector![block.clone()]),
         };
         assert!(!block.has_selection());
         state.set_selection(Some(BlockSelection::Full));
@@ -5121,7 +5121,7 @@ mod tests {
         let after = CodeBlock::from_code("after", None::<SharedString>);
         after.set_selection(0..5);
         let document = crate::text::document::ParsedDocument {
-            blocks: Arc::new(vec![block, BlockNode::CodeBlock(after)]),
+            blocks: Arc::new(im::vector![block, BlockNode::CodeBlock(after)]),
             ..Default::default()
         };
         assert!(
@@ -5996,7 +5996,7 @@ mod tests {
     /// does, with every block painted.
     fn copy_across_styles(blocks: Vec<BlockNode>) -> String {
         let document = crate::text::document::ParsedDocument {
-            blocks: blocks.into(),
+            blocks: Arc::new(blocks.into()),
             ..Default::default()
         };
         document.selected_text(SelectionFormat::SourceAcrossStyles, None)
@@ -6656,7 +6656,7 @@ mod tests {
 
         let document = ParsedDocument {
             source: source.into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Paragraph(selected_paragraph("start")),
                 BlockNode::List {
                     ordered: true,
@@ -6674,8 +6674,7 @@ mod tests {
                     }),
                 },
                 BlockNode::Paragraph(selected_paragraph("end")),
-            ]
-            .into(),
+            ]),
         };
 
         assert_eq!(
@@ -6702,12 +6701,11 @@ mod tests {
 
         let document = ParsedDocument {
             source: source.into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Paragraph(selected_paragraph("before")),
                 BlockNode::Paragraph(image),
                 BlockNode::Paragraph(selected_paragraph("after")),
-            ]
-            .into(),
+            ]),
         };
         assert_eq!(
             document.selected_text(SelectionFormat::Source, None),
@@ -6723,11 +6721,10 @@ mod tests {
         // it, is not enclosed and is dropped.
         let document = ParsedDocument {
             source: String::new().into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Paragraph(selected_paragraph("before")),
                 BlockNode::Paragraph(image_paragraph("alt", "u")),
-            ]
-            .into(),
+            ]),
         };
         assert_eq!(
             document.selected_text(SelectionFormat::Source, None),
@@ -6793,7 +6790,7 @@ mod tests {
         // copied Markdown re-renders with the same structure.
         let document = ParsedDocument {
             source: String::new().into(),
-            blocks: vec![
+            blocks: Arc::new(im::vector![
                 BlockNode::Heading {
                     level: 1,
                     children: selected_paragraph("Title"),
@@ -6822,8 +6819,7 @@ mod tests {
                         },
                     ],
                 },
-            ]
-            .into(),
+            ]),
         };
 
         assert_eq!(

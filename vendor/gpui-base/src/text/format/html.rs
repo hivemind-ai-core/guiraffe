@@ -115,7 +115,7 @@ pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument
 
     Ok(ParsedDocument {
         source: source.to_string().into(),
-        blocks: Arc::new(vec![node]),
+        blocks: Arc::new(im::vector![node]),
     })
 }
 
@@ -761,8 +761,9 @@ fn trim_trailing_break(paragraph: &mut Paragraph) {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{px, relative};
     use std::sync::Arc;
+
+    use gpui::{px, relative};
 
     use crate::text::{
         document::ParsedDocument,
@@ -1056,7 +1057,7 @@ mod tests {
             node,
             ParsedDocument {
                 source: html.to_string().into(),
-                blocks: Arc::new(vec![BlockNode::Paragraph(Paragraph {
+                blocks: Arc::new(im::vector![BlockNode::Paragraph(Paragraph {
                     span: None,
                     children: Arc::new(vec![InlineNode::image(ImageNode {
                         url: "https://example.com/image.png".to_string().into(),
@@ -1077,7 +1078,7 @@ mod tests {
             node,
             ParsedDocument {
                 source: html.to_string().into(),
-                blocks: Arc::new(vec![BlockNode::Paragraph(Paragraph {
+                blocks: Arc::new(im::vector![BlockNode::Paragraph(Paragraph {
                     span: None,
                     children: Arc::new(vec![InlineNode::image(ImageNode {
                         url: "https://example.com/image.png".to_string().into(),

@@ -18,8 +18,11 @@ The renderer parses eligible documents in sections, using unindented ATX
 headings as boundaries. When the first complete section is at most 32 KiB,
 the initial view can show it while the background parser works. The parser
 checks for source replacement and view teardown between sections. Streaming versions
-share existing paragraph runs and copy them only when edited. The append
-path still copies the raw source and top-level block vector. Documents
+share existing paragraph runs and copy them only when edited. Appends
+reparse from the final block’s source span and share settled block leaves
+through the persistent vector. The raw source remains contiguous and is
+copied on append. A [Kit scaling test](../../vendor/gpui-base/src/text/state.rs)
+observed zero settled block copies at both 256 and 4,096 blocks. Documents
 with link definitions, footnotes, or ambiguous blocks use the one-shot
 parser. The background renderer and metadata pass consume one raw AST section at a
 time. The published background result still holds the entire render tree.

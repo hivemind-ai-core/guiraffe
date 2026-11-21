@@ -41,8 +41,11 @@ before hosts can recycle those selected entities.
 The live viewer and parser both hold a snapshot during an append. Let
 cloned paragraphs share their inline runs and copy them only on edit.
 Keep the existing parsed-node API and selection pointers. Test copy-on-write
-with text and selection projections, then profile the remaining source
-and top-level block vector copies.
+with text and selection projections. Store the root blocks in a persistent
+vector so replacing the last parsed block shares settled leaves with the
+previous snapshot. Verify sharing at multiple document sizes and preserve
+source ranges and list continuation. The contiguous source string still
+needs to be copied on append.
 
 ## Share immutable Tree-sitter queries across highlighters
 
