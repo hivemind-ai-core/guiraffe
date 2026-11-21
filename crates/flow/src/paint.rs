@@ -8,7 +8,7 @@ use guiraffe_flow_core::{
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 const EDGE_STROKE: f32 = 1.5;
@@ -129,6 +129,7 @@ impl DeferredMeshCache {
 pub(crate) struct MeshCache {
     entries: BTreeMap<EdgeId, (Arc<EdgePath>, EdgeMesh)>,
     deferred: DeferredMeshCache,
+    deferred_scene: Weak<Scene>,
     pub edge_buffer: Vec<EdgeId>,
     mesh_bytes: usize,
     admission_limited: bool,
@@ -146,12 +147,17 @@ pub(crate) struct MeshCache {
 impl MeshCache {
     pub fn refine_edge_candidates(
         &mut self,
-        scene: &Scene,
+        scene: &Arc<Scene>,
         viewport: Viewport,
         area: Rect,
         edges: &mut Vec<EdgeId>,
     ) {
         if scene.has_deferred_edges() {
+            let current = Arc::downgrade(scene);
+            if !self.deferred_scene.ptr_eq(&current) {
+                self.deferred = DeferredMeshCache::default();
+                self.deferred_scene = current;
+            }
             self.deferred.begin_frame();
             edges.retain(|id| self.deferred.get(scene, *id, viewport.zoom, area).is_some());
         }
@@ -1112,6 +1118,35 @@ mod tests {
         assert!(!Arc::ptr_eq(&shared, &bucket));
         assert_eq!(shared, bucket);
         assert!(scene.paths().is_empty());
+    }
+
+    #[test]
+    fn deferred_mesh_cache_replaces_routes_when_display_scene_changes() {
+        let scene = |target_y| {
+            Arc::new(
+                Scene::new_deferred(
+                    Graph::from_parts(
+                        [
+                            Node::new(1, "", WorldPoint::default()),
+                            Node::new(2, "", WorldPoint::new(400., target_y)),
+                        ],
+                        [Edge::new(1, 1, 2)],
+                    )
+                    .expect("graph"),
+                )
+                .expect("scene"),
+            )
+        };
+        let first = scene(100.);
+        let second = scene(300.);
+        let mut cache = MeshCache::default();
+        let area = Rect::new(0., 0., 800., 600.);
+        let mut edges = vec![1];
+        cache.refine_edge_candidates(&first, Viewport::default(), area, &mut edges);
+        let first_route = cache.deferred.entries[&(1, 0)].route.clone();
+        cache.refine_edge_candidates(&second, Viewport::default(), area, &mut edges);
+        assert_ne!(&first_route, &cache.deferred.entries[&(1, 0)].route);
+        assert_eq!(Arc::strong_count(&first), 1);
     }
 
     #[test]
