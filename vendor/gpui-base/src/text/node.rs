@@ -1098,13 +1098,14 @@ fn source_range_for_segments(
 pub struct InlineNode {
     /// The text content.
     pub(crate) text: SharedString,
-    pub(crate) image: Option<ImageNode>,
-    pub(crate) custom: Option<MarkdownNode>,
+    // Most runs are text. Keep object payloads out of their inline footprint.
+    pub(crate) image: Option<Box<ImageNode>>,
+    pub(crate) custom: Option<Arc<MarkdownNode>>,
     custom_selection: Arc<Mutex<bool>>,
     /// The text styles, each tuple contains the range of the text and the style.
     pub(crate) marks: Vec<(Range<usize>, TextMark)>,
     /// Rendered UTF-8 byte spans paired with their exact Markdown source spans.
-    pub(crate) source_segments: Vec<SourceSegment>,
+    pub(crate) source_segments: Box<[SourceSegment]>,
 
     pub(super) state: Arc<Mutex<InlineState>>,
 }
@@ -1591,7 +1592,7 @@ impl InlineNode {
             custom: None,
             custom_selection: Arc::default(),
             marks: vec![],
-            source_segments: vec![],
+            source_segments: Box::default(),
             state: Arc::new(Mutex::new(InlineState::default())),
         }
     }
@@ -1599,14 +1600,14 @@ impl InlineNode {
     /// A custom inline node, an atomic object in the flow.
     pub fn custom(node: MarkdownNode) -> Self {
         let mut this = Self::new(node.as_text().to_string());
-        this.custom = Some(node);
+        this.custom = Some(Arc::new(node));
         this
     }
 
     /// An inline image, an atomic object in the flow.
     pub fn image(image: ImageNode) -> Self {
         let mut this = Self::new("");
-        this.image = Some(image);
+        this.image = Some(Box::new(image));
         this
     }
 
@@ -1623,12 +1624,12 @@ impl InlineNode {
 
     /// The image, when this run is an image.
     pub fn as_image(&self) -> Option<&ImageNode> {
-        self.image.as_ref()
+        self.image.as_deref()
     }
 
     /// The custom node, when this run is one.
     pub fn as_custom(&self) -> Option<&MarkdownNode> {
-        self.custom.as_ref()
+        self.custom.as_deref()
     }
 
     /// The marks, each a byte range of the text and its style.
@@ -1637,7 +1638,7 @@ impl InlineNode {
     }
 
     pub(crate) fn source_segments(mut self, source_segments: Vec<SourceSegment>) -> Self {
-        self.source_segments = source_segments;
+        self.source_segments = source_segments.into_boxed_slice();
         self
     }
 
@@ -1898,7 +1899,7 @@ impl Paragraph {
                         selected.merge(
                             child
                                 .custom
-                                .as_ref()
+                                .as_deref()
                                 .and_then(MarkdownNode::source_range)
                                 .map(SourceRangeSelection::Mapped)
                                 .unwrap_or(SourceRangeSelection::Unmapped),
@@ -2405,6 +2406,13 @@ impl Paragraph {
     /// Appends an inline run.
     pub fn push(&mut self, text: InlineNode) {
         self.children_mut().push(text);
+    }
+
+    pub(super) fn trim_child_capacity(&mut self) {
+        let len = self.children.len();
+        if self.children.capacity() > len + len / 4 {
+            self.children_mut().shrink_to_fit();
+        }
     }
 
     /// The inline runs.
@@ -4774,6 +4782,14 @@ impl BlockNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn text_only_inline_run_keeps_a_compact_footprint() {
+        let bytes = std::mem::size_of::<InlineNode>();
+        eprintln!("inline_node_size_bytes={bytes}");
+        assert!(bytes <= 104, "inline run occupies {bytes} bytes");
+    }
 
     #[test]
     fn paragraph_clones_share_runs_until_the_next_edit() {

@@ -379,6 +379,7 @@ fn parse_inline_children(
     children: &[Node],
     cx: &mut NodeContext,
 ) -> String {
+    paragraph.children_mut().reserve_exact(children.len());
     let mut text = String::new();
     for group in inline_groups(children) {
         match group {
@@ -392,6 +393,7 @@ fn parse_inline_children(
             }
         }
     }
+    paragraph.trim_child_capacity();
     text
 }
 
@@ -505,11 +507,13 @@ fn merge_children_with_mark(
             }
             let merged_offset = merged_text.len();
             merged_text.push_str(&node.text);
-            merged_source_segments.extend(node.source_segments.drain(..).map(|mut segment| {
-                segment.rendered.start += merged_offset;
-                segment.rendered.end += merged_offset;
-                segment
-            }));
+            merged_source_segments.extend(node.source_segments.into_vec().into_iter().map(
+                |mut segment| {
+                    segment.rendered.start += merged_offset;
+                    segment.rendered.end += merged_offset;
+                    segment
+                },
+            ));
 
             for (range, child_mark) in node.marks {
                 merged_marks.push((
@@ -533,7 +537,7 @@ fn merge_children_with_mark(
                     std::mem::take(&mut merged_source_segments),
                     mark.clone(),
                 );
-                paragraph.push(InlineNode::image(image));
+                paragraph.push(InlineNode::image(*image));
             }
         }
     }
@@ -1616,8 +1620,8 @@ mod tests {
         let document = parse(source, &mut cx).unwrap();
         let paragraph = first_paragraph(&document.blocks[0]).unwrap();
         assert_eq!(
-            paragraph.children[0].source_segments,
-            vec![SourceSegment {
+            paragraph.children[0].source_segments.as_ref(),
+            &[SourceSegment {
                 rendered: 0..source.len(),
                 source: 0..source.len(),
                 linear: true,
@@ -1765,7 +1769,6 @@ mod tests {
         assert_eq!(paragraph.text(), source);
         let segments = &paragraph.children[0].source_segments;
         assert_eq!(segments.len(), 1);
-        assert!(segments.capacity() < 64);
         assert_eq!(segments[0].source, 0..source.len());
         assert_eq!(
             selected_rendered_range(&source, source.len() - 3..source.len()),
@@ -1818,8 +1821,8 @@ mod tests {
         let paragraph = first_paragraph(&document.blocks[0]).unwrap();
         assert_eq!(paragraph.children[0].text.as_ref(), "a ∾̳ b");
         assert_eq!(
-            paragraph.children[0].source_segments,
-            vec![
+            paragraph.children[0].source_segments.as_ref(),
+            &[
                 SourceSegment {
                     rendered: 0..2,
                     source: 0..2,

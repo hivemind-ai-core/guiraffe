@@ -52,3 +52,13 @@ measured 504–551 ms p99 before sharing and 134–152 ms afterward. The
 settled mount was 4.83 s and sampled RSS was 170–171 MiB after sharing.
 The settled-mount probe drains background work, and the measurements do
 not establish the quiet release budgets.
+
+
+The upstream dev short soak first drew published content at 48 ms, reached
+background completion at 854 ms, and measured 4.0–4.5 ms p99 for scrolling
+and appending. Boxing rare image and custom payloads, using exact-size
+source maps, and trimming run capacity reduced the inline run from 424 to
+96 bytes on a 64-bit build. The process peak delta over the empty window
+fell from 145,256 to 74,488 KiB. The 50k fixture has a 67,686 KiB peak delta
+budget. These shared-machine development measurements leave production
+RSS and warm repaint allocation checks open.

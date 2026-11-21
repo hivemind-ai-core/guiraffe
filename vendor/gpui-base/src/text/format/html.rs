@@ -374,7 +374,7 @@ fn parse_paragraph(paragraph: &mut HtmlParagraph, node: &Rc<Node>) {
                         new_mark.clone(),
                     );
 
-                    paragraph.push(InlineNode::image(image));
+                    paragraph.push(InlineNode::image(*image));
                 }
             }
         }
