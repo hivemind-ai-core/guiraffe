@@ -52,11 +52,7 @@ impl std::error::Error for FormulaError {}
 /// Numeric values exposed to a formula. A missing cell is distinct from numeric zero.
 pub trait FormulaValues {
     fn number(&self, pos: CellPos) -> Result<Option<f64>, FormulaError>;
-    fn visit(
-        &self,
-        range: Reference,
-        visitor: &mut dyn FnMut(f64),
-    ) -> Result<(), FormulaError>;
+    fn visit(&self, range: Reference, visitor: &mut dyn FnMut(f64)) -> Result<(), FormulaError>;
 }
 
 /// A compiled formula. Implementations declare every dependency they may read.
@@ -161,7 +157,10 @@ impl Expr {
                 }
             }
         };
-        result.is_finite().then_some(result).ok_or(FormulaError::Value)
+        result
+            .is_finite()
+            .then_some(result)
+            .ok_or(FormulaError::Value)
     }
 }
 
@@ -186,12 +185,19 @@ impl FormulaEngine for BuiltinEngine {
         if expression.len() > 8192 {
             return Err(FormulaError::Syntax);
         }
-        let mut parser = Parser { rest: expression, references: Vec::new(), budget: 256 };
+        let mut parser = Parser {
+            rest: expression,
+            references: Vec::new(),
+            budget: 256,
+        };
         let expr = parser.expression(0)?;
         if parser.peek().is_some() {
             return Err(FormulaError::Syntax);
         }
-        Ok(Box::new(Compiled { expr, references: parser.references }))
+        Ok(Box::new(Compiled {
+            expr,
+            references: parser.references,
+        }))
     }
 }
 

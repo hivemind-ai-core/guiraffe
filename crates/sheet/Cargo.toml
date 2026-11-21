@@ -14,3 +14,7 @@ guiraffe-datagrid.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

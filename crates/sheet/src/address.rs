@@ -11,7 +11,10 @@ pub fn parse_a1(text: &str) -> Option<CellPos> {
         col.checked_mul(26)?
             .checked_add(usize::from(letter.to_ascii_uppercase() - b'A') + 1)
     })?;
-    Some(CellPos::new(digits.parse::<usize>().ok()?.checked_sub(1)?, col - 1))
+    Some(CellPos::new(
+        digits.parse::<usize>().ok()?.checked_sub(1)?,
+        col - 1,
+    ))
 }
 
 /// Format a zero-based column as a spreadsheet column label.

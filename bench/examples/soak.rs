@@ -376,7 +376,7 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <mixed|grid|code|empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <mixed|grid|sheet|code|empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
     if std::env::var_os("SOAK_WARM_REPAINT").is_some() {
         if !warm_repaint::enabled() {
             return Err("warm repaint requires --features warm-repaint-probe".into());
@@ -407,6 +407,9 @@ fn run_component(component: &str, short: bool, no_minimap: bool) -> Result<()> {
             result = sample(frame, mount, short);
         })?,
         "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
+        "sheet" => mounted::sheet(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "flow" => flow(no_minimap, mount_started, |frame, mount| {
             result = sample(frame, mount, short)
         })?,
@@ -654,6 +657,46 @@ mod mounted {
         } else {
             -1.
         }
+    }
+
+    pub fn sheet(mount_started: Instant, run: impl FnOnce(Frame, Duration)) -> Result<()> {
+        use guiraffe_sheet::{Cell, CellPos, SheetModel, SheetState};
+
+        let count = scaled(100_000);
+        let (mut window, sheet) = mount("sheet_soak", guiraffe_sheet::init, |_, cx| {
+            let cells = (1..=count.min(999_999))
+                .map(|row| (CellPos::new(row, 0), Cell::new(format!("=A{row}+1"))));
+            let model = SheetModel::from_cells(1_000_000, 1000, cells);
+            cx.new(|cx| SheetState::new(model, cx))
+        })?;
+        let at = point(px(380.), px(310.));
+        let elapsed = mount_started.elapsed();
+        run(
+            &mut |frame| {
+                if frame.is_multiple_of(16) {
+                    window.update(|_, cx| {
+                        sheet.update(cx, |sheet, cx| {
+                            sheet.edit([(CellPos::default(), Cell::new(frame.to_string()))], cx);
+                        })
+                    });
+                }
+                if frame.is_multiple_of(2) {
+                    wheel(
+                        &mut window,
+                        at,
+                        sign(frame, 64) * 40.,
+                        sign(frame, 128) * 96.,
+                        false,
+                    );
+                } else {
+                    window.simulate_click(at, Modifiers::default());
+                }
+                settle(&mut window);
+                Ok(())
+            },
+            elapsed,
+        );
+        Ok(())
     }
 
     pub fn code_annotations(

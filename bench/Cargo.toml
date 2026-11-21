@@ -20,6 +20,7 @@ guiraffe-flamegraph.workspace = true
 guiraffe-tree.workspace = true
 guiraffe-timeline.workspace = true
 guiraffe-datagrid.workspace = true
+guiraffe-sheet.workspace = true
 guiraffe-layout.workspace = true
 guiraffe-inputs.workspace = true
 guiraffe-overlays.workspace = true
