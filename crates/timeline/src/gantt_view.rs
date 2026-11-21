@@ -1,5 +1,5 @@
 //! The Gantt chart view: ruler, task bars, dependency arrows, critical path, drag to
-//! reschedule, wheel pan / ctrl+wheel zoom.
+//! reschedule, wheel scroll, shift+wheel pan and ctrl+wheel zoom.
 
 use std::{collections::HashMap, rc::Rc};
 
@@ -45,44 +45,68 @@ struct Drag {
     grab: Grab,
 }
 
-/// Per-row data derived from tasks + schedule; rebuilt only when either changes, shared
-/// with render closures by `Rc` (no per-frame copies).
+/// Static display metadata and dependency adjacency, rebuilt only on task replacement.
 #[derive(Default)]
 struct Geometry {
     rows: Vec<Row>,
-    /// (predecessor row, successor row)
-    successors: Vec<Vec<usize>>,
-    predecessors: Vec<Vec<usize>>,
+    successors: AdjacentRows,
+    predecessors: AdjacentRows,
     index: HashMap<u32, usize>,
 }
 
 struct Row {
     id: u32,
     name: gpui_kit::SharedString,
-    scheduled: Option<Scheduled>,
 }
 
-fn geometry(
-    tasks: &[Task],
-    sched: &Result<HashMap<u32, Scheduled>, ScheduleError>,
-) -> Rc<Geometry> {
-    let m = sched.as_ref().ok();
-    let index: HashMap<u32, usize> = tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
-    let mut successors = vec![Vec::new(); tasks.len()];
-    let mut predecessors = vec![Vec::new(); tasks.len()];
-    for (to, task) in tasks.iter().enumerate() {
-        for from in task.after.iter().filter_map(|id| index.get(id).copied()) {
-            successors[from].push(to);
-            predecessors[to].push(from);
+/// Two contiguous arrays replace a heap allocation per nonempty adjacency list.
+#[derive(Default)]
+struct AdjacentRows {
+    offsets: Vec<usize>,
+    rows: Vec<usize>,
+}
+
+impl AdjacentRows {
+    fn new(count: usize, edges: impl Iterator<Item = (usize, usize)> + Clone) -> Self {
+        let mut offsets = vec![0; count + 1];
+        for (from, _) in edges.clone() {
+            offsets[from + 1] += 1;
         }
+        for row in 0..count {
+            offsets[row + 1] += offsets[row];
+        }
+        let mut rows = vec![0; offsets[count]];
+        // Use each start offset as a write cursor and then restore the starts.
+        for (from, to) in edges {
+            rows[offsets[from]] = to;
+            offsets[from] += 1;
+        }
+        offsets.rotate_right(1);
+        offsets[0] = 0;
+        Self { offsets, rows }
     }
+
+    fn get(&self, row: usize) -> &[usize] {
+        &self.rows[self.offsets[row]..self.offsets[row + 1]]
+    }
+}
+
+fn geometry(tasks: &[Task]) -> Rc<Geometry> {
+    let index: HashMap<u32, usize> = tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+    let by_id = &index;
+    let edges = tasks.iter().enumerate().flat_map(|(to, task)| {
+        task.after
+            .iter()
+            .filter_map(move |id| by_id.get(id).map(|&from| (from, to)))
+    });
+    let successors = AdjacentRows::new(tasks.len(), edges.clone());
+    let predecessors = AdjacentRows::new(tasks.len(), edges.map(|(from, to)| (to, from)));
     Rc::new(Geometry {
         rows: tasks
             .iter()
             .map(|t| Row {
                 id: t.id,
                 name: t.name.clone().into(),
-                scheduled: m.and_then(|m| m.get(&t.id)).copied(),
             })
             .collect(),
         successors,
@@ -94,7 +118,7 @@ fn geometry(
 pub struct GanttView {
     geometry: Rc<Geometry>,
     tasks: Vec<Task>,
-    schedule: Result<HashMap<u32, Scheduled>, ScheduleError>,
+    schedule: Rc<Result<HashMap<u32, Scheduled>, ScheduleError>>,
     surface: crate::PlotSurface,
     format: TimeFormat,
     lock_style: crate::LockStyle,
@@ -134,9 +158,9 @@ impl GanttView {
         let (lo, hi) = span(&schedule);
         let axis = Axis::new(lo, hi, 800.0);
         cx.new(|cx| Self {
-            geometry: geometry(&tasks, &schedule),
+            geometry: geometry(&tasks),
             tasks,
-            schedule,
+            schedule: Rc::new(schedule),
             surface: crate::PlotSurface::timeline(axis, format),
             format,
             lock_style: crate::LockStyle::Badge,
@@ -188,7 +212,7 @@ impl GanttView {
             return;
         }
         let Some(sc) = self
-            .schedule
+            .schedule()
             .as_ref()
             .ok()
             .and_then(|m| m.get(&id))
@@ -216,7 +240,11 @@ impl GanttView {
         if let Some(row) = next {
             let top = row as f32 * ROW_H;
             let height = f32::from(self.body.get().size.height).max(ROW_H);
-            self.scroll_y = self.scroll_y.clamp((top + ROW_H - height).max(0.0), top);
+            let offset = self.scroll_y.clamp((top + ROW_H - height).max(0.0), top);
+            if offset != self.scroll_y {
+                self.scroll_y = offset;
+                cx.notify();
+            }
         }
         self.select(next.and_then(|i| self.tasks.get(i)).map(|t| t.id), cx);
     }
@@ -245,8 +273,8 @@ impl GanttView {
 
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
         self.tasks = tasks;
-        self.schedule = schedule(&self.tasks);
-        self.geometry = geometry(&self.tasks, &self.schedule);
+        self.schedule = Rc::new(schedule(&self.tasks));
+        self.geometry = geometry(&self.tasks);
         self.pending_fit = Some(span(&self.schedule));
         cx.notify();
     }
@@ -275,8 +303,7 @@ impl GanttView {
         };
         let before = start(&self.schedule);
         t.not_before = not_before;
-        self.schedule = schedule(&self.tasks);
-        self.geometry = geometry(&self.tasks, &self.schedule);
+        self.schedule = Rc::new(schedule(&self.tasks));
         if before != start(&self.schedule) {
             cx.emit(GanttEvent::Rescheduled { id, not_before });
         }
@@ -286,7 +313,7 @@ impl GanttView {
     /// Latest early finish among `id`'s predecessors (−∞ if none or unscheduled).
     fn predecessor_bound(&self, id: u32) -> f64 {
         let (Ok(m), Some(t)) = (
-            self.schedule.as_ref(),
+            self.schedule().as_ref(),
             self.geometry
                 .index
                 .get(&id)
@@ -310,7 +337,7 @@ impl GanttView {
         if self.locked.contains(&task.id) {
             return None;
         }
-        let sc = self.schedule.as_ref().ok()?.get(&task.id)?;
+        let sc = self.schedule().as_ref().ok()?.get(&task.id)?;
         let x0 = self.surface.axis.x(sc.early_start);
         let x1 = self.surface.axis.x(sc.early_finish).max(x0 + 2.0);
         grab_at(
@@ -333,7 +360,7 @@ impl GanttView {
     fn press_item(&mut self, row: usize, x: f64) -> bool {
         let mut hit = false;
         if let Some(task) = self.tasks.get(row)
-            && let Some(sc) = self.schedule.as_ref().ok().and_then(|m| m.get(&task.id))
+            && let Some(sc) = self.schedule().as_ref().ok().and_then(|m| m.get(&task.id))
         {
             let (x0, x1) = (
                 self.surface.axis.x(sc.early_start),
@@ -369,7 +396,7 @@ impl GanttView {
         }
         let bound = self.predecessor_bound(id);
         let Some(sc) = self
-            .schedule
+            .schedule()
             .as_ref()
             .ok()
             .and_then(|m| m.get(&id))
@@ -398,8 +425,7 @@ impl GanttView {
         }
         task.duration = duration;
         task.not_before = not_before;
-        self.schedule = schedule(&self.tasks);
-        self.geometry = geometry(&self.tasks, &self.schedule);
+        self.schedule = Rc::new(schedule(&self.tasks));
         cx.emit(GanttEvent::Resized {
             id,
             not_before,
@@ -574,8 +600,11 @@ impl Render for GanttView {
         let axis = self.surface.axis;
         let format = self.format;
 
-        let error = self.schedule.as_ref().err().map(|e| format!("{e:?}"));
+        let error = self.schedule().as_ref().err().map(|e| format!("{e:?}"));
         let geo = self.geometry.clone();
+        let schedule = self.schedule.clone();
+        let paint_schedule = schedule.clone();
+        let scheduled = self.schedule().as_ref().ok();
         let editable = self.editable;
         let item_style = self.lock_style;
         let global_style = self.global_lock_style;
@@ -671,14 +700,12 @@ impl Render for GanttView {
                                 .border_r_1()
                                 .border_color(line)
                                 .children(header_rows.map(|i| {
-                                    let Row {
-                                        id,
-                                        name,
-                                        scheduled,
-                                    } = &geo.rows[i];
+                                    let Row { id, name } = &geo.rows[i];
                                     let id = *id;
                                     let locked = self.locked.contains(&id);
-                                    let crit = scheduled.is_some_and(|x| x.critical());
+                                    let crit = scheduled
+                                        .and_then(|m| m.get(&id))
+                                        .is_some_and(Scheduled::critical);
                                     div()
                                         .absolute()
                                         .left_0()
@@ -783,9 +810,12 @@ impl Render for GanttView {
                                     canvas(
                                         |_, _, _| (),
                                         move |b, _, window, _| {
+                                            let Ok(schedule) = paint_schedule.as_ref() else {
+                                                return;
+                                            };
                                             for i in paint_rows {
                                                 let row = &paint_geo.rows[i];
-                                                let Some(sc) = row.scheduled else {
+                                                let Some(&sc) = schedule.get(&row.id) else {
                                                     continue;
                                                 };
                                                 if lock_style(paint_locks.contains(&row.id))
@@ -835,12 +865,8 @@ impl Render for GanttView {
                                     .size_full(),
                                 )
                                 .children(bar_rows.filter_map(|i| {
-                                    let Row {
-                                        id,
-                                        name,
-                                        scheduled,
-                                    } = &geo.rows[i];
-                                    let sc = (*scheduled)?;
+                                    let Row { id, name } = &geo.rows[i];
+                                    let sc = *scheduled?.get(id)?;
                                     let (x, width) = bar_interval(axis, sc)?;
                                     let colors = if sc.critical() { critical } else { normal };
                                     let on = selected_row == Some(i);
@@ -888,13 +914,16 @@ impl Render for GanttView {
                                     canvas(
                                         |_, _, _| (),
                                         move |b, _, window, _| {
+                                            let Ok(schedule) = schedule.as_ref() else {
+                                                return;
+                                            };
                                             let in_x = |x| x >= 0.0 && x < f32::from(b.size.width);
                                             let visible_end =
                                                 |row, x| visible.contains(&row) && in_x(x);
                                             let mut draw = |from: usize, to: usize, outgoing| {
                                                 let (Some(a), Some(c)) = (
-                                                    geo.rows[from].scheduled,
-                                                    geo.rows[to].scheduled,
+                                                    schedule.get(&geo.rows[from].id),
+                                                    schedule.get(&geo.rows[to].id),
                                                 ) else {
                                                     return;
                                                 };
@@ -917,10 +946,10 @@ impl Render for GanttView {
                                                 arrow(window, p0, p1, arrow_color);
                                             };
                                             for row in visible.clone() {
-                                                for &to in &geo.successors[row] {
+                                                for &to in geo.successors.get(row) {
                                                     draw(row, to, true);
                                                 }
-                                                for &from in &geo.predecessors[row] {
+                                                for &from in geo.predecessors.get(row) {
                                                     draw(from, row, false);
                                                 }
                                             }
@@ -938,6 +967,17 @@ impl Render for GanttView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adjacency_indexes_preserve_direction_order_and_duplicate_edges() {
+        let edges = [(0, 4), (3, 2), (0, 4), (0, 2)];
+        let outgoing = AdjacentRows::new(5, edges.into_iter());
+        let incoming = AdjacentRows::new(5, edges.into_iter().map(|(a, b)| (b, a)));
+        assert_eq!(outgoing.get(0), &[4, 4, 2]);
+        assert!(outgoing.get(1).is_empty());
+        assert_eq!(incoming.get(2), &[3, 0]);
+        assert_eq!(incoming.get(4), &[0, 0]);
+    }
 
     #[test]
     fn viewport_rows_are_independent_of_total_rows() {
