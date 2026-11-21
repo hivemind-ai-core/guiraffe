@@ -1,4 +1,5 @@
 //! Virtualized tree views with a shared visible-row and navigation model.
+mod collapse_motion;
 mod geometry;
 mod model;
 mod property;
