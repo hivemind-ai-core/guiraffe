@@ -421,6 +421,73 @@ mod tests {
     }
 
     #[test]
+    fn a_running_formula_is_superseded_off_thread() -> Result<(), Box<dyn std::error::Error>> {
+        use std::{sync::Mutex, time::Duration};
+
+        struct PausingEngine {
+            entered: Sender<thread::ThreadId>,
+            release: Arc<Mutex<Receiver<()>>>,
+        }
+
+        struct PausingFormula {
+            entered: Sender<thread::ThreadId>,
+            release: Arc<Mutex<Receiver<()>>>,
+        }
+
+        impl FormulaEngine for PausingEngine {
+            fn compile(&self, expression: &str) -> Result<Box<dyn Formula>, FormulaError> {
+                if expression != "WAIT" {
+                    return BuiltinEngine.compile(expression);
+                }
+                Ok(Box::new(PausingFormula {
+                    entered: self.entered.clone(),
+                    release: self.release.clone(),
+                }))
+            }
+        }
+
+        impl Formula for PausingFormula {
+            fn references(&self) -> &[Reference] {
+                &[]
+            }
+
+            fn evaluate(&self, _: &dyn FormulaValues) -> Result<f64, FormulaError> {
+                self.entered
+                    .send(thread::current().id())
+                    .map_err(|_| FormulaError::Cancelled)?;
+                self.release
+                    .lock()
+                    .map_err(|_| FormulaError::Cancelled)?
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| FormulaError::Cancelled)?;
+                Ok(1.)
+            }
+        }
+
+        let timeout = Duration::from_secs(5);
+        let (entered, wait_for_enter) = mpsc::channel();
+        let (release, wait_for_release) = mpsc::channel();
+        let engine = Arc::new(PausingEngine {
+            entered,
+            release: Arc::new(Mutex::new(wait_for_release)),
+        });
+        let mut worker = Recalculator::new(1, 1, engine)?;
+        let pos = CellPos::default();
+        let first = worker.submit(vec![(pos, Arc::from("=WAIT"))]);
+        assert!(first.is_some());
+        assert_ne!(
+            wait_for_enter.recv_timeout(timeout)?,
+            thread::current().id()
+        );
+        let latest = worker.submit(vec![(pos, Arc::from("=100"))]);
+        release.send(())?;
+        let result = worker.output.recv_timeout(timeout)?;
+        assert_eq!(Some(result.revision), latest);
+        assert_eq!(result.value(pos), Some(Ok(100.)));
+        Ok(())
+    }
+
+    #[test]
     fn asynchronous_chain_of_one_hundred_thousand_formulas() -> std::io::Result<()> {
         let mut worker = Recalculator::new(1_000_000, 1000, Arc::new(BuiltinEngine))?;
         let entries = (1..=100_000)
@@ -429,7 +496,10 @@ mod tests {
         let initial = worker.submit(entries);
         let latest = worker.submit(vec![(CellPos::default(), Arc::from("7"))]);
         assert_ne!(initial, latest);
-        while let Some(result) = worker.recv() {
+        while let Ok(result) = worker
+            .output
+            .recv_timeout(std::time::Duration::from_secs(10))
+        {
             if Some(result.revision) == latest {
                 assert!(result.value(CellPos::new(100_000, 0)) == Some(Ok(100_007.)));
                 return Ok(());

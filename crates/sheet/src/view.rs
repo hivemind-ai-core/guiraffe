@@ -1161,7 +1161,7 @@ impl PaintCache {
                             point(rect.right() - px(6.), rect.bottom() - px(6.)),
                             size(px(6.), px(6.)),
                         ),
-                        accent,
+                        GuiraffeTheme::hsla(selection.foreground),
                     ));
                 }
                 if label.text.is_empty() {
