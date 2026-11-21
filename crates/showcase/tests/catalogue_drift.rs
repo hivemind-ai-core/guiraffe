@@ -71,6 +71,12 @@ fn kind(surface: &str) -> Option<&'static str> {
         "overlays::Modals" | "overlays::Modal" => "modal",
         "overlays::Drawer" => "drawer",
         "overlays::OverlayHost" => "toast-tray",
+        "overlays::Popover" => "popover",
+        "overlays::HoverCard" => "hover-card",
+        "overlays::Tooltip" => "tooltip",
+        "overlays::PopupMenu" => "popup-menu",
+        "overlays::ContextMenu" | "overlays::ContextMenuExt" => "context-menu",
+        "overlays::DropdownMenu" => "dropdown-menu",
         "overlays::Affix" => "affix",
         "overlays::FloatingTooltip" | "overlays::FloatingOptions" => "floating-tooltip",
         "overlays::LoadingOverlay" => "loading-overlay",
@@ -90,6 +96,22 @@ fn kind(surface: &str) -> Option<&'static str> {
 
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
+    (
+        "overlays::Popover::track_focus",
+        "A caller supplies a native FocusHandle. Document triggers use the component default.",
+    ),
+    (
+        "overlays::Tooltip::action",
+        "A native GPUI action supplies its shortcut. The explicit key-binding string is the declarative equivalent.",
+    ),
+    (
+        "overlays::PopupMenu::action_context",
+        "A native FocusHandle controls how Rust actions dispatch. Documents receive select IDs.",
+    ),
+    (
+        "overlays::PopupMenu::is_empty",
+        "Read-only menu state query for native callers.",
+    ),
     (
         "layout::AppShellState::toggle_navbar",
         "Imperative toggle of local state. Documents drive navbar-collapsed.",
@@ -942,6 +964,9 @@ fn covered(surface: &str) -> bool {
             .find(|prop| prop.name == "placements")
             .is_some_and(|prop| prop.schema()["items"]["properties"].get(method).is_some());
     }
+    if method == "content" && matches!(owner, "overlays::Popover" | "overlays::HoverCard") {
+        return spec.accepts_children;
+    }
     match method {
         "first" | "second" | "pane" | "panes" if owner == "layout::Splitter" => {
             spec.accepts_children
@@ -992,6 +1017,44 @@ fn covered(surface: &str) -> bool {
                     "slots".into()
                 }
                 ("flow::FlowState", "arrange") => "layout".into(),
+                ("overlays::Popover" | "overlays::HoverCard", "trigger") => "trigger-label".into(),
+                ("overlays::Popover" | "overlays::HoverCard", "trigger_style") => {
+                    "trigger-full-width".into()
+                }
+                ("overlays::Popover" | "overlays::HoverCard", "on_open_change") => "change".into(),
+                ("overlays::HoverCard", "open_delay") => "open-delay-ms".into(),
+                ("overlays::HoverCard", "close_delay") => "close-delay-ms".into(),
+                ("overlays::Tooltip", "element" | "build") => "text".into(),
+                ("overlays::ContextMenuExt", "context_menu") => "items".into(),
+                ("overlays::DropdownMenu", "dropdown_menu") => "items".into(),
+                ("overlays::DropdownMenu", "dropdown_menu_with_anchor") => "anchor".into(),
+                ("overlays::PopupMenu", "min_w") => "min-width".into(),
+                ("overlays::PopupMenu", "max_w") => "max-width".into(),
+                ("overlays::PopupMenu", "max_h") => "max-height".into(),
+                (
+                    "overlays::PopupMenu",
+                    "build"
+                    | "rebuild"
+                    | "item"
+                    | "label"
+                    | "separator"
+                    | "submenu"
+                    | "submenu_with_icon"
+                    | "link"
+                    | "link_with_disabled"
+                    | "link_with_icon"
+                    | "menu"
+                    | "menu_with_enable"
+                    | "menu_with_disabled"
+                    | "menu_with_icon"
+                    | "menu_with_icon_and_disabled"
+                    | "menu_with_check"
+                    | "menu_with_check_and_disabled"
+                    | "menu_element"
+                    | "menu_element_with_disabled"
+                    | "menu_element_with_icon"
+                    | "menu_element_with_check",
+                ) => "items".into(),
                 ("overlays::Modal", "content") => "message".into(),
                 ("overlays::Modal", "footer") => "ok-label".into(),
                 ("overlays::Modal", "w") => "width".into(),
@@ -1030,7 +1093,9 @@ fn covered(surface: &str) -> bool {
                 .strip_prefix("on_")
                 .map(|name| name.replace('_', "-"));
             spec.props.iter().any(|p| p.name == property)
-                || spec.events.iter().any(|e| event.as_deref() == Some(e.id))
+                || spec.events.iter().any(|e| {
+                    event.as_deref() == Some(e.id) || method.starts_with("on_") && property == e.id
+                })
         }
     }
 }

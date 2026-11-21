@@ -103,6 +103,7 @@ impl PropSpec {
             | "grid-placements"
             | "card-section-borders"
             | "overlay-toasts"
+            | "native-popup-items"
             | "dial-actions" => "array",
             ty => ty,
         };
@@ -126,6 +127,7 @@ impl PropSpec {
         match self.type_name {
             "array" => schema["items"] = json!({"type": "string"}),
             "integer-array" => schema["items"] = json!({"type":"integer","minimum":0}),
+            "native-popup-items" => schema["items"] = native_popup_item_schema(3),
             "overlay-toasts" => schema["items"] = overlay_toast_schema(),
             "code-annotations" => schema["items"] = code_annotation_schema(),
             "code-decoration-layers" => schema["items"] = code_decoration_layer_schema(),
@@ -486,6 +488,27 @@ pub fn overlay_toast_schema() -> Value {
             "revision":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1}
         }
     })
+}
+
+pub fn native_popup_item_schema(depth: usize) -> Value {
+    let mut item = json!({
+        "type":"object","additionalProperties":false,
+        "properties":{
+            "kind":{"type":"string","enum":["item", "label", "separator"]},
+            "id":{"type":"string","minLength":1},
+            "label":{"type":"string"},
+            "icon":{"type":"string"},
+            "href":{"type":"string"},
+            "disabled":{"type":"boolean"},
+            "checked":{"type":"boolean"}
+        }
+    });
+    if depth > 0 {
+        item["properties"]["kind"]["enum"] = json!(["item", "label", "separator", "submenu"]);
+        item["properties"]["items"] =
+            json!({"type":"array","items":native_popup_item_schema(depth - 1)});
+    }
+    item
 }
 
 pub fn code_annotation_schema() -> Value {

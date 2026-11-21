@@ -2345,3 +2345,197 @@ fn ui_macro_accepts_tree_board_flame_graph_and_disclosure_state() {
 
     let _ = example;
 }
+
+#[gpui_kit::test]
+fn kit_overlay_documents_validate_and_mount(cx: &mut TestAppContext) {
+    use gpui_kit::AppContext as _;
+    cx.update(guiraffe_overlays::init);
+    let items = serde_json::json!([
+        {"id":"save","label":"Save","icon":"icons/check.svg","checked":true},
+        {"kind":"label","label":"Recent"},
+        {"kind":"separator"},
+        {"kind":"submenu","label":"Options","items":[{"id":"undo","label":"Undo","disabled":true}]}
+    ]);
+    let doc = Document::new(
+        Node::new("stack")
+            .child(
+                Node::new("popover")
+                    .prop("trigger-label", "Open details")
+                    .prop("arrow", true)
+                    .prop("offset", 6)
+                    .prop("default-open", true)
+                    .prop("anchor", "bottom-left")
+                    .prop("trigger-full-width", true)
+                    .on("change", "details-changed")
+                    .child(Node::new("text").prop("text", "Popover content")),
+            )
+            .child(
+                Node::new("hover-card")
+                    .prop("open-delay-ms", 10)
+                    .prop("close-delay-ms", 25)
+                    .prop("anchor", "right-center")
+                    .on("change", "hover-changed")
+                    .child(Node::new("text").prop("text", "Hover content")),
+            )
+            .child(
+                Node::new("tooltip")
+                    .prop("text", "Save all changes")
+                    .prop("key-binding", "ctrl-s")
+                    .child(Node::new("text").prop("text", "Save")),
+            )
+            .child(
+                Node::new("popup-menu")
+                    .prop("items", items.clone())
+                    .prop("min-width", 140)
+                    .prop("max-width", 220)
+                    .prop("max-height", 260)
+                    .prop("scrollable", true)
+                    .prop("check-side", "right")
+                    .prop("external-link-icon", false)
+                    .on("select", "choose-popup"),
+            )
+            .child(
+                Node::new("context-menu")
+                    .prop("items", items.clone())
+                    .on("select", "choose-context")
+                    .child(Node::new("text").prop("text", "Right-click target")),
+            )
+            .child(
+                Node::new("dropdown-menu")
+                    .prop("items", items)
+                    .prop("trigger-label", "File")
+                    .prop("anchor", "top-right")
+                    .on("select", "choose-file")
+                    .on("change", "file-open"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    cx.update(|cx| {
+        cx.open_window(gpui_kit::WindowOptions::default(), |window, cx| {
+            let ui = DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+                .expect("native Kit overlay document");
+            let screen = cx.new(|_| Shell { ui });
+            guiraffe_overlays::root(screen, window, cx)
+        })
+        .expect("window with overlay root")
+    });
+    cx.run_until_parked();
+}
+
+#[test]
+fn ui_macro_calls_reexported_overlay_builders() {
+    use gpui_kit::{Anchor, component::button::Button};
+    use guiraffe_overlays::{ContextMenuExt, DropdownMenu, HoverCard, Popover, Tooltip};
+    use std::time::Duration;
+    fn example() -> impl IntoElement {
+        let popover = ui! {
+            Popover("editing") {
+                trigger: Button::new("open").label("Open");
+                anchor: Anchor::TopRight;
+                arrow: true;
+                "Popover"
+            }
+        };
+        let hover = ui! {
+            HoverCard("about") {
+                trigger: "Details";
+                open_delay: Duration::from_millis(150);
+                "More details"
+            }
+        };
+        let context =
+            ui! { div { .context_menu(|popup, _, _| popup.label("Context")) "Right-click" } };
+        let dropdown = ui! { Button("choices") { label: "Choices"; .dropdown_menu(|popup, _, _| popup.label("Choice")) } };
+        let _tooltip = ui! { Tooltip("Save") { key_binding: None } };
+        ui! { div { {popover} {hover} {context} {dropdown} } }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn every_catalogue_property_validates_and_mounts_a_literal(cx: &mut TestAppContext) {
+    use gpui_kit::AppContext as _;
+    use serde_json::{Value as Json, json};
+
+    fn literal(schema: &Json) -> Json {
+        if let Some(value) = schema["enum"].as_array().and_then(|items| items.first()) {
+            return value.clone();
+        }
+        match schema["type"].as_str() {
+            Some("string") => {
+                let value = if schema["pattern"].as_str().is_some() {
+                    "2026-01-01"
+                } else {
+                    "sample"
+                };
+                json!(value)
+            }
+            Some("boolean") => json!(true),
+            Some("integer") => json!(schema["minimum"].as_f64().unwrap_or_default().ceil() as u64),
+            Some("number") => {
+                let minimum = schema["minimum"].as_f64().unwrap_or(0.);
+                let maximum = schema["maximum"].as_f64().unwrap_or(1.);
+                json!(1_f64.clamp(minimum, maximum.max(minimum)))
+            }
+            Some("array") => json!([]),
+            Some("object") => {
+                let required = schema["required"].as_array().into_iter().flatten();
+                Json::Object(
+                    required
+                        .filter_map(Json::as_str)
+                        .map(|field| (field.to_owned(), literal(&schema["properties"][field])))
+                        .collect(),
+                )
+            }
+            _ => json!("2026-01-01"),
+        }
+    }
+
+    init_document_widgets(cx);
+    let registry = cx.update(|cx| Arc::new(Registry::for_app(cx)));
+    for spec in catalog::all_widgets() {
+        let mut root = Node::new(spec.id);
+        for prop in spec.props {
+            let default: Json =
+                serde_json::from_str(prop.default_json).expect("descriptor default");
+            let value = if !default.is_null() {
+                default
+            } else {
+                match (spec.id, prop.name) {
+                    ("date-picker", "years") => json!([2020, 2030]),
+                    ("date-picker", "date-format") => json!("%Y-%m-%d"),
+                    ("dock", "layout") => json!({
+                        "version":1,"center":{"panel_name":"StackPanel","children":[],"info":{}}
+                    }),
+                    (_, "icon" | "loading-icon") => json!("icons/check.svg"),
+                    _ => literal(&prop.schema()),
+                }
+            };
+            root = root.prop(prop.name, value);
+        }
+        for event in spec.events {
+            root = root.on(event.id, event.id);
+        }
+        let document = Document::new(root);
+        let issues = validation::Validation::default().check(&document);
+        assert!(issues.is_empty(), "{}: {issues:?}", spec.id);
+        let template = Arc::new(Template::compile(&document, &registry).expect(spec.id));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{}: {:?}",
+            spec.id,
+            template.diagnostics()
+        );
+        let registry = registry.clone();
+        cx.update(|cx| {
+            cx.open_window(gpui_kit::WindowOptions::default(), |window, cx| {
+                let ui = DataUi::from_template(template, registry, NoLogic, cx);
+                let view = cx.new(|_| Shell { ui });
+                guiraffe_overlays::root(view, window, cx)
+            })
+            .expect(spec.id)
+        });
+        cx.run_until_parked();
+    }
+}

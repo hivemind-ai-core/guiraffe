@@ -297,6 +297,13 @@ fn matches_data_schema(value: &Value, schema: &Value) -> bool {
     {
         return false;
     }
+    if let Some(text) = value.as_str()
+        && schema["minLength"]
+            .as_u64()
+            .is_some_and(|min| (text.chars().count() as u64) < min)
+    {
+        return false;
+    }
     if let Some(number) = value.as_f64()
         && (schema["minimum"].as_f64().is_some_and(|min| number < min)
             || schema["maximum"].as_f64().is_some_and(|max| number > max))
@@ -578,7 +585,7 @@ impl Validation<'_> {
                                 .is_some_and(|(start, end)| end > start + 1)
                     })
                 }),
-                "overlay-toasts" | "code-decoration-layers" => {
+                "overlay-toasts" | "code-decoration-layers" | "native-popup-items" => {
                     matches_data_schema(got, &prop.schema())
                 }
                 "code-annotations" => got.as_array().is_some_and(|annotations| {

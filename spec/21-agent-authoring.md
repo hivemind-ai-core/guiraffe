@@ -31,7 +31,8 @@ Callback builders can expose named events with serializable payloads, and applic
 entities can expose input records that the renderer turns into keyed native state.
 
 The showcase `catalogue_drift` test compares discovered public Rust surfaces with their
-catalogue kinds, props, and events. Classify an existing Rust-only API by exact owner and member
+catalogue kinds, props, and events. This includes the directly re-exported Controls
+widgets the test resolves against the pinned source. Classify a Rust-only API by exact owner and member
 in the test's `IMPERATIVE` table and give its authoring rationale. The test fails if a
 new API has no coverage or if an exception no longer matches a public API.
 

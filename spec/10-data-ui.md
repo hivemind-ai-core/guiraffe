@@ -49,6 +49,9 @@ A window with the overlay root supports `modal`, `drawer` and `toast-tray`. Bind
 A modal can refer to a Rust-registered factory through its `context` name. A toast tray
 owns its notifications and matches them by document-local ID. Remove a record to
 dismiss it. Change a record or its optional `revision` to publish it again.
+Popover and hover card children become the overlay content. Tooltip and context menu
+children become the interaction target. Menu entries can carry an ID for the `select`
+event, a link, or a nested group of items.
 
 The host resolves event and data ids against its logic:
 ```rust

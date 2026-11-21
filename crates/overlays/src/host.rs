@@ -755,6 +755,7 @@ pub fn init(cx: &mut App) {
     crate::spotlight::init(cx);
     crate::data_ui::register(cx);
     crate::document_services::register(cx);
+    crate::kit_surfaces::register(cx);
     crate::spotlight::document::register(cx);
     cx.set_global(Initialized);
 }

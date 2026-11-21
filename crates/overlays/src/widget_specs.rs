@@ -175,6 +175,12 @@ pub const WIDGETS: &[&WidgetSpec] = &[
     &MODAL,
     &DRAWER,
     &TOAST_TRAY,
+    &POPOVER,
+    &HOVER_CARD,
+    &TOOLTIP,
+    &POPUP_MENU,
+    &CONTEXT_MENU,
+    &DROPDOWN_MENU,
 ];
 
 const fn service_property(
@@ -294,4 +300,169 @@ pub static DRAWER: WidgetSpec = WidgetSpec {
     state: "document-owned request for the window's native sheet",
     theme_tokens: &["surfaces.body", "surfaces.text"],
     a11y_role: "dialog",
+};
+
+const ANCHORS: &[&str] = &[
+    "top-left",
+    "top-right",
+    "bottom-left",
+    "bottom-right",
+    "top-center",
+    "bottom-center",
+    "left-center",
+    "right-center",
+];
+
+const fn accepted(
+    name: &'static str,
+    default_json: &'static str,
+    values: &'static [&'static str],
+) -> PropSpec {
+    PropSpec {
+        accepted: values,
+        ..service_property(name, "string", default_json)
+    }
+}
+
+const fn extent(name: &'static str) -> PropSpec {
+    PropSpec {
+        range: Some((0., f32::MAX as f64)),
+        ..service_property(name, "number", "null")
+    }
+}
+
+pub static POPOVER: WidgetSpec = WidgetSpec {
+    id: "popover",
+    krate: "overlays",
+    summary: "Kit popover anchored to a button. Its children are the popup contents.",
+    props: &[
+        service_property("trigger-label", "string", "\"Details\""),
+        accepted("anchor", "\"top-left\"", ANCHORS),
+        extent("offset"),
+        service_property("arrow", "boolean", "false"),
+        accepted("mouse-button", "\"left\"", &["left", "right", "middle"]),
+        service_property("default-open", "boolean", "false"),
+        service_property("open", "boolean", "null"),
+        service_property("overlay-closable", "boolean", "true"),
+        service_property("appearance", "boolean", "true"),
+        service_property("trigger-full-width", "boolean", "false"),
+    ],
+    accepts_children: true,
+    events: &[EventSpec {
+        id: "change",
+        payload_type: "boolean",
+    }],
+    state: "native popover, optionally controlled by open",
+    theme_tokens: &["kit.popover", "kit.popover_foreground"],
+    a11y_role: "dialog",
+};
+
+pub static HOVER_CARD: WidgetSpec = WidgetSpec {
+    id: "hover-card",
+    krate: "overlays",
+    summary: "Kit hover surface. Its children appear when the pointer rests on the trigger.",
+    props: &[
+        service_property("trigger-label", "string", "\"Details\""),
+        accepted("anchor", "\"top-center\"", ANCHORS),
+        PropSpec {
+            range: Some((0., 60_000.)),
+            ..service_property("open-delay-ms", "integer", "600")
+        },
+        PropSpec {
+            range: Some((0., 60_000.)),
+            ..service_property("close-delay-ms", "integer", "300")
+        },
+        service_property("appearance", "boolean", "true"),
+        service_property("trigger-full-width", "boolean", "false"),
+    ],
+    accepts_children: true,
+    events: &[EventSpec {
+        id: "change",
+        payload_type: "boolean",
+    }],
+    state: "native pointer and delay state",
+    theme_tokens: &["kit.popover", "kit.popover_foreground"],
+    a11y_role: "group",
+};
+
+pub static TOOLTIP: WidgetSpec = WidgetSpec {
+    id: "tooltip",
+    krate: "overlays",
+    summary: "Show a native tooltip when the pointer rests on the document children.",
+    props: &[
+        service_property("text", "string", "\"\""),
+        service_property("key-binding", "string", "null"),
+    ],
+    accepts_children: true,
+    events: &[],
+    state: "window tooltip state",
+    theme_tokens: &["kit.popover", "kit.popover_foreground"],
+    a11y_role: "tooltip",
+};
+
+const MENU_PROPS: [PropSpec; 7] = [
+    service_property("items", "native-popup-items", "[]"),
+    extent("min-width"),
+    extent("max-width"),
+    extent("max-height"),
+    service_property("scrollable", "boolean", "false"),
+    accepted("check-side", "\"left\"", &["left", "right"]),
+    service_property("external-link-icon", "boolean", "true"),
+];
+
+const SELECT: EventSpec = EventSpec {
+    id: "select",
+    payload_type: "string",
+};
+
+pub static POPUP_MENU: WidgetSpec = WidgetSpec {
+    id: "popup-menu",
+    krate: "overlays",
+    summary: "Mount a native menu surface directly with structured items and selection events.",
+    props: &MENU_PROPS,
+    accepts_children: false,
+    events: &[SELECT],
+    state: "native menu navigation",
+    theme_tokens: &["kit.popover"],
+    a11y_role: "menu",
+};
+
+pub static CONTEXT_MENU: WidgetSpec = WidgetSpec {
+    id: "context-menu",
+    krate: "overlays",
+    summary: "Open a native menu on right-click over its children.",
+    props: &MENU_PROPS,
+    accepts_children: true,
+    events: &[SELECT],
+    state: "native secondary-click and menu navigation",
+    theme_tokens: &["kit.popover"],
+    a11y_role: "group",
+};
+
+pub static DROPDOWN_MENU: WidgetSpec = WidgetSpec {
+    id: "dropdown-menu",
+    krate: "overlays",
+    summary: "Button that opens a native menu with structured items.",
+    props: &[
+        MENU_PROPS[0],
+        MENU_PROPS[1],
+        MENU_PROPS[2],
+        MENU_PROPS[3],
+        MENU_PROPS[4],
+        MENU_PROPS[5],
+        MENU_PROPS[6],
+        service_property("trigger-label", "string", "\"Menu\""),
+        accepted("anchor", "\"top-left\"", ANCHORS),
+    ],
+    accepts_children: false,
+    events: &[
+        SELECT,
+        EventSpec {
+            id: "change",
+            payload_type: "boolean",
+        },
+    ],
+    state: "native trigger and menu navigation",
+    theme_tokens: &["kit.popover"],
+    a11y_role: "button",
 };

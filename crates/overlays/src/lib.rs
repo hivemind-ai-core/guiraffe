@@ -14,6 +14,7 @@ mod confirm;
 mod data_ui;
 mod document_services;
 mod host;
+mod kit_surfaces;
 pub mod position;
 pub mod search;
 pub mod stack;

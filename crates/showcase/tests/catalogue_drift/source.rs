@@ -1,17 +1,20 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use syn::{
-    GenericArgument, ImplItem, Item, PathArguments, ReturnType, Type, TypeParamBound, Visibility,
+    GenericArgument, ImplItem, Item, PathArguments, ReturnType, TraitItem, Type, TypeParamBound,
+    UseTree, Visibility,
 };
 
 const TOOL_CRATES: &[&str] = &["bench", "cli", "gallery", "mocket", "showcase", "test"];
 
 pub fn public_surface(crates: &Path) -> BTreeSet<String> {
     let mut result = BTreeSet::new();
+    let kit_components = crates.join("../vendor/gpui-component/src");
+    let mut kit_modules = BTreeMap::new();
     for dir in fs::read_dir(crates).expect("workspace crates") {
         let dir = dir.expect("crate directory entry");
         let name = dir.file_name();
@@ -21,13 +24,37 @@ pub fn public_surface(crates: &Path) -> BTreeSet<String> {
             continue;
         }
         let mut inventory = Inventory::default();
-        for source in rust_files(&src) {
-            let text = fs::read_to_string(&source).expect("source file");
-            let syntax = syn::parse_file(&text)
-                .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
-            inventory.scan(&syntax.items);
-        }
+        inventory.scan_files(&src);
         result.extend(inventory.surface(name));
+        for (module, source, exported) in &inventory.kit_imports {
+            let kit = kit_modules.entry(module.clone()).or_insert_with(|| {
+                let mut kit = Inventory::default();
+                let path = kit_components.join(module);
+                if path.is_dir() {
+                    kit.scan_files(&path);
+                } else {
+                    let file = path.with_extension("rs");
+                    if file.is_file() {
+                        kit.scan_file(&file);
+                    }
+                }
+                kit
+            });
+            if kit.renders.contains(source)
+                || matches!(
+                    source.as_str(),
+                    "ContextMenu" | "ContextMenuExt" | "DropdownMenu"
+                )
+            {
+                result.insert(format!("{name}::{exported}"));
+                result.extend(
+                    kit.methods
+                        .iter()
+                        .filter(|(owner, _)| owner == source)
+                        .map(|(_, method)| format!("{name}::{exported}::{method}")),
+                );
+            }
+        }
     }
     result
 }
@@ -62,9 +89,23 @@ struct Inventory {
     factories: Vec<(String, Type)>,
     event_types: BTreeMap<String, Vec<String>>,
     emitters: BTreeSet<(String, String)>,
+    kit_imports: BTreeSet<(PathBuf, String, String)>,
 }
 
 impl Inventory {
+    fn scan_files(&mut self, dir: &Path) {
+        for source in rust_files(dir) {
+            self.scan_file(&source);
+        }
+    }
+
+    fn scan_file(&mut self, source: &Path) {
+        let text = fs::read_to_string(source).expect("source file");
+        let syntax =
+            syn::parse_file(&text).unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+        self.scan(&syntax.items);
+    }
+
     fn surface(&self, krate: &str) -> BTreeSet<String> {
         let render_types: BTreeSet<_> = self
             .public_types
@@ -162,6 +203,24 @@ impl Inventory {
                         self.scan(items);
                     }
                 }
+                Item::Use(item) if matches!(item.vis, Visibility::Public(_)) => {
+                    if let UseTree::Path(kit) = &item.tree
+                        && kit.ident == "gpui_kit"
+                        && let UseTree::Path(component) = kit.tree.as_ref()
+                        && component.ident == "component"
+                    {
+                        collect_imports(&component.tree, Path::new(""), &mut self.kit_imports);
+                    }
+                }
+                Item::Trait(item) if matches!(item.vis, Visibility::Public(_)) => {
+                    let owner = item.ident.to_string();
+                    self.methods.extend(item.items.iter().filter_map(|item| {
+                        let TraitItem::Fn(method) = item else {
+                            return None;
+                        };
+                        Some((owner.clone(), method.sig.ident.to_string()))
+                    }));
+                }
                 Item::Type(item) if matches!(item.vis, Visibility::Public(_)) => {
                     self.aliases
                         .push((item.ident.to_string(), item.ty.as_ref().clone()));
@@ -236,6 +295,35 @@ impl Inventory {
                 _ => {}
             }
         }
+    }
+}
+
+fn collect_imports(
+    tree: &UseTree,
+    module: &Path,
+    imports: &mut BTreeSet<(PathBuf, String, String)>,
+) {
+    match tree {
+        UseTree::Path(path) => {
+            collect_imports(&path.tree, &module.join(path.ident.to_string()), imports)
+        }
+        UseTree::Group(group) => {
+            for child in &group.items {
+                collect_imports(child, module, imports);
+            }
+        }
+        UseTree::Name(name) => {
+            let name = name.ident.to_string();
+            imports.insert((module.to_owned(), name.clone(), name));
+        }
+        UseTree::Rename(rename) => {
+            imports.insert((
+                module.to_owned(),
+                rename.ident.to_string(),
+                rename.rename.to_string(),
+            ));
+        }
+        UseTree::Glob(_) => {}
     }
 }
 
