@@ -321,7 +321,7 @@ mod tests {
     }
     #[test]
     fn retained_line_index_has_no_spare_slots() {
-        let doc = CodeDocument::new("x\n".repeat(20_000) + "x");
+        let doc = CodeDocument::new("x\nyz\n".repeat(10_000) + "x");
         let LineStarts::Compact(starts) = &doc.starts else {
             panic!("small files must use compact offsets");
         };
