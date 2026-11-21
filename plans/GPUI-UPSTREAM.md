@@ -38,6 +38,19 @@ dropped from 1,135,960 to 10,040 requested bytes per retained draw. DataGrid,
 Gantt, Markdown and Charts also removed one request per frame. A renderer
 sort regression checks order for duplicate keys and scratch reuse.
 
+## Retain viewport-sized Kit roots
+
+The Kit root opts into the same cached view path as a viewport-sized child.
+The root's inner layout keeps the normal viewport stretch. A child
+notification invalidates its ancestors, and whole-window refresh forces
+a full render. While accessibility is active, the root runs ordinary
+prepaint so the accessibility builder receives its nodes.
+
+In upstream warm replay, this reduced the fixtures from 60–67 requests per
+draw to two or four. Every remaining request was for cloned key context
+entries. The integration test covers intact scene output, a child
+notification, and explicit refresh.
+
 # Draft pull request for longbridge/gpui-fast
 
 ## Pace callback-only Wayland ticks from the compositor

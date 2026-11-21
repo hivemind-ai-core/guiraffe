@@ -567,12 +567,24 @@ fn prepaint_view(
                     return (None, element_state);
                 }
 
-                let refreshing = mem::replace(&mut window.refreshing, true);
+                let retained_root = window.root_view_is_retained(entity_id);
+                let refreshing = window.refreshing;
+                if !retained_root {
+                    window.refreshing = true;
+                }
                 let prepaint_start = window.prepaint_index();
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
-                    element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
-                    element.prepaint_at(bounds.origin, window, cx);
+                    if retained_root {
+                        let layout = element.request_layout(window, cx);
+                        window.stretch_root_layout(layout, bounds.size);
+                    }
+                    element.prepaint_as_root(
+                        bounds.origin,
+                        Size::<AvailableSpace>::from(bounds.size),
+                        window,
+                        cx,
+                    );
                     element
                 });
 
