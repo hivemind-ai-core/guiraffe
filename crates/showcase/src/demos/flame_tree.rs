@@ -9,8 +9,8 @@ use gpui_kit::{
 };
 use guiraffe_flamegraph::{ColourScheme, FlameGraph, Frame, FrameSource, Orientation};
 use guiraffe_tree::{
-    Children, NodeId, Property, PropertyOptions, RowDensity, RowStyle, TreeData, TreeEvent,
-    TreeSource, TreeView, Value,
+    Children, EditButtons, NodeId, Property, PropertyOptions, RowDensity, RowStyle, TreeData,
+    TreeEvent, TreeSource, TreeView, Value,
 };
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};
 
@@ -33,7 +33,7 @@ pub fn entries() -> [Entry; 3] {
         Entry {
             krate: "tree",
             name: "Property grid",
-            summary: "Edit settings inline. Press Enter to commit text, numbers, and hex colours.",
+            summary: "Edit settings inline. Enter commits, Escape cancels, Tab moves to the next value.",
             covers: &["TreeView"],
             demo: tree::<true>,
         },
@@ -147,9 +147,13 @@ impl Settings {
             (10, Value::Rect([0., 0., 640., 480.])),
             (11, Value::Flags(vec!["Auto".into()])),
             (12, Value::Path("workspace/settings.toml".into())),
+            (
+                13,
+                Value::Text("Shared build machine.\nBackups run nightly.".into()),
+            ),
         ]);
         Self {
-            children: vec![1, 2, 3, 4, 5, 6, 9, 10, 11, 12],
+            children: vec![1, 13, 2, 3, 4, 5, 6, 9, 10, 11, 12],
             checked: BTreeMap::from([(3, true)]),
             defaults: values.clone(),
             values,
@@ -184,6 +188,7 @@ impl TreeSource for Settings {
             "Bounds",
             "Capabilities",
             "Settings file",
+            "Notes",
         ]
         .get(id as usize)
         .copied()
@@ -224,8 +229,14 @@ impl TreeData for Settings {
                 step: Some(1.),
                 ..Default::default()
             },
-            1 => PropertyOptions {
+            13 => PropertyOptions {
+                description: Some("Shift+Enter starts a new line."),
                 multiline_rows: Some(4),
+                ..Default::default()
+            },
+            12 => PropertyOptions {
+                // The path keeps "Reset" in its context menu only.
+                reset_button: Some(false),
                 ..Default::default()
             },
             7 => PropertyOptions {
@@ -255,6 +266,7 @@ struct TreeDemo<const P: bool> {
     advanced: Cell<bool>,
     style: Cell<RowStyle>,
     tall_header: Cell<bool>,
+    editing: Cell<Editing>,
     _subscription: gpui_kit::Subscription,
 }
 
@@ -303,10 +315,54 @@ impl<const P: bool> TreeDemo<P> {
             advanced: Cell::new(false),
             style: Cell::new(RowStyle::default()),
             tall_header: Cell::new(true),
+            editing: Cell::new(Editing::default()),
             _subscription: subscription,
         }
     }
 }
+
+/// PropertyGrid editing options driven by the property knobs.
+#[derive(Clone, Copy, PartialEq)]
+struct Editing {
+    focus_row: bool,
+    reset_button: bool,
+    buttons: EditButtons,
+}
+
+impl Default for Editing {
+    fn default() -> Self {
+        Self {
+            focus_row: true,
+            reset_button: true,
+            buttons: EditButtons::Hidden,
+        }
+    }
+}
+
+const ROW_KNOBS: [Knob; 8] = [
+    Knob::toggle("Expand advanced"),
+    Knob::new("Row height", &["Compact", "Default", "Comfortable"]).default(1),
+    Knob::toggle("Alternating rows"),
+    Knob::toggle("Grid lines"),
+    Knob::toggle("Indent guides"),
+    Knob::toggle("Group styling"),
+    Knob::toggle("Sticky groups"),
+    Knob::toggle("Taller first group").default(1),
+];
+
+const PROPERTY_KNOBS: [Knob; 11] = [
+    ROW_KNOBS[0],
+    ROW_KNOBS[1],
+    ROW_KNOBS[2],
+    ROW_KNOBS[3],
+    ROW_KNOBS[4],
+    ROW_KNOBS[5],
+    ROW_KNOBS[6],
+    ROW_KNOBS[7],
+    Knob::toggle("Highlight focused row").default(1),
+    Knob::toggle("Reset buttons").default(1),
+    Knob::new("Edit buttons", &["Hidden", "Icons", "Labels"]),
+];
 
 fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
     playground_with(
@@ -315,16 +371,7 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
         } else {
             "Workspace tree"
         },
-        &[
-            Knob::toggle("Expand advanced"),
-            Knob::new("Row height", &["Compact", "Default", "Comfortable"]).default(1),
-            Knob::toggle("Alternating rows"),
-            Knob::toggle("Grid lines"),
-            Knob::toggle("Indent guides"),
-            Knob::toggle("Group styling"),
-            Knob::toggle("Sticky groups"),
-            Knob::toggle("Taller first group").default(1),
-        ],
+        if P { &PROPERTY_KNOBS } else { &ROW_KNOBS },
         |window, cx| cx.new(|cx| TreeDemo::<P>::new(window, cx)),
         |entity, knobs, _, cx| {
             let demo = entity.read(cx);
@@ -345,7 +392,21 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
             let change_style = demo.style.replace(style) != style;
             let tall = knobs.on(7);
             let change_height = demo.tall_header.replace(tall) != tall;
-            if change_advanced || change_style || change_height {
+            let editing = if P {
+                Editing {
+                    focus_row: knobs.on(8),
+                    reset_button: knobs.on(9),
+                    buttons: match knobs.index(10) {
+                        1 => EditButtons::Icons,
+                        2 => EditButtons::Labels,
+                        _ => EditButtons::Hidden,
+                    },
+                }
+            } else {
+                Editing::default()
+            };
+            let change_editing = demo.editing.replace(editing) != editing;
+            if change_advanced || change_style || change_height || change_editing {
                 let view = demo.view.clone();
                 cx.defer(move |cx| {
                     view.update(cx, |view, cx| {
@@ -357,6 +418,11 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
                         }
                         if change_height {
                             view.set_row_heights(tall.then_some((0, 44.)), cx);
+                        }
+                        if change_editing {
+                            view.set_focus_row(editing.focus_row, cx);
+                            view.set_reset_button(editing.reset_button, cx);
+                            view.set_edit_buttons(editing.buttons, cx);
                         }
                     });
                 });

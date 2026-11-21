@@ -95,7 +95,7 @@ measurement.
 | Variable row heights | One ID/height pair per configured override and one prefix entry per visible override. An active multiline editor can add one temporary entry. Window lookup searches the sparse prefix entries, then visits only the viewport. |
 | Sticky header and indentation guides | One sticky ancestor and up to 45 guides per viewport row. No label or layout cache. |
 | Search projection | At most one visible rank per matching row or ancestor on a match path. One cancellable task walks every loaded node depth-first, 512 nodes per step, holding one frame per tree level, the matching IDs and the collapsed branches on match paths. A new query opens those branches (deepest first, so each revealed subtree is spliced once) when the walk completes; a rescan after a hierarchy mutation keeps the user's collapse and lists the collapsed branch as the path. A new query or mutation drops the running task. Labels are matched case-insensitively without allocation. |
-| Editors | One active input editor with at most four component fields, one colour picker, and one slider. Multiline editors grow to at most eight lines. |
+| Editors | One active input editor with at most four component fields, one colour picker, and one slider. Multiline editors grow to at most eight lines; one canvas probe per frame measures the open multi-line editor and rebuilds the sparse geometry only when its row height changes. Tab traversal scans visible rows linearly from the current editor to the next editable one. |
 | Split | One ratio and measured width per view. Each keyed instance uses one application-managed layout-store entry. |
 
 The sparse geometry tests cover identical viewport output at 10k and 10M
