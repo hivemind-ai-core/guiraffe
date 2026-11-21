@@ -1509,6 +1509,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "desktop-integration"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-commands",
+ "guiraffe-core",
+ "guiraffe-overlays",
+ "guiraffe-tray",
+ "guiraffe-windows",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3702,8 +3714,10 @@ dependencies = [
  "guiraffe-overlays",
  "guiraffe-test",
  "guiraffe-timeline",
+ "guiraffe-tray",
  "guiraffe-tree",
  "guiraffe-ui",
+ "guiraffe-windows",
  "jsonschema",
  "serde_json",
 ]
