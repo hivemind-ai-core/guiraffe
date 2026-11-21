@@ -544,6 +544,7 @@ impl Render for TracksView {
                         div()
                             .id("tracks-body")
                             .test_support()
+                            .debug_selector(|| "tracks-body".into())
                             .cursor(crate::edit::cursor_for(
                                 self.drag.map(|d| d.grab).or(self.hover),
                             ))
