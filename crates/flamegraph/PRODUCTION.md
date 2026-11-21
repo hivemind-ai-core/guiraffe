@@ -85,8 +85,8 @@ The index does not duplicate source labels or stack records.
 | Second short-soak interval p99 / max | 1.76–2.63 / 14.49 ms in earlier runs | 3.81 / 20.82 ms |
 | Peak RSS | 345 MiB | 59.2 MiB |
 
-The synthetic source stores one `usize` and 37 bytes of static label and
-package text. On a 64-bit build the source payload is 45 bytes before
+The synthetic source stores one `usize` and 46 bytes of static label and
+package text. On a 64-bit build the source payload is 54 bytes before
 the shared allocation header, making the peak budget approximately
 64 MiB. The compact fixture uses sequential IDs and exact linear spans
 in each row. Irregular profiles can store explicit spans and sparse
@@ -100,3 +100,6 @@ span vector growth among the leading costs. The regression tests cover
 mixed explicit and linear blocks, packed-location overflow, and equal
 overview dispatch at 10k, 1M and 10M spans. Mounted allocation-free repaint
 and 30-minute drift remain open.
+
+The five forced whole-window redraws each retained the prior count of
+224 allocations and 86,633 requested bytes.

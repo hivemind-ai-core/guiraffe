@@ -57,8 +57,8 @@ memory and quiet-window latency were open at that checkpoint.
 | --- | ---: | ---: |
 | TreeList peak RSS | 124 MiB | 63.7 MiB |
 | PropertyGrid peak RSS | 124 MiB | 64.5 MiB |
-| TreeList warmed expansion memcpy, sampled self | 85.48% | See warmed frame mix below |
-| PropertyGrid warmed expansion memcpy, sampled self | 83.92% | See warmed frame mix below |
+| TreeList warmed expansion memcpy, sampled self | 85.48% | 5.56% |
+| PropertyGrid warmed expansion memcpy, sampled self | 83.92% | 2.91% |
 
 Both synthetic models hold one million `u64` IDs (7.63 MiB) with static
 labels. PropertyGrid also holds four values, four defaults and three
@@ -66,10 +66,18 @@ choices, with 39 bytes of string contents and fixed handles. Their
 common RSS budget rounds to 73.54 MiB without counting those fixed
 records. The observed peaks are process maxima in 256-frame runs.
 
-In follow-up samples filtered to the frame loop, memcpy fell to 7.49%
-of TreeList and 3.73% of PropertyGrid self samples, now including GPUI
-copies. Flexbox layout accounted for 8.65% and 12.50% of self samples.
+In the follow-up frame-loop samples, which also include scrolling,
+hovering and selection, memcpy was 7.49% of TreeList and 3.73% of
+PropertyGrid self time. Flexbox layout was 8.65% and 12.50%.
+On the loaded host, TreeList p99 was 6.75–9.56 ms and PropertyGrid
+p99 was 14.68–17.39 ms in the two short-soak intervals. The largest
+recorded frames were 31.49 ms and 23.21 ms, respectively.
 TreeList and PropertyGrid share the same model edit costs. The mounted
 UI still rebuilds the viewport's Kit controls for dirty frames. Cold
 all-expanded tree mount, quiet-window latency and allocation-free
 mounted repaint remain open.
+
+Five forced whole-window redraws requested 879 allocations and 357,987
+bytes each for TreeList (previously 894 and 357,995). The legacy 110k
+PropertyGrid probe requested 1,279 allocations and 576,768 bytes each
+(previously 1,294 and 576,768).
