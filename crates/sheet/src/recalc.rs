@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -138,7 +139,7 @@ impl Graph {
             self.ranges.remove(&pos);
             self.numbers.remove(&pos);
             if let Some(expression) = text.strip_prefix('=') {
-                let formula = engine.compile(expression).and_then(|formula| {
+                let formula = engine_call(|| engine.compile(expression)).and_then(|formula| {
                     let valid = formula.references().iter().all(|r| {
                         r.first.row <= r.last.row
                             && r.first.col <= r.last.col
@@ -232,7 +233,7 @@ impl Graph {
                 cancelled: &cancelled,
             };
             let value = match formula {
-                Ok(formula) => formula.evaluate(&reader),
+                Ok(formula) => engine_call(|| formula.evaluate(&reader)),
                 Err(error) => Err(*error),
             };
             changes.insert(pos, Some(value));
@@ -268,6 +269,10 @@ impl Graph {
         self.dirty.clear();
         Some(())
     }
+}
+
+fn engine_call<T>(evaluate: impl FnOnce() -> Result<T, FormulaError>) -> Result<T, FormulaError> {
+    catch_unwind(AssertUnwindSafe(evaluate)).unwrap_or(Err(FormulaError::Value))
 }
 
 struct Reader<'a> {
