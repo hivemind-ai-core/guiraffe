@@ -10,10 +10,13 @@ GUIraffe supports both, with one widget vocabulary:
 | Bridge | `guiraffe-codegen` turns a document into static Rust when it should be compiled in | |
 
 ## The host component: dynamic UI anywhere inside a static UI
-`DataUi` is an ordinary Control. Put it in any static layout, and it instantiates a document inside it:
+`DataUi` is an ordinary Control. Initialize the component crates the document uses before building
+the application registry. The CLI initializes its bundled widgets for preview and inspection.
+
 ```rust
-let host = DataUi::new(document, bindings, cx);   // Entity<DataUi>
-div().child(sidebar).child(host.clone())           // lives anywhere in a static tree
+let registry = Arc::new(Registry::for_app(cx));
+let host = DataUi::new(&document, registry, logic, cx)?;
+div().child(sidebar).child(host)
 ```
 - **Pre-created:** loading compiles the document *once* into a `Template`. That is a flat arena of nodes
   with resolved widget factories (function pointers looked up in the registry at load), pre-resolved style
@@ -23,8 +26,13 @@ div().child(sidebar).child(host.clone())           // lives anywhere in a static
 - **Hot reload:** a new document compiles to a new Template. State in slots is kept by slot id.
 
 ## Bindings: events in, view data out, by id
-The document names events (`"on": {"click": "save"}`) and data sinks/sources (`"text": "@title"`,
-`"items": "@todos"`) **by id**. The host resolves them against a `Bindings` implementation:
+The document puts literal values in `props`, assigns data slots in `bind`, and names handlers in
+`on`. For example, `"bind": {"text": "title"}` reads the `title` slot and
+`"on": {"click": "save"}` routes the widget's click to the `save` event. The generated catalogue
+describes the property shapes, child slots, and event payloads available to documents. A Rust
+`ui!` tree calls the component's public builder methods directly.
+
+The host resolves event and data ids against its logic:
 ```rust
 trait Logic {
     /// Small, copyable event (id + compact payload). Returns view-data patches.
