@@ -55,6 +55,8 @@ was usually the refined raster. The production-headless Mermaid path in
 hidden window. It observes the first useful draw and reports exact
 refinement separately as `refined_ready_us`. The two 10-second samples drive
 wheel zoom, drag, and hover through the window and include scene construction.
+The refined phase starts at 1× and alternates reciprocal wheel deltas. The
+short soak verifies that it observes at least one change in refined raster size.
 The headless platform discards the scene before GPU submission.
 
 ## Headless 500-node follow-up
@@ -62,15 +64,20 @@ The headless platform discards the scene before GPU submission.
 Release measurements are indicative under shared load. The baseline uses
 release/0.2 at `6ef0ad6`. Its quiet-window values came from the foreman.
 
-| Backend and run | First useful frame | Refined ready | p99 intervals | Max frame | Peak RSS |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Upstream baseline, quiet | raster, 2.81 s | included in mount | 15.6 ms | — | — |
-| gpui-fast baseline, quiet | raster, 2.79 s | included in mount | 15.9 ms | — | — |
-| Upstream baseline, local | raster, 4.09 s | included in mount | 19.90 / 0.71 ms | 28.93 ms | 34,852 KiB |
-| Upstream follow-up, local | preview, 182 ms | 6.47 s | 0.92 / 0.54 ms | 5.30 ms | 48,460 KiB |
-| gpui-fast follow-up, local | preview, 122 ms | 4.56 s | 0.92 / 0.43 ms | 2.78 ms | 61,632 KiB |
+| Backend and run | First useful frame | Refined ready | p99 intervals | Max frame | Peak RSS | Raster size changes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Upstream baseline, quiet | raster, 2.81 s | included in mount | 15.6 ms | — | — | — |
+| gpui-fast baseline, quiet | raster, 2.79 s | included in mount | 15.9 ms | — | — | — |
+| Upstream baseline, local | raster, 4.09 s | included in mount | 19.90 / 0.71 ms | 28.93 ms | 34,852 KiB | — |
+| Upstream, threaded probe | preview, 182 ms | 6.47 s | 0.92 / 0.54 ms | 5.30 ms | 48,460 KiB | — |
+| Upstream, sustained zoom | preview, 120–204 ms | 6.11–6.68 s | ≤1.77 ms | ≤7.25 ms | ≤54,592 KiB | 49–50 |
+| gpui-fast, threaded probe | preview, 122 ms | 4.56 s | 0.92 / 0.43 ms | 2.78 ms | 61,632 KiB | — |
+| gpui-fast, sustained zoom | preview, 130–195 ms | 6.19–6.54 s | ≤1.04 ms | ≤6.07 ms | 56,080 KiB | 49–50 |
 
-The upstream profile (96 scripted frames) moved exact routing from the test
+The sustained-zoom runs overlapped the workspace build. RSS rose between
+their first two windows while zoom rasters were still warming.
+
+The upstream profile (96 scripted frames on the initial threaded probe) moved exact routing from the test
 thread to a worker. Worker and baseline shares use their respective thread
 sample totals. The routed-edge percentage is inclusive.
 

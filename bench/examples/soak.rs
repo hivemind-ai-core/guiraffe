@@ -1168,16 +1168,22 @@ mod mounted {
                     let executor = cx.background_executor().clone();
                     let result: Result<()> = async {
                         let mut samples = None::<super::Samples>;
-                        let mut refined = false;
+                        let mut raster_size = None;
+                        let mut zoom_rasters = 0;
+                        let mut refined_index = 0;
                         loop {
                             let frame_started = Instant::now();
-                            let (frame, ready) = cx.update(|cx| {
+                            if let Some(samples) = &samples
+                                && !samples.done()
+                            {
+                                cx.update(|cx| {
+                                    window.update(cx, |_, window, cx| {
+                                        mermaid_input(window, cx, samples.index - refined_index);
+                                    })
+                                })?;
+                            }
+                            let (frame, ready_size) = cx.update(|cx| {
                                 window.update(cx, |_, window, cx| {
-                                    if let Some(samples) = &samples
-                                        && !samples.done()
-                                    {
-                                        mermaid_input(window, cx, samples.index);
-                                    }
                                     window.draw(cx).clear(cx);
                                     let diagram = view.read(cx).0.read(cx);
                                     let frame = if diagram.has_preview() {
@@ -1191,19 +1197,37 @@ mod mounted {
                                         guiraffe_mermaid::view::Status::Failed(error) => {
                                             Err(error.clone())
                                         }
-                                        status => Ok((
+                                        guiraffe_mermaid::view::Status::Ready => Ok((
                                             frame,
-                                            *status == guiraffe_mermaid::view::Status::Ready,
+                                            diagram.image().map(|image| image.image.size(0)),
                                         )),
+                                        _ => Ok((frame, None)),
                                     }
                                 })
                             })??;
-                            if !refined && !ready && started.elapsed() >= Duration::from_secs(30) {
+                            if let Some(size) = ready_size {
+                                match raster_size.replace(size) {
+                                    None => {
+                                        println!(
+                                            "refined_ready_us={}",
+                                            started.elapsed().as_micros()
+                                        );
+                                        refined_index = samples.as_ref().map_or(0, |s| s.index + 1);
+                                        // Start the refined interaction at 1× to exercise
+                                        // zoom-dependent raster sizes after the preview.
+                                        cx.update(|cx| {
+                                            let diagram = view.read(cx).0.clone();
+                                            diagram
+                                                .update(cx, |diagram, cx| diagram.reset_zoom(cx));
+                                        });
+                                    }
+                                    Some(previous) if previous != size => zoom_rasters += 1,
+                                    Some(_) => {}
+                                }
+                            } else if raster_size.is_none()
+                                && started.elapsed() >= Duration::from_secs(30)
+                            {
                                 break Err("Mermaid refinement timed out".into());
-                            }
-                            if ready && !refined {
-                                refined = true;
-                                println!("refined_ready_us={}", started.elapsed().as_micros());
                             }
                             if let Some(samples) = &mut samples {
                                 let elapsed = frame_started.elapsed();
@@ -1216,7 +1240,14 @@ mod mounted {
                                 if !samples.done() {
                                     samples.finish_interval()?;
                                 }
-                                if samples.done() && refined {
+                                if samples.done() && raster_size.is_some() {
+                                    println!("zoom_raster_changes={zoom_rasters}");
+                                    if samples.profile_frames.is_none() && zoom_rasters == 0 {
+                                        break Err(
+                                            "Mermaid soak did not exercise zoom re-rasterization"
+                                                .into(),
+                                        );
+                                    }
                                     break samples.result();
                                 }
                             } else if let Some(frame) = frame {
@@ -1247,10 +1278,16 @@ mod mounted {
             );
         match i % 32 {
             0..4 => {
+                // Inverse of the +40 px wheel step keeps the zoom cycling.
+                let dy = if sign(i, 32) > 0.0 {
+                    40.0
+                } else {
+                    40.0 * (1.0 / 1.15 - 1.0) / 0.15
+                };
                 window.dispatch_event(
                     ScrollEvent {
                         position: at,
-                        delta: ScrollDelta::Pixels(point(px(0.), px(40. * sign(i, 32)))),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
                         modifiers: Modifiers::default(),
                         touch_phase: TouchPhase::Moved,
                         source: ScrollSource::Pointer,
