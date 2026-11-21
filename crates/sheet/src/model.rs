@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, HashMap},
     ops::Range,
     sync::Arc,
 };
@@ -10,9 +10,10 @@ use guiraffe_datagrid::{
         clipboard,
         undo::{Change, UndoLog},
     },
+    selection::RowSet,
 };
 
-use crate::{CellPos, a1, parse_a1};
+use crate::{CellPos, address::parse_reference, column_name};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum NumberFormat {
@@ -53,7 +54,7 @@ impl Cell {
     }
 
     pub fn input(&self) -> Arc<str> {
-        if self.format.number == NumberFormat::Text && self.text.starts_with('=') {
+        if self.format.number == NumberFormat::Text {
             Arc::from("")
         } else {
             self.text.clone()
@@ -68,7 +69,8 @@ pub struct SheetModel {
     rows: usize,
     cols: usize,
     cells: BTreeMap<CellPos, Cell>,
-    transposed: BTreeSet<(usize, usize)>,
+    occupied_rows: HashMap<usize, RowSet>,
+    occupied_cols: HashMap<usize, RowSet>,
     history: History,
     pub selection: Selection,
     pub read_only: bool,
@@ -88,7 +90,8 @@ impl SheetModel {
             rows,
             cols,
             cells: BTreeMap::new(),
-            transposed: BTreeSet::new(),
+            occupied_rows: HashMap::new(),
+            occupied_cols: HashMap::new(),
             history: History::default(),
             selection: Selection::new(SelectionMode::Range),
             read_only: false,
@@ -118,12 +121,32 @@ impl SheetModel {
     }
 
     fn write(&mut self, pos: CellPos, cell: Cell) {
+        let occupied = !cell.text.is_empty();
+        let was_occupied = self.cell(pos).is_some_and(|old| !old.text.is_empty());
+        if occupied != was_occupied {
+            Self::update_occupancy(&mut self.occupied_rows, pos.row, pos.col, occupied);
+            Self::update_occupancy(&mut self.occupied_cols, pos.col, pos.row, occupied);
+        }
         if cell == Cell::default() {
             self.cells.remove(&pos);
-            self.transposed.remove(&(pos.col, pos.row));
         } else {
             self.cells.insert(pos, cell);
-            self.transposed.insert((pos.col, pos.row));
+        }
+    }
+
+    fn update_occupancy(
+        lanes: &mut HashMap<usize, RowSet>,
+        lane: usize,
+        at: usize,
+        occupied: bool,
+    ) {
+        if occupied {
+            lanes.entry(lane).or_default().insert(at..at + 1);
+        } else if let Some(range) = lanes.get_mut(&lane) {
+            range.remove(at);
+            if range.is_empty() {
+                lanes.remove(&lane);
+            }
         }
     }
 
@@ -215,72 +238,43 @@ impl SheetModel {
         if !matches!(nav, Nav::Up | Nav::Down | Nav::Left | Nav::Right) {
             return None;
         }
-        let (axis, limit) = if vertical {
-            (from.row, self.rows)
+        let (at, limit, lane) = if vertical {
+            (from.row, self.rows, self.occupied_cols.get(&from.col))
         } else {
-            (from.col, self.cols)
+            (from.col, self.cols, self.occupied_rows.get(&from.row))
         };
-        let cell = |axis| {
-            if vertical {
-                CellPos::new(axis, from.col)
-            } else {
-                CellPos::new(from.row, axis)
-            }
-        };
-        let next = if backwards {
-            axis.checked_sub(1)?
-        } else {
-            axis.saturating_add(1)
-        };
-        if next >= limit {
-            return Some(from);
+        if limit == 0 {
+            return None;
         }
-        if self.cell(from).is_some_and(|c| !c.text.is_empty())
-            && self.cell(cell(next)).is_some_and(|c| !c.text.is_empty())
-        {
-            let mut edge = next;
-            while let Some(candidate) = if backwards {
-                edge.checked_sub(1)
-            } else {
-                edge.checked_add(1)
-            } {
-                if !self
-                    .cell(cell(candidate))
-                    .is_some_and(|c| !c.text.is_empty())
-                {
-                    break;
-                }
-                edge = candidate;
-            }
-            return Some(cell(edge));
-        }
-        let range = if backwards { 0..axis } else { next..limit };
-        let mut occupied = if vertical {
-            let lane = from.col;
-            Box::new(
-                self.transposed
-                    .range((lane, range.start)..(lane, range.end))
-                    .map(|&(_, row)| row),
-            ) as Box<dyn DoubleEndedIterator<Item = usize>>
-        } else {
-            Box::new(
-                self.cells
-                    .range(cell(range.start)..cell(range.end))
-                    .map(|(pos, _)| pos.col),
-            )
-        }
-        .filter(|&axis| self.cell(cell(axis)).is_some_and(|c| !c.text.is_empty()));
+        let ranges = lane.map_or(&[][..], RowSet::ranges);
+        let first_after = ranges.partition_point(|range| range.end <= at);
+        let containing = ranges.get(first_after).filter(|range| range.contains(&at));
         let edge = if backwards {
-            occupied.next_back().unwrap_or(0)
+            match containing {
+                Some(range) if at > range.start => range.start,
+                _ => first_after
+                    .checked_sub(1)
+                    .and_then(|index| ranges.get(index))
+                    .map_or(0, |range| range.end - 1),
+            }
         } else {
-            occupied.next().unwrap_or(limit - 1)
+            match containing {
+                Some(range) if at + 1 < range.end => range.end - 1,
+                _ => ranges
+                    .get(first_after + usize::from(containing.is_some()))
+                    .map_or(limit - 1, |range| range.start),
+            }
         };
-        Some(cell(edge))
+        Some(if vertical {
+            CellPos::new(edge, from.col)
+        } else {
+            CellPos::new(from.row, edge)
+        })
     }
 
     pub fn copy_tsv(&self) -> Option<String> {
         let (rows, cols) = self.selection.rect()?;
-        if rows.len().saturating_mul(cols.len()) > clipboard::MAX_COPY_CELLS {
+        if rows.len().saturating_mul(cols.len()) > MAX_BATCH {
             return None;
         }
         let cols: Vec<_> = cols.collect();
@@ -420,22 +414,30 @@ fn translate(text: &str, from: CellPos, to: CellPos, rows: usize, cols: usize) -
     let mut output = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(ch) = rest.chars().next() {
-        if ch.is_ascii_alphanumeric() || ch == '.' {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '$') {
             let len = rest
                 .bytes()
-                .take_while(|b| b.is_ascii_alphanumeric() || *b == b'.')
+                .take_while(|b| b.is_ascii_alphanumeric() || matches!(*b, b'.' | b'$'))
                 .count();
             let (token, tail) = rest.split_at(len);
-            if let Some(pos) = parse_a1(token) {
-                let row = (pos.row as i128 + to.row as i128 - from.row as i128)
-                    .try_into()
-                    .ok();
-                let col = (pos.col as i128 + to.col as i128 - from.col as i128)
-                    .try_into()
-                    .ok();
+            if let Some((pos, fixed_row, fixed_col)) = parse_reference(token) {
+                let translate = |origin: usize, from: usize, to: usize, fixed: bool| {
+                    let delta = if fixed { 0 } else { to as i128 - from as i128 };
+                    usize::try_from(origin as i128 + delta).ok()
+                };
+                let row = translate(pos.row, from.row, to.row, fixed_row);
+                let col = translate(pos.col, from.col, to.col, fixed_col);
                 match (row, col) {
                     (Some(row), Some(col)) if row < rows && col < cols => {
-                        output.push_str(&a1(CellPos::new(row, col)))
+                        use std::fmt::Write as _;
+                        let _ = write!(
+                            output,
+                            "{}{}{}{}",
+                            if fixed_col { "$" } else { "" },
+                            column_name(col),
+                            if fixed_row { "$" } else { "" },
+                            row + 1
+                        );
                     }
                     _ => output.push_str("#REF!"),
                 }
@@ -455,6 +457,36 @@ fn translate(text: &str, from: CellPos, to: CellPos, rows: usize, cols: usize) -
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn fill_keeps_fixed_reference_axes() {
+        let from = CellPos::new(2, 2);
+        let to = CellPos::new(3, 3);
+        assert_eq!(
+            translate("=$A1+A$1+$A$1+A1", from, to, 10, 10),
+            "=$A2+B$1+$A$1+B2"
+        );
+    }
+
+    #[test]
+    fn ctrl_jump_uses_contiguous_run_edges() {
+        let mut sheet = SheetModel::from_cells(
+            20,
+            20,
+            [0, 1, 2, 10, 11].map(|row| (CellPos::new(row, 0), Cell::new("42"))),
+        );
+        sheet.select(CellPos::default(), false);
+        for (nav, row) in [
+            (Nav::Down, 2),
+            (Nav::Down, 10),
+            (Nav::Down, 11),
+            (Nav::Up, 10),
+            (Nav::Up, 2),
+        ] {
+            sheet.navigate(nav, false, true, 1);
+            assert_eq!(sheet.selection.cursor, Some(CellPos::new(row, 0)));
+        }
+    }
 
     proptest! {
         #[test]

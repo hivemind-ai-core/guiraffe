@@ -11,6 +11,7 @@ gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-datagrid/gpui-fast"]
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-datagrid.workspace = true
+im = "15.1"
 
 [dev-dependencies]
 proptest = "1"

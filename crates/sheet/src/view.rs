@@ -1,6 +1,5 @@
 use std::{
     cell::Cell as Local,
-    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -8,19 +7,17 @@ use std::{
 use gpui_kit::{
     App, AppContext, Bounds, ClipboardItem, ContentMask, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Point,
-    Render, ScrollEvent, SharedString, Styled, Window, canvas,
+    Render, Role, ScrollEvent, SharedString, StatefulInteractiveElement, Styled, Window, canvas,
     component::input::{Input, InputState},
     div, fill, point, px, size,
 };
-use guiraffe_core::GuiraffeTheme;
+use guiraffe_core::{GuiraffeTheme, Variant, state::StateKind};
 use guiraffe_datagrid::Nav;
 
 use crate::{
-    Alignment, Axis, BuiltinEngine, Cell, CellPos, FormulaEngine, FormulaError, NumberFormat,
+    Alignment, Axis, BuiltinEngine, Calculation, Cell, CellPos, FormulaEngine, NumberFormat,
     Recalculator, SheetModel, column_name,
 };
-
-type Values = HashMap<CellPos, Result<f64, FormulaError>>;
 
 /// The Sheet control displays an existing state entity.
 pub struct Sheet;
@@ -62,7 +59,8 @@ pub struct SheetState {
     startup_error: Option<SharedString>,
     revision: u64,
     published: u64,
-    values: Values,
+    calculation: Option<Calculation>,
+    busy: bool,
     waiting: Option<Instant>,
     polling: bool,
 }
@@ -116,7 +114,8 @@ impl SheetState {
             startup_error,
             revision,
             published: 0,
-            values: Values::new(),
+            calculation: None,
+            busy: false,
             waiting: None,
             polling: false,
         };
@@ -191,25 +190,24 @@ impl SheetState {
                     while let Some(calculation) =
                         state.recalc.as_ref().and_then(Recalculator::try_recv)
                     {
-                        for (pos, value) in calculation.changes {
-                            if let Some(value) = value {
-                                state.values.insert(pos, value);
-                            } else {
-                                state.values.remove(&pos);
-                            }
+                        if calculation.revision == state.revision {
+                            state.published = calculation.revision;
+                            state.calculation = Some(calculation);
                         }
-                        state.published = calculation.revision;
                     }
                     if state.published == state.revision {
                         state.waiting = None;
+                        state.busy = false;
                         state.polling = false;
                         cx.notify();
                         true
                     } else {
-                        if state
-                            .waiting
-                            .is_some_and(|start| start.elapsed().as_millis() < 80)
+                        if !state.busy
+                            && state
+                                .waiting
+                                .is_some_and(|start| start.elapsed() >= Duration::from_millis(50))
                         {
+                            state.busy = true;
                             cx.notify();
                         }
                         false
@@ -441,6 +439,15 @@ impl SheetState {
         if !self.model.contains(pos) {
             return;
         }
+        if self
+            .editor
+            .as_ref()
+            .is_some_and(|(editing, _)| *editing == pos)
+            && x >= self.gutter()
+            && y >= self.header()
+        {
+            return;
+        }
         window.focus(&self.focus, cx);
         self.editor = None;
         let rect = self.rect(pos);
@@ -535,8 +542,47 @@ impl Focusable for SheetState {
 }
 
 impl Render for SheetState {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
+        let (rows, cols) = self.model.dimensions();
+        let scheme = GuiraffeTheme::global(cx);
+        let ring = scheme
+            .state(StateKind::FocusRing, Variant::Default, None)
+            .border;
+        let ring_visible = self.focus.is_focused(window) && window.last_input_was_keyboard();
+        let status = if self.busy {
+            Some(SharedString::from("Calculating…"))
+        } else {
+            self.startup_error.clone()
+        };
+        let accessible_cursor = if window.is_a11y_active() {
+            self.model.selection.cursor.map(|pos| {
+                let bounds = self.rect(pos);
+                let (value, _) = self.label(pos);
+                div()
+                    .id("sheet-cursor")
+                    .role(Role::Row)
+                    .aria_row_index(pos.row.saturating_add(1))
+                    .absolute()
+                    .left(bounds.origin.x)
+                    .top(bounds.origin.y)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .child(
+                        div()
+                            .id("sheet-cell")
+                            .role(Role::GridCell)
+                            .aria_column_index(pos.col.saturating_add(1))
+                            .aria_label(crate::a1(pos))
+                            .aria_description(value)
+                            .aria_selected(true)
+                            .aria_active_descendant()
+                            .size_full(),
+                    )
+            })
+        } else {
+            None
+        };
         let editor = self.editor.as_ref().map(|(pos, input)| {
             let bounds = self.rect(*pos);
             div()
@@ -547,11 +593,21 @@ impl Render for SheetState {
                 .h(bounds.size.height)
                 .child(Input::new(input).h_full().w_full())
         });
-        div()
+        let grid = div()
+            .id("sheet")
+            .role(Role::Grid)
+            .aria_label("Spreadsheet")
+            .aria_description(if self.model.read_only {
+                "Read only"
+            } else {
+                "Editable"
+            })
+            .aria_row_count(rows)
+            .aria_column_count(cols)
             .relative()
             .size_full()
             .overflow_hidden()
-            .track_focus(&self.focus)
+            .track_focus(&self.focus.clone().tab_stop(true))
             .key_context("GrSheet")
             .capture_key_down(cx.listener(Self::keyboard))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::pointer_down))
@@ -571,12 +627,10 @@ impl Render for SheetState {
                 .absolute()
                 .size_full(),
             )
+            .children(accessible_cursor)
             .children(editor)
-            .children(
-                self.startup_error
-                    .clone()
-                    .map(|message| div().absolute().bottom_0().child(message)),
-            )
+            .children(status.map(|message| div().absolute().bottom_0().right_0().child(message)));
+        guiraffe_core::focus_ring(grid, ring_visible, px(0.), ring)
     }
 }
 
@@ -771,8 +825,12 @@ impl SheetState {
             return (SharedString::from(cell.text.as_ref()), alignment);
         }
         let number = if cell.text.starts_with('=') {
-            match self.values.get(&pos) {
-                Some(Ok(value)) => Some(*value),
+            match self
+                .calculation
+                .as_ref()
+                .and_then(|snapshot| snapshot.value(pos))
+            {
+                Some(Ok(value)) => Some(value),
                 Some(Err(error)) => return (error.to_string().into(), alignment),
                 None => return ("…".into(), alignment),
             }
@@ -815,7 +873,8 @@ impl Frame {
     fn paint(self, window: &mut Window, cx: &mut App) {
         let theme = GuiraffeTheme::global(cx);
         let palette = theme.surfaces();
-        let selected = GuiraffeTheme::hsla(palette.mark);
+        let selection = theme.state(StateKind::Selected, Variant::Light, None);
+        let selected = GuiraffeTheme::hsla(selection.background);
         let accent = GuiraffeTheme::hsla(theme.primary_color());
         window.paint_quad(fill(self.bounds, GuiraffeTheme::hsla(palette.body)));
         let style = window.text_style();
@@ -878,6 +937,8 @@ impl Frame {
                 let mut run = style.to_run(label.text.len());
                 run.color = GuiraffeTheme::hsla(if label.header {
                     palette.dimmed
+                } else if label.selected {
+                    selection.foreground
                 } else {
                     palette.text
                 });

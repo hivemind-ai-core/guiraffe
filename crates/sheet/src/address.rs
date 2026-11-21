@@ -2,18 +2,33 @@ use crate::CellPos;
 
 /// Parse a one-based A1 address into zero-based coordinates.
 pub fn parse_a1(text: &str) -> Option<CellPos> {
+    parse_reference(text).map(|(pos, _, _)| pos)
+}
+
+pub(crate) fn parse_reference(text: &str) -> Option<(CellPos, bool, bool)> {
+    let fixed_col = text.starts_with('$');
+    let text = text.strip_prefix('$').unwrap_or(text);
     let split = text.bytes().take_while(u8::is_ascii_alphabetic).count();
-    let (letters, digits) = text.split_at(split);
+    let (letters, row) = text.split_at(split);
+    let fixed_row = row.starts_with('$');
+    let digits = row.strip_prefix('$').unwrap_or(row);
     if letters.is_empty() || digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let col = letters.bytes().try_fold(0usize, |col, letter| {
+    let col = letters.bytes().try_fold(0u128, |col, letter| {
         col.checked_mul(26)?
-            .checked_add(usize::from(letter.to_ascii_uppercase() - b'A') + 1)
+            .checked_add(u128::from(letter.to_ascii_uppercase() - b'A') + 1)
     })?;
-    Some(CellPos::new(
-        digits.parse::<usize>().ok()?.checked_sub(1)?,
-        col - 1,
+    let row = digits
+        .parse::<u128>()
+        .ok()?
+        .checked_sub(1)?
+        .try_into()
+        .ok()?;
+    Some((
+        CellPos::new(row, (col - 1).try_into().ok()?),
+        fixed_row,
+        fixed_col,
     ))
 }
 

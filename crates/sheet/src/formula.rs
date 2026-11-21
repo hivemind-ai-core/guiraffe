@@ -182,6 +182,9 @@ impl Formula for Compiled {
 impl FormulaEngine for BuiltinEngine {
     fn compile(&self, expression: &str) -> Result<Box<dyn Formula>, FormulaError> {
         // Bound tree depth, including left-associative expressions.
+        if expression.contains("#REF!") {
+            return Err(FormulaError::Reference);
+        }
         if expression.len() > 8192 {
             return Err(FormulaError::Syntax);
         }
@@ -291,13 +294,13 @@ impl<'a> Parser<'a> {
                     .map(Expr::Number)
                     .map_err(|_| FormulaError::Syntax)
             }
-            b'A'..=b'Z' | b'a'..=b'z' => self.word(),
+            b'$' | b'A'..=b'Z' | b'a'..=b'z' => self.word(),
             _ => Err(FormulaError::Syntax),
         }
     }
 
     fn word(&mut self) -> Result<Expr, FormulaError> {
-        let word = self.take(u8::is_ascii_alphanumeric);
+        let word = self.take(|b| b.is_ascii_alphanumeric() || *b == b'$');
         if self.eat(b'(') {
             let function = match word.to_ascii_uppercase().as_str() {
                 "SUM" => Function::Sum,
@@ -325,7 +328,8 @@ impl<'a> Parser<'a> {
         let start = parse_a1(word).ok_or(FormulaError::Syntax)?;
         if self.eat(b':') {
             self.peek();
-            let end = parse_a1(self.take(u8::is_ascii_alphanumeric)).ok_or(FormulaError::Syntax)?;
+            let end = parse_a1(self.take(|b| b.is_ascii_alphanumeric() || *b == b'$'))
+                .ok_or(FormulaError::Syntax)?;
             let range = Reference::new(start, end);
             self.references.push(range);
             Ok(Expr::Range(range))

@@ -85,3 +85,31 @@ impl Axis {
         index
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn sparse_metrics_match_dense(
+            changes in proptest::collection::vec((0usize..64, 1u16..400), 0..100)
+        ) {
+            let mut axis = Axis::new(64, 20.);
+            let mut dense = [20.; 64];
+            for (index, value) in changes {
+                axis.resize(index, f64::from(value));
+                dense[index] = f64::from(value);
+            }
+            let mut offset = 0.;
+            for (index, value) in dense.into_iter().enumerate() {
+                prop_assert_eq!(axis.offset(index), offset);
+                prop_assert_eq!(axis.index(offset), index);
+                prop_assert_eq!(axis.index(offset + value / 2.), index);
+                offset += value;
+            }
+            prop_assert_eq!(axis.index(offset), dense.len());
+        }
+    }
+}

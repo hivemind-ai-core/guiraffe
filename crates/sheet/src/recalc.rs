@@ -12,12 +12,19 @@ use crate::{CellPos, Formula, FormulaEngine, FormulaError, FormulaValues, Refere
 
 type Input = (CellPos, Arc<str>);
 type Value = Result<f64, FormulaError>;
+type Values = im::OrdMap<CellPos, Value>;
 type Compiled = Result<Box<dyn Formula>, FormulaError>;
 
-/// Formula values from a completed revision. An entry with no value removes an old result.
+/// Immutable formula values from a completed revision.
 pub struct Calculation {
     pub revision: u64,
-    pub changes: Vec<(CellPos, Option<Value>)>,
+    values: Values,
+}
+
+impl Calculation {
+    pub fn value(&self, pos: CellPos) -> Option<Result<f64, FormulaError>> {
+        self.values.get(&pos).copied()
+    }
 }
 
 /// A single spreadsheet's asynchronous calculation session.
@@ -41,17 +48,21 @@ impl Recalculator {
             .spawn(move || {
                 let mut graph = Graph::new(rows, cols);
                 while let Ok((mut version, changes)) = incoming.recv() {
+                    if latest.load(Ordering::Acquire) == u64::MAX {
+                        return;
+                    }
                     graph.update(changes, engine.as_ref());
                     for (pending, changes) in incoming.try_iter() {
                         version = pending;
                         graph.update(changes, engine.as_ref());
                     }
-                    if let Some(changes) =
-                        graph.calculate(|| latest.load(Ordering::Acquire) != version)
+                    if graph
+                        .calculate(|| latest.load(Ordering::Acquire) != version)
+                        .is_some()
                         && outgoing
                             .send(Calculation {
                                 revision: version,
-                                changes,
+                                values: graph.values.clone(),
                             })
                             .is_err()
                     {
@@ -92,7 +103,7 @@ struct Graph {
     cols: usize,
     numbers: BTreeMap<CellPos, f64>,
     formulas: BTreeMap<CellPos, Compiled>,
-    values: BTreeMap<CellPos, Value>,
+    values: Values,
     reverse: HashMap<CellPos, HashSet<CellPos>>,
     ranges: HashMap<CellPos, Vec<Reference>>,
     dirty: HashSet<CellPos>,
@@ -105,7 +116,7 @@ impl Graph {
             cols,
             numbers: BTreeMap::new(),
             formulas: BTreeMap::new(),
-            values: BTreeMap::new(),
+            values: Values::new(),
             reverse: HashMap::new(),
             ranges: HashMap::new(),
             dirty: HashSet::new(),
@@ -155,7 +166,7 @@ impl Graph {
         }
     }
 
-    fn calculate(&mut self, cancelled: impl Fn() -> bool) -> Option<Vec<(CellPos, Option<Value>)>> {
+    fn calculate(&mut self, cancelled: impl Fn() -> bool) -> Option<()> {
         let mut dirty = self.dirty.clone();
         let mut queue: VecDeque<_> = dirty.iter().copied().collect();
         while let Some(pos) = queue.pop_front() {
@@ -247,7 +258,7 @@ impl Graph {
             }
         }
         self.dirty.clear();
-        Some(changes.into_iter().collect())
+        Some(())
     }
 }
 
@@ -371,11 +382,7 @@ mod tests {
         assert_ne!(initial, latest);
         while let Some(result) = worker.recv() {
             if Some(result.revision) == latest {
-                assert!(
-                    result
-                        .changes
-                        .contains(&(CellPos::new(100_000, 0), Some(Ok(100_007.))))
-                );
+                assert!(result.value(CellPos::new(100_000, 0)) == Some(Ok(100_007.)));
                 return Ok(());
             }
         }
