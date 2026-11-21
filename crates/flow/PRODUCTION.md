@@ -66,7 +66,7 @@ before the renderer collects visible IDs or tessellates edges. Sparse
 views, active gestures and accessibility rendering use detailed geometry.
 
 
-For mounted graphs with at least 4,096 edges, Flow validates the document
+For mounted graphs with at least 4,096 nodes or edges, Flow validates the document
 during setup and computes routes as paint needs them. The first frame queries
 nearby nodes and edges. The first zoomed-out preview uses at most 4,096
 occupied cells. A cancellable background job builds immutable node and edge

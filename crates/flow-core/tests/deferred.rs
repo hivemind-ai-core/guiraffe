@@ -109,3 +109,42 @@ fn conservative_index_covers_route_samples_for_each_routing_style() {
         }
     }
 }
+
+#[test]
+fn offscreen_growth_keeps_visible_route_work_constant() {
+    fn work(pairs: u64) -> (Visible, usize) {
+        let graph = Graph::from_parts(
+            (0..pairs * 2).map(|id| Node::new(id, "", Point::new(id as f32 * 240., 0.))),
+            (0..pairs).map(|id| Edge::new(id, id * 2, id * 2 + 1)),
+        )
+        .expect("disjoint edge pairs");
+        let scene = Scene::new_deferred(graph).expect("scene");
+        scene
+            .prepare_indexes(&LayoutCancellation::default())
+            .expect("index");
+        let mut visible = Visible::default();
+        scene.visible_candidates(Rect::new(-10., -10., 430., 150.), &mut visible);
+        let samples = visible
+            .edges
+            .iter()
+            .filter_map(|id| scene.edge_route(*id))
+            .map(|route| route.points.len())
+            .sum();
+        (visible, samples)
+    }
+
+    let (small, small_samples) = work(1_000);
+    let (large, large_samples) = work(100_000);
+    assert_eq!(small.nodes, [0, 1]);
+    assert_eq!(small.edges, [0]);
+    assert_eq!(small.nodes, large.nodes);
+    assert_eq!(small.edges, large.edges);
+    assert_eq!(small_samples, large_samples);
+    // Only the index's root-to-leaf search should grow with the graph.
+    assert!(
+        large.visited <= small.visited + 28,
+        "{} / {}",
+        small.visited,
+        large.visited
+    );
+}

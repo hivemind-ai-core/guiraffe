@@ -139,7 +139,8 @@ impl Drop for FlowViewport {
     }
 }
 fn editor_for_view(graph: Graph) -> Result<core::Editor, FlowError> {
-    if graph.edges.len() >= 4_096 {
+    const STAGED_SCENE_THRESHOLD: usize = 4_096;
+    if graph.nodes.len().max(graph.edges.len()) >= STAGED_SCENE_THRESHOLD {
         core::Editor::new_deferred(graph)
     } else {
         core::Editor::new(graph)
