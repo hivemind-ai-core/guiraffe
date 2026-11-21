@@ -10,7 +10,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "chat::Chat" | "chat::ChatState" | "chat::Composer" | "chat::ChatProps" => "chat",
         "charts::ChartView" | "charts::ChartOptions" | "charts::ChartSpec" => "chart",
         "code::CodeViewer" | "code::CodeOptions" => "code-viewer",
-        "datagrid::DataGrid" | "datagrid::GridOptions" => "data-grid",
+        "datagrid::DataGrid" | "datagrid::GridOptions" | "datagrid::GridEvents" => "data-grid",
         "dnd::SortableBoard" => "sortable-board",
         "dnd::fn new_dock" | "dnd::fn new_native_dock" => "dock",
         "flamegraph::FlameGraph" => "flame-graph",
@@ -524,6 +524,47 @@ fn covered(surface: &str) -> bool {
     let Some(spec) = kind(owner).and_then(guiraffe_ui::catalog::lookup) else {
         return false;
     };
+    if let Some(event) = method.strip_prefix("event ") {
+        let id = match (owner, event) {
+            ("tree::TreeView", "LoadChildren") => "load-children",
+            ("tree::TreeView", "PickPath") => "pick-path",
+            ("tree::TreeView", "Checked") => "check",
+            ("tree::TreeView", "Reorder") | ("dnd::SortableBoard", "SortEvent") => "reorder",
+            ("charts::ChartView", "Brushed") => "brush",
+            ("charts::ChartView", "SeriesVisibility") => "series-visibility",
+            ("inputs::Dropzone", "Accepted") => "accept",
+            ("inputs::Dropzone", "BrowseRequested") => "browse",
+            ("flamegraph::FlameGraph", "FrameClicked") => "frame-click",
+            ("timeline::TracksView", "ClipChanged") => "clip-change",
+            ("timeline::TracksView", "Seek") => "seek",
+            ("timeline::GanttView", "Rescheduled") => "reschedule",
+            ("timeline::GanttView", "Resized") => "resize",
+            ("chat::ChatState", "Submitted") => "submit",
+            ("chat::ChatState", "Retry") => "retry",
+            ("chat::ChatState", "Stopped") => "stop",
+            ("chat::ChatState", "AttachmentRequested") => "attachment-request",
+            ("chat::ChatState", "Finished") => "finish",
+            ("datagrid::GridEvents", "SortChanged") => "sort-change",
+            ("datagrid::GridEvents", "CellEdited") => "cell-edit",
+            ("datagrid::GridEvents", "EditCancelled") => "edit-cancel",
+            ("datagrid::GridEvents", "Copied") => "copy",
+            ("datagrid::GridEvents", "EditRejected") => "edit-reject",
+            ("datagrid::GridEvents", "RowActivated") => "row-activate",
+            ("datagrid::GridEvents", "ColumnResized") => "column-resize",
+            ("datagrid::GridEvents", "ColumnReordered") => "column-reorder",
+            ("datagrid::GridEvents", "CellsChanged") => "cells-change",
+            ("datagrid::GridEvents", "CellsRejected") => "cells-reject",
+            (_, "Changed") => "change",
+            (_, "Error") => "error",
+            (_, "Edited") => "edit",
+            (_, "Rejected") => "reject",
+            (_, "Selected") => "select",
+            (_, "SelectionChanged") => "selection-change",
+            (_, "ViewportChanged") => "viewport-change",
+            _ => return false,
+        };
+        return spec.events.iter().any(|event| event.id == id);
+    }
     if let Some(field) = method.strip_prefix("field ") {
         let name = match (owner, field) {
             ("charts::ChartSpec", "x" | "y" | "right") => "axes".into(),

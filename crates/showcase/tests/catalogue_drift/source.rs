@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 use syn::{
     GenericArgument, ImplItem, Item, PathArguments, ReturnType, Type, TypeParamBound, Visibility,
@@ -49,6 +53,8 @@ struct Inventory {
     aliases: Vec<(String, Type)>,
     fields: BTreeSet<(String, String)>,
     factories: Vec<(String, Type)>,
+    event_types: BTreeMap<String, Vec<String>>,
+    emitters: BTreeSet<(String, String)>,
 }
 
 impl Inventory {
@@ -77,12 +83,35 @@ impl Inventory {
                 result.insert(format!("{krate}::fn {name}"));
             }
         }
+        for (owner, event) in &self.emitters {
+            if !self.structs.contains(owner) {
+                continue;
+            }
+            if let Some(variants) = self.event_types.get(event) {
+                result.extend(
+                    variants
+                        .iter()
+                        .map(|variant| format!("{krate}::{owner}::event {variant}")),
+                );
+            } else if self.structs.contains(event) {
+                result.insert(format!("{krate}::{owner}::event {event}"));
+            }
+        }
         result
     }
 
     fn scan(&mut self, items: &[Item]) {
         for item in items {
             match item {
+                Item::Enum(item) if matches!(item.vis, Visibility::Public(_)) => {
+                    self.event_types.insert(
+                        item.ident.to_string(),
+                        item.variants
+                            .iter()
+                            .map(|variant| variant.ident.to_string())
+                            .collect(),
+                    );
+                }
                 Item::Struct(item) if matches!(item.vis, Visibility::Public(_)) => {
                     let name = item.ident.to_string();
                     if name.ends_with("Options")
@@ -129,10 +158,17 @@ impl Inventory {
                     };
                     let owner = owner.ident.to_string();
                     if let Some((_, trait_path, _)) = &item.trait_ {
-                        if let Some(name) = trait_path.segments.last()
-                            && (name.ident == "Render" || name.ident == "RenderOnce")
-                        {
-                            self.renders.insert(owner);
+                        if let Some(name) = trait_path.segments.last() {
+                            if name.ident == "Render" || name.ident == "RenderOnce" {
+                                self.renders.insert(owner);
+                            } else if name.ident == "EventEmitter"
+                                && let PathArguments::AngleBracketed(args) = &name.arguments
+                                && let Some(GenericArgument::Type(Type::Path(path))) =
+                                    args.args.first()
+                                && let Some(event) = path.path.segments.last()
+                            {
+                                self.emitters.insert((owner, event.ident.to_string()));
+                            }
                         }
                         continue;
                     }
@@ -224,6 +260,8 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
         }
         props!(ButtonView { macro_prop: Size => size });
         crate::props!(ButtonView { qualified_prop: bool => flag });
+        pub enum ButtonEvent { Clicked, Hovered(bool) }
+        impl EventEmitter<ButtonEvent> for ButtonView {}
         pub type Alias = ButtonView;
         pub struct ViewOptions { pub newer: bool, internal: bool }
         pub fn factory() -> (Entity<DockArea>, Entity<ButtonView>) { todo!() }
@@ -242,6 +280,8 @@ fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
         BTreeSet::from([
             "fixture::Alias".into(),
             "fixture::ButtonView".into(),
+            "fixture::ButtonView::event Clicked".into(),
+            "fixture::ButtonView::event Hovered".into(),
             "fixture::ButtonView::macro_prop".into(),
             "fixture::ButtonView::new_prop".into(),
             "fixture::ButtonView::qualified_prop".into(),

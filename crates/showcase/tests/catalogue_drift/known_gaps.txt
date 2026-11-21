@@ -10,6 +10,7 @@ commands::Menu::show_keybindings
 commands::MenuProps::field show_categories
 commands::MenuProps::field show_keybindings
 components::Accordion
+components::Accordion::event AccordionChange
 components::Accordion::new
 components::Accordion::open
 components::Accordion::set_controlled
@@ -74,6 +75,7 @@ components::CopyButton::set_size
 components::CopyButton::set_value
 components::CopyButton::value
 components::ExpandingList
+components::ExpandingList::event ExpandingListChange
 components::ExpandingList::new
 components::ExpandingList::open
 components::ExpandingList::set_focusable
@@ -99,6 +101,7 @@ components::ScopedButton::focusable
 components::ScopedButton::new
 components::SegmentedControl
 components::SegmentedControl::disabled
+components::SegmentedControl::event Changed
 components::SegmentedControl::items
 components::SegmentedControl::new
 components::SegmentedControl::select
@@ -109,6 +112,8 @@ components::SegmentedControl::set_full_width
 components::SegmentedControl::set_items
 components::SegmentedControl::set_size
 components::SpeedDial
+components::SpeedDial::event Action
+components::SpeedDial::event Open
 components::SpeedDial::is_open
 components::SpeedDial::new
 components::SpeedDial::set_focusable
@@ -183,6 +188,10 @@ layout::AppShell::new
 layout::AppShell::padding
 layout::AppShell::resizable_aside
 layout::AppShell::resizable_navbar
+layout::AppShellState::event AsideCollapsed
+layout::AppShellState::event AsideResized
+layout::AppShellState::event NavbarCollapsed
+layout::AppShellState::event NavbarResized
 layout::Col
 layout::Col::child
 layout::Col::children
@@ -215,6 +224,7 @@ layout::Splitter::pane_size
 layout::Splitter::panes
 layout::Splitter::persist_key
 layout::Splitter::second
+layout::SplitterState::event Resized
 markdown::MarkdownState::reveal_heading
 mermaid::Host
 mermaid::Host::new
@@ -248,6 +258,7 @@ overlays::Spotlight::set_commands
 timeline::BarCurveView
 timeline::BarCurveView::add_layer
 timeline::BarCurveView::draw_to
+timeline::BarCurveView::event BarEvent
 timeline::BarCurveView::model
 timeline::BarCurveView::new
 timeline::BarCurveView::release
@@ -262,6 +273,9 @@ timeline::CurveView::axis
 timeline::CurveView::curve
 timeline::CurveView::curves
 timeline::CurveView::drag_to
+timeline::CurveView::event Changed
+timeline::CurveView::event KeyMoved
+timeline::CurveView::event SelectionChanged
 timeline::CurveView::fit_view
 timeline::CurveView::insert_at
 timeline::CurveView::new
@@ -286,6 +300,10 @@ timeline::DopeSheet::channels
 timeline::DopeSheet::delete_selected
 timeline::DopeSheet::drag_to
 timeline::DopeSheet::duplicate_selected
+timeline::DopeSheet::event Changed
+timeline::DopeSheet::event ChannelChanged
+timeline::DopeSheet::event KeyRetimed
+timeline::DopeSheet::event SelectionChanged
 timeline::DopeSheet::model
 timeline::DopeSheet::new
 timeline::DopeSheet::nudge
