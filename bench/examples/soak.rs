@@ -1826,7 +1826,7 @@ mod mounted {
     #[cfg(all(test, target_os = "linux"))]
     mod tests {
         use super::{ChatHost, MarkdownHost, chat, chat_message, document, empty, markdown, mount};
-        use gpui_kit::{AppContext as _, test::TestWindowExt};
+        use gpui_kit::AppContext as _;
         use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
         use std::{process::Command, time::Instant};
 
@@ -1840,6 +1840,7 @@ mod mounted {
                 .args(["--exact", test, "--nocapture"])
                 .env(SCENARIO, scenario)
                 .env_remove("SOAK_SCALE")
+                .env_remove("SOAK_ITEMS")
                 .output()
                 .expect("run mount in isolated process");
             assert!(
@@ -1917,6 +1918,12 @@ mod mounted {
 
         #[test]
         fn text_warm_repaint_work_does_not_grow_with_history() -> anyhow::Result<()> {
+            // Count the draw with caches enabled, outside test-window dispatch.
+            let count_draw = |window: &mut gpui_kit::VisualTestContext| {
+                window.update(|window, cx| {
+                    count_allocations(|| window.draw(cx).clear(cx)).map(|(_, counts)| counts)
+                })
+            };
             let markdown_allocs = |lines| {
                 let (mut window, _) = mount(
                     "markdown-warm-allocation",
@@ -1929,20 +1936,31 @@ mod mounted {
                 )
                 .expect("Markdown mount");
                 for _ in 0..4 {
-                    window.update(|window, cx| window.render_frame(cx));
+                    window.update(|window, cx| window.draw(cx).clear(cx));
                 }
-                count_allocations(|| window.update(|window, cx| window.render_frame(cx)))
-                    .map(|(_, counts)| counts)
+                count_draw(&mut window)
             };
             let chat_allocs = |rows| {
-                let (mut window, _) =
-                    mount("chat-warm-allocation", guiraffe_chat::init, |window, cx| {
+                let (mut window, _) = mount(
+                    "chat-warm-allocation",
+                    |cx| {
+                        guiraffe_chat::init(cx);
+                        guiraffe_motion::MotionPrefs::set(
+                            guiraffe_motion::MotionPrefs {
+                                reduced: true,
+                                ..guiraffe_motion::MotionPrefs::global(cx)
+                            },
+                            cx,
+                        );
+                    },
+                    |window, cx| {
                         let state = cx.new(|cx| guiraffe_chat::ChatState::new(window, cx));
                         state.update(cx, |chat, cx| {
-                            for index in 0..rows {
+                            // The tail-following viewport sees the same message IDs.
+                            for id in (1..=rows).rev() {
                                 chat.push_message(
                                     guiraffe_chat::Message::new(
-                                        guiraffe_chat::MessageId(index + 1),
+                                        guiraffe_chat::MessageId(id),
                                         guiraffe_chat::Role::User,
                                         "Same visible **message**",
                                     ),
@@ -1951,13 +1969,13 @@ mod mounted {
                             }
                         });
                         cx.new(|_| ChatHost(state))
-                    })
-                    .expect("Chat mount");
+                    },
+                )
+                .expect("Chat mount");
                 for _ in 0..4 {
-                    window.update(|window, cx| window.render_frame(cx));
+                    window.update(|window, cx| window.draw(cx).clear(cx));
                 }
-                count_allocations(|| window.update(|window, cx| window.render_frame(cx)))
-                    .map(|(_, counts)| counts)
+                count_draw(&mut window)
             };
             let markdown_small = markdown_allocs(10_000)?;
             let markdown_large = markdown_allocs(50_000)?;

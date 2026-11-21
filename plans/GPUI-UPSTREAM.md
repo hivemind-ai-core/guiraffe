@@ -57,3 +57,15 @@ survive the clear, and retain the existing invalidation for escaped boxes.
 
 Verify with the same cached 1,000-path canvas and copy-on-write checks. The
 API migration for a direct vector assignment is `Vec::into`.
+
+## Keep the list measurement tree on unchanged layout
+
+Apply the same change to both published GPUI backends. Visible rows still
+layout normally, and the measurement update still runs when a size, size
+hint, or readiness changes. An unchanged viewport skips the persistent
+tree splice and preserves its existing height index.
+
+The mounted plain-list allocation test draws equal viewports over 10,000
+and 100,000 items. It asserts both layout calls and allocation traffic
+after warmup. The Markdown and Chat soak checks also compare normal
+mounted repaint traffic at two history sizes.
