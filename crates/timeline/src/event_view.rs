@@ -377,6 +377,11 @@ fn paint_caption(
 ) {
     use gpui_kit::{TextAlign, TruncateFrom};
 
+    let text = if text.contains(['\n', '\r']) {
+        text.replace(['\n', '\r'], " ").into()
+    } else {
+        text
+    };
     let text_system = window.text_system();
     let mut wrapper = text_system.line_wrapper(style.font(), font_size);
     let runs = [style.to_run(text.len())];
