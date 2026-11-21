@@ -2,9 +2,193 @@
 use crate::{Point, Rect};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 pub type NodeId = u64;
 pub type EdgeId = u64;
+
+/// Immutable, cheaply cloned text for handle ids and node types.
+///
+/// The defaults used by [`Node::new`] and [`Edge::new`] (`"in"`, `"out"`,
+/// `"default"`) share one process-wide allocation, so a default document stores
+/// no per-node or per-edge string bytes for them. Serializes as a plain string.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Name(Arc<str>);
+
+impl Name {
+    fn common() -> &'static [Arc<str>; 4] {
+        static COMMON: OnceLock<[Arc<str>; 4]> = OnceLock::new();
+        COMMON.get_or_init(|| ["".into(), "in".into(), "out".into(), "default".into()])
+    }
+    fn interned(text: &str) -> Option<Self> {
+        Self::common()
+            .iter()
+            .find(|common| ***common == *text)
+            .map(|common| Self(common.clone()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl Default for Name {
+    fn default() -> Self {
+        Self::from("")
+    }
+}
+impl From<&str> for Name {
+    fn from(text: &str) -> Self {
+        Self::interned(text).unwrap_or_else(|| Self(text.into()))
+    }
+}
+impl From<&String> for Name {
+    fn from(text: &String) -> Self {
+        Self::from(text.as_str())
+    }
+}
+impl From<String> for Name {
+    fn from(text: String) -> Self {
+        Self::interned(&text).unwrap_or_else(|| Self(text.into()))
+    }
+}
+impl From<Name> for String {
+    fn from(name: Name) -> Self {
+        name.as_str().to_owned()
+    }
+}
+impl std::ops::Deref for Name {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+impl AsRef<str> for Name {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+impl std::borrow::Borrow<str> for Name {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+impl PartialEq<str> for Name {
+    fn eq(&self, other: &str) -> bool {
+        *self.0 == *other
+    }
+}
+impl PartialEq<&str> for Name {
+    fn eq(&self, other: &&str) -> bool {
+        *self.0 == **other
+    }
+}
+impl PartialEq<String> for Name {
+    fn eq(&self, other: &String) -> bool {
+        *self.0 == **other
+    }
+}
+impl std::fmt::Debug for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&*self.0, f)
+    }
+}
+impl std::fmt::Display for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&*self.0, f)
+    }
+}
+impl Serialize for Name {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+impl<'de> Deserialize<'de> for Name {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
+
+/// Copy-on-write handle list. Nodes built by [`Node::new`] share one default
+/// `in`/`out` list; mutable access (`push`, indexing, `iter_mut`) clones it first.
+#[derive(Clone)]
+pub struct Handles(Arc<Vec<Handle>>);
+
+impl Handles {
+    fn defaults() -> Self {
+        static DEFAULT: OnceLock<Arc<Vec<Handle>>> = OnceLock::new();
+        Self(
+            DEFAULT
+                .get_or_init(|| {
+                    Arc::new(vec![
+                        Handle::new("in", HandleKind::Target, Side::Left),
+                        Handle::new("out", HandleKind::Source, Side::Right),
+                    ])
+                })
+                .clone(),
+        )
+    }
+    /// Whether both lists share storage (no copy-on-write happened since a clone).
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Default for Handles {
+    fn default() -> Self {
+        Self(Arc::new(Vec::new()))
+    }
+}
+impl PartialEq for Handles {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other) || self.0 == other.0
+    }
+}
+impl std::fmt::Debug for Handles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&*self.0, f)
+    }
+}
+impl std::ops::Deref for Handles {
+    type Target = Vec<Handle>;
+    fn deref(&self) -> &Vec<Handle> {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for Handles {
+    fn deref_mut(&mut self) -> &mut Vec<Handle> {
+        Arc::make_mut(&mut self.0)
+    }
+}
+impl From<Vec<Handle>> for Handles {
+    fn from(handles: Vec<Handle>) -> Self {
+        Self(Arc::new(handles))
+    }
+}
+impl From<Handles> for Vec<Handle> {
+    fn from(handles: Handles) -> Self {
+        Arc::unwrap_or_clone(handles.0)
+    }
+}
+impl FromIterator<Handle> for Handles {
+    fn from_iter<I: IntoIterator<Item = Handle>>(iter: I) -> Self {
+        Self(Arc::new(iter.into_iter().collect()))
+    }
+}
+impl<'a> IntoIterator for &'a Handles {
+    type Item = &'a Handle;
+    type IntoIter = std::slice::Iter<'a, Handle>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+impl Serialize for Handles {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for Handles {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<Handle>::deserialize(deserializer).map(Self::from)
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
     Left,
@@ -30,13 +214,13 @@ pub enum HandleKind {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Handle {
-    pub id: String,
+    pub id: Name,
     pub kind: HandleKind,
     pub side: Side,
     pub offset: f32,
 }
 impl Handle {
-    pub fn new(id: impl Into<String>, kind: HandleKind, side: Side) -> Self {
+    pub fn new(id: impl Into<Name>, kind: HandleKind, side: Side) -> Self {
         Self {
             id: id.into(),
             kind,
@@ -59,11 +243,11 @@ pub struct Node {
     pub pos: Point,
     pub size: Point,
     pub data: serde_json::Value,
-    pub node_type: String,
+    pub node_type: Name,
     pub parent: Option<NodeId>,
     pub selected: bool,
     pub draggable: bool,
-    pub handles: Vec<Handle>,
+    pub handles: Handles,
 }
 impl Node {
     pub fn new(id: NodeId, label: impl Into<String>, pos: Point) -> Self {
@@ -76,10 +260,7 @@ impl Node {
             parent: None,
             selected: false,
             draggable: true,
-            handles: vec![
-                Handle::new("in", HandleKind::Target, Side::Left),
-                Handle::new("out", HandleKind::Source, Side::Right),
-            ],
+            handles: Handles::defaults(),
         }
     }
     /// Coordinates are absolute world coordinates, including for children.
@@ -113,10 +294,10 @@ pub enum Marker {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Endpoint {
     pub node: NodeId,
-    pub handle: String,
+    pub handle: Name,
 }
 impl Endpoint {
-    pub fn new(node: NodeId, handle: impl Into<String>) -> Self {
+    pub fn new(node: NodeId, handle: impl Into<Name>) -> Self {
         Self {
             node,
             handle: handle.into(),
@@ -207,22 +388,56 @@ where
         self(g, s, t)
     }
 }
+/// Bulk-load a persistent map with densely packed leaves.
+///
+/// `im::OrdMap` nodes hold a fixed 64-entry array and split full nodes at the
+/// median, so inserting ascending keys leaves every node half full: twice the
+/// entry size per key. The first pass inserts a sparse ascending subset spaced
+/// so that each half-full leaf, bounded by its two separator keys, spans
+/// exactly 64 keys of the sorted input. The second pass fills those gaps
+/// without splitting, so leaves end full. Only a changed `im` node width
+/// affects the density (a regression test locks it); the map is the same.
+fn packed<V: Clone>(
+    values: impl IntoIterator<Item = V>,
+    key: impl Fn(&V) -> u64,
+) -> Result<im::OrdMap<u64, V>, FlowError> {
+    // `im` 15 B-tree width and the keys a split leaves in the left node.
+    const WIDTH: usize = 64;
+    const HALF: usize = WIDTH / 2;
+    let mut values: Vec<V> = values.into_iter().collect();
+    values.sort_unstable_by_key(&key);
+    if values.windows(2).any(|pair| key(&pair[0]) == key(&pair[1])) {
+        return Err(FlowError::DuplicateId);
+    }
+    let mut slots: Vec<Option<V>> = values.into_iter().map(Some).collect();
+    let mut map = im::OrdMap::new();
+    // Ascending splits make every (HALF + 1)th first-pass key a separator, so
+    // HALF + 1 first-pass keys must cover WIDTH + 1 sorted positions.
+    let len = slots.len();
+    let sparse = (0..)
+        .map(|step: usize| step * (WIDTH + 1) / (HALF + 1))
+        .take_while(|&position| position < len);
+    for position in sparse {
+        if let Some(value) = slots.get_mut(position).and_then(Option::take) {
+            map.insert(key(&value), value);
+        }
+    }
+    for value in slots.into_iter().flatten() {
+        map.insert(key(&value), value);
+    }
+    Ok(map)
+}
+
 impl Graph {
     pub fn from_parts(
         nodes: impl IntoIterator<Item = Node>,
         edges: impl IntoIterator<Item = Edge>,
     ) -> Result<Self, FlowError> {
-        let mut graph = Self::default();
-        for node in nodes {
-            if graph.nodes.insert(node.id, node).is_some() {
-                return Err(FlowError::DuplicateId);
-            }
-        }
-        for edge in edges {
-            if graph.edges.insert(edge.id, edge).is_some() {
-                return Err(FlowError::DuplicateId);
-            }
-        }
+        let mut graph = Self {
+            nodes: packed(nodes, |node| node.id)?,
+            ..Self::default()
+        };
+        graph.edges = packed(edges, |edge| edge.id)?;
         graph.edge_id_high_water = graph.edges.keys().next_back().copied().unwrap_or(0);
         graph.validate()?;
         Ok(graph)
@@ -363,5 +578,41 @@ impl Graph {
     }
     pub fn bounds(&self) -> Option<Rect> {
         self.nodes.values().map(Node::rect).reduce(Rect::union)
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn packed_maps_match_sequential_insertion_for_any_order() {
+        for len in [0_u64, 1, 2, 31, 32, 33, 63, 64, 65, 66, 129, 2_113, 5_000] {
+            // A deterministic permutation: 7919 is prime and larger than every length.
+            let keys = (0..len).map(|i| (i * 7_919) % len.max(1));
+            let map = packed(keys.map(|k| (k, k * 3)), |(k, _)| *k).expect("unique keys");
+            let expected: im::OrdMap<u64, (u64, u64)> = (0..len).map(|k| (k, (k, k * 3))).collect();
+            assert_eq!(map, expected, "len {len}");
+            assert_eq!(map.len() as u64, len);
+        }
+        assert_eq!(
+            packed([(4, 0), (1, 0), (4, 1)], |(k, _)| *k),
+            Err(FlowError::DuplicateId)
+        );
+    }
+
+    #[test]
+    fn names_intern_defaults_and_compare_as_text() {
+        let a = Name::from("out");
+        let b = Name::from(String::from("out"));
+        assert!(Arc::ptr_eq(&a.0, &b.0));
+        assert_eq!(a, "out");
+        assert_eq!(Name::from("custom"), *"custom");
+        assert_eq!(format!("{a:?} {a}"), "\"out\" out");
+        let json = serde_json::to_string(&Endpoint::new(3, "in")).expect("serialize");
+        assert_eq!(json, r#"{"node":3,"handle":"in"}"#);
+        let back: Endpoint = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, Endpoint::new(3, "in"));
+        assert!(Arc::ptr_eq(&back.handle.0, &Name::from("in").0));
     }
 }
