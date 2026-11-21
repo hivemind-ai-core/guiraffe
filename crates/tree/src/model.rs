@@ -384,6 +384,40 @@ mod index_tests {
     use super::*;
 
     #[test]
+    fn replacement_across_block_boundaries_keeps_all_ranks() {
+        let row = |id| Row {
+            id,
+            depth: 0,
+            parent: None,
+        };
+        let mut rows: Vec<_> = (0..4_000).map(row).collect();
+        let mut index = RowIndex::default();
+        index.rebuild(&rows);
+
+        for (before, inserted) in [
+            (511..1_537, 1_200),
+            (512..512, 206),
+            (1_024..2_048, 0),
+            (2..3_182, 0),
+            (1..1, 2_000),
+        ] {
+            for entry in &rows[before.clone()] {
+                index.ids.remove(&entry.id);
+            }
+            let first_id = rows.iter().map(|entry| entry.id).max().unwrap_or(0) + 1;
+            rows.splice(
+                before.clone(),
+                (first_id..first_id + inserted as u64).map(row),
+            );
+            index.splice(before, inserted, &rows);
+            assert_eq!(index.ids.len(), rows.len());
+            for (position, row) in rows.iter().enumerate() {
+                assert_eq!(index.get(row.id), Some(position));
+            }
+        }
+    }
+
+    #[test]
     fn local_splice_keeps_trailing_id_locations() {
         for count in [ROW_BLOCK * 4, 1_000_000] {
             let mut rows: Vec<_> = (0..count)
