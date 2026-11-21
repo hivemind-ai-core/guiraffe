@@ -55,7 +55,7 @@ impl PropSpec {
 
     pub fn schema(&self) -> Value {
         let ty = match self.type_name {
-            "ring-sections" => "array",
+            "ring-sections" | "integer-array" => "array",
             ty => ty,
         };
         let mut schema = json!({"type": ty});
@@ -68,6 +68,7 @@ impl PropSpec {
         }
         match self.type_name {
             "array" => schema["items"] = json!({"type": "string"}),
+            "integer-array" => schema["items"] = json!({"type":"integer","minimum":0}),
             "ring-sections" => {
                 schema["items"] = json!({
                     "type":"object",
@@ -89,6 +90,7 @@ impl EventSpec {
     pub fn schema(&self) -> Value {
         match self.payload_type {
             "selection" => json!({"type":["string","null"]}),
+            "integer-array" => json!({"type":"array","items":{"type":"integer","minimum":0}}),
             ty => json!({"type":ty}),
         }
     }

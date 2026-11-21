@@ -63,6 +63,7 @@ struct Repeater {
 }
 type RepeatState = Rc<Repeater>;
 struct Shared {
+    host_id: gpui_kit::EntityId,
     template: RefCell<Arc<Template>>,
     slots: RefCell<SlotTable>,
     generation: Cell<u32>,
@@ -522,6 +523,7 @@ impl Shared {
             spec,
             slots: &slots,
             emit: &self.emit,
+            host_id: self.host_id,
             generation: self.generation.get(),
             index,
             item: item_value.as_deref(),
@@ -554,6 +556,7 @@ impl Shared {
             spec,
             slots: &slots,
             emit: &self.emit,
+            host_id: self.host_id,
             generation: self.generation.get(),
             index,
             item: value.as_deref(),
@@ -783,7 +786,7 @@ impl DataUi {
         mut logic: impl Logic,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|_cx| {
+        cx.new(|cx| {
             // Built once, shared by every handler; dispatches through the shared state (never
             // by writing the host entity). The cell breaks the Rc cycle Shared ↔ emit.
             let shared_slot: Rc<RefCell<std::rc::Weak<Shared>>> = Rc::default();
@@ -812,6 +815,7 @@ impl DataUi {
             let shared = Rc::new_cyclic(|owner| Shared {
                 template: RefCell::new(template),
                 slots: RefCell::new(slots),
+                host_id: cx.entity_id(),
                 generation: Cell::new(0),
                 emit,
                 input_emit,

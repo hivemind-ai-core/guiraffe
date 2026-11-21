@@ -382,6 +382,7 @@ impl Focusable for RangeSlider {
 const RANGE_CONTEXT: &str = "GrRangeSlider";
 
 pub fn init(cx: &mut App) {
+    document::register(cx);
     cx.bind_keys([
         KeyBinding::new("left", LowDown, Some(RANGE_CONTEXT)),
         KeyBinding::new("right", LowUp, Some(RANGE_CONTEXT)),
@@ -752,3 +753,5 @@ impl Render for Dropzone {
             .child(self.label.clone())
     }
 }
+
+mod document;

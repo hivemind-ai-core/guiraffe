@@ -199,6 +199,9 @@ impl Validation<'_> {
                     prop.range
                         .is_none_or(|(min, max)| (min..=max).contains(&number))
                 }),
+                "integer-array" => got
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(|item| item.as_u64().is_some())),
                 "ring-sections" => got.as_array().is_some_and(|sections| {
                     sections.iter().all(|section| {
                         section.as_object().is_some_and(|fields| {

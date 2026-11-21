@@ -19,6 +19,8 @@ pub trait WidgetNode {
     fn color(&self, index: usize) -> Option<ColorName>;
     fn handler(&self, index: usize) -> Option<EventHandler>;
     fn element_id(&self) -> ElementId;
+    /// State identity of this node, including the host, generation and repeat item.
+    fn state_id(&self) -> ElementId;
 }
 
 pub type RenderWidget = fn(&dyn WidgetNode, Vec<AnyElement>, &mut Window, &mut App) -> AnyElement;
