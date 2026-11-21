@@ -22,3 +22,16 @@ guiraffe-icons = { path = {{icons}} }
 # Interactive graphics need optimized dependencies even in dev builds.
 [profile.dev.package."*"]
 opt-level = 2
+
+# The vendored GPUI / GPUI Kit / Mermaid patches GUIraffe is built and tested with
+# (vendor/README.md in the checkout). A standalone workspace does not inherit the GUIraffe
+# workspace's [patch] table, so the app repeats it; the paths point into the same checkout
+# as the guiraffe-* path dependencies above. Keep this list in sync with the root Cargo.toml
+# (the CLI's scaffold tests check it).
+[patch.crates-io]
+gpui-fast = { path = {{vendor:gpui-fast}} }
+gpui-fast-linux = { path = {{vendor:gpui-fast-linux}} }
+gpui-pre = { path = {{vendor:gpui-pre}} }
+gpui-base = { path = {{vendor:gpui-base}} }
+gpui-component = { path = {{vendor:gpui-component}} }
+mermaid-rs-renderer = { path = {{vendor:mermaid-rs-renderer}} }
