@@ -14,6 +14,8 @@ instruction-counts = ["dep:iai-callgrind"]
 
 [dependencies]
 guiraffe-code.workspace = true
+guiraffe-calendar.workspace = true
+chrono.workspace = true
 guiraffe-charts.workspace = true
 guiraffe-flamegraph.workspace = true
 guiraffe-tree.workspace = true

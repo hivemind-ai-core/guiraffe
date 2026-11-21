@@ -42,6 +42,11 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
 - **flow / flow-core:** React-Flow-style graph editor: drag, connect, box-select, undo/redo,
   minimap (drag to pan), animated edges.
 - **chat:** agent chat UI (streaming replies, reasoning, tool calls, attachments, composer).
+- **calendar:** year, six-week month, virtualized week/day schedules; UTC timed and civil all-day
+  events, named time zones, source visibility/colors, business hours, ISO weeks, 12h/24-hour
+  formats, custom item content, overlap/overflow handling, 15-minute drag and keyboard editing,
+  focus semantics, and light/dark snapshots on both backends. The release-only 10,000-event
+  mount/frame gate is `cargo test -p guiraffe-calendar --release --test scale -- --ignored`.
 - **timeline:** Gantt (critical path, resize either edge, locks), DAW track timeline (move,
   trim, snap, locks, keyboard editing), dope sheet, curve editor.
 - **code:** virtualized code viewer: highlighting, analysis highlights, inlay hints, lenses,

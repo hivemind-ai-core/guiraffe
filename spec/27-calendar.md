@@ -242,6 +242,7 @@ Reference dataset: 10,000 deterministic items in the visible year, including mid
 all-day, short, and overlapping events, with a fixed time zone and viewport. Additional adversarial
 fixtures place all items in one month and overlap them in one week. Measure both backends in a
 release build; record commit, rustc, CPU/GPU, scale, viewport, dataset seed, and machine load.
+The probe refuses to accept measurements when the one-minute load average exceeds available CPUs.
 
 Per-view gate:
 

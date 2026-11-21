@@ -163,6 +163,25 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
 }
 
 #[test]
+fn calendar_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{calendar_frame_10k, calendar_frame_100k};
+    calendar_frame_10k();
+    calendar_frame_100k();
+    let (_, small) = count_allocations(calendar_frame_10k)?;
+    let (_, large) = count_allocations(calendar_frame_100k)?;
+    eprintln!("calendar: 10k {small:?}, 100k {large:?}");
+    assert!(
+        large.allocations <= small.allocations,
+        "calendar frame allocations grew with source size: {small:?} vs {large:?}"
+    );
+    assert!(
+        large.bytes <= small.bytes + 4096,
+        "calendar frame bytes grew with source size: {small:?} vs {large:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     guiraffe_bench::suites::flow_query();
     let (_, counts) = count_allocations(guiraffe_bench::suites::flow_query)?;
