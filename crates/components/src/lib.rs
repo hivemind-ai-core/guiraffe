@@ -3,6 +3,14 @@
 //! Every component takes colors, radii, spacing and shadows from `guiraffe-core`'s theme,
 //! uses Mantine prop names (`.size(Size::Md)`, `.variant(Variant::Light)`, `.color(..)`),
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
+//!
+//! In `ui!`, place builder arguments after the component name and properties inside the block.
+//!
+//! ```ignore
+//! ui! { Card { p: Size::Md;
+//!     Text("Details") { fw: FontWeight::SEMIBOLD }
+//! } }
+//! ```
 
 pub mod accordion;
 pub mod avatar_group;

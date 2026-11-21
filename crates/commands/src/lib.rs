@@ -18,6 +18,12 @@
 //! handlers, and place [`CommandScope`] around focused content. [`Menu`] consumes
 //! the same registry; Ctrl+Shift+P opens the existing overlays Spotlight adapter.
 //! See the crate README and `examples/commands.rs` for host context management.
+//!
+//! A `ui!` view can mount a menu using the window's `Commands` service.
+//!
+//! ```ignore
+//! ui! { Menu("file-menu", &commands) { show_categories: true; show_keybindings: true } }
+//! ```
 pub mod context;
 mod error;
 pub mod keybinding;
