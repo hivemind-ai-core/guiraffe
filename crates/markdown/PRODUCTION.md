@@ -77,3 +77,22 @@ including after evicting both selection endpoints. With cold paragraphs,
 the shared-machine upstream dev probe drew the first useful frame in
 57 ms, measured 5.0–6.5 ms scroll/append p99, and peaked at 66,656 KiB
 above the empty window. The full parse and metadata settled in 1.03 s.
+
+Initial documents larger than 32 KiB can collect metadata from the renderer's raw AST
+sections before each section is lowered to render nodes. The parser keeps
+one section in memory at a time and publishes one metadata result. The
+standalone GFM path still handles sources with dollar signs, an unfinished
+Mermaid fence, or an initial parse superseded before completion. Streaming
+updates continue to analyze the unsettled suffix. The mounted tests compare
+shared metadata with canonical GFM after an append and verify that replacing
+a document before the initial worker runs publishes the replacement.
+
+The merged upstream release probe at 50k lines recorded about 700 ms
+until background readiness under samply before sharing and 406 ms after.
+Across the complete mounted probe, `markdown::to_mdast` accounted for
+73.72% and 61.66% of inclusive samples respectively. The independent
+metadata traversal accounted for 37.23% before sharing and did not register
+among the sampled hot paths afterward. Callgrind at 5k lines and ten frames
+counted 1,203,756,098 instructions on the original integration commit and
+831,752,373 with shared parsing and the height-tree reuse change. Those
+counts include fixture creation and the mounted frame loop.

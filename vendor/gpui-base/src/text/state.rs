@@ -182,10 +182,12 @@ pub struct TextViewState {
     _receive_task: Task<()>,
 }
 
+type InitialMarkdownObserver = Box<dyn FnMut(&str, Option<&markdown::mdast::Node>) + Send>;
+
 impl TextViewState {
     /// Create a Markdown TextViewState.
     pub fn markdown(text: &str, cx: &mut Context<Self>) -> Self {
-        Self::new(TextViewFormat::Markdown, text, None, cx)
+        Self::new(TextViewFormat::Markdown, text, None, None, cx)
     }
 
     /// Estimate unseen blocks in scrollable views and measure them near the viewport.
@@ -194,12 +196,38 @@ impl TextViewState {
         height: Pixels,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(TextViewFormat::Markdown, text, Some(height.max(px(1.))), cx)
+        Self::new(
+            TextViewFormat::Markdown,
+            text,
+            Some(height.max(px(1.))),
+            None,
+            cx,
+        )
+    }
+
+    /// Observe the raw AST of each section of the first background parse.
+    ///
+    /// The observer receives the complete source and coordinates relative to
+    /// that source. A final call with no section signals success. A replacement
+    /// or coalesced append can supersede this parse and drop the observer.
+    pub fn markdown_with_initial_sections(
+        text: &str,
+        height: Pixels,
+        observe: impl FnMut(&str, Option<&markdown::mdast::Node>) + Send + 'static,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new(
+            TextViewFormat::Markdown,
+            text,
+            Some(height.max(px(1.))),
+            Some(Box::new(observe)),
+            cx,
+        )
     }
 
     /// Create a HTML TextViewState.
     pub fn html(text: &str, cx: &mut Context<Self>) -> Self {
-        Self::new(TextViewFormat::Html, text, None, cx)
+        Self::new(TextViewFormat::Html, text, None, None, cx)
     }
 
     /// Create a new TextViewState.
@@ -207,6 +235,7 @@ impl TextViewState {
         format: TextViewFormat,
         text: &str,
         estimated_block_height: Option<Pixels>,
+        initial_observer: Option<InitialMarkdownObserver>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -243,6 +272,7 @@ impl TextViewState {
             tx_result,
             latest_replacement.clone(),
             estimated_block_height.is_some(),
+            initial_observer,
         ));
 
         let mut this = Self {
@@ -1327,6 +1357,7 @@ struct UpdateFuture {
     tx_result: Sender<ParsedUpdate>,
     latest_replacement: Arc<AtomicUsize>,
     defer_paragraphs: bool,
+    initial_observer: Option<InitialMarkdownObserver>,
 }
 
 impl UpdateFuture {
@@ -1336,6 +1367,7 @@ impl UpdateFuture {
         tx_result: Sender<ParsedUpdate>,
         latest_replacement: Arc<AtomicUsize>,
         defer_paragraphs: bool,
+        initial_observer: Option<InitialMarkdownObserver>,
     ) -> Self {
         Self {
             format,
@@ -1344,6 +1376,7 @@ impl UpdateFuture {
             tx_result,
             latest_replacement,
             defer_paragraphs,
+            initial_observer,
         }
     }
 }
@@ -1355,6 +1388,8 @@ impl Future for UpdateFuture {
         loop {
             match self.rx.as_mut().poll_next(cx) {
                 Poll::Ready(Some(mut options)) => {
+                    let initial_revision = options.revision;
+                    let observer = self.initial_observer.take();
                     let hit_coalesce_budget =
                         merge_pending_options(&mut options, self.rx.as_ref().get_ref());
 
@@ -1366,6 +1401,7 @@ impl Future for UpdateFuture {
                         &options,
                         self.defer_paragraphs,
                         cancelled,
+                        observer.filter(|_| options.revision == initial_revision),
                     );
                     if !cancelled() {
                         if let Ok(content) = &res {
@@ -1451,7 +1487,7 @@ fn parse_content(
     content: ParsedContent,
     options: &UpdateOptions,
 ) -> Result<ParsedContent, SharedString> {
-    parse_content_with_cancel(format, content, options, false, || false)
+    parse_content_with_cancel(format, content, options, false, || false, None)
 }
 
 fn parse_content_with_cancel(
@@ -1460,6 +1496,7 @@ fn parse_content_with_cancel(
     options: &UpdateOptions,
     defer_paragraphs: bool,
     cancelled: impl Fn() -> bool,
+    mut observe: Option<InitialMarkdownObserver>,
 ) -> Result<ParsedContent, SharedString> {
     if cancelled() {
         return Err("Text parse superseded".into());
@@ -1503,10 +1540,19 @@ fn parse_content_with_cancel(
             &source,
             &mut node_cx,
             defer_paragraphs && !options.append,
-            cancelled,
+            &cancelled,
+            |root| {
+                if let Some(observe) = &mut observe {
+                    observe(&source, Some(root));
+                }
+            },
         ),
         TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
     }?;
+
+    if !cancelled() && let Some(observe) = &mut observe {
+        observe(&source, None);
+    }
 
     if options.append {
         content.document.source =
@@ -2356,6 +2402,7 @@ mod tests {
             tx_result,
             Arc::default(),
             false,
+            None,
         ));
         let waker = futures::task::noop_waker();
         let mut task_cx = std::task::Context::from_waker(&waker);

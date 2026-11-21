@@ -399,7 +399,7 @@ mod tests {
     fn cold_paragraphs_drop_runs_outside_the_viewport_cache() {
         let source = "plain **marked** text\n\n".repeat(2_000);
         let document =
-            markdown::parse_with_cancel(&source, &mut NodeContext::default(), true, || false)
+            markdown::parse_with_cancel(&source, &mut NodeContext::default(), true, || false, |_| {})
                 .unwrap();
         let cache = ViewportBlockCache::default();
         let BlockNode::ColdParagraph(first) = &document.blocks[0] else {

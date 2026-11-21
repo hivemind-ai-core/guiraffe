@@ -18,7 +18,7 @@ use crate::text::{
 
 /// Parse Markdown into a tree of nodes.
 pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument, SharedString> {
-    parse_with_cancel(source, cx, false, || false)
+    parse_with_cancel(source, cx, false, || false, |_| {})
 }
 
 pub(in crate::text) fn parse_with_cancel(
@@ -26,6 +26,7 @@ pub(in crate::text) fn parse_with_cancel(
     cx: &mut NodeContext,
     defer_paragraphs: bool,
     cancelled: impl Fn() -> bool,
+    mut observe_section: impl FnMut(&Node),
 ) -> Result<ParsedDocument, SharedString> {
     let options = cx.markdown_extensions.parse_options();
     let mut prose = cx.markdown_extensions.parse_options();
@@ -37,6 +38,7 @@ pub(in crate::text) fn parse_with_cancel(
     let mut blocks = Vec::new();
     let mut last = None;
     visit_ast_sections(source, &options, &cancelled, |mut root| {
+        observe_section(&root);
         flatten_unclaimed_math(&mut root, source, &prose, cx);
         let parsed = ast_into_blocks(source, root, cx);
         if defer_paragraphs {

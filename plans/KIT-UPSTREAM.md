@@ -65,3 +65,12 @@ Cache compiled queries by canonical language and query purpose, checking
 the grammar and query source before reuse. Keep mutable parser state local
 and cap the fence parser cache. Cover alias reuse, grammar re-registration,
 injections, and high-cardinality fence names.
+
+## Observe raw AST sections during initial rendering
+
+Allow an estimated-height Markdown text view to receive each raw AST section
+from the first background parse before lowering it to render blocks. The
+observer gets source-relative positions and a completion signal. Superseding
+the request drops the observer, allowing a host to schedule its own fallback.
+The observer holds a metadata accumulator and the host receives at most one
+result. It retains no AST sections.
