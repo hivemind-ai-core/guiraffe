@@ -333,7 +333,7 @@ fn first_layout_highlights_the_same_number_of_fences_at_both_scales(cx: &mut Tes
                 cx,
                 |_, cx| {
                     cx.new(|cx| Host {
-                        markdown: cx.new(|cx| MarkdownState::new(&source, cx)),
+                        markdown: cx.new(|cx| MarkdownState::new(source.clone(), cx)),
                         source,
                         collected: Default::default(),
                     })
