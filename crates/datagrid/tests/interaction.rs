@@ -68,6 +68,17 @@ fn mount(
     (grid, renders, events, vcx)
 }
 
+fn mount_with_cells(
+    cx: &mut TestAppContext,
+    make: impl FnOnce(&mut gpui_kit::App) -> GridHandle,
+) -> (GridHandle, RenderCounter, Events, &mut VisualTestContext) {
+    mount(cx, |cx| {
+        let grid = make(cx);
+        grid.observe_cells_for_test(cx);
+        grid
+    })
+}
+
 /// Window position of the center of (view row, display col); header when `row` is None.
 fn at(grid: &GridHandle, row: Option<usize>, col: usize) -> Point<gpui_kit::Pixels> {
     let b = grid.bounds();
@@ -153,7 +164,7 @@ fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn scrolling_ten_million_rows_shows_the_right_rows(cx: &mut TestAppContext) {
-    let (grid, _, _, vcx) = mount(cx, |cx| {
+    let (grid, _, _, vcx) = mount_with_cells(cx, |cx| {
         GridHandle::new(
             FnSource::new(10_000_000, |r, c| CellRef::Int((r * 100 + c) as i64)),
             columns(50),
@@ -231,7 +242,7 @@ fn palette_is_shared_across_row_recycling_and_refreshes_on_theme_change(cx: &mut
 fn materialised_million_rows_keep_viewport_sized_slots(cx: &mut TestAppContext) {
     let rows = (0..1_000_000_i64).collect();
     let source = VecSource::new(rows).column(|&value| CellRef::Int(value));
-    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(source, columns(1), cx));
+    let (grid, _, _, vcx) = mount_with_cells(cx, |cx| GridHandle::new(source, columns(1), cx));
     for row in [0, 500_000, 999_999] {
         vcx.update(|_, cx| grid.scroll_to_row(row, cx));
         vcx.run_until_parked();
@@ -247,7 +258,7 @@ fn materialised_million_rows_keep_viewport_sized_slots(cx: &mut TestAppContext) 
 fn long_multilingual_cells_have_bounded_labels_and_full_copy(cx: &mut TestAppContext) {
     let value = "א界🙂".repeat(112_000);
     let source = VecSource::new(vec![value.clone()]).column(|value| CellRef::Text(value));
-    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(source, columns(1), cx));
+    let (grid, _, _, vcx) = mount_with_cells(cx, |cx| GridHandle::new(source, columns(1), cx));
     let end = value.floor_char_boundary(4096 - "…".len());
     let label = format!("{}…", &value[..end]);
     vcx.update(|window, cx| {
@@ -504,7 +515,8 @@ fn large_sort_runs_in_the_background(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn edit_commit_cancel_and_veto(cx: &mut TestAppContext) {
-    let (grid, _, events, vcx) = mount(cx, |cx| GridHandle::new(people(), people_columns(), cx));
+    let (grid, _, events, vcx) =
+        mount_with_cells(cx, |cx| GridHandle::new(people(), people_columns(), cx));
     // Double-click opens the Kit Input.
     let cell = at(&grid, Some(2), 1);
     vcx.simulate_event(gpui_kit::MouseDownEvent {
@@ -597,7 +609,7 @@ fn enter_activates_non_editable_rows(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn render_isolation(cx: &mut TestAppContext) {
-    let (grid, host, _, vcx) = mount(cx, |cx| {
+    let (grid, host, _, vcx) = mount_with_cells(cx, |cx| {
         let g = GridHandle::new(people(), people_columns(), cx);
         g.set_options(
             GridOptions {
@@ -694,8 +706,30 @@ fn focus_policy_and_stable_layout(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn accessibility_roles_and_indices(cx: &mut TestAppContext) {
+fn canvas_cells_remain_pointer_and_keyboard_targets(cx: &mut TestAppContext) {
     let (grid, _, _, vcx) = mount(cx, |cx| {
+        let grid = GridHandle::new(million(), columns(4), cx);
+        let mut options = grid.options();
+        options.selection = SelectionMode::Cell;
+        options.focusable = Some(true);
+        grid.set_options(options, cx);
+        grid
+    });
+    vcx.update(|window, _| assert!(window.try_find_by_label("101").is_none()));
+    click(vcx, at(&grid, Some(1), 1), Modifiers::default());
+    assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 1)));
+    vcx.update(|window, _| {
+        assert_eq!(window.find_by_label("101").role(), Some(Role::GridCell));
+        assert!(window.try_find_by_label("102").is_none());
+    });
+    vcx.simulate_keystrokes("right");
+    vcx.run_until_parked();
+    assert_eq!(grid.selection().cursor, Some(CellPos::new(1, 2)));
+}
+
+#[gpui_kit::test]
+fn accessibility_roles_and_indices(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount_with_cells(cx, |cx| {
         let mut cols = columns(4);
         cols[3].pin = Pin::Left;
         GridHandle::new(million(), cols, cx)
@@ -981,7 +1015,7 @@ fn a_new_edit_cancels_the_open_one_and_rerenders_its_row(cx: &mut TestAppContext
 fn recycled_slots_show_their_new_rows(cx: &mut TestAppContext) {
     // Scrolling by exactly `pool` rows puts row r + pool in row r's slot at the *same*
     // bounds, so gpui-fast would replay the old row unless the slot is notified.
-    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(3), cx));
+    let (grid, _, _, vcx) = mount_with_cells(cx, |cx| GridHandle::new(million(), columns(3), cx));
     let pool = grid.stats().pool;
     let h = f64::from(grid.row_height());
     let old: Vec<_> = grid

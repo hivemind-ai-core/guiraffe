@@ -32,6 +32,7 @@ pub(crate) struct Frame {
     app: HeadlessAppContext,
     window: WindowHandle<Host>,
     host: Host,
+    first_row: usize,
     next_row: usize,
 }
 
@@ -61,11 +62,16 @@ impl Frame {
             cx.new(|_| control)
         })?;
         let host = host.context("frame benchmark control was not mounted")?;
+        let first_row = match component {
+            Component::Grid => 4_200,
+            Component::Code => 42_000,
+        };
         let mut fixture = Self {
             app,
             window,
             host,
-            next_row: 42_000,
+            first_row,
+            next_row: first_row,
         };
         for _ in 0..8 {
             fixture.draw()?;
@@ -86,7 +92,11 @@ impl Frame {
         self.app.run_until_parked();
         // The two jumps exercise the same visible content and row-number width
         // at both source sizes and ensure each call invalidates the viewport.
-        self.next_row = if row == 42_000 { 42_064 } else { 42_000 };
+        self.next_row = if row == self.first_row {
+            self.first_row + 64
+        } else {
+            self.first_row
+        };
         Ok(())
     }
 }

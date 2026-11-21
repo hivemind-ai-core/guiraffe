@@ -78,15 +78,20 @@ fn warmed_hot_paths_allocate_nothing() -> anyhow::Result<()> {
 #[test]
 fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()> {
     use guiraffe_bench::suites::{
-        code_frame_10m, code_frame_100k, datagrid_frame_10m, datagrid_frame_100k,
+        code_frame_10m, code_frame_100k, datagrid_frame_10k, datagrid_frame_10m,
+    };
+    let (grid_allocations, grid_bytes) = if gpui_kit::GPUI_FAST {
+        (1_900, 420 * 1024)
+    } else {
+        (1_150, 460 * 1024)
     };
     for (name, small, large, allocation_budget, byte_budget) in [
         (
             "datagrid",
-            datagrid_frame_100k as fn(),
+            datagrid_frame_10k as fn(),
             datagrid_frame_10m as fn(),
-            10_300,
-            2_750 * 1024,
+            grid_allocations,
+            grid_bytes,
         ),
         (
             "code",
@@ -100,7 +105,7 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
         large();
         let (_, small_counts) = count_allocations(small)?;
         let (_, large_counts) = count_allocations(large)?;
-        eprintln!("{name}: 100k {small_counts:?}, 10M {large_counts:?}");
+        eprintln!("{name}: small {small_counts:?}, 10M {large_counts:?}");
         assert_eq!(small_counts.allocations, large_counts.allocations, "{name}");
         assert!(
             large_counts.bytes <= small_counts.bytes + 4096,
@@ -223,10 +228,8 @@ fn code_document_index_allocations_are_bounded() -> anyhow::Result<()> {
     // Warm the shared source before measuring only index construction.
     guiraffe_bench::suites::code_index_ten_million();
     let (_, counts) = count_allocations(guiraffe_bench::suites::code_index_ten_million)?;
-    let lines = 10_000_000;
-    let index_bytes = lines * size_of::<u32>();
-    assert_eq!(counts.allocations, 1, "{counts:?}");
-    assert_eq!(counts.bytes, index_bytes as u64, "{counts:?}");
+    assert_eq!(counts.allocations, 0, "{counts:?}");
+    assert_eq!(counts.bytes, 0, "{counts:?}");
     Ok(())
 }
 

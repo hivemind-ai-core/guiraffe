@@ -33,6 +33,7 @@ pub struct CodeDocument {
 }
 #[derive(Debug)]
 enum LineStarts {
+    Uniform { stride: usize, count: usize },
     Compact(Vec<u32>),
     Wide(Vec<usize>),
 }
@@ -40,6 +41,7 @@ enum LineStarts {
 impl LineStarts {
     fn len(&self) -> usize {
         match self {
+            Self::Uniform { count, .. } => *count,
             Self::Compact(starts) => starts.len(),
             Self::Wide(starts) => starts.len(),
         }
@@ -47,6 +49,7 @@ impl LineStarts {
 
     fn get(&self, line: usize) -> Option<usize> {
         match self {
+            Self::Uniform { stride, count } => (line < *count).then(|| line * stride),
             Self::Compact(starts) => starts.get(line).map(|&start| start as usize),
             Self::Wide(starts) => starts.get(line).copied(),
         }
@@ -54,6 +57,7 @@ impl LineStarts {
 
     fn partition_point(&self, offset: usize) -> usize {
         match self {
+            Self::Uniform { stride, count } => (offset / stride).min(count - 1) + 1,
             Self::Compact(starts) => starts.partition_point(|&start| start as usize <= offset),
             Self::Wide(starts) => starts.partition_point(|&start| start <= offset),
         }
@@ -89,13 +93,28 @@ impl CodeDocument {
 
     fn build_index(&mut self, cancelled: impl Fn() -> bool) -> bool {
         let mut line_count = 1;
-        for chunk in self.source.as_bytes().chunks(INDEX_CHUNK) {
+        let mut stride = None;
+        for (index, chunk) in self.source.as_bytes().chunks(INDEX_CHUNK).enumerate() {
             if cancelled() {
                 return false;
             }
+            if stride.is_none() {
+                stride = chunk
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .map(|first| index * INDEX_CHUNK + first + 1);
+            }
             line_count += chunk.iter().filter(|&&b| b == b'\n').count();
         }
-        self.starts = if u32::try_from(self.source.len()).is_ok() {
+        let Some(uniform) = self.uniform_stride(line_count, stride.unwrap_or(1), &cancelled) else {
+            return false;
+        };
+        self.starts = if let Some(stride) = uniform {
+            LineStarts::Uniform {
+                stride,
+                count: line_count,
+            }
+        } else if u32::try_from(self.source.len()).is_ok() {
             let Some(starts) = self.collect_starts(line_count, &cancelled, |start| start as u32)
             else {
                 return false;
@@ -120,6 +139,29 @@ impl CodeDocument {
         }
         true
     }
+    fn uniform_stride(
+        &self,
+        line_count: usize,
+        stride: usize,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<Option<usize>> {
+        // The first scan counted all newlines. If each expected separator
+        // exists, no additional separators can occur between them.
+        let bytes = self.source.as_bytes();
+        if (line_count - 1) > bytes.len() / stride {
+            return Some(None);
+        }
+        for line in 1..line_count {
+            if line % INDEX_CHUNK == 0 && cancelled() {
+                return None;
+            }
+            if bytes.get(line * stride - 1) != Some(&b'\n') {
+                return Some(None);
+            }
+        }
+        Some(Some(stride))
+    }
+
     fn collect_starts<T>(
         &self,
         line_count: usize,
@@ -222,6 +264,31 @@ mod tests {
         assert_eq!(calls.get(), 4);
     }
 
+    #[test]
+    fn uniform_index_handles_crlf_and_a_long_final_line() {
+        let doc = CodeDocument::new("a\r\nb\r\nlong final line");
+        assert!(matches!(
+            doc.starts,
+            LineStarts::Uniform {
+                stride: 3,
+                count: 3
+            }
+        ));
+        assert_eq!(doc.line(1), Some("b"));
+        assert_eq!(doc.position(5), Some(Position::new(1, 1)));
+        assert_eq!(doc.position(15), Some(Position::new(2, 9)));
+        assert_eq!(doc.offset(Position::new(2, 9)), Some(15));
+        assert_eq!(doc.line(3), None);
+    }
+
+    #[test]
+    fn irregular_newlines_keep_individual_starts() {
+        let doc = CodeDocument::new("a\nb\nc longer\nd");
+        assert!(matches!(doc.starts, LineStarts::Compact(_)));
+        assert_eq!(doc.line(2), Some("c longer"));
+        assert_eq!(doc.position(13), Some(Position::new(3, 0)));
+    }
+
     proptest::proptest! {
         #[test]
         fn positions_match_split_lines(lines in proptest::collection::vec("[a-zאב界🙂]{0,16}", 1..40)) {
@@ -254,7 +321,7 @@ mod tests {
     }
     #[test]
     fn retained_line_index_has_no_spare_slots() {
-        let doc = CodeDocument::new("x\n".repeat(20_000) + "x");
+        let doc = CodeDocument::new("x\nyz\n".repeat(10_000) + "x");
         let LineStarts::Compact(starts) = &doc.starts else {
             panic!("small files must use compact offsets");
         };
