@@ -30,8 +30,8 @@ features.
 The cached scene replays paths into its paint operations and gathers them
 into renderer order. Let all of these owners share vertex backing. Make
 writes copy-on-write so layer translations and clipping continue to update
-only the affected copy. Skip taking a mutable borrow when clipping would
-leave every vertex mask unchanged. Backend renderer code retains borrowed
+only the affected copy. Keep the buffer shared when all vertex masks are empty, as
+they are for ordinary paint paths. Backend renderer code retains borrowed
 access to vertices.
 
 The local `gpui-fast 0.1.15` chart fixture recorded 373 allocations and
