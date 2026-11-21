@@ -366,25 +366,35 @@ fn typing_prepares_nothing_and_submit_does_not_rescore(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-fn typing_rerenders_only_the_palette(cx: &mut TestAppContext) {
+fn searching_rerenders_only_the_palette(cx: &mut TestAppContext) {
     cx.update(crate::init);
     let (handle, content) = open_with_content(cx);
-    cx.update_window(handle.into(), |_, window, cx| {
-        let state = palette(window, cx, &Log::default());
-        SpotlightState::open(&state, window, cx).expect("open");
-        window.render_frame(cx);
-        window.render_frame(cx);
-    })
-    .expect("window");
+    let state = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let state = palette(window, cx, &Log::default());
+            SpotlightState::open(&state, window, cx).expect("open");
+            window.draw(cx).clear(cx);
+            state
+        })
+        .expect("window");
+    // Let the open transition settle, then measure incremental frames only.
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_secs(1));
     cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .expect("draw");
     let renders = content.read_with(cx, |c, _| c.renders.get());
-    cx.update_window(handle.into(), |_, window, cx| {
-        for key in ["p", "u", "s"] {
-            window.input(key, cx);
-            window.render_frame(cx);
-        }
-    })
-    .expect("window");
+    // Drive the palette directly: the test harness's simulated key presses refresh the
+    // whole window on their own (measured with a plain modal and no handler).
+    for query in ["p", "pu", "pus", ""] {
+        cx.update_window(handle.into(), |_, window, cx| {
+            state.update(cx, |s, cx| s.set_query(query, window, cx));
+        })
+        .expect("query");
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("draw");
+    }
     let after = content.read_with(cx, |c, _| c.renders.get());
     // Upstream GPUI re-renders the uncached children of a notified view's ancestors
     // (spec/00 §6), so only gpui-fast can promise an untouched page.

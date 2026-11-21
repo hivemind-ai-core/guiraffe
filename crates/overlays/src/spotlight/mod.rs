@@ -376,9 +376,13 @@ impl SpotlightState {
         }
         let view = this.clone();
         let weak = this.downgrade();
-        let (transition, label) = {
+        let (transition, label, width) = {
             let state = this.read(cx);
-            (state.transition, state.labels.name.clone())
+            (
+                state.transition,
+                state.labels.name.clone(),
+                state.panel_width(),
+            )
         };
         let id = OverlayHost::open_layer(
             window,
@@ -387,8 +391,9 @@ impl SpotlightState {
             OverlayKind::Spotlight,
             None,
             transition,
-            move |modal, window, cx| {
-                let width = view.read(cx).panel_width();
+            move |modal, window, _| {
+                // Read at open time: reading the state here would make the dialog shell
+                // re-render on every keystroke along with the panel.
                 let viewport = window.viewport_size();
                 let weak = weak.clone();
                 modal
