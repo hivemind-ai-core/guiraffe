@@ -89,14 +89,14 @@ impl NodeView<'_> {
         match self.spec.props.get(i) {
             Some(Prop::Size(value)) => Some(*value),
             Some(Prop::Slot(id)) => self.slots.size(*id),
-            _ => None,
+            _ => self.prop(i).as_str().and_then(crate::template::parse_size),
         }
     }
     pub fn color(&self, i: usize) -> Option<ColorName> {
         match self.spec.props.get(i) {
             Some(Prop::Color(value)) => Some(*value),
             Some(Prop::Slot(id)) => self.slots.color(*id),
-            _ => None,
+            _ => self.prop(i).as_str().and_then(ColorName::from_name),
         }
     }
     /// Handler for the widget's event at schema position `i`, if the document wires it.

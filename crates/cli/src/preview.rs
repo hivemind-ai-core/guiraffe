@@ -237,6 +237,7 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
         .with_assets(guiraffe_icons::GuiraffeAssets)
         .run(move |cx: &mut App| {
             guiraffe_inputs::init(cx);
+            guiraffe_layout::init(cx);
             let title = format!("GUIraffe preview — {}", path.display());
             let opened = cx.open_window(
                 gpui_kit::WindowOptions {

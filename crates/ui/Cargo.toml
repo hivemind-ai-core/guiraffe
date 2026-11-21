@@ -19,6 +19,7 @@ im = "15.1"
 
 [dev-dependencies]
 guiraffe-inputs.workspace = true
+guiraffe-layout.workspace = true
 guiraffe-test = { workspace = true, features = ["render"] }
 guiraffe-ui = { path = ".", features = ["test-support"] }
 serde_json.workspace = true

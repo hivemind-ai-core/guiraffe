@@ -340,12 +340,26 @@ fn hot_reload_keeps_live_values_and_lets_logic_fill_new_slots(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
-fn crate_owned_password_meter_validates_compiles_and_renders(cx: &mut TestAppContext) {
+fn crate_owned_widgets_validate_compile_and_render(cx: &mut TestAppContext) {
     cx.update(guiraffe_inputs::init);
+    cx.update(guiraffe_layout::init);
     let document = Document::new(
-        Node::new("password-strength")
-            .prop("password", "A7!example")
-            .bind("password", "password"),
+        Node::new("center").prop("min-height", 100).child(
+            Node::new("aspect-ratio")
+                .prop("ratio", 2)
+                .child(
+                    Node::new("space")
+                        .prop("width", "md")
+                        .prop("height", "sm")
+                        .prop("width-px", 32)
+                        .prop("height-px", 24),
+                )
+                .child(
+                    Node::new("password-strength")
+                        .prop("password", "A7!example")
+                        .bind("password", "password"),
+                ),
+        ),
     );
     let (_, window) = cx.add_window_view(|_, cx| {
         let registry = Arc::new(Registry::for_app(cx));
@@ -369,4 +383,17 @@ fn ui_macro_accepts_the_password_meter_constructor() {
     use guiraffe_inputs::PasswordStrength;
     let meter = ui! { PasswordStrength("A7!example") };
     let _ = meter.into_element();
+}
+
+#[test]
+fn ui_macro_accepts_the_layout_builders() {
+    use guiraffe_layout::{AspectRatio, Center, Size, Space};
+    let layout = ui! {
+        Center { min_height: px(100.)
+            AspectRatio(1.0) { ratio: 2.0
+                Space { width: Size::Md; height: Size::Sm; width_px: 32.0; height_px: 24.0 }
+            }
+        }
+    };
+    let _ = layout.into_element();
 }

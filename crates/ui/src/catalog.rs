@@ -10,9 +10,15 @@ use crate::widget_spec;
 
 #[path = "../../inputs/src/widget_specs.rs"]
 mod inputs;
+#[path = "../../layout/src/widget_specs.rs"]
+mod layout;
 
 pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
-    WIDGETS.iter().chain(inputs::WIDGETS).copied()
+    WIDGETS
+        .iter()
+        .chain(inputs::WIDGETS)
+        .chain(layout::WIDGETS)
+        .copied()
 }
 
 const SIZE: &[&str] = &["xs", "sm", "md", "lg", "xl"];
