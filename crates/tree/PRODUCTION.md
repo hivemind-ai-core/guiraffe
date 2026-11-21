@@ -114,10 +114,14 @@ lightweight-row implementation before the final editor changes.
 | Largest sampled self path, unsymbolized | 17.63% | 15.57% |
 | Flexbox layout, sampled self | 4.30% | 5.91% |
 | Callgrind instructions, setup and 64 frames at 10,001 rows | 405,094,957 | 303,714,634 |
+| Callgrind memcpy instructions | 90,887,281 | 58,064,349 |
+| Callgrind main flexbox routine instructions | 26,819,333 | 17,600,400 |
 | Short-soak mount, 100,001 rows | 96.3 ms | 14.8 ms |
 | Short-soak p99, two intervals | 8.25–9.40 ms | 6.66–7.71 ms |
 | Largest short-soak frame | 16.42 ms | 15.50 ms |
 | Largest reported steady RSS | 22.9 MiB | 25.2 MiB |
+| Peak RSS at 1,000,001 rows, 256 scripted frames | 61.5 MiB | 61.8 MiB |
+| Loaded-host mount at 1,000,001 rows | 296 ms | 364 ms |
 | Warm sparse viewport geometry allocations | — | 0 |
 
 These runs did not activate the inspector toolbar or custom row styles.
