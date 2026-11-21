@@ -839,6 +839,8 @@ mod mounted {
         Ok(())
     }
 
+    const PROPERTIES_PER_GROUP: usize = 9;
+
     struct Settings {
         groups: Forest,
         values: [guiraffe_tree::Value; 4],
@@ -850,7 +852,7 @@ mod mounted {
             &[0]
         }
         fn children(&self, id: u64) -> guiraffe_tree::Children<'_> {
-            guiraffe_tree::Children::Ready(self.groups.kids(id, 10))
+            guiraffe_tree::Children::Ready(self.groups.kids(id, PROPERTIES_PER_GROUP))
         }
         fn label(&self, id: u64) -> &str {
             if id == 0 {
@@ -878,12 +880,16 @@ mod mounted {
         }
     }
 
-    /// PropertyGrid: 10,000 groups of ten properties (110,001 rows) all expanded.
+    /// PropertyGrid: 100,000 groups of nine properties (1,000,001 rows) all expanded.
     pub fn property_grid(run: impl FnOnce(Frame)) -> Result<()> {
         use guiraffe_tree::Value;
-        let groups = scaled(10_000);
+        let groups = scaled(100_000);
+        println!(
+            "property_groups={groups} visible_rows={}",
+            1 + groups * (1 + PROPERTIES_PER_GROUP)
+        );
         let source = Rc::new(Settings {
-            groups: Forest::new(groups, 10),
+            groups: Forest::new(groups, PROPERTIES_PER_GROUP),
             values: [
                 Value::Number(0.75),
                 Value::Bool(true),
