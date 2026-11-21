@@ -538,21 +538,20 @@ impl<const P: bool> TreeView<P> {
 
     pub fn set_expanded(&mut self, id: NodeId, open: bool, cx: &mut Context<Self>) {
         self.expand_task = None;
-        let rank = self
+        let previously_visible = self
             .model
             .row_index(id)
-            .filter(|_| self.model.expanded(id) != open);
-        let viewport_end = self.window().end;
-        let cursor = self.model.cursor();
+            .filter(|_| self.model.expanded(id) != open)
+            .map(|rank| (rank < self.window().end, self.model.cursor()));
         if let Some(id) = self.model.set_expanded(id, open, self.source.as_ref()) {
             cx.emit(TreeEvent::LoadChildren(id));
         }
-        if let Some(rank) = rank {
+        if let Some((in_viewport, cursor)) = previously_visible {
             self.rebuild_geometry();
             self.restart_filter(cx);
             let scroll = self.scroll;
             self.clamp_scroll();
-            if rank < viewport_end || self.scroll != scroll || self.model.cursor() != cursor {
+            if in_viewport || self.scroll != scroll || self.model.cursor() != cursor {
                 cx.notify();
             }
         }
