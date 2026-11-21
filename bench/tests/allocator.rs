@@ -126,8 +126,15 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
             "datagrid",
             datagrid_frame_100k as fn(),
             datagrid_frame_10m as fn(),
-            15_000,
-            7 * 1024 * 1024,
+            // The grid builds the rows the viewport shows: gpui-fast keeps the
+            // retained layout of the rest, upstream GPUI builds the subtree
+            // again.
+            if gpui_kit::GPUI_FAST { 9_000 } else { 12_000 },
+            if gpui_kit::GPUI_FAST {
+                2 * 1024 * 1024
+            } else {
+                6 * 1024 * 1024
+            },
         ),
         (
             "code",
