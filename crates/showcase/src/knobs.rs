@@ -356,7 +356,7 @@ mod tests {
 
     /// Record automatic GPUI draws as well as explicitly stepped frames.
     fn assert_immediate_transition(demo: &str, changes: &[(usize, usize)]) {
-        use gpui_kit::{HeadlessAppContext, canvas, platform, size};
+        use gpui_kit::{HeadlessAppContext, platform, size};
         use std::{
             cell::{Cell, RefCell},
             rc::Rc,
@@ -375,27 +375,21 @@ mod tests {
         cx.update(crate::init);
         let frames = Rc::new(RefCell::new(Vec::new()));
         let armed = Rc::new(Cell::new(false));
-        let record: Rc<FrameRecorder> = Rc::new({
-            let frames = frames.clone();
-            let armed = armed.clone();
-            move |window, cx| {
-                if armed.get() {
-                    let frames = frames.clone();
-                    // The scene swaps after paint. Capture it before GPUI draws again.
-                    window.defer(cx, move |window, _| {
-                        frames
-                            .borrow_mut()
-                            .push(window.render_to_image().expect("capture frame"));
-                    });
-                }
-            }
-        });
         let window = cx
             .open_window(size(px(1100.), px(850.)), |window, cx| {
                 let playground = (entry.demo)(window, cx)
                     .downcast::<Playground>()
                     .unwrap_or_else(|_| panic!("{demo} is not a playground"));
-                cx.new(|_| FrameFixture(playground, record))
+                let frames = frames.clone();
+                let armed = armed.clone();
+                window.observe_test_frames(move |window| {
+                    if armed.get() {
+                        frames
+                            .borrow_mut()
+                            .push(window.render_to_image().expect("capture frame"));
+                    }
+                });
+                cx.new(|_| FrameFixture(playground))
             })
             .expect("open window");
         let draw = |cx: &mut HeadlessAppContext| {
@@ -440,8 +434,7 @@ mod tests {
             }
         }
 
-        type FrameRecorder = dyn Fn(&mut Window, &mut App);
-        struct FrameFixture(Entity<Playground>, Rc<FrameRecorder>);
+        struct FrameFixture(Entity<Playground>);
 
         impl gpui_kit::Render for FrameFixture {
             fn render(
@@ -449,14 +442,7 @@ mod tests {
                 _: &mut Window,
                 cx: &mut gpui_kit::Context<Self>,
             ) -> impl IntoElement {
-                let record = self.1.clone();
-                div()
-                    .size_full()
-                    .child(self.0.read(cx).preview.clone())
-                    .child(canvas(
-                        |_, _, _| (),
-                        move |_, _, window, cx| record(window, cx),
-                    ))
+                div().size_full().child(self.0.read(cx).preview.clone())
             }
         }
     }
