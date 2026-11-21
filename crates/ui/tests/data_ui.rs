@@ -569,12 +569,14 @@ fn ui_macro_accepts_overlay_builders() {
         position::{FloatingOptions, Rect, Side},
         toast::ToastPosition,
     };
+    let tooltip_options = FloatingOptions {
+        side: Side::Right,
+        ..Default::default()
+    };
     let overlay = ui! {
         Affix { position: ToastPosition::TopRight; offset: Size::Sm
             LoadingOverlay { visible: false; size: Size::Lg; color: ColorName::Orange; variant: Variant::Outline }
-            FloatingTooltip("help", "Details", Rect::default()) {
-                options: FloatingOptions { side: Side::Right, ..Default::default() }
-            }
+            FloatingTooltip("help", "Details", Rect::default()) { options: tooltip_options }
         }
     };
     let _ = overlay.into_element();
