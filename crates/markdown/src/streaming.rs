@@ -238,7 +238,11 @@ mod tests {
         for (split, _) in source.char_indices() {
             let first = &source[..split];
             let base = settled_prefix(first);
-            let second = Document::analyze_tail(&Document::analyze(first), base, &source[base..]);
+            let second = Document::merge_tail(
+                &Document::analyze(first),
+                base,
+                Document::analyze(&source[base..]),
+            );
             assert_eq!(
                 base + settled_prefix(&source[base..]),
                 settled_prefix(source)

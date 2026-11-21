@@ -54,6 +54,7 @@ pub struct MarkdownState {
     revision: u64,
     analyzed: u64,
     document: Arc<Document>,
+    metadata_end: usize,
     /// Settled prefix of the source the current `document` was computed from.
     settled: usize,
     analyzing: bool,
@@ -93,8 +94,7 @@ impl MarkdownState {
     pub fn new(source: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let source = source.into().to_string();
         let pushed = showable(&source);
-        let initial = source.get(..pushed).unwrap_or_default().to_owned();
-        let text = cx.new(|cx| TextViewState::markdown(&initial, cx));
+        let text = cx.new(|cx| TextViewState::markdown(&source[..pushed], cx));
         let mut state = Self {
             text,
             source,
@@ -102,6 +102,7 @@ impl MarkdownState {
             revision: 0,
             analyzed: 0,
             document: Arc::default(),
+            metadata_end: 0,
             settled: 0,
             analyzing: false,
             dirty: false,
@@ -160,6 +161,7 @@ impl MarkdownState {
                 self.replaced += 1;
                 self.settled = 0;
                 self.document = Arc::default();
+                self.metadata_end = 0;
                 self.sync_text(true, cx);
             }
         }
@@ -185,16 +187,12 @@ impl MarkdownState {
     fn sync_text(&mut self, replace: bool, cx: &mut Context<Self>) {
         let target = showable(&self.source);
         if replace {
-            let shown = self.source.get(..target).unwrap_or_default().to_owned();
-            self.text.update(cx, |text, cx| text.set_text(&shown, cx));
+            let shown = &self.source[..target];
+            self.text.update(cx, |text, cx| text.set_text(shown, cx));
             self.stats.replacements += 1;
         } else if target > self.pushed {
-            let tail = self
-                .source
-                .get(self.pushed..target)
-                .unwrap_or_default()
-                .to_owned();
-            self.text.update(cx, |text, cx| text.push_str(&tail, cx));
+            let tail = &self.source[self.pushed..target];
+            self.text.update(cx, |text, cx| text.push_str(tail, cx));
             self.stats.appends += 1;
         }
         self.pushed = target;
@@ -236,31 +234,44 @@ impl MarkdownState {
         let revision = self.revision;
         let replaced = self.replaced;
         let prev = self.document.clone();
+        let prev_metadata_end = self.metadata_end;
         let base = self.settled;
         let tail = self.source[base..].to_owned();
         self.stats.analyses += 1;
         self.stats.analyzed_bytes += tail.len() as u64;
         cx.spawn(async move |this, cx| {
-            let (document, settled) = cx
+            let (document, metadata_end, settled) = cx
                 .background_executor()
                 .spawn(async move {
-                    let doc = Document::analyze_tail(&prev, base, &tail);
-                    (doc, base + crate::streaming::settled_prefix(&tail))
+                    let settled = base + crate::streaming::settled_prefix(&tail);
+                    let tail = Document::analyze(&tail);
+                    if prev_metadata_end <= base && tail.is_empty() {
+                        (prev, prev_metadata_end, settled)
+                    } else {
+                        let document = Document::merge_tail(&prev, base, tail);
+                        let metadata_end = document.metadata_end();
+                        (Arc::new(document), metadata_end, settled)
+                    }
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.analyzing = false;
+                let mut metadata_changed = false;
                 if this.replaced == replaced {
                     // Even a superseded *append* result analyses a prefix of the current text,
                     // so its settled point can seed the next incremental run.
-                    this.document = Arc::new(document);
+                    metadata_changed = !Arc::ptr_eq(&this.document, &document);
+                    this.document = document;
+                    this.metadata_end = metadata_end;
                     this.settled = settled;
                     this.analyzed = revision;
                 }
                 if this.dirty || this.revision != revision {
                     this.reanalyze(cx);
                 }
-                cx.notify();
+                if metadata_changed {
+                    cx.notify();
+                }
             })
             .ok();
         })

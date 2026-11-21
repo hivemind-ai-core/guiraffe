@@ -332,6 +332,22 @@ mod streaming_cost {
     }
 
     #[gpui_kit::test]
+    fn prose_appends_reuse_the_settled_metadata_snapshot(cx: &mut TestAppContext) {
+        let state = cx.new(|cx| MarkdownState::new("# Stable\n\n", cx));
+        cx.run_until_parked();
+        let before = cx.update(|cx| std::ptr::from_ref(state.read(cx).document()));
+        for chunk in ["A streamed ", "paragraph ", "with no headings."] {
+            cx.update(|cx| state.update(cx, |state, cx| state.append(chunk, cx)));
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let viewer = state.read(cx);
+                assert_eq!(std::ptr::from_ref(viewer.document()), before);
+                assert_eq!(viewer.headings()[0].text, "Stable");
+            });
+        }
+    }
+
+    #[gpui_kit::test]
     fn streaming_is_incremental_and_coalesced(cx: &mut TestAppContext) {
         let full = reply(40);
         let chunks: Vec<&str> = full
