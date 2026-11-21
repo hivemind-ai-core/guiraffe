@@ -1,0 +1,16 @@
+[package]
+name = "guiraffe-sheet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-datagrid/gpui-fast"]
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-datagrid.workspace = true
+
+[dev-dependencies]
+proptest = "1"

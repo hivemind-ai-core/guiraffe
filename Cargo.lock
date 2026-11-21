@@ -3710,6 +3710,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-sheet"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-datagrid",
+ "proptest",
+]
+
+[[package]]
 name = "guiraffe-showcase"
 version = "0.1.0"
 dependencies = [
