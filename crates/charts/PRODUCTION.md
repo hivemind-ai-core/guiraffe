@@ -34,3 +34,16 @@ took 79.8 s from fixture creation through first frame. Each short sampling
 window completed one interaction, taking 26.7 s and 33.3 s respectively.
 RSS rose from 495,784 KiB to 502,888 KiB. Those two windows are too short
 and too sparse for a live memory or percentile acceptance claim.
+
+## Scatter viewport budget
+
+Scatter and bubble runs share device-pixel occupancy per facet. A sparse
+viewport draws at most one mark center per pixel. At overview density, all
+visible runs split a 2,048-candidate budget, and marks share a grid with cells
+at least six device pixels wide and high, capped at 64 × 32 cells. The first
+drawable candidate claims each cell. Picking still uses the original points.
+
+Scene compilation uses a 2,048-byte occupancy array, up to 2,048 sparse
+pixel keys, and one temporary visible range per scatter run. These buffers
+are released when scene compilation finishes. The two cached scenes are
+invalidated on size, scale, data or visibility changes.
