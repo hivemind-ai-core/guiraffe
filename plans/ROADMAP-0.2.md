@@ -77,6 +77,9 @@ Status audit of `guiraffe import` vs Mocket's JSON; write **spec/19-mocket-inter
   "IDE layout" example.
 
 ## 0.3 candidates
+Superseded by plans/ROADMAP-0.3.md (state model + control protocol, store-first `ui!`, command
+ribbon, multi-window docking).
+
 - **Multi-window docking**: pop a panel out into its own OS window, drag panels between windows,
   dock a floating window's panel back into another window; cross-window drag sessions, window
   layout persistence and restore across monitors/DPI; depends on the 0.2 DnD framework and

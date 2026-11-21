@@ -23,6 +23,8 @@ batches; nothing goes to main without the user.
       ui/windows/motion/commands/devtools/state/router/icons.
 
 ## Ready to integrate
+- [ ] DataUi catalogue coverage (`49dbc28`): 87 widget kinds, 549 props, 103 events; drift guard
+      maps 740/919 APIs with 179 documented Rust-only exceptions; gate passed on both backends.
 - [ ] Flow document memory (`bd882ba`, gating): 36/46 MiB delta vs 68 MiB limit. Public API
       change (`Name`, `Handles`) → CHANGELOG.
 - [ ] Date/time pickers (`961a46e`): Date/DateRange/Time/DateTime/DateTimeRange pickers.
@@ -92,8 +94,19 @@ batches; nothing goes to main without the user.
       `edit_buttons(EditButtons)`; Enter/Escape, Tab/Shift+Tab, multi-line rows grow while editing.
       Follow-up: multi-line values still display on one line ("↵") when not being edited.
 
+## 0.3 (plans/ROADMAP-0.3.md, decided 2026-11-21)
+- [ ] **Core state model + control protocol** (spec/30): stable control ids, typed snapshots and
+      actions, one action bus for pointer/keyboard/shortcut/Spotlight/ribbon/DataUi/MCP/scripts;
+      zero cost at render time (allocation + scaling gates from day one).
+- [ ] **Store-first `ui!`** (spec/31): `<=`/`<=>` bindings, `on_x => Event`, `store!`,
+      `#[component(stateful)]`; the canonical structured path. The builder API stays for standalone UIs.
+- [ ] **Command ribbon** (spec/32): port of ../gui/research/cmd onto guiraffe-commands + the bus.
+- [ ] **Multi-window docking**: pop-out panels, cross-window drag, layout restore across monitors/DPI.
+- [ ] spec/30 phase 1 starts by extending the Catalogue 1.2 descriptors (feat-catalog-coverage,
+      `49dbc28`) with optional actions and snapshot sections.
+
 ## Later / out of scope for now
-- macOS/Windows CI and testing; crates.io publishing; multi-window docking (0.3).
+- macOS/Windows CI and testing; crates.io publishing.
 - windows: tear-off panels, parent/child + modal windows, examples/multi.rs; X11 2 px restore
   offset compensation.
 - Tooling DX: templates for `guiraffe new`, `guiraffe dev` hot relaunch, docs site from showcase.
