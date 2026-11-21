@@ -2222,7 +2222,7 @@ mod review_tests {
             code.set_document_decorations(
                 |document| {
                     let mut decorations =
-                        Decorations::new(document).expect("source fits decorations");
+                        crate::Decorations::new(document).expect("source fits decorations");
                     decorations
                         .update_layer(
                             23,
