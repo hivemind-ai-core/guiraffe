@@ -10,7 +10,9 @@ use guiraffe_core::{ColorName, Size, Variant};
 use super::{column, example};
 use crate::catalog::{Entry, stateless};
 use crate::events::EventLog;
-use crate::knobs::{Applied, Knob, KnobValues, SIZE_NAMES, playground_with, with_knobs};
+use crate::knobs::{
+    Applied, Knob, KnobValues, SIZE_NAMES, playground_with, playground_with_update, with_knobs,
+};
 use gpui_kit::AnyElement;
 
 const VARIANTS: [Variant; 5] = [
@@ -454,7 +456,7 @@ fn ring_live(v: &KnobValues, _: &mut Window, _: &mut App) -> AnyElement {
 }
 
 fn segmented(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live SegmentedControl",
         &[
             Knob::size(),
@@ -465,17 +467,17 @@ fn segmented(window: &mut Window, cx: &mut App) -> AnyView {
             let control = SegmentedControl::new(["Preview", "Code", "Export"], cx);
             let log = EventLog::new(cx);
             EventLog::watch::<SegmentedEvent, _>(&log, &control, cx);
-            (control, log, Applied::default())
+            (control, log)
         },
-        |(control, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let (size, full, disabled) = (v.size(0), v.on(1), v.on(2));
-                control.update(cx, |c, cx| {
-                    c.set_size(Some(size), cx);
-                    c.set_full_width(full, cx);
-                    c.set_disabled(disabled, cx);
-                });
-            }
+        |(control, _), v, cx| {
+            let (size, full, disabled) = (v.size(0), v.on(1), v.on(2));
+            control.update(cx, |c, cx| {
+                c.set_size(Some(size), cx);
+                c.set_full_width(full, cx);
+                c.set_disabled(disabled, cx);
+            });
+        },
+        |(control, log), _, _, _| {
             column([
                 div().w(px(420.)).child(control.clone()).into_any_element(),
                 example("Events", log.clone()),
