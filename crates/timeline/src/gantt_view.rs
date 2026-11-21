@@ -6,7 +6,8 @@ use std::{collections::HashMap, rc::Rc};
 use gpui_kit::{
     App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, PathBuilder, Pixels, Point, Render,
-    Role, ScrollEvent, Styled, TestSupportExt, Window, canvas, div, point, prelude::*, px,
+    Role, ScrollEvent, StyleRefinement, Styled, TestSupportExt, WeakEntity, Window, canvas, div,
+    point, prelude::*, px,
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant, focus_ring, ring_visible};
 
@@ -129,6 +130,7 @@ pub struct GanttView {
     tasks: Vec<Task>,
     schedule: Rc<Result<HashMap<u32, Scheduled>, ScheduleError>>,
     bar_labels: BarLabels,
+    header: Option<Entity<GanttHeader>>,
     surface: crate::PlotSurface,
     format: TimeFormat,
     lock_style: crate::LockStyle,
@@ -171,6 +173,7 @@ impl GanttView {
         cx.new(|cx| Self {
             geometry,
             bar_labels: BarLabels::default(),
+            header: None,
             tasks,
             schedule: Rc::new(schedule),
             surface: crate::PlotSurface::timeline(axis, format),
@@ -736,9 +739,72 @@ fn paint_arrows(
     }
 }
 
+struct GanttHeader {
+    owner: WeakEntity<GanttView>,
+    scroll_y: f64,
+    rows: std::ops::Range<usize>,
+    geometry: Rc<Geometry>,
+    schedule: Rc<Result<HashMap<u32, Scheduled>, ScheduleError>>,
+    locked: Rc<std::collections::HashSet<u32>>,
+}
+
+impl Render for GanttHeader {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = GuiraffeTheme::global(cx);
+        let line = theme.surfaces().border.to_hsla();
+        let critical = theme
+            .variant(Some(ColorName::Red), Variant::Filled)
+            .background
+            .to_hsla();
+        let scheduled = self.schedule.as_ref().as_ref().ok();
+        div()
+            .relative()
+            .size_full()
+            .children(self.rows.clone().map(|i| {
+                let Row { id, name } = &self.geometry.rows[i];
+                let id = *id;
+                let locked = self.locked.contains(&id);
+                let crit = scheduled
+                    .and_then(|m| m.get(&id))
+                    .is_some_and(Scheduled::critical);
+                let owner = self.owner.clone();
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px((row_top(i) - self.scroll_y) as f32))
+                    .h(px(ROW_H))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(line)
+                    .when(crit, |el| el.text_color(critical))
+                    .child(crate::locks::probe(
+                        "task-lock",
+                        i,
+                        gpui_kit::component::button::Button::new(("task-lock", i))
+                            .icon(gpui_kit::component::Icon::new(if locked {
+                                gpui_kit::assets::IconName::Lock
+                            } else {
+                                gpui_kit::assets::IconName::LockOpen
+                            }))
+                            .tab_stop(false)
+                            .tooltip("Toggle task lock")
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |this, cx| {
+                                    this.set_locked(id, !this.is_locked(id), cx);
+                                });
+                            }),
+                    ))
+                    .child(name.clone())
+            }))
+    }
+}
+
 impl Render for GanttView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = GuiraffeTheme::global(cx);
+        let t = GuiraffeTheme::global(cx).clone();
         let s = t.surfaces();
         let normal = t.variant(None, Variant::Light);
         let critical = t.variant(Some(ColorName::Red), Variant::Filled);
@@ -757,7 +823,6 @@ impl Render for GanttView {
             (f32::from(window.viewport_size().height) - RULER_H).max(0.0)
         };
         let visible = visible_rows(self.tasks.len(), scroll_y, height);
-        let header_rows = visible.clone();
         let bar_rows = visible.clone();
         let row_count = self.tasks.len();
         if let Some(w) = crate::measure::width(&self.body) {
@@ -774,6 +839,26 @@ impl Render for GanttView {
         let schedule = self.schedule.clone();
         let paint_schedule = schedule.clone();
         let scheduled = self.schedule.as_ref().as_ref().ok();
+        let header_is_current = self.header.as_ref().is_some_and(|header| {
+            let header = header.read(cx);
+            header.scroll_y == scroll_y
+                && header.rows == visible
+                && Rc::ptr_eq(&header.geometry, &self.geometry)
+                && Rc::ptr_eq(&header.schedule, &self.schedule)
+                && Rc::ptr_eq(&header.locked, &self.locked)
+        });
+        if !header_is_current {
+            let owner = cx.entity().downgrade();
+            self.header = Some(cx.new(|_| GanttHeader {
+                owner,
+                scroll_y,
+                rows: visible.clone(),
+                geometry: self.geometry.clone(),
+                schedule: self.schedule.clone(),
+                locked: self.locked.clone(),
+            }));
+        }
+        let header = self.header.clone();
         let bar_labels = &mut self.bar_labels;
         let editable = self.editable;
         let item_style = self.lock_style;
@@ -862,42 +947,9 @@ impl Render for GanttView {
                             .flex_none()
                             .border_r_1()
                             .border_color(line)
-                            .children(header_rows.map(|i| {
-                                let Row { id, name } = &geo.rows[i];
-                                let id = *id;
-                                let locked = self.locked.contains(&id);
-                                let crit = scheduled
-                                    .and_then(|m| m.get(&id))
-                                    .is_some_and(Scheduled::critical);
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .top(px((row_top(i) - scroll_y) as f32))
-                                    .h(px(ROW_H))
-                                    .px(px(8.))
-                                    .flex()
-                                    .items_center()
-                                    .border_b_1()
-                                    .border_color(line)
-                                    .when(crit, |el| el.text_color(critical.background.to_hsla()))
-                                    .child(crate::locks::probe(
-                                        "task-lock",
-                                        i,
-                                        gpui_kit::component::button::Button::new(("task-lock", i))
-                                            .icon(gpui_kit::component::Icon::new(if locked {
-                                                gpui_kit::assets::IconName::Lock
-                                            } else {
-                                                gpui_kit::assets::IconName::LockOpen
-                                            }))
-                                            .tab_stop(false)
-                                            .tooltip("Toggle task lock")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.set_locked(id, !this.is_locked(id), cx)
-                                            })),
-                                    ))
-                                    .child(name.clone())
-                            })),
+                            .when_some(header, |el, header| {
+                                el.child(header.cached(StyleRefinement::default().size_full()))
+                            }),
                     )
                     .child(
                         div()
@@ -1041,7 +1093,7 @@ impl Render for GanttView {
                                                     .border_1()
                                                     .bg(colors.background.to_hsla())
                                                     .border_color(colors.foreground.to_hsla()),
-                                                t,
+                                                &t,
                                             );
                                             el.when(on, |el| {
                                                 el.child(
@@ -1098,6 +1150,39 @@ impl Render for GanttView {
 mod tests {
     use super::*;
 
+    #[gpui_kit::test]
+    fn header_is_retained_across_horizontal_navigation(cx: &mut gpui_kit::TestAppContext) {
+        struct Host(Entity<GanttView>);
+
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(self.0.clone())
+            }
+        }
+
+        cx.update(|cx| {
+            gpui_kit::component::init(cx);
+            guiraffe_core::apply(Default::default(), cx);
+        });
+        let gantt = cx.update(|cx| GanttView::new(tasks(), TimeFormat::Seconds, cx));
+        let (_, window) = cx.add_window_view(|_, _| Host(gantt.clone()));
+        window.run_until_parked();
+        let header_id = |this: &GanttView| this.header.as_ref().map(Entity::entity_id);
+        let initial = window.update(|_, cx| header_id(gantt.read(cx)));
+        assert!(initial.is_some());
+        window.update(|_, cx| {
+            gantt.update(cx, |this, cx| {
+                this.surface.axis.pan_px(5.0);
+                cx.notify();
+            });
+        });
+        window.run_until_parked();
+        assert_eq!(window.update(|_, cx| header_id(gantt.read(cx))), initial);
+        window.update(|_, cx| gantt.update(cx, |this, cx| this.set_locked(1, true, cx)));
+        window.run_until_parked();
+        assert_ne!(window.update(|_, cx| header_id(gantt.read(cx))), initial);
+    }
+
     #[test]
     fn viewport_rows_are_independent_of_total_rows() {
         assert_eq!(visible_rows(10_000, 45.0, 640.0), 1..22);
@@ -1127,6 +1212,7 @@ mod tests {
 
     #[test]
     fn bar_labels_reuse_shared_text_until_timing_or_row_changes() {
+        let name = "A long task name that exceeds the shared string inline storage";
         let mut labels = BarLabels::default();
         let mut scheduled = Scheduled {
             early_start: 1.0,
@@ -1134,11 +1220,11 @@ mod tests {
             late_start: 1.0,
             late_finish: 2.0,
         };
-        let original = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
-        let reused = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
+        let original = labels.get(0, name, scheduled, TimeFormat::Seconds);
+        let reused = labels.get(0, name, scheduled, TimeFormat::Seconds);
         assert_eq!(original.as_ptr(), reused.as_ptr());
         scheduled.early_finish = 3.0;
-        let updated = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
+        let updated = labels.get(0, name, scheduled, TimeFormat::Seconds);
         assert_ne!(original, updated);
         labels.get(
             BAR_LABEL_CACHE_SIZE,
@@ -1146,7 +1232,7 @@ mod tests {
             scheduled,
             TimeFormat::Seconds,
         );
-        let restored = labels.get(0, "Task", scheduled, TimeFormat::Seconds);
+        let restored = labels.get(0, name, scheduled, TimeFormat::Seconds);
         assert_eq!(restored, updated);
         assert_ne!(restored.as_ptr(), updated.as_ptr());
         labels.clear();
