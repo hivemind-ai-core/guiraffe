@@ -357,7 +357,11 @@ mod tests {
     /// Record automatic GPUI draws as well as explicitly stepped frames.
     fn assert_immediate_transition(demo: &str, changes: &[(usize, usize)]) {
         use gpui_kit::{HeadlessAppContext, canvas, platform, size};
-        use std::{cell::Cell, rc::Rc, sync::Arc};
+        use std::{
+            cell::{Cell, RefCell},
+            rc::Rc,
+            sync::Arc,
+        };
 
         let entry = crate::catalog::entries()
             .into_iter()
