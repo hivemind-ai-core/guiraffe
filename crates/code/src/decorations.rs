@@ -809,6 +809,68 @@ mod tests {
     }
 
     #[test]
+    fn gutter_overview_only_places_gutter_marks_at_their_source_line_and_lane() {
+        let mut decorations = store(Arc::new(CodeDocument::new("first\nsecond\nthird\nlast")));
+        let bookmark = decorations
+            .intern_style(DecorationStyle::Gutter {
+                lane: 1,
+                mark: GutterMark::Bookmark,
+            })
+            .expect("interned bookmark");
+        let coverage = decorations
+            .intern_style(DecorationStyle::Gutter {
+                lane: 3,
+                mark: GutterMark::Covered,
+            })
+            .expect("interned coverage");
+        let on_line = |id, line, style| DecorationInput {
+            range: SourceRange::new(Position::new(line, 0), Position::new(line, 0)),
+            style,
+            ..mark(id, 0, 0)
+        };
+        decorations
+            .update_layer(0, Default::default(), &[], [mark(1, 0, 3)])
+            .expect("published non-gutter layer");
+        decorations
+            .update_layer(
+                1,
+                Default::default(),
+                &[],
+                [on_line(2, 1, bookmark), on_line(3, 2, coverage)],
+            )
+            .expect("published gutter layer");
+
+        assert!(
+            decorations
+                .layer(0)
+                .expect("layer 0")
+                .gutter_overview()
+                .is_none()
+        );
+        let overview = decorations
+            .layer(1)
+            .expect("layer 1")
+            .gutter_overview()
+            .expect("gutter summary");
+        assert_eq!(
+            overview[64][1].map(GutterMark::color),
+            Some(ColorName::Blue)
+        );
+        assert_eq!(
+            overview[128][3].map(GutterMark::color),
+            Some(ColorName::Green)
+        );
+        assert_eq!(
+            overview
+                .iter()
+                .flatten()
+                .filter(|mark| mark.is_some())
+                .count(),
+            2
+        );
+    }
+
+    #[test]
     fn batch_update_and_edit_preserve_identity_and_bias() {
         let source = Arc::new(CodeDocument::new("ab界d"));
         let mut decorations = store(source);

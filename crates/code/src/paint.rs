@@ -1041,6 +1041,16 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
                 (y, ((last - first + 1) as f32 / t * height).max(2.))
             }
         };
+        let h = h.min((height - y).max(0.));
+        let blue = color(ColorName::Blue, theme);
+        window.paint_quad(
+            fill(
+                Bounds::new(point(origin.x, origin.y + px(y)), size(px(g.mini), px(h))),
+                blue.opacity(0.08),
+            )
+            .border_widths(px(1.))
+            .border_color(blue.opacity(0.45)),
+        );
         if let Some(decorations) = shared.decorations.borrow().as_ref() {
             use crate::decorations::OVERVIEW_BINS;
 
@@ -1075,16 +1085,6 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
                 }
             }
         }
-        let h = h.min((height - y).max(0.));
-        let blue = color(ColorName::Blue, theme);
-        window.paint_quad(
-            fill(
-                Bounds::new(point(origin.x, origin.y + px(y)), size(px(g.mini), px(h))),
-                blue.opacity(0.08),
-            )
-            .border_widths(px(1.))
-            .border_color(blue.opacity(0.45)),
-        );
     }
 }
 // At less than one pixel per bin the strokes overlap and each contributes opacity.
