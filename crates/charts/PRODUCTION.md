@@ -87,3 +87,26 @@ Each replayed path is cloned once into the paint operation and again into the
 draw list. Sharing immutable scaled vertices across those two records and
 adjacent frames would remove the vertex copies. The full zero-allocation
 criterion also requires reusable backend sort and window scratch storage.
+
+Dense scatter batches now draw rounded quads inside one GPUI paint layer per
+batch. The layer preserves mark order and uses one bounds-tree insertion for
+the batch. In the same upstream warm draw, this reduced allocation traffic to
+74 calls and 79,500 bytes. Remaining allocations are 58 axis-path vertex
+copies (11,136 bytes), two stable-sort buffers (56,544 bytes), and 14 window
+bookkeeping allocations (11,820 bytes). Chart code still allocates zero
+bytes in the captured draw.
+
+The native headless release probe at 1M points and 100 series reached its
+first frame in 155 ms, published the full scene in 1,200 ms, and held 42.7 MiB
+RSS across the two 10-second samples on a shared host. Its second sample
+recorded p50 1.56 ms, p99 27.95 ms and maximum 36.82 ms. A prior run of the
+same workload with octagon paths recorded p50 1.68 ms, p99 11.67 ms, and
+maximum 21.06 ms under different contention. These runs do not settle the
+quiet-host p99 or full-scene publication time.
+
+The warmed mounted Samply trace filtered to `soak::sample` attributes 1.0%
+of self samples to bounds-tree insertion with layered quads, compared with
+1.6% with octagon paths. Visible-range search accounted for 21.4%, dense
+scatter generation 11.5%, and coordinate projection 6.2%. A trial that
+restricted the upper-bound search to a short suffix did not improve total
+Callgrind instructions at either 100k or 1M points and was dropped.
