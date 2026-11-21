@@ -60,6 +60,11 @@ timestamps) and RAPL energy; both need hardware access the scripted run doesn't 
   Electron records its marker after showing the window and waiting for two rAFs. To trace
   GUIraffe startup from main, run the app directly with `COMPARE_TRACE_STARTUP=1` and
   `--bench startup`.
+- On native Wayland, run the apps directly with `WAYLAND_DEBUG=client` to inspect
+  `wp_presentation_feedback.presented` and `discarded` events. GUIraffe additionally
+  requires `GPUI_WAYLAND_PRESENTATION_TRACE=1`. Feedback timestamps describe committed
+  buffers. Gaps can include deliberate pauses with no new buffer, and logging itself can
+  affect callback timings.
 - Electron waits for two rAFs after `flushSync`. GUIraffe waits until the grid is idle and
   then waits for one more next-frame callback for grid actions.
 - GUIraffe keeps pages alive after the first visit (GPUI's idiomatic pattern); React unmounts
