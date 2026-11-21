@@ -539,7 +539,7 @@ mod mounted {
 
     /// Tracks: 100 tracks of 1,000 clips (100,000 clips), fitted to the full length.
     pub fn tracks(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_timeline::{TimeFormat, Track, TracksView, tracks_view::clip_element_id};
+        use guiraffe_timeline::{TimeFormat, Track, TracksView, tracks_view::TRACK_H};
         let per_track = scaled(1_000);
         let tracks = (0..100)
             .map(|t| {
@@ -556,6 +556,7 @@ mod mounted {
             TracksView::new(tracks, TimeFormat::Seconds, length, cx)
         })?;
         let root = require(&mut window, "tracks")?;
+        let track_body = require(&mut window, "tracks-body")?;
         let body = root.origin + point(root.size.width * 0.55, root.size.height * 0.4);
         run(&mut |i| {
             match i % 4 {
@@ -566,21 +567,34 @@ mod mounted {
                 }
                 2 => {
                     let track = (i / 4) % 16;
-                    let clip = window.update(|_, cx| {
-                        let v = view.read(cx);
-                        let axis = v.axis();
-                        let mid = axis.start + axis.width * axis.scale * 0.5;
-                        let clips = v.tracks().get(track)?.1.clips();
-                        clips
-                            .get(clips.partition_point(|c| c.start < mid))
-                            .map(|c| c.id)
-                    });
-                    let at = clip
-                        .and_then(|id| bounds(&mut window, clip_element_id(track, id)))
-                        .map(|b| b.center())
-                        .filter(|p| inside(root, *p))
-                        .unwrap_or(body);
+                    let (clip_id, x) = window
+                        .update(|_, cx| {
+                            let view = view.read(cx);
+                            let axis = view.axis();
+                            let mid = axis.t(axis.width * 0.5);
+                            let clips = view.tracks().get(track)?.1.clips();
+                            let first = clips.partition_point(|clip| clip.end() <= axis.start);
+                            let end = clips.partition_point(|clip| clip.start < axis.end());
+                            let visible = clips.get(first..end)?;
+                            let index = visible
+                                .partition_point(|clip| clip.start < mid)
+                                .min(visible.len().saturating_sub(1));
+                            let clip = visible.get(index)?;
+                            let left = clip.start.max(axis.start);
+                            let right = clip.end().min(axis.end());
+                            Some((clip.id, axis.x(left + (right - left) * 0.5)))
+                        })
+                        .ok_or("missing visible clip during tracks selection")?;
+                    let at =
+                        track_body.origin + point(px(x as f32), px((track as f32 + 0.5) * TRACK_H));
                     window.simulate_click(at, Modifiers::default());
+                    let selected = window.update(|_, cx| view.read(cx).selected());
+                    if selected != Some((track, clip_id)) {
+                        return Err(format!(
+                            "tracks selection expected ({track}, {clip_id}), got {selected:?}"
+                        )
+                        .into());
+                    }
                 }
                 _ => hover(
                     &mut window,
