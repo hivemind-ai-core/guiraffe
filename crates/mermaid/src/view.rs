@@ -15,6 +15,7 @@ use guiraffe_core::{GuiraffeTheme, Scheme};
 
 use crate::{
     engine::{Engine, Image, RenderError, Request},
+    sizing::zoom_raster_size,
     theme::{background_for, theme_for},
     viewport::{Point, Viewport},
 };
@@ -239,12 +240,32 @@ impl MermaidViewState {
         cx.notify();
     }
 
+    #[cfg(test)]
+    pub(crate) fn has_pending_zoom_refresh(&self) -> bool {
+        self.zoom_refresh.is_some()
+    }
+
     /// Zoom changed: redraw now (the current raster, scaled) and, once zooming pauses,
     /// re-rasterize at the new zoom so the diagram is sharp again.
     fn zoom_changed(&mut self, cx: &mut Context<Self>) {
         cx.notify();
         if self.source.is_empty() {
             return;
+        }
+        if self.status == Status::Ready
+            && let Some(image) = self.image()
+        {
+            let pixels = zoom_raster_size(
+                image.width,
+                image.height,
+                self.viewport.zoom(),
+                self.density,
+            );
+            let current = image.image.size(0);
+            if pixels == (current.width.0 as u32, current.height.0 as u32) {
+                self.zoom_refresh = None;
+                return;
+            }
         }
         let delay = cx.background_executor().timer(ZOOM_SETTLE);
         self.zoom_refresh = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {

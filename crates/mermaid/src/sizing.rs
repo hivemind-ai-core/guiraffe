@@ -36,6 +36,11 @@ pub fn raster_size(width: f32, height: f32, density: f32) -> (u32, u32) {
     )
 }
 
+pub(crate) fn zoom_raster_size(width: f32, height: f32, zoom: f32, density: f32) -> (u32, u32) {
+    let scale = zoom.clamp(1.0, 4.0);
+    raster_size(width * scale, height * scale, density)
+}
+
 /// Whether natural diagram dimensions are usable for layout.
 pub fn dimensions_are_usable(width: f32, height: f32) -> bool {
     width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0

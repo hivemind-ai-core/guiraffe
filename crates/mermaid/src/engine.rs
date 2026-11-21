@@ -18,7 +18,7 @@ use mermaid_rs_renderer::{
 };
 
 use crate::{
-    sizing::{dimensions_are_usable, raster_size},
+    sizing::{dimensions_are_usable, zoom_raster_size},
     source::{CacheKey, SourceError, admit},
 };
 
@@ -250,8 +250,7 @@ impl Engine {
         // below 1x, so zooming out keeps full quality.
         let width = nw.min(request.display_width.max(100.0));
         let height = width * nh / nw;
-        let scale = request.zoom.clamp(1.0, 4.0);
-        let pixels = raster_size(width * scale, height * scale, request.density);
+        let pixels = zoom_raster_size(width, height, request.zoom, request.density);
         let image = match &entry.raster {
             Some((size, image)) if *size == pixels => image.clone(),
             _ => {
