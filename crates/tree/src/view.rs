@@ -8,12 +8,15 @@ use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
     ScrollEvent, SharedString, StatefulInteractiveElement, Styled, TestSupportExt, Window,
+    assets::IconName,
     component::{
         Sizable, Size as ControlSize,
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
         color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
-        input::{Input, InputEvent, InputState, Textarea, TextareaState},
+        input::{
+            IndentInline, Input, InputEvent, InputState, OutdentInline, Textarea, TextareaState,
+        },
         menu::{ContextMenuExt, PopupMenuItem},
         slider::{Slider, SliderEvent, SliderState, SliderValue},
     },
@@ -96,21 +99,66 @@ pub enum TreeEvent {
     PickPath(NodeId),
 }
 
+/// Commit and cancel buttons shown beside an open text editor. Enter commits and Escape
+/// cancels whether or not they are shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EditButtons {
+    /// Keyboard and the context menu only (default).
+    #[default]
+    Hidden,
+    /// Compact tick and cross icon buttons.
+    Icons,
+    /// "Save" and "Cancel" text buttons.
+    Labels,
+}
+
+/// The largest Kit control size whose height (plus a little breathing room) fits `height`.
 fn row_control_size(height: f32) -> ControlSize {
     if height <= 28. {
         ControlSize::XSmall
+    } else if height < 36. {
+        ControlSize::Small
     } else {
         ControlSize::Medium
     }
 }
 
-fn text_height(text: &str, max_rows: usize) -> f64 {
-    (text.split('\n').take(max_rows).count().max(1) * 22 + 14) as f64
+/// Multi-line editors use the tighter text padding of small inputs so one line fits any row.
+fn multiline_size(size: ControlSize) -> ControlSize {
+    if size == ControlSize::XSmall {
+        size
+    } else {
+        ControlSize::Small
+    }
+}
+
+/// Space kept above and below an open editor that sets its row's height.
+const EDITOR_MARGIN: f64 = 2.;
+/// Line height of Kit text inputs (1.25 rem).
+const EDITOR_LINE: f64 = 20.;
+
+/// Estimated outer height of a multi-line editor showing `text`, before it is first measured:
+/// one line per paragraph up to `max_rows`, plus the input's vertical padding and border.
+fn multiline_height(text: &str, max_rows: usize, size: ControlSize) -> f64 {
+    let lines = text.split('\n').take(max_rows).count().max(1) as f64;
+    let padding = if size == ControlSize::XSmall { 0. } else { 2. };
+    lines * EDITOR_LINE + 2. * padding + 2.
+}
+
+/// Show a multi-line value on one row, marking each line break with "↵".
+fn one_line(text: String) -> String {
+    if text.contains('\n') {
+        text.split('\n').collect::<Vec<_>>().join(" ↵ ")
+    } else {
+        text
+    }
 }
 
 struct Edit {
     id: NodeId,
     input: EditorInput,
+    /// Laid-out height of the open value cell (estimated for multi-line editors until the first
+    /// frame measures it). The row grows to fit it.
     height: Option<f64>,
     _subscriptions: Vec<gpui_kit::Subscription>,
 }
@@ -181,6 +229,9 @@ pub struct TreeView<const PROPERTIES: bool> {
     drag: Option<(NodeId, gpui_kit::Point<gpui_kit::Pixels>)>,
     edit: Option<Edit>,
     error: Option<(NodeId, String)>,
+    focus_row: bool,
+    reset_button: bool,
+    edit_buttons: EditButtons,
 }
 
 struct Filter {
@@ -310,12 +361,58 @@ impl<const P: bool> TreeView<P> {
             drag: None,
             edit: None,
             error: None,
+            focus_row: true,
+            reset_button: true,
+            edit_buttons: EditButtons::Hidden,
         }
     }
 
     pub fn focusable(mut self, enabled: bool) -> Self {
         self.tab_stop = enabled;
         self
+    }
+
+    /// Highlight the selected and keyboard-cursor rows (default). When disabled, no row is ever
+    /// highlighted, including the row whose value is being edited, and Tab between editors
+    /// leaves the selection alone.
+    pub fn focus_row(mut self, enabled: bool) -> Self {
+        self.focus_row = enabled;
+        self
+    }
+
+    pub fn set_focus_row(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.focus_row != enabled {
+            self.focus_row = enabled;
+            cx.notify();
+        }
+    }
+
+    /// Show a "Reset" button on properties whose value differs from their default (default).
+    /// [PropertyOptions::reset_button] overrides this per property; the context menu keeps
+    /// "Reset to default" either way.
+    pub fn reset_button(mut self, enabled: bool) -> Self {
+        self.reset_button = enabled;
+        self
+    }
+
+    pub fn set_reset_button(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.reset_button != enabled {
+            self.reset_button = enabled;
+            cx.notify();
+        }
+    }
+
+    /// Show commit and cancel buttons beside an open text editor. Hidden by default.
+    pub fn edit_buttons(mut self, buttons: EditButtons) -> Self {
+        self.edit_buttons = buttons;
+        self
+    }
+
+    pub fn set_edit_buttons(&mut self, buttons: EditButtons, cx: &mut Context<Self>) {
+        if self.edit_buttons != buttons {
+            self.edit_buttons = buttons;
+            cx.notify();
+        }
     }
 
     pub fn row_style(mut self, style: RowStyle) -> Self {
@@ -357,7 +454,7 @@ impl<const P: bool> TreeView<P> {
         let editor = self
             .edit
             .as_ref()
-            .and_then(|edit| Some((edit.id, edit.height?)));
+            .and_then(|edit| Some((edit.id, edit.height? + 2. * EDITOR_MARGIN)));
         self.geometry
             .rebuild(self.row_style.density.height(), editor, |id| {
                 let rank = model.row_index(id)?;
@@ -654,14 +751,10 @@ impl<const P: bool> TreeView<P> {
         }
         if self.edit.is_some() {
             if key == "escape" {
-                self.edit = None;
-                self.rebuild_geometry();
-                self.clamp_scroll();
-                self.error = None;
-                if self.tab_stop {
-                    window.focus(&self.focus, cx);
-                }
-                cx.notify();
+                self.cancel_edit(window, cx);
+                cx.stop_propagation();
+            } else if key == "enter" && !event.keystroke.modifiers.shift {
+                // The editor commits on its submit event; keep the key from also being typed.
                 cx.stop_propagation();
             }
             return;
@@ -750,17 +843,87 @@ impl<const P: bool> TreeView<P> {
         }
 
         if let Some(index) = self.model.cursor().and_then(|id| self.display_rank(id)) {
-            let top = self.row_top(index);
-            let bottom = self.row_top(index + 1);
-            self.scroll = self
-                .scroll
-                .clamp((bottom - f64::from(self.height)).max(0.).min(top), top);
+            self.reveal(index);
         }
         self.clamp_scroll();
         cx.notify();
         cx.stop_propagation();
     }
 
+    /// Scroll the least distance that shows the whole row at display rank `index`.
+    fn reveal(&mut self, index: usize) {
+        let top = self.row_top(index);
+        let bottom = self.row_top(index + 1);
+        self.scroll = self
+            .scroll
+            .clamp((bottom - f64::from(self.height)).max(0.).min(top), top);
+    }
+
+    /// Close the open editor without committing.
+    fn cancel_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.edit.take().is_some() {
+            self.error = None;
+            self.rebuild_geometry();
+            self.clamp_scroll();
+            if self.tab_stop {
+                window.focus(&self.focus, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    /// Commit the open editor's text. An invalid value keeps the editor open with its error.
+    fn commit_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(edit) = &self.edit else { return };
+        let (id, text) = (edit.id, edit.input.value(cx));
+        self.commit_text(id, &text, cx);
+        if self.edit.is_none() && self.tab_stop {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    /// Record the measured height of the open value cell, growing or shrinking its row.
+    fn set_editor_height(&mut self, id: NodeId, height: f64, cx: &mut Context<Self>) {
+        let base = self.base_row_height(id);
+        let Some(edit) = self.edit.as_mut().filter(|edit| edit.id == id) else {
+            return;
+        };
+        if edit.height.is_some_and(|old| (old - height).abs() < 0.5) {
+            return;
+        }
+        let row = |height: Option<f64>| height.map_or(base, |h| base.max(h + 2. * EDITOR_MARGIN));
+        let changed = row(edit.height) != row(Some(height));
+        edit.height = Some(height);
+        if changed {
+            self.rebuild_geometry();
+            self.clamp_scroll();
+            cx.notify();
+        }
+    }
+
+    /// Whether the row paints the selection highlight.
+    fn highlighted(&self, id: NodeId) -> bool {
+        self.focus_row && (self.model.selected(id) || self.model.cursor() == Some(id))
+    }
+
+    /// Whether `id` has an open multi-line editor, whose measured height sets the row's.
+    /// Single-line editors are sized to fit the configured row.
+    fn growing_editor(&self, id: NodeId) -> bool {
+        self.edit
+            .as_ref()
+            .is_some_and(|edit| edit.id == id && matches!(edit.input, EditorInput::Multiline(_)))
+    }
+
+    /// The configured height of a row, ignoring any open editor.
+    fn base_row_height(&self, id: NodeId) -> f64 {
+        self.geometry
+            .override_height(id)
+            .unwrap_or_else(|| self.row_style.density.height())
+    }
+
+    /// Commit the open editor and open the next (or previous) visible, editable text value.
+    /// Rows inside collapsed groups are skipped; nothing expands. Past the last editor the edit
+    /// is committed and closed. Returns false when no editor is open.
     fn tab_to_editor(
         &mut self,
         reverse: bool,
@@ -769,32 +932,33 @@ impl<const P: bool> TreeView<P> {
     ) -> bool {
         let Some(edit) = &self.edit else { return false };
         let id = edit.id;
-        let Some(rank) = self.display_rank(id) else {
-            return false;
-        };
         if edit.input.focus_adjacent(reverse, window, cx) {
             return true;
         }
-        let text = edit.input.value(cx);
-        self.commit_text(id, &text, cx);
+        self.commit_edit(window, cx);
         if self.edit.is_some() {
             return true;
         }
-        let ranks = self.window();
-        let next = if reverse {
-            (ranks.start..rank)
-                .rev()
-                .find_map(|rank| self.inline_editor_at(rank))
-        } else {
-            (rank + 1..ranks.end).find_map(|rank| self.inline_editor_at(rank))
+        let Some(rank) = self.display_rank(id) else {
+            return true;
         };
-        if let Some(next) = next {
-            self.model.select(next, false);
-            self.start_edit(next, window, cx);
-            true
+        let next = if reverse {
+            (0..rank)
+                .rev()
+                .find_map(|rank| Some((rank, self.inline_editor_at(rank)?)))
         } else {
-            false
+            (rank + 1..self.row_count()).find_map(|rank| Some((rank, self.inline_editor_at(rank)?)))
+        };
+        if let Some((rank, next)) = next {
+            if self.focus_row {
+                self.model.select(next, false);
+            }
+            self.start_edit(next, window, cx);
+            self.reveal(rank);
+            self.clamp_scroll();
+            cx.notify();
         }
+        true
     }
 
     fn inline_editor_at(&self, rank: usize) -> Option<NodeId> {
@@ -873,6 +1037,13 @@ impl<const P: bool> TreeView<P> {
     }
 
     fn start_edit(&mut self, id: NodeId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.edit.as_ref().is_some_and(|edit| edit.id != id) {
+            // Opening another editor commits this one, like Tab.
+            self.commit_edit(window, cx);
+            if self.edit.is_some() {
+                return;
+            }
+        }
         let Some(property) = self
             .source
             .property(id)
@@ -916,14 +1087,9 @@ impl<const P: bool> TreeView<P> {
                     window,
                     move |this, _, event, window, cx| {
                         if matches!(event, InputEvent::PressEnter { .. })
-                            && let Some(edit) = &this.edit
-                            && edit.id == id
+                            && this.edit.as_ref().is_some_and(|edit| edit.id == id)
                         {
-                            let text = edit.input.value(cx);
-                            this.commit_text(id, &text, cx);
-                            if this.edit.is_none() && this.tab_stop {
-                                window.focus(&this.focus, cx);
-                            }
+                            this.commit_edit(window, cx);
                         }
                     },
                 ));
@@ -933,22 +1099,23 @@ impl<const P: bool> TreeView<P> {
             let focus = first.read(cx).focus_handle(cx);
             (EditorInput::Components(inputs), focus, None, subscriptions)
         } else if let Some(rows) = multiline {
-            let height = text_height(&text, rows);
-            let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, rows));
-            input.update(cx, |input, cx| input.set_value(text, window, cx));
-            let subscription = cx.subscribe(&input, move |this, input, event, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let height = text_height(&input.read(cx).value(), rows);
-                    if let Some(edit) = &mut this.edit
-                        && edit.id == id
-                        && edit.height != Some(height)
-                    {
-                        edit.height = Some(height);
-                        this.rebuild_geometry();
-                        cx.notify();
-                    }
-                }
+            let size = multiline_size(row_control_size(self.base_row_height(id) as f32));
+            let height = multiline_height(&text, rows, size);
+            // Enter commits like a single-line editor; Shift+Enter starts a new line.
+            let input = cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .auto_grow(1, rows)
+                    .submit_on_enter(true)
             });
+            input.update(cx, |input, cx| input.set_value(text, window, cx));
+            let subscription =
+                cx.subscribe_in(&input, window, move |this, _, event, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { shift: false, .. })
+                        && this.edit.as_ref().is_some_and(|edit| edit.id == id)
+                    {
+                        this.commit_edit(window, cx);
+                    }
+                });
             let focus = input.read(cx).focus_handle(cx);
             (
                 EditorInput::Multiline(input),
@@ -960,12 +1127,11 @@ impl<const P: bool> TreeView<P> {
             let input = cx.new(|cx| InputState::new(window, cx));
             input.update(cx, |input, cx| input.set_value(text, window, cx));
             let subscription =
-                cx.subscribe_in(&input, window, move |this, input, event, window, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. }) {
-                        this.commit_text(id, &input.read(cx).value(), cx);
-                        if this.edit.is_none() && this.tab_stop {
-                            window.focus(&this.focus, cx);
-                        }
+                cx.subscribe_in(&input, window, move |this, _, event, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. })
+                        && this.edit.as_ref().is_some_and(|edit| edit.id == id)
+                    {
+                        this.commit_edit(window, cx);
                     }
                 });
             let focus = input.read(cx).focus_handle(cx);
@@ -1130,6 +1296,53 @@ impl<const P: bool> TreeView<P> {
         self.finish_split(cx);
     }
 
+    /// Commit and cancel buttons for the open text editor of `id`, when enabled.
+    fn edit_button_row(
+        &self,
+        id: NodeId,
+        size: ControlSize,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement + use<P>> {
+        if self.edit_buttons == EditButtons::Hidden
+            || !self.edit.as_ref().is_some_and(|edit| edit.id == id)
+        {
+            return None;
+        }
+        let commit = Button::new(("property-edit-commit", id as usize))
+            .with_size(size)
+            .tab_stop(false)
+            .on_click(cx.listener(|this, _, window, cx| this.commit_edit(window, cx)));
+        let cancel = Button::new(("property-edit-cancel", id as usize))
+            .with_size(size)
+            .tab_stop(false)
+            .on_click(cx.listener(|this, _, window, cx| this.cancel_edit(window, cx)));
+        let (commit, cancel) = if self.edit_buttons == EditButtons::Icons {
+            (
+                commit
+                    .ghost()
+                    .compact()
+                    .icon(IconName::Check)
+                    .accessibility_label("Apply"),
+                cancel
+                    .ghost()
+                    .compact()
+                    .icon(IconName::Close)
+                    .accessibility_label("Cancel"),
+            )
+        } else {
+            (commit.label("Save"), cancel.label("Cancel"))
+        };
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(2.))
+                .child(commit)
+                .child(cancel),
+        )
+    }
+
     fn property_cell(&self, id: NodeId, row_height: f32, cx: &Context<Self>) -> Option<AnyElement> {
         let size = row_control_size(row_height);
         let property = self.source.property(id)?;
@@ -1137,7 +1350,10 @@ impl<const P: bool> TreeView<P> {
             self.scrub
                 .as_ref()
                 .filter(|scrub| scrub.id == id)
-                .map_or_else(|| property.value.text(), |scrub| scrub.preview.to_string())
+                .map_or_else(
+                    || one_line(property.value.text()),
+                    |scrub| scrub.preview.to_string(),
+                )
         };
         let options = self.source.property_options(id);
         let editing = self.edit.as_ref().is_some_and(|edit| edit.id == id);
@@ -1147,7 +1363,7 @@ impl<const P: bool> TreeView<P> {
                     .child(if options.mixed {
                         "—".to_owned()
                     } else {
-                        property.value.text()
+                        one_line(property.value.text())
                     })
                     .into_any_element(),
                 _ if editing => {
@@ -1184,22 +1400,11 @@ impl<const P: bool> TreeView<P> {
                         EditorInput::Multiline(input) => div()
                             .flex_1()
                             .min_w_0()
-                            .flex()
-                            .items_center()
-                            .child(Textarea::new(input).aria_label(label).w_full().flex_1())
                             .child(
-                                Button::new(("property-text-save", id as usize))
-                                    .with_size(size)
-                                    .label("Save")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(Edit {
-                                            input: EditorInput::Multiline(input),
-                                            ..
-                                        }) = &this.edit
-                                        {
-                                            this.commit_text(id, &input.read(cx).value(), cx);
-                                        }
-                                    })),
+                                Textarea::new(input)
+                                    .with_size(multiline_size(size))
+                                    .aria_label(label)
+                                    .w_full(),
                             )
                             .into_any_element(),
                     }
@@ -1409,8 +1614,11 @@ impl<const P: bool> TreeView<P> {
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(TreeEvent::PickPath(id))))
                 }),
             )
+            .children(self.edit_button_row(id, size, cx))
             .children(
-                (!property.read_only && (options.mixed || property.value != property.default))
+                (!property.read_only
+                    && options.reset_button.unwrap_or(self.reset_button)
+                    && (options.mixed || property.value != property.default))
                     .then(|| {
                         let default = property.default.clone();
                         Button::new(("property-reset", id as usize))
@@ -1436,6 +1644,35 @@ impl<const P: bool> TreeView<P> {
                             .child(error.clone())
                     }),
             );
+        let cell = if self.growing_editor(id) {
+            // Measure the open editor so its row grows (or shrinks back) to fit it.
+            let view = cx.weak_entity();
+            cell.relative().child(
+                gpui_kit::canvas(
+                    move |bounds, _, cx| {
+                        let height = f64::from(f32::from(bounds.size.height));
+                        let stale = view.upgrade().filter(|view| {
+                            view.read(cx).edit.as_ref().is_some_and(|edit| {
+                                edit.id == id
+                                    && edit.height.is_none_or(|old| (old - height).abs() >= 0.5)
+                            })
+                        });
+                        if let Some(view) = stale {
+                            cx.defer(move |cx| {
+                                view.update(cx, |this, cx| this.set_editor_height(id, height, cx))
+                            });
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+        } else {
+            cell
+        };
         if self.split.is_none() {
             return Some(cell.into_any_element());
         }
@@ -1522,7 +1759,14 @@ impl<const P: bool> Render for TreeView<P> {
             let (row, siblings) = self.model.row_and_siblings(self.model_rank(index)?)?;
             let id = row.id;
             let height = (self.row_top(index + 1) - self.row_top(index)) as f32;
-            let size = row_control_size(height);
+            let editing = P && self.edit.as_ref().is_some_and(|edit| edit.id == id);
+            // Controls keep the configured row's size while an editor grows the row.
+            let control_height = if editing {
+                self.base_row_height(id) as f32
+            } else {
+                height
+            };
+            let size = row_control_size(control_height);
             let open = self.model.expanded(id);
             let branch = self.source.children(id) != Children::Ready(&[]);
             let selected = self.model.selected(id);
@@ -1541,12 +1785,17 @@ impl<const P: bool> Render for TreeView<P> {
                 .aria_label(label.clone())
                 .aria_selected(selected)
                 .aria_level(row.depth + 1)
-                .h(px(height))
                 .w_full()
                 .flex()
                 .items_center()
                 .gap(px(4.))
                 .hover(|style| style.bg(hover_background));
+            // A multi-line editor's row is at least its measured height and never clips it.
+            element = if self.growing_editor(id) {
+                element.min_h(px(height))
+            } else {
+                element.h(px(height))
+            };
             if let Some((position, count)) = siblings {
                 element = element
                     .aria_position_in_set(position)
@@ -1581,7 +1830,7 @@ impl<const P: bool> Render for TreeView<P> {
                             .bg(border)
                     }));
             }
-            if selected || active {
+            if self.highlighted(id) {
                 element = element
                     .bg(selection_background)
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD);
@@ -1659,7 +1908,8 @@ impl<const P: bool> Render for TreeView<P> {
                             .id(("tree-select", id as usize))
                             .flex_1()
                             .text_ellipsis()
-                            .py(px(6.))
+                            // While the row fits its editor only the editor sets its height.
+                            .py(px(if self.growing_editor(id) { 0. } else { 6. }))
                             .cursor_pointer()
                             .child(
                                 match needle.and_then(|needle| match_range(&label, needle)) {
@@ -1709,7 +1959,7 @@ impl<const P: bool> Render for TreeView<P> {
                             }),
                     )
                     .children(if P {
-                        self.property_cell(id, height, cx)
+                        self.property_cell(id, control_height, cx)
                     } else {
                         None
                     }),
@@ -1767,6 +2017,20 @@ impl<const P: bool> Render for TreeView<P> {
             .on_key_down(
                 cx.listener(|this, event: &KeyDownEvent, window, cx| this.key(event, window, cx)),
             )
+            .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
+                if this.tab_to_editor(false, window, cx) {
+                    cx.stop_propagation();
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &OutdentInline, window, cx| {
+                if this.tab_to_editor(true, window, cx) {
+                    cx.stop_propagation();
+                } else {
+                    cx.propagate();
+                }
+            }))
             .child(
                 div()
                     .absolute()
@@ -2470,5 +2734,387 @@ mod tests {
             window.run_until_parked();
             assert!(events.borrow().contains(&TreeEvent::Edited(id, value)));
         }
+    }
+
+    /// Text fields for the editing tests: a read-only row and a collapsed group sit between
+    /// "Name" and "Size", and "Notes" opts into a multi-line editor.
+    struct Fields {
+        values: [(Value, Value); 6],
+        reset: Option<bool>,
+    }
+
+    const FIELDS: [&str; 6] = ["Name", "Locked", "Group", "Hidden", "Size", "Notes"];
+
+    impl Fields {
+        fn new() -> Self {
+            let text = |text: &str| (Value::Text(text.into()), Value::Text(text.into()));
+            Self {
+                values: [
+                    (Value::Text("Alpha".into()), Value::Text("Default".into())),
+                    text("Fixed"),
+                    text(""),
+                    text("Inner"),
+                    (Value::Number(3.), Value::Number(3.)),
+                    text("One line"),
+                ],
+                reset: None,
+            }
+        }
+    }
+
+    impl TreeSource for Fields {
+        fn roots(&self) -> &[NodeId] {
+            &[0, 1, 2, 4, 5]
+        }
+        fn children(&self, id: NodeId) -> Children<'_> {
+            Children::Ready(if id == 2 { &[3] } else { &[] })
+        }
+        fn label(&self, id: NodeId) -> &str {
+            FIELDS.get(id as usize).copied().unwrap_or("")
+        }
+    }
+
+    impl TreeData for Fields {
+        fn property(&self, id: NodeId) -> Option<Property<'_>> {
+            let (value, default) = self.values.get(id as usize).filter(|_| id != 2)?;
+            Some(Property {
+                value,
+                default,
+                choices: &[],
+                read_only: id == 1,
+            })
+        }
+        fn property_options(&self, id: NodeId) -> PropertyOptions<'_> {
+            PropertyOptions {
+                multiline_rows: (id == 5).then_some(4),
+                reset_button: (id == 0).then_some(self.reset).flatten(),
+                ..Default::default()
+            }
+        }
+    }
+
+    type Events = Rc<RefCell<Vec<TreeEvent>>>;
+
+    fn open_fields(
+        cx: &mut TestAppContext,
+        source: Fields,
+        build: impl FnOnce(PropertyGrid) -> PropertyGrid,
+    ) -> (
+        Entity<PropertyGrid>,
+        &mut gpui_kit::VisualTestContext,
+        Events,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::base::init(cx);
+            gpui_kit::component::init(cx);
+            guiraffe_core::apply(Default::default(), cx);
+        });
+        let events: Events = Rc::new(RefCell::new(Vec::new()));
+        let view = cx.new(|cx| build(PropertyGrid::new(Rc::new(source), cx)));
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let events = events.clone();
+            cx.subscribe(&view, move |_, _, event: &TreeEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach();
+            gpui_kit::base::Root::new(view.clone(), window, cx)
+        });
+        window.run_until_parked();
+        (view, window, events)
+    }
+
+    fn editing(
+        view: &Entity<PropertyGrid>,
+        window: &mut gpui_kit::VisualTestContext,
+    ) -> Option<NodeId> {
+        view.read_with(window, |view, _| view.edit.as_ref().map(|edit| edit.id))
+    }
+
+    /// Replace the open editor's text.
+    fn type_text(
+        view: &Entity<PropertyGrid>,
+        window: &mut gpui_kit::VisualTestContext,
+        text: &str,
+    ) {
+        let input = view.read_with(window, |view, _| {
+            view.edit.as_ref().map(|edit| match &edit.input {
+                EditorInput::Single(input) => Ok(input.clone()),
+                EditorInput::Multiline(input) => Err(input.clone()),
+                EditorInput::Components(_) => panic!("component editor"),
+            })
+        });
+        window.update(|window, cx| match input {
+            Some(Ok(input)) => input.update(cx, |input, cx| input.set_value(text, window, cx)),
+            Some(Err(input)) => input.update(cx, |input, cx| input.set_value(text, window, cx)),
+            None => panic!("no editor is open"),
+        });
+        window.run_until_parked();
+    }
+
+    fn click_label(window: &mut gpui_kit::VisualTestContext, label: &str) {
+        use gpui_kit::test::TestQueryExt;
+        let position = window.update(|window, _| window.find_by_label(label).bounds().center());
+        window.simulate_click(position, Modifiers::default());
+        window.run_until_parked();
+    }
+
+    /// The bounds of the row labelled `label` and of every other element with that label (the
+    /// open editor), which must lie inside it.
+    fn row_and_editor(
+        window: &mut gpui_kit::VisualTestContext,
+        label: &str,
+    ) -> (
+        gpui_kit::Bounds<gpui_kit::Pixels>,
+        Vec<gpui_kit::Bounds<gpui_kit::Pixels>>,
+    ) {
+        use gpui_kit::test::TestQueryExt;
+        window.update(|window, _| {
+            let found = window.find_all_by_label(label);
+            let row = found
+                .iter()
+                .find(|node| node.role() == Some(Role::TreeItem))
+                .map(|node| node.bounds())
+                .expect("row");
+            let editor = found
+                .iter()
+                .filter(|node| node.role() != Some(Role::TreeItem))
+                .map(|node| node.bounds())
+                .collect();
+            (row, editor)
+        })
+    }
+
+    fn assert_editor_fits(window: &mut gpui_kit::VisualTestContext, label: &str) -> f32 {
+        let (row, editors) = row_and_editor(window, label);
+        assert!(!editors.is_empty(), "{label}: no editor");
+        for editor in editors {
+            assert!(
+                editor.top() >= row.top() && editor.bottom() <= row.bottom(),
+                "{label}: editor {editor:?} spills out of row {row:?}"
+            );
+        }
+        f32::from(row.size.height)
+    }
+
+    #[gpui_kit::test]
+    fn enter_commits_and_escape_cancels_single_line_text(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        let (view, window, events) = open_fields(cx, Fields::new(), |grid| grid.focusable(true));
+        click_label(window, "Alpha");
+        assert!(view.read_with(window, |view, _| matches!(
+            view.edit.as_ref().map(|edit| &edit.input),
+            Some(EditorInput::Single(_))
+        )));
+        // No commit or cancel buttons by default.
+        window.update(|window, _| {
+            for label in ["Save", "Apply", "Cancel"] {
+                assert!(window.try_find_by_label(label).is_none(), "{label} shown");
+            }
+        });
+        type_text(&view, window, "Beta");
+        window.simulate_keystrokes("enter");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), None);
+        assert_eq!(
+            events.borrow().last(),
+            Some(&TreeEvent::Edited(0, Value::Text("Beta".into())))
+        );
+
+        let count = events.borrow().len();
+        click_label(window, "Alpha");
+        type_text(&view, window, "Discarded");
+        window.simulate_keystrokes("escape");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), None);
+        assert_eq!(events.borrow().len(), count, "Escape emitted an edit");
+    }
+
+    #[gpui_kit::test]
+    fn tab_and_shift_tab_traverse_editable_visible_values(cx: &mut TestAppContext) {
+        let (view, window, events) = open_fields(cx, Fields::new(), |grid| grid);
+        click_label(window, "Alpha");
+        type_text(&view, window, "Beta");
+        // Skips the read-only row, the group row and the collapsed group's child.
+        window.simulate_keystrokes("tab");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), Some(4));
+        assert!(
+            events
+                .borrow()
+                .contains(&TreeEvent::Edited(0, Value::Text("Beta".into())))
+        );
+        assert!(!view.read_with(window, |view, _| view.model.expanded(2)));
+        assert!(view.read_with(window, |view, _| view.model.selected(4)));
+        window.simulate_keystrokes("tab");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), Some(5));
+        window.simulate_keystrokes("shift-tab shift-tab");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), Some(0));
+        // Past the last editor Tab commits and closes.
+        window.simulate_keystrokes("shift-tab");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), None);
+        assert!(!view.read_with(window, |view, _| view.model.expanded(2)));
+    }
+
+    #[gpui_kit::test]
+    fn multiline_rows_grow_to_fit_then_cap_and_shrink(cx: &mut TestAppContext) {
+        let (view, window, events) = open_fields(cx, Fields::new(), |grid| grid);
+        let closed = assert_editor_fits_row_only(window, "Notes");
+        click_label(window, "One line");
+        assert!(view.read_with(window, |view, _| matches!(
+            view.edit.as_ref().map(|edit| &edit.input),
+            Some(EditorInput::Multiline(_))
+        )));
+        let one = assert_editor_fits(window, "Notes");
+        assert_eq!(one, closed, "one line fits the default row");
+        type_text(&view, window, "one\ntwo\nthree");
+        window.run_until_parked();
+        let three = assert_editor_fits(window, "Notes");
+        assert!(three > one + 30., "three lines: {three} vs {one}");
+        // The model's geometry agrees with the laid-out row.
+        let geometry = view.read_with(window, |view, _| {
+            let rank = view.display_rank(5).expect("rank");
+            (view.row_top(rank + 1) - view.row_top(rank)) as f32
+        });
+        assert!((geometry - three).abs() < 1., "{geometry} vs {three}");
+        type_text(&view, window, &"line\n".repeat(12));
+        window.run_until_parked();
+        let capped = assert_editor_fits(window, "Notes");
+        assert!(
+            capped > three && capped < one + 4. * 20.,
+            "capped at {capped}"
+        );
+        type_text(&view, window, "short");
+        window.run_until_parked();
+        assert_eq!(assert_editor_fits(window, "Notes"), one);
+        // Shift+Enter starts a new line; Enter commits the multi-line text.
+        type_text(&view, window, "first");
+        window.simulate_keystrokes("end shift-enter");
+        window.simulate_input("second");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), Some(5));
+        window.simulate_keystrokes("enter");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), None);
+        assert_eq!(
+            events.borrow().last(),
+            Some(&TreeEvent::Edited(5, Value::Text("first\nsecond".into())))
+        );
+    }
+
+    fn assert_editor_fits_row_only(window: &mut gpui_kit::VisualTestContext, label: &str) -> f32 {
+        f32::from(row_and_editor(window, label).0.size.height)
+    }
+
+    #[gpui_kit::test]
+    fn editors_stay_inside_their_rows_at_every_density(cx: &mut TestAppContext) {
+        let (view, window, _) = open_fields(cx, Fields::new(), |grid| {
+            grid.edit_buttons(EditButtons::Labels)
+        });
+        for density in [
+            RowDensity::Compact,
+            RowDensity::Default,
+            RowDensity::Comfortable,
+        ] {
+            view.update(window, |view, cx| {
+                view.set_row_style(
+                    RowStyle {
+                        density,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            });
+            window.run_until_parked();
+            for (value, label) in [("Alpha", "Name"), ("3", "Size"), ("One line", "Notes")] {
+                click_label(window, value);
+                let height = assert_editor_fits(window, label);
+                assert_eq!(
+                    f64::from(height),
+                    density.height(),
+                    "{label} {density:?} editor grew a one-line row"
+                );
+                window.simulate_keystrokes("escape");
+                window.run_until_parked();
+            }
+        }
+    }
+
+    #[gpui_kit::test]
+    fn edit_buttons_commit_and_cancel(cx: &mut TestAppContext) {
+        let (view, window, events) = open_fields(cx, Fields::new(), |grid| {
+            grid.edit_buttons(EditButtons::Icons)
+        });
+        click_label(window, "Alpha");
+        type_text(&view, window, "Dropped");
+        click_label(window, "Cancel");
+        assert_eq!(editing(&view, window), None);
+        assert!(events.borrow().is_empty());
+        click_label(window, "Alpha");
+        type_text(&view, window, "Kept");
+        click_label(window, "Apply");
+        assert_eq!(editing(&view, window), None);
+        assert_eq!(
+            events.borrow().last(),
+            Some(&TreeEvent::Edited(0, Value::Text("Kept".into())))
+        );
+    }
+
+    #[gpui_kit::test]
+    fn focus_row_false_never_highlights(cx: &mut TestAppContext) {
+        let (view, window, _) = open_fields(cx, Fields::new(), |grid| grid.focus_row(false));
+        view.update(window, |view, cx| {
+            view.model.select(0, false);
+            cx.notify();
+        });
+        assert!(view.read_with(window, |view, _| view.model.selected(0)));
+        click_label(window, "Alpha");
+        window.simulate_keystrokes("tab");
+        window.run_until_parked();
+        assert_eq!(editing(&view, window), Some(4));
+        view.read_with(window, |view, _| {
+            assert!(!view.model.selected(4), "Tab moved the selection");
+            for id in 0..6 {
+                assert!(!view.highlighted(id), "row {id} highlighted");
+            }
+        });
+        view.update(window, |view, cx| view.set_focus_row(true, cx));
+        assert!(view.read_with(window, |view, _| view.highlighted(0)));
+    }
+
+    #[gpui_kit::test]
+    fn reset_button_is_configurable_per_grid_and_property(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        let reset_shown = |window: &mut gpui_kit::VisualTestContext| {
+            window.run_until_parked();
+            window.update(|window, _| window.try_find_by_label("Reset").is_some())
+        };
+        let (view, window, _) = open_fields(cx, Fields::new(), |grid| grid);
+        assert!(reset_shown(window), "Reset shows by default");
+        view.update(window, |view, cx| view.set_reset_button(false, cx));
+        assert!(!reset_shown(window), "reset_button(false) hides Reset");
+        let source = |reset| {
+            Rc::new(Fields {
+                reset,
+                ..Fields::new()
+            })
+        };
+        view.update(window, |view, cx| {
+            view.replace_source(source(Some(true)), cx)
+        });
+        assert!(reset_shown(window), "per-property override shows Reset");
+        view.update(window, |view, cx| {
+            view.set_reset_button(true, cx);
+            view.replace_source(source(Some(false)), cx);
+        });
+        assert!(!reset_shown(window), "per-property override hides Reset");
+    }
+
+    #[test]
+    fn multiline_values_display_on_one_line() {
+        assert_eq!(one_line("a\nb".into()), "a ↵ b");
+        assert_eq!(one_line("plain".into()), "plain");
     }
 }
