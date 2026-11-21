@@ -297,6 +297,9 @@ pub(crate) struct Coordinates {
     ids: Vec<(usize, u64)>,
     first: Option<DatumId>,
     stride: (usize, u64),
+    color: Vec<Option<Color>>,
+    size: Vec<f32>,
+    text: Vec<Option<Arc<str>>>,
 }
 
 impl Coordinates {
@@ -338,6 +341,9 @@ impl Coordinates {
         if !self.ids.is_empty() {
             self.ids.push((row.id.index, row.id.key));
         }
+        push_channel(&mut self.color, len, None, row.color);
+        push_channel(&mut self.size, len, 3., row.size);
+        push_channel(&mut self.text, len, None, row.text);
         self.x.push(row.x);
         self.y.push(row.y);
     }
@@ -361,11 +367,22 @@ impl Coordinates {
             y2: None,
             low: None,
             ohlc: None,
-            size: 3.,
-            color: None,
-            text: None,
+            size: self.size.get(index).copied().unwrap_or(3.),
+            color: self.color.get(index).copied().flatten(),
+            text: self.text.get(index).cloned().flatten(),
         }
     }
+}
+
+// Empty means every entry has the channel's default value.
+fn push_channel<T: Clone + PartialEq>(column: &mut Vec<T>, len: usize, default: T, value: T) {
+    if column.is_empty() {
+        if value == default {
+            return;
+        }
+        column.resize(len, default);
+    }
+    column.push(value);
 }
 
 pub(crate) enum Rows {
@@ -383,15 +400,9 @@ impl Rows {
     }
 
     fn push(&mut self, sample: Sample) {
-        if let Self::Plain(columns) = self {
-            if sample.color.is_none() && sample.size == 3. && sample.text.is_none() {
-                columns.push(sample);
-                return;
-            }
-            *self = Self::Styled((0..columns.x.len()).map(|i| columns.row(i)).collect());
-        }
-        if let Self::Styled(rows) = self {
-            rows.push(sample);
+        match self {
+            Self::Plain(columns) => columns.push(sample),
+            Self::Styled(rows) => rows.push(sample),
         }
     }
 
@@ -861,6 +872,48 @@ mod tests {
         assert_eq!(rows.row(0).id.index, 0);
         assert_eq!(rows.row(rows.len() - 1).id.index, 99_999);
         assert!(rows.iter().all(|row| row.x == row.id.index as f64));
+    }
+
+    #[test]
+    fn compact_sort_preserves_irregular_ids_and_optional_style() {
+        struct Source(Vec<(u64, f64)>);
+
+        impl ChartSource for Source {
+            type Row = (u64, f64);
+
+            fn len(&self) -> usize {
+                self.0.len()
+            }
+            fn row(&self, index: usize) -> Option<&Self::Row> {
+                self.0.get(index)
+            }
+            fn key(&self, index: usize) -> u64 {
+                self.0[index].0
+            }
+        }
+
+        let chart = ChartSpec::new("styled bubbles")
+            .layer(Layer::new(
+                Mark::Bubble,
+                Source(vec![(u64::MAX, 3.), (0, 1.), (7, 2.)]),
+                Channels::new(|p: &(u64, f64)| p.1, |p| p.1 + 1.)
+                    .color(|p| Color::Category(p.1 as u32))
+                    .size(|p| p.1 as f32 + 3.)
+                    .text(|p| if p.0 == 7 { "middle" } else { "" }),
+            ))
+            .prepare();
+        let rows = &chart.runs[0].rows;
+        assert!(matches!(rows, Rows::Plain(_)));
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.id.index, row.id.key))
+                .collect::<Vec<_>>(),
+            [(1, 0), (2, 7), (0, u64::MAX)]
+        );
+        let middle = rows.row(1);
+        assert_eq!(middle.size, 5.);
+        assert_eq!(middle.color, Some(Color::Category(2)));
+        assert_eq!(middle.text.as_deref(), Some("middle"));
     }
 
     #[test]
