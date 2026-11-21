@@ -196,3 +196,31 @@ fn accessibility_roles_and_values(cx: &mut TestAppContext) {
 fn remove_id() -> gpui_kit::ElementId {
     (gpui_kit::ElementId::from(("tag", 0usize)), "remove").into()
 }
+
+/// gpui-fast re-renders a clicked control's view on its own, without the `focus_scope`
+/// around it; the control must still read the scope's context and stay a tab stop.
+#[gpui_kit::test]
+fn controls_stay_tab_stops_after_isolated_rerenders(cx: &mut TestAppContext) {
+    let (host, vcx, input) = mount(cx);
+    let (chips, range) = host.read_with(vcx, |h, _| (h.chips.clone(), h.range.clone()));
+    for _ in 0..2 {
+        vcx.update(|window, cx| {
+            window.click(("chip", 1usize), cx);
+            window.click("range", cx);
+        });
+        vcx.update(|_, cx| {
+            chips.update(cx, |_, cx| cx.notify());
+            range.update(cx, |_, cx| cx.notify());
+        });
+        vcx.run_until_parked();
+    }
+    vcx.update(|window, _| assert!(input.is_focused(window), "a pointer press stole focus"));
+    // Input -> chips 0, 1, 2 -> range.
+    for _ in 0..4 {
+        keyboard_focus_next(vcx);
+    }
+    assert!(
+        vcx.update(|w, cx| range.read(cx).focus_handle(cx).is_focused(w)),
+        "Tab still reaches the chips and the range slider after they re-rendered"
+    );
+}
