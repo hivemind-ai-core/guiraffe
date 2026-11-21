@@ -323,6 +323,9 @@ impl CodeHandle {
             &self.shared.annotations.borrow(),
         );
         *self.shared.folds.borrow_mut() = folds;
+        self.shared
+            .text_epoch
+            .set(self.shared.text_epoch.get().wrapping_add(1));
         self.scroll_to(self.viewport(), cx);
         self.notify_all(cx);
     }
