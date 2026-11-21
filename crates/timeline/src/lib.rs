@@ -38,6 +38,7 @@ pub use edit::ResizeEdges;
 /// Register the keyboard bindings of the editable views (see [`edit::init`]).
 pub fn init(cx: &mut gpui_kit::App) {
     edit::init(cx);
+    event_view::init(cx);
 }
 
 #[cfg(test)]
@@ -85,3 +86,10 @@ pub use curves::TangentMode;
 pub use curve_view::CurveSeries;
 
 pub mod channels;
+
+pub mod event_layout;
+pub mod event_view;
+pub use event_layout::{
+    EventLink, EventModel, EventModelError, EventTrack, LinkKind, TimelineEvent,
+};
+pub use event_view::{EventOrientation, EventTimeline, EventTimelineEvent, EventTimelineState};

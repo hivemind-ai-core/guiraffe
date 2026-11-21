@@ -84,7 +84,11 @@ impl RoutedLink {
         let end = self.to.slot as f64 + 0.5;
         let from = self.from.track as f64;
         let to = self.to.track as f64;
-        let gutter = if start == end { start - 0.375 } else { start + 0.375 };
+        let gutter = if start == end {
+            start - 0.375
+        } else {
+            start + 0.375
+        };
         [(start, from), (gutter, from), (gutter, to), (end, to)]
     }
 }
@@ -133,7 +137,12 @@ impl EventModel {
                 width = width.max(stack.len());
                 for (offset, &(_, track, event)) in stack.iter().enumerate() {
                     if let (Some(lane), Some(item)) = (lanes.get_mut(track), events.get(event)) {
-                        let placement = Placement { event, slot: base + offset, track, row: lane.len() };
+                        let placement = Placement {
+                            event,
+                            slot: base + offset,
+                            track,
+                            row: lane.len(),
+                        };
                         if placements.insert(item.id, placement).is_some() {
                             return Err(EventModelError::DuplicateEvent(item.id));
                         }
@@ -146,10 +155,19 @@ impl EventModel {
         let mut routed = Vec::with_capacity(links.len());
         let mut incident = HashMap::new();
         for link in links {
-            let from = placements.get(&link.source).copied().ok_or(EventModelError::UnknownEvent(link.source))?;
-            let to = placements.get(&link.destination).copied().ok_or(EventModelError::UnknownEvent(link.destination))?;
+            let from = placements
+                .get(&link.source)
+                .copied()
+                .ok_or(EventModelError::UnknownEvent(link.source))?;
+            let to = placements
+                .get(&link.destination)
+                .copied()
+                .ok_or(EventModelError::UnknownEvent(link.destination))?;
             if from.track == to.track || from.slot > to.slot {
-                return Err(EventModelError::InvalidLink(EventLinkIds(link.source, link.destination)));
+                return Err(EventModelError::InvalidLink(EventLinkIds(
+                    link.source,
+                    link.destination,
+                )));
             }
             let kind = usize::from(link.kind == LinkKind::Merge);
             for id in [link.source, link.destination] {
@@ -159,19 +177,39 @@ impl EventModel {
             }
             routed.push(RoutedLink { from, to, link });
         }
-        routed.sort_unstable_by_key(|route| (route.from.slot, route.to.slot, route.link.source, route.link.destination));
+        routed.sort_unstable_by_key(|route| {
+            (
+                route.from.slot,
+                route.to.slot,
+                route.link.source,
+                route.link.destination,
+            )
+        });
         let leaf_count = routed.len().next_power_of_two();
         let mut max_end = vec![0; leaf_count * 2];
         for (end, route) in max_end.iter_mut().skip(leaf_count).zip(&routed) {
             *end = route.to.slot;
         }
         for index in (1..leaf_count).rev() {
-            let end = max_end.get(index * 2).copied().unwrap_or_default().max(max_end.get(index * 2 + 1).copied().unwrap_or_default());
+            let end = max_end
+                .get(index * 2)
+                .copied()
+                .unwrap_or_default()
+                .max(max_end.get(index * 2 + 1).copied().unwrap_or_default());
             if let Some(slot) = max_end.get_mut(index) {
                 *slot = end;
             }
         }
-        Ok(Self { tracks, events, lanes, slots: base, placements, links: routed, max_end, incident })
+        Ok(Self {
+            tracks,
+            events,
+            lanes,
+            slots: base,
+            placements,
+            links: routed,
+            max_end,
+            incident,
+        })
     }
 
     pub(crate) fn locate(&self, id: u64) -> Option<Placement> {
@@ -186,11 +224,20 @@ impl EventModel {
         if slots.is_empty() {
             return;
         }
-        let end = self.links.partition_point(|route| route.from.slot < slots.end);
+        let end = self
+            .links
+            .partition_point(|route| route.from.slot < slots.end);
         self.visit_links(1, 0..self.max_end.len() / 2, slots.start, end, &mut visit);
     }
 
-    fn visit_links(&self, node: usize, rows: Range<usize>, start: usize, end: usize, visit: &mut impl FnMut(RoutedLink)) {
+    fn visit_links(
+        &self,
+        node: usize,
+        rows: Range<usize>,
+        start: usize,
+        end: usize,
+        visit: &mut impl FnMut(RoutedLink),
+    ) {
         if rows.start >= end || self.max_end.get(node).is_none_or(|last| *last < start) {
             return;
         }
@@ -204,6 +251,21 @@ impl EventModel {
         self.visit_links(node * 2, rows.start..middle, start, end, visit);
         self.visit_links(node * 2 + 1, middle..rows.end, start, end, visit);
     }
+}
+
+/// Clip one orthogonal connector segment to the visible chronology interval.
+pub(crate) fn clip_segment(
+    from: (f64, f64),
+    to: (f64, f64),
+    visible: Range<f64>,
+) -> Option<[(f64, f64); 2]> {
+    let (first, last) = (from.0.min(to.0), from.0.max(to.0));
+    if last < visible.start || first > visible.end || visible.is_empty() {
+        return None;
+    }
+    let start = (from.0.clamp(visible.start, visible.end), from.1);
+    let end = (to.0.clamp(visible.start, visible.end), to.1);
+    (start != end).then_some([start, end])
 }
 
 pub(crate) fn visible_range(offset: f64, viewport: f64, pitch: f64, count: usize) -> Range<usize> {
@@ -234,7 +296,7 @@ mod tests {
             let events = rows.iter().enumerate().map(|(id, &(track, position))| TimelineEvent {
                 id: id as u64, track, position, label: id.to_string(), content: None, tags: vec![], color: None,
             }).collect();
-            let model = EventModel::new(tracks, events, vec![]).unwrap();
+            let model = EventModel::new(tracks, events, vec![]).unwrap_or_else(|error| panic!("{error}"));
             let mut expected = vec![Vec::new(); 4];
             let mut base = 0;
             for position in -10..10 {
@@ -258,6 +320,15 @@ mod tests {
                     expected.into_iter().filter(|(_, slot)| range.contains(slot)).collect::<Vec<_>>());
             }
         }
+    }
+
+    #[test]
+    fn same_slot_crossing_is_not_projected_onto_viewport_edge() {
+        assert_eq!(clip_segment((1.125, 0.0), (1.125, 2.0), 1.2..2.0), None);
+        assert_eq!(
+            clip_segment((1.125, 2.0), (3.5, 2.0), 1.2..2.0),
+            Some([(1.2, 2.0), (2.0, 2.0)])
+        );
     }
 
     proptest! {
