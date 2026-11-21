@@ -3732,6 +3732,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-layout",
+ "guiraffe-test",
  "proptest",
 ]
 

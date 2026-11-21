@@ -101,6 +101,29 @@ fn row_control_size(height: f32) -> ControlSize {
     }
 }
 
+/// Byte range of the first case-insensitive occurrence of `needle` (already lowercase) in
+/// `label`. Compares each char's lowercase expansion in place, so it allocates nothing.
+pub(crate) fn match_range(label: &str, needle: &str) -> Option<std::ops::Range<usize>> {
+    if needle.is_empty() {
+        return None;
+    }
+    label.char_indices().find_map(|(start, _)| {
+        let mut hay = label[start..].char_indices().flat_map(|(at, c)| {
+            c.to_lowercase()
+                .map(move |lower| (at + c.len_utf8(), lower))
+        });
+        let mut end = start;
+        for wanted in needle.chars() {
+            let (after, lower) = hay.next()?;
+            if lower != wanted {
+                return None;
+            }
+            end = start + after;
+        }
+        Some(start..end)
+    })
+}
+
 fn text_height(text: &str, max_rows: usize) -> f64 {
     (text.split('\n').take(max_rows).count().max(1) * 22 + 14) as f64
 }
@@ -452,7 +475,7 @@ impl<const P: bool> TreeView<P> {
                             && (this.show_advanced
                                 || !this.source.property_options(row.id).advanced)
                             && (needle.is_empty()
-                                || this.source.label(row.id).to_lowercase().contains(&needle))
+                                || match_range(this.source.label(row.id), &needle).is_some())
                         {
                             matches.push(rank);
                         }
@@ -480,6 +503,30 @@ impl<const P: bool> TreeView<P> {
             ranks: Vec::new(),
             task: Some(task),
             pending: true,
+        });
+        self.rebuild_geometry();
+        cx.notify();
+    }
+
+    /// Type `query` into the search box and finish the filter scan synchronously.
+    #[cfg(test)]
+    fn search_now(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((input, _)) = &self.search {
+            input.update(cx, |input, cx| input.set_value(query, window, cx));
+        }
+        let needle = query.trim().to_lowercase();
+        let ranks = (0..self.model.row_count())
+            .filter(|&rank| {
+                self.model
+                    .row(rank)
+                    .is_some_and(|row| match_range(self.source.label(row.id), &needle).is_some())
+            })
+            .collect();
+        self.filter = Some(Filter {
+            query: needle,
+            ranks,
+            task: None,
+            pending: false,
         });
         self.rebuild_geometry();
         cx.notify();
@@ -1172,14 +1219,16 @@ impl<const P: bool> TreeView<P> {
                     .children(property.choices.iter().map(|choice| {
                         let selected = choice == value;
                         let choice = choice.clone();
-                        Button::new(choice.clone())
+                        let button = Button::new(choice.clone())
                             .with_size(size)
                             .tab_stop(self.tab_stop)
                             .label(choice.clone())
-                            .selected(selected)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.edit_value(id, Value::Enum(choice.clone()), cx)
-                            }))
+                            .selected(selected);
+                        // The kit's selected fill is too close to the default in dark themes.
+                        let button = if selected { button.primary() } else { button };
+                        button.on_click(cx.listener(move |this, _, _, cx| {
+                            this.edit_value(id, Value::Enum(choice.clone()), cx)
+                        }))
                     }))
                     .into_any_element(),
                 Value::Flags(flags) => {
@@ -1229,7 +1278,7 @@ impl<const P: bool> TreeView<P> {
                             .aria_label(text.clone())
                             .flex_1()
                             .text_ellipsis()
-                            .px(px(8.))
+                            .pr(px(8.))
                             .py(px(4.))
                             .cursor_pointer()
                             .child(text)
@@ -1251,6 +1300,9 @@ impl<const P: bool> TreeView<P> {
             ))
             .flex_none()
             .overflow_hidden()
+            // Keep controls clear of the divider line.
+            .pl(px(8.))
+            .pr(px(4.))
             .child(value)
             .children(options.units.map(str::to_owned))
             .children(if let Value::Colour(rgb) = property.value {
@@ -1418,7 +1470,18 @@ impl<const P: bool> Render for TreeView<P> {
         let surfaces = theme.surfaces();
         let border = surfaces.border.to_hsla();
         let alternate = surfaces.track.to_hsla();
-        let group = surfaces.raised.to_hsla();
+        let dimmed = surfaces.dimmed.to_hsla();
+        // Half the border over the body: distinct from alternate rows in both schemes.
+        let group = surfaces.border.alpha(0.5).over(surfaces.body).to_hsla();
+        let needle = self
+            .filter
+            .as_ref()
+            .map(|filter| filter.query.as_str())
+            .filter(|query| !query.is_empty());
+        let mark = gpui_kit::HighlightStyle {
+            background_color: Some(surfaces.mark.to_hsla()),
+            ..Default::default()
+        };
         let sticky = self
             .row_style
             .sticky_headers
@@ -1441,7 +1504,7 @@ impl<const P: bool> Render for TreeView<P> {
                 let top = next.map_or(0., |rank| {
                     (self.row_top(rank) - self.scroll - row_height).min(0.)
                 });
-                Some((header.id, top))
+                Some((header.id, header.depth, top))
             })
             .flatten();
         let hover_background = colours.hover.background.to_hsla();
@@ -1486,13 +1549,7 @@ impl<const P: bool> Render for TreeView<P> {
             if branch {
                 element = element.aria_expanded(open);
             }
-            if self
-                .filter
-                .as_ref()
-                .is_some_and(|filter| !filter.query.is_empty())
-            {
-                element = element.bg(surfaces.mark.to_hsla());
-            } else if self.row_style.group_headers && branch {
+            if self.row_style.group_headers && branch {
                 element = element
                     .bg(group)
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD);
@@ -1529,6 +1586,8 @@ impl<const P: bool> Render for TreeView<P> {
             }
             if !P {
                 element = element
+                    // Keep the trailing badge and checkbox off the edge.
+                    .pr(px(8.))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &gpui_kit::MouseDownEvent, _, _| {
@@ -1567,7 +1626,12 @@ impl<const P: bool> Render for TreeView<P> {
                     }))
                     .child(div().w(px(28.)).flex_none().children(branch.then(|| {
                         Button::new(("tree-expand", id as usize))
-                            .with_size(size)
+                            // Medium is wider than the 28px gutter and would touch the label.
+                            .with_size(if size == ControlSize::XSmall {
+                                size
+                            } else {
+                                ControlSize::Small
+                            })
                             .tab_stop(false)
                             .compact()
                             .w_full()
@@ -1588,7 +1652,14 @@ impl<const P: bool> Render for TreeView<P> {
                             .text_ellipsis()
                             .py(px(6.))
                             .cursor_pointer()
-                            .child(label)
+                            .child(
+                                match needle.and_then(|needle| match_range(&label, needle)) {
+                                    Some(range) => gpui_kit::StyledText::new(label)
+                                        .with_highlights([(range, mark)])
+                                        .into_any_element(),
+                                    None => label.into_any_element(),
+                                },
+                            )
                             .on_click(select)
                             .into_any_element()
                     } else {
@@ -1607,11 +1678,13 @@ impl<const P: bool> Render for TreeView<P> {
                             )
                             .into_any_element()
                     })
-                    .children(
-                        (!P).then(|| self.source.badge(id))
-                            .flatten()
-                            .map(str::to_owned),
-                    )
+                    .children((!P).then(|| self.source.badge(id)).flatten().map(|badge| {
+                        div()
+                            .flex_none()
+                            .text_sm()
+                            .text_color(dimmed)
+                            .child(badge.to_owned())
+                    }))
                     .children(
                         (!P).then(|| self.source.checked(id))
                             .flatten()
@@ -1692,7 +1765,7 @@ impl<const P: bool> Render for TreeView<P> {
                     .top(px(offset as f32))
                     .children(rows),
             )
-            .children(sticky.map(|(parent, top)| {
+            .children(sticky.map(|(parent, depth, top)| {
                 div()
                     .absolute()
                     .top(px(top as f32))
@@ -1700,8 +1773,12 @@ impl<const P: bool> Render for TreeView<P> {
                     .h(px(row_height as f32))
                     .flex()
                     .items_center()
-                    .px(px(8.))
+                    // Line the label up with the row it stands in for (indent, gutter, gaps).
+                    .pl(px((depth.min(45) * 16 + 32) as f32))
+                    .pr(px(8.))
                     .bg(group)
+                    .border_b_1()
+                    .border_color(border)
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                     .text_ellipsis()
                     .child(self.source.label(parent).to_owned())
@@ -1827,6 +1904,10 @@ impl<const P: bool> Render for TreeView<P> {
 }
 
 #[cfg(test)]
+#[path = "view/visual_tests.rs"]
+mod visual_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use gpui_kit::{
@@ -1894,6 +1975,15 @@ mod tests {
                     .cached(StyleRefinement::default().size_full()),
             )
         }
+    }
+
+    #[test]
+    fn match_range_is_case_insensitive_and_on_char_boundaries() {
+        assert_eq!(match_range("Font Size", "size"), Some(5..9));
+        assert_eq!(match_range("Opacity", "o"), Some(0..1));
+        assert_eq!(match_range("Ünïcode ÄB", "äb"), Some(10..13));
+        assert_eq!(match_range("Name", "names"), None);
+        assert_eq!(match_range("Name", ""), None);
     }
 
     #[gpui_kit::test]
