@@ -82,7 +82,13 @@ pub struct MermaidViewState {
 }
 
 impl MermaidViewState {
-    fn new(id: ElementId, engine: Engine) -> Self {
+    fn new(id: ElementId, engine: Engine, cx: &mut Context<Self>) -> Self {
+        cx.on_release(|state, cx| {
+            if let Some(image) = state.published.take() {
+                cx.drop_image(image.image, None);
+            }
+        })
+        .detach();
         Self {
             id,
             revision: 0,
@@ -110,6 +116,20 @@ impl MermaidViewState {
     /// The image last drawn, if any.
     pub fn image(&self) -> Option<&Image> {
         self.published.as_ref()
+    }
+
+    fn set_published(&mut self, next: Option<Image>, cx: &mut Context<Self>) {
+        let previous = std::mem::replace(&mut self.published, next);
+        if let Some(previous) = previous
+            && !self
+                .published
+                .as_ref()
+                .is_some_and(|next| Arc::ptr_eq(&next.image, &previous.image))
+        {
+            // RenderImage sources bypass GPUI's image cache eviction. Defer
+            // until the current window has rejoined the app's window map.
+            cx.defer(move |cx| cx.drop_image(previous.image, None));
+        }
     }
 
     /// Whether the current diagram has a temporary overview.
@@ -178,7 +198,7 @@ impl MermaidViewState {
         }
         self.zoom_refresh = None;
         if self.preview.take().is_some() {
-            self.published = None;
+            self.set_published(None, cx);
         }
         self.source = source.into();
         self.dark = dark;
@@ -194,7 +214,7 @@ impl MermaidViewState {
     fn request_at_width(&mut self, mut width: f32, cx: &mut Context<Self>) {
         if self.source.is_empty() {
             self.status = Status::Empty;
-            self.published = None;
+            self.set_published(None, cx);
             self.awaiting = None;
             cx.notify();
             return;
@@ -214,7 +234,7 @@ impl MermaidViewState {
                 Ok(request) => request,
                 Err(error) => {
                     self.status = Status::Failed(RenderError::Source(error).to_string());
-                    self.published = None;
+                    self.set_published(None, cx);
                     self.awaiting = None;
                     cx.notify();
                     return;
@@ -286,13 +306,13 @@ impl MermaidViewState {
                 anchor,
                 scale,
             } => {
-                self.published = None;
+                self.set_published(None, cx);
                 (Some(Arc::new(overview)), natural, anchor, scale)
             }
             StagedPreview::Raster(frame) => {
                 let Some(anchor) = frame.anchor else { return };
                 let natural = (frame.image.width, frame.image.height);
-                self.published = Some(frame.image);
+                self.set_published(Some(frame.image), cx);
                 (None, natural, anchor, frame.scale)
             }
         };
@@ -323,7 +343,6 @@ impl MermaidViewState {
         match result {
             Ok(Some(frame)) => {
                 let preview = self.preview.take();
-                let was_preview = preview.is_some();
                 let natural = (frame.image.width, frame.image.height);
                 match (preview, frame.anchor) {
                     (Some(preview), Some(anchor)) => {
@@ -336,18 +355,19 @@ impl MermaidViewState {
                     }
                     _ => self.viewport.set_natural(natural.0, natural.1),
                 }
-                self.published = Some(frame.image);
+                self.set_published(Some(frame.image), cx);
                 self.status = Status::Ready;
-                if was_preview && self.viewport.zoom() > 1.0 {
-                    self.zoom_changed(cx);
-                    return;
-                }
+                // Input may have changed the desired density while the worker
+                // was busy. The published image remains available while the
+                // newest zoom settles.
+                self.zoom_changed(cx);
+                return;
             }
             Ok(None) => return,
             Err(error) => {
                 self.preview = None;
                 self.status = Status::Failed(error.to_string());
-                self.published = None;
+                self.set_published(None, cx);
             }
         }
         cx.notify();
@@ -384,7 +404,8 @@ impl MermaidViewState {
         self.zoom_refresh = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
             delay.await;
             this.update(cx, |this, cx| {
-                if this.status == Status::Drawing {
+                this.zoom_refresh = None;
+                if this.status != Status::Ready {
                     return;
                 }
                 this.revision += 1;
@@ -683,7 +704,7 @@ impl MermaidView {
     pub fn create_state(id: impl Into<ElementId>, cx: &mut App) -> Entity<MermaidViewState> {
         let id = id.into();
         let engine = Engine::new(cx.svg_renderer());
-        cx.new(|_| MermaidViewState::new(id, engine))
+        cx.new(|cx| MermaidViewState::new(id, engine, cx))
     }
 }
 
@@ -695,7 +716,7 @@ impl RenderOnce for MermaidView {
             None => window.use_keyed_state(
                 ElementId::NamedChild(std::sync::Arc::new(id.clone()), "state".into()),
                 cx,
-                |_, cx| MermaidViewState::new(id.clone(), Engine::new(cx.svg_renderer())),
+                |_, cx| MermaidViewState::new(id.clone(), Engine::new(cx.svg_renderer()), cx),
             ),
         };
         if let Some(source) = source {

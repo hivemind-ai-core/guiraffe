@@ -344,47 +344,61 @@ fn main() -> Result<()> {
         "markdown" => {
             mounted::markdown(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "mermaid" => {
-            mounted::mermaid(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
+        "mermaid" => return mounted::mermaid(mount_started, short),
         "chat" => mounted::chat(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         _ => return Err("unknown soak component".into()),
     }
     result
 }
 
-fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bool) -> Result<()> {
-    println!("setup_and_first_frame_us={}", mount.as_micros());
-    let interval = Duration::from_secs(10);
-    let mut index = 0;
-    let mut times = Vec::with_capacity(1_200);
-    let mut warmed_memory = None;
-    // `SOAK_FRAMES=n`: run exactly n frames and stop (profiling; no timing verdict).
-    if let Some(frames) = std::env::var("SOAK_FRAMES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-    {
-        for index in 0..frames {
-            frame(index)?;
+struct Samples {
+    times: Vec<u128>,
+    index: usize,
+    interval: Instant,
+    sample: usize,
+    warmed_memory: Option<[u64; 2]>,
+    short: bool,
+    failed: bool,
+    profile_frames: Option<usize>,
+}
+
+impl Samples {
+    fn new(mount: Duration, short: bool) -> Self {
+        println!("setup_and_first_frame_us={}", mount.as_micros());
+        Self {
+            times: Vec::with_capacity(1_200),
+            index: 0,
+            interval: Instant::now(),
+            sample: 0,
+            warmed_memory: None,
+            short,
+            failed: !short && mount > Duration::from_millis(200),
+            profile_frames: std::env::var("SOAK_FRAMES")
+                .ok()
+                .and_then(|n| n.parse().ok()),
         }
-        println!("profiled_frames={frames}");
-        return Ok(());
     }
-    let mut failed = !short && mount > Duration::from_millis(200);
-    // The first interval warms caches. The following 180 intervals measure drift.
-    for sample in 0..if short { 2 } else { 181 } {
-        times.clear();
-        let start = Instant::now();
-        while start.elapsed() < interval {
-            let started = Instant::now();
-            frame(index)?;
-            let elapsed = started.elapsed();
-            index += 1;
-            times.push(elapsed.as_micros());
-            std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
+
+    fn done(&self) -> bool {
+        match self.profile_frames {
+            Some(frames) => self.index >= frames,
+            None => self.sample >= if self.short { 2 } else { 181 },
         }
-        times.sort_unstable();
-        let percentile = |p: usize| times[(times.len() * p).div_ceil(100) - 1];
+    }
+
+    fn record(&mut self, elapsed: Duration) {
+        self.index += 1;
+        if self.profile_frames.is_none() {
+            self.times.push(elapsed.as_micros());
+        }
+    }
+
+    fn finish_interval(&mut self) -> Result<()> {
+        if self.profile_frames.is_some() || self.interval.elapsed() < Duration::from_secs(10) {
+            return Ok(());
+        }
+        self.times.sort_unstable();
+        let percentile = |p: usize| self.times[(self.times.len() * p).div_ceil(100) - 1];
         let (p50, p95, p99, max) = (
             percentile(50),
             percentile(95),
@@ -392,19 +406,43 @@ fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bo
             percentile(100),
         );
         let [rss, pss] = memory_kib()?;
-        let [base_rss, base_pss] = *warmed_memory.get_or_insert([rss, pss]);
+        let [base_rss, base_pss] = *self.warmed_memory.get_or_insert([rss, pss]);
         let drifted = rss * 100 > base_rss * 102 || pss * 100 > base_pss * 102;
         println!(
-            "sample={sample} frames={} p50_us={p50} p95_us={p95} p99_us={p99} max_us={max} rss_kib={rss} pss_kib={pss} drifted={drifted}",
-            times.len()
+            "sample={} frames={} p50_us={p50} p95_us={p95} p99_us={p99} max_us={max} rss_kib={rss} pss_kib={pss} drifted={drifted}",
+            self.sample,
+            self.times.len()
         );
-        // A 16 ms frame maximum also enforces the 50 ms long-task limit inside measured frames.
-        failed |= !short && sample > 0 && (drifted || p99 > 8_000 || max > 16_000);
+        self.failed |= !self.short && self.sample > 0 && (drifted || p99 > 8_000 || max > 16_000);
+        self.sample += 1;
+        self.times.clear();
+        self.interval = Instant::now();
+        Ok(())
     }
-    if failed {
-        return Err("Headless soak exceeded a timing or memory budget".into());
+
+    fn result(&self) -> Result<()> {
+        if let Some(frames) = self.profile_frames {
+            println!("profiled_frames={frames}");
+        } else if self.failed {
+            return Err("Headless soak exceeded a timing or memory budget".into());
+        }
+        Ok(())
     }
-    Ok(())
+}
+
+fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bool) -> Result<()> {
+    let mut samples = Samples::new(mount, short);
+    while !samples.done() {
+        let started = Instant::now();
+        frame(samples.index)?;
+        let elapsed = started.elapsed();
+        samples.record(elapsed);
+        if samples.profile_frames.is_none() {
+            std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
+        }
+        samples.finish_interval()?;
+    }
+    samples.result()
 }
 
 /// Mounted spec/23 scale probes: each mounts the real component over a large
@@ -1082,10 +1120,9 @@ mod mounted {
         }
     }
 
-    /// Mermaid: a ~500-node flowchart (tree plus cross links), zoomed and panned.
-    /// Each 32-frame cycle zooms, then pans, then idles so the zoom settle
-    /// re-rasterizes, as when a reader pauses.
-    pub fn mermaid(run: impl FnOnce(Frame)) -> Result<()> {
+    /// Sample Mermaid on the production executor with a window that draws to no display.
+    pub fn mermaid(started: Instant, short: bool) -> Result<()> {
+        use gpui_kit::{WindowingRequest, application};
         let nodes = scaled(500).max(2);
         let mut source = String::from("flowchart TD\n");
         for i in 0..nodes {
@@ -1097,54 +1134,176 @@ mod mounted {
                 source.push_str(&format!("  n{i} -.-> n{}\n", (i * 7) % nodes));
             }
         }
-        let (mut window, view) = mount(
-            "mermaid_soak",
-            |_| {},
-            |_, cx| {
-                let state = guiraffe_mermaid::MermaidView::create_state("diagram", cx);
-                state.update(cx, |s, cx| {
-                    let dark = guiraffe_core::GuiraffeTheme::global(cx).scheme
-                        == guiraffe_core::Scheme::Dark;
-                    s.set_source(source.into(), dark, cx)
-                });
-                cx.new(|_| MermaidHost(state))
-            },
-        )?;
-        for _ in 0..4 {
-            settle(&mut window);
-        }
-        let state = window.update(|_, cx| view.read(cx).0.clone());
-        let first_frame = window.update(|_, cx| {
-            let diagram = state.read(cx);
-            match (diagram.has_preview(), diagram.image()) {
-                (true, None) => Some("native preview"),
-                (_, Some(_)) => Some("raster"),
-                (false, None) => None,
-            }
-        });
-        let Some(first_frame) = first_frame else {
-            return Err("mermaid diagram did not render".into());
-        };
-        eprintln!("Mermaid first frame: {first_frame}");
-        let center = point(px(640.), px(380.));
-        run(&mut |i| {
-            let at = center
-                + point(
-                    px(((i * 37) % 200) as f32 - 100.),
-                    px(((i * 13) % 160) as f32 - 80.),
+        let result = Rc::new(std::cell::RefCell::new(None));
+        let output = result.clone();
+        application()
+            .with_windowing(WindowingRequest::Headless)
+            .run(move |cx| {
+                guiraffe_core::init(cx);
+                let window = gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            point(px(0.), px(0.)),
+                            size(px(1280.), px(800.)),
+                        ))),
+                        show: false,
+                        ..Default::default()
+                    },
+                    cx,
+                    |_, cx| {
+                        let state = guiraffe_mermaid::MermaidView::create_state("diagram", cx);
+                        state.update(cx, |s, cx| s.set_source(source.into(), false, cx));
+                        cx.new(|_| MermaidHost(state))
+                    },
                 );
-            match i % 32 {
-                0..4 => wheel(&mut window, at, 0., 40. * sign(i, 32), false),
-                8..16 => {
-                    let d = 20. * sign(i, 16);
-                    drag(&mut window, at, at + point(px(d), px(d * 0.5)));
-                }
-                _ => hover(&mut window, at),
+                let (window, view) = match window {
+                    Ok(window) => window,
+                    Err(error) => {
+                        *output.borrow_mut() = Some(Err(error.into()));
+                        cx.quit();
+                        return;
+                    }
+                };
+                cx.spawn(async move |cx| {
+                    let executor = cx.background_executor().clone();
+                    let result: Result<()> = async {
+                        let mut samples = None::<super::Samples>;
+                        let mut refined = false;
+                        loop {
+                            let frame_started = Instant::now();
+                            let (frame, ready) = cx.update(|cx| {
+                                window.update(cx, |_, window, cx| {
+                                    if let Some(samples) = &samples
+                                        && !samples.done()
+                                    {
+                                        mermaid_input(window, cx, samples.index);
+                                    }
+                                    window.draw(cx).clear(cx);
+                                    let diagram = view.read(cx).0.read(cx);
+                                    let frame = if diagram.has_preview() {
+                                        Some("preview")
+                                    } else if diagram.image().is_some() {
+                                        Some("raster")
+                                    } else {
+                                        None
+                                    };
+                                    match diagram.status() {
+                                        guiraffe_mermaid::view::Status::Failed(error) => {
+                                            Err(error.clone())
+                                        }
+                                        status => Ok((
+                                            frame,
+                                            *status == guiraffe_mermaid::view::Status::Ready,
+                                        )),
+                                    }
+                                })
+                            })??;
+                            if !refined && !ready && started.elapsed() >= Duration::from_secs(30) {
+                                break Err("Mermaid refinement timed out".into());
+                            }
+                            if ready && !refined {
+                                refined = true;
+                                println!("refined_ready_us={}", started.elapsed().as_micros());
+                            }
+                            if let Some(samples) = &mut samples {
+                                let elapsed = frame_started.elapsed();
+                                if !samples.done() {
+                                    samples.record(elapsed);
+                                }
+                                executor
+                                    .timer(Duration::from_micros(8_334).saturating_sub(elapsed))
+                                    .await;
+                                if !samples.done() {
+                                    samples.finish_interval()?;
+                                }
+                                if samples.done() && refined {
+                                    break samples.result();
+                                }
+                            } else if let Some(frame) = frame {
+                                eprintln!("Mermaid first frame: {frame}");
+                                samples = Some(super::Samples::new(started.elapsed(), short));
+                            } else {
+                                executor.timer(Duration::from_millis(1)).await;
+                            }
+                        }
+                    }
+                    .await;
+                    *output.borrow_mut() = Some(result);
+                    cx.update(|cx| cx.quit());
+                })
+                .detach();
+            });
+        result
+            .take()
+            .ok_or("Mermaid sample stopped before completion")?
+    }
+
+    fn mermaid_input(window: &mut Window, cx: &mut App, i: usize) {
+        use gpui_kit::{InputEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+        let at = point(px(640.), px(380.))
+            + point(
+                px(((i * 37) % 200) as f32 - 100.),
+                px(((i * 13) % 160) as f32 - 80.),
+            );
+        match i % 32 {
+            0..4 => {
+                window.dispatch_event(
+                    ScrollEvent {
+                        position: at,
+                        delta: ScrollDelta::Pixels(point(px(0.), px(40. * sign(i, 32)))),
+                        modifiers: Modifiers::default(),
+                        touch_phase: TouchPhase::Moved,
+                        source: ScrollSource::Pointer,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
             }
-            settle(&mut window);
-            Ok(())
-        });
-        Ok(())
+            8..16 => {
+                let d = 20. * sign(i, 16);
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: at,
+                        button: MouseButton::Left,
+                        click_count: 1,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                for step in 1..=4 {
+                    window.dispatch_event(
+                        MouseMoveEvent {
+                            position: at + point(px(d), px(d * 0.5)) * (step as f32 / 4.),
+                            pressed_button: Some(MouseButton::Left),
+                            ..Default::default()
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                }
+                window.dispatch_event(
+                    MouseUpEvent {
+                        position: at + point(px(d), px(d * 0.5)),
+                        button: MouseButton::Left,
+                        click_count: 1,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+            _ => {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: at,
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+        }
     }
 
     // -------------------------------------------------------------------- chat
