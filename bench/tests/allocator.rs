@@ -493,3 +493,79 @@ fn warmed_chart_replays_cached_ink(cx: &mut gpui_kit::TestAppContext) {
         assert_eq!(chart.read(cx).scene_build_count(), builds);
     });
 }
+
+// Mermaid
+
+#[test]
+fn mermaid_warm_repaint_allocation_traffic_is_independent_of_node_count() -> anyhow::Result<()> {
+    use gpui_kit::{
+        AppContext, Context, Entity, HeadlessAppContext, IntoElement, Render, Window, px, size,
+    };
+    use guiraffe_bench::allocator::Counts;
+    use guiraffe_mermaid::{MermaidView, MermaidViewState, view::Status};
+    use std::{fmt::Write as _, sync::Arc};
+
+    const FRAMES: u64 = 8;
+
+    struct Diagram(Entity<MermaidViewState>);
+
+    impl Render for Diagram {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            MermaidView::new("allocation-diagram").state(&self.0)
+        }
+    }
+
+    fn measure(nodes: usize) -> anyhow::Result<Counts> {
+        let mut source = String::from("flowchart TD\n");
+        for i in (0..nodes).step_by(2) {
+            writeln!(source, "  n{i} --> n{}", i + 1)?;
+        }
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut app =
+            HeadlessAppContext::with_platform(text, Arc::new(gpui_kit::assets::Assets), || {
+                Ok(None)
+            });
+        app.update(guiraffe_core::init);
+        let window = app.open_window(size(px(1200.), px(800.)), |_, cx| {
+            let diagram = MermaidView::create_state("allocation-diagram", cx);
+            diagram.update(cx, |state, cx| state.set_source(source.into(), false, cx));
+            cx.new(|_| Diagram(diagram))
+        })?;
+        app.run_until_parked();
+        for _ in 0..FRAMES {
+            app.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+            app.run_until_parked();
+        }
+        app.update_window(window.into(), |host, window, cx| {
+            let diagram = host
+                .downcast::<Diagram>()
+                .expect("Mermaid test host")
+                .read(cx)
+                .0
+                .clone();
+            let state = diagram.read(cx);
+            assert_eq!(state.status(), &Status::Ready);
+            let image = state.image().expect("refined diagram").image.clone();
+            let (_, counts) = count_allocations(|| {
+                for _ in 0..FRAMES {
+                    window.draw(cx).clear(cx);
+                }
+            })?;
+            assert!(Arc::ptr_eq(
+                &image,
+                &diagram.read(cx).image().expect("unchanged diagram").image
+            ));
+            Ok(counts)
+        })?
+    }
+
+    let small = measure(50)?;
+    let large = measure(500)?;
+    eprintln!("Mermaid allocations over eight draws: 50 nodes {small:?}, 500 nodes {large:?}");
+    assert_eq!(small, large);
+    assert!(
+        large.allocations <= FRAMES * 12,
+        "warm redraw must reuse the Mermaid view: {large:?}"
+    );
+    Ok(())
+}

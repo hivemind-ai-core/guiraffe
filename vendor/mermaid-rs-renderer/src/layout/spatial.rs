@@ -54,24 +54,24 @@ impl SpatialIndex {
     /// Return candidates in insertion order, preserving floating-point score sums.
     pub(super) fn query(&self, bounds: Option<Bounds>, candidates: &mut Vec<usize>) {
         candidates.clear();
+        let overlaps = |&i: &usize| {
+            bounds.is_none_or(|(left, top, right, bottom)| {
+                self.bounds[i].is_none_or(|(x0, y0, x1, y1)| {
+                    !(right < x0 || bottom < y0 || left > x1 || top > y1)
+                })
+            })
+        };
         if let Some(cells) = bounds.and_then(cells) {
-            candidates.extend_from_slice(&self.global);
+            candidates.extend(self.global.iter().copied().filter(overlaps));
             for cell in cells {
                 if let Some(bucket) = self.buckets.get(&cell) {
-                    candidates.extend_from_slice(bucket);
+                    candidates.extend(bucket.iter().copied().filter(overlaps));
                 }
             }
             candidates.sort_unstable();
             candidates.dedup();
         } else {
-            candidates.extend(0..self.bounds.len());
-        }
-        if let Some((left, top, right, bottom)) = bounds {
-            candidates.retain(|&i| {
-                self.bounds[i].is_none_or(|(x0, y0, x1, y1)| {
-                    !(right < x0 || bottom < y0 || left > x1 || top > y1)
-                })
-            });
+            candidates.extend((0..self.bounds.len()).filter(overlaps));
         }
     }
 }

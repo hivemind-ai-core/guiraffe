@@ -86,6 +86,7 @@ pub fn draw(source: &str, theme: &Theme) -> Result<Drawn, RenderError> {
 
 struct Frame {
     drawing: Drawn,
+    preview_pixels: Option<(u32, u32)>,
     anchor: Option<(f32, f32)>,
 }
 
@@ -109,13 +110,14 @@ fn frame(
     } else {
         None
     };
-    let subpixel_labels = preview.is_some_and(|request| {
+    let preview_pixels = preview.and_then(|request| {
         let width = dims.width.min(request.display_width.max(100.0));
         let height = width * dims.height / dims.width;
-        let (pixels, _) = zoom_raster_size(width, height, request.zoom, request.density);
-        theme.font_size * pixels as f32 / dims.width < 1.0
+        let pixels = zoom_raster_size(width, height, request.zoom, request.density);
+        (theme.font_size * pixels.0 as f32 / dims.width < 1.0)
+            .then(|| crate::sizing::overview_raster_size(pixels))
     });
-    let svg = if subpixel_labels {
+    let svg = if preview_pixels.is_some() {
         render_flowchart_overview_svg(layout, theme, config)
     } else {
         render_svg(layout, theme, config)
@@ -125,6 +127,7 @@ fn frame(
             svg: svg.into(),
             natural: (dims.width, dims.height),
         },
+        preview_pixels,
         anchor,
     })
 }
@@ -331,8 +334,7 @@ impl Engine {
                     let mut preview = |layout: &Layout| {
                         if !cancelled()
                             && let Ok(frame) = frame(layout, &request.theme, &config, Some(request))
-                            && let Ok(mut entry) = self.entry(request, frame)
-                            && let Ok(image) = self.rasterize(request, &mut entry, false)
+                            && let Ok(image) = self.rasterize_preview(request, frame)
                             && !cancelled()
                         {
                             (stage.publish)(image);
@@ -353,7 +355,7 @@ impl Engine {
                 self.entry(request, frame)?
             }
         };
-        let image = self.rasterize(request, &mut entry, cached)?;
+        let image = self.rasterize(request, &mut entry, cached, None)?;
         self.cache.push_front(entry);
         while self.cache.len() > CACHE_ENTRIES || self.bytes() > CACHE_BYTES {
             self.cache.pop_back();
@@ -377,17 +379,29 @@ impl Engine {
         })
     }
 
+    fn rasterize_preview(
+        &mut self,
+        request: &Request,
+        frame: Frame,
+    ) -> Result<StagedImage, RenderError> {
+        let pixels = frame.preview_pixels;
+        let mut entry = self.entry(request, frame)?;
+        self.rasterize(request, &mut entry, false, pixels)
+    }
+
     fn rasterize(
         &mut self,
         request: &Request,
         entry: &mut Entry,
         cached: bool,
+        preview_pixels: Option<(u32, u32)>,
     ) -> Result<StagedImage, RenderError> {
         let (nw, nh) = entry.natural;
         let width = nw.min(request.display_width.max(100.0));
         let height = width * nh / nw;
         let scale = width / nw;
-        let pixels = zoom_raster_size(width, height, request.zoom, request.density);
+        let pixels = preview_pixels
+            .unwrap_or_else(|| zoom_raster_size(width, height, request.zoom, request.density));
         let image = match &entry.raster {
             Some((size, image)) if *size == pixels => image.clone(),
             _ => {
@@ -536,6 +550,16 @@ mod tests {
         };
         assert!(svg(None).contains(">Start<"));
         assert!(!svg(Some(&request)).contains(">Start<"));
+        let overview = frame(&layout, &request.theme, &config, Some(&request)).expect("overview");
+        let mut engine = engine();
+        let image = engine
+            .rasterize_preview(&request, overview)
+            .expect("overview raster")
+            .image;
+        let size = image.image.size(0);
+        assert!(size.width <= DevicePixels(1024));
+        assert!(size.height <= DevicePixels(1024));
+        assert_eq!(engine.len(), 0);
         request.zoom = 4.0;
         let zoomed = frame(&layout, &request.theme, &config, Some(&request)).expect("zoomed");
         assert!(zoomed.drawing.svg.contains(">Start<"));
