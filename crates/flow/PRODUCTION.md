@@ -64,3 +64,28 @@ overview. Between 0.05× and 0.10×, the overview activates when a viewport
 query finds more than 1,024 nodes. The BVH stops counting at the cutoff
 before the renderer collects visible IDs or tessellates edges. Sparse
 views, active gestures and accessibility rendering use detailed geometry.
+
+
+For mounted graphs with at least 4,096 edges, Flow validates the document
+during setup and computes routes as paint needs them. The first frame queries
+nearby nodes and edges. The first zoomed-out preview uses at most 4,096
+occupied cells. A cancellable background job builds immutable node and edge
+BVHs. Once indexed, incident-edge lookups can query the edge BVH at the
+affected node and verify the endpoint IDs. The edge BVH uses endpoint and control
+bounds, so indexed queries include viewport-crossing edges whose endpoints
+lie outside the screen. The renderer tests exact route bounds before
+submitting triangles.
+
+The deferred route cache uses edge ID and half-octave zoom buckets. It keeps
+up to 1,024 entries and 1 MiB of sampled points and compact vertex buffers.
+Eviction uses the last frame that accessed each entry. A document change
+clears cached routes and cancels stale background work. The immutable
+edge BVH stores bounds and IDs without the eager per-edge route table or
+the mutable index's ID-to-leaf map.
+
+
+At each zoom bucket, Flow simplifies deferred stroke geometry within an
+eighth of a screen pixel. Picking, labels and arrowheads use exact route
+points. On gpui-fast, large viewports with the default node renderer build
+the visible cards inline to reduce retained view state. Custom renderers and
+accessibility use the normal node entity path.

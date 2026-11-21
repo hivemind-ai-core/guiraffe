@@ -53,9 +53,82 @@ impl EdgeMesh {
     }
 }
 
+// Deferred scenes retain only tessellation and sampled routes that the viewport used recently.
+const DEFERRED_MESH_ENTRIES: usize = 1_024;
+const DEFERRED_MESH_BYTES: usize = 1024 * 1024;
+type MeshKey = (EdgeId, i8);
+
+struct DeferredMesh {
+    route: Arc<EdgePath>,
+    mesh: Option<EdgeMesh>,
+    bytes: usize,
+    touched: u64,
+}
+
+#[derive(Default)]
+struct DeferredMeshCache {
+    entries: BTreeMap<MeshKey, DeferredMesh>,
+    recency: BTreeSet<(u64, MeshKey)>,
+    bytes: usize,
+    frame: u64,
+}
+
+impl DeferredMeshCache {
+    fn begin_frame(&mut self) {
+        self.frame = self.frame.wrapping_add(1);
+        if self.frame == 0 {
+            *self = Self::default();
+        }
+    }
+
+    fn get(&mut self, scene: &Scene, id: EdgeId, zoom: f32, area: Rect) -> Option<&DeferredMesh> {
+        let key = (id, (zoom.log2() * 2.).floor() as i8);
+        if self.entries.contains_key(&key) {
+            let existing = self.entries.get_mut(&key)?;
+            if !existing.route.bounds.intersects(area) {
+                return None;
+            }
+            if existing.touched != self.frame {
+                self.recency.remove(&(existing.touched, key));
+                existing.touched = self.frame;
+                self.recency.insert((self.frame, key));
+            }
+            return Some(existing);
+        }
+
+        let route = scene.edge_route(id)?;
+        if !route.bounds.intersects(area) {
+            return None;
+        }
+        let mesh = mesh_at_zoom(&route, key.1).map(EdgeMesh::from_path);
+        let bytes = route.points.capacity() * std::mem::size_of::<WorldPoint>()
+            + mesh.as_ref().map_or(0, EdgeMesh::bytes);
+        while self.entries.len() >= DEFERRED_MESH_ENTRIES
+            || bytes > DEFERRED_MESH_BYTES - self.bytes
+        {
+            let (_, oldest) = self.recency.pop_first()?;
+            let evicted = self.entries.remove(&oldest)?;
+            self.bytes -= evicted.bytes;
+        }
+        self.bytes += bytes;
+        self.recency.insert((self.frame, key));
+        self.entries.insert(
+            key,
+            DeferredMesh {
+                route,
+                mesh,
+                bytes,
+                touched: self.frame,
+            },
+        );
+        self.entries.get(&key)
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct MeshCache {
     entries: BTreeMap<EdgeId, (Arc<EdgePath>, EdgeMesh)>,
+    deferred: DeferredMeshCache,
     pub edge_buffer: Vec<EdgeId>,
     mesh_bytes: usize,
     admission_limited: bool,
@@ -71,9 +144,23 @@ pub(crate) struct MeshCache {
     grid: Option<GridMesh>,
 }
 impl MeshCache {
+    pub fn refine_edge_candidates(
+        &mut self,
+        scene: &Scene,
+        viewport: Viewport,
+        area: Rect,
+        edges: &mut Vec<EdgeId>,
+    ) {
+        if scene.has_deferred_edges() {
+            self.deferred.begin_frame();
+            edges.retain(|id| self.deferred.get(scene, *id, viewport.zoom, area).is_some());
+        }
+    }
+
     #[cfg(test)]
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.deferred = DeferredMeshCache::default();
 
         self.mesh_bytes = 0;
         self.admission_limited = false;
@@ -81,6 +168,9 @@ impl MeshCache {
         self.minimap = None;
     }
     pub fn sync(&mut self, scene: &Scene) {
+        if scene.has_deferred_edges() {
+            self.deferred = DeferredMeshCache::default();
+        }
         self.entries.retain(|id, (route, _)| {
             scene
                 .paths()
@@ -230,13 +320,77 @@ fn minimap_mesh<'a>(
 }
 
 fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
-    let mut builder = PathBuilder::stroke(px(EDGE_STROKE));
-    for (i, p) in route.points.iter().enumerate() {
-        if i == 0 {
-            builder.move_to(pixel(*p));
+    stroke(route.points.iter().copied())
+}
+
+fn mesh_at_zoom(route: &EdgePath, bucket: i8) -> Option<Path<Pixels>> {
+    // At every scale in this half-octave band the simplified centreline
+    // stays within an eighth of a pixel of the exact route. Picking, labels
+    // and arrowheads continue to use the exact points.
+    const MAX_ROUTE_SAMPLES: usize = 33;
+    let points = route.points.as_slice();
+    let mut marked = [false; MAX_ROUTE_SAMPLES];
+    let Some(keep) = marked.get_mut(..points.len()) else {
+        return mesh(route);
+    };
+    let max_zoom = 2_f32.powf((f32::from(bucket) + 1.) * 0.5);
+    mark_stroke_samples(points, keep, (0.125 / max_zoom).powi(2));
+    stroke(
+        points
+            .iter()
+            .zip(keep)
+            .filter_map(|(point, keep)| (*keep).then_some(*point)),
+    )
+}
+
+fn mark_stroke_samples(points: &[WorldPoint], marked: &mut [bool], error_squared: f32) {
+    if let Some(first) = marked.first_mut() {
+        *first = true;
+    }
+    let [from, interior @ .., to] = points else {
+        return;
+    };
+    if let Some(last) = marked.last_mut() {
+        *last = true;
+    }
+    let direction = *to - *from;
+    let length_squared = direction.x * direction.x + direction.y * direction.y;
+    if !length_squared.is_finite() {
+        marked.fill(true);
+        return;
+    }
+    let mut farthest = error_squared;
+    let mut split = None;
+    for (offset, &point) in interior.iter().enumerate() {
+        let relative = point - *from;
+        let projection = if length_squared > 0. {
+            ((relative.x * direction.x + relative.y * direction.y) / length_squared).clamp(0., 1.)
         } else {
-            builder.line_to(pixel(*p));
+            0.
+        };
+        let delta = relative - direction * projection;
+        let squared = delta.x * delta.x + delta.y * delta.y;
+        if !squared.is_finite() {
+            marked.fill(true);
+            return;
         }
+        if squared > farthest {
+            farthest = squared;
+            split = Some(offset + 1);
+        }
+    }
+    if let Some(at) = split {
+        mark_stroke_samples(&points[..=at], &mut marked[..=at], error_squared);
+        mark_stroke_samples(&points[at..], &mut marked[at..], error_squared);
+    }
+}
+
+fn stroke(points: impl IntoIterator<Item = WorldPoint>) -> Option<Path<Pixels>> {
+    let mut points = points.into_iter();
+    let mut builder = PathBuilder::stroke(px(EDGE_STROKE));
+    builder.move_to(pixel(points.next()?));
+    for point in points {
+        builder.line_to(pixel(point));
     }
     builder.build().ok()
 }
@@ -342,6 +496,11 @@ impl Frame {
             phase,
         }
     }
+    pub(crate) fn with_viewport(mut self, viewport: Viewport) -> Self {
+        self.viewport = viewport;
+        self
+    }
+
     pub(crate) fn with_scene(mut self, scene: Arc<Scene>) -> Self {
         self.scene = scene;
         self
@@ -385,6 +544,12 @@ impl Frame {
             return;
         }
         cache.begin_edges((self.viewport, bounds.size), &self.edges);
+        let deferred = self.scene.has_deferred_edges();
+        let canvas_size = WorldPoint::new(bounds.size.width.as_f32(), bounds.size.height.as_f32());
+        let area = self
+            .viewport
+            .visible(canvas_size)
+            .expand(12. / self.viewport.zoom);
         let graph = self.scene.graph();
         // GPUI takes ownership of submitted vertices. Batch by colour, so its
         // ownership boundary requires one allocation per batch, not per edge.
@@ -408,6 +573,14 @@ impl Frame {
                     && let Some(path) = EdgeMesh::new(&route)
                 {
                     append_transformed(output, &path, self.viewport, bounds.origin);
+                }
+            } else if deferred {
+                if let Some(route) = cache
+                    .deferred
+                    .get(&self.scene, *id, self.viewport.zoom, area)
+                    && let Some(path) = &route.mesh
+                {
+                    append_transformed(output, path, self.viewport, bounds.origin);
                 }
             } else if let Some(route) = self.scene.paths().get(id)
                 && let Some(path) = cache.get(*id, route)
@@ -447,6 +620,14 @@ impl Frame {
                     continue;
                 };
                 std::borrow::Cow::Owned(route)
+            } else if deferred {
+                let Some(route) = cache
+                    .deferred
+                    .get(&self.scene, *id, self.viewport.zoom, area)
+                else {
+                    continue;
+                };
+                std::borrow::Cow::Borrowed(route.route.as_ref())
             } else {
                 let Some(route) = self.scene.paths().get(id) else {
                     continue;
@@ -880,6 +1061,57 @@ mod tests {
         assert_eq!(cache.entries.len(), MAX_EDGE_MESHES);
         assert!(cache.admission_limited);
         assert!(cache.mesh_bytes < MAX_EDGE_MESH_BYTES);
+    }
+
+    #[test]
+    fn zoom_stroke_simplification_keeps_bends_and_reduces_straight_runs() {
+        let points = [
+            WorldPoint::new(0., 0.),
+            WorldPoint::new(20., 0.),
+            WorldPoint::new(40., 0.),
+            WorldPoint::new(40., 20.),
+            WorldPoint::new(40., 40.),
+        ];
+        let mut keep = [false; 5];
+        mark_stroke_samples(&points, &mut keep, 0.125f32.powi(2));
+        assert_eq!(keep, [true, false, true, false, true]);
+    }
+
+    #[test]
+    fn deferred_mesh_cache_keeps_recent_routes_and_caps_zoom_buckets() {
+        let graph = Graph::from_parts(
+            [
+                Node::new(1, "", WorldPoint::default()),
+                Node::new(2, "", WorldPoint::new(400., 100.)),
+            ],
+            (0..3_000).map(|id| Edge::new(id, 1, 2)),
+        )
+        .expect("graph");
+        let scene = Scene::new_deferred(graph).expect("deferred scene");
+        let mut cache = DeferredMeshCache::default();
+        let area = Rect::new(0., 0., 800., 600.);
+        for id in 0..3_000 {
+            cache.begin_frame();
+            cache.get(&scene, 0, 1.25, area).expect("recurring edge");
+            cache.get(&scene, id, 1., area).expect("new edge");
+            assert!(cache.entries.len() <= DEFERRED_MESH_ENTRIES);
+            assert!(cache.bytes <= DEFERRED_MESH_BYTES);
+        }
+        assert!(cache.entries.contains_key(&(0, 0)));
+        assert!(!cache.entries.contains_key(&(1, 0)));
+        let shared = cache
+            .get(&scene, 0, 1., area)
+            .expect("base zoom")
+            .route
+            .clone();
+        let bucket = cache
+            .get(&scene, 0, 2., area)
+            .expect("next bucket")
+            .route
+            .clone();
+        assert!(!Arc::ptr_eq(&shared, &bucket));
+        assert_eq!(shared, bucket);
+        assert!(scene.paths().is_empty());
     }
 
     #[test]

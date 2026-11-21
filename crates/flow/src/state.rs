@@ -1,7 +1,7 @@
 //! Model-owned document state with a separate viewport leaf and a reusable element.
 use crate::{
     ConnectionValidator, DefaultNodeRenderer, FlowError, FlowEvent, FlowGesture, FlowOptions,
-    FlowViewport, Graph, NodeRenderer, Viewport, WorldPoint, core, paint,
+    FlowViewport, Graph, NodeRenderer, Viewport, WorldPoint, core, editor_for_view, paint,
 };
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -16,6 +16,7 @@ use std::{
 pub(crate) struct Config {
     pub options: FlowOptions,
     pub renderer: Rc<dyn NodeRenderer>,
+    pub default_renderer: bool,
     pub validator: Option<Rc<dyn ConnectionValidator>>,
     pub policy: core::ConnectionPolicy,
 }
@@ -43,7 +44,7 @@ impl Drop for FlowState {
 }
 impl FlowState {
     pub fn new(graph: Graph, cx: &mut Context<Self>) -> Result<Self, FlowError> {
-        Ok(Self::from_editor(core::Editor::new(graph)?, cx))
+        Ok(Self::from_editor(editor_for_view(graph)?, cx))
     }
     /// Build an entity from an editor whose graph has already been validated.
     pub fn from_editor(editor: core::Editor, cx: &mut Context<Self>) -> Self {
@@ -74,6 +75,7 @@ impl FlowState {
             *config = Some(Config {
                 options: FlowOptions::default(),
                 renderer: Rc::new(DefaultNodeRenderer),
+                default_renderer: true,
                 validator: None,
                 policy: self.editor.policy,
             });
@@ -89,6 +91,7 @@ impl FlowState {
     pub fn node_renderer(mut self, renderer: impl NodeRenderer) -> Self {
         if let Some(config) = self.config_mut().as_mut() {
             config.renderer = Rc::new(renderer);
+            config.default_renderer = false;
         }
         self
     }
@@ -144,6 +147,7 @@ impl FlowState {
             leaf.layout_preview = None;
             leaf.interaction.cancel();
             leaf.interaction.editor = editor;
+            leaf.cancel_stale_indexes();
             leaf.last_error = error;
             if leaf.gesture_view.read(cx).gesture.is_some() {
                 leaf.gesture_view.update(cx, |view, cx| {
@@ -432,6 +436,46 @@ mod tests {
                 .child(self.sibling.clone())
         }
     }
+    #[gpui_kit::test]
+    fn mounted_large_flow_publishes_deferred_crossing_edges(cx: &mut TestAppContext) {
+        let graph = Graph::from_parts(
+            [
+                Node::new(1, "", WorldPoint::new(-4_000., 80.)),
+                Node::new(2, "", WorldPoint::new(4_000., 80.)),
+                Node::new(3, "", WorldPoint::new(5_000., 80.)),
+            ],
+            std::iter::once(crate::core::Edge::new(0, 1, 2))
+                .chain((1..4_096).map(|id| crate::core::Edge::new(id, 2, 3))),
+        )
+        .expect("graph");
+        let (window, state) = cx.update(|cx| {
+            guiraffe_core::init(cx);
+            let state = cx.new(|cx| {
+                FlowState::new(graph, cx)
+                    .expect("flow")
+                    .options(FlowOptions {
+                        minimap: false,
+                        fit_on_init: false,
+                        ..Default::default()
+                    })
+            });
+            assert!(state.read(cx).editor.scene().index_pending());
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, _| state).expect("window")
+        });
+        window
+            .update(cx, |_, window, cx| window.render_frame(cx))
+            .expect("first frame");
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, cx| window.render_frame(cx))
+            .expect("indexed frame");
+        state.read_with(cx, |state, _| {
+            assert!(!state.editor.scene().index_pending());
+            assert!(state.editor.scene().paths().is_empty());
+            assert_eq!(state.visible_counts(), (0, 1));
+        });
+    }
+
     #[gpui_kit::test]
     fn review2_2_camera_frames_isolate_document_host_and_sibling(cx: &mut TestAppContext) {
         let parent_count = Rc::new(Cell::new(0));

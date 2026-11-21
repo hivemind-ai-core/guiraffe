@@ -93,6 +93,7 @@ pub struct FlowViewport {
     interaction: Interaction,
     options: FlowOptions,
     renderer: Rc<dyn NodeRenderer>,
+    default_renderer: bool,
     validator: Option<Rc<dyn ConnectionValidator>>,
     focus: FocusHandle,
     bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -108,6 +109,7 @@ pub struct FlowViewport {
     camera: Rc<Cell<Viewport>>,
     counts: Rc<Cell<(usize, usize)>>,
     first_fit: Rc<Cell<bool>>,
+    index_job: Option<(std::sync::Arc<core::Scene>, core::LayoutCancellation)>,
     camera_explicit: Cell<bool>,
     minimap_drag: bool,
     config: Rc<RefCell<Option<state::Config>>>,
@@ -129,9 +131,23 @@ struct Stamp {
     error: Option<FlowError>,
 }
 impl EventEmitter<FlowEvent> for FlowViewport {}
+impl Drop for FlowViewport {
+    fn drop(&mut self) {
+        if let Some((_, cancel)) = self.index_job.take() {
+            cancel.cancel();
+        }
+    }
+}
+fn editor_for_view(graph: Graph) -> Result<core::Editor, FlowError> {
+    if graph.edges.len() >= 4_096 {
+        core::Editor::new_deferred(graph)
+    } else {
+        core::Editor::new(graph)
+    }
+}
 impl FlowViewport {
     pub fn new(graph: Graph, cx: &mut Context<Self>) -> Result<Self, FlowError> {
-        Ok(Self::from_editor(core::Editor::new(graph)?, None, cx))
+        Ok(Self::from_editor(editor_for_view(graph)?, None, cx))
     }
     fn from_editor(
         editor: core::Editor,
@@ -149,6 +165,7 @@ impl FlowViewport {
             gesture_view,
             options: FlowOptions::default(),
             renderer: Rc::new(DefaultNodeRenderer),
+            default_renderer: true,
             validator: None,
             focus: cx.focus_handle(),
             bounds: Rc::new(Cell::new(Bounds::default())),
@@ -162,6 +179,7 @@ impl FlowViewport {
             camera: Rc::new(Cell::new(Viewport::default())),
             counts: Rc::new(Cell::new((0, 0))),
             first_fit: Rc::new(Cell::new(true)),
+            index_job: None,
             camera_explicit: Cell::new(false),
             minimap_drag: false,
             config: Rc::new(RefCell::new(None)),
@@ -175,6 +193,50 @@ impl FlowViewport {
             renders: 0,
         }
     }
+    fn prepare_indexes(&mut self, cx: &mut Context<Self>) {
+        use std::sync::Arc;
+        let scene = self.interaction.editor.scene_shared();
+        if !scene.index_pending()
+            || self
+                .index_job
+                .as_ref()
+                .is_some_and(|(active, _)| Arc::ptr_eq(active, &scene))
+        {
+            return;
+        }
+        if let Some((_, stale)) = self.index_job.take() {
+            stale.cancel();
+        }
+        let cancel = core::LayoutCancellation::default();
+        self.index_job = Some((scene.clone(), cancel.clone()));
+        cx.spawn(async move |view, cx| {
+            let worker_scene = scene.clone();
+            let worker_cancel = cancel.clone();
+            let done = cx
+                .background_executor()
+                .spawn(async move { worker_scene.prepare_indexes(&worker_cancel) })
+                .await;
+            if done.is_ok() && cancel.check().is_ok() {
+                let _ = view.update(cx, |this, cx| {
+                    if Arc::ptr_eq(&scene, &this.interaction.editor.scene_shared()) {
+                        this.index_job = None;
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn cancel_stale_indexes(&mut self) {
+        if self.index_job.as_ref().is_some_and(|(scene, _)| {
+            !std::sync::Arc::ptr_eq(scene, &self.interaction.editor.scene_shared())
+        }) && let Some((_, cancel)) = self.index_job.take()
+        {
+            cancel.cancel();
+        }
+    }
+
     pub fn options(mut self, options: FlowOptions) -> Self {
         self.first_fit.set(options.fit_on_init);
         self.interaction.grid = options.snap_grid;
@@ -183,6 +245,7 @@ impl FlowViewport {
     }
     pub fn node_renderer(mut self, renderer: impl NodeRenderer) -> Self {
         self.renderer = Rc::new(renderer);
+        self.default_renderer = false;
         self
     }
     /// Configure structural connection rules, including self-loops and parallel edges.
@@ -260,6 +323,7 @@ impl FlowViewport {
         let error = before.error != self.last_error;
         self.camera.set(self.viewport());
         if document {
+            self.cancel_stale_indexes();
             self.layout_preview = None;
             self.meshes
                 .borrow_mut()
@@ -477,6 +541,7 @@ impl Render for FlowViewport {
             self.interaction.grid = config.options.snap_grid;
             self.options = config.options;
             self.renderer = config.renderer;
+            self.default_renderer = config.default_renderer;
             self.validator = config.validator;
             self.interaction.editor.policy = config.policy;
         }
@@ -493,7 +558,7 @@ impl Render for FlowViewport {
             .clone()
             .unwrap_or_else(|| Rc::new(current.clone()));
         let surfaces = theme.surfaces();
-        let viewport = self.viewport();
+        let mut viewport = self.viewport();
         let size = if self.size() == WorldPoint::default() {
             WorldPoint::new(
                 window.viewport_size().width.as_f32(),
@@ -509,6 +574,9 @@ impl Render for FlowViewport {
             .layout_preview
             .clone()
             .unwrap_or_else(|| self.interaction.editor.scene_shared());
+        if self.first_fit.get() && display.has_deferred_edges() && !window.is_a11y_active() {
+            viewport = self.interaction.fitted_viewport(size);
+        }
         // Detail gets expensive when a fit would show thousands of tiny
         // cards and edges. Test density before collecting any visible IDs.
         let area = viewport.visible(size).expand(12. / viewport.zoom);
@@ -521,15 +589,20 @@ impl Render for FlowViewport {
             self.visible.nodes.clear();
             self.visible.edges.clear();
         } else {
-            display.visible(area, &mut self.visible);
+            display.visible_candidates(area, &mut self.visible);
+            self.meshes.borrow_mut().refine_edge_candidates(
+                &display,
+                viewport,
+                area,
+                &mut self.visible.edges,
+            );
         }
         if let Some(Gesture::Move { origins, .. }) = &self.interaction.gesture {
             self.visible.nodes.extend(origins.keys().copied());
-            for id in origins.keys() {
-                self.visible
-                    .edges
-                    .extend(self.interaction.editor.scene().incident_edges(*id));
-            }
+            self.interaction
+                .editor
+                .scene()
+                .append_incident_edges(origins.keys().copied(), &mut self.visible.edges);
             self.visible.nodes.sort_unstable();
             self.visible.nodes.dedup();
             self.visible.edges.sort_unstable();
@@ -540,8 +613,16 @@ impl Render for FlowViewport {
             .retain(|id| self.interaction.editor.graph().nodes.contains_key(id));
         self.visible_counts = (self.visible.nodes.len(), self.visible.edges.len());
         self.counts.set(self.visible_counts);
-        self.nodes
-            .retain(|id, _| self.visible.nodes.binary_search(id).is_ok());
+        let inline_nodes = gpui_kit::GPUI_FAST
+            && self.default_renderer
+            && display.has_deferred_edges()
+            && !window.is_a11y_active();
+        if inline_nodes {
+            self.nodes.clear();
+        } else {
+            self.nodes
+                .retain(|id, _| self.visible.nodes.binary_search(id).is_ok());
+        }
         let scene = self.interaction.editor.scene_shared();
         let selection = self.interaction.editor.selected_nodes_shared();
         if self.last_query_ids != self.visible.nodes
@@ -575,6 +656,30 @@ impl Render for FlowViewport {
                     .get(id)
                     .map_or(node.pos, |preview| preview.pos)
             }));
+            let style = StyleRefinement::default()
+                .absolute()
+                .left(px(position.x))
+                .top(px(position.y))
+                .w(px(node.size.x * viewport.zoom))
+                .h(px(node.size.y * viewport.zoom));
+            if inline_nodes {
+                let mut rendered = std::borrow::Cow::Borrowed(node);
+                if node.selected != selected {
+                    rendered.to_mut().selected = selected;
+                }
+                nodes.push(
+                    node::render_card(
+                        &rendered,
+                        viewport.zoom,
+                        self.renderer.as_ref(),
+                        Some(style),
+                        window,
+                        cx,
+                    )
+                    .into_any_element(),
+                );
+                continue;
+            }
             let card = self.nodes.entry(*id).or_insert_with(|| {
                 cx.new(|_| node::NodeCard {
                     node: {
@@ -587,12 +692,6 @@ impl Render for FlowViewport {
                     renderer: self.renderer.clone(),
                 })
             });
-            let style = StyleRefinement::default()
-                .absolute()
-                .left(px(position.x))
-                .top(px(position.y))
-                .w(px(node.size.x * viewport.zoom))
-                .h(px(node.size.y * viewport.zoom));
             // GPUI 0.3.7 does not replay accessibility nodes from its paint cache.
             if window.is_a11y_active() {
                 let mut frame = div().child(card.clone());
@@ -611,7 +710,7 @@ impl Render for FlowViewport {
                 if edge.label.is_empty() || viewport.zoom < 0.4 {
                     return None;
                 }
-                let path = display.paths().get(id)?;
+                let path = display.edge_route(*id)?;
                 let source = self.interaction.preview(edge.source.node);
                 let target = self.interaction.preview(edge.target.node);
                 let label = if source.is_some() || target.is_some() {
@@ -640,7 +739,13 @@ impl Render for FlowViewport {
         let bounds = self.bounds.clone();
         let weak = cx.entity().downgrade();
         let first_fit = self.first_fit.clone();
-        let graph_nonempty = self.interaction.editor.scene().bounds().is_some();
+        let scene = self.interaction.editor.scene_shared();
+        let graph_nonempty = scene.bounds().is_some();
+        let prepare_indexes = scene.index_pending()
+            && self
+                .index_job
+                .as_ref()
+                .is_none_or(|(active, _)| !std::sync::Arc::ptr_eq(active, &scene));
         let meshes = self.meshes.clone();
         // Animated edges: phase from the app clock; none at all under reduced motion.
         let now = cx.background_executor().now();
@@ -656,7 +761,9 @@ impl Render for FlowViewport {
             phase,
         );
         frame.overview = overview;
-        let frame = Rc::new(RefCell::new(frame.with_scene(display)));
+        let frame = Rc::new(RefCell::new(
+            frame.with_scene(display).with_viewport(viewport),
+        ));
         let base_frame = frame.clone();
         let map_meshes = self.meshes.clone();
         let mut root = div()
@@ -676,6 +783,12 @@ impl Render for FlowViewport {
                     move |b, _, cx| {
                         let changed = bounds.get() != b;
                         bounds.set(b);
+                        if prepare_indexes {
+                            let index_leaf = weak.clone();
+                            cx.defer(move |cx| {
+                                let _ = index_leaf.update(cx, |leaf, cx| leaf.prepare_indexes(cx));
+                            });
+                        }
                         if first_fit.get()
                             && graph_nonempty
                             && b.size.width > px(80.)

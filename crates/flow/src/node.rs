@@ -23,51 +23,68 @@ pub(crate) struct NodeCard {
 }
 impl Render for NodeCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = GuiraffeTheme::global(cx);
-        let surfaces = theme.surfaces();
-        let accent = theme.primary_color();
-        // The border of a node is painted over the children of the node, so
-        // the handles are children of a frame around the border: the handles
-        // are then painted above the border and sit whole on it.
-        let mut frame = div()
-            .id(("flow-node", self.node.id))
-            .test_support()
-            .relative()
-            .size_full()
-            .child(
-                div()
-                    .size_full()
-                    .rounded(px(theme.default_radius.radius() * self.zoom))
-                    .bg(surfaces.surface.to_hsla())
-                    .border_1()
-                    .border_color(if self.node.selected {
-                        accent.to_hsla()
-                    } else {
-                        surfaces.border.to_hsla()
-                    })
-                    .child(self.renderer.render(&self.node, self.zoom, window, cx)),
-            );
-        for handle in &self.node.handles {
-            let bounds = handle_bounds(
-                handle.position(Rect {
-                    origin: WorldPoint::default(),
-                    size: self.node.size,
-                }),
-                self.zoom,
-            );
-            frame = frame.child(
-                div()
-                    .id(SharedString::from(format!("handle-{}", handle.id)))
-                    .test_support()
-                    .absolute()
-                    // The dot is centred on the border of the node.
-                    .left(px(bounds.origin.x))
-                    .top(px(bounds.origin.y))
-                    .size(px(bounds.size.x))
-                    .rounded_full()
-                    .bg(accent.to_hsla()),
-            );
-        }
-        frame
+        render_card(
+            &self.node,
+            self.zoom,
+            self.renderer.as_ref(),
+            None,
+            window,
+            cx,
+        )
     }
+}
+
+pub(crate) fn render_card(
+    node: &Node,
+    zoom: f32,
+    renderer: &dyn NodeRenderer,
+    style: Option<StyleRefinement>,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    let theme = GuiraffeTheme::global(cx);
+    let surfaces = theme.surfaces();
+    let accent = theme.primary_color();
+    // The border of a node is painted over the children of the node, so
+    // the handles are children of a frame around the border: the handles
+    // are then painted above the border and sit whole on it.
+    let mut frame = div().id(("flow-node", node.id)).relative().size_full();
+    if let Some(style) = style {
+        *frame.style() = style;
+    }
+    let mut frame = frame.test_support().child(
+        div()
+            .size_full()
+            .rounded(px(theme.default_radius.radius() * zoom))
+            .bg(surfaces.surface.to_hsla())
+            .border_1()
+            .border_color(if node.selected {
+                accent.to_hsla()
+            } else {
+                surfaces.border.to_hsla()
+            })
+            .child(renderer.render(node, zoom, window, cx)),
+    );
+    for handle in &node.handles {
+        let bounds = handle_bounds(
+            handle.position(Rect {
+                origin: WorldPoint::default(),
+                size: node.size,
+            }),
+            zoom,
+        );
+        frame = frame.child(
+            div()
+                .id(SharedString::from(format!("handle-{}", handle.id)))
+                .test_support()
+                .absolute()
+                // The dot is centred on the border of the node.
+                .left(px(bounds.origin.x))
+                .top(px(bounds.origin.y))
+                .size(px(bounds.size.x))
+                .rounded_full()
+                .bg(accent.to_hsla()),
+        );
+    }
+    frame
 }
