@@ -1269,18 +1269,19 @@ mod mounted {
     }
     #[cfg(all(test, target_os = "linux"))]
     mod tests {
-        use super::{chat, chat_message, empty};
-        use std::process::Command;
+        use super::{ChatHost, MarkdownHost, chat, chat_message, document, empty, markdown, mount};
+        use gpui_kit::{AppContext as _, test::TestWindowExt};
+        use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
+        use std::{process::Command, time::Instant};
 
-        const SCENARIO: &str = "GUIRAFFE_CHAT_RSS_TEST_SCENARIO";
+        #[global_allocator]
+        static ALLOCATOR: CountingAllocator = CountingAllocator;
 
-        fn mounted_peak(scenario: &str) -> u64 {
+        const SCENARIO: &str = "GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO";
+
+        fn mounted_peak(test: &str, scenario: &str) -> u64 {
             let output = Command::new(std::env::current_exe().expect("test executable"))
-                .args([
-                    "--exact",
-                    "mounted::tests::chat_history_rss_budget",
-                    "--nocapture",
-                ])
+                .args(["--exact", test, "--nocapture"])
                 .env(SCENARIO, scenario)
                 .env_remove("SOAK_SCALE")
                 .output()
@@ -1292,17 +1293,22 @@ mod mounted {
             );
             String::from_utf8_lossy(&output.stdout)
                 .lines()
-                .find_map(|line| line.strip_prefix("chat-test-rss-kib="))
+                .find_map(|line| line.strip_prefix("mounted-test-rss-kib="))
                 .and_then(|value| value.parse().ok())
                 .expect("child peak RSS")
         }
 
-        #[test]
-        fn chat_history_rss_budget() {
+        fn run_rss_child() -> bool {
             if let Ok(scenario) = std::env::var(SCENARIO) {
                 match scenario.as_str() {
                     "empty" => empty(|_| {}).expect("mount baseline"),
                     "chat" => chat(|_| {}).expect("mount 100k chat history"),
+                    "markdown" => markdown(Instant::now(), |frame, _| {
+                        for index in 0..64 {
+                            frame(index).expect("scroll and append");
+                        }
+                    })
+                    .expect("mount 50k-line Markdown"),
                     _ => panic!("unknown scenario {scenario}"),
                 }
                 let status = std::fs::read_to_string("/proc/self/status").expect("process status");
@@ -1311,14 +1317,15 @@ mod mounted {
                     .find_map(|line| line.strip_prefix("VmHWM:"))
                     .and_then(|value| value.split_whitespace().next())
                     .expect("kernel peak RSS");
-                println!("chat-test-rss-kib={peak}");
-                return;
+                println!("mounted-test-rss-kib={peak}");
+                return true;
             }
-            let baseline = mounted_peak("empty");
-            let loaded = mounted_peak("chat");
-            let raw_bytes: usize = (0..100_000)
-                .map(|index| chat_message(index).text.len())
-                .sum();
+            false
+        }
+
+        fn assert_rss_budget(test: &str, scenario: &str, raw_bytes: usize) {
+            let baseline = mounted_peak(test, "empty");
+            let loaded = mounted_peak(test, scenario);
             let budget = (raw_bytes + raw_bytes / 4).div_ceil(1024) as u64 + 64 * 1024;
             let delta = loaded.saturating_sub(baseline);
             println!(
@@ -1328,6 +1335,83 @@ mod mounted {
                 delta <= budget,
                 "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
             );
+        }
+
+        #[test]
+        fn chat_history_rss_budget() {
+            if run_rss_child() {
+                return;
+            }
+            let raw_bytes: usize = (0..100_000)
+                .map(|index| chat_message(index).text.len())
+                .sum();
+            assert_rss_budget("mounted::tests::chat_history_rss_budget", "chat", raw_bytes);
+        }
+
+        #[test]
+        fn markdown_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget(
+                    "mounted::tests::markdown_rss_budget",
+                    "markdown",
+                    document(50_000).len(),
+                );
+            }
+        }
+
+        #[test]
+        fn text_warm_repaint_work_does_not_grow_with_history() -> anyhow::Result<()> {
+            let markdown_allocs = |lines| {
+                let (mut window, _) = mount(
+                    "markdown-warm-allocation",
+                    |_| {},
+                    |_, cx| {
+                        let state =
+                            cx.new(|cx| guiraffe_markdown::MarkdownState::new(document(lines), cx));
+                        cx.new(|_| MarkdownHost(state))
+                    },
+                )
+                .expect("Markdown mount");
+                for _ in 0..4 {
+                    window.update(|window, cx| window.render_frame(cx));
+                }
+                count_allocations(|| window.update(|window, cx| window.render_frame(cx)))
+                    .map(|(_, counts)| counts)
+            };
+            let chat_allocs = |rows| {
+                let (mut window, _) =
+                    mount("chat-warm-allocation", guiraffe_chat::init, |window, cx| {
+                        let state = cx.new(|cx| guiraffe_chat::ChatState::new(window, cx));
+                        state.update(cx, |chat, cx| {
+                            for index in 0..rows {
+                                chat.push_message(
+                                    guiraffe_chat::Message::new(
+                                        guiraffe_chat::MessageId(index + 1),
+                                        guiraffe_chat::Role::User,
+                                        "Same visible **message**",
+                                    ),
+                                    cx,
+                                );
+                            }
+                        });
+                        cx.new(|_| ChatHost(state))
+                    })
+                    .expect("Chat mount");
+                for _ in 0..4 {
+                    window.update(|window, cx| window.render_frame(cx));
+                }
+                count_allocations(|| window.update(|window, cx| window.render_frame(cx)))
+                    .map(|(_, counts)| counts)
+            };
+            let markdown_small = markdown_allocs(10_000)?;
+            let markdown_large = markdown_allocs(50_000)?;
+            let chat_small = chat_allocs(10_000)?;
+            let chat_large = chat_allocs(100_000)?;
+            eprintln!("Markdown: {markdown_small:?} -> {markdown_large:?}");
+            eprintln!("Chat: {chat_small:?} -> {chat_large:?}");
+            assert_eq!(markdown_small, markdown_large);
+            assert_eq!(chat_small, chat_large);
+            Ok(())
         }
     }
 }
