@@ -220,8 +220,9 @@ fn charts(
                     stream.append((next..end).collect());
                     stream.retain_last(STREAM_RATE as usize);
                     next = end;
-                    let model = streaming_spec(stream.clone()).prepare();
-                    window.update(|_, cx| view.update(cx, |chart, cx| chart.replace(model, cx)));
+                    let spec = streaming_spec(stream.clone());
+                    window
+                        .update(|_, cx| view.update(cx, |chart, cx| chart.replace_spec(spec, cx)));
                 }
             }
             let bounds = window
@@ -268,7 +269,7 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter|chart-stream|gantt|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
@@ -286,7 +287,16 @@ fn main() -> Result<()> {
         "chart-stream" => charts(false, true, |frame, mount| {
             result = sample(frame, mount, short)
         })?,
-        "gantt" => mounted::gantt(|frame| result = sample(frame, mount_started.elapsed(), short))?,
+        "gantt" | "gantt-fan-out" | "gantt-chain" => {
+            let graph = match component {
+                "gantt-fan-out" => mounted::GanttGraph::FanOut,
+                "gantt-chain" => mounted::GanttGraph::Chain,
+                _ => mounted::GanttGraph::Sparse,
+            };
+            mounted::gantt(graph, |frame| {
+                result = sample(frame, mount_started.elapsed(), short)
+            })?;
+        }
         "tracks" => {
             mounted::tracks(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
@@ -479,7 +489,13 @@ mod mounted {
     /// Gantt: 100,000 bars in chains of ten finish→start dependencies.
     /// The view lays out every row (no vertical virtualization or scrolling);
     /// vertical wheel input pans its time axis like horizontal input.
-    pub fn gantt(run: impl FnOnce(Frame)) -> Result<()> {
+    pub enum GanttGraph {
+        Sparse,
+        FanOut,
+        Chain,
+    }
+
+    pub fn gantt(graph: GanttGraph, run: impl FnOnce(Frame)) -> Result<()> {
         use guiraffe_timeline::{GanttView, Task, TimeFormat, gantt_view::RULER_H};
         let count = scaled(100_000) as u32;
         let tasks = (0..count)
@@ -488,7 +504,12 @@ mod mounted {
                 name: format!("Task {id}"),
                 not_before: f64::from((id / 10) % 100) * 3.,
                 duration: 1. + f64::from(id % 3),
-                after: if id % 10 == 0 { vec![] } else { vec![id - 1] },
+                after: match graph {
+                    GanttGraph::FanOut if id > 0 => vec![0],
+                    GanttGraph::Chain if id > 0 => vec![id - 1],
+                    GanttGraph::Sparse if id % 10 != 0 => vec![id - 1],
+                    _ => vec![],
+                },
             })
             .collect();
         let (mut window, _view) = mount("gantt_soak", guiraffe_timeline::init, |_, cx| {
@@ -832,6 +853,8 @@ mod mounted {
         Ok(())
     }
 
+    const PROPERTIES_PER_GROUP: usize = 9;
+
     struct Settings {
         groups: Forest,
         values: [guiraffe_tree::Value; 4],
@@ -843,7 +866,7 @@ mod mounted {
             &[0]
         }
         fn children(&self, id: u64) -> guiraffe_tree::Children<'_> {
-            guiraffe_tree::Children::Ready(self.groups.kids(id, 10))
+            guiraffe_tree::Children::Ready(self.groups.kids(id, PROPERTIES_PER_GROUP))
         }
         fn label(&self, id: u64) -> &str {
             if id == 0 {
@@ -871,12 +894,16 @@ mod mounted {
         }
     }
 
-    /// PropertyGrid: 10,000 groups of ten properties (110,001 rows) all expanded.
+    /// PropertyGrid: 100,000 groups of nine properties (1,000,001 rows) all expanded.
     pub fn property_grid(run: impl FnOnce(Frame)) -> Result<()> {
         use guiraffe_tree::Value;
-        let groups = scaled(10_000);
+        let groups = scaled(100_000);
+        println!(
+            "property_groups={groups} visible_rows={}",
+            1 + groups * (1 + PROPERTIES_PER_GROUP)
+        );
         let source = Rc::new(Settings {
-            groups: Forest::new(groups, 10),
+            groups: Forest::new(groups, PROPERTIES_PER_GROUP),
             values: [
                 Value::Number(0.75),
                 Value::Bool(true),

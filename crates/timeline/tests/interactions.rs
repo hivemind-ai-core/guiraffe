@@ -416,6 +416,38 @@ fn dense_tracks_select_a_clip_by_canvas_position(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn gantt_virtual_rows_scroll_and_hit_test_content_coordinates(cx: &mut TestAppContext) {
+    let (view, _, vcx) = mount(cx, |cx| {
+        GanttView::new(
+            (0..10_000)
+                .map(|id| Task {
+                    id,
+                    name: format!("Task {id}"),
+                    not_before: 0.0,
+                    duration: 2.0,
+                    after: Vec::new(),
+                })
+                .collect(),
+            TimeFormat::Seconds,
+            cx,
+        )
+    });
+    assert!(vcx.debug_bounds("task-lock-0").is_some());
+    assert!(vcx.debug_bounds("task-lock-9999").is_none());
+    let body = vcx.debug_bounds("gantt-body").expect("Gantt body");
+    vcx.simulate_event(gpui_kit::ScrollEvent {
+        position: body.center(),
+        delta: gpui_kit::ScrollDelta::Pixels(point(px(0.0), px(-320_000.0))),
+        ..Default::default()
+    });
+    vcx.run_until_parked();
+    assert!(vcx.debug_bounds("task-lock-0").is_none());
+    assert!(vcx.debug_bounds("task-lock-9999").is_some());
+    click(vcx, point(body.center().x, body.bottom() - px(16.0)), false);
+    assert_eq!(vcx.update(|_, cx| view.read(cx).selected()), Some(9999));
+}
+
+#[gpui_kit::test]
 fn dope_virtual_rows_scroll_without_instantiating_offscreen_controls(cx: &mut TestAppContext) {
     let (_, _, vcx) = mount(cx, |cx| {
         DopeSheet::new(
