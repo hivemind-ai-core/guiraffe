@@ -282,12 +282,18 @@ fn matches_data_schema(value: &Value, schema: &Value) -> bool {
     {
         return false;
     }
-    if let Some(array) = value.as_array()
-        && let Some(item_schema) = schema.get("items")
-    {
-        return array
-            .iter()
-            .all(|value| matches_data_schema(value, item_schema));
+    if let Some(array) = value.as_array() {
+        let len = array.len() as u64;
+        if schema["minItems"].as_u64().is_some_and(|min| len < min)
+            || schema["maxItems"].as_u64().is_some_and(|max| len > max)
+        {
+            return false;
+        }
+        if let Some(item_schema) = schema.get("items") {
+            return array
+                .iter()
+                .all(|value| matches_data_schema(value, item_schema));
+        }
     }
     if let Some(fields) = value.as_object() {
         return schema["required"]
@@ -579,6 +585,12 @@ impl Validation<'_> {
                 "number-array" => got
                     .as_array()
                     .is_some_and(|values| values.iter().all(Value::is_number)),
+                "curve-series" => got.as_array().is_some_and(|curves| {
+                    let schema = crate::widget_spec::curve_series_schema();
+                    curves
+                        .iter()
+                        .all(|curve| matches_data_schema(curve, &schema))
+                }),
                 "flame-frames" => check_flame_frames(got),
                 "grid-rows" => got.as_array().is_some_and(|rows| {
                     let schema = crate::widget_spec::grid_row_schema();

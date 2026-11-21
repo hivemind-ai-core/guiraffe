@@ -231,37 +231,6 @@ overlays::Spotlight
 overlays::Spotlight::new
 overlays::Spotlight::open
 overlays::Spotlight::set_commands
-timeline::BarCurveView::add_layer
-timeline::CurveView
-timeline::CurveView::add_curve
-timeline::CurveView::add_key
-timeline::CurveView::add_layer
-timeline::CurveView::axis
-timeline::CurveView::curve
-timeline::CurveView::curves
-timeline::CurveView::drag_to
-timeline::CurveView::event Changed
-timeline::CurveView::event KeyMoved
-timeline::CurveView::event SelectionChanged
-timeline::CurveView::fit_view
-timeline::CurveView::insert_at
-timeline::CurveView::new
-timeline::CurveView::press
-timeline::CurveView::range
-timeline::CurveView::release
-timeline::CurveView::remove_segment
-timeline::CurveView::remove_selected
-timeline::CurveView::select_key
-timeline::CurveView::selection
-timeline::CurveView::set_curve_visible
-timeline::CurveView::set_editable
-timeline::CurveView::set_focusable
-timeline::CurveView::set_interpolation
-timeline::CurveView::set_tangent
-timeline::CurveView::set_tangent_mode
-timeline::CurveView::split_segment
-timeline::DopeSheet::add_layer
-timeline::GanttView::add_layer
 ui::BoundNode
 ui::DataUi
 ui::DataUi::events_handled

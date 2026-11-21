@@ -69,7 +69,7 @@ impl PropSpec {
             | "timeline-tracks" | "track-selection" | "gantt-tasks" | "board-columns"
             | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
             | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels"
-            | "avatar-people" | "dope-channels" | "number-array" => "array",
+            | "avatar-people" | "dope-channels" | "number-array" | "curve-series" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -109,12 +109,10 @@ impl PropSpec {
             "avatar-people" => schema["items"] = avatar_person_schema(),
             "dope-channels" => schema["items"] = dope_channel_schema(),
             "number-array" => schema["items"] = json!({"type":"number"}),
+            "curve-series" => schema["items"] = curve_series_schema(),
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
-            "track-selection" => {
-                schema["items"] = json!({"type":"integer","minimum":0,"maximum":u32::MAX});
-                schema["oneOf"] = json!([{"maxItems":0},{"minItems":2,"maxItems":2}]);
-            }
+            "track-selection" => schema = curve_selection_schema(),
             "ring-sections" => {
                 schema["items"] = json!({
                     "type":"object",
@@ -197,6 +195,12 @@ impl EventSpec {
                 dope_event_schema(kind)
             }
             "bar-edit" => bar_edit_schema(),
+            "curve-key-move" => json!({
+                "type":"object","additionalProperties":false,"required":["index","time","value"],
+                "properties":{"index":{"type":"integer","minimum":0},"time":{"type":"number"},"value":{"type":"number"}}
+            }),
+            "curve-series" => json!({"type":"array","items":curve_series_schema()}),
+            "curve-selection" => curve_selection_schema(),
             "flow-selection" => {
                 let ids = json!({"type":"array","items":{"type":"integer","minimum":0}});
                 json!({"type":"object","required":["nodes","edges"],"additionalProperties":false,
@@ -871,5 +875,32 @@ fn bar_edit_schema() -> Value {
     json!({
         "type":"object","additionalProperties":false,"required":["start","end","values"],
         "properties":{"start":index,"end":index,"values":{"type":"array","items":{"type":"number"}}}
+    })
+}
+
+pub fn curve_series_schema() -> Value {
+    let handle = json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}});
+    json!({
+        "type":"object","additionalProperties":false,"required":["name"],
+        "properties":{
+            "name":{"type":"string"},
+            "color":{"enum":["dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal","green","lime","yellow","orange"]},
+            "visible":{"type":"boolean"},
+            "keys":{"type":"array","items":{
+                "type":"object","additionalProperties":false,"required":["time","value"],
+                "properties":{
+                    "time":{"type":"number"},"value":{"type":"number"},
+                    "interpolation":{"enum":["constant","linear","bezier"]},
+                    "inHandle":handle,"outHandle":handle
+                }
+            }}
+        }
+    })
+}
+
+fn curve_selection_schema() -> Value {
+    json!({
+        "type":"array","items":{"type":"integer","minimum":0,"maximum":u32::MAX},
+        "oneOf":[{"maxItems":0},{"minItems":2,"maxItems":2}]
     })
 }

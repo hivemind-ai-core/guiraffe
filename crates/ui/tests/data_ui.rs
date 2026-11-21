@@ -1663,3 +1663,61 @@ fn ui_macro_accepts_dope_sheet_and_bar_curve_views() {
     }
     let _ = example;
 }
+
+#[gpui_kit::test]
+fn curve_editor_document_drives_series_tangents_and_selection(cx: &mut TestAppContext) {
+    cx.update(guiraffe_timeline::init);
+    let doc = Document::new(
+        Node::new("curve-editor")
+            .prop(
+                "curves",
+                serde_json::json!([
+                    {"name":"Move","color":"orange","visible":true,"keys":[
+                        {"time":0,"value":0,"interpolation":"bezier","outHandle":[0.3,0.2]},
+                        {"time":3,"value":1,"interpolation":"linear","inHandle":[-0.3,-0.2]}
+                    ]},
+                    {"name":"Opacity","visible":false,"keys":[{"time":1,"value":0.4}]}
+                ]),
+            )
+            .prop("time-start", -1)
+            .prop("time-end", 8)
+            .prop("minimum", -0.25)
+            .prop("maximum", 1.25)
+            .prop("focusable", true)
+            .prop("editable", true)
+            .prop("tangent-mode", "mirrored")
+            .prop("selection", serde_json::json!([0, 1]))
+            .prop("fit", "normalize")
+            .on("key-move", "move-key")
+            .on("change", "update-series")
+            .on("selection-change", "select-key"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx).expect("curves"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_the_native_curve_editor() {
+    use guiraffe_timeline::{Curve, CurveSeries, CurveView, Interp, Key, TangentMode};
+
+    fn example(cx: &mut gpui_kit::App) -> impl IntoElement {
+        let mut curve = Curve::default();
+        curve.set(Key::new(0.0, 0.0, Interp::Linear));
+        let view = CurveView::new(curve, 0.0, 10.0, 0.0, 1.0, cx);
+        view.update(cx, |view, cx| {
+            view.add_curve(
+                CurveSeries::new("Extra", Curve::default(), guiraffe_core::ColorName::Teal),
+                cx,
+            );
+            view.set_tangent_mode(TangentMode::Mirrored);
+            view.set_editable(true, cx);
+            view.set_focusable(Some(true), cx);
+        });
+        ui! { div { {view} } }
+    }
+    let _ = example;
+}

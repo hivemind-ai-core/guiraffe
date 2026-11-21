@@ -50,6 +50,7 @@ pub fn init(cx: &mut gpui_kit::App) {
     gantt_view::document::register(cx);
     dope_sheet::document::register(cx);
     bar_view::document::register(cx);
+    curve_view::document::register(cx);
     edit::init(cx);
 }
 

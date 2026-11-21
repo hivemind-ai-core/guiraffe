@@ -729,3 +729,5 @@ mod tangent_defaults {
         assert_eq!(handles[1].1, (1. / 3., 0.));
     }
 }
+
+pub(crate) mod document;

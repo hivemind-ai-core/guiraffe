@@ -57,6 +57,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "timeline::GanttView" => "gantt",
         "timeline::DopeSheet" => "dope-sheet",
         "timeline::BarCurveView" => "bar-curve",
+        "timeline::CurveView" => "curve-editor",
         _ => return None,
     })
 }
@@ -232,6 +233,42 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Finishes the active native input gesture.",
     ),
     (
+        "timeline::CurveView::axis",
+        "Returns the current viewport axis. The document supplies time-start and time-end.",
+    ),
+    (
+        "timeline::CurveView::range",
+        "Returns the current viewport range. The document supplies minimum and maximum.",
+    ),
+    (
+        "timeline::CurveView::insert_at",
+        "Imperative editor command that interpolates a new key. Documents supply the desired key data.",
+    ),
+    (
+        "timeline::CurveView::remove_selected",
+        "Imperative editor command. A document can replace its curve key list.",
+    ),
+    (
+        "timeline::CurveView::split_segment",
+        "Imperative edit preserving curve continuity. A document supplies complete keys and handles.",
+    ),
+    (
+        "timeline::CurveView::remove_segment",
+        "Imperative edit. A document can replace its curve key list.",
+    ),
+    (
+        "timeline::CurveView::press",
+        "Begins a native pointer gesture from editor coordinates.",
+    ),
+    (
+        "timeline::CurveView::drag_to",
+        "Continues the native pointer gesture.",
+    ),
+    (
+        "timeline::CurveView::release",
+        "Finishes the native pointer gesture.",
+    ),
+    (
         "tree::TreeView::expand_loaded",
         "An imperative batch command. Documents name the desired expanded row ids.",
     ),
@@ -309,6 +346,22 @@ const IMPERATIVE: &[(&str, &str)] = &[
     ),
     (
         "timeline::TracksView::add_layer",
+        "A native plot-layer trait implementation is application-owned Rust code.",
+    ),
+    (
+        "timeline::BarCurveView::add_layer",
+        "A native plot-layer trait implementation is application-owned Rust code.",
+    ),
+    (
+        "timeline::CurveView::add_layer",
+        "A native plot-layer trait implementation is application-owned Rust code.",
+    ),
+    (
+        "timeline::DopeSheet::add_layer",
+        "A native plot-layer trait implementation is application-owned Rust code.",
+    ),
+    (
+        "timeline::GanttView::add_layer",
         "A native plot-layer trait implementation is application-owned Rust code.",
     ),
     (
@@ -599,6 +652,7 @@ fn covered(surface: &str) -> bool {
             ("timeline::DopeSheet", "KeyRetimed") => "key-retime",
             ("timeline::DopeSheet", "ChannelChanged") => "channel-change",
             ("timeline::BarCurveView", "BarEvent") => "change",
+            ("timeline::CurveView", "KeyMoved") => "key-move",
             ("chat::ChatState", "Submitted") => "submit",
             ("chat::ChatState", "Retry") => "retry",
             ("chat::ChatState", "Stopped") => "stop",
@@ -662,6 +716,13 @@ fn covered(surface: &str) -> bool {
                 ("timeline::GanttView", "select") => "selected".into(),
                 ("timeline::DopeSheet", "set_locked") => "channels".into(),
                 ("timeline::BarCurveView", "model" | "set_model") => "values".into(),
+                (
+                    "timeline::CurveView",
+                    "curve" | "add_curve" | "add_key" | "set_curve_visible" | "set_interpolation"
+                    | "set_tangent",
+                ) => "curves".into(),
+                ("timeline::CurveView", "select_key") => "selection".into(),
+                ("timeline::CurveView", "fit_view") => "fit".into(),
                 ("chat::ChatState", "begin_reply") => "streaming-message".into(),
                 ("chat::ChatState", "add_attachment") => "attachments".into(),
                 ("chat::ChatState", "with_props" | "props" | "set_props") => "title".into(),

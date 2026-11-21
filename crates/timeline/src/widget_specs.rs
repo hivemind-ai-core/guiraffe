@@ -184,4 +184,44 @@ pub static BAR_CURVE: WidgetSpec = WidgetSpec {
     a11y_role: "group",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&TRACKS, &GANTT, &DOPE_SHEET, &BAR_CURVE];
+pub static CURVE_EDITOR: WidgetSpec = WidgetSpec {
+    id: "curve-editor",
+    krate: "timeline",
+    summary: "Multi-series keyframe curve editor with editable Bezier tangents.",
+    props: &[
+        prop("curves", "curve-series", "[]"),
+        prop("time-start", "number", "0"),
+        prop("time-end", "number", "10"),
+        prop("minimum", "number", "0"),
+        prop("maximum", "number", "1"),
+        prop("editable", "boolean", "true"),
+        prop("focusable", "boolean", "null"),
+        choice(
+            "tangent-mode",
+            "\"free\"",
+            &["free", "aligned", "mirrored", "flat"],
+        ),
+        prop("selection", "track-selection", "null"),
+        choice("fit", "\"none\"", &["none", "visible", "normalize"]),
+    ],
+    accepts_children: false,
+    events: &[
+        EventSpec {
+            id: "key-move",
+            payload_type: "curve-key-move",
+        },
+        EventSpec {
+            id: "change",
+            payload_type: "curve-series",
+        },
+        EventSpec {
+            id: "selection-change",
+            payload_type: "curve-selection",
+        },
+    ],
+    state: "keyed curve editor with local viewport, selection and edits",
+    theme_tokens: &[],
+    a11y_role: "group",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[&TRACKS, &GANTT, &DOPE_SHEET, &BAR_CURVE, &CURVE_EDITOR];
