@@ -133,3 +133,15 @@ Owned result vectors and per-node child lists keep their existing lifetimes.
 In the upstream mounted release probe, this removed 17 requests per retained
 draw in five fixtures and 20 in Charts, after tab-stop reuse. Taffy's 171
 library tests include a nested scratch reuse check.
+
+## Share the entries of replayed key contexts in both GPUI snapshots
+
+The dispatch tree copies key context values when replaying retained nodes.
+Share their backing entries with an Arc and detach on mutation. Keep one
+shared empty context. Edits, clearing, comparisons, and predicate evaluation
+keep their value semantics.
+
+GDB traced the fast backend's 48-byte requests to the context clone in
+`fast::dispatch::copy_nodes`. The five fixtures without rounded-clip
+compilation went from one or two requests to zero. Upstream cloned the same
+entries twice through `DispatchTree::move_node` and `set_key_context`.
