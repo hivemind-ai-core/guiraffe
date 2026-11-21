@@ -322,9 +322,9 @@ fn main() -> Result<()> {
         "bar-editor" => {
             mounted::bar_editor(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "flamegraph" => {
-            mounted::flamegraph(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
+        "flamegraph" => mounted::flamegraph(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "tree" => mounted::tree(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         "property-grid" => {
             mounted::property_grid(|frame| result = sample(frame, mount_started.elapsed(), short))?
@@ -398,7 +398,7 @@ fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bo
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
-    use super::{Result, scaled};
+    use super::{Instant, Result, scaled};
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
         ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, ScrollSource, Styled,
@@ -430,6 +430,21 @@ mod mounted {
         init: impl FnOnce(&mut App),
         build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> Result<(VisualTestContext, Entity<V>)> {
+        let (mut window, view) = open(name, init, build)?;
+        window.run_until_parked();
+        window.update(|window, cx| window.render_frame(cx));
+        settle(&mut window);
+        // Views that measure themselves (axis width, viewport bounds) lay out again.
+        window.update(|window, cx| window.render_frame(cx));
+        window.run_until_parked();
+        Ok((window, view))
+    }
+
+    fn open<V: Render>(
+        name: &'static str,
+        init: impl FnOnce(&mut App),
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> Result<(VisualTestContext, Entity<V>)> {
         let cx = TestAppContext::build(TestDispatcher::new(0), Some(name));
         cx.update(|cx| {
             guiraffe_core::init(cx);
@@ -445,14 +460,7 @@ mod mounted {
             };
             gpui_kit::open_window(options, cx, build)
         })?;
-        let mut window = VisualTestContext::from_window(handle, &cx);
-        window.run_until_parked();
-        window.update(|window, cx| window.render_frame(cx));
-        settle(&mut window);
-        // Views that measure themselves (axis width, viewport bounds) lay out again.
-        window.update(|window, cx| window.render_frame(cx));
-        window.run_until_parked();
-        Ok((window, view))
+        Ok((VisualTestContext::from_window(handle, &cx), view))
     }
 
     fn settle(window: &mut VisualTestContext) {
@@ -713,8 +721,8 @@ mod mounted {
 
     /// FlameGraph: 10,000,000 frames as 20,000 stacks of depth 500 (mirrors
     /// the `flamegraph_ten_million` bench source).
-    pub fn flamegraph(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_flamegraph::{FlameGraph, FlameLayout, Frame as Sample, FrameSource};
+    pub fn flamegraph(started: Instant, run: impl FnOnce(Frame, Duration)) -> Result<()> {
+        use guiraffe_flamegraph::{FlameGraph, Frame as Sample, FrameSource};
         const LABELS: [&str; 8] = [
             "main", "run", "dispatch", "render", "layout", "paint", "alloc", "hash",
         ];
@@ -736,26 +744,45 @@ mod mounted {
             }
         }
         let frames = scaled(10_000_000).div_ceil(500) * 500;
-        let layout =
-            Arc::new(FlameLayout::new(Arc::new(Profile(frames))).map_err(|e| format!("{e:?}"))?);
-        let (mut window, _view) = mount("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
-            cx.new(|_| FlameGraph::new(layout))
+        let (mut window, view) = open("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
+            cx.new(|cx| {
+                FlameGraph::from_source(Arc::new(Profile(frames)), cx)
+                    .unwrap_or_else(|error| panic!("invalid soak profile: {error:?}"))
+            })
         })?;
+        // The deterministic test dispatcher runs its background queue when
+        // parked. Draw and verify the preview before draining that queue.
+        window.update(|window, cx| window.render_frame(cx));
+        require(&mut window, "flame-plot")?;
+        let mount = started.elapsed();
+        println!(
+            "preview_pending={}",
+            view.read_with(&window, |view, _| view.is_loading())
+        );
+        settle(&mut window);
+        window.update(|window, cx| window.render_frame(cx));
+        if let Some(error) = view.read_with(&window, |view, _| view.load_failure()) {
+            return Err(format!("invalid soak profile: {error:?}").into());
+        }
+        println!("setup_and_full_layout_us={}", started.elapsed().as_micros());
         let plot = require(&mut window, "flame-plot")?;
-        run(&mut |i| {
-            let at = point(
-                plot.origin.x + plot.size.width * (0.1 + 0.8 * ((i * 37) % 100) as f32 / 100.),
-                plot.origin.y + plot.size.height - px(10. + 21. * ((i * 7) % 30) as f32),
-            );
-            match i % 8 {
-                0 | 1 => wheel(&mut window, at, 0., 35., false),
-                2 | 3 => wheel(&mut window, at, 0., -35., false),
-                6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
-                _ => hover(&mut window, at),
-            }
-            window.run_until_parked();
-            Ok(())
-        });
+        run(
+            &mut |i| {
+                let at = point(
+                    plot.origin.x + plot.size.width * (0.1 + 0.8 * ((i * 37) % 100) as f32 / 100.),
+                    plot.origin.y + plot.size.height - px(10. + 21. * ((i * 7) % 30) as f32),
+                );
+                match i % 8 {
+                    0 | 1 => wheel(&mut window, at, 0., 35., false),
+                    2 | 3 => wheel(&mut window, at, 0., -35., false),
+                    6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
+                    _ => hover(&mut window, at),
+                }
+                window.run_until_parked();
+                Ok(())
+            },
+            mount,
+        );
         Ok(())
     }
 
