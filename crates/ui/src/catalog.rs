@@ -181,7 +181,10 @@ widgets! {
         ["shadow": "string" = "\"sm\"", SIZE, None, false;
          "radius": "string" = "null", SIZE, None, false;
          "padding": "string" = "null", SIZE, None, false;
-         "with-border": "boolean" = "true", &[] as &[&str], None, false], [];
+         "with-border": "boolean" = "true", &[] as &[&str], None, false;
+         "section-borders": "card-section-borders" = "[]", &[] as &[&str], None, false], [];
+    CARD_SECTION: "card-section", "components", "Grouped card content with optional top and bottom borders. Use card.section-borders for edge-to-edge sections.", true, "stateless", "group", ["surfaces.border"],
+        ["with-border": "boolean" = "false", &[] as &[&str], None, false], [];
     RING: "ring", "components", "Circular progress indicator.", false, "stateless", "progressbar", ["surfaces.track", "surfaces.text", "variant.background"],
         ["value": "number" = "0", &[] as &[&str], Some((0.0, 100.0)), false;
          "color": "string" = "\"blue\"", COLOR, None, false;
@@ -205,6 +208,7 @@ widgets! {
          "dropdown-caret": "boolean" = "false", &[] as &[&str], None, false;
          "focus-ring": "boolean" = "true", &[] as &[&str], None, false;
          "tab-stop": "boolean" = "true", &[] as &[&str], None, false;
+         "inherit-focus-scope": "boolean" = "false", &[] as &[&str], None, false;
          "tab-index": "number" = "0", &[] as &[&str], Some((i32::MIN as f64, i32::MAX as f64)), false;
          "icon": "string" = "null", &[] as &[&str], None, false;
          "loading-icon": "string" = "null", &[] as &[&str], None, false;

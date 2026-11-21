@@ -32,6 +32,18 @@ The document puts literal values in `props`, assigns data slots in `bind`, and n
 describes the property shapes, child slots, and event payloads available to documents. A Rust
 `ui!` tree calls the component's public builder methods directly.
 
+For an `app-shell`, assign each child to a region using the matching index in `slots`.
+Children without an assignment appear in `main`. A `responsive-grid` uses the same
+positional convention for `placements`. Its `span` and `offset` accept a scalar or
+a record keyed by breakpoint. A `card` treats a child as an edge-to-edge section when
+the matching `section-borders` entry is a boolean. A null entry keeps ordinary padding.
+
+Use `decoration-layers` to group code ranges under stable IDs and specify their paint
+order. Ranges use zero-based lines and UTF-8 byte columns. The `decoration` event carries
+the layer ID, decoration ID and `hover`, `leave` or `click` action. A `flow` document
+can request a built-in layout through `layout`. Change its `revision` to rerun the same
+configuration. The graph returned by `change` includes the laid-out positions.
+
 The host resolves event and data ids against its logic:
 ```rust
 trait Logic {

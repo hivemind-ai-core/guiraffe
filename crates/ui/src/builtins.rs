@@ -6,8 +6,9 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, component::button::Button, div, px,
 };
 use guiraffe_components::{
-    AvatarGroup, Blockquote, Card, ColorSwatch, Highlight, Indicator, IndicatorPosition, KbdGroup,
-    KbdSeparator, Mark, Paper, Person, Pill, RingProgress, SwatchSelected, Text, Title,
+    AvatarGroup, Blockquote, Card, CardSection, ColorSwatch, Highlight, Indicator,
+    IndicatorPosition, KbdGroup, KbdSeparator, Mark, Paper, Person, Pill, RingProgress,
+    ScopedButton, SwatchSelected, Text, Title,
 };
 use guiraffe_core::{ColorName, Rgb, Size, StyleContext, Variant};
 use guiraffe_layout::{Align, Group, Justify, Stack};
@@ -651,7 +652,25 @@ pub fn register(r: &mut Registry) {
             if let Some(padding) = n.size(n.prop_index("padding")) {
                 card = card.p(padding);
             }
-            card.children(kids).into_any_element()
+            let borders = n.prop(n.prop_index("section-borders"));
+            for (index, child) in kids.into_iter().enumerate() {
+                card = match borders.list_get(index).and_then(|value| value.as_bool()) {
+                    Some(border) => {
+                        card.section(CardSection::new().with_border(border).child(child))
+                    }
+                    None => card.child(child),
+                };
+            }
+            card.into_any_element()
+        }),
+    );
+    r.register(
+        CARD_SECTION.0.id,
+        widget(&CARD_SECTION.1, |n, kids, _, _| {
+            CardSection::new()
+                .with_border(n.bool(n.prop_index("with-border")))
+                .children(kids)
+                .into_any_element()
         }),
     );
     r.register(
@@ -701,11 +720,20 @@ pub fn register(r: &mut Registry) {
                 }
                 hover => hover,
             };
-            let b = match n.handler(n.event_index("click")) {
-                Some(h) => b
-                    .on_click(move |_, w, cx| h(crate::Value::Null, w, cx))
-                    .into_any_element(),
-                None => b.into_any_element(),
+            if let Some(handler) = n.handler(n.event_index("click")) {
+                b = b.on_click(move |_, window, cx| handler(crate::Value::Null, window, cx));
+            }
+            let b = if n.bool(n.prop_index("inherit-focus-scope")) {
+                let mut scoped = ScopedButton::new(b);
+                let tab_stop = n.prop_index("tab-stop");
+                if guiraffe_core::widget_catalog::WidgetNode::is_set(n, tab_stop) {
+                    if let Some(focusable) = n.prop(tab_stop).as_bool() {
+                        scoped = scoped.focusable(focusable);
+                    }
+                }
+                scoped.into_any_element()
+            } else {
+                b.into_any_element()
             };
             // Kit's managed tooltip owns the button's hover listener when present.
             let b = if let Some(hover) = hover {

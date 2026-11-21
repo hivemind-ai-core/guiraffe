@@ -55,7 +55,10 @@ pub const FORMAT_VERSION: u32 = 1;
 impl PropSpec {
     /// Whether the compiler accepts a JSON record as a literal value for this property.
     pub fn accepts_record(&self) -> bool {
-        matches!(self.type_name, "object" | "flow-graph" | "dock-state")
+        matches!(
+            self.type_name,
+            "object" | "flow-graph" | "dock-state" | "flow-layout"
+        )
     }
 
     fn default_value(&self) -> Value {
@@ -64,20 +67,49 @@ impl PropSpec {
 
     pub fn schema(&self) -> Value {
         let ty = match self.type_name {
-            "ring-sections" | "integer-array" | "code-annotations" | "code-folds"
-            | "tree-nodes" | "range-value" | "grid-rows" | "grid-columns" | "flame-frames"
-            | "timeline-tracks" | "track-selection" | "gantt-tasks" | "board-columns"
-            | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
-            | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels"
-            | "avatar-people" | "dope-channels" | "number-array" | "curve-series"
-            | "activity-items" | "disclosure-items" | "spotlight-commands" | "menu-commands"
-            | "step-items" | "splitter-sizes" => "array",
+            "ring-sections"
+            | "integer-array"
+            | "code-annotations"
+            | "code-folds"
+            | "code-decoration-layers"
+            | "tree-nodes"
+            | "range-value"
+            | "grid-rows"
+            | "grid-columns"
+            | "flame-frames"
+            | "timeline-tracks"
+            | "track-selection"
+            | "gantt-tasks"
+            | "board-columns"
+            | "chart-layers"
+            | "chart-axes"
+            | "chart-labels"
+            | "chat-messages"
+            | "chat-attachments"
+            | "chat-commands"
+            | "calendar-presets"
+            | "dock-panels"
+            | "avatar-people"
+            | "dope-channels"
+            | "number-array"
+            | "curve-series"
+            | "activity-items"
+            | "disclosure-items"
+            | "spotlight-commands"
+            | "menu-commands"
+            | "step-items"
+            | "splitter-sizes"
+            | "app-shell-slots"
+            | "grid-placements"
+            | "card-section-borders"
+            | "dial-actions" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
             "range-value" => range_schema(),
             "calendar-value" => calendar_value_schema(),
             "flow-graph" => flow_graph_schema(),
+            "flow-layout" => flow_layout_schema(),
             "dock-state" => dock_state_schema(),
             "iso-time" => json!({"type":"string","pattern":ISO_TIME}),
             "iso-date" => json!({"type":"string","pattern":ISO_DATE}),
@@ -94,6 +126,7 @@ impl PropSpec {
             "array" => schema["items"] = json!({"type": "string"}),
             "integer-array" => schema["items"] = json!({"type":"integer","minimum":0}),
             "code-annotations" => schema["items"] = code_annotation_schema(),
+            "code-decoration-layers" => schema["items"] = code_decoration_layer_schema(),
             "code-folds" => schema["items"] = code_fold_schema(),
             "tree-nodes" => schema["items"] = tree_node_schema(),
             "grid-rows" => schema["items"] = grid_row_schema(),
@@ -118,6 +151,13 @@ impl PropSpec {
             "menu-commands" => schema["items"] = menu_command_schema(),
             "step-items" => schema["items"] = step_item_schema(),
             "splitter-sizes" => schema["items"] = splitter_size_schema(),
+            "app-shell-slots" => schema["items"] = shell_slot_schema(),
+            "grid-placements" => schema["items"] = grid_placement_schema(),
+            "card-section-borders" => schema["items"] = json!({"type":["boolean","null"]}),
+            "dial-actions" => {
+                schema["items"] = json!({"type":"object","additionalProperties":false,
+                "required":["label"],"properties":{"label":{"type":"string"},"icon":{"type":"string"}}})
+            }
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => schema = curve_selection_schema(),
@@ -235,6 +275,14 @@ impl EventSpec {
             "selection" => json!({"type":["string","null"]}),
             "nullable-integer" => json!({"type":["integer","null"],"minimum":0}),
             "integer-array" => json!({"type":"array","items":{"type":"integer","minimum":0}}),
+            "code-decoration-action" => json!({
+                "type":"object","required":["action","layer","id"],"additionalProperties":false,
+                "properties":{
+                    "action":{"type":"string","enum":["hover","leave","click"]},
+                    "layer":{"type":"integer","minimum":0,"maximum":u32::MAX},
+                    "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1}
+                }
+            }),
             "number-array" => json!({"type":"array","items":{"type":"number"}}),
             ty => json!({"type":ty}),
         }
@@ -329,6 +377,99 @@ impl WidgetSpec {
         }
         schema
     }
+}
+
+pub fn shell_slot_schema() -> Value {
+    json!({"type":"string","enum":["header","navbar","main","aside","footer"]})
+}
+
+pub fn grid_placement_schema() -> Value {
+    let count = |minimum| json!({"type":"integer","minimum":minimum,"maximum":u16::MAX});
+    let responsive = |schema: Value| {
+        let properties = ["base", "xs", "sm", "md", "lg", "xl"]
+            .into_iter()
+            .map(|band| (band.to_owned(), schema.clone()))
+            .collect::<serde_json::Map<String, Value>>();
+        json!({"anyOf":[schema,{"type":"object","properties":properties,"additionalProperties":false}]})
+    };
+    let span = json!({"anyOf":[count(1),{"type":"string","const":"full"}]});
+    json!({
+        "type":"object","additionalProperties":false,
+        "properties":{"span":responsive(span),"offset":responsive(count(0))}
+    })
+}
+
+pub fn flow_layout_schema() -> Value {
+    let node = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    let nodes = json!({"type":"array","items":node});
+    let space = json!({"type":"number","minimum":0,"maximum":f32::MAX});
+    json!({
+        "type":"object","additionalProperties":false,
+        "properties":{
+            "engine":{"type":"string","enum":["layered","tree","radial","grid","force"]},
+            "direction":{"type":"string","enum":["left-to-right","right-to-left","top-to-bottom","bottom-to-top"]},
+            "routing":{"type":"string","enum":["orthogonal","spline"]},
+            "spacing":{"type":"object","additionalProperties":false,"properties":{"x":space,"y":space}},
+            "pinned":nodes,
+            "constraints":{"type":"array","items":{"type":"object","additionalProperties":false,
+                "required":["kind","first","second"],"properties":{
+                    "kind":{"type":"string","enum":["left-of","above","align-x","align-y","same-rank"]},
+                    "first":node,"second":node}}},
+            "order":{"type":"array","items":{"type":"object","additionalProperties":false,
+                "required":["node","priority"],"properties":{
+                    "node":node,"priority":{"type":"integer","minimum":i32::MIN,"maximum":i32::MAX}}}},
+            "crossingWeight":{"type":"number","minimum":0,"maximum":128},
+            "affected":nodes,
+            "columns":{"type":"integer","minimum":1,"maximum":1024},
+            "seed":node,
+            "iterations":{"type":"integer","minimum":1,"maximum":2000},
+            "durationMs":{"type":"integer","minimum":0,"maximum":10000},
+            "revision":node
+        }
+    })
+}
+
+pub fn code_decoration_layer_schema() -> Value {
+    let coordinate = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    let side = json!({"type":"string","enum":["left","right"]});
+    let style = json!({
+        "type":"object", "required":["kind"], "additionalProperties":false,
+        "properties":{
+            "kind":{"type":"string","enum":["highlight","diagnostic","gutter","blame","inline","review","block","unnecessary","deprecated"]},
+            "shape":{"type":"string","enum":["background","outline","rounded","bracket-pair"]},
+            "color":{"type":"string","enum":["dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal","green","lime","yellow","orange"]},
+            "severity":{"type":"string","enum":["error","warning","info","hint"]},
+            "pattern":{"type":"string","enum":["straight","wavy","dotted","dashed","double"]},
+            "message":{"type":"string"},
+            "mark":{"type":"string","enum":["breakpoint","bookmark","error","added","modified","deleted","covered","uncovered","partially-covered"]},
+            "lane":{"type":"integer","minimum":0,"maximum":3},
+            "author":{"type":"string"},
+            "shortHash":{"type":"string"},
+            "date":{"type":"string"},
+            "ageDays":{"type":"integer","minimum":0,"maximum":u32::MAX},
+            "url":{"type":"string"},
+            "widget":{"type":"string","enum":["inlay","ghost","end-of-line-diagnostic","code-lens"]},
+            "label":{"type":"string"},
+            "markdown":{"type":"string"},
+            "estimatedRows":{"type":"integer","minimum":1,"maximum":u16::MAX},
+            "payload":{"type":"string"}
+        }
+    });
+    json!({
+        "type":"object","required":["id","decorations"],"additionalProperties":false,
+        "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":u32::MAX},
+            "zIndex":{"type":"integer","minimum":i32::MIN,"maximum":i32::MAX},
+            "mergeIdentical":{"type":"boolean"},
+            "decorations":{"type":"array","items":{
+                "type":"object","required":["id","line","start","end","style"],"additionalProperties":false,
+                "properties":{
+                    "id":coordinate,"line":coordinate,"start":coordinate,"endLine":coordinate,
+                    "end":coordinate,"startBias":side,"endBias":side,"style":style
+                }
+            }}
+        }
+    })
 }
 
 pub fn code_annotation_schema() -> Value {

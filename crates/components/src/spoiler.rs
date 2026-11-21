@@ -6,10 +6,12 @@
 //! child — text, cards, a list — expands smoothly. Reduced motion jumps straight to the end
 //! state, because the timing comes from guiraffe-motion's prefs.
 
+pub(crate) mod document;
+
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, Styled, TestSupportExt, Window, canvas, div,
-    prelude::*, px,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, TestSupportExt,
+    Window, canvas, div, prelude::*, px,
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant};
 use guiraffe_motion::{Animated, Easing, MotionPrefs, Timing};
@@ -76,6 +78,10 @@ pub struct Spoiler {
 /// Builds the spoiler body. A closure rather than an element, because an `AnyElement` is
 /// consumed when painted and the body is rebuilt whenever the spoiler's own view renders.
 type Build = std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>;
+
+pub(crate) struct SpoilerChange(bool);
+
+impl EventEmitter<SpoilerChange> for Spoiler {}
 
 impl Spoiler {
     pub fn new(cx: &mut App) -> Entity<Self> {
@@ -162,6 +168,13 @@ impl Spoiler {
 
     /// Expand or collapse. Does nothing (and notifies nobody) when already in that state.
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        if self.expanded != expanded {
+            self.sync_expanded(expanded, cx);
+            cx.emit(SpoilerChange(expanded));
+        }
+    }
+
+    fn sync_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         if self.expanded == expanded {
             return;
         }

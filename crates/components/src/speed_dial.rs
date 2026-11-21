@@ -1,3 +1,5 @@
+pub(crate) mod document;
+
 use crate::disclosure_motion;
 use std::{f32::consts::PI, time::Duration};
 
@@ -134,6 +136,13 @@ impl SpeedDial {
     }
 
     pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.open != open {
+            self.sync_open(open, cx);
+            cx.emit(SpeedDialEvent::Open(open));
+        }
+    }
+
+    fn sync_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if self.open == open {
             return;
         }
@@ -153,7 +162,6 @@ impl SpeedDial {
             }
         }
         cx.notify();
-        cx.emit(SpeedDialEvent::Open(open));
     }
 }
 

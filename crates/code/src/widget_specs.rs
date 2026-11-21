@@ -1,6 +1,6 @@
 //! Code viewer metadata shared with the authoring catalogue generator.
 
-use super::widget_spec::{PropSpec, WidgetSpec};
+use super::widget_spec::{EventSpec, PropSpec, WidgetSpec};
 
 const fn prop(name: &'static str, type_name: &'static str, default_json: &'static str) -> PropSpec {
     PropSpec {
@@ -37,9 +37,13 @@ pub static CODE_VIEWER: WidgetSpec = WidgetSpec {
         },
         prop("annotations", "code-annotations", "[]"),
         prop("folds", "code-folds", "[]"),
+        prop("decoration-layers", "code-decoration-layers", "[]"),
     ],
     accepts_children: false,
-    events: &[],
+    events: &[EventSpec {
+        id: "decoration",
+        payload_type: "code-decoration-action",
+    }],
     state: "keyed viewer state driven by source, annotations and folds",
     theme_tokens: &[],
     a11y_role: "document",

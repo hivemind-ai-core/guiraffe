@@ -16,6 +16,14 @@ fn kind(surface: &str) -> Option<&'static str> {
         "flamegraph::FlameGraph" => "flame-graph",
         "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
         | "flow::FlowOptions" => "flow",
+        "code::DecorationLayerOptions" => "code-viewer",
+        "flow-core::LayoutOptions" => "flow",
+        "components::CardSection" => "card-section",
+        "components::ScopedButton" => "button",
+        "components::SpeedDial" => "speed-dial",
+        "components::Spoiler" => "spoiler",
+        "layout::AppShell" | "layout::AppShellState" => "app-shell",
+        "layout::Grid" | "layout::Col" => "responsive-grid",
         "commands::CommandScope" => "command-scope",
         "commands::Menu" | "commands::MenuProps" => "command-menu",
         "components::ActionIcon" => "action-icon",
@@ -79,6 +87,26 @@ fn kind(surface: &str) -> Option<&'static str> {
 
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
+    (
+        "layout::Grid::layout",
+        "Pure placement query for Rust. Documents configure placement records.",
+    ),
+    (
+        "layout::Col::span_at",
+        "Pure breakpoint resolution query. Documents configure spans.",
+    ),
+    (
+        "layout::Col::offset_at",
+        "Pure breakpoint resolution query. Documents configure offsets.",
+    ),
+    (
+        "components::Spoiler::id",
+        "Rust element identity. Documents key the native entity with node identity.",
+    ),
+    (
+        "components::Spoiler::toggle",
+        "Imperative inversion of the current value. Documents bind expanded or invoke the native action.",
+    ),
     (
         "components::CopyButton::copied",
         "Read-only native copy confirmation.",
@@ -608,10 +636,6 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Read-only native state derived from streaming-message.",
     ),
     (
-        "flow::FlowState::arrange",
-        "A host-owned layout engine is a Rust trait implementation; documents provide graph positions.",
-    ),
-    (
         "flow::FlowState::cancel_layout",
         "Host-side layout task cancellation.",
     ),
@@ -772,6 +796,12 @@ fn covered(surface: &str) -> bool {
             ("timeline::GanttView", "Resized") => "resize",
             ("timeline::DopeSheet", "KeyRetimed") => "key-retime",
             ("timeline::DopeSheet", "ChannelChanged") => "channel-change",
+            ("components::SpeedDial", "Open") => "change",
+            ("components::SpeedDial", "Action") => "action",
+            ("layout::AppShellState", "NavbarCollapsed") => "navbar-collapsed",
+            ("layout::AppShellState", "AsideCollapsed") => "aside-collapsed",
+            ("layout::AppShellState", "NavbarResized") => "navbar-resized",
+            ("layout::AppShellState", "AsideResized") => "aside-resized",
             ("layout::SplitterState", "Resized") => "resize",
             ("timeline::BarCurveView", "BarEvent") => "change",
             ("timeline::CurveView", "KeyMoved") => "key-move",
@@ -806,6 +836,30 @@ fn covered(surface: &str) -> bool {
             ("charts::ChartSpec", "x" | "y" | "right") => "axes".into(),
             (_, field) => field.replace('_', "-"),
         };
+        if owner == "code::DecorationLayerOptions" {
+            let name = match field {
+                "merge_identical" => "mergeIdentical",
+                "z_index" => "zIndex",
+                _ => return false,
+            };
+            return spec
+                .props
+                .iter()
+                .find(|prop| prop.name == "decoration-layers")
+                .is_some_and(|prop| prop.schema()["items"]["properties"].get(name).is_some());
+        }
+        if owner == "flow-core::LayoutOptions" {
+            let name = if field == "crossing_weight" {
+                "crossingWeight"
+            } else {
+                field
+            };
+            return spec
+                .props
+                .iter()
+                .find(|prop| prop.name == "layout")
+                .is_some_and(|prop| prop.schema()["properties"].get(name).is_some());
+        }
         if owner == "tree::PropertyOptions" {
             let name = if field == "multiline_rows" {
                 "multilineRows"
@@ -836,6 +890,13 @@ fn covered(surface: &str) -> bool {
             .props
             .iter()
             .find(|prop| prop.name == "steps")
+            .is_some_and(|prop| prop.schema()["items"]["properties"].get(method).is_some());
+    }
+    if owner == "layout::Col" && matches!(method, "span" | "offset") {
+        return spec
+            .props
+            .iter()
+            .find(|prop| prop.name == "placements")
             .is_some_and(|prop| prop.schema()["items"]["properties"].get(method).is_some());
     }
     match method {
@@ -877,6 +938,17 @@ fn covered(surface: &str) -> bool {
                 ("flow::FlowState" | "flow::FlowViewport", "set_viewport") => "zoom".into(),
                 ("flow::FlowState", "from_editor") => "graph".into(),
                 ("components::Card" | "components::Paper", "p") => "padding".into(),
+                ("components::Card", "section") => "section-borders".into(),
+                ("components::ScopedButton", "focusable") => "tab-stop".into(),
+                ("components::SpeedDial", "is_open") => "open".into(),
+                ("components::Spoiler", "is_expanded") => "expanded".into(),
+                ("components::Spoiler", "set_content") => "text".into(),
+                ("components::Spoiler", "set_timing") => "duration-ms".into(),
+                ("layout::Grid", "container_width") => "width-source".into(),
+                ("layout::AppShell", "header" | "navbar" | "main" | "aside" | "footer") => {
+                    "slots".into()
+                }
+                ("flow::FlowState", "arrange") => "layout".into(),
                 ("commands::Menu", "props") => "show-categories".into(),
                 ("components::ActionIcon" | "components::ThemeIcon", "from_asset") => "icon".into(),
                 ("layout::Splitter", "pane_size") => "pane-sizes".into(),

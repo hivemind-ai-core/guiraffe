@@ -82,6 +82,8 @@ impl AnalysisRequest {
 
 // Presentation supplied after set_source belongs to that source, even while the
 // previously published document is still visible. Each replacement source resets it.
+type BuildDocumentDecorations = Box<dyn FnOnce(Arc<CodeDocument>) -> Option<Arc<Decorations>>>;
+
 struct PendingPresentation {
     revision: u64,
     source: Arc<str>,
@@ -89,6 +91,7 @@ struct PendingPresentation {
     folds: Vec<Fold>,
     traces: Arc<[Trace]>,
     prepared: Option<PreparedAnalysis>,
+    document_decorations: Option<BuildDocumentDecorations>,
 }
 
 pub type SymbolProvider = Rc<dyn Fn(Position) -> Option<SymbolInfo>>;
@@ -338,6 +341,21 @@ impl CodeHandle {
             self.notify_all(cx);
         }
         true
+    }
+
+    pub(crate) fn set_document_decorations(
+        &self,
+        build: impl FnOnce(Arc<CodeDocument>) -> Option<Arc<Decorations>> + 'static,
+        cx: &mut App,
+    ) {
+        {
+            let mut presentation = self.shared.presentation.borrow_mut();
+            if let Some(pending) = presentation.as_mut() {
+                pending.document_decorations = Some(Box::new(build));
+                return;
+            }
+        }
+        self.set_decorations(build(self.document()), cx);
     }
 
     /// Set the renderer for inter-line block decorations. The default displays the payload
@@ -891,6 +909,7 @@ impl CodeHandle {
                     folds: Vec::new(),
                     traces: Arc::from([]),
                     prepared: None,
+                    document_decorations: None,
                 });
             }
         }
@@ -1026,6 +1045,9 @@ impl CodeHandle {
             });
             self.set_analysis(prepared, cx);
             self.set_traces(pending.traces, cx);
+            if let Some(build) = pending.document_decorations {
+                self.set_decorations(build(self.document()), cx);
+            }
         }
         self.notify_all(cx);
     }

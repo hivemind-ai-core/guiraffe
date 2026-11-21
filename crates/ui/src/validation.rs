@@ -270,12 +270,22 @@ fn matches_data_schema(value: &Value, schema: &Value) -> bool {
         "array" => value.is_array(),
         "object" => value.is_object(),
         "boolean" => value.is_boolean(),
-        "integer" => value.as_u64().is_some(),
+        "integer" => value.as_u64().is_some() || value.as_i64().is_some(),
         "number" => value.is_number(),
         "null" => value.is_null(),
         "string" => value.is_string(),
         _ => false,
     };
+    if schema["anyOf"].as_array().is_some_and(|choices| {
+        !choices
+            .iter()
+            .any(|branch| matches_data_schema(value, branch))
+    }) || schema
+        .get("const")
+        .is_some_and(|constant| value != constant)
+    {
+        return false;
+    }
     let ty = &schema["type"];
     if ty.as_str().is_some_and(|ty| !type_matches(ty))
         || ty
@@ -546,6 +556,11 @@ impl Validation<'_> {
                     let schema = crate::widget_spec::step_item_schema();
                     steps.iter().all(|step| matches_data_schema(step, &schema))
                 }),
+                "flow-layout"
+                | "app-shell-slots"
+                | "grid-placements"
+                | "card-section-borders"
+                | "dial-actions" => matches_data_schema(got, &prop.schema()),
                 "splitter-sizes" => got.as_array().is_some_and(|sizes| {
                     let schema = crate::widget_spec::splitter_size_schema();
                     sizes.iter().all(|size| matches_data_schema(size, &schema))
@@ -563,6 +578,7 @@ impl Validation<'_> {
                                 .is_some_and(|(start, end)| end > start + 1)
                     })
                 }),
+                "code-decoration-layers" => matches_data_schema(got, &prop.schema()),
                 "code-annotations" => got.as_array().is_some_and(|annotations| {
                     let schema = crate::widget_spec::code_annotation_schema();
                     annotations.iter().all(|annotation| {

@@ -686,6 +686,15 @@ fn code_document_drives_view_options_and_annotations(cx: &mut TestAppContext) {
             .prop("line-numbers", false)
             .prop("minimap", true)
             .prop("margin-chars", 20)
+            .prop("decoration-layers", serde_json::json!([{
+                "id": 3, "zIndex": -2, "mergeIdentical": true,
+                "decorations": [
+                    {"id": 4, "line": 0, "start": 4, "end": 5,
+                     "startBias": "left", "style": {"kind": "diagnostic", "severity": "warning",
+                                 "pattern": "dotted", "message": "Check this binding"}}
+                ]
+            }]))
+            .on("decoration", "inspect-binding")
             .prop("folds", serde_json::json!([{"start":0,"end":3,"collapsed":true}]))
             .prop("annotations", serde_json::json!([
                 {"id":1,"line":0,"start":4,"end":5,"kind":"underline","payload":"A binding","color":"orange"}
@@ -1293,6 +1302,12 @@ fn flow_document_accepts_and_renders_native_graph_records(cx: &mut TestAppContex
             .prop("pan-x", 10)
             .prop("pan-y", 20)
             .prop("zoom", 1.5)
+            .prop("layout", serde_json::json!({
+                "engine": "layered", "direction": "top-to-bottom", "routing": "spline",
+                "spacing": {"x": 52, "y": 32}, "pinned": [1], "affected": [1, 2],
+                "constraints": [{"kind": "above", "first": 1, "second": 2}],
+                "order": [{"node": 2, "priority": -1}], "crossingWeight": 2
+            }))
             .on("change", "change")
             .on("viewport-change", "viewport")
             .on("selection-change", "selection")
@@ -2045,6 +2060,138 @@ fn ui_macro_accepts_native_commands_icons_steps_and_splitter_panes() {
             .first(menu)
             .second(controls);
         ui! { CommandScope(commands) { {split} } }
+    }
+
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn responsive_document_layouts_validate_and_render(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let doc = Document::new(
+        Node::new("app-shell")
+            .prop(
+                "slots",
+                serde_json::json!(["header", "navbar", "main", "aside", "footer"]),
+            )
+            .prop("header-height", 50)
+            .prop("footer-height", 30)
+            .prop("padding", "md")
+            .prop("border", true)
+            .prop("collapse-below", "sm")
+            .prop("collapse-aside-below", "md")
+            .prop("resizable-navbar", true)
+            .prop("resizable-aside", true)
+            .prop("navbar-collapsed", false)
+            .prop("aside-width", 250)
+            .on("navbar-collapsed", "hide-navigation")
+            .on("aside-resized", "resize-aside")
+            .child(Node::new("text").prop("text", "Header"))
+            .child(Node::new("text").prop("text", "Navigation"))
+            .child(
+                Node::new("responsive-grid")
+                    .prop("columns", 12)
+                    .prop("gutter", "xs")
+                    .prop("gutter-px", 8)
+                    .prop("justify", "center")
+                    .prop("grow", true)
+                    .prop("width-source", "viewport")
+                    .prop("width-px", 900)
+                    .prop(
+                        "placements",
+                        serde_json::json!([
+                            {"span": {"base": "full", "sm": 3}, "offset": {"base": 0, "sm": 1}},
+                            {"span": 6, "offset": 2}
+                        ]),
+                    )
+                    .child(Node::new("text").prop("text", "First column"))
+                    .child(Node::new("text").prop("text", "Second column")),
+            )
+            .child(Node::new("text").prop("text", "Aside"))
+            .child(Node::new("text").prop("text", "Footer")),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("native application shell and responsive grid"),
+    });
+    window.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn native_spoiler_speed_dial_and_card_sections_validate_and_render(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let doc = Document::new(
+        Node::new("card")
+            .prop("section-borders", serde_json::json!([true, null, false]))
+            .child(
+                Node::new("spoiler")
+                    .prop("text", "A short preview with more content available.")
+                    .prop("expanded", true)
+                    .prop("collapsed-lines", 2)
+                    .prop("duration-ms", 0)
+                    .prop("easing", "ease-in")
+                    .prop("focusable", true)
+                    .prop("color", "violet")
+                    .prop("size", "sm")
+                    .on("change", "update-expanded"),
+            )
+            .child(
+                Node::new("card-section").prop("with-border", true).child(
+                    Node::new("button")
+                        .prop("label", "Continue")
+                        .prop("inherit-focus-scope", true),
+                ),
+            )
+            .child(
+                Node::new("speed-dial")
+                    .prop("primary-icon", "icons/check.svg")
+                    .prop("label", "File commands")
+                    .prop("layout", "radial")
+                    .prop("radius", 80)
+                    .prop("clockwise", false)
+                    .prop("arc", "half")
+                    .prop("start-degrees", 180)
+                    .prop(
+                        "actions",
+                        serde_json::json!([{"label":"Confirm","icon":"icons/check.svg"}]),
+                    )
+                    .prop("show-labels", true)
+                    .prop("focusable", true)
+                    .on("change", "toggle-actions")
+                    .on("action", "run-action"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("native disclosure and card components"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_native_responsive_grid_card_and_scoped_button() {
+    use gpui_kit::{Entity, ParentElement, component::button::Button, px};
+    use guiraffe_components::{Card, CardSection, ScopedButton};
+    use guiraffe_layout::{AppShell, AppShellState, Breakpoint, Col, Grid, Justify, Responsive};
+    use guiraffe_ui::ui;
+
+    fn example(state: &Entity<AppShellState>) -> impl IntoElement {
+        let button = ui! { ScopedButton(Button::new("next")) { focusable: true } };
+        let card = ui! { Card { with_border: true; .section(CardSection::new().with_border(true).child(button)); } };
+        let column = Col::span(Responsive::base(12).at(Breakpoint::Sm, 6)).offset(1);
+        let columns = ui! { Grid { columns: 12; justify: Justify::Center; grow: true; .child(column.child(card)); } };
+        ui! {
+            AppShell(state) {
+                header_height: px(48.);
+                collapse_below: Breakpoint::Sm;
+                border;
+                .header(columns);
+            }
+        }
     }
 
     let _ = example;

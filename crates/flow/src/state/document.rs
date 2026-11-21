@@ -38,6 +38,92 @@ fn editor(value: &Value) -> Result<Editor, String> {
     editor_for_view(graph).map_err(|error| error.to_string())
 }
 
+fn arrange(flow: &mut FlowState, value: &Value, cx: &mut gpui_kit::Context<FlowState>) {
+    use crate::core::{
+        AutoLayout, LayoutConstraint, LayoutDirection, LayoutOptions, LayoutRouting,
+    };
+
+    if matches!(value, Value::Null) {
+        flow.cancel_layout(cx);
+        return;
+    }
+    let field = |name: &str| value.field(&[name.into()]);
+    let n = |name, default| field(name).as_f64().unwrap_or(default);
+    let ids = |name| {
+        let values = field(name);
+        (0..values.list_len().unwrap_or_default())
+            .filter_map(move |index| values.list_get(index)?.as_f64().map(|value| value as u64))
+            .collect()
+    };
+    let direction = match field("direction").as_str() {
+        Some("right-to-left") => LayoutDirection::RightToLeft,
+        Some("top-to-bottom") => LayoutDirection::TopToBottom,
+        Some("bottom-to-top") => LayoutDirection::BottomToTop,
+        _ => LayoutDirection::LeftToRight,
+    };
+    let routing = match field("routing").as_str() {
+        Some("spline") => LayoutRouting::Spline,
+        _ => LayoutRouting::Orthogonal,
+    };
+    let layout = match field("engine").as_str() {
+        Some("tree") => AutoLayout::Tree,
+        Some("radial") => AutoLayout::Radial,
+        Some("grid") => AutoLayout::Grid {
+            columns: n("columns", 4.).clamp(1., 1024.) as usize,
+        },
+        Some("force") => AutoLayout::Force {
+            seed: n("seed", 0.) as u64,
+            iterations: n("iterations", 80.).clamp(1., 2000.) as usize,
+        },
+        _ => AutoLayout::Layered,
+    };
+    let order = field("order");
+    let constraints = field("constraints");
+    let ordering = (0..order.list_len().unwrap_or_default())
+        .filter_map(|index| {
+            let item = order.list_get(index)?;
+            let node = item.field(&["node".into()]).as_f64()? as u64;
+            let priority = item.field(&["priority".into()]).as_f64()? as i32;
+            Some((node, priority))
+        })
+        .collect();
+    let constraints = (0..constraints.list_len().unwrap_or_default())
+        .filter_map(|index| {
+            let constraint = constraints.list_get(index)?;
+            let first = constraint.field(&["first".into()]).as_f64()? as u64;
+            let second = constraint.field(&["second".into()]).as_f64()? as u64;
+            Some(match constraint.field(&["kind".into()]).as_str()? {
+                "left-of" => LayoutConstraint::LeftOf(first, second),
+                "above" => LayoutConstraint::Above(first, second),
+                "align-x" => LayoutConstraint::AlignX(first, second),
+                "align-y" => LayoutConstraint::AlignY(first, second),
+                "same-rank" => LayoutConstraint::SameRank(first, second),
+                _ => return None,
+            })
+        })
+        .collect();
+    let spacing = field("spacing");
+    let options = LayoutOptions {
+        direction,
+        routing,
+        spacing: Point::new(
+            spacing.field(&["x".into()]).as_f64().unwrap_or(80.) as f32,
+            spacing.field(&["y".into()]).as_f64().unwrap_or(40.) as f32,
+        ),
+        pinned: ids("pinned"),
+        constraints,
+        order: ordering,
+        crossing_weight: n("crossingWeight", 1.) as f32,
+        affected: field("affected").list_len().map(|_| ids("affected")),
+    };
+    flow.arrange(
+        layout,
+        options,
+        std::time::Duration::from_millis(n("durationMs", 0.) as u64),
+        cx,
+    );
+}
+
 fn record<const N: usize>(fields: [(&str, Value); N]) -> Value {
     Value::Record(Arc::new(
         fields
@@ -91,6 +177,7 @@ struct FlowDocument {
     options: FlowOptions,
     policy: ConnectionPolicy,
     viewport: Option<Viewport>,
+    layout: Value,
     handlers: [Option<EventHandler>; 4],
 }
 
@@ -124,12 +211,14 @@ impl FlowDocument {
                 pan: Point::new(n(10, 0.0), n(11, 0.0)),
                 zoom: n(12, 1.0),
             }),
+            layout: node.prop(13).clone(),
             handlers: std::array::from_fn(|i| node.handler(i)),
         }
     }
 }
 
 struct FlowDocumentState {
+    layout: Value,
     graph: Value,
     viewport: Option<Viewport>,
     flow: Option<(Entity<FlowState>, Subscription)>,
@@ -185,6 +274,7 @@ impl RenderOnce for FlowDocument {
                 Err(error) => (None, Some(error)),
             };
             FlowDocumentState {
+                layout: Value::Null,
                 graph: self.graph.clone(),
                 viewport: None,
                 flow,
@@ -215,6 +305,7 @@ impl RenderOnce for FlowDocument {
                                 cx,
                             ));
                             state.viewport = None;
+                            state.layout = Value::Null;
                         }
                         state.invalid = None;
                     }
@@ -238,6 +329,10 @@ impl RenderOnce for FlowDocument {
                         cx.notify();
                     }
                 });
+                if state.layout != self.layout {
+                    state.layout = self.layout;
+                    arrange(flow, &state.layout, cx);
+                }
                 if self.viewport != state.viewport {
                     state.viewport = self.viewport;
                     if let Some(viewport) = self.viewport

@@ -41,6 +41,7 @@ pub static FLOW: WidgetSpec = WidgetSpec {
             range: Some((0.02, 4.0)),
             ..prop("zoom", "number", "1")
         },
+        prop("layout", "flow-layout", "null"),
     ],
     accepts_children: false,
     events: &[

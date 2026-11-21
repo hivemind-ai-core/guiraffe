@@ -159,10 +159,108 @@ pub static COPY_BUTTON: WidgetSpec = WidgetSpec {
     a11y_role: "button",
 };
 
+pub static SPOILER: WidgetSpec = WidgetSpec {
+    id: "spoiler",
+    krate: "components",
+    summary: "Clipped text preview that expands using the native reveal control.",
+    props: &[
+        prop("text", "string", "\"\""),
+        prop("expanded", "boolean", "null"),
+        PropSpec {
+            range: Some((1., 4096.)),
+            ..prop("collapsed-lines", "integer", "3")
+        },
+        SIZE,
+        PropSpec {
+            accepted: &[
+                "dark", "gray", "red", "pink", "grape", "violet", "indigo", "blue", "cyan", "teal",
+                "green", "lime", "yellow", "orange",
+            ],
+            token_backed: true,
+            ..prop("color", "string", "null")
+        },
+        prop("focusable", "boolean", "null"),
+        PropSpec {
+            range: Some((0., 60_000.)),
+            ..prop("duration-ms", "integer", "null")
+        },
+        PropSpec {
+            accepted: &[
+                "linear",
+                "ease",
+                "ease-in",
+                "ease-out",
+                "ease-in-out",
+                "emphasized",
+            ],
+            ..prop("easing", "string", "\"ease\"")
+        },
+    ],
+    accepts_children: false,
+    events: &[EventSpec {
+        id: "change",
+        payload_type: "boolean",
+    }],
+    state: "keyed local reveal or a bound expanded value",
+    theme_tokens: &["control_size", "variant.foreground"],
+    a11y_role: "group",
+};
+
+pub static SPEED_DIAL: WidgetSpec = WidgetSpec {
+    id: "speed-dial",
+    krate: "components",
+    summary: "Animated action dial with bundled icon paths and indexed action events.",
+    props: &[
+        prop("primary-icon", "string", "\"icons/plus.svg\""),
+        prop("label", "string", "\"More actions\""),
+        prop("actions", "dial-actions", "[]"),
+        PropSpec {
+            accepted: &["vertical", "horizontal", "radial"],
+            ..prop("layout", "string", "\"vertical\"")
+        },
+        PropSpec {
+            range: Some((0., 4096.)),
+            ..prop("spacing", "number", "48")
+        },
+        PropSpec {
+            range: Some((0., 4096.)),
+            ..prop("radius", "number", "64")
+        },
+        PropSpec {
+            range: Some((-360., 360.)),
+            ..prop("start-degrees", "number", "270")
+        },
+        PropSpec {
+            accepted: &["quarter", "half"],
+            ..prop("arc", "string", "\"quarter\"")
+        },
+        prop("clockwise", "boolean", "true"),
+        prop("open", "boolean", "null"),
+        prop("focusable", "boolean", "null"),
+        prop("show-labels", "boolean", "false"),
+    ],
+    accepts_children: false,
+    events: &[
+        EventSpec {
+            id: "change",
+            payload_type: "boolean",
+        },
+        EventSpec {
+            id: "action",
+            payload_type: "integer",
+        },
+    ],
+    state: "keyed focus and animated action positions",
+    theme_tokens: &["variant.foreground", "variant.background"],
+    a11y_role: "group",
+};
+
 pub const WIDGETS: &[&WidgetSpec] = &[
     &SEGMENTED,
     &BURGER,
     &ACCORDION,
     &EXPANDING_LIST,
     &COPY_BUTTON,
+    &SPOILER,
+    &SPEED_DIAL,
 ];

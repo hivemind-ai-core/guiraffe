@@ -72,4 +72,6 @@ pub fn init(cx: &mut gpui_kit::App) {
     accordion::document::register(cx);
     expanding_list::document::register(cx);
     copy_button::document::register(cx);
+    spoiler::document::register(cx);
+    speed_dial::document::register(cx);
 }
