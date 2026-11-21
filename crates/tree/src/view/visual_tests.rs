@@ -10,6 +10,8 @@ use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
 struct Inspector {
     values: Vec<(Value, Value)>,
     choices: [String; 2],
+    /// Edit "Name" in a growing multi-line editor.
+    multiline_name: bool,
 }
 
 const LABELS: [&str; 18] = [
@@ -64,6 +66,7 @@ impl Inspector {
         Self {
             values,
             choices: ["Auto".into(), "Manual".into()],
+            multiline_name: false,
         }
     }
 
@@ -113,6 +116,10 @@ impl TreeData for Inspector {
     }
     fn property_options(&self, id: NodeId) -> PropertyOptions<'_> {
         match id {
+            1 => PropertyOptions {
+                multiline_rows: self.multiline_name.then_some(4),
+                ..Default::default()
+            },
             2 => PropertyOptions {
                 units: Some("%"),
                 min: Some(0.),
@@ -151,6 +158,15 @@ fn golden<const P: bool>(
     window_size: (f32, f32),
     build: impl Fn(TreeView<P>, &mut Window, &mut Context<TreeView<P>>) -> TreeView<P> + Copy + 'static,
 ) {
+    golden_with(name, window_size, Inspector::new, build);
+}
+
+fn golden_with<const P: bool>(
+    name: &str,
+    window_size: (f32, f32),
+    source: fn() -> Inspector,
+    build: impl Fn(TreeView<P>, &mut Window, &mut Context<TreeView<P>>) -> TreeView<P> + Copy + 'static,
+) {
     let mut failures = Vec::new();
     for scheme in [Scheme::Light, Scheme::Dark] {
         let image = Snapshotter::new()
@@ -170,7 +186,7 @@ fn golden<const P: bool>(
                 size(px(window_size.0), px(window_size.1)),
                 move |window, cx| {
                     let view = cx.new(|cx| {
-                        let mut view = TreeView::<P>::new(Rc::new(Inspector::new()), cx);
+                        let mut view = TreeView::<P>::new(Rc::new(source()), cx);
                         view.set_expanded(0, true, cx);
                         view.set_expanded(6, true, cx);
                         view.set_expanded(9, true, cx);
@@ -301,4 +317,43 @@ fn tree_list_shared_row_styles() {
         );
         view
     });
+}
+
+#[test]
+fn single_line_text_edit_fits_its_row() {
+    golden::<true>(
+        "property-grid/edit-single-line",
+        GRID,
+        |view, window, cx| {
+            let mut view = view.split_ratio(0.4);
+            view.start_edit(1, window, cx);
+            view
+        },
+    );
+}
+
+#[test]
+fn multiline_text_edit_grows_its_row() {
+    golden_with::<true>(
+        "property-grid/edit-multiline",
+        GRID,
+        || Inspector {
+            multiline_name: true,
+            ..Inspector::new()
+        },
+        |view, window, cx| {
+            let mut view = view.split_ratio(0.4).edit_buttons(EditButtons::Icons);
+            view.start_edit(1, window, cx);
+            if let Some(Edit {
+                input: EditorInput::Multiline(input),
+                ..
+            }) = &view.edit
+            {
+                input.update(cx, |input, cx| {
+                    input.set_value("Inspector\nSecond line\nThird line", window, cx)
+                });
+            }
+            view
+        },
+    );
 }
