@@ -706,11 +706,11 @@ mod mounted {
         let mount = started.elapsed();
         println!(
             "preview_pending={}",
-            view.read_with(&mut window, |view, _| view.is_loading())
+            view.read_with(&window, |view, _| view.is_loading())
         );
         settle(&mut window);
         window.update(|window, cx| window.render_frame(cx));
-        if let Some(error) = view.read_with(&mut window, |view, _| view.load_failure()) {
+        if let Some(error) = view.read_with(&window, |view, _| view.load_failure()) {
             return Err(format!("invalid soak profile: {error:?}").into());
         }
         println!("setup_and_full_layout_us={}", started.elapsed().as_micros());
