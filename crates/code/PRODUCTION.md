@@ -105,6 +105,9 @@ The same fixture linked against cached GPUI-fast dependencies requested
 | Isolated index construction (ms, one loaded-host sample) | 166.326 | 77.696 |
 | Isolated instructions, including identical source generation | 1,669,895,840 | 1,379,895,455 |
 | Mounted renderer-backed RSS (KiB) | 351,796 | 237,816 |
+| Warm viewport jump allocations at 100k and 10M lines | 137 | 137 |
+| Warm viewport jump instructions at 100k lines | 6,398,199 | 6,398,614 |
+| Warm viewport jump instructions at 10M lines | 6,464,807 | 6,465,333 |
 
 The isolated probe constructs the document from a shared source and excludes
 GPUI and the headless renderer. The before mounted Samply capture attributed
@@ -116,7 +119,7 @@ with at most 256 KiB of UTF-8 input across all entries and 16 KiB per entry.
 GPUI owns its own glyph and layout caches.
 
 
-The same 10M-line mounted CPU-only fixture observed 87,740 KiB RSS when
+The same 10M-line mounted CPU-only fixture observed 87,740–87,836 KiB RSS when
 GPUI's WGPU renderer callback was disabled. The full mounted probe still
 exceeds the process-wide RSS budget. The renderer-backed and CPU-only
 runs both use GPUI event handling, layout and scene construction.

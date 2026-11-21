@@ -88,7 +88,7 @@ rows and 37,185,423 instructions at 10M rows.
 The [instruction suite](../../bench/benches/production_frames.rs) warms a 1,200 by
 800 headless viewport and measures one scroll and draw. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
-100k and 10M rows. It caps each draw at 15,000 allocations and 7 MiB of
+100k and 10M rows. It caps each draw at 11,000 allocations and 3 MiB of
 requests. The [mounted interaction test](tests/interaction.rs) requires
 equal source reads, row renders, constructed cells and pool size.
 
@@ -129,6 +129,7 @@ belong to GPUI.
 |---|---:|---:|
 | Samply inclusive layout samples | 35.25% | 8.12% |
 | Instructions at 100k rows | 37,620,931 | 29,033,009 |
+| Instructions at 10M rows | 37,612,205 | 29,025,842 |
 | Allocation requests at 100k and 10M rows | 14,178 | 10,482 |
 | Requested bytes at 100k and 10M rows | 6,621,580 | 2,649,388 |
 | Renderer-backed RSS (KiB, 10M rows) | 180,632 | 181,596 |
@@ -138,3 +139,7 @@ belong to GPUI.
 The allocation capture used the same release benchmark fixture before and
 after, with the pre-change artifacts at `65e854a`. Timing came from one
 loaded-host capture per build while several worktrees were compiling.
+
+The mounted visual groups verified the existing upstream goldens for the
+cursor, editor and production-scale viewport. The mounted allocation
+gate still observes GPUI element, layout and draw allocations.
