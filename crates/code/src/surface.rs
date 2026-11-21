@@ -1831,13 +1831,13 @@ mod review_tests {
         let (view, vcx) = cx.add_window_view(|_, cx| {
             let document = Arc::new(CodeDocument::new("x\n".repeat(10_000)));
             let code = CodeHandle::new(17, document.clone(), cx);
-            let mut data = Decorations::new(document).unwrap();
+            let mut data = Decorations::new(document).expect("fixture source fits u32");
             let style = data
                 .intern_style(DecorationStyle::Block {
                     estimated_rows: 1,
                     payload: "Review".into(),
                 })
-                .unwrap();
+                .expect("block style can be interned");
             data.update_layer(
                 1,
                 Default::default(),
@@ -1853,7 +1853,7 @@ mod review_tests {
                     }
                 }),
             )
-            .unwrap();
+            .expect("block anchors are in range");
             code.set_analysis(data.prepare_analysis(Vec::new(), Vec::new()), cx);
             code.set_decorations(Some(Arc::new(data)), cx);
             code.on_block_widget(
@@ -1895,14 +1895,14 @@ mod review_tests {
         cx.update(|cx| {
             let document = Arc::new(CodeDocument::new("first\nsecond"));
             let code = CodeHandle::new(12, document.clone(), cx);
-            let mut decorations = Decorations::new(document).unwrap();
+            let mut decorations = Decorations::new(document).expect("fixture source fits u32");
             let style = decorations
                 .intern_style(DecorationStyle::Diagnostic {
                     severity: Severity::Warning,
                     pattern: UnderlinePattern::Dotted,
                     message: "Check these values".into(),
                 })
-                .unwrap();
+                .expect("diagnostic style can be interned");
             decorations
                 .update_layer(
                     1,
@@ -1919,10 +1919,12 @@ mod review_tests {
                         }
                     }),
                 )
-                .unwrap();
+                .expect("diagnostic ranges are valid");
             assert!(code.set_decorations(Some(Arc::new(decorations)), cx));
-            let elsewhere =
-                Arc::new(Decorations::new(Arc::new(CodeDocument::new("first\nsecond"))).unwrap());
+            let elsewhere = Arc::new(
+                Decorations::new(Arc::new(CodeDocument::new("first\nsecond")))
+                    .expect("other revision fits u32"),
+            );
             assert!(!code.set_decorations(Some(elsewhere), cx));
             let events = Rc::new(RefCell::new(Vec::new()));
             let captured = events.clone();
@@ -1930,7 +1932,10 @@ mod review_tests {
                 captured.borrow_mut().push(event)
             })));
             assert!(code.navigate_diagnostic(false, cx));
-            assert_eq!(code.selection().unwrap().start, Position::new(0, 0));
+            assert_eq!(
+                code.selection().map(|range| range.start),
+                Some(Position::new(0, 0))
+            );
             code.set_hover(Some(Position::new(0, 1)), cx);
             code.set_hover(Some(Position::new(0, 2)), cx);
             code.set_hover(None, cx);
@@ -1943,7 +1948,10 @@ mod review_tests {
                 [DecorationAction::Hover, DecorationAction::Leave]
             );
             assert!(code.navigate_diagnostic(false, cx));
-            assert_eq!(code.selection().unwrap().start, Position::new(1, 0));
+            assert_eq!(
+                code.selection().map(|range| range.start),
+                Some(Position::new(1, 0))
+            );
             assert!(!code.navigate_diagnostic(false, cx));
         });
     }

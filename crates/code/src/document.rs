@@ -287,7 +287,13 @@ mod tests {
             let doc = CodeDocument::new(source);
             let mut expected = [0_f32; 256];
             for line in 0..doc.line_count() {
-                let density = doc.line(line).unwrap().trim().len().min(120) as f32 / 120.;
+                let density = doc
+                    .line(line)
+                    .expect("indexed line exists")
+                    .trim()
+                    .len()
+                    .min(120) as f32
+                    / 120.;
                 let bucket = line * expected.len() / doc.line_count();
                 expected[bucket] = expected[bucket].max(density);
             }

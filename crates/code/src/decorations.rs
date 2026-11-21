@@ -761,8 +761,13 @@ mod tests {
     use crate::Position;
 
     fn store(document: Arc<CodeDocument>) -> Decorations {
-        let mut store = Decorations::new(document).unwrap();
-        assert_eq!(store.intern_style(DecorationStyle::Deprecated).unwrap(), 0);
+        let mut store = Decorations::new(document).expect("fixture source fits u32");
+        assert_eq!(
+            store
+                .intern_style(DecorationStyle::Deprecated)
+                .expect("first style key"),
+            0
+        );
         store
     }
 
@@ -783,30 +788,50 @@ mod tests {
         let options = DecorationLayerOptions::default();
         decorations
             .update_layer(3, options, &[], [mark(1, 1, 2), mark(2, 5, 6)])
-            .unwrap();
+            .expect("initial batch is valid");
         assert!(
             decorations
                 .update_layer(3, options, &[2], [mark(1, 3, 5)])
                 .is_err()
         );
-        assert!(decorations.layer(3).unwrap().get(2).is_some());
+        assert!(
+            decorations
+                .layer(3)
+                .expect("layer 3 was published")
+                .get(2)
+                .is_some()
+        );
         decorations
             .apply_edit(Arc::new(CodeDocument::new("aXYb界d")), 1..1)
-            .unwrap();
-        let layer = decorations.layer(3).unwrap();
+            .expect("inserted text leaves valid offsets");
+        let layer = decorations.layer(3).expect("layer 3 was published");
         let mut next = decorations.clone();
         next.mark_stale(3);
-        assert!(Arc::ptr_eq(&next.layer(3).unwrap().index, &layer.index));
+        assert!(Arc::ptr_eq(
+            &next.layer(3).expect("cloned layer is present").index,
+            &layer.index
+        ));
         assert!(layer.is_stale());
-        let anchored = layer.get(1).unwrap();
+        let anchored = layer.get(1).expect("left-biased mark remains");
         assert_eq!((anchored.start, anchored.end), (1, 4));
-        let shifted = layer.get(2).unwrap();
+        let shifted = layer.get(2).expect("shifted mark remains");
         assert_eq!((shifted.start, shifted.end), (7, 8));
         decorations
             .update_layer(3, options, &[1], [mark(2, 4, 7)])
-            .unwrap();
-        assert!(!decorations.layer(3).unwrap().is_stale());
-        assert!(decorations.layer(3).unwrap().get(1).is_none());
+            .expect("refresh replaces mark 2");
+        assert!(
+            !decorations
+                .layer(3)
+                .expect("layer 3 was published")
+                .is_stale()
+        );
+        assert!(
+            decorations
+                .layer(3)
+                .expect("layer 3 was published")
+                .get(1)
+                .is_none()
+        );
     }
 
     #[test]
@@ -819,8 +844,8 @@ mod tests {
         });
         decorations
             .update_layer(0, Default::default(), &[], inputs)
-            .unwrap();
-        let layer = decorations.layer(0).unwrap();
+            .expect("all oracle input ranges are valid");
+        let layer = decorations.layer(0).expect("layer 0 was published");
         for start in 0..82 {
             for end in start..82 {
                 let mut indexed = Vec::new();
@@ -850,8 +875,8 @@ mod tests {
             let records = (0..count).map(|i| mark(i as u64, i, i + 1));
             decorations
                 .update_layer(0, Default::default(), &[], records)
-                .unwrap();
-            let layer = decorations.layer(0).unwrap();
+                .expect("all scale-fixture ranges are valid");
+            let layer = decorations.layer(0).expect("layer 0 was published");
             let mut hits = 0;
             layer.query(42..90, |_| hits += 1);
             assert_eq!(hits, 48);
