@@ -40,6 +40,35 @@ a one-day move at the default knob setting, clicks the live week option
 and verifies a seven-day move on the same view. The keyboard tests also
 check that views without an explicit opt-in preserve pointer focus.
 
+## Viewport rendering bounds
+
+- The bar editor retains up to 16,384 pairs of `f64` extrema (256 KiB of
+  entries) and one dirty index range. The first dense render and a column
+  count change scan the model. A stroke recomputes only columns intersecting
+  its changed range. One GPUI paint layer groups the dense view's quads,
+  with at most one quad per column.
+- Tracks overview uses the sorted, disjoint clip intervals already in the model
+  and retains no overview geometry. Each visible lane emits at most one mark
+  per logical pixel column, capped at 16,384 columns, with adjacent runs of the
+  same color combined in one paint layer. The selected clip keeps its individual element.
+  When assistive technology is active, individual visible clip elements expose
+  their names, roles and selection state.
+- The dope sheet retains one cached header view per visible row (including
+  partially visible rows). The header cache reuses the same controls across
+  pan, zoom and key edits. The key canvas uses four-pixel spacing for dense
+  undecorated rows without selection. Decorated, summary and selected rows
+  retain their individual marks. Plain channels store only the sorted key
+  times, with no parallel decoration array. The key canvas traverses the
+  visible rows at paint time using the current scroll offset and keeps no
+  key-mark vector. GPUI receives owned path meshes. The pinned backends
+  still invalidate the editor view when scrolling shifts the row headers.
+- The curve editor indexes visible markers by time. When more than 512
+  markers from one series intersect the viewport, consecutive unselected
+  markers share a mesh. Selected markers and tangent handles remain
+  individually painted. The editor retains no marker geometry between
+  frames. The viewport test varies the number of offscreen keys and keeps
+  the viewport fixed.
+
 ### Gantt rendering storage
 
 The view retains one schedule keyed by task ID, one ID-to-row index, and one
@@ -206,23 +235,3 @@ and still reported its original upstream failure. An exact rerun of the
 upstream workspace test stage after the correction exited 0. The focused
 Gantt showcase and timeline snapshots passed on both backends with no
 golden changes.
-
-## Viewport rendering bounds
-
-- The bar editor retains up to 16,384 pairs of `f64` extrema (256 KiB of
-  entries) and one dirty index range. The first dense render and a column
-  count change scan the model. A stroke recomputes only columns intersecting
-  its changed range. One GPUI paint layer groups the dense view's quads,
-  with at most one quad per column.
-- Tracks overview uses the sorted, disjoint clip intervals already in the model
-  and retains no overview geometry. Each visible lane emits at most one mark
-  per logical pixel column, capped at 16,384 columns, with adjacent runs of the
-  same color combined in one paint layer. The selected clip keeps its individual element.
-  When assistive technology is active, individual visible clip elements expose
-  their names, roles and selection state.
-- The dope sheet retains one cached header view per visible row (including
-  partially visible rows). The header cache reuses the same controls across
-  pan, zoom and key edits. The key canvas uses four-pixel spacing for dense
-  undecorated rows without selection. Decorated, summary and selected rows
-  retain their individual marks. Plain channels store only the sorted key
-  times, with no parallel decoration array.

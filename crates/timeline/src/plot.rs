@@ -1,7 +1,8 @@
 //! Shared, chart-independent plot composition. Layers see only visible coordinates.
 use crate::{Axis, TimeFormat, ValueRange};
 use gpui_kit::{
-    AnyElement, IntoElement, ParentElement, PathBuilder, Styled, canvas, div, point, px, size,
+    AnyElement, Bounds, IntoElement, ParentElement, PathBuilder, Pixels, Styled, canvas, div,
+    point, px, size,
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant};
 use std::{ops::Range, rc::Rc};
@@ -481,6 +482,27 @@ impl PlotSurface {
             )
             .into_any_element()
     }
+}
+
+// Append both triangles and extend the bounds once per diamond. GPUI's
+// general-purpose triangle method extends the bounds once per vertex.
+pub(crate) fn append_diamond(
+    mesh: &mut gpui_kit::Path<Pixels>,
+    [top, right, bottom, left]: [gpui_kit::Point<Pixels>; 4],
+) {
+    use gpui_kit::{PathVertex, point, size};
+
+    mesh.bounds = mesh.bounds.union(&Bounds::new(
+        point(left.x, top.y),
+        size(right.x - left.x, bottom.y - top.y),
+    ));
+    mesh.vertices.extend(
+        [top, right, bottom, top, bottom, left].map(|xy_position| PathVertex {
+            xy_position,
+            st_position: point(0., 1.),
+            content_mask: Default::default(),
+        }),
+    );
 }
 
 #[cfg(test)]
