@@ -40,6 +40,31 @@ alone is 0, so ~62 are GPUI frame scaffolding charged to every window.
 | windows | no views (registry, bus, layout store) | — | n/a |
 | icons | asset source only | — | n/a |
 
+## After the zero-allocation work (`perf-warm-alloc`, 77d3584), measured on a scratch merge
+
+The shared GPUI/Taffy work cuts every number here, and the framework floor
+drops from 63 to 30 per draw for a plain `div` tree (identical for a retained
+draw and for `window.refresh()`), and to **1** for a bare single-`div` view.
+The residual is not framework scaffolding any more: it is per-node and
+per-widget work.
+
+| crate | before | after 77d3584 | note |
+|---|---|---|---|
+| router | 7 | 6 | |
+| state | 13 | 12 | |
+| motion | 23 | 18 | |
+| ui (`ui!`) | 60 | 42 | first frame 63 |
+| ui (DataUi) | 189 | 132 | |
+| devtools | 757 | 615 | closed host 22 |
+| commands | 858 | 735 | |
+
+Zero is therefore reachable only where the fixture renders nothing
+(`empty div` → 1). For a mounted document the remaining 132 are attributable work:
+~9 per node of `AnyElement` + children `Vec` erasure in `DataUi::render_node`,
+plus each widget's own render (`text` in `guiraffe-components`, `Button` in
+`gpui-component`). Reaching zero for these needs the structural changes listed
+under "Recorded, not fixed" — they are not local fixes.
+
 `windows` and `icons` expose no rendered view: `windows` is a keyed window
 registry + typed event bus + layout persistence, and `icons` is an
 `AssetSource`. Neither runs per-frame code, so neither gets a repaint gate; the
