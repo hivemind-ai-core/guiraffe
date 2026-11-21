@@ -39,3 +39,20 @@ keyboard instructions. Its native Gantt regression clicks a bar, verifies
 a one-day move at the default knob setting, clicks the live week option
 and verifies a seven-day move on the same view. The keyboard tests also
 check that views without an explicit opt-in preserve pointer focus.
+
+### Gantt rendering storage
+
+The view retains one schedule keyed by task ID, one ID-to-row index, and one
+shared display label per task. Forward and reverse dependency indexes each
+store (N+1) row offsets and (E) row numbers, where (N) is task count and
+(E) is dependency count. Drag and resize replace the schedule without
+rebuilding labels or dependency indexes. No scroll history or zoom buckets
+are retained.
+
+A frame visits the intersecting rows plus their incident edges. Task bars
+outside the horizontal interval are culled and narrow bars retain a
+two-pixel marker. Dependency arrows require a visible endpoint. A graph
+with very high degree on a visible row can still require work proportional
+to its incident edges. Visible accessibility items and lock controls
+remain GPUI elements. Plot command generation and arrow path construction
+still allocate, so the warm repaint allocation gate remains open.
