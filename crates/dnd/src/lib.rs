@@ -1,5 +1,6 @@
 mod board;
-pub use board::{BoardDragOverlay, Card, SortableBoard};
+mod chrome;
+pub use board::{BoardDragOverlay, Card, SortableBoard, gap_at};
 pub mod dock;
 pub mod sortable;
 

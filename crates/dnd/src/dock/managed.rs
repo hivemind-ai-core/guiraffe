@@ -1,10 +1,11 @@
-use crate::board::{DropOutline, Preview};
+use crate::chrome::{DropOutline, IndicatorStyle, Preview, set_indicators};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, Axis, Bounds, ClickEvent, Context, CursorStyle, DispatchPhase,
     Entity, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, Role, SharedString,
     Stateful, StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
+    assets::IconName,
     base::{ElementExt, Placement, TestSupportExt},
     canvas,
     component::dock::{
@@ -12,9 +13,13 @@ use gpui_kit::{
         InsertTarget, NodeId, PaneNode, PaneRef, PanelHandle, PanelId, TabGroupContext,
         TabGroupRenderer,
     },
+    component::tooltip::Tooltip,
     div, point, px, size,
 };
-use guiraffe_core::GuiraffeTheme;
+use guiraffe_components::ActionIcon;
+use guiraffe_core::{
+    ColorName, GuiraffeTheme, RING_WIDTH, Size, StateKind, Variant, keyed_focus, ring_visible,
+};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -108,12 +113,35 @@ pub struct DockDragOverlay {
 }
 
 impl DockDragOverlay {
-    fn outline(&self, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
-        if self.outline.read(cx).bounds != bounds {
-            self.outline.update(cx, |outline, cx| {
-                outline.bounds = bounds;
-                cx.notify();
-            });
+    fn outline(&self, indicator: Option<(Bounds<Pixels>, IndicatorStyle)>, cx: &mut App) {
+        set_indicators(&self.outline, indicator.into_iter().collect(), cx);
+    }
+
+    /// Re-render the dock when a tab drag starts or ends: it drops the tabs' hover and
+    /// pressed styles for the drag, so pointer moves never re-render it (or its host).
+    fn notify_area(&self, cx: &mut App) {
+        if let Some(area) = self.area.upgrade() {
+            App::notify(cx, area.entity_id());
+        }
+    }
+
+    /// Whether a tab is being dragged.
+    fn is_dragging_tab(&self) -> bool {
+        matches!(self.gesture, Some(Gesture::Tab { active: true, .. }))
+    }
+
+    /// The cursor while a gesture is in progress: grabbing for a tab drag, the resize cursor
+    /// for a split or dock edge.
+    fn cursor(&self) -> Option<CursorStyle> {
+        let resize = |axis| match axis {
+            Axis::Horizontal => CursorStyle::ResizeLeftRight,
+            Axis::Vertical => CursorStyle::ResizeUpDown,
+        };
+        match self.gesture.as_ref()? {
+            Gesture::Tab { active: true, .. } => Some(CursorStyle::ClosedHand),
+            Gesture::Tab { .. } => None,
+            Gesture::Split { resize: split, .. } => Some(resize(split.axis)),
+            Gesture::Side { dock, .. } => Some(resize(dock.placement().axis())),
         }
     }
 
@@ -131,7 +159,12 @@ impl DockDragOverlay {
             }
         }));
         self.keyboard_panel = None;
+        let resizing = !matches!(gesture, Gesture::Tab { .. });
         self.gesture = Some(gesture);
+        if resizing {
+            // Only the overlay re-renders: it owns the resize cursor.
+            cx.notify();
+        }
     }
 
     fn cancel(&mut self, cx: &mut Context<Self>) -> Option<Gesture> {
@@ -139,6 +172,9 @@ impl DockDragOverlay {
         self.escape = None;
         self.outline(None, cx);
         cx.notify();
+        if matches!(finished, Gesture::Tab { active: true, .. }) {
+            self.notify_area(cx);
+        }
         Some(finished)
     }
 
@@ -304,11 +340,12 @@ impl DockDragOverlay {
                     });
                     self.outline(
                         self.resolve(event.position, source)
-                            .map(|(_, bounds)| bounds),
+                            .map(|(target, bounds)| (bounds, indicator_style(&target))),
                         cx,
                     );
                     if started {
                         cx.notify();
+                        self.notify_area(cx);
                     }
                     cx.stop_propagation();
                 }
@@ -322,7 +359,13 @@ impl DockDragOverlay {
                 }
             }
             Gesture::Split { resize, origin } => {
-                self.outline(Some(resize.outline_at(event.position - origin)), cx);
+                self.outline(
+                    Some((
+                        guide(resize.outline_at(event.position - origin), resize.axis),
+                        IndicatorStyle::Line,
+                    )),
+                    cx,
+                );
                 cx.stop_propagation();
                 Gesture::Split { resize, origin }
             }
@@ -336,7 +379,16 @@ impl DockDragOverlay {
                     Axis::Horizontal => point(delta.x, px(0.)),
                     Axis::Vertical => point(px(0.), delta.y),
                 };
-                self.outline(Some(Bounds::new(outline.origin + delta, outline.size)), cx);
+                self.outline(
+                    Some((
+                        guide(
+                            Bounds::new(outline.origin + delta, outline.size),
+                            dock.placement().axis(),
+                        ),
+                        IndicatorStyle::Line,
+                    )),
+                    cx,
+                );
                 cx.stop_propagation();
                 Gesture::Side {
                     dock,
@@ -413,6 +465,31 @@ impl DockDragOverlay {
     }
 }
 
+/// Insertion between tabs draws a line; merging or splitting highlights the region.
+fn indicator_style(target: &InsertTarget) -> IndicatorStyle {
+    match target {
+        InsertTarget::Tabs { ix: Some(_), .. } => IndicatorStyle::Line,
+        _ => IndicatorStyle::Zone,
+    }
+}
+
+/// A 2px resize guide centred in a split or dock-edge handle. `axis` is the direction the
+/// handle moves in.
+fn guide(handle: Bounds<Pixels>, axis: Axis) -> Bounds<Pixels> {
+    let thickness = px(2.);
+    let centre = handle.center();
+    match axis {
+        Axis::Horizontal => Bounds::new(
+            point(centre.x - thickness / 2., handle.top()),
+            size(thickness, handle.size.height),
+        ),
+        Axis::Vertical => Bounds::new(
+            point(handle.left(), centre.y - thickness / 2.),
+            size(handle.size.width, thickness),
+        ),
+    }
+}
+
 fn split_edge(bounds: Bounds<Pixels>, pointer: Point<Pixels>) -> Option<Placement> {
     if pointer.x < bounds.left() + bounds.size.width * 0.25 {
         Some(Placement::Left)
@@ -433,6 +510,7 @@ impl Render for DockDragOverlay {
         let movement = down.clone();
         let release = down.clone();
         let origin = self.origin.clone();
+        let cursor = self.cursor();
         let preview = match &self.gesture {
             Some(Gesture::Tab {
                 preview,
@@ -450,6 +528,9 @@ impl Render for DockDragOverlay {
                 canvas(
                     move |bounds, _, _| origin.set(bounds.origin),
                     move |_, _, window, _| {
+                        if let Some(cursor) = cursor {
+                            window.set_window_cursor_style(cursor);
+                        }
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture && event.button == MouseButton::Left
                             {
@@ -630,11 +711,30 @@ impl TabGroupRenderer for Renderer {
             })
     }
 
-    fn render_tab_bar(&self, group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
-        let theme = GuiraffeTheme::global(cx);
-        let fill = theme.surfaces().surface.to_hsla();
-        let border = theme.surfaces().border.to_hsla();
+    fn render_tab_bar(
+        &self,
+        group: &TabGroupContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let theme = GuiraffeTheme::global(cx).clone();
+        let surfaces = theme.surfaces();
+        let fill = surfaces.surface.to_hsla();
+        let border = surfaces.border.to_hsla();
+        let tab_colors = theme.press_colors(Variant::Subtle, Some(ColorName::Gray));
+        let (hover, pressed) = (
+            tab_colors.hover.background.over(surfaces.surface).to_hsla(),
+            tab_colors.pressed.background.to_hsla(),
+        );
+        let ring = theme
+            .state(StateKind::FocusRing, Variant::Default, None)
+            .border;
+        let primary = theme.primary_color().to_hsla();
         let area = self.area.upgrade();
+        let dragging = self
+            .overlay
+            .upgrade()
+            .is_some_and(|overlay| overlay.read(cx).is_dragging_tab());
         let bottom_collapsed = area.as_ref().is_some_and(|area| {
             let area = area.read(cx);
             !area.is_dock_open(DockPlacement::Bottom)
@@ -656,7 +756,8 @@ impl TabGroupRenderer for Renderer {
             .panels()
             .iter()
             .enumerate()
-            .filter(|(_, panel)| panel.visible(cx));
+            .filter(|(_, panel)| panel.visible(cx))
+            .collect::<Vec<_>>();
         let mut bar = div()
             .flex()
             .items_center()
@@ -675,12 +776,41 @@ impl TabGroupRenderer for Renderer {
                 .active_panel()
                 .is_some_and(|panel| panel.panel_id(cx) == id);
             let node = group.node();
-            let mut tab = div().id(("dock-tab", id.as_u64())).test_support().role(Role::Tab)
-                .aria_label(label.clone()).aria_selected(active).focusable().tab_stop(true)
+            let focus = keyed_focus(("dock-tab-focus", id.as_u64()), window, cx);
+            let ring_shown = ring_visible(&focus, window);
+            let tab = div().id(("dock-tab", id.as_u64())).test_support().role(Role::Tab)
+                .aria_label(label.clone()).aria_selected(active).track_focus(&focus).tab_stop(true)
                 .aria_keyshortcuts("Control+Space Escape Alt+ArrowLeft Alt+ArrowRight Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Alt+Shift+ArrowUp Alt+Shift+ArrowDown")
                 .h_full().px_3().flex().items_center().border_r_1().border_color(border)
-                .when(active, |el| el.bg(theme.surfaces().raised.to_hsla()))
-                .child(label.clone());
+                .when(active, |el| {
+                    // Selected: raised fill, full-contrast text and a primary underline
+                    // (a shape cue, not color alone), drawn as an overlay so it never
+                    // changes the tab's size.
+                    el.bg(surfaces.raised.to_hsla())
+                        .text_color(surfaces.text.to_hsla())
+                        .child(div().absolute().left_0().right_0().bottom_0().h(px(2.)).bg(primary))
+                })
+                .when(!active, |el| el.text_color(surfaces.dimmed.to_hsla()))
+                .when(!active && !dragging, |el| {
+                    el.hover(move |style| style.bg(hover))
+                        .active(move |style| style.bg(pressed))
+                })
+                .child(label.clone())
+                // The tab bar clips overflow, so the focus ring is drawn inset: same color and
+                // width as the shared ring, never part of layout.
+                .when(ring_shown, |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .border(px(RING_WIDTH))
+                            .border_color(ring.to_hsla()),
+                    )
+                });
+            let mut tab = tab.relative();
             if group.is_droppable() {
                 tab = tab.on_prepaint(measure(self.zone(ZoneKind::Tab(node, index))));
             }
@@ -796,29 +926,49 @@ impl TabGroupRenderer for Renderer {
         if center_controls && let Some(area) = area {
             let active = area.read(cx);
             let controls = [
-                (DockPlacement::Left, "Left"),
-                (DockPlacement::Bottom, "Bottom"),
-                (DockPlacement::Right, "Right"),
+                (DockPlacement::Left, "left", IconName::PanelLeft),
+                (DockPlacement::Bottom, "bottom", IconName::PanelBottom),
+                (DockPlacement::Right, "right", IconName::PanelRight),
             ]
             .into_iter()
-            .filter(|(side, _)| active.has_dock(*side) && active.is_dock_collapsible(*side))
-            .map(|(side, label)| {
+            .filter(|(side, ..)| active.has_dock(*side) && active.is_dock_collapsible(*side))
+            .map(|(side, name, icon)| {
                 let area = area.downgrade();
-                div()
-                    .id(("dock-toggle", side as usize))
-                    .test_support()
-                    .role(Role::Button)
-                    .aria_label(format!("Toggle {label} dock"))
-                    .focusable()
-                    .tab_stop(true)
-                    .px_2()
-                    .cursor(CursorStyle::PointingHand)
-                    .child(label)
+                let open = active.is_dock_open(side);
+                let label: SharedString = if open {
+                    format!("Hide {name} panel")
+                } else {
+                    format!("Show {name} panel")
+                }
+                .into();
+                let tip = label.clone();
+                // Pressed (open) toggles are filled in the primary tint; closed ones are
+                // quiet. The accessible name and tooltip state the action as well.
+                let button = ActionIcon::new(("dock-toggle", side as usize), icon)
+                    .size(Size::Sm)
+                    .variant(if open {
+                        Variant::Light
+                    } else {
+                        Variant::Subtle
+                    })
+                    .when(!open, |button| button.color(ColorName::Gray))
+                    .label(label)
+                    .focusable(true)
                     .on_click(move |_, window, cx| {
                         let _ = area.update(cx, |area, cx| area.toggle_dock(side, window, cx));
-                    })
+                    });
+                div()
+                    .id(("dock-toggle-tip", side as usize))
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    .child(button)
             });
-            bar = bar.child(div().flex_1()).children(controls);
+            let controls = div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_1()
+                .children(controls);
+            bar = bar.child(div().flex_1()).child(controls);
         }
         bar.into_any_element()
     }
@@ -832,10 +982,7 @@ pub(super) fn new(
 ) -> (Entity<DockArea>, Entity<DockDragOverlay>) {
     let zones = Zones::default();
     let origin = Rc::new(Cell::new(Point::default()));
-    let outline = cx.new(|_| DropOutline {
-        bounds: None,
-        origin: origin.clone(),
-    });
+    let outline = cx.new(|_| DropOutline::new(origin.clone()));
     let overlay = cx.new(|_| DockDragOverlay {
         area: WeakEntity::new_invalid(),
         zones: zones.clone(),
@@ -997,7 +1144,7 @@ mod tests {
                     _
                 ))
             ));
-            assert!(overlay.outline.read(cx).bounds.is_some());
+            assert!(!overlay.outline.read(cx).indicators.is_empty());
             assert!(!cx.has_active_drag());
         });
         window.simulate_mouse_up(to, MouseButton::Left, Default::default());
