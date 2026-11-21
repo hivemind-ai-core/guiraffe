@@ -283,11 +283,12 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
+        "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         "flow" => flow(
             args.iter().any(|arg| arg == "--no-minimap"),
             mount_started,
@@ -422,6 +423,16 @@ mod mounted {
         } else {
             -1.
         }
+    }
+
+    /// Sample the process cost of the same window without fixture content.
+    pub fn empty(run: impl FnOnce(Frame)) -> Result<()> {
+        let (mut window, _) = mount("empty_soak", |_| {}, |_, cx| cx.new(|_| gpui_kit::Empty))?;
+        run(&mut |_| {
+            settle(&mut window);
+            Ok(())
+        });
+        Ok(())
     }
 
     /// Open a 1280x800 window (base Root) and render the first frame.
