@@ -123,8 +123,30 @@ fn now(cx: &App) -> std::time::Instant {
 
 impl IntoElement for AnimatedSize {
     type Element = Self;
+    /// Wraps the child so that, when it is measured as a root, it fills the cross axis like
+    /// an ordinary block child would (a root with an auto size shrinks to fit).
     fn into_element(self) -> Self {
-        self
+        let Self {
+            id,
+            child,
+            axis,
+            enabled,
+            timing,
+            clip,
+        } = self;
+        let child = match axis {
+            SizeAxis::Vertical => div().w_full().child(child).into_any_element(),
+            SizeAxis::Horizontal => div().h_full().child(child).into_any_element(),
+            SizeAxis::Both => child,
+        };
+        Self {
+            id,
+            child,
+            axis,
+            enabled,
+            timing,
+            clip,
+        }
     }
 }
 
@@ -516,9 +538,13 @@ impl Reveal {
         };
         let child = if progress < 1.0 {
             // A plain div adds no id to the path, so the child's state survives the switch.
-            div().opacity(progress).child(child).into_any_element()
+            div()
+                .w_full()
+                .opacity(progress)
+                .child(child)
+                .into_any_element()
         } else {
-            child.into_any_element()
+            div().w_full().child(child).into_any_element()
         };
         Self {
             id: id.into(),
