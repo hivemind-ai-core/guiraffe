@@ -313,6 +313,57 @@ fn long_variable_history_virtualizes_and_jump_restores_tail(cx: &mut TestAppCont
         assert!(h.list.is_following_tail());
     });
 }
+#[gpui_kit::test]
+fn traversing_history_evicts_distant_text_and_restores_rows(cx: &mut TestAppContext) {
+    let (handle, chat) = open(cx);
+    let history = cx.update(|cx| {
+        chat.update(cx, |chat, cx| {
+            for index in 0..400 {
+                chat.push_message(
+                    Message::new(
+                        MessageId(index),
+                        Role::Assistant,
+                        format!("Message {index}"),
+                    ),
+                    cx,
+                );
+            }
+            chat.history.clone()
+        })
+    });
+    draw(cx, handle);
+    for index in (0..400).step_by(8) {
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                history.list.pause_following_tail();
+                history.list.scroll_to_reveal_item(index);
+                cx.notify();
+            });
+        });
+        draw(cx, handle);
+    }
+    cx.update(|cx| {
+        let history = history.read(cx);
+        assert!(history.rows[0].read(cx).markdown.is_none());
+        assert!(
+            history
+                .rows
+                .iter()
+                .filter(|row| row.read(cx).markdown.is_some())
+                .count()
+                <= 64
+        );
+    });
+    cx.update(|cx| {
+        history.update(cx, |history, cx| {
+            history.list.scroll_to_reveal_item(0);
+            cx.notify();
+        })
+    });
+    draw(cx, handle);
+    cx.update(|cx| assert!(history.read(cx).rows[0].read(cx).markdown.is_some()));
+}
+
 // gpui-fast exposes its scroll-layer test switch; upstream has no scroll layers.
 // An inherent method wins over this fallback on the fast backend.
 #[allow(

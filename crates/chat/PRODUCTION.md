@@ -1,5 +1,20 @@
 # Chat performance
 
-The [long-history interaction test](src/gpui_tests.rs) checks that message insertion registers history rows in one list update per render and that Markdown state is created only for rows the list renders. Reasoning starts parsing when expanded.
+The [long-history interaction tests](src/gpui_tests.rs) cover batched list
+insertion, lazy Markdown state creation, and traversal with eviction.
+History keeps text state for 64 recently used rows and evicts the row
+farthest from the current row being laid out. When a row returns to the list,
+it recreates Markdown from raw text. Reasoning parses only when open and
+recreates its state if the row was evicted.
 
-Each rendered message retains one Kit text state so its selection can survive scrolling out of view. Each expanded reasoning panel can retain another. The upper bound is the number of messages and reasoning panels seen, so this retention can grow with history traversal. Kit also keeps one highlight result per parsed code block and, with Tree-sitter enabled, one parser and query per literal fence language per thread. Bounded history-wide shaping and query storage remain open.
+Rows participating in a selection retain their text entities until Kit
+releases the selection. This preserves window-owned copy and selection
+endpoints. That exception can grow during a selection across history.
+Separately, Kit retains up to 4,096 shaped layouts per UI thread, up to
+eight fence parsers per thread with at most 64 KiB of cached source per
+parser, and up to 128 compiled Tree-sitter query entries process-wide.
+Unknown fence names do not create parser entries.
+
+One message view and its underlying data are still allocated per history
+row. Cold mount, peak RSS with a selection spanning history, and warm
+repaint allocations remain open.

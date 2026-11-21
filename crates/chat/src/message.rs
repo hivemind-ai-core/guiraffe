@@ -30,6 +30,7 @@ pub struct MessageView {
     #[cfg(test)]
     pub(crate) renders: Rc<Cell<usize>>,
     _layout_subscriptions: Vec<Subscription>,
+    markdown_subscription: Option<Subscription>,
     pub(crate) layout: RowLayout,
 }
 #[derive(Clone)]
@@ -89,9 +90,36 @@ impl MessageView {
             #[cfg(test)]
             renders: Rc::default(),
             _layout_subscriptions: subscriptions,
+            markdown_subscription: None,
             layout,
         }
     }
+    pub(crate) fn has_text_selection(&self, cx: &App) -> bool {
+        self.markdown
+            .as_ref()
+            .is_some_and(|text| text.read(cx).has_selection(cx))
+            || self.reasoning.as_ref().is_some_and(|reasoning| {
+                reasoning
+                    .read(cx)
+                    .markdown
+                    .as_ref()
+                    .is_some_and(|text| text.read(cx).has_selection(cx))
+            })
+    }
+
+    pub(crate) fn evict_text(&mut self, cx: &mut Context<Self>) {
+        self.markdown = None;
+        self.markdown_subscription = None;
+        if let Some(reasoning) = &self.reasoning
+            && reasoning.read(cx).markdown.is_some()
+        {
+            reasoning.update(cx, |reasoning, _| {
+                reasoning.markdown = None;
+                reasoning._layout_subscription = None;
+            });
+        }
+    }
+
     pub(crate) fn append(&mut self, delta: &str, cx: &mut Context<Self>) {
         if delta.is_empty() {
             return;
@@ -181,8 +209,7 @@ impl Render for MessageView {
         self.renders.set(self.renders.get() + 1);
         let markdown_state = self.markdown.get_or_insert_with(|| {
             let state = cx.new(|cx| TextViewState::markdown(&self.data.text, cx).scrollable(false));
-            self._layout_subscriptions
-                .push(self.layout.observe(&state, cx));
+            self.markdown_subscription = Some(self.layout.observe(&state, cx));
             state
         });
         let menu = self.menu.get_or_insert_with(guiraffe_core::TextMenu::new);
@@ -465,6 +492,15 @@ impl Reasoning {
 }
 impl Render for Reasoning {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.open
+            && self.markdown.is_none()
+            && let Some(row) = self.row.upgrade()
+        {
+            let source = row.read(cx).data.reasoning.clone();
+            let state = cx.new(|cx| TextViewState::markdown(&source, cx));
+            self._layout_subscription = Some(self.layout.observe(&state, cx));
+            self.markdown = Some(state);
+        }
         div()
             .flex()
             .flex_col()
@@ -489,16 +525,6 @@ impl Render for Reasoning {
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open = !this.open;
-                        if this.open
-                            && this.markdown.is_none()
-                            && let Some(row) = this.row.upgrade()
-                        {
-                            let text = row.read(cx).data.reasoning.clone();
-                            let state =
-                                cx.new(|cx| TextViewState::markdown(&text, cx).scrollable(false));
-                            this._layout_subscription = Some(this.layout.observe(&state, cx));
-                            this.markdown = Some(state);
-                        }
                         cx.notify();
                     })),
             )
