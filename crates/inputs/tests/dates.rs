@@ -651,7 +651,7 @@ fn focus_ring_and_popover_never_move_layout(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn an_open_popover_settles_and_closing_renders_little(cx: &mut TestAppContext) {
+fn an_open_popover_settles(cx: &mut TestAppContext) {
     let m = mount::<DateRange>(cx, false, |p| p.number_of_months(2));
     click(m.vcx, "gr-picker-trigger");
     frames(m.vcx, 5);
@@ -662,19 +662,38 @@ fn an_open_popover_settles_and_closing_renders_little(cx: &mut TestAppContext) {
         before,
         "an idle open popover must not re-render every frame"
     );
-    m.vcx.update(|w, cx| {
-        w.dispatch_action(Box::new(guiraffe_inputs::dates::picker::Dismiss), cx);
+}
+
+#[gpui_kit::test]
+fn paging_months_and_hovering_days_do_not_rerender_the_host(cx: &mut TestAppContext) {
+    // Driven through the API: the pointer helpers force full-window frames.
+    let m = mount::<DateRange>(cx, false, |p| p);
+    let picker = m.picker.clone();
+    frames(m.vcx, 3);
+    let closed = m.renders.get();
+    m.vcx
+        .update(|w, cx| picker.update(cx, |p, cx| p.set_open(true, w, cx)));
+    frames(m.vcx, 3);
+    let opened = m.renders.get();
+    let cal = m.vcx.update(|_, cx| picker.read(cx).calendar_for_test());
+    m.vcx.update(|_, cx| {
+        cal.update(cx, |c, cx| {
+            c.next_month();
+            cx.notify()
+        })
     });
-    let _ = &m.picker;
+    frames(m.vcx, 3);
+    // Arrow keys move the day cursor (a picker-only change).
+    m.vcx
+        .update(|w, cx| picker.update(cx, |p, cx| p.update_props(|p| p.color = None, w, cx)));
+    frames(m.vcx, 3);
     if gpui_kit::GPUI_FAST {
-        frames(m.vcx, 2);
-        let host = m.renders.get();
-        click(m.vcx, "gr-picker-trigger");
-        frames(m.vcx, 3);
+        // gpui-fast re-renders the host once when the deferred popover view mounts.
+        assert!(opened - closed <= 1, "opening: {}", opened - closed);
         assert_eq!(
             m.renders.get(),
-            host,
-            "opening re-renders the picker only, not its host (gpui-fast)"
+            opened,
+            "the popover is its own view: paging and picker updates repaint only it"
         );
     }
 }

@@ -33,7 +33,7 @@ use gpui_kit::{
 use guiraffe_components::close_button;
 use guiraffe_core::{
     A11yDisabledExt, ColorName, GuiraffeTheme, Rgb, Size, StateKind, StyleContext, Variant,
-    focus_ring, kit_size, ring_visible, tab_stop,
+    focus_ring, kit_size, ring_visible,
 };
 
 use super::{
@@ -335,6 +335,12 @@ pub struct Picker<V: PickerValue> {
     /// What the popover last rendered of the calendar, so its notifications only repaint
     /// the picker when something visible changed.
     seen: (i32, u8, CalendarView, Date),
+    /// The popover is its own small view: it is laid out deferred (after the main tree), and
+    /// as a view its reads of the calendar and time fields stay its own, so a month change
+    /// repaints the popover, not the page around the picker (gpui-fast).
+    popover: Entity<PopoverView<V>>,
+    /// The inherited style context of the last render that saw one (see [`Self::context`]).
+    ctx: StyleContext,
     _subs: Vec<Subscription>,
 }
 
@@ -381,6 +387,7 @@ impl<V: PickerValue> Picker<V> {
             let start_time = cx.new(|cx| TimeFieldState::new(window, cx));
             let end_time = cx.new(|cx| TimeFieldState::new(window, cx));
             let focus = cx.focus_handle();
+            let weak = cx.weak_entity();
             let subs = vec![
                 cx.subscribe_in(
                     &calendar,
@@ -446,6 +453,10 @@ impl<V: PickerValue> Picker<V> {
                 display: None,
                 preset_labels: Vec::new(),
                 seen: (0, 0, CalendarView::Day, Date::Single(None)),
+                ctx: StyleContext::default(),
+                popover: cx.new(|_| PopoverView {
+                    picker: weak.clone(),
+                }),
                 _subs: subs,
             };
             debug_assert!(
@@ -1011,10 +1022,22 @@ fn tabular() -> FontFeatures {
 }
 
 impl<V: PickerValue> Picker<V> {
+    /// Resolve the inherited `StyleContext` for this render.
+    ///
+    /// gpui-fast re-renders a notified view on its own, outside its ancestors' layout, so
+    /// the context providers (`focus_scope`, `provide`) are not on the stack and
+    /// `StyleContext::current()` reads the default. A default read therefore keeps the
+    /// context of the last render that ran inside the tree; a picker moved from a
+    /// non-default context into a default one is the only case this gets wrong.
+    fn context(&mut self) {
+        let now = StyleContext::current();
+        if now != StyleContext::default() {
+            self.ctx = now;
+        }
+    }
+
     fn size(&self) -> Size {
-        self.props
-            .size
-            .unwrap_or(StyleContext::current().control_size)
+        self.props.size.unwrap_or(self.ctx.control_size)
     }
 
     fn radius(&self, cx: &App) -> f32 {
@@ -1043,7 +1066,7 @@ impl<V: PickerValue> Picker<V> {
             .unwrap_or_else(|| self.placeholder())
     }
 
-    fn render_calendar(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_calendar(&self, this: &Entity<Self>, window: &Window, cx: &App) -> AnyElement {
         let size = self.size();
         let t = GuiraffeTheme::global(cx);
         let n = self.props.number_of_months.max(1);
@@ -1077,9 +1100,9 @@ impl<V: PickerValue> Picker<V> {
             locale: self.props.locale.clone(),
         });
         let labels = look.clone();
-        let weak = cx.entity().downgrade();
+        let weak = this.downgrade();
         let range = V::MODE.is_range();
-        BaseCalendar::new(("gr-calendar", cx.entity_id()), &self.calendar)
+        BaseCalendar::new(("gr-calendar", this.entity_id()), &self.calendar)
             .number_of_months(n)
             .first_day_of_week(first_day)
             .gap(px(2.))
@@ -1242,8 +1265,8 @@ impl<V: PickerValue> Picker<V> {
         state: &Entity<TimeFieldState>,
         empty: bool,
         compact: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        window: &Window,
+        cx: &App,
     ) -> AnyElement {
         let t = GuiraffeTheme::global(cx);
         let size = self.size();
@@ -1304,14 +1327,14 @@ impl<V: PickerValue> Picker<V> {
         focus_ring(frame, !disabled && ring_visible(&focus, window), r, ring).into_any_element()
     }
 
-    fn render_popover(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_popover(&self, this: &Entity<Self>, window: &Window, cx: &App) -> AnyElement {
         let t = GuiraffeTheme::global(cx);
         let s = t.surfaces();
         let size = self.size();
         let pad = px(size.spacing());
         let gap = px((size.spacing() / 2.0).round());
         let r = px(t.default_radius.radius());
-        let tab = guiraffe_core::tab_stop(self.props.focusable);
+        let tab = self.props.focusable.unwrap_or(self.ctx.keyboard_nav);
         let shadows: Vec<_> = t
             .shadow(Size::Md)
             .iter()
@@ -1323,7 +1346,7 @@ impl<V: PickerValue> Picker<V> {
                 inset: false,
             })
             .collect();
-        let entity = cx.entity();
+        let entity = this.clone();
         let light = t.variant(self.props.color, Variant::Light);
         let (active_bg, active_fg) = (light.background.over(s.body), light.foreground);
         let presets = (!self.props.presets.is_empty()).then(|| {
@@ -1435,27 +1458,20 @@ impl<V: PickerValue> Picker<V> {
             // Pointer presses inside the popover never take keyboard focus (spec/00 §12.3);
             // the time fields focus themselves, like text inputs.
             .capture_any_mouse_down(|_, window, _| window.prevent_default())
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                this.request_open(false, window, cx);
-            }))
+            .on_mouse_down_out({
+                let e = entity.clone();
+                move |_, window, cx| e.update(cx, |p, cx| p.request_open(false, window, cx))
+            })
             .children(presets)
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap(gap)
-                    .child(self.render_calendar(window, cx))
+                    .child(self.render_calendar(this, window, cx))
                     .children(times),
             );
-        div()
-            .absolute()
-            .top_full()
-            .left_0()
-            .child(
-                deferred(anchored().snap_to_window_with_margin(px(8.)).child(surface))
-                    .with_priority(1),
-            )
-            .into_any_element()
+        surface.into_any_element()
     }
 
     fn render_trigger(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1546,7 +1562,18 @@ impl<V: PickerValue> Picker<V> {
         div()
             .relative()
             .child(frame)
-            .when(self.open, |el| el.child(self.render_popover(window, cx)))
+            .when(self.open, |el| {
+                el.child(
+                    div().absolute().top_full().left_0().child(
+                        deferred(
+                            anchored()
+                                .snap_to_window_with_margin(px(8.))
+                                .child(self.popover.clone()),
+                        )
+                        .with_priority(1),
+                    ),
+                )
+            })
             .into_any_element()
     }
 
@@ -1601,6 +1628,7 @@ impl SizeStep for Size {
 
 impl<V: PickerValue> Render for Picker<V> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.context();
         let size = self.size();
         let disabled = self.props.disabled;
         let input = if V::MODE == PickerMode::Time {
@@ -1620,7 +1648,7 @@ impl<V: PickerValue> Render for Picker<V> {
         if V::MODE == PickerMode::Time {
             return root.test_support().child(wrapped);
         }
-        let tab = !disabled && tab_stop(self.props.focusable);
+        let tab = !disabled && self.props.focusable.unwrap_or(self.ctx.keyboard_nav);
         root.test_support()
             .role(Role::ComboBox)
             .aria_label(self.accessible_name())
@@ -1665,5 +1693,19 @@ impl<V: PickerValue> Render for Picker<V> {
             .on_action(cx.listener(Self::on_dismiss))
             .on_action(cx.listener(Self::on_clear))
             .child(wrapped)
+    }
+}
+
+/// The popover surface of a [`Picker`] (see `Picker::popover`).
+struct PopoverView<V: PickerValue> {
+    picker: gpui_kit::WeakEntity<Picker<V>>,
+}
+
+impl<V: PickerValue> Render for PopoverView<V> {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(picker) = self.picker.upgrade() else {
+            return div().into_any_element();
+        };
+        picker.read(cx).render_popover(&picker, window, cx)
     }
 }
