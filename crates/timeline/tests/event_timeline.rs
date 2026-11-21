@@ -258,6 +258,7 @@ fn soak_100k(cx: &mut TestAppContext) {
         window.focus(&entity.read(cx).focus_handle(cx), cx);
     });
     let mount = mount_started.elapsed();
+    vcx.update(|window, cx| window.draw(cx).clear(cx));
     let duration = Duration::from_secs(
         std::env::var("EVENT_TIMELINE_SOAK_SECONDS")
             .ok()
@@ -278,10 +279,19 @@ fn soak_100k(cx: &mut TestAppContext) {
             1..60 => "down",
             _ => "up",
         };
+        let wheel = samples % 120 == 30;
+        let keystroke = (!wheel).then(|| {
+            vcx.update(|_, cx| {
+                Keystroke::parse_with_os(key, cx.platform_info().os)
+                    .unwrap_or_else(|error| panic!("{error}"))
+            })
+        });
         let cpu_start = thread_cpu_ns();
         let frame = Instant::now();
         vcx.update(|window, cx| {
-            if samples % 120 == 30 {
+            if let Some(keystroke) = &keystroke {
+                window.dispatch_keystroke(keystroke.clone(), cx);
+            } else {
                 let viewport = window.viewport_size();
                 window.dispatch_event(
                     PlatformInput::Scroll(ScrollEvent {
@@ -291,11 +301,6 @@ fn soak_100k(cx: &mut TestAppContext) {
                     }),
                     cx,
                 );
-            } else {
-                let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os)
-                    .unwrap_or_else(|error| panic!("{error}"));
-                window.dispatch_keystroke(keystroke.clone(), cx);
-                window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
             }
         });
         vcx.update(|window, cx| window.draw(cx).clear(cx));
@@ -305,6 +310,13 @@ fn soak_100k(cx: &mut TestAppContext) {
             &mut cpu,
             Duration::from_nanos(thread_cpu_ns().saturating_sub(cpu_start)),
         );
+        // Key-up can trigger GPUI's pre-dispatch redraw when a window is dirty.
+        // Complete the key pair after the measured dispatch and draw.
+        if let Some(keystroke) = keystroke {
+            vcx.update(|window, cx| {
+                window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
+            });
+        }
         if samples % 120 == 0 {
             last_rss = rss_bytes();
             peak = peak.max(last_rss);
