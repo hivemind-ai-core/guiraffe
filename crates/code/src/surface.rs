@@ -82,7 +82,8 @@ impl AnalysisRequest {
 
 // Presentation supplied after set_source belongs to that source, even while the
 // previously published document is still visible. Each replacement source resets it.
-type BuildDocumentDecorations = Box<dyn FnOnce(Arc<CodeDocument>) -> Option<Arc<Decorations>>>;
+type DocumentPresentation = (PreparedAnalysis, Option<Arc<Decorations>>);
+type BuildDocumentDecorations = Box<dyn FnOnce(Arc<CodeDocument>) -> DocumentPresentation>;
 
 struct PendingPresentation {
     revision: u64,
@@ -345,7 +346,7 @@ impl CodeHandle {
 
     pub(crate) fn set_document_decorations(
         &self,
-        build: impl FnOnce(Arc<CodeDocument>) -> Option<Arc<Decorations>> + 'static,
+        build: impl FnOnce(Arc<CodeDocument>) -> DocumentPresentation + 'static,
         cx: &mut App,
     ) {
         {
@@ -355,7 +356,16 @@ impl CodeHandle {
                 return;
             }
         }
-        self.set_decorations(build(self.document()), cx);
+        self.publish_document_decorations(build(self.document()), cx);
+    }
+
+    fn publish_document_decorations(
+        &self,
+        (prepared, decorations): DocumentPresentation,
+        cx: &mut App,
+    ) {
+        self.set_analysis(prepared, cx);
+        self.set_decorations(decorations, cx);
     }
 
     /// Set the renderer for inter-line block decorations. The default displays the payload
@@ -1040,14 +1050,15 @@ impl CodeHandle {
             *self.shared.rows.borrow_mut() = RowMap::new(self.document().line_count(), &[], &[]);
         }
         if let Some(pending) = pending {
-            let prepared = pending.prepared.unwrap_or_else(|| {
-                PreparedAnalysis::new(self.document(), pending.annotations, pending.folds)
-            });
-            self.set_analysis(prepared, cx);
-            self.set_traces(pending.traces, cx);
             if let Some(build) = pending.document_decorations {
-                self.set_decorations(build(self.document()), cx);
+                self.publish_document_decorations(build(self.document()), cx);
+            } else {
+                let prepared = pending.prepared.unwrap_or_else(|| {
+                    PreparedAnalysis::new(self.document(), pending.annotations, pending.folds)
+                });
+                self.set_analysis(prepared, cx);
             }
+            self.set_traces(pending.traces, cx);
         }
         self.notify_all(cx);
     }
@@ -2218,7 +2229,6 @@ mod review_tests {
         }
         cx.update(|cx| {
             code.set_source("a\nb\nc\n".into(), "text".into(), cx);
-            code.set_annotations(Arc::from([annotation()]), cx);
             code.set_document_decorations(
                 |document| {
                     let mut decorations =
@@ -2234,16 +2244,16 @@ mod review_tests {
                             [],
                         )
                         .expect("empty decoration layer");
-                    Some(Arc::new(decorations))
+                    let prepared = decorations.prepare_analysis(
+                        vec![annotation()],
+                        vec![Fold {
+                            start: 0,
+                            end: 3,
+                            collapsed: true,
+                        }],
+                    );
+                    (prepared, Some(Arc::new(decorations)))
                 },
-                cx,
-            );
-            code.set_folds(
-                vec![Fold {
-                    start: 0,
-                    end: 3,
-                    collapsed: true,
-                }],
                 cx,
             );
             code.set_traces(

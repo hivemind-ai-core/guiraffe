@@ -13,7 +13,7 @@ use crate::{
     AnchorBias, Annotation, AnnotationKind, BlameCommit, CodeDocument, CodeHandle, CodeOptions,
     CodeViewer, DecorationAction, DecorationHandler, DecorationInput, DecorationLayerOptions,
     DecorationStyle, Decorations, Fold, GutterMark, HighlightShape, InlineWidget, Position,
-    Severity, SourceRange, UnderlinePattern, widget_specs,
+    PreparedAnalysis, Severity, SourceRange, UnderlinePattern, widget_specs,
 };
 
 pub(crate) fn register(cx: &mut App) {
@@ -302,22 +302,30 @@ impl RenderOnce for CodeDocumentView {
                     cx,
                 );
             }
-            if source_changed || self.annotations != state.annotations {
+            if source_changed
+                || self.annotations != state.annotations
+                || self.folds != state.folds
+                || self.layers != state.layers
+            {
                 state.annotations = self.annotations;
-                state
-                    .handle
-                    .set_annotations(parse_annotations(&state.annotations), cx);
-            }
-            if source_changed || self.folds != state.folds {
                 state.folds = self.folds;
-                state.handle.set_folds(parse_folds(&state.folds), cx);
-            }
-            if source_changed || self.layers != state.layers {
                 state.layers = self.layers;
+                let annotations = parse_annotations(&state.annotations);
+                let folds = parse_folds(&state.folds);
                 let layers = state.layers.clone();
-                state
-                    .handle
-                    .set_document_decorations(move |document| parse_layers(document, &layers), cx);
+                state.handle.set_document_decorations(
+                    move |document| {
+                        let decorations = parse_layers(document.clone(), &layers);
+                        let prepared = match &decorations {
+                            Some(decorations) => {
+                                decorations.prepare_analysis(annotations.to_vec(), folds)
+                            }
+                            None => PreparedAnalysis::new(document, annotations, folds),
+                        };
+                        (prepared, decorations)
+                    },
+                    cx,
+                );
             }
             let handler = self.on_decoration.map(|handler| {
                 let window = window.window_handle();
