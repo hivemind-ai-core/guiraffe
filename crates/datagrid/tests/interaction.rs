@@ -96,6 +96,21 @@ fn shift() -> Modifiers {
 }
 
 #[gpui_kit::test]
+fn vertical_scroll_reuses_the_header_but_horizontal_scroll_refreshes_it(cx: &mut TestAppContext) {
+    let (grid, _, _, vcx) = mount(cx, |cx| GridHandle::new(million(), columns(30), cx));
+    let header_renders = grid.stats().header_renders;
+    assert!(header_renders > 0);
+
+    vcx.update(|_, cx| grid.scroll_to_row(4_200, cx));
+    vcx.run_until_parked();
+    assert_eq!(grid.stats().header_renders, header_renders);
+
+    vcx.update(|_, cx| grid.set_scroll(300., grid.scroll_offset().1, cx));
+    vcx.run_until_parked();
+    assert!(grid.stats().header_renders > header_renders);
+}
+
+#[gpui_kit::test]
 fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

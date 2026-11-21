@@ -88,7 +88,7 @@ rows and 37,185,423 instructions at 10M rows.
 The [instruction suite](../../bench/benches/production_frames.rs) warms a 1,200 by
 800 headless viewport and measures one scroll and draw. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
-100k and 10M rows. It caps each draw at 11,000 allocations and 3 MiB of
+100k and 10M rows. It caps each draw at 10,300 allocations and 2,750 KiB of
 requests. The [mounted interaction test](tests/interaction.rs) requires
 equal source reads, row renders, constructed cells and pool size.
 
@@ -143,3 +143,23 @@ loaded-host capture per build while several worktrees were compiling.
 The mounted visual groups verified the existing upstream goldens for the
 cursor, editor and production-scale viewport. The mounted allocation
 gate still observes GPUI element, layout and draw allocations.
+
+
+## Retained header and resize
+
+The column header has its own retained GPUI view. A mounted interaction
+test verifies that a vertical jump leaves its render counter unchanged
+and a horizontal pan refreshes it. Sorting, column mutations and metric
+changes invalidate the header. Height-only resizing updates the visible
+range and notifies newly bound slots. A pool size change still rebinds
+all slots because the slot-to-row mapping depends on the pool size.
+
+The row's accessible name uses the existing formatting buffer. The
+same SharedString serves as both the painted cell value and its accessible
+name. Test-support builds retain individual cell labels so accessibility
+and interaction tests still exercise the normal cell semantics.
+
+| Warm mounted viewport jump, both source sizes | Row-band baseline | Retained header |
+|---|---:|---:|
+| Allocation requests | 10,482 | 10,022 |
+| Requested bytes | 2,649,388 | 2,409,034 |

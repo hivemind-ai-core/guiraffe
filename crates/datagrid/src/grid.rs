@@ -10,6 +10,7 @@
 
 use std::{
     cell::RefCell,
+    fmt::Write as _,
     ops::Range,
     rc::{Rc, Weak},
     sync::{
@@ -356,6 +357,7 @@ pub type Validator = Rc<dyn Fn(&EditRequest<'_>) -> Result<(), SharedString>>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GridStats {
     pub grid_renders: u64,
+    pub header_renders: u64,
     pub row_renders: u64,
     pub cells_built: u64,
     pub visible_rows: usize,
@@ -708,6 +710,7 @@ pub(crate) struct Core {
     focus: FocusHandle,
     events: Entity<GridEvents>,
     view: RefCell<Option<gpui_kit::EntityId>>,
+    header_id: RefCell<Option<gpui_kit::EntityId>>,
     rows: RefCell<Vec<Entity<RowView>>>,
     palette: RefCell<Option<(GuiraffeTheme, Palette)>>,
 }
@@ -783,10 +786,18 @@ impl GridHandle {
             focus: cx.focus_handle(),
             events: cx.new(|_| GridEvents),
             view: RefCell::new(None),
+            header_id: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
             palette: RefCell::new(None),
         });
-        let view = cx.new(|_| GridView { core: core.clone() });
+        let header = cx.new(|_| HeaderView {
+            core: Rc::downgrade(&core),
+        });
+        *core.header_id.borrow_mut() = Some(header.entity_id());
+        let view = cx.new(|_| GridView {
+            core: core.clone(),
+            header,
+        });
         *core.view.borrow_mut() = Some(view.entity_id());
         core.sync(true, cx);
         Self { core, view }
@@ -1171,6 +1182,12 @@ impl Core {
         }
     }
 
+    fn notify_header(&self, cx: &mut App) {
+        if let Some(id) = *self.header_id.borrow() {
+            cx.notify(id);
+        }
+    }
+
     fn notify_slot(&self, slot: usize, cx: &mut App) {
         let id = self.rows.borrow().get(slot).map(|e| e.entity_id());
         if let Some(id) = id {
@@ -1181,6 +1198,9 @@ impl Core {
     /// Recompute the visible window and pool; notify the grid and every row view whose row
     /// changed (all of them when `all`).
     fn sync(self: &Rc<Self>, all: bool, cx: &mut App) {
+        if all {
+            self.notify_header(cx);
+        }
         let (old, visible, pool, all) = {
             let mut m = self.m.borrow_mut();
             m.clamp_scroll();
@@ -1307,6 +1327,7 @@ impl Core {
             }
             m.sort = keys.clone();
         }
+        self.notify_header(cx);
         self.emit(GridEvent::SortChanged(keys.into()), cx);
         self.refresh_order(cx);
     }
@@ -2623,53 +2644,27 @@ impl Palette {
 /// The grid's root view: header, row wrappers, scrollbar, pointer and keyboard handling.
 pub(crate) struct GridView {
     core: Rc<Core>,
+    header: Entity<HeaderView>,
 }
 
-macro_rules! nav_actions {
-    ($el:expr, $core:expr, $( $action:ident => ($nav:expr, $ext:expr) ),* $(,)?) => {{
-        let el = $el;
-        $(
-            let c = $core.clone();
-            let el = el.on_action(move |_: &$action, _: &mut Window, cx: &mut App| c.navigate($nav, $ext, cx));
-        )*
-        el
-    }};
+struct HeaderView {
+    core: Weak<Core>,
 }
 
-impl Render for GridView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let core = self.core.clone();
-        let ctx = StyleContext::current();
-        let resync = {
-            let mut m = core.m.borrow_mut();
-            m.stats.grid_renders += 1;
-            if m.context != ctx {
-                m.context = ctx;
-                m.resolve_metrics()
-            } else {
-                false
-            }
+impl Render for HeaderView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(core) = self.core.upgrade() else {
+            return div().into_any_element();
         };
-        if resync {
-            let c = core.clone();
-            cx.defer(move |cx| c.sync(true, cx));
-        }
         let pal = core.palette(cx);
-        let tab = core.tab_stop();
-        let focused = core.focus.is_focused(window);
-        let m = core.m.borrow();
+        let mut m = core.m.borrow_mut();
+        m.stats.header_renders += 1;
         let row_h = m.row_h;
         let w = m.grid_w();
-        let rows = core.rows.borrow();
-        let row_f = f64::from(row_h);
-
         // Header cells: visible center columns plus pinned bands.
         let mut header = div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .h(px(row_h))
+            .relative()
+            .size_full()
             .bg(hsla(pal.header))
             .border_b_1()
             .border_color(hsla(pal.border))
@@ -2771,7 +2766,7 @@ impl Render for GridView {
             .w(px(center_vp))
             .h_full()
             .overflow_hidden();
-        for p in m.layout.center.get(vis_c.clone()).into_iter().flatten() {
+        for p in m.layout.center.get(vis_c).into_iter().flatten() {
             center = center.child(header_cell(p, (p.x - m.scroll_x) as f32));
         }
         header = header.child(center);
@@ -2782,6 +2777,59 @@ impl Render for GridView {
         for p in &m.layout.right {
             header = header.child(header_cell(p, rx + p.x as f32));
         }
+
+        header.into_any_element()
+    }
+}
+
+macro_rules! nav_actions {
+    ($el:expr, $core:expr, $( $action:ident => ($nav:expr, $ext:expr) ),* $(,)?) => {{
+        let el = $el;
+        $(
+            let c = $core.clone();
+            let el = el.on_action(move |_: &$action, _: &mut Window, cx: &mut App| c.navigate($nav, $ext, cx));
+        )*
+        el
+    }};
+}
+
+impl Render for GridView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let core = self.core.clone();
+        let ctx = StyleContext::current();
+        let resync = {
+            let mut m = core.m.borrow_mut();
+            m.stats.grid_renders += 1;
+            if m.context != ctx {
+                m.context = ctx;
+                m.resolve_metrics()
+            } else {
+                false
+            }
+        };
+        if resync {
+            let c = core.clone();
+            cx.defer(move |cx| c.sync(true, cx));
+        }
+        let pal = core.palette(cx);
+        let tab = core.tab_stop();
+        let focused = core.focus.is_focused(window);
+        let m = core.m.borrow();
+        let row_h = m.row_h;
+        let w = m.grid_w();
+        let rows = core.rows.borrow();
+        let row_f = f64::from(row_h);
+
+        let lw = m.layout.left_width;
+        let center_vp = m.layout.center_viewport(w);
+        let header_style = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(row_h))
+            .style()
+            .clone();
 
         // Row wrappers: positioned here, content in the retained row views.
         let mut body = div()
@@ -2949,15 +2997,15 @@ impl Render for GridView {
             .child(
                 canvas(
                     move |bounds, _, cx| {
-                        let changed = {
+                        let old_size = {
                             let mut m = c_record.m.borrow_mut();
-                            let changed = m.bounds.size != bounds.size;
+                            let old_size = m.bounds.size;
                             m.bounds = bounds;
-                            changed
+                            old_size
                         };
-                        if changed {
+                        if old_size != bounds.size {
                             let c = c_record.clone();
-                            cx.defer(move |cx| c.sync(true, cx));
+                            cx.defer(move |cx| c.sync(old_size.width != bounds.size.width, cx));
                         }
                     },
                     move |_, _, window, _| {
@@ -2979,7 +3027,7 @@ impl Render for GridView {
                 .size_full(),
             )
             .child(body)
-            .child(header)
+            .child(self.header.clone().cached(header_style))
             .children(vbar)
             .children(hbar)
             .when_some(drop_x, |el, x| {
@@ -3161,6 +3209,9 @@ impl Render for RowView {
             .filter(|e| e.row == row)
             .map(|e| (e.def, e.input.clone(), e.error.clone()));
         let mut text = std::mem::take(&mut m.text);
+        text.clear();
+        let _ = write!(text, "Row {}", row + 1);
+        let row_label = SharedString::from(text.as_str());
         let mut cells = 0usize;
         let weak_core = self.core.clone();
         let mut cell = |p: &crate::columns::Placed,
@@ -3380,7 +3431,7 @@ impl Render for RowView {
             .test_support()
             .role(Role::Row)
             .aria_row_index(aria_row_index(row))
-            .aria_label(SharedString::from(format!("Row {}", row + 1)))
+            .aria_label(row_label)
             .aria_selected(selected)
             .relative()
             .size_full()

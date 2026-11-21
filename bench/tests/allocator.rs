@@ -85,8 +85,8 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
             "datagrid",
             datagrid_frame_100k as fn(),
             datagrid_frame_10m as fn(),
-            11_000,
-            3 * 1024 * 1024,
+            10_300,
+            2_750 * 1024,
         ),
         (
             "code",
