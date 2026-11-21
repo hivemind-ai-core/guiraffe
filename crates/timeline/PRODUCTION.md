@@ -51,13 +51,25 @@ dependency indexes or topological order. No scroll history or zoom buckets
 are retained. Dependency paint collects up to 32 projected edges on the
 stack before drawing a stroke path and an arrowhead mesh.
 
-A frame visits the intersecting rows plus their incident edges. Task bars
-outside the horizontal interval are culled and narrow bars retain a
-two-pixel marker. Dependency arrows require a visible endpoint. A graph
-with very high degree on a visible row can still require work proportional
-to its incident edges. Visible accessibility items and lock controls
-remain GPUI elements. Plot command generation and arrow path construction
-still allocate, so the warm repaint allocation gate remains open.
+A frame visits the intersecting rows. Task bars outside the horizontal
+interval are culled and narrow bars retain a two-pixel marker. Dependency
+arrows require a visible endpoint. Adjacencies with at most 64 peers are
+scanned directly. For larger adjacencies, row-ordered indexes locate the
+visible range by binary search. Paint projects each distinct peer in that
+range and one representative (the furthest row) for each offscreen direction.
+This bounds projections by the viewport and leaves logarithmic index work
+in the degree of a dense row. The LOD omits individual offscreen routes
+when a dense row's offscreen edges overlap.
+
+The view retains one header subtree containing the current viewport's
+task names and lock controls. It reuses the subtree across horizontal
+navigation, hover and selection, and replaces it when vertical position,
+visible rows, tasks, schedule or lock state changes. Colors resolve from
+the live GPUI theme. The accessibility label cache retains at most 128
+shared strings in direct-mapped row slots. Schedule timing changes refresh
+a slot lazily and task replacement clears all slots. GPUI retains its own
+text layout inside the header. Visible accessibility items remain GPUI
+elements. Plot commands and arrow tessellation still allocate.
 
 
 The standalone scheduler check used the 100k-task soak fixture, optimized
@@ -137,3 +149,45 @@ and coincident arrowheads remain visible.
 and separate targets for each backend. Both full workspace test stages,
 the per-crate doctest commands, workspace Clippy with warnings denied,
 and formatting checks passed.
+
+
+### Gantt follow-up at `34c5531`
+
+The baseline for this comparison is `9f6e90a`. Both binaries used opt-level 3
+for the probe and timeline code and the same upstream dev GPUI dependencies.
+Callgrind counts include the 10k-task fixture, mount and 64 scripted frames.
+Samply sampled the 100k-task mounted replay for 1,000 iterations. Percentages
+are shares of their respective captures. Timing was recorded on a shared
+host and needs quiet release measurement.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Layout copy, Samply self share | 13.96% | 11.63% |
+| Flex layout, Samply self share | 2.91% | 1.99% |
+| Bounds-tree insertion, Samply self share | 7.42% | 9.65% |
+| Sparse replay, Callgrind instructions | 274,323,270 | 175,827,681 |
+| Forced warm whole-window refresh, allocation calls | 3,367 | 3,251 |
+| Forced warm whole-window refresh, requested bytes | 1,981,143 | 1,987,211 |
+| 10k-task fan-out, setup and first frame | 52.0 s | 68.1 ms |
+| 100k-task sparse, setup and first frame | 170.3 ms (earlier run) | 455.6 ms |
+| 100k-task sparse, warmed p99 | 13.6 ms (earlier run) | 29.2 ms |
+| 100k-task sparse, sampled RSS | 49.4 MiB | 49.6 MiB |
+
+The 100k-task fan-out mounted in 165.1 ms, with a warmed p99 of 31.6 ms
+and 50.3 MiB sampled RSS. The 100k-task chain mounted in 469.9 ms, with
+a warmed p99 of 29.1 ms and 48.3 MiB sampled RSS. The benchmark harness
+exposes these cases as `gantt-fan-out` and `gantt-chain`, with the same
+`SOAK_SCALE` and `SOAK_FRAMES` controls as `gantt`.
+
+The 10M-task sparse run also recorded 3,251 allocations and 1,987,211
+requested bytes for the forced repaint. Setup at that scale took 52.1 s
+on the busy host. The viewport test checks the same six projected peers
+at degrees of 10k and 10M. The mounted header test checks reuse after pan
+and invalidation after a lock change. A label test checks cache reuse,
+timing invalidation, eviction and task replacement. The zero-allocation
+budget remains open. GPUI forced refresh bypasses retained view caching,
+and GPUI's path submission consumes and rescales owned path vertices.
+A trial bounded tessellated-path cache increased the sparse replay from
+175.8M to 176.9M instructions and did not reduce forced-repaint allocations,
+so it was discarded. Quiet latency for every interaction, peak RSS and
+30-minute drift still need verification.
