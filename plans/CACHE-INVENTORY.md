@@ -16,27 +16,24 @@ that storage cannot grow unless user data grows.
 Legend: **bounded** = hard cap or strictly viewport/scene-scoped; **doc-scoped** = grows with the user's
 data and leaves with it; **UNBOUNDED** = flagged for review.
 
-## Summary of flags
+## Summary of UNBOUNDED caches
 
-| crate | item | why flagged | risk |
+Every cache below has **no cap that holds it to a viewport, a scene, or a fixed size**. Ordered by risk.
+
+| crate | cache (file) | why unbounded | suggested bound |
 |---|---|---|---|
-| tree | `TreeModel.expanded` / `selected` | `HashSet<NodeId>` of ids; ids are never pruned when a node stops existing | moderate: drains over a long session with churn; the row index itself is incremental now, so this is the only per-id growth left |
-| code | `Shared.bubbles` | markdown entity per bubble annotation *ever* placed in the viewport | moderate: bounded by the annotation set, not by the viewport |
-| overlays | `ToastQueue.queued` | visible list is capped, backlog is not | low: a producer storm grows it without limit |
-| overlays | `OverlayHost.contexts` | `HashMap<String, ContextBuilder>` per registered name | low: bounded by app registrations; re-register replaces; cleared on window close |
-| devtools | `Shared.stores` | `Vec<Rc<dyn InspectStore>>`, `push` only | low: one per `inspect_store` call, no removal API |
-| layout | `MemoryPersist.values` | `HashMap<String, String>` keyed by persist key, app-lifetime | low: one entry per splitter/pane key |
-| charts | `Stream.chunks` | grows with every `append` until the caller calls `retain_last` | by design (rolling window is caller policy) |
+| tree | `TreeModel.expanded` / `.selected` (`model.rs`) | `HashSet<NodeId>`; ids are only removed by a user collapse/deselect, never when the node disappears from the source, so a long session with churn grows it monotonically | prune on `refresh` against the new snapshot (the id index already knows which ids exist), or cap and drop least-recently-used ids beyond a documented limit (e.g. 100k, matching the scale target) |
+| chat | `RowCache.pinned` (`history.rs`) | rows stay mounted while any of them has an open text selection; `RowCache::use_row` only re-checks pinned rows when a *different* row is entered, so a selection spanning history keeps every intermediate row mounted | bound pins to the current selection span and release them when the selection ends; failing that, cap pins (e.g. 256 rows) and document that a wider selection degrades to cold rows |
+| code | `Shared.bubbles` (`surface.rs`) | one `Entity<MarkdownState>` per distinct bubble annotation ever scrolled into view; cleared only when annotations or the source change | evict bubbles outside the current viewport + overscan on each publish, or cap to the visible placements (the paint path already computes `BubblePlacement`s) |
+| overlays | `ToastQueue.queued` (`toast.rs`) | `visible` is capped by `limit`, `queued` accepts every push | drop the oldest queued toast beyond a fixed backlog (e.g. 64), or coalesce identical messages |
+| overlays | `OverlayHost.contexts` (`host.rs`) | `HashMap<String, ContextBuilder>` append-only per registered name | bounded by app registrations in practice; add a `remove_context` for hosts that register dynamically |
+| devtools | `Shared.stores` (`view.rs`) | `Vec<Rc<dyn InspectStore>>`, `push` only, no removal API | add `remove_store`/weak store handles, or cap to a small fixed count |
+| layout | `MemoryPersist.values` (`splitter.rs`) | one entry per persist key in an app-lifetime store; nothing evicts stale keys | bounded by app keys in practice; a documented key prefix/clear API is enough |
+| charts | `Stream.chunks` (`data.rs`) | grows with every `append` until the caller invokes `retain_last` — by design (the rolling window is caller policy) | document that a streaming chart must call `retain_last`; optionally assert a maximum chunk count in debug builds |
 
-**No unbounded cache that scales with user data survives** with the exception of the seven above, and
-six of those are bounded by app/configuration size rather than data size. Only `charts::Stream.chunks`
-(by design) and `tree::TreeModel.expanded`/`selected` grow with a long session.
-
-Resolved since the first pass: chat now keeps message rows as `Row::Cold` and mounts at most 64 of them
-(`RowCache`); `flow` edge meshes are capped (8192 meshes / 16 MiB) with a separate bounded deferred
-cache (1024 / 1 MiB); `datagrid` cell text and shapes are two 1024-entry LRUs; `code`'s shape cache is
-capped by entries *and* bytes and prunes out-of-viewport styled lines; markdown parses only the
-unsettled tail.
+No other cache in the workspace grows without a bound: everything else is capped (entry/byte limits,
+scene- or viewport-scoped) or is document data that leaves with the document. The per-crate sections below
+name each one and its eviction rule.
 
 ## charts
 
