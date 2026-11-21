@@ -96,3 +96,13 @@ among the sampled hot paths afterward. Callgrind at 5k lines and ten frames
 counted 1,203,756,098 instructions on the original integration commit and
 831,752,373 with shared parsing and the height-tree reuse change. Those
 counts include fixture creation and the mounted frame loop.
+
+The measured mounted warm draw still allocates. The 10k- and 50k-line
+viewports matched at 1,447 allocations upstream and 93 on Fast. GPUI
+paint/layout and Kit view retention will be profiled in the cross-component
+allocation work.
+
+A four-minute upstream release diagnostic recorded 24 ten-second intervals.
+All were below 8 ms p99, and RSS repeatedly crossed the 2% drift threshold.
+The diagnostic stopped after reproducing the drift. The 30-minute soak and
+production executor long-task check remain open.

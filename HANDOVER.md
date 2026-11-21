@@ -95,3 +95,43 @@ revision-pinned evidence for RSS on both backends, p99 and long tasks, and
 zero-allocation warm repaint. The foreman approved sharing the render and
 metadata parse after the merge handoff. Preserve section equivalence,
 incremental metadata, cancellation, and selection when implementing it.
+
+### List guard and shared initial parse
+
+- `c18797f` retains the measured list tree when its records are unchanged.
+  The plain-list regression compares equal viewport visits and allocation
+  counts at 10k and 100k items. Both complete bench allocator suites passed
+  29 tests at this stage.
+- `44029cb` shares the initial AST traversal between Markdown rendering and
+  metadata for eligible sources. Canonical GFM fallback covers math syntax,
+  a withheld Mermaid tail, and superseded initial requests. The shared
+  observer retains one metadata accumulator, no AST sections, and sends at
+  most one result. It adds no cache.
+- The new Markdown tests assert zero bytes reparsed by standalone metadata
+  analysis for the shared initial case, canonical metadata after a streamed
+  append, and correct metadata after replacing a queued initial request.
+
+| Upstream probe | Merge `10763f0` | Shared parse and list guard `44029cb` |
+| --- | ---: | ---: |
+| 50k lines, profiled background readiness | 700 ms | 406 ms |
+| 50k lines, parser inclusive sample share | 73.72% | 61.66% |
+| 5k lines and 10 frames, Callgrind instructions | 1,203,756,098 | 831,752,373 |
+| 50k lines, first useful frame in short soak | 32.3 ms | 30.2 ms |
+| 50k lines, p99 over two short intervals | 4.95–5.32 ms | 4.66–5.13 ms |
+| 50k lines, peak RSS above empty process | 64,624 KiB | 64,200 KiB |
+| Mounted Markdown warm draw allocations at 10k / 50k | 1,463 / 1,464 | 1,447 / 1,447 after list guard |
+
+The timing and RSS values are indicative shared-machine measurements. The
+latest upstream Markdown short soak reported drift in its second interval.
+Mounted warm draws still allocate, and the contiguous source is copied on
+stream appends. The short run does not certify a 30-minute soak, all
+interactive paths, a UI-thread long-task budget, or the 10M/10k target.
+
+Both scoped backend runs passed the Markdown, Chat, DataGrid, and Tree
+unit and integration tests after the shared parser change. The Fast mounted
+development probe measured 64,576 KiB of Markdown RSS above empty and
+57,424 KiB for Chat. Fast warm draws measured 93 allocations for Markdown
+and 127 for Chat at both tested sizes. The standalone Kit text harness
+reproduced five Fast failures previously recorded on the inherited release
+baseline. The upstream Kit text harness passed 439 base and 78 component
+tests, and the Fast component harness passed 78.
