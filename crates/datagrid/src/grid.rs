@@ -10,6 +10,7 @@
 
 use std::{
     cell::RefCell,
+    fmt::Write as _,
     ops::Range,
     rc::{Rc, Weak},
     sync::{
@@ -356,6 +357,7 @@ pub type Validator = Rc<dyn Fn(&EditRequest<'_>) -> Result<(), SharedString>>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GridStats {
     pub grid_renders: u64,
+    pub header_renders: u64,
     pub row_renders: u64,
     pub cells_built: u64,
     pub visible_rows: usize,
@@ -708,6 +710,7 @@ pub(crate) struct Core {
     focus: FocusHandle,
     events: Entity<GridEvents>,
     view: RefCell<Option<gpui_kit::EntityId>>,
+    header_id: RefCell<Option<gpui_kit::EntityId>>,
     rows: RefCell<Vec<Entity<RowView>>>,
     palette: RefCell<Option<(GuiraffeTheme, Palette)>>,
 }
@@ -783,10 +786,18 @@ impl GridHandle {
             focus: cx.focus_handle(),
             events: cx.new(|_| GridEvents),
             view: RefCell::new(None),
+            header_id: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
             palette: RefCell::new(None),
         });
-        let view = cx.new(|_| GridView { core: core.clone() });
+        let header = cx.new(|_| HeaderView {
+            core: Rc::downgrade(&core),
+        });
+        *core.header_id.borrow_mut() = Some(header.entity_id());
+        let view = cx.new(|_| GridView {
+            core: core.clone(),
+            header,
+        });
         *core.view.borrow_mut() = Some(view.entity_id());
         core.sync(true, cx);
         Self { core, view }
@@ -1171,6 +1182,12 @@ impl Core {
         }
     }
 
+    fn notify_header(&self, cx: &mut App) {
+        if let Some(id) = *self.header_id.borrow() {
+            cx.notify(id);
+        }
+    }
+
     fn notify_slot(&self, slot: usize, cx: &mut App) {
         let id = self.rows.borrow().get(slot).map(|e| e.entity_id());
         if let Some(id) = id {
@@ -1181,6 +1198,9 @@ impl Core {
     /// Recompute the visible window and pool; notify the grid and every row view whose row
     /// changed (all of them when `all`).
     fn sync(self: &Rc<Self>, all: bool, cx: &mut App) {
+        if all {
+            self.notify_header(cx);
+        }
         let (old, visible, pool, all) = {
             let mut m = self.m.borrow_mut();
             m.clamp_scroll();
@@ -1204,6 +1224,7 @@ impl Core {
                     core,
                     slot,
                     renders: 0,
+                    labels: Default::default(),
                 }));
             }
         }
@@ -1306,6 +1327,7 @@ impl Core {
             }
             m.sort = keys.clone();
         }
+        self.notify_header(cx);
         self.emit(GridEvent::SortChanged(keys.into()), cx);
         self.refresh_order(cx);
     }
@@ -2622,53 +2644,27 @@ impl Palette {
 /// The grid's root view: header, row wrappers, scrollbar, pointer and keyboard handling.
 pub(crate) struct GridView {
     core: Rc<Core>,
+    header: Entity<HeaderView>,
 }
 
-macro_rules! nav_actions {
-    ($el:expr, $core:expr, $( $action:ident => ($nav:expr, $ext:expr) ),* $(,)?) => {{
-        let el = $el;
-        $(
-            let c = $core.clone();
-            let el = el.on_action(move |_: &$action, _: &mut Window, cx: &mut App| c.navigate($nav, $ext, cx));
-        )*
-        el
-    }};
+struct HeaderView {
+    core: Weak<Core>,
 }
 
-impl Render for GridView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let core = self.core.clone();
-        let ctx = StyleContext::current();
-        let resync = {
-            let mut m = core.m.borrow_mut();
-            m.stats.grid_renders += 1;
-            if m.context != ctx {
-                m.context = ctx;
-                m.resolve_metrics()
-            } else {
-                false
-            }
+impl Render for HeaderView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(core) = self.core.upgrade() else {
+            return div().into_any_element();
         };
-        if resync {
-            let c = core.clone();
-            cx.defer(move |cx| c.sync(true, cx));
-        }
         let pal = core.palette(cx);
-        let tab = core.tab_stop();
-        let focused = core.focus.is_focused(window);
-        let m = core.m.borrow();
+        let mut m = core.m.borrow_mut();
+        m.stats.header_renders += 1;
         let row_h = m.row_h;
         let w = m.grid_w();
-        let rows = core.rows.borrow();
-        let row_f = f64::from(row_h);
-
         // Header cells: visible center columns plus pinned bands.
         let mut header = div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .h(px(row_h))
+            .relative()
+            .size_full()
             .bg(hsla(pal.header))
             .border_b_1()
             .border_color(hsla(pal.border))
@@ -2770,7 +2766,7 @@ impl Render for GridView {
             .w(px(center_vp))
             .h_full()
             .overflow_hidden();
-        for p in m.layout.center.get(vis_c.clone()).into_iter().flatten() {
+        for p in m.layout.center.get(vis_c).into_iter().flatten() {
             center = center.child(header_cell(p, (p.x - m.scroll_x) as f32));
         }
         header = header.child(center);
@@ -2781,6 +2777,59 @@ impl Render for GridView {
         for p in &m.layout.right {
             header = header.child(header_cell(p, rx + p.x as f32));
         }
+
+        header.into_any_element()
+    }
+}
+
+macro_rules! nav_actions {
+    ($el:expr, $core:expr, $( $action:ident => ($nav:expr, $ext:expr) ),* $(,)?) => {{
+        let el = $el;
+        $(
+            let c = $core.clone();
+            let el = el.on_action(move |_: &$action, _: &mut Window, cx: &mut App| c.navigate($nav, $ext, cx));
+        )*
+        el
+    }};
+}
+
+impl Render for GridView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let core = self.core.clone();
+        let ctx = StyleContext::current();
+        let resync = {
+            let mut m = core.m.borrow_mut();
+            m.stats.grid_renders += 1;
+            if m.context != ctx {
+                m.context = ctx;
+                m.resolve_metrics()
+            } else {
+                false
+            }
+        };
+        if resync {
+            let c = core.clone();
+            cx.defer(move |cx| c.sync(true, cx));
+        }
+        let pal = core.palette(cx);
+        let tab = core.tab_stop();
+        let focused = core.focus.is_focused(window);
+        let m = core.m.borrow();
+        let row_h = m.row_h;
+        let w = m.grid_w();
+        let rows = core.rows.borrow();
+        let row_f = f64::from(row_h);
+
+        let lw = m.layout.left_width;
+        let center_vp = m.layout.center_viewport(w);
+        let header_style = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(row_h))
+            .style()
+            .clone();
 
         // Row wrappers: positioned here, content in the retained row views.
         let mut body = div()
@@ -2948,15 +2997,15 @@ impl Render for GridView {
             .child(
                 canvas(
                     move |bounds, _, cx| {
-                        let changed = {
+                        let old_size = {
                             let mut m = c_record.m.borrow_mut();
-                            let changed = m.bounds.size != bounds.size;
+                            let old_size = m.bounds.size;
                             m.bounds = bounds;
-                            changed
+                            old_size
                         };
-                        if changed {
+                        if old_size != bounds.size {
                             let c = c_record.clone();
-                            cx.defer(move |cx| c.sync(true, cx));
+                            cx.defer(move |cx| c.sync(old_size.width != bounds.size.width, cx));
                         }
                     },
                     move |_, _, window, _| {
@@ -2978,7 +3027,7 @@ impl Render for GridView {
                 .size_full(),
             )
             .child(body)
-            .child(header)
+            .child(self.header.clone().cached(header_style))
             .children(vbar)
             .children(hbar)
             .when_some(drop_x, |el, x| {
@@ -3023,11 +3072,98 @@ impl Render for GridView {
     }
 }
 
+struct CellLabel {
+    text: SharedString,
+    x: Pixels,
+    width: Pixels,
+    align: Align,
+}
+
+fn paint_cell_labels(
+    labels: &[CellLabel],
+    bounds: Bounds<Pixels>,
+    pad: Pixels,
+    row_height: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let style = window.text_style();
+    let font_size = style.font_size.to_pixels(window.rem_size());
+    let line_height = window.pixel_snap(window.line_height());
+    let text_system = window.text_system().clone();
+    for label in labels {
+        let width = (label.width - pad * 2.).max(px(0.));
+        let mut run = style.to_run(label.text.len());
+        let mut layout = text_system.layout_line(
+            label.text.as_ref(),
+            font_size,
+            std::slice::from_ref(&run),
+            None,
+        );
+        if layout.width > width {
+            let (text, _) = cx
+                .text_system()
+                .line_wrapper(style.font(), font_size)
+                .truncate_line(
+                    label.text.clone(),
+                    width,
+                    "…",
+                    std::slice::from_ref(&run),
+                    gpui_kit::TruncateFrom::End,
+                );
+            run.len = text.len();
+            layout =
+                text_system.layout_line(text.as_ref(), font_size, std::slice::from_ref(&run), None);
+        }
+        let measured_width = layout.width.ceil().min(width);
+        let align_offset = match label.align {
+            Align::End => width - measured_width,
+            Align::Center => (width - measured_width) / 2.,
+            _ => px(0.),
+        };
+        let origin = window.pixel_snap_point(
+            bounds.origin
+                + gpui_kit::point(
+                    label.x + pad + align_offset,
+                    (row_height - line_height) / 2.,
+                ),
+        );
+        let decorations = [gpui_kit::DecorationRun {
+            len: run.len as u32,
+            color: run.color,
+            background_color: run.background_color,
+            underline: run.underline,
+            strikethrough: run.strikethrough,
+        }];
+        if run.background_color.is_some() {
+            let _ = layout.paint_background(
+                origin,
+                line_height,
+                style.text_align,
+                Some(measured_width),
+                &decorations,
+                window,
+                cx,
+            );
+        }
+        let _ = layout.paint(
+            origin,
+            line_height,
+            style.text_align,
+            Some(measured_width),
+            &decorations,
+            window,
+            cx,
+        );
+    }
+}
+
 /// One recycled row view; shows whichever visible view row maps to its slot.
 pub(crate) struct RowView {
     core: Weak<Core>,
     slot: usize,
     renders: u64,
+    labels: Rc<RefCell<[Vec<CellLabel>; 3]>>,
 }
 
 impl Render for RowView {
@@ -3073,9 +3209,16 @@ impl Render for RowView {
             .filter(|e| e.row == row)
             .map(|e| (e.def, e.input.clone(), e.error.clone()));
         let mut text = std::mem::take(&mut m.text);
+        text.clear();
+        let _ = write!(text, "Row {}", row + 1);
+        let row_label = SharedString::from(text.as_str());
         let mut cells = 0usize;
         let weak_core = self.core.clone();
-        let mut cell = |p: &crate::columns::Placed, x: f32, m: &Model| -> AnyElement {
+        let mut cell = |p: &crate::columns::Placed,
+                        x: f32,
+                        m: &Model,
+                        labels: &mut Vec<CellLabel>|
+         -> AnyElement {
             cells += 1;
             let def = m.defs.get(p.def);
             let value = def.map_or(CellRef::Empty, |d| m.source.cell(src_row, d.source));
@@ -3118,16 +3261,16 @@ impl Render for RowView {
                 .left(px(x))
                 .w(px(p.width))
                 .h(px(row_h))
-                .px(px(m.pad))
-                .flex()
-                .items_center()
-                .when(end, |el| el.justify_end())
-                .when(center, |el| el.justify_center())
                 .when(in_rect && cell_mode, |el| el.bg(hsla(pal.selected)));
             if let Some((col, input, error)) = editing.as_ref().filter(|e| e.0 == p.def) {
                 let _ = col;
                 let core = weak_core.clone();
                 return el
+                    .px(px(m.pad))
+                    .flex()
+                    .items_center()
+                    .when(end, |el| el.justify_end())
+                    .when(center, |el| el.justify_center())
                     .child(
                         div()
                             .id("editor")
@@ -3224,14 +3367,55 @@ impl Render for RowView {
                     .when_some(error.clone(), |el, e| el.aria_description(e))
                     .into_any_element();
             }
-            el.whitespace_nowrap()
-                .text_ellipsis()
-                .child(label)
-                .when(is_cursor && cell_mode, |el| {
-                    el.child(cursor_box(hsla(pal.accent)))
-                })
-                .into_any_element()
+            let el = if label.contains('\n') {
+                el.px(px(m.pad))
+                    .flex()
+                    .items_center()
+                    .when(end, |el| el.justify_end())
+                    .when(center, |el| el.justify_center())
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label)
+            } else if !label.is_empty() {
+                labels.push(CellLabel {
+                    text: label,
+                    x: px(x),
+                    width: px(p.width),
+                    align: if end {
+                        Align::End
+                    } else if center {
+                        Align::Center
+                    } else {
+                        Align::Start
+                    },
+                });
+                el
+            } else {
+                el
+            };
+            el.when(is_cursor && cell_mode, |el| {
+                el.child(cursor_box(hsla(pal.accent)))
+            })
+            .into_any_element()
         };
+        let pad = px(m.pad);
+        // Cell divs retain semantic bounds. One canvas per band paints their labels.
+        let text_band = |band: usize| {
+            let labels = self.labels.clone();
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    paint_cell_labels(&labels.borrow()[band], bounds, pad, px(row_h), window, cx);
+                },
+            )
+            .absolute()
+            .size_full()
+        };
+        let mut bands = self.labels.borrow_mut();
+        let [center_labels, left_labels, right_labels] = &mut *bands;
+        center_labels.clear();
+        left_labels.clear();
+        right_labels.clear();
         let mut center = div()
             .absolute()
             .top_0()
@@ -3240,14 +3424,14 @@ impl Render for RowView {
             .h_full()
             .overflow_hidden();
         for p in m.layout.center.get(vis_c).into_iter().flatten() {
-            center = center.child(cell(p, (p.x - m.scroll_x) as f32, &m));
+            center = center.child(cell(p, (p.x - m.scroll_x) as f32, &m, center_labels));
         }
         let mut el = div()
             .id(("row", self.slot))
             .test_support()
             .role(Role::Row)
             .aria_row_index(aria_row_index(row))
-            .aria_label(SharedString::from(format!("Row {}", row + 1)))
+            .aria_label(row_label)
             .aria_selected(selected)
             .relative()
             .size_full()
@@ -3255,7 +3439,7 @@ impl Render for RowView {
             .border_b_1()
             .border_color(hsla(pal.border))
             .when(!selected, |el| el.hover(move |s| s.bg(hsla(pal.hover))))
-            .child(center);
+            .child(center.child(text_band(0)));
         if !m.layout.left.is_empty() {
             let mut band = div()
                 .absolute()
@@ -3267,9 +3451,9 @@ impl Render for RowView {
                 .border_r_1()
                 .border_color(hsla(pal.border));
             for p in &m.layout.left {
-                band = band.child(cell(p, p.x as f32, &m));
+                band = band.child(cell(p, p.x as f32, &m, left_labels));
             }
-            el = el.child(band);
+            el = el.child(band.child(text_band(1)));
         }
         if !m.layout.right.is_empty() {
             let mut band = div()
@@ -3282,9 +3466,9 @@ impl Render for RowView {
                 .border_l_1()
                 .border_color(hsla(pal.border));
             for p in &m.layout.right {
-                band = band.child(cell(p, p.x as f32 - 0., &m));
+                band = band.child(cell(p, p.x as f32, &m, right_labels));
             }
-            el = el.child(band);
+            el = el.child(band.child(text_band(2)));
         }
         if selected {
             // Shape cue besides color (spec/00 §12.1): an accent bar, overlaid.

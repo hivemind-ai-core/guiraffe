@@ -136,11 +136,11 @@ fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
         let (code, _, vcx) = mount(cx, Arc::from("x\n".repeat(line_count - 1) + "x"));
         let before = code.stats();
         vcx.update(|window, cx| {
-            code.scroll_to_line(42_000, cx);
+            code.scroll_to_line(4_200, cx);
             window.render_frame(cx);
         });
         let after = code.stats();
-        assert!(code.anchor_in_window(Position::new(42_000, 0)).is_some());
+        assert!(code.anchor_in_window(Position::new(4_200, 0)).is_some());
         (
             after.shaped_lines - before.shaped_lines,
             after.cache_hits - before.cache_hits,
@@ -148,7 +148,7 @@ fn viewport_jump_work_does_not_grow_with_source_size(cx: &mut TestAppContext) {
         )
     };
 
-    let smaller = measure(100_000);
+    let smaller = measure(10_000);
     let larger = measure(10_000_000);
     assert!(smaller.0 > 0);
     assert_eq!(smaller, larger);

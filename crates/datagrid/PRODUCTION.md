@@ -6,7 +6,7 @@ Audit and follow-up on `feat-prod-a` from `62b8de3`, against [spec/23](../../spe
 | Criterion | Status | Evidence and remaining check |
 |---|---|---|
 | §1 Scale | ✅ | [Interaction tests](tests/interaction.rs) mount 10M computed rows × 50 columns and 1M materialised rows. The [scroll suite](../../bench/src/suites.rs) adds 10M-row virtual-window, pan and formatting coverage. |
-| §2 Frame and cold mount | ⚠️ | The scroll suites measure model access and formatting. The [headless soak](../../bench/examples/production_soak.rs) times scripted updates and draws, with night-only p99/max gates. [Mounted complexity checks](tests/interaction.rs) compare work at 100k and 10M rows. Quiet-host run pending for the frame and mount budgets. Desktop presentation latency remains open. |
+| §2 Frame and cold mount | ⚠️ | The scroll suites measure model access and formatting. The [headless soak](../../bench/examples/production_soak.rs) times scripted updates and draws, with night-only p99/max gates. [Mounted complexity checks](tests/interaction.rs) compare work at 10k and 10M rows. Quiet-host run pending for the frame and mount budgets. Desktop presentation latency remains open. |
 | §2 Background work | ⚠️ | [Grid](src/grid.rs) computes large permutations off-thread with supersession. Background sorting prepares its inverse before publication. Key collection, sorting runs, merge passes and the inverse build poll cancellation. Dropping the core signals cancellation. The [select-all filter test](tests/interaction.rs) verifies compact whole-source selections. Other large selection remaps still run on the UI thread. |
 | §3 Memory and allocation | ⚠️ | [Row order](src/order.rs) uses 32-bit forward and inverse indices. [Allocator tests](../../bench/tests/allocator.rs) gate model scrolling, sort recompute and forward/inverse overhead. Forward plus inverse indices use 8 B per row on x86-64 before container headers. The scroll path streams dirty slots without a scratch vector. The [mounted allocation check](../../bench/tests/allocator.rs) gates viewport-scale requests. The zero-allocation GPUI paint target remains open. |
 | §4 Model and importer checks | ✅ | [Order properties](src/order.rs) cover stable sorting and filtering. [Editing tests](tests/editing.rs) exercise editing transactions. [Undo, selection and clipboard models](src/model/) also have property tests. Ragged TSV storage is linear in explicit fields. The [clipboard fuzz target](../../fuzz/fuzz_targets/clipboard_tsv.rs) checks malformed input and canonical round trips in the [fuzz smoke workflow](../../.github/workflows/model-fuzz.yml). The ordering properties also compare a sequence of filter and multi-key sort updates and their inverse against a reference. |
@@ -88,7 +88,7 @@ rows and 37,185,423 instructions at 10M rows.
 The [instruction suite](../../bench/benches/production_frames.rs) warms a 1,200 by
 800 headless viewport and measures one scroll and draw. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
-100k and 10M rows. It caps each draw at 15,000 allocations and 7 MiB of
+100k and 10M rows. It caps each draw at 10,300 allocations and 2,750 KiB of
 requests. The [mounted interaction test](tests/interaction.rs) requires
 equal source reads, row renders, constructed cells and pool size.
 
@@ -106,3 +106,65 @@ Removing the extra text wrapper reduced layout work while the two
 
 The same fixture linked against cached GPUI-fast dependencies requested
 10,279 allocations and 2,167,674 bytes at each source size.
+
+## Kit Table usage
+
+The [Kit Table showcase](../showcase/src/demos/kit.rs) builds four static
+invoice rows and four headers. This is the small, fixed-data path described
+in [spec/22](../../spec/22-table-grid-sheet.md). DataGrid supplies the
+virtualized path for large record sets. The mounted DataGrid profile and
+scroll gates exercise DataGrid, while the showcase's Kit Table uses its
+own static element tree.
+
+## Consolidated cell label painting
+
+Non-editing single-line labels share one canvas in each active row band.
+Cells retain their semantic bounds and the in-place editor and multiline
+labels keep their GPUI layout. Each pooled row reuses three label vectors
+(one per band), at most the displayed columns assigned to its bands.
+Labels contain at most 4,096 UTF-8 bytes each. Layout and glyph caches
+belong to GPUI.
+
+| Warm mounted viewport jump | Before | After |
+|---|---:|---:|
+| Samply inclusive layout samples | 35.25% | 8.12% |
+| Instructions at 100k rows | 37,620,931 | 29,033,009 |
+| Instructions at 10M rows | 37,612,205 | 29,025,842 |
+| Allocation requests at 100k and 10M rows | 14,178 | 10,482 |
+| Requested bytes at 100k and 10M rows | 6,621,580 | 2,649,388 |
+| Renderer-backed RSS (KiB, 10M rows) | 180,632 | 181,596 |
+| Loaded-host median renderer-backed frame (ms) | 51.258 | 23.384 |
+| Loaded-host p99 renderer-backed frame (ms) | 169.598 | 43.347 |
+
+The allocation capture used the same release benchmark fixture before and
+after, with the pre-change artifacts at `65e854a`. Timing came from one
+loaded-host capture per build while several worktrees were compiling.
+
+The mounted visual groups verified the existing upstream goldens for the
+cursor, editor and production-scale viewport. The mounted allocation
+gate still observes GPUI element, layout and draw allocations.
+
+
+## Retained header and resize
+
+The column header has its own retained GPUI view. A mounted interaction
+test verifies that a vertical jump leaves its render counter unchanged
+and a horizontal pan refreshes it. Sorting, column mutations and metric
+changes invalidate the header. Height-only resizing updates the visible
+range and notifies newly bound slots. A pool size change still rebinds
+all slots because the slot-to-row mapping depends on the pool size.
+
+The row's accessible name uses the existing formatting buffer. The
+same SharedString serves as both the painted cell value and its accessible
+name. Test-support builds retain individual cell labels so accessibility
+and interaction tests still exercise the normal cell semantics.
+
+| Warm mounted viewport jump, both source sizes | Row-band baseline | Retained header |
+|---|---:|---:|
+| Instructions at 100k rows | 29,033,009 | 27,988,798 |
+| Instructions at 10M rows | 29,025,842 | 28,007,635 |
+| Allocation requests | 10,482 | 10,022 |
+| Requested bytes | 2,649,388 | 2,409,034 |
+
+With gpui-fast and the retained header, the same fixture requested 5,019
+allocations and 1,202,424 bytes at both sizes in the debug workspace gate.
