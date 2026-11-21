@@ -98,6 +98,7 @@ gpui_kit::actions!(
 
 /// Register key bindings (idempotent). Bindings are scoped to [`CONTEXT`]; apps may override.
 pub fn init(cx: &mut App) {
+    crate::data_ui::register(cx);
     if !cx.has_global::<gpui_kit::component::Theme>() {
         gpui_kit::component::init(cx);
     }

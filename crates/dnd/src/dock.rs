@@ -1,4 +1,9 @@
 //! In-window docking with managed gestures over Kit's versioned layout model.
+//!
+//! A screen document can supply plain-text `panels` or a serialized `layout`. A
+//! `persist-key` connects it to the host's layout store, and `layout-change`
+//! emits the same snapshot shape accepted by `layout`. Rust hosts can register
+//! their own panel factories for layouts containing application-specific panels.
 
 mod managed;
 pub use managed::DockDragOverlay;
@@ -106,3 +111,5 @@ mod tests {
         Ok(())
     }
 }
+
+pub(crate) mod document;

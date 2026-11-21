@@ -2,8 +2,8 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px,
+    AnyElement, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px, svg,
 };
 use guiraffe_core::{
     A11yDisabledExt, ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant, keyed_focus,
@@ -11,10 +11,52 @@ use guiraffe_core::{
 
 use crate::style::{hsla, radius, variant};
 
+enum ComponentIcon {
+    Named(IconName),
+    Asset(SharedString),
+}
+
+impl ComponentIcon {
+    fn into_element(self) -> AnyElement {
+        match self {
+            Self::Named(icon) => icon.into_any_element(),
+            Self::Asset(path) => AssetIcon(path).into_any_element(),
+        }
+    }
+
+    fn label(&self) -> SharedString {
+        match self {
+            Self::Named(icon) => format!("{icon:?}").into(),
+            Self::Asset(path) => path
+                .rsplit('/')
+                .next()
+                .map(|name| name.strip_suffix(".svg").unwrap_or(name))
+                .filter(|name| !name.is_empty())
+                .unwrap_or("Action")
+                .to_owned()
+                .into(),
+        }
+    }
+}
+
+#[derive(IntoElement)]
+struct AssetIcon(SharedString);
+
+impl RenderOnce for AssetIcon {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+        let style = window.text_style();
+        svg()
+            .path(self.0)
+            .flex_shrink_0()
+            .size(style.font_size.to_pixels(window.rem_size()))
+            .text_color(style.color)
+    }
+}
+
 /// An icon inside a colored, variant-styled square.
 #[derive(IntoElement)]
 pub struct ThemeIcon {
-    icon: IconName,
+    icon: ComponentIcon,
     /// `None`: inherit the context's control size.
     size: Option<Size>,
     color: Option<ColorName>,
@@ -25,6 +67,15 @@ pub struct ThemeIcon {
 
 impl ThemeIcon {
     pub fn new(icon: IconName) -> Self {
+        Self::with_icon(ComponentIcon::Named(icon))
+    }
+
+    /// Build the themed icon from a path in the application's SVG assets.
+    pub fn from_asset(path: impl Into<SharedString>) -> Self {
+        Self::with_icon(ComponentIcon::Asset(path.into()))
+    }
+
+    fn with_icon(icon: ComponentIcon) -> Self {
         Self {
             icon,
             size: None,
@@ -73,7 +124,7 @@ impl RenderOnce for ThemeIcon {
             .border_color(hsla(v.border))
             .text_color(hsla(v.foreground))
             .text_size(px(size.icon_size()))
-            .child(self.icon);
+            .child(self.icon.into_element());
         crate::style::refine(el, &self.style)
     }
 }
@@ -88,7 +139,7 @@ type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 #[derive(IntoElement)]
 pub struct ActionIcon {
     id: ElementId,
-    icon: IconName,
+    icon: ComponentIcon,
     /// `None`: inherit the context's control size.
     size: Option<Size>,
     color: Option<ColorName>,
@@ -105,8 +156,17 @@ pub struct ActionIcon {
 
 impl ActionIcon {
     pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
+        Self::with_icon(id.into(), ComponentIcon::Named(icon))
+    }
+
+    /// Build the action icon from a path in the application's SVG assets.
+    pub fn from_asset(id: impl Into<ElementId>, path: impl Into<SharedString>) -> Self {
+        Self::with_icon(id.into(), ComponentIcon::Asset(path.into()))
+    }
+
+    fn with_icon(id: ElementId, icon: ComponentIcon) -> Self {
         Self {
-            id: id.into(),
+            id,
             icon,
             size: None,
             color: None,
@@ -152,9 +212,7 @@ impl RenderOnce for ActionIcon {
         let colors = GuiraffeTheme::global(cx).press_colors(v_kind, self.color);
         let side = px(icon_box(size));
         let focus = keyed_focus(self.id.clone(), window, cx);
-        let label = self
-            .label
-            .unwrap_or_else(|| SharedString::from(format!("{:?}", self.icon)));
+        let label = self.label.unwrap_or_else(|| self.icon.label());
         let loading = self.loading;
         // Screen readers hear that the action is in progress.
         let label = if loading {
@@ -189,7 +247,7 @@ impl RenderOnce for ActionIcon {
                     gpui_kit::component::Size::Small,
                 ))
             })
-            .when(!loading, |el| el.child(self.icon))
+            .when(!loading, |el| el.child(self.icon.into_element()))
             .press(&press, &focus, window)
             .when_some(on_click, |el, f| el.on_press(inert, f));
         crate::style::refine(el, &self.style)

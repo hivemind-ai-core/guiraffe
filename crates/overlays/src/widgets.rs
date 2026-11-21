@@ -57,6 +57,17 @@ impl RenderOnce for LoadingOverlay {
         let theme = GuiraffeTheme::global(cx);
         // Scheme-aware scrim token (spec/00 §12.1), not a raw alpha on the variant color.
         let backdrop = theme.veil().to_hsla();
+        let mut spinner = Spinner::new();
+        if self.color.is_some() || self.variant != Variant::Light {
+            let colors = theme.variant(self.color, self.variant);
+            // A bare spinner sits on the veil, without the filled variant's surface.
+            let ink = if self.variant == Variant::Filled {
+                colors.background
+            } else {
+                colors.foreground
+            };
+            spinner = spinner.color(ink.to_hsla());
+        }
         let surface = div()
             .id("guiraffe-loading-overlay")
             .test_support()
@@ -74,7 +85,7 @@ impl RenderOnce for LoadingOverlay {
                 div()
                     .w(px(self.size.control_height()))
                     .h(px(self.size.control_height()))
-                    .child(Spinner::new()),
+                    .child(spinner),
             )
             .refine_style(&self.style)
             .into_any_element();

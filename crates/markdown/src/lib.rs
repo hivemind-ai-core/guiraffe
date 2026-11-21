@@ -23,6 +23,12 @@
 //! }
 //! ```
 
+//! A `ui!` viewer can use the ordinary builders:
+//!
+//! ```ignore
+//! ui! { MarkdownView("example") { source: "# Notes"; selectable: true } }
+//! ```
+
 pub mod document;
 pub mod streaming;
 pub mod view;
@@ -42,3 +48,15 @@ pub use view::{EMBEDDED_DIAGRAM_HEIGHT, MERMAID_NODE};
 
 #[cfg(test)]
 mod tests;
+
+mod data_ui;
+use guiraffe_core::widget_spec;
+mod widget_specs;
+
+/// Register MarkdownView for document authoring.
+pub fn init(cx: &mut gpui_kit::App) {
+    if !cx.has_global::<guiraffe_core::GuiraffeTheme>() {
+        guiraffe_core::init(cx);
+    }
+    data_ui::register(cx);
+}

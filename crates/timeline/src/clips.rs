@@ -33,6 +33,11 @@ pub enum Edge {
 pub const MIN_LEN: f64 = 1e-3;
 
 impl Track {
+    pub(crate) fn from_validated_clips(clips: Vec<Clip>) -> Self {
+        let next_id = clips.iter().map(|clip| clip.id).max().unwrap_or_default();
+        Self { clips, next_id }
+    }
+
     pub fn clips(&self) -> &[Clip] {
         &self.clips
     }
@@ -76,7 +81,7 @@ impl Track {
         if start < lo - 1e-12 || end > hi + 1e-12 {
             return None;
         }
-        self.next_id += 1;
+        self.next_id = self.next_id.checked_add(1)?;
         self.clips.insert(
             pos,
             Clip {
@@ -139,8 +144,8 @@ impl Track {
         if !(t > c.start + MIN_LEN && t < c.end() - MIN_LEN) {
             return None;
         }
+        self.next_id = self.next_id.checked_add(1)?;
         self.clips[i].len = t - c.start;
-        self.next_id += 1;
         let right = Clip {
             id: self.next_id,
             start: t,

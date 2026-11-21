@@ -277,3 +277,5 @@ mod tests {
         assert!(h1 >= 1.5, "a bar is always visible: {h1}");
     }
 }
+
+pub(crate) mod document;

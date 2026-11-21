@@ -3,12 +3,24 @@
 //! Every component takes colors, radii, spacing and shadows from `guiraffe-core`'s theme,
 //! uses Mantine prop names (`.size(Size::Md)`, `.variant(Variant::Light)`, `.color(..)`),
 //! and is either a stateless *component* (`RenderOnce`) or a *control* (state entity).
+//!
+//! In `ui!`, place builder arguments after the component name and properties inside the block.
+//!
+//! ```ignore
+//! ui! { Card { p: Size::Md;
+//!     Text("Details") { fw: FontWeight::SEMIBOLD }
+//! } }
+//! ```
+
+use guiraffe_core::widget_spec;
+mod widget_specs;
 
 pub mod accordion;
 pub mod avatar_group;
 pub mod burger;
 pub mod color_swatch;
 pub mod copy_button;
+mod disclosure_data;
 mod disclosure_motion;
 pub mod expanding_list;
 pub mod focus;
@@ -55,4 +67,11 @@ pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_core::init(cx);
     guiraffe_motion::init(cx);
     segmented::init(cx);
+    segmented::document::register(cx);
+    burger::document::register(cx);
+    accordion::document::register(cx);
+    expanding_list::document::register(cx);
+    copy_button::document::register(cx);
+    spoiler::document::register(cx);
+    speed_dial::document::register(cx);
 }

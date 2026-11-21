@@ -22,6 +22,20 @@ become one workflow instead of three tools.
   "did you mean \"primary\" color? variant controls style"}`; unknown props, wrong slot children,
   missing required props, bad token names, unbound events, duplicate ids — all with node path.
 
+For a crate-owned widget, define the descriptor in its `widget_specs.rs` and install its
+native renderer from the crate's `init(cx)`. Include the descriptor in the DataUi catalogue
+so build-time generation and screen validation see the same contract. Application hosts call
+the widget crate's initializer before constructing `Registry::for_app(cx)`; the CLI initializes
+the bundled widgets. Add a headless test that validates, compiles, and mounts the example.
+Callback builders can expose named events with serializable payloads, and application-owned
+entities can expose input records that the renderer turns into keyed native state.
+
+The showcase `catalogue_drift` test compares discovered public Rust surfaces with their
+catalogue kinds, props, and events. This includes the directly re-exported Controls
+widgets the test resolves against the pinned source. Classify a Rust-only API by exact owner and member
+in the test's `IMPERATIVE` table and give its authoring rationale. The test fails if a
+new API has no coverage or if an exception no longer matches a public API.
+
 ## 2. Inspectable, drivable preview
 - Every node has a **stable node id** (document id, or `#[test_id]` on static widgets) that maps
   to the element tree and the AccessKit node.

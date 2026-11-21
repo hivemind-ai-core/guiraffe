@@ -3118,3 +3118,5 @@ mod tests {
         assert_eq!(one_line("plain".into()), "plain");
     }
 }
+
+pub(crate) mod document;

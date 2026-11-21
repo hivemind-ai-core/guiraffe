@@ -67,3 +67,14 @@ to embed a custom GPUI element. The viewer mounts visible widgets and caches
 the measured height for the current layout. The default renders the payload
 as text. Cloning a decoration snapshot shares unchanged interval indexes,
 so a worker can refresh a layer while the previous snapshot is displayed.
+
+A DataUi `code-viewer` takes the source and language as strings. Annotation
+coordinates use zero-based lines and byte columns with a half-open end. Omit
+`endLine` to keep the annotation on its starting line.
+
+```json
+{"version":1,"root":{"kind":"code-viewer","props":{"source":"let x = 42;","language":"rust","annotations":[{"id":1,"line":0,"start":4,"end":5,"kind":"underline","color":"orange"}]}}}
+```
+
+In Rust, pass an application-owned handle to the same viewer with
+`ui! { CodeViewer(&handle) }`.

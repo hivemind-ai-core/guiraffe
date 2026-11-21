@@ -276,18 +276,22 @@ impl FlameLayout {
         Self::build(source, || false).map(|(layout, _)| layout)
     }
 
+    pub(crate) fn empty(source: Arc<dyn FrameSource>) -> Self {
+        Self {
+            locations: Locations::Sequential(SequentialLocations::default()),
+            source,
+            rows: Vec::new(),
+            extent: 0.,
+        }
+    }
+
     /// A cancelled build returns its private partial state for destruction on
     /// the worker. Callers only publish a completed layout.
     pub(crate) fn build(
         source: Arc<dyn FrameSource>,
         cancelled: impl Fn() -> bool,
     ) -> Result<(Self, bool), LayoutError> {
-        let mut result = Self {
-            locations: Locations::Sequential(SequentialLocations::default()),
-            source,
-            rows: Vec::new(),
-            extent: 0.,
-        };
+        let mut result = Self::empty(source);
         let mut stack: Vec<(FrameId, f64, f64)> = Vec::new();
         for index in 0..result.source.len() {
             if index.is_multiple_of(1024) && cancelled() {

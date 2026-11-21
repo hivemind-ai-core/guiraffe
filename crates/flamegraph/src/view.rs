@@ -967,3 +967,5 @@ mod tests {
         assert_eq!(graph.read_with(window, |graph, _| graph.focus), None);
     }
 }
+
+pub(crate) mod document;

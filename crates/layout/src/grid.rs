@@ -120,6 +120,11 @@ impl Grid {
         }
     }
 
+    pub(crate) fn with_key(mut self, key: ElementId) -> Self {
+        self.key = key;
+        self
+    }
+
     /// How many columns the grid has.
     pub fn columns(mut self, columns: u16) -> Self {
         self.columns = columns.max(1);

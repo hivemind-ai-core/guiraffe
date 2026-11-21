@@ -1,5 +1,9 @@
 //! Agent chat: virtualized native Markdown, isolated message views and bounded streaming.
 //! Initialize once before opening windows, then retain a `ChatState` per conversation.
+//!
+//! ```ignore
+//! ui! { Chat(&conversation) }
+//! ```
 pub mod commands;
 pub mod model;
 pub mod scroll;
@@ -7,9 +11,12 @@ pub mod stream;
 pub use model::{Attachment, Message, MessageId, Role, ToolCall, ToolStatus};
 
 mod composer;
+mod data_ui;
+use guiraffe_core::widget_spec;
 mod history;
 mod message;
 mod style;
+mod widget_specs;
 pub use composer::Composer;
 
 use gpui_kit::base::TestSupportExt;
@@ -45,6 +52,7 @@ pub fn init(cx: &mut App) {
     }
     guiraffe_overlays::init(cx);
     composer::init(cx);
+    data_ui::register(cx);
     cx.set_global(Initialized);
 }
 

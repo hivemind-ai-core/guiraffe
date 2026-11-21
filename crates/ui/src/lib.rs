@@ -17,6 +17,7 @@ pub mod template;
 pub mod validation;
 pub mod value;
 pub mod widget;
+use guiraffe_core::widget_spec;
 
 pub use host::{BoundNode, DataUi, DataUiHandle, Logic, NoLogic};
 pub use ir::{Document, Node};

@@ -19,6 +19,12 @@
 //!     );
 //! ```
 //!
+//! A declarative builder example using `guiraffe_ui::ui`:
+//!
+//! ```ignore
+//! ui! { Center { min_height: px(100.) AspectRatio(2.0) { Space { width: Size::Sm } } } }
+//! ```
+//!
 //! # Tokens
 //!
 //! Sizes come from [`Size`], the scale `guiraffe-core` owns: the same tokens
@@ -53,6 +59,7 @@ mod app_shell;
 mod aspect_ratio;
 mod center;
 mod container;
+mod data_ui;
 mod divider;
 mod flex;
 mod grid;
@@ -66,7 +73,9 @@ mod stack;
 mod style;
 mod theme;
 mod tokens;
+mod widget_specs;
 mod width;
+use guiraffe_core::widget_spec;
 
 /// Install what the layout widgets need before they are shown.
 ///
@@ -76,6 +85,7 @@ mod width;
 /// its own. It is idempotent: calling it twice changes nothing.
 pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_core::init(cx);
+    data_ui::register(cx);
     if cx.try_global::<LayoutStore>().is_none() {
         cx.set_global(LayoutStore::in_memory());
     }

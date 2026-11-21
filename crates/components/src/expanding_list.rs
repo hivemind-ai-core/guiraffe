@@ -53,10 +53,16 @@ impl ExpandingList {
     }
 
     pub fn set_open(&mut self, open: Option<usize>, cx: &mut Context<Self>) {
+        if self.sync_open(open, cx) {
+            cx.emit(ExpandingListChange(open));
+        }
+    }
+
+    fn sync_open(&mut self, open: Option<usize>, cx: &mut Context<Self>) -> bool {
         if open == self.open
             || open.is_some_and(|i| self.items.get(i).is_none_or(|item| item.disabled))
         {
-            return;
+            return false;
         }
         if let Some(previous) = self.open {
             self.progress[previous].set(0., cx);
@@ -66,7 +72,7 @@ impl ExpandingList {
         }
         self.open = open;
         cx.notify();
-        cx.emit(ExpandingListChange(open));
+        true
     }
 }
 
@@ -174,3 +180,5 @@ impl Render for ExpandingList {
         element
     }
 }
+
+pub(crate) mod document;

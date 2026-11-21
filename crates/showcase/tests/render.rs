@@ -176,10 +176,18 @@ fn kanban_mid_drag() {
 }
 
 #[test]
-fn recipes_match_the_generated_screen_schema() {
+fn examples_and_recipes_match_the_generated_screen_schema() {
     let schema = serde_json::from_str(guiraffe_ui::catalogue_artifacts::SCREEN_SCHEMA)
         .unwrap_or_else(|error| panic!("{error}"));
     let validator = jsonschema::validator_for(&schema).unwrap_or_else(|error| panic!("{error}"));
+    for widget in guiraffe_ui::catalog::all_widgets() {
+        let example = widget.example();
+        let issues: Vec<_> = validator
+            .iter_errors(&example)
+            .map(|error| error.to_string())
+            .collect();
+        assert!(issues.is_empty(), "{}: {issues:?}", widget.id);
+    }
     for (name, raw) in guiraffe_showcase::recipes::DOCUMENTS {
         let document = serde_json::from_str(raw).unwrap_or_else(|error| panic!("{name}: {error}"));
         let issues: Vec<_> = validator

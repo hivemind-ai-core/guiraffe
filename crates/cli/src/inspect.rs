@@ -84,13 +84,15 @@ fn with_app<R>(
         gpui_kit::platform::current_headless_renderer,
     );
     let window = cx
-        .open_window(size(px(1280.), px(800.)), move |_, app| {
-            app.new(|cx| AppRoot {
+        .open_window(size(px(1280.), px(800.)), move |window, app| {
+            crate::preview::init_document_widgets(app);
+            let view = app.new(|cx| AppRoot {
                 ui: doc.and_then(|doc| {
-                    DataUi::new(&doc, Arc::new(Registry::with_builtins()), NoLogic, cx).ok()
+                    DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx).ok()
                 }),
                 events: app_events,
-            })
+            });
+            guiraffe_overlays::root(view, window, app)
         })
         .context("open the headless window")?;
     let mut target = HeadlessTarget::new(&mut cx, window.into());
@@ -113,5 +115,33 @@ impl Render for AppRoot {
             Some(ui) => div().size_full().child(ui.clone()),
             None => div().size_full(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_app;
+    use guiraffe_test::inspect::NodeId;
+
+    #[test]
+    fn headless_inspection_uses_the_native_document_registry() -> anyhow::Result<()> {
+        let document = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            document.path(),
+            r#"{"version":1,"root":{"kind":"center","props":{"min-height":240},
+                "children":[{"kind":"button","id":"document-button",
+                "props":{"label":"Inspect me"}}]}}"#,
+        )?;
+        with_app(Some(document.path()), |server| {
+            let layout = server
+                .driver_mut()
+                .layout(Some(&NodeId::from("document-button")));
+            let node = layout
+                .nodes
+                .first()
+                .expect("the document button is painted");
+            assert!(node.layout.bounds.y > 72., "{node:?}");
+            Ok(())
+        })
     }
 }

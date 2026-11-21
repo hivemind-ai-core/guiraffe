@@ -2,54 +2,79 @@
 
 use serde_json::{Value, json};
 
-/// The props and events a widget kind understands, in positional order.
-#[derive(Debug)]
-pub struct Schema {
-    pub props: &'static [&'static str],
-    pub events: &'static [&'static str],
-}
+pub use crate::widget_spec::{EventSpec, FORMAT_VERSION, PropSpec, Schema, WidgetSpec};
 
-impl Schema {
-    pub const EMPTY: Schema = Schema {
-        props: &[],
-        events: &[],
-    };
-}
+pub const VERSION: &str = "1.2.0";
 
-pub const VERSION: &str = "1.1.0";
-pub const FORMAT_VERSION: u32 = 1;
+use crate::widget_spec;
 
-#[derive(Debug)]
-pub struct PropSpec {
-    pub name: &'static str,
-    pub type_name: &'static str,
-    pub default_json: &'static str,
-    pub accepted: &'static [&'static str],
-    pub range: Option<(f64, f64)>,
-    pub token_backed: bool,
-    pub required: bool,
-}
+#[path = "../../charts/src/widget_specs.rs"]
+mod charts;
+#[path = "../../chat/src/widget_specs.rs"]
+mod chat;
+#[path = "../../code/src/widget_specs.rs"]
+mod code;
+#[path = "../../commands/src/widget_specs.rs"]
+mod commands;
+#[path = "../../components/src/widget_specs.rs"]
+mod components;
+#[path = "../../datagrid/src/widget_specs.rs"]
+mod datagrid;
+#[path = "../../dnd/src/widget_specs.rs"]
+mod dnd;
+#[path = "../../flamegraph/src/widget_specs.rs"]
+mod flamegraph;
+#[path = "../../flow/src/widget_specs.rs"]
+mod flow;
+#[path = "../../inputs/src/widget_specs.rs"]
+mod inputs;
+#[path = "../../layout/src/widget_specs.rs"]
+mod layout;
+#[path = "../../markdown/src/widget_specs.rs"]
+mod markdown;
+#[path = "../../mermaid/src/widget_specs.rs"]
+mod mermaid;
+#[path = "../../overlays/src/widget_specs.rs"]
+mod overlays;
+#[path = "../../timeline/src/widget_specs.rs"]
+mod timeline;
+#[path = "../../tree/src/widget_specs.rs"]
+mod tree;
 
-#[derive(Debug)]
-pub struct EventSpec {
-    pub id: &'static str,
-    pub payload_type: &'static str,
-}
-
-#[derive(Debug)]
-pub struct WidgetSpec {
-    pub id: &'static str,
-    pub krate: &'static str,
-    pub summary: &'static str,
-    pub props: &'static [PropSpec],
-    pub accepts_children: bool,
-    pub events: &'static [EventSpec],
-    pub state: &'static str,
-    pub theme_tokens: &'static [&'static str],
-    pub a11y_role: &'static str,
+pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
+    WIDGETS
+        .iter()
+        .chain(charts::WIDGETS)
+        .chain(chat::WIDGETS)
+        .chain(code::WIDGETS)
+        .chain(components::WIDGETS)
+        .chain(commands::WIDGETS)
+        .chain(datagrid::WIDGETS)
+        .chain(dnd::WIDGETS)
+        .chain(flamegraph::WIDGETS)
+        .chain(flow::WIDGETS)
+        .chain(inputs::WIDGETS)
+        .chain(layout::WIDGETS)
+        .chain(markdown::WIDGETS)
+        .chain(mermaid::WIDGETS)
+        .chain(overlays::WIDGETS)
+        .chain(tree::WIDGETS)
+        .chain(timeline::WIDGETS)
+        .copied()
 }
 
 const SIZE: &[&str] = &["xs", "sm", "md", "lg", "xl"];
+const VARIANT: &[&str] = &[
+    "filled",
+    "light",
+    "outline",
+    "subtle",
+    "transparent",
+    "white",
+    "default",
+];
+const ALIGN: &[&str] = &["start", "center", "end", "stretch", "baseline"];
+const JUSTIFY: &[&str] = &["start", "center", "end", "between", "around", "evenly"];
 const COLOR: &[&str] = &[
     "dark", "gray", "red", "pink", "grape", "violet", "indigo", "blue", "cyan", "teal", "green",
     "lime", "yellow", "orange",
@@ -65,7 +90,7 @@ macro_rules! widgets {
                 id: $id, krate: $krate, summary: $summary, accepts_children: $children,
                 state: $state, a11y_role: $role, theme_tokens: &[$($token),*],
                 props: &[$(PropSpec {name: $name, type_name: $ty, default_json: $default,
-                    accepted: $accepted, range: $range, token_backed: !$accepted.is_empty(),
+                    accepted: $accepted, range: $range, token_backed: !$accepted.is_empty() && matches!($ty.as_bytes(), b"string"),
                     required: $required}),*],
                 events: &[$(EventSpec {id: $event, payload_type: $payload}),*],
             },
@@ -77,10 +102,19 @@ macro_rules! widgets {
 }
 
 widgets! {
-    STACK: "stack", "ui", "Vertical stack.", true, "stateless", "group", ["density.space"],
-        ["gap": "string" = "\"sm\"", SIZE, None, false], [];
-    GROUP: "group", "ui", "Wrapping horizontal group.", true, "stateless", "group", ["density.space"],
-        ["gap": "string" = "\"sm\"", SIZE, None, false], [];
+    STACK: "stack", "layout", "Vertical stack.", true, "stateless", "group", ["density.space"],
+        ["gap": "string" = "\"sm\"", SIZE, None, false;
+         "gap-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
+         "align": "string" = "\"stretch\"", ALIGN, None, false;
+         "justify": "string" = "\"start\"", JUSTIFY, None, false;
+         "grow": "boolean" = "false", &[] as &[&str], None, false], [];
+    GROUP: "group", "layout", "Horizontal group that wraps by default.", true, "stateless", "group", ["density.space"],
+        ["gap": "string" = "\"sm\"", SIZE, None, false;
+         "gap-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
+         "align": "string" = "\"center\"", ALIGN, None, false;
+         "justify": "string" = "\"start\"", JUSTIFY, None, false;
+         "grow": "boolean" = "false", &[] as &[&str], None, false;
+         "wrap": "boolean" = "true", &[] as &[&str], None, false], [];
     GRID: "grid", "ui", "Equal-width grid rows.", true, "stateless", "group", ["density.space"],
         ["gap": "string" = "\"sm\"", SIZE, None, false;
          "columns": "number" = "2", &[] as &[&str], Some((1.0, 12.0)), false], [];
@@ -92,20 +126,99 @@ widgets! {
          "dimmed": "boolean" = "false", &[] as &[&str], None, false;
          "size": "string" = "null", SIZE, None, false;
          "color": "string" = "null", COLOR, None, false;
-         "single-line": "boolean" = "false", &[] as &[&str], None, false], [];
+         "single-line": "boolean" = "false", &[] as &[&str], None, false;
+         "truncate": "boolean" = "false", &[] as &[&str], None, false;
+         "font-weight": "number" = "null", &[] as &[&str], Some((1.0, 1000.0)), false], [];
     HIGHLIGHT: "highlight", "components", "Text with matching terms highlighted.", false, "stateless", "text", ["surfaces.mark", "surfaces.text"],
         ["text": "string" = "\"\"", &[] as &[&str], None, true;
          "term": "string" = "\"\"", &[] as &[&str], None, false], [];
+    MARK: "mark", "components", "Marked text.", false, "stateless", "text", ["surfaces.mark", "surfaces.text"],
+        ["text": "string" = "\"Marked text\"", &[] as &[&str], None, true], [];
+    BLOCKQUOTE: "blockquote", "components", "Quoted content with an optional citation.", true, "stateless", "group",
+        ["variant.background", "surfaces.text"],
+        ["color": "string" = "null", COLOR, None, false;
+         "cite": "string" = "null", &[] as &[&str], None, false], [];
+    PAPER: "paper", "components", "Themed surface for grouped content.", true, "stateless", "group",
+        ["density.space", "default_radius", "surfaces.body", "surfaces.text", "surfaces.border"],
+        ["shadow": "string" = "null", SIZE, None, false;
+         "radius": "string" = "null", SIZE, None, false;
+         "padding": "string" = "null", SIZE, None, false;
+         "no-padding": "boolean" = "false", &[] as &[&str], None, false;
+         "with-border": "boolean" = "false", &[] as &[&str], None, false], [];
+    INDICATOR: "indicator", "components", "Anchors a count or dot to its child content.", true, "stateless", "group",
+        ["control_size", "variant.background"],
+        ["label": "string" = "null", &[] as &[&str], None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "position": "string" = "\"top-end\"", &["top-end", "top-start", "bottom-end", "bottom-start"], None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false], [];
+    COLOR_SWATCH: "color-swatch", "components", "Palette or RGB swatch with an optional selection mark.", false, "stateless", "button",
+        ["control_size", "surfaces.border", "variant.foreground"],
+        ["color": "string" = "\"blue\"", COLOR, None, false;
+         "rgb": "integer" = "null", &[] as &[&str], Some((0.0, 0xff_ffff as f64)), false;
+         "label": "string" = "null", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "selected": "string" = "\"none\"", &["none", "check", "ring"], None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false], ["click": "null"];
+    AVATAR_GROUP: "avatar-group", "components", "Overlapping avatars with optional contents for the overflow chip.", true, "stateless", "group",
+        ["control_size", "surfaces.body", "surfaces.text"],
+        ["people": "avatar-people" = "[]", &[] as &[&str], None, false;
+         "limit": "integer" = "null", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "color": "string" = "null", COLOR, None, false;
+         "size": "string" = "null", SIZE, None, false], [];
+    KBD_GROUP: "kbd-group", "components", "A keyboard chord or sequence of keycaps.", false, "stateless", "group",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["keys": "array" = "[\"Ctrl\",\"K\"]", &[] as &[&str], None, true;
+         "separator": "string" = "\"plus\"", &["plus", "then"], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "variant": "string" = "null", VARIANT, None, false], [];
     PILL: "pill", "components", "Compact label.", false, "stateless", "text", ["control_size", "surfaces.track", "surfaces.text"],
-        ["label": "string" = "\"\"", &[] as &[&str], None, true], [];
-    CARD: "card", "components", "Surface for grouped content.", true, "stateless", "group", ["density.space", "default_radius", "recipes.card", "surfaces.body", "surfaces.text", "surfaces.border"], [], [];
+        ["label": "string" = "\"\"", &[] as &[&str], None, true;
+         "size": "string" = "null", SIZE, None, false], ["remove": "string"];
+    CARD: "card", "components", "Surface for grouped content.", true, "stateless", "group", ["density.space", "default_radius", "recipes.card", "surfaces.body", "surfaces.text", "surfaces.border"],
+        ["shadow": "string" = "\"sm\"", SIZE, None, false;
+         "radius": "string" = "null", SIZE, None, false;
+         "padding": "string" = "null", SIZE, None, false;
+         "with-border": "boolean" = "true", &[] as &[&str], None, false;
+         "section-borders": "card-section-borders" = "[]", &[] as &[&str], None, false], [];
+    CARD_SECTION: "card-section", "components", "Grouped card content with optional top and bottom borders. Use card.section-borders for edge-to-edge sections.", true, "stateless", "group", ["surfaces.border"],
+        ["with-border": "boolean" = "false", &[] as &[&str], None, false], [];
     RING: "ring", "components", "Circular progress indicator.", false, "stateless", "progressbar", ["surfaces.track", "surfaces.text", "variant.background"],
         ["value": "number" = "0", &[] as &[&str], Some((0.0, 100.0)), false;
          "color": "string" = "\"blue\"", COLOR, None, false;
          "diameter": "number" = "64", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
+         "thickness": "number" = "12", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
+         "sections": "ring-sections" = "[]", COLOR, None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false], [];
-    BUTTON: "button", "gpui-kit", "Clickable action.", false, "stateless", "button", ["kit.primary", "kit.primary_foreground"],
-        ["label": "string" = "\"\"", &[] as &[&str], None, true], ["click": "null"];
+    BUTTON: "button", "gpui-kit", "Clickable action.", true, "stateless", "button", ["kit.primary", "kit.primary_foreground"],
+        ["label": "string" = "\"\"", &[] as &[&str], None, true;
+         "size": "string" = "\"md\"", SIZE, None, false;
+         "variant": "string" = "\"default\"", &["default", "primary", "secondary", "danger", "info", "success", "warning", "ghost", "link", "text"], None, false;
+         "rounded": "string" = "\"md\"", &["none", "sm", "md", "lg"], None, false;
+         "rounding-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "loading": "boolean" = "false", &[] as &[&str], None, false;
+         "selected": "boolean" = "false", &[] as &[&str], None, false;
+         "open": "boolean" = "false", &[] as &[&str], None, false;
+         "outline": "boolean" = "false", &[] as &[&str], None, false;
+         "compact": "boolean" = "false", &[] as &[&str], None, false;
+         "toggled": "boolean" = "null", &[] as &[&str], None, false;
+         "dropdown-caret": "boolean" = "false", &[] as &[&str], None, false;
+         "focus-ring": "boolean" = "true", &[] as &[&str], None, false;
+         "tab-stop": "boolean" = "true", &[] as &[&str], None, false;
+         "inherit-focus-scope": "boolean" = "false", &[] as &[&str], None, false;
+         "tab-index": "number" = "0", &[] as &[&str], Some((i32::MIN as f64, i32::MAX as f64)), false;
+         "icon": "string" = "null", &[] as &[&str], None, false;
+         "loading-icon": "string" = "null", &[] as &[&str], None, false;
+         "role": "string" = "null", &["button", "check-box", "radio-button", "switch", "menu-item"], None, false;
+         "accessibility-id": "string" = "null", &[] as &[&str], None, false;
+         "accessibility-label": "string" = "null", &[] as &[&str], None, false;
+         "tooltip": "string" = "null", &[] as &[&str], None, false;
+         "tooltip-placement": "string" = "null", &["top", "bottom", "left", "right"], None, false;
+         "tooltip-show-delay-ms": "number" = "null", &[] as &[&str], Some((0.0, 60_000.0)), false],
+        ["click": "null", "hover": "boolean"];
     HUG: "hug", "ui", "Content-width container.", true, "stateless", "group", [], [], [];
     SPACER: "spacer", "ui", "Flexible empty space.", false, "stateless", "presentation", [], [], [];
     TEXT_INPUT: "text-input", "gpui-kit", "Single-line text editor.", false, "controlled or uncontrolled value", "textbox", ["control_size", "kit.input", "kit.foreground", "scale", "state.focus_ring"],
@@ -120,13 +233,29 @@ widgets! {
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
-         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "boolean"];
+         "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "accessibility-label": "string" = "null", &[] as &[&str], None, false;
+         "tooltip": "string" = "null", &[] as &[&str], None, false;
+         "tooltip-show-delay-ms": "number" = "null", &[] as &[&str], Some((0.0, 60_000.0)), false;
+         "tab-stop": "boolean" = "true", &[] as &[&str], None, false;
+         "tab-index": "number" = "0", &[] as &[&str], Some((i32::MIN as f64, i32::MAX as f64)), false;
+         "focus-ring": "boolean" = "true", &[] as &[&str], None, false;
+         "role": "string" = "null", &["checkbox", "radio", "switch"], None, false], ["change": "boolean"];
     SWITCH: "switch", "gpui-kit", "Boolean switch.", false, "controlled or uncontrolled value", "switch", ["control_size", "kit.primary", "kit.switch"],
         ["value": "boolean" = "false", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
          "options": "array" = "[]", &[] as &[&str], None, false;
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
-         "placeholder": "string" = "\"\"", &[] as &[&str], None, false], ["change": "boolean"];
+         "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "accessibility-label": "string" = "null", &[] as &[&str], None, false;
+         "tooltip": "string" = "null", &[] as &[&str], None, false;
+         "tooltip-show-delay-ms": "number" = "null", &[] as &[&str], Some((0.0, 60_000.0)), false;
+         "tab-stop": "boolean" = "true", &[] as &[&str], None, false;
+         "tab-index": "number" = "0", &[] as &[&str], Some((i32::MIN as f64, i32::MAX as f64)), false;
+         "focus-ring": "boolean" = "true", &[] as &[&str], None, false;
+         "color": "string" = "null", COLOR, None, false], ["change": "boolean"];
     SELECT: "select", "gpui-kit", "Select one of a list of labels.", false, "controlled or uncontrolled value", "combobox", ["control_size", "kit.input", "kit.foreground", "scale", "state.focus_ring"],
         ["value": "string" = "null", &[] as &[&str], None, false;
          "label": "string" = "\"\"", &[] as &[&str], None, false;
@@ -134,142 +263,72 @@ widgets! {
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
          "invalid": "boolean" = "false", &[] as &[&str], None, false], ["change": "selection"];
+    LOADER: "loader", "components", "Animated loading indicator with an accessible label.", false, "keyed animation state", "progressbar",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["kind": "string" = "\"oval\"", &["oval", "bars", "dots"], None, false;
+         "label": "string" = "\"Loading\"", &[] as &[&str], None, false;
+         "count": "integer" = "3", &[] as &[&str], Some((1.0, 12.0)), false;
+         "period-ms": "integer" = "1200", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false], [];
+    ACTIVITY_TIMELINE: "activity-timeline", "components", "Vertical list of activity items and a current position.", false, "stateless", "list",
+        ["control_size", "variant.background", "surfaces.text"],
+        ["items": "activity-items" = "[]", &[] as &[&str], None, false;
+         "active": "integer" = "0", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "bullet-size": "number" = "null", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
+         "line-width": "number" = "null", &[] as &[&str], Some((1.0, f32::MAX as f64)), false], [];
+    THEME_ICON: "theme-icon", "components", "Themed icon drawn from an application SVG asset.", false, "stateless", "presentation",
+        ["control_size", "variant.foreground", "variant.background", "default_radius"],
+        ["icon": "string" = "\"icons/check.svg\"", &[] as &[&str], None, true;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "variant": "string" = "\"filled\"", VARIANT, None, false;
+         "radius": "string" = "null", SIZE, None, false], [];
+    ACTION_ICON: "action-icon", "components", "Icon-only action with an accessible label and click event.", false, "stateless", "button",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["icon": "string" = "\"icons/search.svg\"", &[] as &[&str], None, false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "variant": "string" = "null", VARIANT, None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "loading": "boolean" = "false", &[] as &[&str], None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false;
+         "label": "string" = "null", &[] as &[&str], None, false], ["click": "null"];
+    CLOSE_BUTTON: "close-button", "components", "Native close action with the standard close icon.", false, "stateless", "button",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["size": "string" = "\"sm\"", SIZE, None, false;
+         "color": "string" = "\"gray\"", COLOR, None, false;
+         "variant": "string" = "\"subtle\"", VARIANT, None, false;
+         "disabled": "boolean" = "false", &[] as &[&str], None, false;
+         "loading": "boolean" = "false", &[] as &[&str], None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false;
+         "label": "string" = "\"Close\"", &[] as &[&str], None, false], ["click": "null"];
+    STEPPER: "stepper", "components", "Progress through a sequence of named steps.", false, "stateless", "list",
+        ["control_size", "variant.foreground", "variant.background", "surfaces.text"],
+        ["steps": "step-items" = "[]", &[] as &[&str], None, false;
+         "active": "integer" = "0", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "focusable": "boolean" = "null", &[] as &[&str], None, false], ["step-click": "integer"];
 }
 
 /// Look up an authoring descriptor by its document kind.
 pub fn lookup(kind: &str) -> Option<&'static WidgetSpec> {
-    WIDGETS.iter().copied().find(|widget| widget.id == kind)
-}
-
-impl PropSpec {
-    fn default_value(&self) -> Value {
-        serde_json::from_str(self.default_json).unwrap_or(Value::Null)
-    }
-
-    pub fn schema(&self) -> Value {
-        let mut schema = json!({"type": self.type_name});
-        if !self.accepted.is_empty() {
-            schema["enum"] = json!(self.accepted);
-        }
-        if let Some((min, max)) = self.range {
-            schema["minimum"] = json!(min);
-            schema["maximum"] = json!(max);
-        }
-        if self.type_name == "array" {
-            schema["items"] = json!({"type": "string"});
-        }
-        schema
-    }
-}
-
-impl EventSpec {
-    fn schema(&self) -> Value {
-        match self.payload_type {
-            "selection" => json!({"type":["string","null"]}),
-            ty => json!({"type":ty}),
-        }
-    }
-}
-
-impl WidgetSpec {
-    pub fn example(&self) -> Value {
-        let props: serde_json::Map<String, Value> = self
-            .props
-            .iter()
-            .filter(|p| p.required)
-            .map(|p| (p.name.into(), p.default_value()))
-            .collect();
-        json!({"version": FORMAT_VERSION, "root": {"kind": self.id, "props": props}})
-    }
-
-    fn description(&self) -> Value {
-        let props = self
-            .props
-            .iter()
-            .map(|p| {
-                json!({"name":p.name, "schema":p.schema(), "default":p.default_value(),
-                "required":p.required, "tokenBacked":p.token_backed})
-            })
-            .collect::<Vec<_>>();
-        let events = self
-            .events
-            .iter()
-            .map(|e| json!({"id":e.id,"payloadSchema":e.schema()}))
-            .collect::<Vec<_>>();
-        let slots = if self.accepts_children {
-            json!([{"name":"children","min":0,"max":null,"accepted":KINDS}])
-        } else {
-            json!([])
-        };
-        json!({"id":self.id, "crate":self.krate, "summary":self.summary,"props":props,
-            "slots":slots,"events":events,"state":self.state,"themeTokens":self.theme_tokens,
-            "a11yRole":self.a11y_role,"examples":[{"name":"minimal","document":self.example()}]})
-    }
-
-    fn node_schema(&self) -> Value {
-        let props: serde_json::Map<String, Value> = self
-            .props
-            .iter()
-            .map(|p| {
-                (
-                    p.name.into(),
-                    json!({"anyOf":[p.schema(),{"type":"string","pattern":"^@.+"}]}),
-                )
-            })
-            .collect();
-        let bind: serde_json::Map<String, Value> = self
-            .props
-            .iter()
-            .map(|p| (p.name.into(), json!({"type":"string","minLength":1})))
-            .collect();
-        let events: serde_json::Map<String, Value> = self
-            .events
-            .iter()
-            .map(|e| (e.id.into(), json!({"type":"string","minLength":1})))
-            .collect();
-        let mut children = json!({"type":"array","items":{"$ref":"#/$defs/node"}});
-        if !self.accepts_children {
-            children["maxItems"] = json!(0);
-        }
-        let required = self
-            .props
-            .iter()
-            .filter(|p| p.required)
-            .map(|p| {
-                json!({"anyOf":[
-                    {"required":["props"], "properties":{"props":{"required":[p.name]}}},
-                    {"required":["bind"], "properties":{"bind":{"required":[p.name]}}}
-                ]})
-            })
-            .collect::<Vec<_>>();
-        let mut schema = json!({"type":"object","required":["kind"],"additionalProperties":false,
-            "properties":{
-                "kind":{"const":self.id},
-                "id":{"type":["string","null"],"minLength":1},
-                "each":{"type":["string","null"]},
-                "when":{"type":["string","null"]},
-                "key":{"type":["string","null"]},
-                "themeTokens":{"type":"array","items": if self.theme_tokens.is_empty() { json!(false) } else { json!({"enum":self.theme_tokens}) }},
-                "props":{"type":"object","properties":props,"additionalProperties":false},
-                "bind":{"type":"object","properties":bind,"additionalProperties":false},
-                "on":{"type":"object","properties":events,"additionalProperties":false},
-                "children":children}});
-        if !required.is_empty() {
-            schema["allOf"] = json!(required);
-        }
-        schema
-    }
+    all_widgets().find(|widget| widget.id == kind)
 }
 
 pub fn catalogue() -> Value {
-    json!({"version": VERSION, "widgets": WIDGETS.iter().map(|w| w.description()).collect::<Vec<_>>()})
+    let kinds: Vec<_> = all_widgets().map(|widget| widget.id).collect();
+    json!({"version": VERSION, "widgets": all_widgets().map(|w| w.description(&kinds)).collect::<Vec<_>>()})
 }
 
 pub fn screen_schema() -> Value {
     json!({"$schema":"https://json-schema.org/draft/2020-12/schema",
         "type":"object","required":["version","root"],"additionalProperties":false,
         "properties":{"version":{"const":FORMAT_VERSION},"root":{"$ref":"#/$defs/node"}},
-        "$defs":{"node":{"oneOf":WIDGETS.iter().map(|w| w.node_schema()).collect::<Vec<_>>()}}})
+        "$defs":{"node":{"oneOf":all_widgets().map(|w| w.node_schema()).collect::<Vec<_>>()}}})
 }
 
 /// Render a reference for screen authors from the same metadata consumed by the CLI and showcase.
@@ -277,7 +336,7 @@ pub fn reference_markdown() -> String {
     use std::fmt::Write as _;
 
     let mut text = format!("# DataUi widget reference\n\nCatalogue {VERSION}\n");
-    for widget in WIDGETS {
+    for widget in all_widgets() {
         let _ = write!(
             text,
             "\n## `{}`\n\n{}\n\n- Crate `{}`\n- State {}\n- Accessibility role `{}`\n",

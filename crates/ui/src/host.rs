@@ -8,7 +8,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use gpui_kit::{
@@ -62,7 +65,10 @@ struct Repeater {
     key_path: Arc<[gpui_kit::SharedString]>,
 }
 type RepeatState = Rc<Repeater>;
+static NEXT_WIDGET_NAMESPACE: AtomicU64 = AtomicU64::new(1);
+
 struct Shared {
+    widget_namespace: Cell<u64>,
     template: RefCell<Arc<Template>>,
     slots: RefCell<SlotTable>,
     generation: Cell<u32>,
@@ -522,6 +528,7 @@ impl Shared {
             spec,
             slots: &slots,
             emit: &self.emit,
+            widget_namespace: self.widget_namespace.get(),
             generation: self.generation.get(),
             index,
             item: item_value.as_deref(),
@@ -554,6 +561,7 @@ impl Shared {
             spec,
             slots: &slots,
             emit: &self.emit,
+            widget_namespace: self.widget_namespace.get(),
             generation: self.generation.get(),
             index,
             item: value.as_deref(),
@@ -783,7 +791,7 @@ impl DataUi {
         mut logic: impl Logic,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|_cx| {
+        cx.new(|_| {
             // Built once, shared by every handler; dispatches through the shared state (never
             // by writing the host entity). The cell breaks the Rc cycle Shared ↔ emit.
             let shared_slot: Rc<RefCell<std::rc::Weak<Shared>>> = Rc::default();
@@ -812,6 +820,7 @@ impl DataUi {
             let shared = Rc::new_cyclic(|owner| Shared {
                 template: RefCell::new(template),
                 slots: RefCell::new(slots),
+                widget_namespace: Cell::new(NEXT_WIDGET_NAMESPACE.fetch_add(1, Ordering::Relaxed)),
                 generation: Cell::new(0),
                 emit,
                 input_emit,
@@ -902,6 +911,9 @@ impl DataUi {
         self.shared.repeats.borrow_mut().clear();
         self.shared.items.borrow_mut().clear();
         self.shared.controls.clear();
+        self.shared
+            .widget_namespace
+            .set(NEXT_WIDGET_NAMESPACE.fetch_add(1, Ordering::Relaxed));
         self.shared
             .generation
             .set(self.shared.generation.get().wrapping_add(1));

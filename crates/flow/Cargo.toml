@@ -12,6 +12,7 @@ workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-flow-core.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
