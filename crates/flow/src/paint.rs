@@ -36,6 +36,8 @@ pub(crate) struct MeshCache {
     batch_capacity: (usize, usize),
     #[cfg(test)]
     pub batches: usize,
+    #[cfg(test)]
+    pub marker_batches: usize,
     minimap: Option<MinimapMeshes>,
     grid: Option<GridMesh>,
 }
@@ -99,6 +101,32 @@ impl MeshCache {
         self.entries.get(&id).map(|(_, path)| Cow::Borrowed(path))
     }
 }
+#[derive(Default)]
+struct ClosedMarkers {
+    path: Option<Path<Pixels>>,
+    #[cfg(test)]
+    submissions: usize,
+}
+impl ClosedMarkers {
+    fn push(&mut self, vertices: [gpui_kit::Point<Pixels>; 3]) {
+        let [left, tip, right] = vertices;
+        let uv = point(0., 1.);
+        self.path
+            .get_or_insert_with(|| Path::new(left))
+            .push_triangle((left, tip, right), (uv, uv, uv));
+    }
+
+    fn paint(&mut self, window: &mut Window, accent: Rgb) {
+        if let Some(path) = self.path.take() {
+            window.paint_path(path, accent.to_hsla());
+            #[cfg(test)]
+            {
+                self.submissions += 1;
+            }
+        }
+    }
+}
+
 struct GridMesh {
     size: WorldPoint,
     step: f32,
@@ -372,7 +400,9 @@ impl Frame {
         if !selected.vertices.is_empty() {
             window.paint_path(selected, self.accent.to_hsla());
         }
-        // Markers and animated beads retain their order above the edge strokes.
+        // Batch adjacent filled markers, flushing at primitives that used to
+        // interleave with them so open markers and animated beads keep their z-order.
+        let mut closed = ClosedMarkers::default();
         for id in &self.edges {
             let Some(edge) = graph.edges.get(id) else {
                 continue;
@@ -396,12 +426,20 @@ impl Frame {
                 };
                 std::borrow::Cow::Borrowed(route.as_ref())
             };
-            self.markers(&route, edge.marker_start, edge.marker_end, bounds, window);
+            self.markers(
+                &route,
+                edge.marker_start,
+                edge.marker_end,
+                bounds,
+                &mut closed,
+                window,
+            );
             if edge.animated
                 && let Some(t) = self.phase
             {
                 let i = (t * (route.points.len().saturating_sub(1)) as f32) as usize;
                 if let Some(p) = route.points.get(i) {
+                    closed.paint(window, self.accent);
                     let p = pixel(self.viewport.screen(*p)) + bounds.origin;
                     let radius = px(2. * self.viewport.zoom);
                     window.paint_quad(fill(
@@ -414,6 +452,11 @@ impl Frame {
                 }
                 window.request_animation_frame();
             }
+        }
+        closed.paint(window, self.accent);
+        #[cfg(test)]
+        {
+            cache.marker_batches = closed.submissions;
         }
         let edge_us = edge_started.elapsed().as_micros();
         cache.timings = (grid_us, edge_us, 0);
@@ -484,6 +527,7 @@ impl Frame {
         start: Marker,
         end: Marker,
         b: Bounds<Pixels>,
+        closed: &mut ClosedMarkers,
         window: &mut Window,
     ) {
         if route.points.len() < 2 {
@@ -513,19 +557,19 @@ impl Frame {
             if !marker_bounds.intersects(canvas) {
                 continue;
             }
-            let mut builder = if marker == Marker::ArrowClosed {
-                PathBuilder::fill()
-            } else {
-                PathBuilder::stroke(px(EDGE_STROKE * self.viewport.zoom))
-            };
-            builder.move_to(b.origin + pixel(left));
-            builder.line_to(b.origin + pixel(tip));
-            builder.line_to(b.origin + pixel(right));
+            let vertices = [left, tip, right].map(|p| b.origin + pixel(p));
             if marker == Marker::ArrowClosed {
-                builder.close();
-            }
-            if let Ok(path) = builder.build() {
-                window.paint_path(path, self.accent.to_hsla());
+                closed.push(vertices);
+            } else {
+                let mut builder = PathBuilder::stroke(px(EDGE_STROKE * self.viewport.zoom));
+                let [left, tip, right] = vertices;
+                builder.move_to(left);
+                builder.line_to(tip);
+                builder.line_to(right);
+                if let Ok(path) = builder.build() {
+                    closed.paint(window, self.accent);
+                    window.paint_path(path, self.accent.to_hsla());
+                }
             }
         }
     }
@@ -1066,11 +1110,7 @@ mod tests {
                 Node::new(1, "", WorldPoint::new(100., 100.)),
                 Node::new(2, "", WorldPoint::new(500., 100.)),
             ],
-            (0..3000).map(|id| {
-                let mut e = Edge::new(id, 1, 2);
-                e.marker_end = Marker::None;
-                e
-            }),
+            (0..3000).map(|id| Edge::new(id, 1, 2)),
         )
         .expect("graph");
         let (w, v) = cx.update(|cx| {
@@ -1103,7 +1143,11 @@ mod tests {
         w.update(cx, |_, w, cx| w.render_frame(cx))
             .expect("warm frame");
         assert_eq!(v.read_with(cx, |v, _| v.meshes.borrow().misses), 0);
-        assert_eq!(v.read_with(cx, |v, _| v.meshes.borrow().batches), 1);
+        v.read_with(cx, |v, _| {
+            let cache = v.meshes.borrow();
+            assert_eq!(cache.batches, 1);
+            assert_eq!(cache.marker_batches, 1);
+        });
     }
     #[test]
     fn review2_drag_frames_share_origin_storage() {
