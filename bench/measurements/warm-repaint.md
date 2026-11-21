@@ -60,3 +60,22 @@ The fast release result uses the six allocator tests after integrating
 requests on each frame. The same run passed the integrated Markdown and
 Chat memory and repaint-scaling checks, as well as the cached-path and Kit
 root notification/refresh tests.
+
+## Final validation
+
+`scripts/gate.sh` passed for source revision `5a4b4c5`. Each backend
+passed 1,371 workspace tests with one ignored. All six fixtures allocated
+zero on each of eight retained draws on both debug backends. The upstream
+before/after requests were therefore Markdown 89 → 0, DataGrid 85 → 0,
+Gantt 215 → 0, Flow 105 → 0, Charts 93 → 0, and Mermaid 77 → 0.
+The fast release run independently verified its six zero results above.
+
+Per-crate doctests, Clippy with warnings denied, and formatting passed.
+All existing golden comparisons passed. The gate used the Taffy source for
+which the standalone library suite passed 171 tests. The two backend test
+logs are in `target/gate-logs`.
+
+The allocator gate covers unchanged CPU repaint at the fixture sizes.
+Explicit whole-window refresh still incurs layout and paint allocations.
+The upstream root also prepaints live while accessibility is active.
+Production-scale latency and long-session drift remain quiet-window work.
