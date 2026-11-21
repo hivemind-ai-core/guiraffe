@@ -61,8 +61,7 @@ impl Overview {
             ]);
         }
         for edge in &layout.edges {
-            if edge.points.len() > 2
-                || edge.label.is_some()
+            if edge.label.is_some()
                 || edge.start_label.is_some()
                 || edge.end_label.is_some()
                 || edge.override_style.stroke.is_some()
@@ -73,12 +72,20 @@ impl Overview {
             {
                 return None;
             }
+            let segment_count = edge.points.len().saturating_sub(1);
+            if overview.nodes.len() + overview.edges.len() + overview.dotted.len() + segment_count
+                > MAX_PRIMITIVES
+            {
+                return None;
+            }
             let lines = match edge.style {
                 EdgeStyle::Solid => &mut overview.edges,
                 EdgeStyle::Dotted => &mut overview.dotted,
                 EdgeStyle::Thick => return None,
             };
-            if let (Some(&(x1, y1)), Some(&(x2, y2))) = (edge.points.first(), edge.points.last()) {
+            for pair in edge.points.windows(2) {
+                let (x1, y1) = pair[0];
+                let (x2, y2) = pair[1];
                 lines.push([normalize(x1, y1), normalize(x2, y2)]);
             }
         }

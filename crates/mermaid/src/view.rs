@@ -234,23 +234,24 @@ impl MermaidViewState {
         cx.notify();
         let cancelled = Arc::new(AtomicBool::new(false));
         self.cancel_render = Some(cancelled.clone());
-        cx.spawn(async move |this: WeakEntity<Self>, cx| {
-            let (preview_sender, preview_receiver) = oneshot::channel();
-            let job = cx.background_executor().spawn(async move {
-                let mut engine = engine;
-                let mut sender = Some(preview_sender);
-                let result = engine.render_staged(&request, &cancelled, |frame| {
-                    if let Some(sender) = sender.take() {
-                        let (painted, wait_for_paint) = mpsc::sync_channel(1);
-                        if sender.send((frame, painted)).is_ok() {
-                            // A hidden or undrawn view must still refine.
-                            let _ =
-                                wait_for_paint.recv_timeout(std::time::Duration::from_millis(100));
-                        }
+        // Start worker execution immediately so placement can overlap the
+        // window's initial layout and paint.
+        let (preview_sender, preview_receiver) = oneshot::channel();
+        let job = cx.background_executor().spawn(async move {
+            let mut engine = engine;
+            let mut sender = Some(preview_sender);
+            let result = engine.render_staged(&request, &cancelled, |frame| {
+                if let Some(sender) = sender.take() {
+                    let (painted, wait_for_paint) = mpsc::sync_channel(1);
+                    if sender.send((frame, painted)).is_ok() {
+                        // A hidden or undrawn view must still refine.
+                        let _ = wait_for_paint.recv_timeout(std::time::Duration::from_millis(100));
                     }
-                });
-                (engine, result)
+                }
             });
+            (engine, result)
+        });
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
             if let Ok((preview, painted)) = preview_receiver.await {
                 this.update(cx, |this, cx| {
                     this.publish_preview(revision, preview, painted, cx)

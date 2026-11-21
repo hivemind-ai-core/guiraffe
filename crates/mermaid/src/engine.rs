@@ -612,10 +612,8 @@ mod tests {
         let config = LayoutConfig::default();
         let parsed = parse_mermaid_strict(source).expect("flowchart");
         let mut layout = compute_layout(&parsed.graph, &request.theme, &config);
-        // Use the cheap preview's straight paths and overview-scale bounds.
-        for edge in &mut layout.edges {
-            edge.points.truncate(2);
-        }
+        // Wide previews can contain multi-segment paths such as self-loops.
+        layout.edges[0].points = vec![(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 0.0)];
         layout.width = 38_000.0;
         let mut engine = engine();
         let preview = engine.preview(&request, &layout, &config).expect("preview");
