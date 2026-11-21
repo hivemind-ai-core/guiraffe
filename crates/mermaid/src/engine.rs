@@ -22,6 +22,7 @@ use mermaid_rs_renderer::{
 };
 
 use crate::{
+    preview::Overview,
     sizing::{dimensions_are_usable, zoom_raster_size},
     source::{CacheKey, SourceError, admit},
 };
@@ -134,7 +135,17 @@ fn frame(
 
 struct RenderStage<'a> {
     cancelled: &'a AtomicBool,
-    publish: &'a mut dyn FnMut(StagedImage),
+    publish: &'a mut dyn FnMut(StagedPreview),
+}
+
+pub(crate) enum StagedPreview {
+    Native {
+        overview: Overview,
+        natural: (f32, f32),
+        anchor: (f32, f32),
+        scale: f32,
+    },
+    Raster(StagedImage),
 }
 
 pub(crate) struct StagedImage {
@@ -301,7 +312,7 @@ impl Engine {
         &mut self,
         request: &Request,
         cancelled: &AtomicBool,
-        mut publish: impl FnMut(StagedImage),
+        mut publish: impl FnMut(StagedPreview),
     ) -> Result<Option<StagedImage>, RenderError> {
         let stage = RenderStage {
             cancelled,
@@ -333,11 +344,10 @@ impl Engine {
                     let cancelled = || stage.cancelled.load(Ordering::Relaxed);
                     let mut preview = |layout: &Layout| {
                         if !cancelled()
-                            && let Ok(frame) = frame(layout, &request.theme, &config, Some(request))
-                            && let Ok(image) = self.rasterize_preview(request, frame)
+                            && let Ok(preview) = self.preview(request, layout, &config)
                             && !cancelled()
                         {
-                            (stage.publish)(image);
+                            (stage.publish)(preview);
                         }
                     };
                     draw_layout(
@@ -377,6 +387,36 @@ impl Engine {
             parsed,
             raster: None,
         })
+    }
+
+    fn preview(
+        &mut self,
+        request: &Request,
+        layout: &Layout,
+        config: &LayoutConfig,
+    ) -> Result<StagedPreview, RenderError> {
+        let dims = measure_svg_dimensions(layout, config, None);
+        if !dimensions_are_usable(dims.width, dims.height) {
+            return Err(RenderError::Dimensions);
+        }
+        let width = dims.width.min(request.display_width.max(100.0));
+        let height = width * dims.height / dims.width;
+        let scale = width / dims.width;
+        let pixels = zoom_raster_size(width, height, request.zoom, request.density);
+        if request.theme.font_size * pixels.0 as f32 / dims.width < 1.0
+            && let Some(node) = layout.nodes.values().find(|node| !node.hidden)
+            && let Some(overview) = Overview::new(layout, &dims, &request.theme)
+        {
+            return Ok(StagedPreview::Native {
+                overview,
+                natural: (width, height),
+                anchor: (node.x * scale, node.y * scale),
+                scale,
+            });
+        }
+        let frame = frame(layout, &request.theme, config, Some(request))?;
+        self.rasterize_preview(request, frame)
+            .map(StagedPreview::Raster)
     }
 
     fn rasterize_preview(
@@ -566,6 +606,32 @@ mod tests {
     }
 
     #[test]
+    fn subpixel_plain_flowchart_preview_skips_svg_rasterization() {
+        let source = "flowchart LR\n  A[Start] --> B[Done]";
+        let request = request(source);
+        let config = LayoutConfig::default();
+        let parsed = parse_mermaid_strict(source).expect("flowchart");
+        let mut layout = compute_layout(&parsed.graph, &request.theme, &config);
+        // Use the cheap preview's straight paths and overview-scale bounds.
+        for edge in &mut layout.edges {
+            edge.points.truncate(2);
+        }
+        layout.width = 38_000.0;
+        let mut engine = engine();
+        let preview = engine.preview(&request, &layout, &config).expect("preview");
+        assert!(matches!(preview, StagedPreview::Native { .. }));
+        assert_eq!(engine.rasterizations(), 0);
+        assert!(engine.is_empty());
+
+        let first = layout.nodes.values_mut().next().expect("node");
+        first.shape = mermaid_rs_renderer::ir::NodeShape::Diamond;
+        let preview = engine.preview(&request, &layout, &config).expect("preview");
+        assert!(matches!(preview, StagedPreview::Raster(_)));
+        assert_eq!(engine.rasterizations(), 1);
+        assert!(engine.is_empty());
+    }
+
+    #[test]
     fn cancelling_after_the_preview_does_not_cache_a_partial_layout() {
         use std::fmt::Write as _;
 
@@ -580,8 +646,10 @@ mod tests {
         let result = engine
             .render_staged(&request, &cancelled, |frame| {
                 previews += 1;
-                assert!(frame.anchor.is_some());
-                assert!(frame.image.image.size(0).width.0 > 1);
+                if let StagedPreview::Raster(frame) = frame {
+                    assert!(frame.anchor.is_some());
+                    assert!(frame.image.image.size(0).width.0 > 1);
+                }
                 cancelled.store(true, Ordering::Relaxed);
             })
             .expect("staged render");

@@ -24,18 +24,9 @@ struct Probe {
 impl Render for Probe {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let diagram = self.diagram.read(cx);
-        if !self.preview_seen
-            && diagram.status() == &Status::Drawing
-            && let Some(image) = diagram.image()
-        {
+        if !self.preview_seen && diagram.has_preview() {
             self.preview_seen = true;
-            let size = image.image.size(0);
-            println!(
-                "first useful frame: {:?} ({} x {} raster)",
-                self.started.elapsed(),
-                size.width.0,
-                size.height.0,
-            );
+            println!("first useful frame: {:?}", self.started.elapsed());
         }
         if !self.finished {
             match diagram.status() {
@@ -62,9 +53,12 @@ impl Render for Probe {
                 _ => {}
             }
         }
-        div()
-            .size_full()
-            .child(MermaidView::new("mermaid-cold-mount").state(&self.diagram))
+        let window = div().size_full();
+        if self.window_only {
+            window
+        } else {
+            window.child(MermaidView::new("mermaid-cold-mount").state(&self.diagram))
+        }
     }
 }
 
