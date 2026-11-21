@@ -61,6 +61,7 @@ impl Default for ChartOptions {
 #[derive(Default)]
 struct Frame {
     bounds: Bounds<Pixels>,
+    scale: f32,
     scene: Option<(Domain, Scene)>,
     previous_scene: Option<(Domain, Scene)>,
     pending: Option<SceneRequest>,
@@ -113,11 +114,18 @@ impl PlotState {
         self.frame.pending = None;
     }
 
-    fn prepare(&mut self, bounds: Bounds<Pixels>, ink: &WeakEntity<PlotInk>, cx: &mut App) {
-        if self.frame.bounds.size != bounds.size {
+    fn prepare(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        scale: f32,
+        ink: &WeakEntity<PlotInk>,
+        cx: &mut App,
+    ) {
+        if self.frame.bounds.size != bounds.size || self.frame.scale != scale {
             self.invalidate();
         }
         self.frame.bounds = bounds;
+        self.frame.scale = scale;
         if self
             .frame
             .scene
@@ -133,7 +141,14 @@ impl PlotState {
         let width = f32::from(bounds.size.width);
         let height = f32::from(bounds.size.height);
         if self.chart.len() < 100_000 {
-            let scene = self.chart.scene(width, height, self.domain, &self.hidden);
+            let scene = self.chart.scene_with_cancel(
+                width,
+                height,
+                scale,
+                self.domain,
+                &self.hidden,
+                &|| false,
+            );
             self.frame.publish_scene(self.domain, scene);
             self.frame.builds += 1;
             return;
@@ -149,7 +164,7 @@ impl PlotState {
             let stop = cancelled.clone();
             let scene = executor
                 .spawn(async move {
-                    chart.scene_with_cancel(width, height, domain, &hidden, &|| {
+                    chart.scene_with_cancel(width, height, scale, domain, &hidden, &|| {
                         stop.load(Ordering::Relaxed)
                     })
                 })
@@ -732,7 +747,7 @@ impl Render for PlotInk {
                 {
                     window.defer(cx, move |_, cx| App::notify(cx, overlay.entity_id()));
                 }
-                layout.prepare(bounds, &ink, cx);
+                layout.prepare(bounds, window.scale_factor(), &ink, cx);
             },
             move |bounds, _, window, cx| {
                 let mut state = paint.borrow_mut();

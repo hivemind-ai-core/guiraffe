@@ -401,3 +401,69 @@ fn ui_macro_matches_builder_allocations_for_a_thousand_nodes() -> anyhow::Result
     assert_eq!(declarative, builder);
     Ok(())
 }
+
+// Charts
+
+#[inline(never)]
+fn draw_cached_chart(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    window.draw(cx).clear(cx);
+}
+
+#[gpui_kit::test]
+fn warmed_chart_replays_cached_ink(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{Context, Entity, IntoElement, Render, StyleRefinement, Styled, Window, px};
+    use guiraffe_charts::{Channels, ChartOptions, ChartSpec, ChartView, Layer, Mark};
+
+    struct CachedChart(Entity<ChartView>);
+    impl Render for CachedChart {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().w_full().h(px(290.)))
+        }
+    }
+
+    cx.update(|cx| {
+        gpui_kit::base::init(cx);
+        gpui_kit::component::init(cx);
+        guiraffe_core::apply(Default::default(), cx);
+    });
+    let (root, window) = cx.add_window_view(|_, cx| {
+        let spec = ChartSpec::new("Cached scatter").layer(Layer::new(
+            Mark::Point,
+            (0..10_000).collect::<Vec<_>>(),
+            Channels::new(|i| f64::from(*i), |i| (f64::from(*i) * 0.01).sin())
+                .group(|i| (i % 100) as u32),
+        ));
+        let options = ChartOptions {
+            legend: false,
+            navigation: false,
+            ..Default::default()
+        };
+        CachedChart(ChartView::new(spec.prepare(), options, cx))
+    });
+    window.run_until_parked();
+    window.update(|window, cx| {
+        for _ in 0..4 {
+            window.draw(cx).clear(cx);
+        }
+        let chart = root.read(cx).0.clone();
+        let paints = chart.read(cx).canvas_paint_count();
+        let builds = chart.read(cx).scene_build_count();
+        assert!(paints > 0 && builds > 0, "chart never mounted");
+        let (_, counts) =
+            count_allocations(|| draw_cached_chart(window, cx)).expect("count frame allocations");
+        eprintln!("cached chart frame: {counts:?}");
+        // GPUI duplicates the vertex buffers during cached scene replay.
+        // Bound the full draw until the backend shares those buffers.
+        let (allocations, bytes) = if gpui_kit::GPUI_FAST {
+            (80, 24 * 1024)
+        } else {
+            (100, 96 * 1024)
+        };
+        assert!(counts.allocations <= allocations, "{counts:?}");
+        assert!(counts.bytes <= bytes, "{counts:?}");
+        assert_eq!(chart.read(cx).canvas_paint_count(), paints);
+        assert_eq!(chart.read(cx).scene_build_count(), builds);
+    });
+}
