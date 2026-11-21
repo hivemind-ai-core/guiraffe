@@ -25,8 +25,9 @@ bullet, rail, label and secondary-content treatment using the shared core theme.
 - `EventTimeline::new(&state)` uses an `EventTimelineState` entity holding the
   immutable model, scroll, cursor and selection. Expose typed selection and
   activation events through the state. Props cover orientation, size, color,
-  accessible label and focus opt-in. Use the repository's data-props conventions
-  for serializable visual settings. Model data and callbacks are separate.
+  accessible label and focus opt-in. The control uses timeline's Rust builder
+  conventions. Model data and callbacks are separate. DataUI registration is
+  a follow-up alongside the other timeline controls.
 - A content factory receives the event and GPUI context and returns an element
   for its content region. Only visible and overscanned events invoke it. Reserve
   a theme-sized content area so slot geometry is independent of measurement.
@@ -102,12 +103,29 @@ Run the ignored integration test on Linux with the worktree-local release target
 It mounts an empty window, installs a 100,000-event dataset with duplicate
 positions and branch/merge links, then dispatches real keys and wheel events.
 The timer covers dataset construction and the first headless GPUI frame.
-The memory numbers are process RSS. CPU timings cover input dispatch and
-headless frame production. Use a native presentation trace for compositor
-timing. The default duration is 30 minutes. Set `EVENT_TIMELINE_SOAK_SECONDS`
+The memory numbers are process RSS. Frame latency covers input dispatch and
+headless frame production. The probe also records UI-thread CPU time. Native
+presentation timing requires a compositor trace. The default duration is 30 minutes. Set `EVENT_TIMELINE_SOAK_SECONDS`
 for a shorter diagnostic run.
 
 ```sh
 CARGO_BUILD_JOBS=4 cargo test --release -p guiraffe-timeline --test event_timeline soak_100k -- --ignored --nocapture
 CARGO_BUILD_JOBS=4 cargo test --release -p guiraffe-timeline --features gpui-fast --test event_timeline soak_100k -- --ignored --nocapture
 ```
+
+## Validation on Linux
+
+Release-mode headless runs used a Ryzen 7 8745HS, Linux 7.2.2, and the
+100,000-event fixture with four tracks, duplicate positions, secondary text
+and 3,125 connectors. The raw fixture occupied 14,875,200 bytes, giving an
+81.73 MiB limit above the empty window. The renderer and workload are from
+`625c955`. The runs lasted 60 seconds each on a shared development host.
+
+| Backend | Mount | Frame p99 | UI-thread CPU p99 | Peak RSS above empty | Post-warm-up RSS growth | Samples |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Upstream | 39.36 ms | 6.10 ms | 6.00 ms | 28.23 MiB | 4 KiB | 14,148 |
+| gpui-fast | 42.81 ms | 4.00 ms | 3.00 ms | 29.11 MiB | 32 KiB | 30,485 |
+
+Both runs met the mount, frame latency and peak memory limits. The headless
+interaction tests exercise the reported accessibility role, name and selection
+state. A native screen-reader pass and compositor timing remain open.
