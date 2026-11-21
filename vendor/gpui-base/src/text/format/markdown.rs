@@ -17,7 +17,6 @@ use crate::text::{
 };
 
 /// Parse Markdown into a tree of nodes.
-#[cfg(test)]
 pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument, SharedString> {
     parse_with_cancel(source, cx, || false)
 }
