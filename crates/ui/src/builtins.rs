@@ -396,6 +396,81 @@ pub fn register(r: &mut Registry) {
         }),
     );
     r.register(
+        LOADER.0.id,
+        widget(&LOADER.1, |n, _, window, cx| {
+            use guiraffe_components::{Loader, LoaderType};
+            use std::time::Duration;
+            let key = guiraffe_core::widget_catalog::WidgetNode::state_id(n);
+            let loader = window
+                .use_keyed_state(key, cx, |_, cx| Loader::new(cx))
+                .read(cx)
+                .clone();
+            let kind = match n.prop(n.prop_index("kind")).as_str() {
+                Some("bars") => LoaderType::Bars,
+                Some("dots") => LoaderType::Dots,
+                _ => LoaderType::Oval,
+            };
+            let count = n.num(n.prop_index("count")).unwrap_or(3.).clamp(1., 12.) as usize;
+            let period = n
+                .num(n.prop_index("period-ms"))
+                .unwrap_or(1200.)
+                .clamp(0., f64::from(u32::MAX)) as u64;
+            let label = n.prop(n.prop_index("label")).as_str().unwrap_or("Loading");
+            loader.update(cx, |loader, cx| {
+                loader.set_kind(kind, cx);
+                loader.set_count(count, cx);
+                loader.set_period(Duration::from_millis(period), cx);
+                loader.set_label(label.to_owned(), cx);
+                loader.set_size(n.size(n.prop_index("size")), cx);
+                loader.set_color(n.color(n.prop_index("color")), cx);
+            });
+            loader.into_any_element()
+        }),
+    );
+    r.register(
+        ACTIVITY_TIMELINE.0.id,
+        widget(&ACTIVITY_TIMELINE.1, |n, _, _, _| {
+            use guiraffe_components::{Timeline, TimelineItem};
+            let values = n.prop(n.prop_index("items"));
+            let title = ["title".into()];
+            let description = ["description".into()];
+            let color = ["color".into()];
+            let bullet = ["bullet".into()];
+            let items = (0..values.list_len().unwrap_or_default()).filter_map(|index| {
+                let value = values.list_get(index)?;
+                let mut item = TimelineItem::new(value.field(&title).as_str()?.to_owned());
+                if let Some(description) = value.field(&description).as_str() {
+                    item = item.description(description.to_owned());
+                }
+                if let Some(color) = value.field(&color).as_str().and_then(ColorName::from_name) {
+                    item = item.color(color);
+                }
+                if let Some(bullet) = value.field(&bullet).as_str() {
+                    item = item.bullet(bullet.to_owned());
+                }
+                Some(item)
+            });
+            let active = n
+                .num(n.prop_index("active"))
+                .unwrap_or_default()
+                .clamp(0., f64::from(u32::MAX)) as usize;
+            let mut timeline = Timeline::new(items).active(active);
+            if let Some(color) = n.color(n.prop_index("color")) {
+                timeline = timeline.color(color);
+            }
+            if let Some(size) = n.size(n.prop_index("size")) {
+                timeline = timeline.size(size);
+            }
+            if let Some(diameter) = n.num(n.prop_index("bullet-size")) {
+                timeline = timeline.bullet_size(diameter.clamp(1., f64::from(f32::MAX)) as f32);
+            }
+            if let Some(width) = n.num(n.prop_index("line-width")) {
+                timeline = timeline.line_width(width.clamp(1., f64::from(f32::MAX)) as f32);
+            }
+            timeline.into_any_element()
+        }),
+    );
+    r.register(
         KBD_GROUP.0.id,
         widget(&KBD_GROUP.1, |n, _, _, _| {
             let keys = n.prop(n.prop_index("keys"));

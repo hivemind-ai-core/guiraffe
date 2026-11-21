@@ -673,6 +673,7 @@ pub struct MermaidView {
     /// state (agent chat, gallery) can stream into it without this element
     /// overwriting what it was given.
     source: Option<SharedString>,
+    message: Option<Option<SharedString>>,
     state: Option<Entity<MermaidViewState>>,
 }
 
@@ -681,6 +682,7 @@ impl MermaidView {
         Self {
             id: id.into(),
             source: None,
+            message: None,
             state: None,
         }
     }
@@ -688,6 +690,12 @@ impl MermaidView {
     /// The diagram source, in Mermaid syntax.
     pub fn source(mut self, source: impl Into<SharedString>) -> Self {
         self.source = Some(source.into());
+        self
+    }
+
+    /// Show an optional message in the diagram footer.
+    pub fn message(mut self, message: Option<SharedString>) -> Self {
+        self.message = Some(message);
         self
     }
 
@@ -710,7 +718,12 @@ impl MermaidView {
 
 impl RenderOnce for MermaidView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let MermaidView { id, source, state } = self;
+        let MermaidView {
+            id,
+            source,
+            message,
+            state,
+        } = self;
         let state = match state {
             Some(state) => state,
             None => window.use_keyed_state(
@@ -719,10 +732,17 @@ impl RenderOnce for MermaidView {
                 |_, cx| MermaidViewState::new(id.clone(), Engine::new(cx.svg_renderer()), cx),
             ),
         };
-        if let Some(source) = source {
+        if source.is_some() || message.is_some() {
             state.update(cx, |state, cx| {
-                let dark = GuiraffeTheme::global(cx).scheme == Scheme::Dark;
-                state.set_source(source, dark, cx);
+                if let Some(source) = source {
+                    let dark = GuiraffeTheme::global(cx).scheme == Scheme::Dark;
+                    state.set_source(source, dark, cx);
+                }
+                if let Some(message) = message
+                    && state.message() != message.as_ref()
+                {
+                    state.set_message(message, cx);
+                }
             });
         }
         // The state fills the slot and can reuse its paint when the host redraws.

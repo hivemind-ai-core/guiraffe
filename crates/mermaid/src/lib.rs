@@ -62,9 +62,11 @@ pub fn init(cx: &mut gpui_kit::App) {
             spec: widget_specs::WIDGETS[0],
             schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| {
-                MermaidView::new(node.state_id())
-                    .source(node.prop(0).display())
-                    .into_any_element()
+                let mut view = MermaidView::new(node.state_id()).source(node.prop(0).display());
+                if node.is_set(1) {
+                    view = view.message(node.prop(1).as_str().map(|text| text.to_owned().into()));
+                }
+                view.into_any_element()
             },
         }],
     );

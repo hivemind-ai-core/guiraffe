@@ -29,18 +29,6 @@ components::ActionIcon::new
 components::ActionIcon::on_click
 components::ActionIcon::size
 components::ActionIcon::variant
-components::Burger
-components::Burger::id
-components::Burger::is_open
-components::Burger::new
-components::Burger::on_change
-components::Burger::set_color
-components::Burger::set_focusable
-components::Burger::set_labels
-components::Burger::set_open
-components::Burger::set_open_instant
-components::Burger::set_size
-components::Burger::toggle
 components::Card::section
 components::CardSection
 components::CardSection::new
@@ -63,30 +51,9 @@ components::ExpandingList::new
 components::ExpandingList::open
 components::ExpandingList::set_focusable
 components::ExpandingList::set_open
-components::Loader
-components::Loader::kind
-components::Loader::new
-components::Loader::set_color
-components::Loader::set_count
-components::Loader::set_kind
-components::Loader::set_label
-components::Loader::set_period
-components::Loader::set_size
 components::ScopedButton
 components::ScopedButton::focusable
 components::ScopedButton::new
-components::SegmentedControl
-components::SegmentedControl::disabled
-components::SegmentedControl::event Changed
-components::SegmentedControl::items
-components::SegmentedControl::new
-components::SegmentedControl::select
-components::SegmentedControl::selected
-components::SegmentedControl::set_disabled
-components::SegmentedControl::set_focusable
-components::SegmentedControl::set_full_width
-components::SegmentedControl::set_items
-components::SegmentedControl::set_size
 components::SpeedDial
 components::SpeedDial::event Action
 components::SpeedDial::event Open
@@ -125,22 +92,7 @@ components::ThemeIcon::new
 components::ThemeIcon::radius
 components::ThemeIcon::size
 components::ThemeIcon::variant
-components::Timeline
-components::Timeline::active
-components::Timeline::bullet_size
-components::Timeline::color
-components::Timeline::line_width
-components::Timeline::new
-components::Timeline::size
-components::TimelineItem
-components::TimelineItem::bullet
-components::TimelineItem::color
-components::TimelineItem::description
-components::TimelineItem::new
 components::fn close_button
-core::TextMenuLayer
-devtools::DevtoolsPanel
-devtools::DevtoolsRoot
 flow-core::LayoutOptions::field affected
 flow-core::LayoutOptions::field constraints
 flow-core::LayoutOptions::field crossing_weight
@@ -201,17 +153,6 @@ layout::Splitter::panes
 layout::Splitter::persist_key
 layout::Splitter::second
 layout::SplitterState::event Resized
-markdown::MarkdownState::reveal_heading
-mermaid::Host
-mermaid::Host::new
-mermaid::Host::request_redraw
-mermaid::Host::set_source
-mermaid::MermaidViewState::fit
-mermaid::MermaidViewState::message
-mermaid::MermaidViewState::reset_zoom
-mermaid::MermaidViewState::set_message
-mermaid::MermaidViewState::zoom_in
-mermaid::MermaidViewState::zoom_out
 overlays::Modals
 overlays::OverlayHost
 overlays::OverlayHost::clear_toasts
@@ -231,15 +172,3 @@ overlays::Spotlight
 overlays::Spotlight::new
 overlays::Spotlight::open
 overlays::Spotlight::set_commands
-ui::BoundNode
-ui::DataUi
-ui::DataUi::events_handled
-ui::DataUi::from_template
-ui::DataUi::handle
-ui::DataUi::host_renders
-ui::DataUi::new
-ui::DataUi::node_renders
-ui::DataUi::set_document
-ui::DataUi::slot_value
-ui::DataUi::stale_events
-ui::DataUi::template

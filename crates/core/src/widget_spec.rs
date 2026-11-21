@@ -69,7 +69,8 @@ impl PropSpec {
             | "timeline-tracks" | "track-selection" | "gantt-tasks" | "board-columns"
             | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
             | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels"
-            | "avatar-people" | "dope-channels" | "number-array" | "curve-series" => "array",
+            | "avatar-people" | "dope-channels" | "number-array" | "curve-series"
+            | "activity-items" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -110,6 +111,7 @@ impl PropSpec {
             "dope-channels" => schema["items"] = dope_channel_schema(),
             "number-array" => schema["items"] = json!({"type":"number"}),
             "curve-series" => schema["items"] = curve_series_schema(),
+            "activity-items" => schema["items"] = activity_item_schema(),
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => schema = curve_selection_schema(),
@@ -902,5 +904,17 @@ fn curve_selection_schema() -> Value {
     json!({
         "type":"array","items":{"type":"integer","minimum":0,"maximum":u32::MAX},
         "oneOf":[{"maxItems":0},{"minItems":2,"maxItems":2}]
+    })
+}
+
+pub fn activity_item_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["title"],
+        "properties":{
+            "title":{"type":"string"},
+            "description":{"type":"string"},
+            "color":{"enum":["dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal","green","lime","yellow","orange"]},
+            "bullet":{"type":"string"}
+        }
     })
 }

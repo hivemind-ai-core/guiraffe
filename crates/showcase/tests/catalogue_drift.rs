@@ -17,18 +17,22 @@ fn kind(surface: &str) -> Option<&'static str> {
         "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport"
         | "flow::FlowOptions" => "flow",
         "components::AvatarGroup" => "avatar-group",
+        "components::Burger" => "burger",
         "components::Card" => "card",
         "components::Blockquote" => "blockquote",
         "components::ColorSwatch" => "color-swatch",
         "components::Highlight" => "highlight",
         "components::Indicator" => "indicator",
         "components::KbdGroup" => "kbd-group",
+        "components::Loader" => "loader",
         "components::Mark" => "mark",
         "components::Paper" => "paper",
         "components::Pill" => "pill",
         "components::RingProgress" => "ring",
+        "components::SegmentedControl" => "segmented-control",
         "components::Text" => "text",
         "components::Title" => "title",
+        "components::Timeline" | "components::TimelineItem" => "activity-timeline",
         "inputs::ChipGroup" => "chip-group",
         "inputs::PasswordStrength" => "password-strength",
         "inputs::Dropzone" => "dropzone",
@@ -45,7 +49,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "layout::Space" => "space",
         "layout::Stack" => "stack",
         "markdown::MarkdownView" | "markdown::MarkdownState" => "markdown",
-        "mermaid::MermaidView" | "mermaid::MermaidViewState" => "mermaid",
+        "mermaid::Host" | "mermaid::MermaidView" | "mermaid::MermaidViewState" => "mermaid",
         "overlays::Affix" => "affix",
         "overlays::FloatingTooltip" | "overlays::FloatingOptions" => "floating-tooltip",
         "overlays::LoadingOverlay" => "loading-overlay",
@@ -65,8 +69,100 @@ fn kind(surface: &str) -> Option<&'static str> {
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
     (
+        "core::TextMenuLayer",
+        "Window-owned menu layer shared by native text controls.",
+    ),
+    (
+        "devtools::DevtoolsPanel",
+        "Feature-gated diagnostics for the application's own window and instrumented view registry.",
+    ),
+    (
+        "devtools::DevtoolsRoot",
+        "Window host infrastructure that mounts diagnostic content around an application view.",
+    ),
+    (
+        "markdown::MarkdownState::reveal_heading",
+        "Host command that takes a parsed Heading returned by the Rust view state.",
+    ),
+    (
+        "mermaid::Host::request_redraw",
+        "The document renderer responds to source and theme changes automatically.",
+    ),
+    (
+        "mermaid::MermaidViewState::fit",
+        "Native viewport action available from the diagram controls and double click.",
+    ),
+    (
+        "mermaid::MermaidViewState::reset_zoom",
+        "Native viewport action available from the diagram controls.",
+    ),
+    (
+        "mermaid::MermaidViewState::zoom_in",
+        "Native zoom action exposed by the diagram controls.",
+    ),
+    (
+        "mermaid::MermaidViewState::zoom_out",
+        "Native zoom action exposed by the diagram controls.",
+    ),
+    (
+        "ui::BoundNode",
+        "An internal view allocated for a document node that reads a binding.",
+    ),
+    (
+        "ui::DataUi",
+        "The Rust host owns a complete compiled document and its application logic.",
+    ),
+    (
+        "ui::DataUi::events_handled",
+        "Read-only host event counter for instrumentation.",
+    ),
+    (
+        "ui::DataUi::from_template",
+        "Rust constructor for a host that compiles or shares a template before mounting it.",
+    ),
+    (
+        "ui::DataUi::handle",
+        "Returns the Rust integration handle for patching a mounted document.",
+    ),
+    (
+        "ui::DataUi::host_renders",
+        "Read-only host render counter for instrumentation.",
+    ),
+    (
+        "ui::DataUi::new",
+        "Rust constructor joining document, application registry and application logic.",
+    ),
+    (
+        "ui::DataUi::node_renders",
+        "Read-only node render counter for instrumentation.",
+    ),
+    (
+        "ui::DataUi::set_document",
+        "Rust hot-reload operation that swaps the document mounted by an existing host.",
+    ),
+    (
+        "ui::DataUi::slot_value",
+        "Read the desired data through a document binding.",
+    ),
+    (
+        "ui::DataUi::stale_events",
+        "Read-only host counter for events rejected across document generations.",
+    ),
+    (
+        "ui::DataUi::template",
+        "Returns the Rust host's compiled and shared template.",
+    ),
+    (
         "components::AvatarGroup::id",
         "Set the document node id to identify the group.",
+    ),
+    (
+        "components::Burger::id",
+        "Set the document node id to identify the navigation toggle.",
+    ),
+    (
+        "components::Burger::toggle",
+        "Interaction command. Documents supply the value and receive a change event.",
     ),
     (
         "inputs::ChipGroup::selected",
@@ -702,6 +798,13 @@ fn covered(surface: &str) -> bool {
         }
         return spec.props.iter().any(|prop| prop.name == name);
     }
+    if owner == "components::TimelineItem" && matches!(method, "description" | "color" | "bullet") {
+        return spec
+            .props
+            .iter()
+            .find(|prop| prop.name == "items")
+            .is_some_and(|prop| prop.schema()["items"]["properties"].get(method).is_some());
+    }
     match method {
         "new" => true, // Constructor parameters are declared by the kind's descriptor.
         "child" | "children" => spec.accepts_children,
@@ -738,6 +841,12 @@ fn covered(surface: &str) -> bool {
                 ("flow::FlowState" | "flow::FlowViewport", "set_viewport") => "zoom".into(),
                 ("flow::FlowState", "from_editor") => "graph".into(),
                 ("components::Card" | "components::Paper", "p") => "padding".into(),
+                ("components::Loader", "set_period") => "period-ms".into(),
+                ("components::Burger", "is_open" | "set_open" | "set_open_instant") => {
+                    "value".into()
+                }
+                ("components::Burger", "set_labels") => "closed-label".into(),
+                ("components::SegmentedControl", "select" | "selected") => "value".into(),
                 ("components::ColorSwatch", "from_color") => "color".into(),
                 ("components::Paper", "p_0") => "no-padding".into(),
                 ("components::Text", "fw") => "font-weight".into(),

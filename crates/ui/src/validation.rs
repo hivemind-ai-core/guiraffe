@@ -507,6 +507,10 @@ impl Validation<'_> {
                         .iter()
                         .all(|person| matches_data_schema(person, &schema))
                 }),
+                "activity-items" => got.as_array().is_some_and(|items| {
+                    let schema = crate::widget_spec::activity_item_schema();
+                    items.iter().all(|item| matches_data_schema(item, &schema))
+                }),
                 "integer-array" => got
                     .as_array()
                     .is_some_and(|items| items.iter().all(|item| item.as_u64().is_some())),

@@ -14,6 +14,8 @@ mod charts;
 mod chat;
 #[path = "../../code/src/widget_specs.rs"]
 mod code;
+#[path = "../../components/src/widget_specs.rs"]
+mod components;
 #[path = "../../datagrid/src/widget_specs.rs"]
 mod datagrid;
 #[path = "../../dnd/src/widget_specs.rs"]
@@ -43,6 +45,7 @@ pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
         .chain(charts::WIDGETS)
         .chain(chat::WIDGETS)
         .chain(code::WIDGETS)
+        .chain(components::WIDGETS)
         .chain(datagrid::WIDGETS)
         .chain(dnd::WIDGETS)
         .chain(flamegraph::WIDGETS)
@@ -253,6 +256,22 @@ widgets! {
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "placeholder": "string" = "\"\"", &[] as &[&str], None, false;
          "invalid": "boolean" = "false", &[] as &[&str], None, false], ["change": "selection"];
+    LOADER: "loader", "components", "Animated loading indicator with an accessible label.", false, "keyed animation state", "progressbar",
+        ["control_size", "variant.foreground", "variant.background"],
+        ["kind": "string" = "\"oval\"", &["oval", "bars", "dots"], None, false;
+         "label": "string" = "\"Loading\"", &[] as &[&str], None, false;
+         "count": "integer" = "3", &[] as &[&str], Some((1.0, 12.0)), false;
+         "period-ms": "integer" = "1200", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false], [];
+    ACTIVITY_TIMELINE: "activity-timeline", "components", "Vertical list of activity items and a current position.", false, "stateless", "list",
+        ["control_size", "variant.background", "surfaces.text"],
+        ["items": "activity-items" = "[]", &[] as &[&str], None, false;
+         "active": "integer" = "0", &[] as &[&str], Some((0.0, u32::MAX as f64)), false;
+         "size": "string" = "null", SIZE, None, false;
+         "color": "string" = "null", COLOR, None, false;
+         "bullet-size": "number" = "null", &[] as &[&str], Some((1.0, f32::MAX as f64)), false;
+         "line-width": "number" = "null", &[] as &[&str], Some((1.0, f32::MAX as f64)), false], [];
 }
 
 /// Look up an authoring descriptor by its document kind.

@@ -12,6 +12,9 @@
 //! } }
 //! ```
 
+use guiraffe_core::widget_spec;
+mod widget_specs;
+
 pub mod accordion;
 pub mod avatar_group;
 pub mod burger;
@@ -63,4 +66,6 @@ pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_core::init(cx);
     guiraffe_motion::init(cx);
     segmented::init(cx);
+    segmented::document::register(cx);
+    burger::document::register(cx);
 }

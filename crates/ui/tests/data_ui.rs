@@ -494,6 +494,7 @@ fn chip_click_updates_a_bound_selection_and_delivers_an_event(cx: &mut TestAppCo
 }
 
 fn init_document_widgets(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
     cx.update(guiraffe_inputs::init);
     cx.update(guiraffe_layout::init);
     cx.update(guiraffe_code::init);
@@ -652,6 +653,7 @@ fn mermaid_document_validates_compiles_and_renders(cx: &mut TestAppContext) {
     let doc = Document::new(
         Node::new("mermaid")
             .prop("source", "flowchart LR\n  A --> B")
+            .prop("message", "Ready")
             .bind("source", "diagram"),
     );
     assert!(validation::Validation::default().check(&doc).is_empty());
@@ -665,7 +667,7 @@ fn mermaid_document_validates_compiles_and_renders(cx: &mut TestAppContext) {
 #[test]
 fn ui_macro_accepts_mermaid_builders() {
     use guiraffe_mermaid::MermaidView;
-    let view = ui! { MermaidView("example") { source: "flowchart LR\n  A --> B" } };
+    let view = ui! { MermaidView("example") { source: "flowchart LR\n  A --> B"; message: Some("Ready".into()) } };
     let _ = view.into_element();
 }
 
@@ -1718,6 +1720,99 @@ fn ui_macro_accepts_the_native_curve_editor() {
             view.set_focusable(Some(true), cx);
         });
         ui! { div { {view} } }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn native_navigation_loader_and_activity_documents_render(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let doc = Document::new(
+        Node::new("stack")
+            .child(
+                Node::new("burger")
+                    .prop("value", true)
+                    .prop("animate-changes", false)
+                    .prop("size", "lg")
+                    .prop("color", "blue")
+                    .prop("focusable", true)
+                    .prop("closed-label", "Open tools")
+                    .prop("open-label", "Close tools")
+                    .on("change", "toggle-tools"),
+            )
+            .child(
+                Node::new("segmented-control")
+                    .prop("items", serde_json::json!(["Current", "All"]))
+                    .prop("value", 1)
+                    .prop("size", "sm")
+                    .prop("full-width", true)
+                    .prop("disabled", false)
+                    .prop("focusable", true)
+                    .on("change", "scope"),
+            )
+            .child(
+                Node::new("loader")
+                    .prop("kind", "dots")
+                    .prop("label", "Loading updates")
+                    .prop("count", 4)
+                    .prop("period-ms", 800)
+                    .prop("size", "lg")
+                    .prop("color", "grape"),
+            )
+            .child(
+                Node::new("activity-timeline")
+                    .prop("items", serde_json::json!([
+                        {"title":"Started","description":"The work began.","color":"teal","bullet":"A"},
+                        {"title":"Finished"}
+                    ]))
+                    .prop("active", 1)
+                    .prop("size", "sm")
+                    .prop("color", "grape")
+                    .prop("bullet-size", 24)
+                    .prop("line-width", 2),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let template = Arc::new(Template::compile(&doc, &registry).expect("native controls"));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{:?}",
+            template.diagnostics()
+        );
+        Shell {
+            ui: DataUi::from_template(template, registry, NoLogic, cx),
+        }
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_activity_and_navigation_component_builders() {
+    use guiraffe_components::{
+        Burger, Loader, LoaderType, SegmentedControl, Timeline, TimelineItem,
+    };
+    use guiraffe_core::Size;
+
+    fn example(cx: &mut gpui_kit::App) -> impl IntoElement {
+        let burger = Burger::new(cx);
+        burger.update(cx, |burger, cx| burger.set_open_instant(true, cx));
+        let loader = Loader::new(cx);
+        loader.update(cx, |loader, cx| loader.set_kind(LoaderType::Dots, cx));
+        let scope = SegmentedControl::new(["Current", "All"], cx);
+        let items = [TimelineItem::new("Started")
+            .description("The work began.")
+            .bullet("A")];
+        ui! {
+            div {
+                {burger}
+                {loader}
+                {scope}
+                Timeline(items) { active: 0; size: Size::Sm; bullet_size: 24.; line_width: 2. }
+            }
+        }
     }
     let _ = example;
 }

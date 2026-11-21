@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../core/src/widget_spec.rs");
     println!("cargo:rerun-if-changed=../inputs/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../code/src/widget_specs.rs");
+    println!("cargo:rerun-if-changed=../components/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../charts/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../chat/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../datagrid/src/widget_specs.rs");

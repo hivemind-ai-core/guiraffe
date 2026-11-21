@@ -369,3 +369,5 @@ mod tests {
         assert_eq!(indicator_box(&[], 0.0, 0), None);
     }
 }
+
+pub(crate) mod document;
