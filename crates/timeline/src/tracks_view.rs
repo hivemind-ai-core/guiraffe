@@ -91,10 +91,14 @@ fn hit_index(track: &Track, axis: &Axis, x: f64, edges: ResizeEdges) -> Option<(
     let clips = track.clips();
     let first = clips.partition_point(|c| c.end() < axis.t((x - EDGE_GRAB).max(0.)));
     let last = clips.partition_point(|c| c.start <= axis.t((x + EDGE_GRAB).min(axis.width)));
-    clips[first..last].iter().find_map(|c| {
-        crate::edit::grab_at(axis.x(c.start), axis.x(c.end()), x, t, c.start, edges)
-            .map(|g| (first + i, g))
-    })
+    clips
+        .get(first..last)?
+        .iter()
+        .enumerate()
+        .find_map(|(i, c)| {
+            crate::edit::grab_at(axis.x(c.start), axis.x(c.end()), x, t, c.start, edges)
+                .map(|g| (first + i, g))
+        })
 }
 
 impl TracksView {
