@@ -74,6 +74,20 @@ pub enum GutterMark {
     PartiallyCovered,
 }
 
+impl GutterMark {
+    pub(crate) fn color(self) -> ColorName {
+        match self {
+            Self::Breakpoint | Self::Error | Self::Deleted | Self::Uncovered => ColorName::Red,
+            Self::Bookmark | Self::Modified => ColorName::Blue,
+            Self::Added | Self::Covered => ColorName::Green,
+            Self::PartiallyCovered => ColorName::Yellow,
+        }
+    }
+}
+
+pub(crate) const OVERVIEW_BINS: usize = 256;
+type GutterOverview = [[Option<GutterMark>; 4]; OVERVIEW_BINS];
+
 /// Git metadata shared by every run attributed to this commit.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BlameCommit {
@@ -485,7 +499,8 @@ struct DecorationIndex {
     by_end: Vec<u32>,
     diagnostics: Vec<u32>,
     changes: Vec<u32>,
-    overview: [bool; 256],
+    overview: [bool; OVERVIEW_BINS],
+    gutter_overview: Option<Box<GutterOverview>>,
     disjoint: bool,
     has_blame: bool,
     has_widgets: bool,
@@ -519,7 +534,8 @@ impl DecorationLayer {
             by_end: Vec::new(),
             diagnostics: Vec::new(),
             changes: Vec::new(),
-            overview: [false; 256],
+            overview: [false; OVERVIEW_BINS],
+            gutter_overview: None,
             disjoint: false,
             has_blame: false,
             has_widgets: false,
@@ -541,14 +557,22 @@ impl DecorationLayer {
                 _ => {}
             }
         }
-        let mut bins = [0_i64; 257];
+        let mut bins = [0_i64; OVERVIEW_BINS + 1];
         let bin = |offset| {
             document.position(offset as usize).map_or(0, |position| {
-                ((position.line as u128 * 256) / document.line_count() as u128) as usize
+                ((position.line as u128 * OVERVIEW_BINS as u128) / document.line_count() as u128)
+                    as usize
             })
         };
         for record in &data.records {
             let first = bin(record.start);
+            if let Some(DecorationStyle::Gutter { lane, mark }) = styles.get(record.style as usize)
+            {
+                let overview = data
+                    .gutter_overview
+                    .get_or_insert_with(|| Box::new([[None; 4]; OVERVIEW_BINS]));
+                overview[first][usize::from((*lane).min(3))] = Some(*mark);
+            }
             let source = document.source();
             let mut tail = record.end.saturating_sub(1).max(record.start) as usize;
             while !source.is_char_boundary(tail) {
@@ -590,8 +614,12 @@ impl DecorationLayer {
     }
 
     /// Occupied rows in a fixed 256-bin overview of the source lines.
-    pub fn overview(&self) -> &[bool; 256] {
+    pub fn overview(&self) -> &[bool; OVERVIEW_BINS] {
         &self.index.overview
+    }
+
+    pub(crate) fn gutter_overview(&self) -> Option<&GutterOverview> {
+        self.index.gutter_overview.as_deref()
     }
 
     pub fn options(&self) -> DecorationLayerOptions {
