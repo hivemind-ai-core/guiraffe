@@ -95,6 +95,21 @@ impl Channel {
         self.keys.iter().position(|k| *k == t)
     }
     pub(crate) fn replace_times(&mut self, edits: &mut [(f64, f64)]) {
+        if self.decor.is_none()
+            && let [(from, to)] = edits
+        {
+            if let Ok(index) = self.keys.binary_search_by(|key| key.total_cmp(from)) {
+                let insertion = self.keys.partition_point(|key| key.total_cmp(to).is_lt());
+                let target = insertion - usize::from(insertion > index);
+                if index < target {
+                    self.keys[index..=target].rotate_left(1);
+                } else if target < index {
+                    self.keys[target..=index].rotate_right(1);
+                }
+                self.keys[target] = *to;
+            }
+            return;
+        }
         edits.sort_by(|a, b| a.0.total_cmp(&b.0));
         let replacement = |t: f64| {
             edits
@@ -164,5 +179,29 @@ pub fn snap_time(t: f64, format: TimeFormat) -> f64 {
     match format {
         TimeFormat::Frames(fps) if fps.is_finite() && fps > 0. => (t * fps).round() / fps,
         _ => t,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Channel;
+
+    #[test]
+    fn single_plain_key_retime_preserves_order_across_densities() {
+        for count in [10_000, 100_000] {
+            let keys: Vec<_> = (0..count).map(f64::from).collect();
+            let mut channel = Channel::new("plain", keys.clone());
+            let index = keys.len() / 2;
+            let from = keys[index];
+            let to = from + 5.5;
+
+            channel.replace_times(&mut [(from, to)]);
+            assert_eq!(channel.keys()[index..index + 5], keys[index + 1..index + 6]);
+            assert_eq!(channel.keys()[index + 5], to);
+            assert_eq!(channel.keys()[index + 6..], keys[index + 6..]);
+
+            channel.replace_times(&mut [(to, from)]);
+            assert_eq!(channel.keys(), keys);
+        }
     }
 }
