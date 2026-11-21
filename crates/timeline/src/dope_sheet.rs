@@ -1,4 +1,5 @@
 //! Hierarchical, frame-snapped dope sheet with viewport-culling and explicit selection.
+use crate::plot::append_diamond;
 use crate::{
     Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
@@ -392,7 +393,7 @@ fn key_indices(
     first: usize,
     end: usize,
     spacing: Option<f64>,
-) -> impl Iterator<Item = usize> + '_ {
+) -> impl Iterator<Item = usize> + Clone + '_ {
     std::iter::successors((first < end).then_some(first), move |&index| {
         let next = index + 1;
         // Preserve the source sequence for picking and editing. Only the
@@ -404,6 +405,79 @@ fn key_indices(
         };
         (next < end).then_some(next)
     })
+}
+
+struct KeyMark {
+    x: f64,
+    y: f64,
+    selected: bool,
+    shape: KeyShape,
+    hold: Option<f64>,
+    muted: bool,
+    summary: bool,
+    locked: bool,
+}
+
+fn viewport_keys(
+    model: &DopeModel,
+    axis: Axis,
+    height: f64,
+    offset: f64,
+) -> impl Iterator<Item = KeyMark> + Clone + '_ {
+    let start = ((offset / f64::from(ROW_H)).floor() as usize).min(model.rows().len());
+    let end = (((offset + height) / f64::from(ROW_H)).ceil() as usize).min(model.rows().len());
+    model.rows()[start..end]
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| model.channels[row.channel].visible)
+        .flat_map(move |(row_index, row)| {
+            let channel = row.channel;
+            let c = &model.channels[channel];
+            let times = if row.summary {
+                model.summary_keys(channel)
+            } else {
+                c.keys()
+            };
+            let first = times.partition_point(|t| *t < axis.t(-KEY_GRAB));
+            let end = times.partition_point(|t| *t <= axis.t(axis.width + KEY_GRAB));
+            let has_selection = model
+                .selected
+                .range((channel, 0)..=(channel, u64::MAX))
+                .next()
+                .is_some();
+            let compact = !row.summary
+                && c.decor.is_none()
+                && !has_selection
+                && end.saturating_sub(first) > (axis.width / 4.) as usize;
+            let locked = !model.editable(channel);
+            let y = (start + row_index) as f64 * f64::from(ROW_H) - offset;
+            key_indices(times, first, end, compact.then_some(4. * axis.scale)).map(move |index| {
+                let time = times[index];
+                let x = axis.x(time);
+                let selected = if compact {
+                    false
+                } else if row.summary {
+                    model.summary_selected(channel, time)
+                } else {
+                    model.selected.contains(&(channel, time.to_bits()))
+                };
+                let (shape, hold) = if compact {
+                    (KeyShape::Diamond, None)
+                } else {
+                    model.key_display(channel, row.summary, index)
+                };
+                KeyMark {
+                    x,
+                    y,
+                    selected,
+                    shape,
+                    hold: hold.map(|t| axis.x(t)),
+                    muted: c.muted,
+                    summary: row.summary,
+                    locked,
+                }
+            })
+        })
 }
 
 impl Render for DopeSheet {
@@ -479,63 +553,8 @@ impl Render for DopeSheet {
                 end: (end.0, f64::from(end.1)),
             });
         }
-        let axis = self.surface.axis;
         let offset = self.offset;
-        let mut keys = Vec::new();
-        for (row_index, row) in rows.iter().enumerate() {
-            let channel = row.channel;
-            let c = &self.model.channels[channel];
-            if !c.visible {
-                continue;
-            }
-            let times = if row.summary {
-                self.model.summary_keys(channel)
-            } else {
-                c.keys()
-            };
-            let first = times.partition_point(|t| *t < axis.t(-KEY_GRAB));
-            let end = times.partition_point(|t| *t <= axis.t(axis.width + KEY_GRAB));
-            let has_selection = self
-                .model
-                .selected
-                .range((channel, 0)..=(channel, u64::MAX))
-                .next()
-                .is_some();
-            let compact = !row.summary
-                && c.decor.is_none()
-                && !has_selection
-                && end.saturating_sub(first) > (axis.width / 4.) as usize;
-            let locked = !self.model.editable(channel);
-            let y = (start + row_index) as f64 * f64::from(ROW_H) - offset;
-            for index in key_indices(times, first, end, compact.then_some(4. * axis.scale)) {
-                let time = times[index];
-                let x = axis.x(time);
-                let selected = if compact {
-                    false
-                } else if row.summary {
-                    self.model.summary_selected(channel, time)
-                } else {
-                    self.model.selected.contains(&(channel, time.to_bits()))
-                };
-                let (shape, hold) = if compact {
-                    (KeyShape::Diamond, None)
-                } else {
-                    self.model.key_display(channel, row.summary, index)
-                };
-                keys.push((
-                    x,
-                    y,
-                    selected,
-                    shape,
-                    hold.map(|t| axis.x(t)),
-                    c.muted,
-                    row.summary,
-                    locked,
-                ));
-            }
-        }
-        // Small scenes retain per-key rasterization and its original coverage.
-        let batch_diamonds = keys.len() > 512;
+        let key_owner = cx.weak_entity();
         let body = self.body.clone();
         let owner = cx.entity_id();
         let key_selected = theme
@@ -765,7 +784,20 @@ impl Render for DopeSheet {
                             .child(
                                 canvas(
                                     |_, _, _| (),
-                                    move |b, _, window, _| {
+                                    move |b, _, window, cx| {
+                                        let Some(owner) = key_owner.upgrade() else {
+                                            return;
+                                        };
+                                        let sheet = owner.read(cx);
+                                        let height = f64::from(f32::from(b.size.height)).max(1.);
+                                        let keys = viewport_keys(
+                                            &sheet.model,
+                                            sheet.surface.axis,
+                                            height,
+                                            sheet.offset,
+                                        );
+                                        // Keep sparse scenes on the original raster path.
+                                        let batch_diamonds = keys.clone().nth(512).is_some();
                                         let at = |x: f64, y: f64| {
                                             gpui_kit::point(
                                                 b.origin.x + px(x as f32),
@@ -776,108 +808,117 @@ impl Render for DopeSheet {
                                             gpui_kit::Hsla,
                                             gpui_kit::Path<Pixels>,
                                         )> = None;
-                                        for (x, y, selected, shape, hold, muted, summary, locked) in
-                                            &keys
-                                        {
-                                            let ink = if *selected {
-                                                key_selected
-                                            } else if *muted
-                                                || (*locked && lock_style == LockStyle::Dimmed)
-                                            {
-                                                key_muted
-                                            } else {
-                                                key_normal
-                                            };
-                                            let cy = *y + f64::from(ROW_H) / 2.;
-                                            let radius =
-                                                if *selected || *summary { 6. } else { 4. };
-                                            if batch_diamonds
-                                                && *shape == KeyShape::Diamond
-                                                && hold.is_none()
-                                                && !(*locked && lock_style == LockStyle::Hatched)
-                                            {
-                                                if diamonds
-                                                    .as_ref()
-                                                    .is_some_and(|(color, _)| *color != ink)
-                                                    && let Some((color, mesh)) = diamonds.take()
+                                        keys.for_each(
+                                            |KeyMark {
+                                                 x,
+                                                 y,
+                                                 selected,
+                                                 shape,
+                                                 hold,
+                                                 muted,
+                                                 summary,
+                                                 locked,
+                                             }| {
+                                                let ink = if selected {
+                                                    key_selected
+                                                } else if muted
+                                                    || (locked && lock_style == LockStyle::Dimmed)
                                                 {
+                                                    key_muted
+                                                } else {
+                                                    key_normal
+                                                };
+                                                let cy = y + f64::from(ROW_H) / 2.;
+                                                let radius =
+                                                    if selected || summary { 6. } else { 4. };
+                                                if batch_diamonds
+                                                    && shape == KeyShape::Diamond
+                                                    && hold.is_none()
+                                                    && !(locked && lock_style == LockStyle::Hatched)
+                                                {
+                                                    if diamonds
+                                                        .as_ref()
+                                                        .is_some_and(|(color, _)| *color != ink)
+                                                        && let Some((color, mesh)) = diamonds.take()
+                                                    {
+                                                        window.paint_path(mesh, color);
+                                                    }
+                                                    let (_, mesh) =
+                                                        diamonds.get_or_insert_with(|| {
+                                                            (ink, gpui_kit::Path::new(at(x, cy)))
+                                                        });
+                                                    append_diamond(
+                                                        mesh,
+                                                        [
+                                                            at(x, cy - radius),
+                                                            at(x + radius, cy),
+                                                            at(x, cy + radius),
+                                                            at(x - radius, cy),
+                                                        ],
+                                                    );
+                                                    return;
+                                                }
+                                                if let Some((color, mesh)) = diamonds.take() {
                                                     window.paint_path(mesh, color);
                                                 }
-                                                let (_, mesh) = diamonds.get_or_insert_with(|| {
-                                                    (ink, gpui_kit::Path::new(at(*x, cy)))
-                                                });
-                                                let top = at(*x, cy - radius);
-                                                let right = at(x + radius, cy);
-                                                let bottom = at(*x, cy + radius);
-                                                let left = at(x - radius, cy);
-                                                let uv = gpui_kit::point(0., 1.);
-                                                mesh.push_triangle(
-                                                    (top, right, bottom),
-                                                    (uv, uv, uv),
-                                                );
-                                                mesh.push_triangle(
-                                                    (top, bottom, left),
-                                                    (uv, uv, uv),
-                                                );
-                                                continue;
-                                            }
-                                            if let Some((color, mesh)) = diamonds.take() {
-                                                window.paint_path(mesh, color);
-                                            }
-                                            if let Some(end) = hold {
-                                                let mut path =
-                                                    gpui_kit::PathBuilder::stroke(px(3.));
-                                                path.move_to(at(*x, cy));
-                                                path.line_to(at(*end, cy));
+                                                if let Some(end) = hold {
+                                                    let mut path =
+                                                        gpui_kit::PathBuilder::stroke(px(3.));
+                                                    path.move_to(at(x, cy));
+                                                    path.line_to(at(end, cy));
+                                                    if let Ok(path) = path.build() {
+                                                        window.paint_path(path, ink);
+                                                    }
+                                                }
+                                                let mut path = gpui_kit::PathBuilder::fill();
+                                                if shape == KeyShape::Diamond {
+                                                    for (i, (dx, dy)) in [
+                                                        (0., -radius),
+                                                        (radius, 0.),
+                                                        (0., radius),
+                                                        (-radius, 0.),
+                                                    ]
+                                                    .iter()
+                                                    .enumerate()
+                                                    {
+                                                        if i == 0 {
+                                                            path.move_to(at(x + dx, cy + dy));
+                                                        } else {
+                                                            path.line_to(at(x + dx, cy + dy));
+                                                        }
+                                                    }
+                                                } else {
+                                                    let sides = if shape == KeyShape::Circle {
+                                                        16
+                                                    } else {
+                                                        4
+                                                    };
+                                                    for i in 0..sides {
+                                                        let angle = (i as f64 + 0.5)
+                                                            * std::f64::consts::TAU
+                                                            / sides as f64;
+                                                        let p = at(
+                                                            x + radius * angle.cos(),
+                                                            cy + radius * angle.sin(),
+                                                        );
+                                                        if i == 0 {
+                                                            path.move_to(p)
+                                                        } else {
+                                                            path.line_to(p)
+                                                        }
+                                                    }
+                                                }
+                                                path.close();
+                                                if locked && lock_style == LockStyle::Hatched {
+                                                    path.move_to(at(x - radius, cy + radius));
+                                                    path.line_to(at(x + radius, cy - radius));
+                                                }
+
                                                 if let Ok(path) = path.build() {
                                                     window.paint_path(path, ink);
                                                 }
-                                            }
-                                            let mut path = gpui_kit::PathBuilder::fill();
-                                            if *shape == KeyShape::Diamond {
-                                                for (i, (dx, dy)) in [
-                                                    (0., -radius),
-                                                    (radius, 0.),
-                                                    (0., radius),
-                                                    (-radius, 0.),
-                                                ]
-                                                .iter()
-                                                .enumerate()
-                                                {
-                                                    if i == 0 {
-                                                        path.move_to(at(x + dx, cy + dy));
-                                                    } else {
-                                                        path.line_to(at(x + dx, cy + dy));
-                                                    }
-                                                }
-                                            } else {
-                                                let sides =
-                                                    if *shape == KeyShape::Circle { 16 } else { 4 };
-                                                for i in 0..sides {
-                                                    let angle = (i as f64 + 0.5)
-                                                        * std::f64::consts::TAU
-                                                        / sides as f64;
-                                                    let p = at(
-                                                        x + radius * angle.cos(),
-                                                        cy + radius * angle.sin(),
-                                                    );
-                                                    if i == 0 {
-                                                        path.move_to(p)
-                                                    } else {
-                                                        path.line_to(p)
-                                                    }
-                                                }
-                                            }
-                                            path.close();
-                                            if *locked && lock_style == LockStyle::Hatched {
-                                                path.move_to(at(x - radius, cy + radius));
-                                                path.line_to(at(x + radius, cy - radius));
-                                            }
-
-                                            if let Ok(path) = path.build() {
-                                                window.paint_path(path, ink);
-                                            }
-                                        }
+                                            },
+                                        );
                                         if let Some((color, mesh)) = diamonds {
                                             window.paint_path(mesh, color);
                                         }
@@ -895,6 +936,50 @@ impl Render for DopeSheet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diamond_batch_matches_generic_triangle_vertices_and_bounds() {
+        use gpui_kit::{Path, point};
+
+        let origin = point(px(2.), px(7.));
+        let mut batch = Path::new(origin);
+        let mut reference = Path::new(origin);
+        let uv = point(0., 1.);
+        for x in [-4., 20., 13.] {
+            let top = point(px(x), px(4.));
+            let right = point(px(x + 3.), px(7.));
+            let bottom = point(px(x), px(10.));
+            let left = point(px(x - 3.), px(7.));
+            append_diamond(&mut batch, [top, right, bottom, left]);
+            reference.push_triangle((top, right, bottom), (uv, uv, uv));
+            reference.push_triangle((top, bottom, left), (uv, uv, uv));
+        }
+        assert_eq!(batch.bounds, reference.bounds);
+        assert_eq!(batch.vertices.len(), reference.vertices.len());
+        for (actual, expected) in batch.vertices.iter().zip(&reference.vertices) {
+            assert_eq!(actual.xy_position, expected.xy_position);
+            assert_eq!(actual.st_position, expected.st_position);
+            assert_eq!(actual.content_mask, expected.content_mask);
+        }
+    }
+
+    #[test]
+    fn viewport_visits_only_intersecting_rows_at_both_scales() {
+        for count in [10_000, 100_000] {
+            let model =
+                DopeModel::new((0..count).map(|_| Channel::new("lane", vec![1.])).collect());
+            let axis = Axis::new(0., 10., 100.);
+            let row_height = f64::from(ROW_H);
+            let offset = 25.5 * row_height;
+            let rows: Vec<_> = viewport_keys(&model, axis, 2. * row_height, offset)
+                .map(|mark| mark.y)
+                .collect();
+            assert_eq!(
+                rows,
+                [-0.5 * row_height, 0.5 * row_height, 1.5 * row_height]
+            );
+        }
+    }
 
     #[test]
     fn dense_plain_keys_emit_the_same_marks_across_input_scales() {
