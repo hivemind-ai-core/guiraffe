@@ -20,6 +20,14 @@ use crate::style::{metrics, radius, theme};
 /// How long "copied" is shown, in milliseconds (Mantine: 2000).
 pub const COPIED_MS: u64 = 2000;
 
+/// The element id of a copy button: the value it copies, shortened.
+fn element_id(value: &SharedString) -> SharedString {
+    let mut id = String::with_capacity(48);
+    id.push_str("gr-copy-button:");
+    id.extend(value.chars().take(24));
+    id.into()
+}
+
 type OnCopy = Box<dyn Fn(&SharedString, &mut Window, &mut App) + 'static>;
 
 /// A button that copies its value and confirms for two seconds.
@@ -34,6 +42,9 @@ type OnCopy = Box<dyn Fn(&SharedString, &mut Window, &mut App) + 'static>;
 /// ```
 pub struct CopyButton {
     value: SharedString,
+    /// The element id, built from the value: it changes with the value, not
+    /// with every render.
+    id: SharedString,
     label: Option<SharedString>,
     copied: bool,
     /// Incremented per copy so a stale timer cannot clear a newer copy.
@@ -54,6 +65,7 @@ impl CopyButton {
             focus: cx.focus_handle(),
             focusable: None,
             value: SharedString::default(),
+            id: element_id(&SharedString::default()),
             label: None,
             copied: false,
             generation: 0,
@@ -83,6 +95,7 @@ impl CopyButton {
     pub fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
         let value = value.into();
         if self.value != value {
+            self.id = element_id(&value);
             self.value = value;
             cx.notify();
         }
@@ -167,10 +180,7 @@ impl Render for CopyButton {
             Variant::Light
         };
         let colors = GuiraffeTheme::global(cx).press_colors(kind, self.color);
-        let id = format!(
-            "gr-copy-button:{}",
-            self.value.chars().take(24).collect::<String>()
-        );
+        let id = self.id.clone();
         let label = self.label.clone();
         // Icon-only buttons still need a name; the state is part of it.
         let name: SharedString = match (&label, copied) {
@@ -191,7 +201,7 @@ impl Render for CopyButton {
             .id(SharedString::from(id.clone()))
             .a11y_disabled(disabled)
             .test_support()
-            .debug_selector(move || id)
+            .debug_selector(move || id.to_string())
             .flex()
             .items_center()
             .justify_center()

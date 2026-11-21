@@ -42,6 +42,10 @@ pub enum ChipEvent {
 /// [`ChipGroup::set_focusable`], and then Enter/Space toggle and a focus ring shows.
 pub struct ChipGroup {
     labels: Vec<SharedString>,
+    /// The chip text, checked and unchecked: it changes with the labels, not
+    /// with every render.
+    text: Vec<SharedString>,
+    checked_text: Vec<SharedString>,
     selection: ChipSelection,
     color: Option<ColorName>,
     disabled: bool,
@@ -56,9 +60,19 @@ impl ChipGroup {
         multiple: bool,
         cx: &mut App,
     ) -> Entity<Self> {
-        let labels = labels.into_iter().map(Into::into).collect();
+        let labels = labels
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<SharedString>>();
+        let text = labels.iter().map(|label| label.clone()).collect();
+        let checked_text = labels
+            .iter()
+            .map(|label| format!("\u{2713} {label}").into())
+            .collect();
         cx.new(|_| Self {
             labels,
+            text,
+            checked_text,
             selection: ChipSelection {
                 multiple,
                 ..Default::default()
@@ -149,9 +163,9 @@ impl Render for ChipGroup {
                     .border_1()
                     .text_size(fs)
                     .child(if checked {
-                        format!("✓ {label}")
+                        self.checked_text[i].clone()
                     } else {
-                        label.to_string()
+                        self.text[i].clone()
                     })
                     .press(&press, &focus, window)
                     .when(!multiple, |el| el.aria_selected(checked))
@@ -187,6 +201,9 @@ pub enum TagsEvent {
 /// removes the last tag; pasted lists are split.
 pub struct TagsInput {
     tags: Vec<String>,
+    /// The tag labels, as the pills show them: they change with the tags, not
+    /// with every render.
+    tag_labels: Vec<SharedString>,
     rules: TagRules,
     input: Entity<InputState>,
     _sub: Subscription,
@@ -215,6 +232,7 @@ impl TagsInput {
             );
             Self {
                 tags: Vec::new(),
+                tag_labels: Vec::new(),
                 rules,
                 input,
                 _sub: sub,
@@ -236,6 +254,8 @@ impl TagsInput {
         match accept_tag(&self.tags, raw, &self.rules) {
             Ok(tag) => {
                 self.tags.push(tag);
+                self.tag_labels
+                    .push(self.tags[self.tags.len() - 1].as_str().into());
                 cx.emit(TagsEvent::Changed(self.tags.clone()));
                 cx.notify();
                 true
@@ -251,6 +271,7 @@ impl TagsInput {
     pub fn remove(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.tags.len() {
             self.tags.remove(index);
+            self.tag_labels.remove(index);
             cx.emit(TagsEvent::Changed(self.tags.clone()));
             cx.notify();
         }
@@ -298,9 +319,9 @@ impl Render for TagsInput {
             .rounded(px(GuiraffeTheme::global(cx).default_radius.radius()))
             .border_1()
             .border_color(s.border.to_hsla())
-            .children(self.tags.iter().enumerate().map(|(i, t)| {
+            .children(self.tags.iter().enumerate().map(|(i, _)| {
                 let e = entity.clone();
-                Pill::new(("tag", i), t.clone())
+                Pill::new(("tag", i), self.tag_labels[i].clone())
                     .on_remove(move |_, _, cx| e.update(cx, |this, cx| this.remove(i, cx)))
             }))
             .child(
@@ -338,6 +359,9 @@ pub enum RangeEvent {
 /// numeric value (low), min, max, step and a "low – high" value text.
 pub struct RangeSlider {
     range: Range2,
+    /// The accessible value text: it changes with the range, not with every
+    /// render.
+    aria_value: SharedString,
     dragging: Option<Thumb>,
     track: Rc<std::cell::Cell<Bounds<Pixels>>>,
     focus: FocusHandle,
@@ -368,10 +392,17 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+/// The accessible value of a range: "low – high".
+fn aria_value(range: &Range2) -> SharedString {
+    format!("{} – {}", range.low, range.high).into()
+}
+
 impl RangeSlider {
     pub fn new(range: Range2, cx: &mut App) -> Entity<Self> {
+        let aria_value = aria_value(&range);
         cx.new(|cx| Self {
             range,
+            aria_value,
             dragging: None,
             track: Rc::default(),
             focus: cx.focus_handle(),
@@ -403,6 +434,7 @@ impl RangeSlider {
     }
     pub fn set(&mut self, thumb: Thumb, v: f32, cx: &mut Context<Self>) {
         if self.range.set(thumb, v) {
+            self.aria_value = aria_value(&self.range);
             cx.emit(RangeEvent::Changed(self.range.low, self.range.high));
             cx.notify();
         }
@@ -475,7 +507,7 @@ impl Render for RangeSlider {
             .aria_min_numeric_value(f64::from(r.min))
             .aria_max_numeric_value(f64::from(r.max))
             .aria_numeric_value_step(f64::from(r.step))
-            .aria_value(format!("{} – {}", r.low, r.high))
+            .aria_value(self.aria_value.clone())
             .track_focus(&self.focus.clone().tab_stop(tab))
             .key_context(RANGE_CONTEXT)
             .on_action(cx.listener(|this, _: &LowDown, _, cx| this.step(Thumb::Low, -1.0, cx)))

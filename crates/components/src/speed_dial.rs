@@ -82,6 +82,9 @@ pub struct SpeedDial {
     show_labels: bool,
     primary: IconName,
     label: SharedString,
+    /// The element id of the dial: it never changes, so it is built once
+    /// instead of for every frame.
+    group: SharedString,
 }
 
 impl EventEmitter<SpeedDialEvent> for SpeedDial {}
@@ -94,7 +97,7 @@ impl SpeedDial {
         layout: DialLayout,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             primary,
             label: label.into(),
             positions: layout.offsets(actions.len()),
@@ -103,6 +106,7 @@ impl SpeedDial {
             open: false,
             focusable: None,
             show_labels: false,
+            group: format!("speed-dial-{}", cx.entity_id().as_u64()).into(),
         })
     }
 
@@ -160,7 +164,7 @@ impl Render for SpeedDial {
         let theme = GuiraffeTheme::global(cx);
         let primary_colors = theme.press_colors(Variant::Filled, None);
         let action_colors = theme.press_colors(Variant::Default, None);
-        let group = SharedString::from(format!("speed-dial-{}", cx.entity_id().as_u64()));
+        let group = self.group.clone();
         let id = |index| ElementId::from((group.clone(), index));
         let primary_focus = keyed_focus(id(0), window, cx);
         let keyboard = guiraffe_core::tab_stop(self.focusable);

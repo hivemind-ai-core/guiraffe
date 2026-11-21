@@ -68,6 +68,9 @@ pub struct Accordion {
     open: Vec<usize>,
     controlled: bool,
     progress: Vec<Animated<f32>>,
+    /// The element id prefix of the triggers: it never changes, so it is built
+    /// once instead of for every trigger of every frame.
+    trigger_prefix: SharedString,
 }
 
 impl EventEmitter<AccordionChange> for Accordion {}
@@ -79,13 +82,14 @@ impl Accordion {
         default_open: Vec<usize>,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|_| {
+        cx.new(|cx| {
             let mut this = Self {
                 progress: vec![Animated::new(0., Timing::Spring(Spring::SNAPPY)); items.len()],
                 items,
                 options,
                 open: Vec::new(),
                 controlled: false,
+                trigger_prefix: format!("accordion-{}", cx.entity_id().as_u64() as usize).into(),
             };
             this.open = this.normalize(default_open);
             for &index in &this.open {
@@ -157,6 +161,7 @@ impl Render for Accordion {
         let separated = self.options.variant == AccordionVariant::Separated;
         let colors = disclosure_motion::trigger_colors(GuiraffeTheme::global(cx));
         let id = cx.entity_id();
+        let trigger_prefix = self.trigger_prefix.clone();
         let element =
             KitAccordion::new(("accordion", id.as_u64() as usize))
                 .flex()
@@ -172,10 +177,7 @@ impl Render for Accordion {
                     |(index, (item, progress))| {
                         let open = self.open.contains(&index);
                         let p = disclosure_motion::progress(progress, &mut needs_frame, cx);
-                        let trigger_id = ElementId::from((
-                            SharedString::from(format!("accordion-{}", id.as_u64() as usize)),
-                            index,
-                        ));
+                        let trigger_id = ElementId::from((trigger_prefix.clone(), index));
                         let focus = keyed_focus(trigger_id.clone(), window, cx);
                         let press = Press::new(colors)
                             .label(item.title.clone())

@@ -168,6 +168,9 @@ pub struct SplitterState {
     /// next: a drag that leaves the panes where they were is not reported,
     /// and the report happens once per drag.
     reported: RefCell<Vec<Pixels>>,
+    /// The sizes the panes start at, read from the store when the splitter is
+    /// built: the store is read once, not for every frame.
+    stored: RefCell<Option<(String, usize, Vec<Option<Pixels>>)>>,
 }
 
 impl EventEmitter<SplitterEvent> for SplitterState {}
@@ -179,6 +182,7 @@ impl SplitterState {
         cx.new(|_| Self {
             group,
             reported: RefCell::new(Vec::new()),
+            stored: RefCell::new(None),
         })
     }
 
@@ -193,6 +197,32 @@ impl SplitterState {
     /// applications that resize a pane themselves.
     pub fn group(&self) -> &Entity<ResizableState> {
         &self.group
+    }
+
+    /// The sizes the panes start at: the ones stored under `key`, read once.
+    ///
+    /// The store is read when the splitter is built, not for every frame: a
+    /// frame that changes nothing does not read the store again.
+    fn stored_sizes(&self, key: &str, panes: usize, cx: &App) -> Vec<Option<Pixels>> {
+        let mut cached = self.stored.borrow_mut();
+        let hit = cached
+            .as_ref()
+            .is_some_and(|(cached_key, cached_panes, _)| {
+                cached_key == key && *cached_panes == panes
+            });
+        if !hit {
+            let sizes: Vec<Option<Pixels>> = load_sizes(key, cx)
+                .map(|sizes| sizes.usable(panes, 0.))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|size| Some(px(size)))
+                .collect();
+            *cached = Some((key.to_owned(), panes, sizes));
+        }
+        cached
+            .as_ref()
+            .map(|(_, _, sizes)| sizes.clone())
+            .unwrap_or_default()
     }
 
     /// Remembers the sizes the panes have, the first time the splitter is
@@ -549,21 +579,18 @@ impl RenderOnce for Splitter {
         // ones that were stored under the splitter's key. The stored sizes
         // are checked first: a size that is not a number, or not positive,
         // is not a size a pane can have.
-        let stored = self
-            .persist_key
-            .as_deref()
-            .and_then(|key| load_sizes(key, cx));
         let panes = self.panes.len();
-        let stored = stored
-            .map(|sizes| sizes.usable(panes, 0.))
-            .unwrap_or_default();
+        let stored = match self.persist_key.as_deref() {
+            Some(key) => self.state.read(cx).stored_sizes(key, panes, cx),
+            None => Vec::new(),
+        };
         let sizes: Vec<Option<Pixels>> = (0..panes)
             .map(|index| {
                 self.sizes
                     .get(index)
                     .copied()
                     .flatten()
-                    .or_else(|| stored.get(index).copied().map(px))
+                    .or_else(|| stored.get(index).copied().flatten())
             })
             .collect();
 

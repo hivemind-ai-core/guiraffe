@@ -799,6 +799,11 @@ macro_rules! make_registry {
                 Suite { name: "code-frame-10m", run: code_frame_10m },
                 Suite { name: "ui-macro-frame-1k", run: ui_macro_tree },
                 Suite { name: "ui-builder-frame-1k", run: ui_builder_tree },
+                // Warm repaints of the crates every frame goes through.
+                Suite { name: "warm-components", run: crate::warm_repaint::warm_components },
+                Suite { name: "warm-inputs", run: crate::warm_repaint::warm_inputs },
+                Suite { name: "warm-layout", run: crate::warm_repaint::warm_layout },
+                Suite { name: "warm-overlays", run: crate::warm_repaint::warm_overlays },
             ]
         }
     };

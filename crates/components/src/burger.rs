@@ -43,6 +43,9 @@ type OnChange = Box<dyn Fn(bool, &mut Window, &mut App) + 'static>;
 /// ```
 pub struct Burger {
     id: String,
+    /// The element id, built from `id`: it changes with the id, not with every
+    /// render.
+    element_id: SharedString,
     open: bool,
     /// 0..=1 as animated; sampling it re-renders only this view.
     amount: Animated<f32>,
@@ -66,6 +69,7 @@ impl Burger {
             focusable: None,
             labels: ("Open navigation".into(), "Close navigation".into()),
             id: "gr-burger".into(),
+            element_id: "gr-burger:gr-burger".into(),
             open: false,
             amount: Animated::new(
                 0.0f32,
@@ -81,6 +85,7 @@ impl Burger {
     /// A stable identity; distinct burgers need distinct ids only for tests and debug selectors.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.id = id.into();
+        self.element_id = format!("gr-burger:{}", self.id).into();
         self
     }
 
@@ -183,7 +188,7 @@ impl Render for Burger {
             .focusable(self.focusable)
             .label(label);
         div()
-            .id(SharedString::from(format!("gr-burger:{id}")))
+            .id(self.element_id.clone())
             .test_support()
             .debug_selector(move || format!("gr-burger:{id}"))
             .relative()
