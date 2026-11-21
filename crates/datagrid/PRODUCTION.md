@@ -88,7 +88,7 @@ rows and 37,185,423 instructions at 10M rows.
 The [instruction suite](../../bench/benches/production_frames.rs) warms a 1,200 by
 800 headless viewport and measures one scroll and draw. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
-10k and 10M rows. The upstream cap is 1,020 allocations and 440 KiB,
+10k and 10M rows. The upstream cap is 1,050 allocations and 440 KiB,
 and the gpui-fast cap is 1,900 allocations and 420 KiB. The [mounted interaction test](tests/interaction.rs) requires
 equal source reads, row renders, constructed cells and pool size.
 
@@ -220,23 +220,23 @@ source size. Major allocation sites included:
 
 Other stacks include GPUI element state, test-support observation and
 accessibility serialization, additional Taffy allocations, and construction
-of action and mouse handler closures. The grid now builds row names only when
-accessibility or cell observation needs them and reuses the paint text style
-to resolve line height. The allocator gate caps upstream at 1,020 requests
+of action and mouse handler closures. The grid reuses the paint text style to resolve line height and constructs
+text runs only on shape-cache misses. Row names remain available to
+accessibility and test-support observation. The allocator gate caps upstream at 1,050 requests
 and 440 KiB and requires equal counts at 10k and 10M rows.
 
 | Warm jump | Canvas baseline | After |
 |---|---:|---:|
-| Optimized upstream requests at both sizes | 1,073 | 989 |
-| Optimized upstream requested bytes at both sizes | 430,262 | 428,694 |
-| Debug upstream requests at both sizes | 1,076 | 992 |
-| Callgrind instructions, 10k rows | 6,262,601 | 6,284,842 |
-| Callgrind instructions, 10M rows | 6,265,028 | 6,253,163 |
-| Renderer-backed p99 (loaded host, ms) | 4.598 | 3.162–3.590 |
+| Optimized upstream requests at both sizes | 1,073 | 1,045 |
+| Optimized upstream requested bytes at both sizes | 430,262 | 429,142 |
+| Debug upstream requests at both sizes | 1,076 | 1,048 |
+| Callgrind instructions, 10k rows | 6,262,601 | 6,257,081 |
+| Callgrind instructions, 10M rows | 6,265,028 | 6,259,305 |
+| Renderer-backed p99 (loaded host, ms) | 4.598 | 2.825–3.515 |
 
 The after captures use the mounted 1,200 × 800 fixture and a standalone
 driver of the production frame suite. Three renderer-backed runs reported
-108,104–108,732 KiB absolute RSS and 10,416–10,876 KiB above the empty
+111,656–111,956 KiB absolute RSS and 10,424–10,552 KiB above the empty
 window. The hot path still constructs per-row element and canvas subtrees
 and installs GPUI input listeners. The 50-request target, zero-allocation
 target and quiet-window timing acceptance remain open.
