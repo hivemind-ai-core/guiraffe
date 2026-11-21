@@ -19,6 +19,7 @@ guiraffe-layout = { path = "crates/layout" }
 guiraffe-components = { path = "crates/components" }
 guiraffe-overlays = { path = "crates/overlays" }
 guiraffe-windows = { path = "crates/windows" }
+guiraffe-tray = { path = "crates/tray" }
 guiraffe-markdown = { path = "crates/markdown" }
 guiraffe-mermaid = { path = "crates/mermaid" }
 guiraffe-flow-core = { path = "crates/flow-core" }
