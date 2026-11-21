@@ -48,7 +48,8 @@ store N+1 row offsets and E row numbers, where N is task count and E is
 dependency count. The schedule plan also holds N row numbers in topological
 order. Drag and resize replace the schedule without rebuilding labels,
 dependency indexes or topological order. No scroll history or zoom buckets
-are retained.
+are retained. Dependency paint collects up to 32 projected edges on the
+stack before drawing a stroke path and an arrowhead mesh.
 
 A frame visits the intersecting rows plus their incident edges. Task bars
 outside the horizontal interval are culled and narrow bars retain a
@@ -73,6 +74,14 @@ and excludes GPUI.
 | Heap bytes allocated | 29,771,368 | 24,005,868 |
 | Median schedule build | 183.6 ms | 99.0 ms |
 | Median peak RSS | 33.3 MiB | 28.9 MiB |
+
+A second standalone probe built the same schedule, changed the first task's
+duration by four seconds, and solved again. Both versions reported the
+same sum of earliest finish times after the edit. Total process instructions
+fell from 395.9M to 224.7M. The second solve took a median 148.2 ms before
+and 28.6 ms with the reused plan in five alternating runs on the shared
+machine.
+
 
 The mounted upstream probe at `ce4b8b1` ran the unchanged Gantt fixture and
 interaction sequence extracted from `bench/examples/soak.rs`. Timeline code
