@@ -1005,8 +1005,8 @@ mod tests {
     #[test]
     fn dense_scatter_candidate_work_is_independent_of_total_size() {
         for size in [10_000, 1_000_000, 10_000_000] {
-            let indices: Vec<_> = scatter_candidates(0..size, 8_192).collect();
-            assert_eq!(indices.len(), 8_192);
+            let indices: Vec<_> = scatter_candidates(0..size, SCATTER_CANDIDATES).collect();
+            assert_eq!(indices.len(), SCATTER_CANDIDATES);
             assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
             assert!(indices.iter().all(|&index| index < size));
         }

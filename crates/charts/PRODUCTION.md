@@ -47,3 +47,43 @@ Scene compilation uses a 2,048-byte occupancy array, up to 2,048 sparse
 pixel keys, and one temporary visible range per scatter run. These buffers
 are released when scene compilation finishes. The two cached scenes are
 invalidated on size, scale, data or visibility changes.
+
+On the shared host, the renderer-neutral scatter probe recorded the following
+at `5f8fd2a` and `172e66c`. The instruction count covers three scene builds
+and picks at 100k points. Allocation traffic, peak RSS, and timing are from
+300 scene builds and picks at 1M points across 100 series.
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Callgrind instructions | 8,109,614 | 2,419,329 |
+| Allocations per build and pick | 277.06 | 117.40 |
+| Peak process RSS | 27.6 MiB | 27.9 MiB |
+| Busy-host p99 | 20.46 ms | 13.93 ms |
+| Samply frame samples across 3,500 iterations | 6,699 | 2,147 |
+| Coordinate projection share of self samples | 31.9% | 18.5% |
+| Scatter generation share of self samples | 31.8% | 27.9% |
+| Visible-range search share of self samples | 19.0% | 15.7% |
+
+The scaling test checks the 2,048 projection budget across 1 and 100 series
+and across 10k through 10M source points. Finding visible ranges and exact
+picking still have per-series work.
+
+## Warm draw allocation attribution
+
+The mounted allocator check in [allocator.rs](../../bench/tests/allocator.rs)
+forces a draw of a warmed, unchanged 10k-point, 100-series scatter chart. It
+asserts no additional scene builds or ink paints and bounds full-frame
+allocation traffic. GPUI upstream allocated 263 times and requested 498,444
+bytes. Valgrind DHAT attributes the draw as follows.
+
+| Allocation site | Calls | Bytes |
+| --- | ---: | ---: |
+| GPUI `Scene::replay` and `Scene::insert_primitive` vertex clones | 248 | 465,792 |
+| GPUI `Scene::finish` stable path sort | 1 | 20,832 |
+| GPUI tab stops, element IDs, dispatch and arena housekeeping | 14 | 11,820 |
+| Chart code | 0 | 0 |
+
+Each replayed path is cloned once into the paint operation and again into the
+draw list. Sharing immutable scaled vertices across those two records and
+adjacent frames would remove the vertex copies. The full zero-allocation
+criterion also requires reusable backend sort and window scratch storage.
