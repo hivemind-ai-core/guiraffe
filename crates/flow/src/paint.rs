@@ -999,6 +999,61 @@ mod tests {
         });
     }
 
+    #[gpui_kit::test]
+    fn intermediate_zoom_uses_overview_only_for_dense_viewports(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::{AppContext, WindowOptions, test::TestWindowExt};
+        let graph = Graph::from_parts(
+            (0..5_000).map(|id| {
+                Node::new(
+                    id,
+                    "",
+                    WorldPoint::new((id % 100) as f32 * 240., (id / 100) as f32 * 150.),
+                )
+            }),
+            (0..5_000).map(|id| Edge::new(id, id, (id + 1) % 5_000)),
+        )
+        .expect("graph");
+        let (window, view) = cx.update(|cx| {
+            guiraffe_core::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| {
+                    crate::FlowViewport::new(graph, cx)
+                        .expect("flow")
+                        .options(crate::FlowOptions {
+                            fit_on_init: false,
+                            minimap: false,
+                            ..Default::default()
+                        })
+                })
+            })
+            .expect("window")
+        });
+        for (pan_x, dense) in [(0., true), (-23_760. * 0.075, false)] {
+            view.update(cx, |view, cx| {
+                view.set_viewport(
+                    Viewport {
+                        pan: WorldPoint::new(pan_x, 0.),
+                        zoom: 0.075,
+                    },
+                    cx,
+                )
+                .expect("camera");
+            });
+            window
+                .update(cx, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                })
+                .expect("frame");
+            let (nodes, edges) = view.read_with(cx, |view, _| view.visible_counts());
+            if dense {
+                assert_eq!((nodes, edges), (0, 0));
+            } else {
+                assert!(nodes > 0 && edges > 0);
+            }
+        }
+    }
+
     #[test]
     fn review_10_second_frame_over_2048_edges_has_no_misses() {
         let graph = Graph::from_parts(

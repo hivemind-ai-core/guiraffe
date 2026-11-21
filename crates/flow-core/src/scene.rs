@@ -213,6 +213,30 @@ impl SpatialIndex {
                 .as_ref()
                 .map_or(0., |(l, r)| l.cost + r.cost);
     }
+    fn count_exceeds(&self, area: Rect, mut limit: usize) -> bool {
+        fn visit(branch: &Branch, area: Rect, remaining: &mut usize) -> bool {
+            if branch.bounds.is_none_or(|bounds| !bounds.intersects(area)) {
+                return false;
+            }
+            if let Some((left, right)) = &branch.children {
+                return visit(left, area, remaining) || visit(right, area, remaining);
+            }
+            for (_, bounds) in &branch.entries {
+                if bounds.intersects(area) {
+                    if *remaining == 0 {
+                        return true;
+                    }
+                    *remaining -= 1;
+                }
+            }
+            false
+        }
+
+        self.root
+            .as_ref()
+            .is_some_and(|root| visit(root, area, &mut limit))
+    }
+
     pub fn query(&self, area: Rect, output: &mut Vec<u64>) -> usize {
         output.clear();
         if !area.valid() {
@@ -680,6 +704,11 @@ impl Scene {
             visit(root, area, detail, &mut emit);
         }
     }
+    /// Check viewport density without collecting IDs or visiting nodes beyond the limit.
+    pub fn node_count_exceeds(&self, area: Rect, limit: usize) -> bool {
+        self.nodes.count_exceeds(area, limit)
+    }
+
     pub fn query_nodes(&self, area: Rect, output: &mut Vec<NodeId>) {
         self.nodes.query(area, output);
     }

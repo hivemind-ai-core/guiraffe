@@ -57,3 +57,10 @@ bounded to 8,100 vertices per layer. The edge submission batches reserve
 capacity based on the previous visible frame and GPUI owns their submitted
 vertices. The cache regression simulates 216,000 camera frames and checks
 both retained mesh limits on every frame.
+
+
+At 0.05× zoom and below, graphs with at least 4,096 nodes use the coarse
+overview. Between 0.05× and 0.10×, the overview activates when a viewport
+query finds more than 1,024 nodes. The BVH stops counting at the cutoff
+before the renderer collects visible IDs or tessellates edges. Sparse
+views, active gestures and accessibility rendering use detailed geometry.

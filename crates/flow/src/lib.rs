@@ -509,20 +509,19 @@ impl Render for FlowViewport {
             .layout_preview
             .clone()
             .unwrap_or_else(|| self.interaction.editor.scene_shared());
-        // At this scale node cards are only a few pixels wide. Draw a spatial
-        // overview and keep exact geometry available to the editor for picking.
-        let overview = viewport.zoom <= 0.05
-            && self.graph().nodes.len() >= 4_096
+        // Detail gets expensive when a fit would show thousands of tiny
+        // cards and edges. Test density before collecting any visible IDs.
+        let area = viewport.visible(size).expand(12. / viewport.zoom);
+        let overview = viewport.zoom <= 0.10
+            && display.graph().nodes.len() >= 4_096
             && self.interaction.gesture.is_none()
-            && !window.is_a11y_active();
+            && !window.is_a11y_active()
+            && (viewport.zoom <= 0.05 || display.node_count_exceeds(area, 1_024));
         if overview {
             self.visible.nodes.clear();
             self.visible.edges.clear();
         } else {
-            display.visible(
-                viewport.visible(size).expand(12. / viewport.zoom),
-                &mut self.visible,
-            );
+            display.visible(area, &mut self.visible);
         }
         if let Some(Gesture::Move { origins, .. }) = &self.interaction.gesture {
             self.visible.nodes.extend(origins.keys().copied());
