@@ -45,7 +45,8 @@ check that views without an explicit opt-in preserve pointer focus.
 - The bar editor retains up to 16,384 pairs of `f64` extrema (256 KiB of
   entries) and one dirty index range. The first dense render and a column
   count change scan the model. A stroke recomputes only columns intersecting
-  its changed range. One GPUI paint layer groups at most one quad per column.
+  its changed range. One GPUI paint layer groups the dense view's quads,
+  with at most one quad per column.
 - Tracks overview uses the sorted, disjoint clip intervals already in the model
   and retains no overview geometry. Each visible lane emits at most one mark
   per logical pixel column, capped at 16,384 columns, with adjacent runs of the

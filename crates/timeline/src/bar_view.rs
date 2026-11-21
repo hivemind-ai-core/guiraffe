@@ -245,7 +245,7 @@ impl Render for BarCurveView {
                                 (values[i], values[i])
                             }
                         });
-                        window.paint_layer(b, |window| {
+                        let paint = |window: &mut Window| {
                             for (i, (low, high)) in extrema.enumerate() {
                                 let top = range.y(high).min(base);
                                 let bottom = range.y(low).max(base);
@@ -263,7 +263,12 @@ impl Render for BarCurveView {
                                     fill,
                                 ));
                             }
-                        });
+                        };
+                        if dense {
+                            window.paint_layer(b, paint);
+                        } else {
+                            paint(window);
+                        }
                     },
                 )
                 .absolute()
