@@ -28,18 +28,67 @@ fn bounded_runs(runs: Vec<TextRun>, len: usize) -> Vec<TextRun> {
         .collect()
 }
 
+const STYLE_OVERSCAN_ROWS: usize = 8;
+const MAX_SHAPE_CACHE_ENTRIES: usize = 2_048;
+const MAX_SHAPE_CACHE_TEXT_BYTES: usize = 256 * 1024;
+
+type ShapeKey = (u64, u64, usize, u32, u32);
+
 #[derive(Default)]
 pub(crate) struct ShapeCache {
-    items: HashMap<(u64, u64, usize, u32, u32), Rc<ShapedLine>>,
-    order: VecDeque<(u64, u64, usize, u32, u32)>,
+    items: HashMap<ShapeKey, Rc<ShapedLine>>,
+    order: VecDeque<ShapeKey>,
+    text_bytes: usize,
     frame: Rc<std::cell::RefCell<Vec<PaintedRow>>>,
     gutter_label: String,
+    styled_viewport: Option<(std::ops::Range<usize>, u64)>,
 }
 impl ShapeCache {
+    fn retain_viewport_styles(
+        &mut self,
+        map: &RowMap,
+        visible: &std::ops::Range<usize>,
+        epoch: u64,
+        styled: bool,
+    ) {
+        let next = styled.then(|| {
+            (
+                visible.start.saturating_sub(STYLE_OVERSCAN_ROWS)
+                    ..visible
+                        .end
+                        .saturating_add(STYLE_OVERSCAN_ROWS)
+                        .min(map.len()),
+                epoch,
+            )
+        });
+        if self.styled_viewport == next {
+            return;
+        }
+        let keep = |key: &ShapeKey| {
+            let (hash, shape_epoch, line, _, _) = *key;
+            // Gutter labels and shared plain text do not carry syntax styles.
+            hash != 0
+                || line == usize::MAX
+                || next.as_ref().is_some_and(|(rows, epoch)| {
+                    shape_epoch == *epoch
+                        && map.source_row(line).is_some_and(|row| rows.contains(&row))
+                })
+        };
+        self.items.retain(|key, shape| {
+            let retain = keep(key);
+            if !retain {
+                self.text_bytes -= shape.text.len();
+            }
+            retain
+        });
+        self.order.retain(keep);
+        self.styled_viewport = next;
+    }
+
     fn line(
         &mut self,
         text: &str,
-        key: (u64, u64, usize, u32, u32),
+        key: ShapeKey,
         runs: impl FnOnce() -> Vec<TextRun>,
         font_size: f32,
         window: &mut Window,
@@ -63,17 +112,29 @@ impl ShapeCache {
         ));
         stats.shaped_lines += 1;
         shared.stats.set(stats);
-        if !self.items.contains_key(&key)
-            && self.items.len() >= 2048
-            && let Some(old) = self.order.pop_front()
-        {
-            self.items.remove(&old);
-        }
-        if !self.items.contains_key(&key) {
-            self.order.push_back(key);
-        }
-        self.items.insert(key, shape.clone());
+        self.insert(key, shape.clone());
         shape
+    }
+
+    fn insert(&mut self, key: ShapeKey, shape: Rc<ShapedLine>) {
+        if let Some(old) = self.items.remove(&key) {
+            self.text_bytes -= old.text.len();
+            self.order.retain(|candidate| *candidate != key);
+        }
+        let bytes = shape.text.len();
+        while self.items.len() >= MAX_SHAPE_CACHE_ENTRIES
+            || self.text_bytes + bytes > MAX_SHAPE_CACHE_TEXT_BYTES
+        {
+            let Some(old_key) = self.order.pop_front() else {
+                return;
+            };
+            if let Some(old) = self.items.remove(&old_key) {
+                self.text_bytes -= old.text.len();
+            }
+        }
+        self.text_bytes += bytes;
+        self.order.push_back(key);
+        self.items.insert(key, shape);
     }
 }
 pub(crate) struct PaintedRow {
@@ -158,7 +219,11 @@ fn runs(
         }
         let mut run = base_run(&source[start..end], theme.surfaces().text.to_hsla(), font);
         let absolute = range.start + start;
-        if let Some((_, style)) = styles.iter().find(|(r, _)| r.contains(&absolute)) {
+        let style_index = styles.partition_point(|(r, _)| r.end <= absolute);
+        if let Some((_, style)) = styles
+            .get(style_index)
+            .filter(|(r, _)| r.contains(&absolute))
+        {
             if let Some(c) = style.color {
                 run.color = c;
             }
@@ -299,6 +364,7 @@ pub(crate) fn prepare(
             surface_color.b,
             surface_color.a,
         ]));
+    cache.retain_viewport_styles(&map, &visible, epoch, highlighted.has_parser());
     let appearance = if theme.scheme == Scheme::Dark { 1 } else { 0 };
     let s = theme.surfaces();
     let mut label = std::mem::take(&mut cache.gutter_label);
@@ -317,13 +383,15 @@ pub(crate) fn prepare(
                     shared.stats.set(stats);
                 }
                 let text = prefix(text);
-                let hash = doc.line_hash(line).unwrap_or_default();
-                let context_line =
-                    if highlighted.spans.is_empty() && shared.annotations.borrow().is_empty() {
-                        usize::MAX
-                    } else {
-                        line
-                    };
+                // Short, unstyled lines can share shaping across source rows.
+                let (hash, context_line) = if text.len() <= 64
+                    && !highlighted.has_parser()
+                    && shared.annotations.borrow().is_empty()
+                {
+                    (content_hash(text.as_bytes()), usize::MAX)
+                } else {
+                    (0, line)
+                };
                 let shape = cache.line(
                     text,
                     (hash, epoch, context_line, font_size.to_bits(), appearance),
@@ -533,19 +601,20 @@ pub(crate) fn anchor(shared: &Shared, position: Position) -> Option<Point<Pixels
     }
     Some(anchor)
 }
-fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
+fn visit_range_rects(shared: &Shared, range: SourceRange, mut visit: impl FnMut(Bounds<Pixels>)) {
     let g = shared.geometry.borrow();
     let viewport = shared.viewport.get();
-    let mut result = Vec::new();
     let doc = shared.highlighted.borrow();
     if doc.document.range(range).is_none() {
-        return result;
+        return;
     }
+    let rows = shared.rows.borrow();
+    let hints = shared.hints.borrow();
     for (line, shape) in &g.shaped {
         if *line < range.start.line || *line > range.end.line {
             continue;
         }
-        let Some(row) = shared.rows.borrow().source_row(*line) else {
+        let Some(row) = rows.source_row(*line) else {
             continue;
         };
         let start = if *line == range.start.line {
@@ -558,7 +627,6 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
         } else {
             doc.document.line(*line).map(str::len).unwrap_or_default()
         };
-        let hints = shared.hints.borrow();
         let start = hints
             .get(line)
             .map(|d| d.source_to_display(start, true))
@@ -573,7 +641,7 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
             .min(g.bounds.right() - px(g.margin + g.mini));
         let left = x.max(g.bounds.origin.x + px(g.gutter));
         if right > left {
-            result.push(Bounds::new(
+            visit(Bounds::new(
                 point(
                     left,
                     g.bounds.origin.y
@@ -583,22 +651,19 @@ fn range_rects(shared: &Shared, range: SourceRange) -> Vec<Bounds<Pixels>> {
             ));
         }
     }
-    result
 }
 pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut App) {
     let owned_theme = GuiraffeTheme::global(cx).clone();
     let theme = &owned_theme;
     let surfaces = theme.surfaces();
     if let Some(selection) = shared.selection.get() {
-        for rect in range_rects(shared, selection) {
-            window.paint_quad(fill(rect, color(ColorName::Blue, theme).opacity(0.22)));
-        }
+        let ink = color(ColorName::Blue, theme).opacity(0.22);
+        visit_range_rects(shared, selection, |rect| window.paint_quad(fill(rect, ink)));
     }
     if let Some(symbol) = shared.symbol.borrow().as_ref() {
+        let ink = color(ColorName::Yellow, theme).opacity(0.25);
         for range in symbol.occurrences.iter() {
-            for rect in range_rects(shared, *range) {
-                window.paint_quad(fill(rect, color(ColorName::Yellow, theme).opacity(0.25)));
-            }
+            visit_range_rects(shared, *range, |rect| window.paint_quad(fill(rect, ink)));
         }
     }
     paint_local_traces(shared, &shared.traces.borrow(), theme, window);
@@ -806,6 +871,65 @@ pub(crate) fn paint_traces(
         path.line_to(b);
         if let Ok(path) = path.build() {
             window.paint_path(path, c);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MAX_SHAPE_CACHE_ENTRIES, MAX_SHAPE_CACHE_TEXT_BYTES, MAX_SHAPED_LINE_BYTES, RowMap,
+        ShapeCache,
+    };
+    use gpui_kit::{ShapedLine, SharedString};
+    use std::rc::Rc;
+
+    #[test]
+    fn shape_cache_evicts_by_text_size_as_well_as_entry_count() {
+        let mut cache = ShapeCache::default();
+        let mut shape = ShapedLine::default();
+        shape
+            .text
+            .clone_from(&SharedString::from("x".repeat(MAX_SHAPED_LINE_BYTES)));
+        let shape = Rc::new(shape);
+        let capacity = MAX_SHAPE_CACHE_TEXT_BYTES / MAX_SHAPED_LINE_BYTES;
+        for row in 0..=capacity {
+            cache.insert((0, 0, row, 0, 0), shape.clone());
+        }
+        assert_eq!(cache.items.len(), capacity);
+        assert_eq!(cache.text_bytes, MAX_SHAPE_CACHE_TEXT_BYTES);
+        assert!(!cache.items.contains_key(&(0, 0, 0, 0, 0)));
+
+        let empty = Rc::new(ShapedLine::default());
+        for row in 1..=MAX_SHAPE_CACHE_ENTRIES {
+            cache.insert((0, 0, row, 0, 0), empty.clone());
+        }
+        assert_eq!(cache.items.len(), MAX_SHAPE_CACHE_ENTRIES);
+        assert_eq!(cache.order.len(), cache.items.len());
+        assert_eq!(cache.text_bytes, 0);
+    }
+
+    #[test]
+    fn styled_shape_cache_keeps_only_the_viewport_and_overscan() {
+        for line_count in [10_000, 10_000_000] {
+            let map = RowMap::new(line_count, &[], &[]);
+            let mut cache = ShapeCache::default();
+            cache.retain_viewport_styles(&map, &(100..120), 1, true);
+            for line in [100, 110, 119] {
+                let mut shape = ShapedLine::default();
+                shape.text = "let value = 42;".into();
+                cache.insert((0, 1, line, 0, 0), Rc::new(shape));
+            }
+            cache.retain_viewport_styles(&map, &(119..139), 1, true);
+            assert_eq!(
+                cache.order.iter().map(|key| key.2).collect::<Vec<_>>(),
+                vec![119]
+            );
+            assert_eq!(cache.text_bytes, "let value = 42;".len());
+            cache.retain_viewport_styles(&map, &(9_000..9_020), 1, true);
+            assert!(cache.items.is_empty());
+            assert!(cache.order.is_empty());
+            assert_eq!(cache.text_bytes, 0);
         }
     }
 }

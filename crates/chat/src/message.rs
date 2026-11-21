@@ -15,12 +15,12 @@ use std::cell::Cell;
 #[cfg(test)]
 use std::rc::Rc;
 
-/// A message's lifetime is independent of its virtualized row. Markdown parsing and
-/// selection state survive scrolling out of view; siblings never read this entity.
+/// A message's lifetime is independent of its virtualized row. Markdown is
+/// parsed on first render and selection state survives scrolling out of view.
 pub struct MessageView {
     pub(crate) data: Message,
-    pub(crate) markdown: Entity<TextViewState>,
-    pub(crate) menu: guiraffe_core::TextMenu,
+    pub(crate) markdown: Option<Entity<TextViewState>>,
+    pub(crate) menu: Option<guiraffe_core::TextMenu>,
     tools: Vec<Entity<ToolCard>>,
     reasoning: Option<Entity<Reasoning>>,
     reasoning_subscription: Option<Subscription>,
@@ -30,6 +30,7 @@ pub struct MessageView {
     #[cfg(test)]
     pub(crate) renders: Rc<Cell<usize>>,
     _layout_subscriptions: Vec<Subscription>,
+    markdown_subscription: Option<Subscription>,
     pub(crate) layout: RowLayout,
 }
 #[derive(Clone)]
@@ -38,12 +39,14 @@ pub(crate) struct RowLayout {
     pub index: usize,
 }
 impl RowLayout {
-    pub fn changed(&self, _cx: &mut App) {
-        self.list.remeasure_items(self.index..self.index + 1);
+    pub fn changed(&self) {
+        if self.index < self.list.item_count() {
+            self.list.remeasure_items(self.index..self.index + 1);
+        }
     }
     fn observe<T: 'static>(&self, entity: &Entity<T>, cx: &mut App) -> Subscription {
         let layout = self.clone();
-        cx.observe(entity, move |_, cx| layout.changed(cx))
+        cx.observe(entity, move |_, _| layout.changed())
     }
 }
 impl MessageView {
@@ -54,48 +57,77 @@ impl MessageView {
         layout: RowLayout,
         cx: &mut Context<Self>,
     ) -> Self {
-        let markdown = cx.new(|cx| TextViewState::markdown(&data.text, cx).scrollable(false));
         let tools: Vec<_> = data
             .tools
             .iter()
             .map(|tool| cx.new(|_| ToolCard::new(tool.clone())))
             .collect();
-        let reasoning = (!data.reasoning.is_empty())
-            .then(|| cx.new(|cx| Reasoning::new(&data.reasoning, &layout, cx)));
-        let transition =
-            Transition::themed(TransitionKind::FadeUp, &MotionPrefs::global(cx).tokens);
-        let mut presence = Presence::new(!animate, transition.enter, transition.exit);
-        if animate {
+        let reasoning = (!data.reasoning.is_empty()).then(|| {
+            let row = cx.weak_entity();
+            cx.new(|_| Reasoning::new(row, &layout))
+        });
+        let presence = animate.then(|| {
+            let transition =
+                Transition::themed(TransitionKind::FadeUp, &MotionPrefs::global(cx).tokens);
+            let mut presence = Presence::new(false, transition.enter, transition.exit);
             set_presence(&mut presence, true, cx);
-        }
-        let mut subscriptions = vec![layout.observe(&markdown, cx)];
-        subscriptions.extend(tools.iter().map(|tool| layout.observe(tool, cx)));
+            presence
+        });
+        let subscriptions = tools.iter().map(|tool| layout.observe(tool, cx)).collect();
         let reasoning_subscription = reasoning
             .as_ref()
             .map(|reasoning| layout.observe(reasoning, cx));
         Self {
+            editable: data.role == Role::User,
             data,
-            markdown,
-            menu: guiraffe_core::TextMenu::new(),
+            markdown: None,
+            menu: None,
             tools,
             reasoning,
             reasoning_subscription,
-            editable: false,
             owner,
-            presence: animate.then_some(presence),
+            presence,
             #[cfg(test)]
             renders: Rc::default(),
             _layout_subscriptions: subscriptions,
+            markdown_subscription: None,
             layout,
         }
     }
+    pub(crate) fn has_text_selection(&self, cx: &App) -> bool {
+        self.markdown
+            .as_ref()
+            .is_some_and(|text| text.read(cx).has_selection(cx))
+            || self.reasoning.as_ref().is_some_and(|reasoning| {
+                reasoning
+                    .read(cx)
+                    .markdown
+                    .as_ref()
+                    .is_some_and(|text| text.read(cx).has_selection(cx))
+            })
+    }
+
+    pub(crate) fn evict_text(&mut self, cx: &mut Context<Self>) {
+        self.markdown = None;
+        self.markdown_subscription = None;
+        if let Some(reasoning) = &self.reasoning
+            && reasoning.read(cx).markdown.is_some()
+        {
+            reasoning.update(cx, |reasoning, _| {
+                reasoning.markdown = None;
+                reasoning._layout_subscription = None;
+            });
+        }
+    }
+
     pub(crate) fn append(&mut self, delta: &str, cx: &mut Context<Self>) {
         if delta.is_empty() {
             return;
         }
         self.data.text.push_str(delta);
-        self.markdown
-            .update(cx, |text, cx| text.push_str(delta, cx));
+        if let Some(markdown) = &self.markdown {
+            markdown.update(cx, |text, cx| text.push_str(delta, cx));
+        }
         cx.notify();
     }
     pub(crate) fn replace_user(
@@ -104,8 +136,9 @@ impl MessageView {
         attachments: Vec<crate::Attachment>,
         cx: &mut Context<Self>,
     ) {
-        self.markdown
-            .update(cx, |markdown, cx| markdown.set_text(&text, cx));
+        if let Some(markdown) = &self.markdown {
+            markdown.update(cx, |markdown, cx| markdown.set_text(&text, cx));
+        }
         self.data.text = text;
         self.data.attachments = attachments;
         cx.notify();
@@ -120,17 +153,20 @@ impl MessageView {
         }
         if let Some(reasoning) = &self.reasoning {
             reasoning.update(cx, |reasoning, cx| {
-                reasoning.markdown.update(cx, |markdown, cx| {
-                    markdown.set_text(&self.data.reasoning, cx)
-                })
+                if let Some(markdown) = &reasoning.markdown {
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.set_text(&self.data.reasoning, cx)
+                    });
+                }
             });
         } else {
-            let reasoning = cx.new(|cx| Reasoning::new(&self.data.reasoning, &self.layout, cx));
+            let row = cx.weak_entity();
+            let reasoning = cx.new(|_| Reasoning::new(row, &self.layout));
             self.reasoning_subscription = Some(self.layout.observe(&reasoning, cx));
             self.reasoning = Some(reasoning);
             cx.notify();
         }
-        self.layout.changed(cx);
+        self.layout.changed();
     }
     pub(crate) fn set_tool(&mut self, tool: ToolCall, cx: &mut Context<Self>) {
         if let Some(index) = self.data.tools.iter().position(|t| t.id == tool.id) {
@@ -171,6 +207,12 @@ impl Render for MessageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.renders.set(self.renders.get() + 1);
+        let markdown_state = self.markdown.get_or_insert_with(|| {
+            let state = cx.new(|cx| TextViewState::markdown(&self.data.text, cx).scrollable(false));
+            self.markdown_subscription = Some(self.layout.observe(&state, cx));
+            state
+        });
+        let menu = self.menu.get_or_insert_with(guiraffe_core::TextMenu::new);
         let alpha = if let Some(presence) = self.presence.as_mut() {
             match presence.frame(cx.background_executor().now(), &MotionPrefs::global(cx)) {
                 PresenceFrame::Mounted {
@@ -272,21 +314,22 @@ impl Render for MessageView {
                                     .children(self.tools.iter().cloned())
                                     .children(self.reasoning.iter().cloned())
                                     .child({
-                                        let raw = self.data.text.clone();
+                                        let row = cx.weak_entity();
                                         guiraffe_core::text_menu::text_view_menu(
-                                            div().child(markdown(&self.markdown)),
+                                            div().child(markdown(markdown_state)),
                                             format!("chat-message/{}", cx.entity_id()),
-                                            &self.menu,
-                                            &self.markdown,
-                                            std::rc::Rc::new(move |_, _| {
-                                                let raw = raw.clone();
+                                            menu,
+                                            markdown_state,
+                                            std::rc::Rc::new(move |_, cx| {
+                                                let Some(row) = row.upgrade() else {
+                                                    return Vec::new();
+                                                };
+                                                let raw = row.read(cx).data.text.clone();
                                                 vec![guiraffe_core::TextMenuItem::new(
                                                     "Copy message",
                                                     move |_, cx| {
                                                         cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                raw.to_string(),
-                                                            ),
+                                                            ClipboardItem::new_string(raw.clone()),
                                                         )
                                                     },
                                                 )]
@@ -431,21 +474,33 @@ impl Render for ToolCard {
 }
 struct Reasoning {
     open: bool,
-    markdown: Entity<TextViewState>,
-    _layout_subscription: Subscription,
+    row: WeakEntity<MessageView>,
+    markdown: Option<Entity<TextViewState>>,
+    layout: RowLayout,
+    _layout_subscription: Option<Subscription>,
 }
 impl Reasoning {
-    fn new(text: &str, layout: &RowLayout, cx: &mut Context<Self>) -> Self {
-        let markdown = cx.new(|cx| TextViewState::markdown(text, cx).scrollable(false));
+    fn new(row: WeakEntity<MessageView>, layout: &RowLayout) -> Self {
         Self {
             open: false,
-            _layout_subscription: layout.observe(&markdown, cx),
-            markdown,
+            row,
+            layout: layout.clone(),
+            _layout_subscription: None,
+            markdown: None,
         }
     }
 }
 impl Render for Reasoning {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.open
+            && self.markdown.is_none()
+            && let Some(row) = self.row.upgrade()
+        {
+            let source = row.read(cx).data.reasoning.clone();
+            let state = cx.new(|cx| TextViewState::markdown(&source, cx));
+            self._layout_subscription = Some(self.layout.observe(&state, cx));
+            self.markdown = Some(state);
+        }
         div()
             .flex()
             .flex_col()
@@ -473,6 +528,6 @@ impl Render for Reasoning {
                         cx.notify();
                     })),
             )
-            .when(self.open, |el| el.child(markdown(&self.markdown)))
+            .children(self.markdown.as_ref().filter(|_| self.open).map(markdown))
     }
 }

@@ -1,20 +1,29 @@
 //! The GPUI viewer: a diagram element with pan, wheel zoom, fit and errors.
 //!
 //! Rendering happens on a background task that owns the [`Engine`] while it
-//! runs; the element only paints the image that comes back. A newer source
+//! runs; the element paints the overview or image that comes back. A newer source
 //! supersedes an older render, so streaming a diagram into an agent chat
 //! never shows a stale drawing.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
+
+use futures_channel::oneshot;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, CursorStyle, Div, ElementId, Entity, ImageSource,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    AnyElement, AnyView, App, AppContext as _, Context, CursorStyle, Div, ElementId, Entity,
+    ImageSource, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement as _, Render, RenderOnce, ScrollDelta, ScrollEvent, SharedString,
-    Styled as _, TestSupportExt as _, WeakEntity, Window, div, img, px,
+    StyleRefinement, Styled as _, TestSupportExt as _, WeakEntity, Window, canvas, div, img, px,
 };
 use guiraffe_core::{GuiraffeTheme, Scheme};
 
 use crate::{
-    engine::{Engine, Image, RenderError, Request},
+    engine::{Engine, Image, RenderError, Request, StagedImage, StagedPreview},
+    preview::Overview,
+    sizing::zoom_raster_size,
     theme::{background_for, theme_for},
     viewport::{Point, Viewport},
 };
@@ -32,9 +41,11 @@ pub enum Status {
     Failed(String),
 }
 
-#[derive(Clone)]
-struct Published {
-    image: Image,
+struct Preview {
+    overview: Option<Arc<Overview>>,
+    painted: mpsc::SyncSender<()>,
+    anchor: (f32, f32),
+    scale: f32,
 }
 
 /// State of one [`MermaidView`].
@@ -42,6 +53,11 @@ struct Published {
 /// Hosts that need to drive zooming or read the SVG can keep the entity from
 /// [`MermaidView::state`] and call the methods here.
 /// How long zooming must pause before the diagram is re-rasterized at the new zoom.
+// Reserve a view-sized initial raster for potentially staged inputs. Actual
+// preview admission is based on parser-produced node and edge counts.
+const STAGED_SOURCE_BYTES: usize = 512;
+const INITIAL_STAGED_WIDTH: f32 = 1_280.0;
+
 const ZOOM_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 pub struct MermaidViewState {
@@ -51,11 +67,13 @@ pub struct MermaidViewState {
     dark: bool,
     engine: Option<Engine>,
     viewport: Viewport,
-    published: Option<Published>,
+    published: Option<Image>,
+    preview: Option<Preview>,
     status: Status,
     /// Superseded renders are dropped when they land; this is the revision
     /// the view is waiting for.
     awaiting: Option<u64>,
+    cancel_render: Option<Arc<AtomicBool>>,
     /// Pending re-render after zooming settles (dropping it cancels).
     zoom_refresh: Option<gpui_kit::Task<()>>,
     density: f32,
@@ -73,8 +91,10 @@ impl MermaidViewState {
             engine: Some(engine),
             viewport: Viewport::default(),
             published: None,
+            preview: None,
             status: Status::Empty,
             awaiting: None,
+            cancel_render: None,
             zoom_refresh: None,
             density: 1.0,
             dragging: None,
@@ -89,14 +109,20 @@ impl MermaidViewState {
 
     /// The image last drawn, if any.
     pub fn image(&self) -> Option<&Image> {
-        self.published.as_ref().map(|published| &published.image)
+        self.published.as_ref()
+    }
+
+    /// Whether the current diagram has a temporary overview.
+    pub fn has_preview(&self) -> bool {
+        self.preview.is_some()
     }
 
     /// SVG of the last successful render, for copying out.
     pub fn svg(&self) -> Option<&str> {
-        self.published
-            .as_ref()
-            .map(|published| published.image.svg.as_ref())
+        if self.has_preview() {
+            return None;
+        }
+        self.image().map(|image| image.svg.as_ref())
     }
 
     /// The viewport, for hosts that render their own zoom controls.
@@ -144,11 +170,17 @@ impl MermaidViewState {
     /// with several diagrams — call this directly and render
     /// [`MermaidView::state`] so the element does not overwrite what they set.
     pub fn set_source(&mut self, source: SharedString, dark: bool, cx: &mut Context<Self>) {
-        let source: String = source.into();
-        if source == self.source && dark == self.dark {
+        if source.as_ref() == self.source && dark == self.dark {
             return;
         }
-        self.source = source;
+        if let Some(cancelled) = &self.cancel_render {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        self.zoom_refresh = None;
+        if self.preview.take().is_some() {
+            self.published = None;
+        }
+        self.source = source.into();
         self.dark = dark;
         self.revision += 1;
         self.request(cx);
@@ -156,6 +188,10 @@ impl MermaidViewState {
 
     /// Ask the background task for the current revision.
     fn request(&mut self, cx: &mut Context<Self>) {
+        self.request_at_width(self.viewport.bounds().0, cx);
+    }
+
+    fn request_at_width(&mut self, mut width: f32, cx: &mut Context<Self>) {
         if self.source.is_empty() {
             self.status = Status::Empty;
             self.published = None;
@@ -168,7 +204,10 @@ impl MermaidViewState {
         let dark = theme.scheme == Scheme::Dark;
         self.dark = dark;
         let mermaid_theme = theme_for(theme.scheme, surfaces, theme.primary);
-        let width = self.viewport.bounds().0;
+        let staged = self.source.len() >= STAGED_SOURCE_BYTES;
+        if staged && width <= 0.0 {
+            width = INITIAL_STAGED_WIDTH;
+        }
         let zoom = self.viewport.zoom();
         let request =
             match Request::new(&self.source, mermaid_theme, dark, width, zoom, self.density) {
@@ -193,17 +232,36 @@ impl MermaidViewState {
         self.awaiting = Some(revision);
         self.status = Status::Drawing;
         cx.notify();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.cancel_render = Some(cancelled.clone());
+        // Start worker execution immediately so placement can overlap the
+        // window's initial layout and paint.
+        let (preview_sender, preview_receiver) = oneshot::channel();
+        let job = cx.background_executor().spawn(async move {
+            let mut engine = engine;
+            let mut sender = Some(preview_sender);
+            let result = engine.render_staged(&request, &cancelled, |frame| {
+                if let Some(sender) = sender.take() {
+                    let (painted, wait_for_paint) = mpsc::sync_channel(1);
+                    if sender.send((frame, painted)).is_ok() {
+                        // A hidden or undrawn view must still refine.
+                        let _ = wait_for_paint.recv_timeout(std::time::Duration::from_millis(100));
+                    }
+                }
+            });
+            (engine, result)
+        });
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
-            let (engine, result) = cx
-                .background_executor()
-                .spawn(async move {
-                    let mut engine = engine;
-                    let result = engine.render(&request);
-                    (engine, result)
+            if let Ok((preview, painted)) = preview_receiver.await {
+                this.update(cx, |this, cx| {
+                    this.publish_preview(revision, preview, painted, cx)
                 })
-                .await;
+                .ok();
+            }
+            let (engine, result) = job.await;
             this.update(cx, |this, cx| {
                 this.engine = Some(engine);
+                this.cancel_render = None;
                 this.complete(revision, result, cx);
             })
             .ok();
@@ -211,32 +269,93 @@ impl MermaidViewState {
         .detach();
     }
 
-    fn complete(
+    fn publish_preview(
         &mut self,
         revision: u64,
-        result: Result<Image, RenderError>,
+        frame: StagedPreview,
+        painted: mpsc::SyncSender<()>,
         cx: &mut Context<Self>,
     ) {
         if self.awaiting != Some(revision) {
-            // Superseded while this render held the engine: the view has moved
-            // on, and nobody else could have started the newer render, so
-            // start it now.
-            self.request(cx);
+            return;
+        }
+        let (overview, natural, anchor, scale) = match frame {
+            StagedPreview::Native {
+                overview,
+                natural,
+                anchor,
+                scale,
+            } => {
+                self.published = None;
+                (Some(Arc::new(overview)), natural, anchor, scale)
+            }
+            StagedPreview::Raster(frame) => {
+                let Some(anchor) = frame.anchor else { return };
+                let natural = (frame.image.width, frame.image.height);
+                self.published = Some(frame.image);
+                (None, natural, anchor, frame.scale)
+            }
+        };
+        self.viewport.set_natural(natural.0, natural.1);
+        self.preview = Some(Preview {
+            overview,
+            painted,
+            anchor,
+            scale,
+        });
+        cx.notify();
+    }
+
+    fn complete(
+        &mut self,
+        revision: u64,
+        result: Result<Option<StagedImage>, RenderError>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.awaiting != Some(revision) {
+            // A newer request arrived while the worker held the engine.
+            if self.awaiting.is_some() {
+                self.request(cx);
+            }
             return;
         }
         self.awaiting = None;
         match result {
-            Ok(image) => {
-                self.viewport.set_natural(image.width, image.height);
-                self.published = Some(Published { image });
+            Ok(Some(frame)) => {
+                let preview = self.preview.take();
+                let was_preview = preview.is_some();
+                let natural = (frame.image.width, frame.image.height);
+                match (preview, frame.anchor) {
+                    (Some(preview), Some(anchor)) => {
+                        self.viewport.replace_natural_aligned(
+                            natural,
+                            preview.anchor,
+                            anchor,
+                            preview.scale / frame.scale,
+                        );
+                    }
+                    _ => self.viewport.set_natural(natural.0, natural.1),
+                }
+                self.published = Some(frame.image);
                 self.status = Status::Ready;
+                if was_preview && self.viewport.zoom() > 1.0 {
+                    self.zoom_changed(cx);
+                    return;
+                }
             }
+            Ok(None) => return,
             Err(error) => {
+                self.preview = None;
                 self.status = Status::Failed(error.to_string());
                 self.published = None;
             }
         }
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_pending_zoom_refresh(&self) -> bool {
+        self.zoom_refresh.is_some()
     }
 
     /// Zoom changed: redraw now (the current raster, scaled) and, once zooming pauses,
@@ -246,12 +365,33 @@ impl MermaidViewState {
         if self.source.is_empty() {
             return;
         }
+        if self.status == Status::Ready
+            && let Some(image) = self.image()
+        {
+            let pixels = zoom_raster_size(
+                image.width,
+                image.height,
+                self.viewport.zoom(),
+                self.density,
+            );
+            let current = image.image.size(0);
+            if pixels == (current.width.0 as u32, current.height.0 as u32) {
+                self.zoom_refresh = None;
+                return;
+            }
+        }
         let delay = cx.background_executor().timer(ZOOM_SETTLE);
         self.zoom_refresh = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
             delay.await;
             this.update(cx, |this, cx| {
+                if this.status == Status::Drawing {
+                    return;
+                }
                 this.revision += 1;
-                this.request(cx);
+                let width = this
+                    .image()
+                    .map_or(this.viewport.bounds().0, |image| image.width);
+                this.request_at_width(width, cx);
             })
             .ok();
         }));
@@ -267,7 +407,11 @@ impl MermaidViewState {
         }
         // The diagram is laid out for a width: re-render (in the background) when it
         // changes, e.g. a source set before first layout was rendered at width 0.
-        if (after.0 - before.0).abs() >= 1.0 && !self.source.is_empty() {
+        // A window can report several initial sizes before its first stable
+        // frame. Keep a large diagram's pending preview valid through those
+        // changes and let the viewport fit the raster that arrives.
+        let staged_in_flight = self.awaiting.is_some() && self.source.len() >= STAGED_SOURCE_BYTES;
+        if (after.0 - before.0).abs() >= 1.0 && !self.source.is_empty() && !staged_in_flight {
             self.revision += 1;
             self.request(cx);
         } else {
@@ -359,20 +503,41 @@ impl MermaidViewState {
         let page = background_for(scheme, surfaces);
         let (width, height) = self.viewport.displayed();
         let offset = self.viewport.offset();
-        let content: AnyElement = match (&self.published, &self.status) {
-            (Some(published), _) => div()
-                .absolute()
-                .left(px(offset.x))
-                .top(px(offset.y))
-                .w(px(width))
-                .h(px(height))
-                .child(
-                    img(ImageSource::Render(published.image.image.clone()))
-                        .w(px(width))
-                        .h(px(height)),
-                )
-                .into_any_element(),
-            (None, Status::Failed(message)) => {
+        let content: AnyElement = match (&self.published, &self.preview, &self.status) {
+            (published, preview, _) if published.is_some() || preview.is_some() => {
+                let mut diagram = div()
+                    .absolute()
+                    .left(px(offset.x))
+                    .top(px(offset.y))
+                    .w(px(width))
+                    .h(px(height));
+                if let Some(published) = published {
+                    diagram = diagram.child(
+                        img(ImageSource::Render(published.image.clone()))
+                            .w(px(width))
+                            .h(px(height)),
+                    );
+                }
+                if let Some(preview) = preview {
+                    let overview = preview.overview.clone();
+                    let painted = preview.painted.clone();
+                    diagram = diagram.child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, (), window, _| {
+                                if let Some(overview) = overview {
+                                    overview.paint(bounds, window);
+                                }
+                                let _ = painted.try_send(());
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    );
+                }
+                diagram.into_any_element()
+            }
+            (_, _, Status::Failed(message)) => {
                 let error = guiraffe_core::ColorName::Red;
                 div()
                     .p_3()
@@ -383,7 +548,7 @@ impl MermaidViewState {
                     .child(message.clone())
                     .into_any_element()
             }
-            (None, _) => div()
+            _ => div()
                 .text_size(px(12.0))
                 .text_color(surfaces.dimmed.to_hsla())
                 .child("Drawing…")
@@ -396,6 +561,14 @@ impl MermaidViewState {
             .overflow_hidden()
             .bg(page.to_hsla())
             .child(content)
+    }
+}
+
+impl Drop for MermaidViewState {
+    fn drop(&mut self) {
+        if let Some(cancelled) = &self.cancel_render {
+            cancelled.store(true, Ordering::Relaxed);
+        }
     }
 }
 
@@ -531,8 +704,7 @@ impl RenderOnce for MermaidView {
                 state.set_source(source, dark, cx);
             });
         }
-        // The state paints itself; wrapping keeps this element's own size
-        // under the host's layout.
-        div().size_full().child(state)
+        // The state fills the slot and can reuse its paint when the host redraws.
+        AnyView::from(state).cached(StyleRefinement::default().size_full())
     }
 }

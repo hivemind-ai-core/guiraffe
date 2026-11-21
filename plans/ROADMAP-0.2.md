@@ -91,6 +91,31 @@ with flat memory, keyboard/a11y under load. Output: PRODUCTION.md readiness tabl
 ## C. Optimisation pass (0.2)
 Fewer re-renders, lower-latency frames, fewer copies, less memory. Measure first (bench + devtools counters + RSS), per crate; publish Electron/React comparison numbers.
 
+## E. Component requests (2026-11-21, before release readiness and docs)
+- **PropertyGrid / TreeList polish** (spec/26): resizable name/value split, alternating rows, row
+  heights, auto-sizing value editors, scrub numbers, colour/enum/flags/vector editors, search,
+  sticky group headers, keyboard + copy/paste.
+- **CodeViewer annotations at scale** (spec/25): stress test (100k marks, 20k squiggles, 5k bubbles,
+  full blame) then optimise; underline styles (wavy/dotted/dashed/double), circled/boxed text,
+  gutter lanes (breakpoints, change/coverage bars), detailed blame with age heatmap and hover cards,
+  inlay hints, ghost text, code lens, review-comment bubbles, minimap marks.
+- **Multi-track event timeline** (Mantine Timeline style, new): several timelines side by side as
+  parallel tracks (git-branch / concurrent-process style), dots at times/dates/indices with label +
+  content rows; multiple dots on the same index stack their content one after another; per-track
+  and per-item colour coding; branch/merge connectors between tracks; vertical and horizontal
+  orientations; virtualised for long histories; keyboard + a11y.
+- **Calendar views** (new crate or in `guiraffe-timeline`): **year** (12 month mini-grids of day
+  numbers, heat/marker tint per day), **month** (day cells with number + dot markers / event chips,
+  overflow "+N"), **week** (day columns × hour rows, timed events as blocks with overlap layout,
+  all-day lane, now-line), **day** (week layout for one day with full width). Shared event model,
+  navigation (prev/next/today), drag to create/move/resize events, locale-aware week start, time
+  zones, keyboard + a11y, virtualised hour grid.
+- **Date & time pickers**: Kit 0.9.1 already has `Calendar`, `DatePicker` (single + range, optional
+  time precision → date-time) and `TimeField`. Wrap them as GUIraffe inputs with Mantine props
+  (DatePicker, DateRangePicker, TimePicker, DateTimePicker, presets like "Last 7 days", min/max,
+  disabled dates, locale/week start), theme tokens and §12 focus/a11y; showcase entries for every
+  variant (only the plain date picker is shown today); fill any gaps found.
+
 ## D. Docs and tooling (after the above)
 1. Static docs site (Rust→wasm live demos where feasible; otherwise screenshots/recordings), modelled on Mantine + TanStack docs.
 2. Tutorial: quick-start whirlwind tour.

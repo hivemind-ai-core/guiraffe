@@ -37,7 +37,11 @@ fn scaled(size: usize) -> usize {
     (size / divisor).max(1)
 }
 
-fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>)) -> Result<()> {
+fn flow(
+    no_minimap: bool,
+    mount_started: Instant,
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>, Duration),
+) -> Result<()> {
     let nodes = scaled(50_000) as u64;
     let graph = Graph::from_parts(
         (0..nodes).map(|i| {
@@ -71,7 +75,16 @@ fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>))
         .expect("window")
     });
     window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
-    run(&mut |i| {
+    let mount = mount_started.elapsed();
+    // The test dispatcher needs to be pumped explicitly to publish the spatial index.
+    cx.run_until_parked();
+    println!(
+        "background_ready_us={}",
+        mount_started.elapsed().as_micros()
+    );
+    let warm_replay = std::env::var_os("SOAK_FLOW_WARM_REPLAY").is_some();
+    let mut frame = |i: usize| {
+        let i = if warm_replay { i % 32 } else { i };
         let zoom = if i % 31 < 15 { 1.25 } else { 1. };
         view.update(&mut cx, |v, cx| {
             v.set_viewport(
@@ -86,8 +99,20 @@ fn flow(no_minimap: bool, run: impl FnOnce(&mut dyn FnMut(usize) -> Result<()>))
             )
         })?;
         window.update(&mut cx, |_, w, cx| w.render_frame(cx))?;
+        if warm_replay {
+            window.update(&mut cx, |_, w, cx| {
+                w.simulate_mouse_move(point(px(if i % 2 == 0 { 40. } else { 210. }), px(24.)), cx);
+                w.render_frame(cx);
+            })?;
+        }
         Ok(())
-    });
+    };
+    if warm_replay {
+        for i in 0..64 {
+            frame(i)?;
+        }
+    }
+    run(&mut frame, mount);
     Ok(())
 }
 
@@ -220,8 +245,9 @@ fn charts(
                     stream.append((next..end).collect());
                     stream.retain_last(STREAM_RATE as usize);
                     next = end;
-                    let model = streaming_spec(stream.clone()).prepare();
-                    window.update(|_, cx| view.update(cx, |chart, cx| chart.replace(model, cx)));
+                    let spec = streaming_spec(stream.clone());
+                    window
+                        .update(|_, cx| view.update(cx, |chart, cx| chart.replace_spec(spec, cx)));
                 }
             }
             let bounds = window
@@ -268,14 +294,17 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <flow|timeline|chart-line|chart-scatter|chart-stream|gantt|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat> [--short] [--no-minimap]")?;
     let short = args.iter().any(|arg| arg == "--short");
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
-        "flow" => flow(args.iter().any(|arg| arg == "--no-minimap"), |frame| {
-            result = sample(frame, mount_started.elapsed(), short);
-        })?,
+        "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
+        "flow" => flow(
+            args.iter().any(|arg| arg == "--no-minimap"),
+            mount_started,
+            |frame, mount| result = sample(frame, mount, short),
+        )?,
         "timeline" => timeline(|frame| result = sample(frame, mount_started.elapsed(), short)),
         "chart-line" => charts(false, false, |frame, mount| {
             result = sample(frame, mount, short)
@@ -286,7 +315,16 @@ fn main() -> Result<()> {
         "chart-stream" => charts(false, true, |frame, mount| {
             result = sample(frame, mount, short)
         })?,
-        "gantt" => mounted::gantt(|frame| result = sample(frame, mount_started.elapsed(), short))?,
+        "gantt" | "gantt-fan-out" | "gantt-chain" => {
+            let graph = match component {
+                "gantt-fan-out" => mounted::GanttGraph::FanOut,
+                "gantt-chain" => mounted::GanttGraph::Chain,
+                _ => mounted::GanttGraph::Sparse,
+            };
+            mounted::gantt(graph, |frame| {
+                result = sample(frame, mount_started.elapsed(), short)
+            })?;
+        }
         "tracks" => {
             mounted::tracks(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
@@ -296,9 +334,9 @@ fn main() -> Result<()> {
         "bar-editor" => {
             mounted::bar_editor(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "flamegraph" => {
-            mounted::flamegraph(|frame| result = sample(frame, mount_started.elapsed(), short))?
-        }
+        "flamegraph" => mounted::flamegraph(mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "tree" => mounted::tree(|frame| result = sample(frame, mount_started.elapsed(), short))?,
         "property-grid" => {
             mounted::property_grid(|frame| result = sample(frame, mount_started.elapsed(), short))?
@@ -372,7 +410,7 @@ fn sample(frame: &mut dyn FnMut(usize) -> Result<()>, mount: Duration, short: bo
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
-    use super::{Result, scaled};
+    use super::{Instant, Result, scaled};
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
         ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, ScrollSource, Styled,
@@ -398,8 +436,33 @@ mod mounted {
         }
     }
 
+    /// Sample the process cost of the same window without fixture content.
+    pub fn empty(run: impl FnOnce(Frame)) -> Result<()> {
+        let (mut window, _) = mount("empty_soak", |_| {}, |_, cx| cx.new(|_| gpui_kit::Empty))?;
+        run(&mut |_| {
+            settle(&mut window);
+            Ok(())
+        });
+        Ok(())
+    }
+
     /// Open a 1280x800 window (base Root) and render the first frame.
     fn mount<V: Render>(
+        name: &'static str,
+        init: impl FnOnce(&mut App),
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> Result<(VisualTestContext, Entity<V>)> {
+        let (mut window, view) = open(name, init, build)?;
+        window.run_until_parked();
+        window.update(|window, cx| window.render_frame(cx));
+        settle(&mut window);
+        // Views that measure themselves (axis width, viewport bounds) lay out again.
+        window.update(|window, cx| window.render_frame(cx));
+        window.run_until_parked();
+        Ok((window, view))
+    }
+
+    fn open<V: Render>(
         name: &'static str,
         init: impl FnOnce(&mut App),
         build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
@@ -419,14 +482,7 @@ mod mounted {
             };
             gpui_kit::open_window(options, cx, build)
         })?;
-        let mut window = VisualTestContext::from_window(handle, &cx);
-        window.run_until_parked();
-        window.update(|window, cx| window.render_frame(cx));
-        settle(&mut window);
-        // Views that measure themselves (axis width, viewport bounds) lay out again.
-        window.update(|window, cx| window.render_frame(cx));
-        window.run_until_parked();
-        Ok((window, view))
+        Ok((VisualTestContext::from_window(handle, &cx), view))
     }
 
     fn settle(window: &mut VisualTestContext) {
@@ -479,7 +535,13 @@ mod mounted {
     /// Gantt: 100,000 bars in chains of ten finish→start dependencies.
     /// The view lays out every row (no vertical virtualization or scrolling);
     /// vertical wheel input pans its time axis like horizontal input.
-    pub fn gantt(run: impl FnOnce(Frame)) -> Result<()> {
+    pub enum GanttGraph {
+        Sparse,
+        FanOut,
+        Chain,
+    }
+
+    pub fn gantt(graph: GanttGraph, run: impl FnOnce(Frame)) -> Result<()> {
         use guiraffe_timeline::{GanttView, Task, TimeFormat, gantt_view::RULER_H};
         let count = scaled(100_000) as u32;
         let tasks = (0..count)
@@ -488,7 +550,12 @@ mod mounted {
                 name: format!("Task {id}"),
                 not_before: f64::from((id / 10) % 100) * 3.,
                 duration: 1. + f64::from(id % 3),
-                after: if id % 10 == 0 { vec![] } else { vec![id - 1] },
+                after: match graph {
+                    GanttGraph::FanOut if id > 0 => vec![0],
+                    GanttGraph::Chain if id > 0 => vec![id - 1],
+                    GanttGraph::Sparse if id % 10 != 0 => vec![id - 1],
+                    _ => vec![],
+                },
             })
             .collect();
         let (mut window, _view) = mount("gantt_soak", guiraffe_timeline::init, |_, cx| {
@@ -518,7 +585,7 @@ mod mounted {
 
     /// Tracks: 100 tracks of 1,000 clips (100,000 clips), fitted to the full length.
     pub fn tracks(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_timeline::{TimeFormat, Track, TracksView, tracks_view::clip_element_id};
+        use guiraffe_timeline::{TimeFormat, Track, TracksView, tracks_view::TRACK_H};
         let per_track = scaled(1_000);
         let tracks = (0..100)
             .map(|t| {
@@ -535,6 +602,7 @@ mod mounted {
             TracksView::new(tracks, TimeFormat::Seconds, length, cx)
         })?;
         let root = require(&mut window, "tracks")?;
+        let track_body = require(&mut window, "tracks-body")?;
         let body = root.origin + point(root.size.width * 0.55, root.size.height * 0.4);
         run(&mut |i| {
             match i % 4 {
@@ -545,21 +613,34 @@ mod mounted {
                 }
                 2 => {
                     let track = (i / 4) % 16;
-                    let clip = window.update(|_, cx| {
-                        let v = view.read(cx);
-                        let axis = v.axis();
-                        let mid = axis.start + axis.width * axis.scale * 0.5;
-                        let clips = v.tracks().get(track)?.1.clips();
-                        clips
-                            .get(clips.partition_point(|c| c.start < mid))
-                            .map(|c| c.id)
-                    });
-                    let at = clip
-                        .and_then(|id| bounds(&mut window, clip_element_id(track, id)))
-                        .map(|b| b.center())
-                        .filter(|p| inside(root, *p))
-                        .unwrap_or(body);
+                    let (clip_id, x) = window
+                        .update(|_, cx| {
+                            let view = view.read(cx);
+                            let axis = view.axis();
+                            let mid = axis.t(axis.width * 0.5);
+                            let clips = view.tracks().get(track)?.1.clips();
+                            let first = clips.partition_point(|clip| clip.end() <= axis.start);
+                            let end = clips.partition_point(|clip| clip.start < axis.end());
+                            let visible = clips.get(first..end)?;
+                            let index = visible
+                                .partition_point(|clip| clip.start < mid)
+                                .min(visible.len().saturating_sub(1));
+                            let clip = visible.get(index)?;
+                            let left = clip.start.max(axis.start);
+                            let right = clip.end().min(axis.end());
+                            Some((clip.id, axis.x(left + (right - left) * 0.5)))
+                        })
+                        .ok_or("missing visible clip during tracks selection")?;
+                    let at =
+                        track_body.origin + point(px(x as f32), px((track as f32 + 0.5) * TRACK_H));
                     window.simulate_click(at, Modifiers::default());
+                    let selected = window.update(|_, cx| view.read(cx).selected());
+                    if selected != Some((track, clip_id)) {
+                        return Err(format!(
+                            "tracks selection expected ({track}, {clip_id}), got {selected:?}"
+                        )
+                        .into());
+                    }
                 }
                 _ => hover(
                     &mut window,
@@ -662,8 +743,8 @@ mod mounted {
 
     /// FlameGraph: 10,000,000 frames as 20,000 stacks of depth 500 (mirrors
     /// the `flamegraph_ten_million` bench source).
-    pub fn flamegraph(run: impl FnOnce(Frame)) -> Result<()> {
-        use guiraffe_flamegraph::{FlameGraph, FlameLayout, Frame as Sample, FrameSource};
+    pub fn flamegraph(started: Instant, run: impl FnOnce(Frame, Duration)) -> Result<()> {
+        use guiraffe_flamegraph::{FlameGraph, Frame as Sample, FrameSource};
         const LABELS: [&str; 8] = [
             "main", "run", "dispatch", "render", "layout", "paint", "alloc", "hash",
         ];
@@ -685,26 +766,45 @@ mod mounted {
             }
         }
         let frames = scaled(10_000_000).div_ceil(500) * 500;
-        let layout =
-            Arc::new(FlameLayout::new(Arc::new(Profile(frames))).map_err(|e| format!("{e:?}"))?);
-        let (mut window, _view) = mount("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
-            cx.new(|_| FlameGraph::new(layout))
+        let (mut window, view) = open("flamegraph_soak", guiraffe_flamegraph::init, |_, cx| {
+            cx.new(|cx| {
+                FlameGraph::from_source(Arc::new(Profile(frames)), cx)
+                    .unwrap_or_else(|error| panic!("invalid soak profile: {error:?}"))
+            })
         })?;
+        // The deterministic test dispatcher runs its background queue when
+        // parked. Draw and verify the preview before draining that queue.
+        window.update(|window, cx| window.render_frame(cx));
+        require(&mut window, "flame-plot")?;
+        let mount = started.elapsed();
+        println!(
+            "preview_pending={}",
+            view.read_with(&window, |view, _| view.is_loading())
+        );
+        settle(&mut window);
+        window.update(|window, cx| window.render_frame(cx));
+        if let Some(error) = view.read_with(&window, |view, _| view.load_failure()) {
+            return Err(format!("invalid soak profile: {error:?}").into());
+        }
+        println!("setup_and_full_layout_us={}", started.elapsed().as_micros());
         let plot = require(&mut window, "flame-plot")?;
-        run(&mut |i| {
-            let at = point(
-                plot.origin.x + plot.size.width * (0.1 + 0.8 * ((i * 37) % 100) as f32 / 100.),
-                plot.origin.y + plot.size.height - px(10. + 21. * ((i * 7) % 30) as f32),
-            );
-            match i % 8 {
-                0 | 1 => wheel(&mut window, at, 0., 35., false),
-                2 | 3 => wheel(&mut window, at, 0., -35., false),
-                6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
-                _ => hover(&mut window, at),
-            }
-            window.run_until_parked();
-            Ok(())
-        });
+        run(
+            &mut |i| {
+                let at = point(
+                    plot.origin.x + plot.size.width * (0.1 + 0.8 * ((i * 37) % 100) as f32 / 100.),
+                    plot.origin.y + plot.size.height - px(10. + 21. * ((i * 7) % 30) as f32),
+                );
+                match i % 8 {
+                    0 | 1 => wheel(&mut window, at, 0., 35., false),
+                    2 | 3 => wheel(&mut window, at, 0., -35., false),
+                    6 => drag(&mut window, at, at + point(px(22. * sign(i, 16)), px(0.))),
+                    _ => hover(&mut window, at),
+                }
+                window.run_until_parked();
+                Ok(())
+            },
+            mount,
+        );
         Ok(())
     }
 
@@ -818,6 +918,8 @@ mod mounted {
         Ok(())
     }
 
+    const PROPERTIES_PER_GROUP: usize = 9;
+
     struct Settings {
         groups: Forest,
         values: [guiraffe_tree::Value; 4],
@@ -829,7 +931,7 @@ mod mounted {
             &[0]
         }
         fn children(&self, id: u64) -> guiraffe_tree::Children<'_> {
-            guiraffe_tree::Children::Ready(self.groups.kids(id, 10))
+            guiraffe_tree::Children::Ready(self.groups.kids(id, PROPERTIES_PER_GROUP))
         }
         fn label(&self, id: u64) -> &str {
             if id == 0 {
@@ -857,12 +959,16 @@ mod mounted {
         }
     }
 
-    /// PropertyGrid: 10,000 groups of ten properties (110,001 rows) all expanded.
+    /// PropertyGrid: 100,000 groups of nine properties (1,000,001 rows) all expanded.
     pub fn property_grid(run: impl FnOnce(Frame)) -> Result<()> {
         use guiraffe_tree::Value;
-        let groups = scaled(10_000);
+        let groups = scaled(100_000);
+        println!(
+            "property_groups={groups} visible_rows={}",
+            1 + groups * (1 + PROPERTIES_PER_GROUP)
+        );
         let source = Rc::new(Settings {
-            groups: Forest::new(groups, 10),
+            groups: Forest::new(groups, PROPERTIES_PER_GROUP),
             values: [
                 Value::Number(0.75),
                 Value::Bool(true),
@@ -1008,9 +1114,18 @@ mod mounted {
             settle(&mut window);
         }
         let state = window.update(|_, cx| view.read(cx).0.clone());
-        if window.update(|_, cx| state.read(cx).image().is_none()) {
+        let first_frame = window.update(|_, cx| {
+            let diagram = state.read(cx);
+            match (diagram.has_preview(), diagram.image()) {
+                (true, None) => Some("native preview"),
+                (_, Some(_)) => Some("raster"),
+                (false, None) => None,
+            }
+        });
+        let Some(first_frame) = first_frame else {
             return Err("mermaid diagram did not render".into());
-        }
+        };
+        eprintln!("Mermaid first frame: {first_frame}");
         let center = point(px(640.), px(380.));
         run(&mut |i| {
             let at = center

@@ -9,16 +9,21 @@
 use std::{
     collections::VecDeque,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use gpui_kit::{DevicePixels, ParsedSvg, RenderImage, Size, SvgRenderer, SvgSize};
 use mermaid_rs_renderer::{
-    LayoutConfig, Theme, compute_layout, measure_svg_dimensions, parse_mermaid_strict, render_svg,
+    DiagramKind, Layout, LayoutConfig, Theme, compute_flowchart_staged, compute_layout,
+    measure_svg_dimensions, parse_mermaid_strict, render_flowchart_overview_svg, render_svg,
 };
 
 use crate::{
-    sizing::{dimensions_are_usable, raster_size},
+    preview::Overview,
+    sizing::{dimensions_are_usable, zoom_raster_size},
     source::{CacheKey, SourceError, admit},
 };
 
@@ -70,26 +75,108 @@ pub struct Drawn {
 ///
 /// Pure with respect to GPUI: no window, no raster. Panic-isolated.
 pub fn draw(source: &str, theme: &Theme) -> Result<Drawn, RenderError> {
-    let config = LayoutConfig::default();
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
-        let parsed = parse_mermaid_strict(source).map_err(|error| error.to_string())?;
-        let layout = compute_layout(&parsed.graph, theme, &config);
-        let dims = measure_svg_dimensions(&layout, &config, None);
-        let svg = render_svg(&layout, theme, &config);
-        Ok::<_, String>((svg, dims.width, dims.height))
-    }));
-    let (svg, width, height) = match outcome {
-        Ok(Ok(rendered)) => rendered,
-        Ok(Err(message)) => return Err(RenderError::Parse(message)),
-        Err(_) => return Err(RenderError::Panic),
-    };
-    if !dimensions_are_usable(width, height) {
+    match catch_unwind(AssertUnwindSafe(|| {
+        draw_layout(source, theme, None, &|| false)
+    })) {
+        Ok(result) => result?
+            .map(|frame| frame.drawing)
+            .ok_or(RenderError::Dimensions),
+        Err(_) => Err(RenderError::Panic),
+    }
+}
+
+struct Frame {
+    drawing: Drawn,
+    preview_pixels: Option<(u32, u32)>,
+    anchor: Option<(f32, f32)>,
+}
+
+fn frame(
+    layout: &Layout,
+    theme: &Theme,
+    config: &LayoutConfig,
+    preview: Option<&Request>,
+) -> Result<Frame, RenderError> {
+    let dims = measure_svg_dimensions(layout, config, None);
+    if !dimensions_are_usable(dims.width, dims.height) {
         return Err(RenderError::Dimensions);
     }
-    Ok(Drawn {
-        svg: svg.into(),
-        natural: (width, height),
+
+    let anchor = if layout.kind == DiagramKind::Flowchart {
+        layout
+            .nodes
+            .values()
+            .find(|node| !node.hidden)
+            .map(|node| (node.x, node.y))
+    } else {
+        None
+    };
+    let preview_pixels = preview.and_then(|request| {
+        let width = dims.width.min(request.display_width.max(100.0));
+        let height = width * dims.height / dims.width;
+        let pixels = zoom_raster_size(width, height, request.zoom, request.density);
+        (theme.font_size * pixels.0 as f32 / dims.width < 1.0)
+            .then(|| crate::sizing::overview_raster_size(pixels))
+    });
+    let svg = if preview_pixels.is_some() {
+        render_flowchart_overview_svg(layout, theme, config)
+    } else {
+        render_svg(layout, theme, config)
+    };
+    Ok(Frame {
+        drawing: Drawn {
+            svg: svg.into(),
+            natural: (dims.width, dims.height),
+        },
+        preview_pixels,
+        anchor,
     })
+}
+
+struct RenderStage<'a> {
+    cancelled: &'a AtomicBool,
+    publish: &'a mut dyn FnMut(StagedPreview),
+}
+
+pub(crate) enum StagedPreview {
+    Native {
+        overview: Overview,
+        natural: (f32, f32),
+        anchor: (f32, f32),
+        scale: f32,
+    },
+    Raster(StagedImage),
+}
+
+pub(crate) struct StagedImage {
+    pub(crate) image: Image,
+    /// Origin of the same node in both frames, measured in logical display pixels.
+    pub(crate) anchor: Option<(f32, f32)>,
+    pub(crate) scale: f32,
+}
+
+fn draw_layout(
+    source: &str,
+    theme: &Theme,
+    stage: Option<&mut dyn FnMut(&Layout)>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<Frame>, RenderError> {
+    let config = LayoutConfig::default();
+    let parsed =
+        parse_mermaid_strict(source).map_err(|error| RenderError::Parse(error.to_string()))?;
+    let graph = &parsed.graph;
+    let layout = if let Some(preview) = stage
+        && graph.kind == DiagramKind::Flowchart
+        && (graph.nodes.len() >= 256 || graph.edges.len() >= 256)
+    {
+        compute_flowchart_staged(graph, theme, &config, preview, cancelled)
+    } else {
+        (!cancelled()).then(|| compute_layout(graph, theme, &config))
+    };
+    layout
+        .as_ref()
+        .map(|layout| frame(layout, theme, &config, None))
+        .transpose()
 }
 
 /// One render request: content identity, the source to draw, and what the
@@ -149,6 +236,7 @@ struct Entry {
     source: String,
     svg: Arc<str>,
     natural: (f32, f32),
+    anchor: Option<(f32, f32)>,
     parsed: ParsedSvg,
     raster: Option<((u32, u32), Arc<RenderImage>)>,
 }
@@ -212,13 +300,35 @@ impl Engine {
     /// The whole body is panic-isolated. A panic leaves the cache as it was
     /// before the request, so the next frame retries cleanly.
     pub fn render(&mut self, request: &Request) -> Result<Image, RenderError> {
-        match catch_unwind(AssertUnwindSafe(|| self.render_inner(request))) {
+        match catch_unwind(AssertUnwindSafe(|| self.render_inner(request, None))) {
+            Ok(result) => result?
+                .map(|frame| frame.image)
+                .ok_or(RenderError::Dimensions),
+            Err(_) => Err(RenderError::Panic),
+        }
+    }
+
+    pub(crate) fn render_staged(
+        &mut self,
+        request: &Request,
+        cancelled: &AtomicBool,
+        mut publish: impl FnMut(StagedPreview),
+    ) -> Result<Option<StagedImage>, RenderError> {
+        let stage = RenderStage {
+            cancelled,
+            publish: &mut publish,
+        };
+        match catch_unwind(AssertUnwindSafe(|| self.render_inner(request, Some(stage)))) {
             Ok(result) => result,
             Err(_) => Err(RenderError::Panic),
         }
     }
 
-    fn render_inner(&mut self, request: &Request) -> Result<Image, RenderError> {
+    fn render_inner(
+        &mut self,
+        request: &Request,
+        stage: Option<RenderStage<'_>>,
+    ) -> Result<Option<StagedImage>, RenderError> {
         let reused = self
             .cache
             .iter()
@@ -229,29 +339,109 @@ impl Engine {
             Some(entry) => entry,
             None => {
                 self.layouts += 1;
-                let drawn = draw(&request.source, &request.theme)?;
-                let parsed = self
-                    .svg
-                    .parse_svg(drawn.svg.as_bytes())
-                    .map_err(|error| RenderError::Raster(error.to_string()))?;
-                Entry {
-                    key: request.key,
-                    source: request.source.clone(),
-                    svg: drawn.svg,
-                    natural: drawn.natural,
-                    parsed,
-                    raster: None,
-                }
+                let config = LayoutConfig::default();
+                let rendered = if let Some(stage) = stage {
+                    let cancelled = || stage.cancelled.load(Ordering::Relaxed);
+                    let mut preview = |layout: &Layout| {
+                        if !cancelled()
+                            && let Ok(preview) = self.preview(request, layout, &config)
+                            && !cancelled()
+                        {
+                            (stage.publish)(preview);
+                        }
+                    };
+                    draw_layout(
+                        &request.source,
+                        &request.theme,
+                        Some(&mut preview),
+                        &cancelled,
+                    )?
+                } else {
+                    draw_layout(&request.source, &request.theme, None, &|| false)?
+                };
+                let Some(frame) = rendered else {
+                    return Ok(None);
+                };
+                self.entry(request, frame)?
             }
         };
+        let image = self.rasterize(request, &mut entry, cached, None)?;
+        self.cache.push_front(entry);
+        while self.cache.len() > CACHE_ENTRIES || self.bytes() > CACHE_BYTES {
+            self.cache.pop_back();
+        }
+        Ok(Some(image))
+    }
+
+    fn entry(&self, request: &Request, frame: Frame) -> Result<Entry, RenderError> {
+        let parsed = self
+            .svg
+            .parse_svg(frame.drawing.svg.as_bytes())
+            .map_err(|error| RenderError::Raster(error.to_string()))?;
+        Ok(Entry {
+            key: request.key,
+            source: request.source.clone(),
+            svg: frame.drawing.svg,
+            natural: frame.drawing.natural,
+            anchor: frame.anchor,
+            parsed,
+            raster: None,
+        })
+    }
+
+    fn preview(
+        &mut self,
+        request: &Request,
+        layout: &Layout,
+        config: &LayoutConfig,
+    ) -> Result<StagedPreview, RenderError> {
+        let dims = measure_svg_dimensions(layout, config, None);
+        if !dimensions_are_usable(dims.width, dims.height) {
+            return Err(RenderError::Dimensions);
+        }
+        let width = dims.width.min(request.display_width.max(100.0));
+        let height = width * dims.height / dims.width;
+        let scale = width / dims.width;
+        let pixels = zoom_raster_size(width, height, request.zoom, request.density);
+        if request.theme.font_size * pixels.0 as f32 / dims.width < 1.0
+            && let Some(node) = layout.nodes.values().find(|node| !node.hidden)
+            && let Some(overview) = Overview::new(layout, &dims, &request.theme)
+        {
+            return Ok(StagedPreview::Native {
+                overview,
+                natural: (width, height),
+                anchor: (node.x * scale, node.y * scale),
+                scale,
+            });
+        }
+        let frame = frame(layout, &request.theme, config, Some(request))?;
+        self.rasterize_preview(request, frame)
+            .map(StagedPreview::Raster)
+    }
+
+    fn rasterize_preview(
+        &mut self,
+        request: &Request,
+        frame: Frame,
+    ) -> Result<StagedImage, RenderError> {
+        let pixels = frame.preview_pixels;
+        let mut entry = self.entry(request, frame)?;
+        self.rasterize(request, &mut entry, false, pixels)
+    }
+
+    fn rasterize(
+        &mut self,
+        request: &Request,
+        entry: &mut Entry,
+        cached: bool,
+        preview_pixels: Option<(u32, u32)>,
+    ) -> Result<StagedImage, RenderError> {
         let (nw, nh) = entry.natural;
-        // Logical size is zoom-independent (the viewport applies zoom when displaying); zoom
-        // only raises the raster density so zoomed-in diagrams stay sharp. Never rasterize
-        // below 1x, so zooming out keeps full quality.
         let width = nw.min(request.display_width.max(100.0));
         let height = width * nh / nw;
-        let scale = request.zoom.clamp(1.0, 4.0);
-        let pixels = raster_size(width * scale, height * scale, request.density);
+        let scale = width / nw;
+        let pixels = preview_pixels
+            .unwrap_or_else(|| zoom_raster_size(width, height, request.zoom, request.density));
         let image = match &entry.raster {
             Some((size, image)) if *size == pixels => image.clone(),
             _ => {
@@ -270,19 +460,18 @@ impl Engine {
                 image
             }
         };
-        let image = Image {
-            key: entry.key,
-            image,
-            svg: entry.svg.clone(),
-            width,
-            height,
-            cached,
-        };
-        self.cache.push_front(entry);
-        while self.cache.len() > CACHE_ENTRIES || self.bytes() > CACHE_BYTES {
-            self.cache.pop_back();
-        }
-        Ok(image)
+        Ok(StagedImage {
+            anchor: entry.anchor.map(|(x, y)| (x * scale, y * scale)),
+            scale,
+            image: Image {
+                key: entry.key,
+                image,
+                svg: entry.svg.clone(),
+                width,
+                height,
+                cached,
+            },
+        })
     }
 }
 
@@ -384,6 +573,88 @@ mod tests {
             3,
             "1x again after 2x: one raster size is cached per entry"
         );
+    }
+
+    #[test]
+    fn only_subpixel_preview_labels_are_omitted() {
+        let mut request = request(FLOW);
+        let config = LayoutConfig::default();
+        let parsed = parse_mermaid_strict(FLOW).expect("flowchart");
+        let mut layout = compute_layout(&parsed.graph, &request.theme, &config);
+        layout.width = 38_000.0;
+        let svg = |preview| {
+            frame(&layout, &request.theme, &config, preview)
+                .expect("frame")
+                .drawing
+                .svg
+        };
+        assert!(svg(None).contains(">Start<"));
+        assert!(!svg(Some(&request)).contains(">Start<"));
+        let overview = frame(&layout, &request.theme, &config, Some(&request)).expect("overview");
+        let mut engine = engine();
+        let image = engine
+            .rasterize_preview(&request, overview)
+            .expect("overview raster")
+            .image;
+        let size = image.image.size(0);
+        assert!(size.width <= DevicePixels(1024));
+        assert!(size.height <= DevicePixels(1024));
+        assert_eq!(engine.len(), 0);
+        request.zoom = 4.0;
+        let zoomed = frame(&layout, &request.theme, &config, Some(&request)).expect("zoomed");
+        assert!(zoomed.drawing.svg.contains(">Start<"));
+    }
+
+    #[test]
+    fn subpixel_plain_flowchart_preview_skips_svg_rasterization() {
+        let source = "flowchart LR\n  A[Start] --> B[Done]";
+        let request = request(source);
+        let config = LayoutConfig::default();
+        let parsed = parse_mermaid_strict(source).expect("flowchart");
+        let mut layout = compute_layout(&parsed.graph, &request.theme, &config);
+        // Wide previews can contain multi-segment paths such as self-loops.
+        layout.edges[0].points = vec![(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 0.0)];
+        layout.width = 38_000.0;
+        let mut engine = engine();
+        let preview = engine.preview(&request, &layout, &config).expect("preview");
+        assert!(matches!(preview, StagedPreview::Native { .. }));
+        assert_eq!(engine.rasterizations(), 0);
+        assert!(engine.is_empty());
+
+        let first = layout.nodes.values_mut().next().expect("node");
+        first.shape = mermaid_rs_renderer::ir::NodeShape::Diamond;
+        let preview = engine.preview(&request, &layout, &config).expect("preview");
+        assert!(matches!(preview, StagedPreview::Raster(_)));
+        assert_eq!(engine.rasterizations(), 1);
+        assert!(engine.is_empty());
+    }
+
+    #[test]
+    fn cancelling_after_the_preview_does_not_cache_a_partial_layout() {
+        use std::fmt::Write as _;
+
+        let mut source = String::from("flowchart TD\n  n0 --> n1\n");
+        for i in 0..256 {
+            writeln!(source, "  n{i}[Node {i}]").expect("write node");
+        }
+        let mut engine = engine();
+        let request = request(&source);
+        let cancelled = AtomicBool::new(false);
+        let mut previews = 0;
+        let result = engine
+            .render_staged(&request, &cancelled, |frame| {
+                previews += 1;
+                if let StagedPreview::Raster(frame) = frame {
+                    assert!(frame.anchor.is_some());
+                    assert!(frame.image.image.size(0).width.0 > 1);
+                }
+                cancelled.store(true, Ordering::Relaxed);
+            })
+            .expect("staged render");
+        assert_eq!(previews, 1);
+        assert!(result.is_none());
+        assert!(engine.is_empty());
+        assert_eq!(engine.rasterizations(), 1);
     }
 
     #[test]

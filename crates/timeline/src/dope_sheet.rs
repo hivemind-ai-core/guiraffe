@@ -1,17 +1,16 @@
 //! Hierarchical, frame-snapped dope sheet with viewport-culling and explicit selection.
+use crate::plot::append_diamond;
 use crate::{
     Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
-use gpui_kit::component::{
-    Disableable, Selectable, Sizable,
-    button::{Button, ButtonVariants},
-};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{ActiveTheme, Icon, Sizable, Size, Theme, tooltip::Tooltip};
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, Styled,
     TestSupportExt, Window, canvas, div, prelude::*, px,
 };
-use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant};
+use guiraffe_core::{A11yDisabledExt, ColorName, GuiraffeTheme, StateKind, Variant};
 use std::{cell::Cell, rc::Rc};
 pub const ROW_H: f32 = 28.;
 pub const NAME_W: f32 = 230.;
@@ -50,6 +49,7 @@ pub struct DopeSheet {
     focus: FocusHandle,
     playhead: f64,
     lock_style: LockStyle,
+    headers: Vec<(ChannelHeader, Entity<ChannelHeader>)>,
 }
 impl EventEmitter<DopeEvent> for DopeSheet {}
 impl Focusable for DopeSheet {
@@ -77,6 +77,7 @@ impl DopeSheet {
             focus: cx.focus_handle(),
             playhead: 0.,
             lock_style: LockStyle::Badge,
+            headers: Vec::new(),
         })
     }
     pub fn channels(&self) -> &[Channel] {
@@ -224,13 +225,13 @@ impl DopeSheet {
             f32::from(p.y - b.origin.y),
         )
     }
-    fn toggle(&mut self, channel: usize, kind: u8, cx: &mut Context<Self>) {
+    fn toggle(&mut self, channel: usize, kind: ChannelControl, cx: &mut Context<Self>) {
         if let Some(c) = self.model.channels.get_mut(channel) {
             match kind {
-                0 => c.collapsed = !c.collapsed,
-                1 => c.muted = !c.muted,
-                2 => c.locked = !c.locked,
-                _ => c.visible = !c.visible,
+                ChannelControl::Expand => c.collapsed = !c.collapsed,
+                ChannelControl::Mute => c.muted = !c.muted,
+                ChannelControl::Lock => c.locked = !c.locked,
+                ChannelControl::Visibility => c.visible = !c.visible,
             }
             self.model.rebuild_rows();
             self.drag = None;
@@ -239,6 +240,246 @@ impl DopeSheet {
         }
     }
 }
+#[derive(Clone, PartialEq)]
+struct ChannelHeader {
+    channel: usize,
+    depth: usize,
+    name: gpui_kit::SharedString,
+    color: ColorName,
+    group: bool,
+    collapsed: bool,
+    muted: bool,
+    locked: bool,
+    visible: bool,
+    owner: gpui_kit::WeakEntity<DopeSheet>,
+}
+
+#[derive(Clone, Copy)]
+enum ChannelControl {
+    Expand,
+    Mute,
+    Lock,
+    Visibility,
+}
+
+impl ChannelHeader {
+    fn control(&self, kind: ChannelControl, theme: &Theme) -> impl IntoElement + use<> {
+        let (id, label, icon, selected, disabled) = match kind {
+            ChannelControl::Expand => (
+                "channel-expand",
+                "Expand or collapse channel",
+                if !self.group {
+                    IconName::Minus
+                } else if self.collapsed {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                },
+                false,
+                !self.group,
+            ),
+            ChannelControl::Mute => (
+                "channel-mute",
+                "Mute channel",
+                if self.muted {
+                    IconName::VolumeX
+                } else {
+                    IconName::Volume2
+                },
+                self.muted,
+                false,
+            ),
+            ChannelControl::Lock => (
+                "channel-lock",
+                "Lock channel",
+                if self.locked {
+                    IconName::Lock
+                } else {
+                    IconName::LockOpen
+                },
+                self.locked,
+                false,
+            ),
+            ChannelControl::Visibility => (
+                "channel-visible",
+                "Channel visibility",
+                if self.visible {
+                    IconName::Eye
+                } else {
+                    IconName::EyeOff
+                },
+                false,
+                false,
+            ),
+        };
+        let owner = self.owner.clone();
+        let channel = self.channel;
+        let foreground = if disabled {
+            theme.muted_foreground.opacity(0.5)
+        } else {
+            theme.secondary_foreground
+        };
+        let hover = theme
+            .tokens
+            .accent
+            .opacity(if theme.mode.is_dark() { 0.5 } else { 1. });
+        let hover_foreground = theme.accent_foreground;
+        let active = theme.tokens.button_active;
+        div()
+            .debug_selector(move || format!("{id}-{channel}"))
+            .child(
+                div()
+                    .id((id, channel))
+                    .role(Role::Button)
+                    .aria_description(label)
+                    .aria_selected(selected)
+                    .size_5()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .rounded(theme.radius)
+                    .text_color(foreground)
+                    .when(selected, |el| el.bg(theme.tokens.secondary_active))
+                    .when(!disabled && !selected, |el| {
+                        el.hover(move |style| style.bg(hover).text_color(hover_foreground))
+                            .active(move |style| style.bg(active))
+                    })
+                    .when(!disabled, |el| {
+                        el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                            .on_click(move |_, _, cx| {
+                                if let Some(owner) = owner.upgrade() {
+                                    owner.update(cx, |view, cx| view.toggle(channel, kind, cx));
+                                }
+                            })
+                    })
+                    .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+                    .child(Icon::new(icon).with_size(Size::XSmall))
+                    .a11y_disabled(disabled),
+            )
+    }
+}
+
+impl Render for ChannelHeader {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = GuiraffeTheme::global(cx);
+        let control_theme = cx.theme();
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .pl(px(self.depth as f32 * 12.))
+            .child(self.control(ChannelControl::Expand, control_theme))
+            .child(
+                div()
+                    .w(px(4.))
+                    .h(px(12.))
+                    .rounded(px(2.))
+                    .mr(px(4.))
+                    .bg(theme
+                        .variant(Some(self.color), Variant::Filled)
+                        .background
+                        .to_hsla()),
+            )
+            .child(div().flex_1().overflow_hidden().child(self.name.clone()))
+            .child(self.control(ChannelControl::Mute, control_theme))
+            .child(self.control(ChannelControl::Lock, control_theme))
+            .child(self.control(ChannelControl::Visibility, control_theme))
+    }
+}
+
+fn key_indices(
+    times: &[f64],
+    first: usize,
+    end: usize,
+    spacing: Option<f64>,
+) -> impl Iterator<Item = usize> + Clone + '_ {
+    std::iter::successors((first < end).then_some(first), move |&index| {
+        let next = index + 1;
+        // Preserve the source sequence for picking and editing. Only the
+        // rendered marks skip diamonds that overlap at this zoom.
+        let next = if let Some(spacing) = spacing {
+            next + times[next..end].partition_point(|&t| t < times[index] + spacing)
+        } else {
+            next
+        };
+        (next < end).then_some(next)
+    })
+}
+
+struct KeyMark {
+    x: f64,
+    y: f64,
+    selected: bool,
+    shape: KeyShape,
+    hold: Option<f64>,
+    muted: bool,
+    summary: bool,
+    locked: bool,
+}
+
+fn viewport_keys(
+    model: &DopeModel,
+    axis: Axis,
+    height: f64,
+    offset: f64,
+) -> impl Iterator<Item = KeyMark> + Clone + '_ {
+    let start = ((offset / f64::from(ROW_H)).floor() as usize).min(model.rows().len());
+    let end = (((offset + height) / f64::from(ROW_H)).ceil() as usize).min(model.rows().len());
+    model.rows()[start..end]
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| model.channels[row.channel].visible)
+        .flat_map(move |(row_index, row)| {
+            let channel = row.channel;
+            let c = &model.channels[channel];
+            let times = if row.summary {
+                model.summary_keys(channel)
+            } else {
+                c.keys()
+            };
+            let first = times.partition_point(|t| *t < axis.t(-KEY_GRAB));
+            let end = times.partition_point(|t| *t <= axis.t(axis.width + KEY_GRAB));
+            let has_selection = model
+                .selected
+                .range((channel, 0)..=(channel, u64::MAX))
+                .next()
+                .is_some();
+            let compact = !row.summary
+                && c.decor.is_none()
+                && !has_selection
+                && end.saturating_sub(first) > (axis.width / 4.) as usize;
+            let locked = !model.editable(channel);
+            let y = (start + row_index) as f64 * f64::from(ROW_H) - offset;
+            key_indices(times, first, end, compact.then_some(4. * axis.scale)).map(move |index| {
+                let time = times[index];
+                let x = axis.x(time);
+                let selected = if compact {
+                    false
+                } else if row.summary {
+                    model.summary_selected(channel, time)
+                } else {
+                    model.selected.contains(&(channel, time.to_bits()))
+                };
+                let (shape, hold) = if compact {
+                    (KeyShape::Diamond, None)
+                } else {
+                    model.key_display(channel, row.summary, index)
+                };
+                KeyMark {
+                    x,
+                    y,
+                    selected,
+                    shape,
+                    hold: hold.map(|t| axis.x(t)),
+                    muted: c.muted,
+                    summary: row.summary,
+                    locked,
+                }
+            })
+        })
+}
+
 impl Render for DopeSheet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
@@ -258,16 +499,42 @@ impl Render for DopeSheet {
         );
         let start = (self.offset / f64::from(ROW_H)).floor() as usize;
         let end = ((self.offset + h) / f64::from(ROW_H)).ceil() as usize;
-        let rows: Vec<_> = self
+        let rows = self
             .model
             .rows()
             .get(start..end.min(self.model.rows().len()))
-            .unwrap_or(&[])
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(i, r)| (start + i, r))
-            .collect();
+            .unwrap_or(&[]);
+        let owner = cx.weak_entity();
+        for (index, row) in rows.iter().enumerate() {
+            let c = &self.model.channels[row.channel];
+            let current = self.headers.get_mut(index);
+            let name = current
+                .as_ref()
+                .map(|(old, _)| &old.name)
+                .filter(|name| name.as_str() == c.name.as_str())
+                .cloned()
+                .unwrap_or_else(|| c.name.clone().into());
+            let header = ChannelHeader {
+                channel: row.channel,
+                depth: row.depth,
+                name,
+                color: c.color,
+                group: c.group,
+                collapsed: c.collapsed,
+                muted: c.muted,
+                locked: c.locked,
+                visible: c.visible,
+                owner: owner.clone(),
+            };
+            if let Some(entry) = current {
+                if entry.0 != header {
+                    *entry = (header.clone(), cx.new(|_| header));
+                }
+            } else {
+                self.headers.push((header.clone(), cx.new(|_| header)));
+            }
+        }
+        self.headers.truncate(rows.len());
         let mut background = self.surface.clone();
         background.insert_layer(
             0,
@@ -286,67 +553,19 @@ impl Render for DopeSheet {
                 end: (end.0, f64::from(end.1)),
             });
         }
-        let axis = self.surface.axis;
         let offset = self.offset;
-        let mut keys = Vec::new();
-        for (r, row) in &rows {
-            let channel = row.channel;
-            let c = &self.model.channels[channel];
-            if !c.visible {
-                continue;
-            }
-            let times = if row.summary {
-                self.model.summary_keys(channel)
-            } else {
-                c.keys()
-            };
-            let first = times.partition_point(|t| *t < axis.t(-KEY_GRAB));
-            let end = times.partition_point(|t| *t <= axis.t(axis.width + KEY_GRAB));
-            let mut index = first;
-            let has_selection = self
-                .model
-                .selected
-                .range((channel, 0)..=(channel, u64::MAX))
-                .next()
-                .is_some();
-            let compact = !row.summary
-                && !c.has_keyframe_values
-                && !has_selection
-                && end.saturating_sub(first) > (axis.width / 4.) as usize;
-            let locked = !self.model.editable(channel);
-            let y = *r as f64 * f64::from(ROW_H) - offset;
-            while index < end {
-                let time = times[index];
-                let x = axis.x(time);
-                let selected = if row.summary {
-                    self.model.summary_selected(channel, time)
-                } else {
-                    self.model.selected.contains(&(channel, time.to_bits()))
-                };
-                let (shape, hold) = self.model.key_display(channel, row.summary, index);
-                keys.push((
-                    x,
-                    y,
-                    selected,
-                    shape,
-                    hold.map(|t| axis.x(t)),
-                    c.muted,
-                    row.summary,
-                    locked,
-                ));
-                index += 1;
-                if compact {
-                    // Overlapping undecorated diamonds represent the same visual
-                    // region. Keep source times intact for hit testing and edits.
-                    index += times[index..end].partition_point(|&t| t < time + 4. * axis.scale);
-                }
-            }
-        }
-        // Small scenes retain per-key rasterization and its original coverage.
-        let batch_diamonds = keys.len() > 512;
+        let key_owner = cx.weak_entity();
         let body = self.body.clone();
         let owner = cx.entity_id();
-        let key_theme = theme.clone();
+        let key_selected = theme
+            .state(StateKind::Selected, Variant::Filled, None)
+            .background
+            .to_hsla();
+        let key_muted = s.dimmed.to_hsla();
+        let key_normal = theme
+            .variant(Some(ColorName::Yellow), Variant::Filled)
+            .background
+            .to_hsla();
         let lock_style = self.lock_style;
         let tab = guiraffe_core::tab_stop(self.focusable);
         let focus_visible = guiraffe_core::ring_visible(&self.focus, window);
@@ -436,103 +655,18 @@ impl Render for DopeSheet {
                             .w(px(NAME_W))
                             .flex_none()
                             .overflow_hidden()
-                            .children(rows.iter().map(|(r, row)| {
-                                let i = row.channel;
-                                let c = &self.model.channels[i];
-                                div()
-                                    .absolute()
-                                    .top(px((*r as f64 * f64::from(ROW_H) - self.offset) as f32))
-                                    .h(px(ROW_H))
-                                    .w_full()
-                                    .flex()
-                                    .items_center()
-                                    .pl(px(row.depth as f32 * 12.))
-                                    .child(crate::locks::probe(
-                                        "channel-expand",
-                                        i,
-                                        Button::new(("channel-expand", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .disabled(!c.group)
-                                            .icon(gpui_kit::component::Icon::new(if !c.group {
-                                                gpui_kit::assets::IconName::Minus
-                                            } else if c.collapsed {
-                                                gpui_kit::assets::IconName::ChevronRight
-                                            } else {
-                                                gpui_kit::assets::IconName::ChevronDown
-                                            }))
-                                            .tooltip("Expand or collapse channel")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 0, cx)
-                                            })),
-                                    ))
-                                    .child(
-                                        div().w(px(4.)).h(px(12.)).rounded(px(2.)).mr(px(4.)).bg(
-                                            theme
-                                                .variant(Some(c.color), Variant::Filled)
-                                                .background
-                                                .to_hsla(),
-                                        ),
+                            .children(self.headers.iter().enumerate().map(
+                                |(index, (_, entity))| {
+                                    let y = (start + index) as f64 * f64::from(ROW_H) - offset;
+                                    entity.clone().cached(
+                                        gpui_kit::StyleRefinement::default()
+                                            .absolute()
+                                            .top(px(y as f32))
+                                            .w(px(NAME_W))
+                                            .h(px(ROW_H)),
                                     )
-                                    .child(div().flex_1().overflow_hidden().child(c.name.clone()))
-                                    .child(crate::locks::probe(
-                                        "channel-mute",
-                                        i,
-                                        Button::new(("channel-mute", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .icon(gpui_kit::component::Icon::new(if c.muted {
-                                                gpui_kit::assets::IconName::VolumeX
-                                            } else {
-                                                gpui_kit::assets::IconName::Volume2
-                                            }))
-                                            .tab_stop(false)
-                                            .tooltip("Mute channel")
-                                            .selected(c.muted)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 1, cx)
-                                            })),
-                                    ))
-                                    .child(crate::locks::probe(
-                                        "channel-lock",
-                                        i,
-                                        Button::new(("channel-lock", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .icon(gpui_kit::component::Icon::new(if c.locked {
-                                                gpui_kit::assets::IconName::Lock
-                                            } else {
-                                                gpui_kit::assets::IconName::LockOpen
-                                            }))
-                                            .tab_stop(false)
-                                            .tooltip("Lock channel")
-                                            .selected(c.locked)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 2, cx)
-                                            })),
-                                    ))
-                                    .child(crate::locks::probe(
-                                        "channel-visible",
-                                        i,
-                                        Button::new(("channel-visible", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .icon(gpui_kit::component::Icon::new(if c.visible {
-                                                gpui_kit::assets::IconName::Eye
-                                            } else {
-                                                gpui_kit::assets::IconName::EyeOff
-                                            }))
-                                            .tab_stop(false)
-                                            .tooltip("Channel visibility")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 3, cx)
-                                            })),
-                                    ))
-                            })),
+                                },
+                            )),
                     )
                     .child(
                         div()
@@ -546,18 +680,31 @@ impl Render for DopeSheet {
                             .on_scroll(cx.listener(|this, e: &gpui_kit::ScrollEvent, _, cx| {
                                 let d = e.delta.pixel_delta(px(16.));
                                 let (x, _) = this.local(e.position);
-                                if e.modifiers.control || e.modifiers.platform || e.modifiers.shift
+                                let changed = if e.modifiers.control
+                                    || e.modifiers.platform
+                                    || e.modifiers.shift
                                 {
                                     this.surface.navigate(
                                         x,
                                         f64::from(f32::from(d.x)),
                                         f64::from(f32::from(d.y)),
                                         e.modifiers.control || e.modifiers.platform,
-                                    );
+                                    )
                                 } else {
-                                    this.offset = (this.offset - f64::from(f32::from(d.y))).max(0.);
+                                    let height =
+                                        f64::from(f32::from(this.body.get().size.height)).max(1.);
+                                    let max = (this.model.rows().len() as f64 * f64::from(ROW_H)
+                                        - height)
+                                        .max(0.);
+                                    let offset =
+                                        (this.offset - f64::from(f32::from(d.y))).clamp(0., max);
+                                    let changed = offset != this.offset;
+                                    this.offset = offset;
+                                    changed
+                                };
+                                if changed {
+                                    cx.notify();
                                 }
-                                cx.notify();
                             }))
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -637,7 +784,20 @@ impl Render for DopeSheet {
                             .child(
                                 canvas(
                                     |_, _, _| (),
-                                    move |b, _, window, _| {
+                                    move |b, _, window, cx| {
+                                        let Some(owner) = key_owner.upgrade() else {
+                                            return;
+                                        };
+                                        let sheet = owner.read(cx);
+                                        let height = f64::from(f32::from(b.size.height)).max(1.);
+                                        let keys = viewport_keys(
+                                            &sheet.model,
+                                            sheet.surface.axis,
+                                            height,
+                                            sheet.offset,
+                                        );
+                                        // Keep sparse scenes on the original raster path.
+                                        let batch_diamonds = keys.clone().nth(512).is_some();
                                         let at = |x: f64, y: f64| {
                                             gpui_kit::point(
                                                 b.origin.x + px(x as f32),
@@ -648,120 +808,117 @@ impl Render for DopeSheet {
                                             gpui_kit::Hsla,
                                             gpui_kit::Path<Pixels>,
                                         )> = None;
-                                        for (x, y, selected, shape, hold, muted, summary, locked) in
-                                            &keys
-                                        {
-                                            let ink = if *selected {
-                                                key_theme
-                                                    .state(
-                                                        StateKind::Selected,
-                                                        Variant::Filled,
-                                                        None,
-                                                    )
-                                                    .background
-                                            } else if *muted
-                                                || (*locked && lock_style == LockStyle::Dimmed)
-                                            {
-                                                key_theme.surfaces().dimmed
-                                            } else {
-                                                key_theme
-                                                    .variant(
-                                                        Some(ColorName::Yellow),
-                                                        Variant::Filled,
-                                                    )
-                                                    .background
-                                            }
-                                            .to_hsla();
-                                            let cy = *y + f64::from(ROW_H) / 2.;
-                                            let radius =
-                                                if *selected || *summary { 6. } else { 4. };
-                                            if batch_diamonds
-                                                && *shape == KeyShape::Diamond
-                                                && hold.is_none()
-                                                && !(*locked && lock_style == LockStyle::Hatched)
-                                            {
-                                                if diamonds
-                                                    .as_ref()
-                                                    .is_some_and(|(color, _)| *color != ink)
-                                                    && let Some((color, mesh)) = diamonds.take()
+                                        keys.for_each(
+                                            |KeyMark {
+                                                 x,
+                                                 y,
+                                                 selected,
+                                                 shape,
+                                                 hold,
+                                                 muted,
+                                                 summary,
+                                                 locked,
+                                             }| {
+                                                let ink = if selected {
+                                                    key_selected
+                                                } else if muted
+                                                    || (locked && lock_style == LockStyle::Dimmed)
                                                 {
+                                                    key_muted
+                                                } else {
+                                                    key_normal
+                                                };
+                                                let cy = y + f64::from(ROW_H) / 2.;
+                                                let radius =
+                                                    if selected || summary { 6. } else { 4. };
+                                                if batch_diamonds
+                                                    && shape == KeyShape::Diamond
+                                                    && hold.is_none()
+                                                    && !(locked && lock_style == LockStyle::Hatched)
+                                                {
+                                                    if diamonds
+                                                        .as_ref()
+                                                        .is_some_and(|(color, _)| *color != ink)
+                                                        && let Some((color, mesh)) = diamonds.take()
+                                                    {
+                                                        window.paint_path(mesh, color);
+                                                    }
+                                                    let (_, mesh) =
+                                                        diamonds.get_or_insert_with(|| {
+                                                            (ink, gpui_kit::Path::new(at(x, cy)))
+                                                        });
+                                                    append_diamond(
+                                                        mesh,
+                                                        [
+                                                            at(x, cy - radius),
+                                                            at(x + radius, cy),
+                                                            at(x, cy + radius),
+                                                            at(x - radius, cy),
+                                                        ],
+                                                    );
+                                                    return;
+                                                }
+                                                if let Some((color, mesh)) = diamonds.take() {
                                                     window.paint_path(mesh, color);
                                                 }
-                                                let (_, mesh) = diamonds.get_or_insert_with(|| {
-                                                    (ink, gpui_kit::Path::new(at(*x, cy)))
-                                                });
-                                                let top = at(*x, cy - radius);
-                                                let right = at(x + radius, cy);
-                                                let bottom = at(*x, cy + radius);
-                                                let left = at(x - radius, cy);
-                                                let uv = gpui_kit::point(0., 1.);
-                                                mesh.push_triangle(
-                                                    (top, right, bottom),
-                                                    (uv, uv, uv),
-                                                );
-                                                mesh.push_triangle(
-                                                    (top, bottom, left),
-                                                    (uv, uv, uv),
-                                                );
-                                                continue;
-                                            }
-                                            if let Some((color, mesh)) = diamonds.take() {
-                                                window.paint_path(mesh, color);
-                                            }
-                                            if let Some(end) = hold {
-                                                let mut path =
-                                                    gpui_kit::PathBuilder::stroke(px(3.));
-                                                path.move_to(at(*x, cy));
-                                                path.line_to(at(*end, cy));
+                                                if let Some(end) = hold {
+                                                    let mut path =
+                                                        gpui_kit::PathBuilder::stroke(px(3.));
+                                                    path.move_to(at(x, cy));
+                                                    path.line_to(at(end, cy));
+                                                    if let Ok(path) = path.build() {
+                                                        window.paint_path(path, ink);
+                                                    }
+                                                }
+                                                let mut path = gpui_kit::PathBuilder::fill();
+                                                if shape == KeyShape::Diamond {
+                                                    for (i, (dx, dy)) in [
+                                                        (0., -radius),
+                                                        (radius, 0.),
+                                                        (0., radius),
+                                                        (-radius, 0.),
+                                                    ]
+                                                    .iter()
+                                                    .enumerate()
+                                                    {
+                                                        if i == 0 {
+                                                            path.move_to(at(x + dx, cy + dy));
+                                                        } else {
+                                                            path.line_to(at(x + dx, cy + dy));
+                                                        }
+                                                    }
+                                                } else {
+                                                    let sides = if shape == KeyShape::Circle {
+                                                        16
+                                                    } else {
+                                                        4
+                                                    };
+                                                    for i in 0..sides {
+                                                        let angle = (i as f64 + 0.5)
+                                                            * std::f64::consts::TAU
+                                                            / sides as f64;
+                                                        let p = at(
+                                                            x + radius * angle.cos(),
+                                                            cy + radius * angle.sin(),
+                                                        );
+                                                        if i == 0 {
+                                                            path.move_to(p)
+                                                        } else {
+                                                            path.line_to(p)
+                                                        }
+                                                    }
+                                                }
+                                                path.close();
+                                                if locked && lock_style == LockStyle::Hatched {
+                                                    path.move_to(at(x - radius, cy + radius));
+                                                    path.line_to(at(x + radius, cy - radius));
+                                                }
+
                                                 if let Ok(path) = path.build() {
                                                     window.paint_path(path, ink);
                                                 }
-                                            }
-                                            let mut path = gpui_kit::PathBuilder::fill();
-                                            if *shape == KeyShape::Diamond {
-                                                for (i, (dx, dy)) in [
-                                                    (0., -radius),
-                                                    (radius, 0.),
-                                                    (0., radius),
-                                                    (-radius, 0.),
-                                                ]
-                                                .iter()
-                                                .enumerate()
-                                                {
-                                                    if i == 0 {
-                                                        path.move_to(at(x + dx, cy + dy));
-                                                    } else {
-                                                        path.line_to(at(x + dx, cy + dy));
-                                                    }
-                                                }
-                                            } else {
-                                                let sides =
-                                                    if *shape == KeyShape::Circle { 16 } else { 4 };
-                                                for i in 0..sides {
-                                                    let angle = (i as f64 + 0.5)
-                                                        * std::f64::consts::TAU
-                                                        / sides as f64;
-                                                    let p = at(
-                                                        x + radius * angle.cos(),
-                                                        cy + radius * angle.sin(),
-                                                    );
-                                                    if i == 0 {
-                                                        path.move_to(p)
-                                                    } else {
-                                                        path.line_to(p)
-                                                    }
-                                                }
-                                            }
-                                            path.close();
-                                            if *locked && lock_style == LockStyle::Hatched {
-                                                path.move_to(at(x - radius, cy + radius));
-                                                path.line_to(at(x + radius, cy - radius));
-                                            }
-
-                                            if let Ok(path) = path.build() {
-                                                window.paint_path(path, ink);
-                                            }
-                                        }
+                                            },
+                                        );
                                         if let Some((color, mesh)) = diamonds {
                                             window.paint_path(mesh, color);
                                         }
@@ -779,6 +936,64 @@ impl Render for DopeSheet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diamond_batch_matches_generic_triangle_vertices_and_bounds() {
+        use gpui_kit::{Path, point};
+
+        let origin = point(px(2.), px(7.));
+        let mut batch = Path::new(origin);
+        let mut reference = Path::new(origin);
+        let uv = point(0., 1.);
+        for x in [-4., 20., 13.] {
+            let top = point(px(x), px(4.));
+            let right = point(px(x + 3.), px(7.));
+            let bottom = point(px(x), px(10.));
+            let left = point(px(x - 3.), px(7.));
+            append_diamond(&mut batch, [top, right, bottom, left]);
+            reference.push_triangle((top, right, bottom), (uv, uv, uv));
+            reference.push_triangle((top, bottom, left), (uv, uv, uv));
+        }
+        assert_eq!(batch.bounds, reference.bounds);
+        assert_eq!(batch.vertices.len(), reference.vertices.len());
+        for (actual, expected) in batch.vertices.iter().zip(&reference.vertices) {
+            assert_eq!(actual.xy_position, expected.xy_position);
+            assert_eq!(actual.st_position, expected.st_position);
+            assert_eq!(actual.content_mask, expected.content_mask);
+        }
+    }
+
+    #[test]
+    fn viewport_visits_only_intersecting_rows_at_both_scales() {
+        for count in [10_000, 100_000] {
+            let model =
+                DopeModel::new((0..count).map(|_| Channel::new("lane", vec![1.])).collect());
+            let axis = Axis::new(0., 10., 100.);
+            let row_height = f64::from(ROW_H);
+            let offset = 25.5 * row_height;
+            let rows: Vec<_> = viewport_keys(&model, axis, 2. * row_height, offset)
+                .map(|mark| mark.y)
+                .collect();
+            assert_eq!(
+                rows,
+                [-0.5 * row_height, 0.5 * row_height, 1.5 * row_height]
+            );
+        }
+    }
+
+    #[test]
+    fn dense_plain_keys_emit_the_same_marks_across_input_scales() {
+        for count in [10_000, 100_000, 10_000_000] {
+            let times: Vec<_> = (0..count).map(|i| i as f64 * 100. / count as f64).collect();
+            let marks: Vec<_> = key_indices(&times, 0, count, Some(4.))
+                .map(|i| times[i])
+                .collect();
+            assert_eq!(
+                marks,
+                (0..25).map(|i| f64::from(i) * 4.).collect::<Vec<_>>()
+            );
+        }
+    }
 
     #[test]
     fn channels_sort_dedup_and_refuse_collisions() {
@@ -852,7 +1067,7 @@ mod hierarchy_regressions {
         assert_eq!(model.channels[2].keys(), &[0.5]);
         assert_eq!(
             model.channels[1].decor,
-            vec![(Some(1.), KeyShape::Square); 2]
+            Some(vec![(Some(1.), KeyShape::Square); 2])
         );
     }
     #[test]
@@ -861,5 +1076,6 @@ mod hierarchy_regressions {
         model.select_all();
         assert!(model.translate(1., TimeFormat::Seconds));
         assert_eq!(model.channels[0].keys(), &[1., 2., 3.]);
+        assert!(model.channels[0].decor.is_none());
     }
 }

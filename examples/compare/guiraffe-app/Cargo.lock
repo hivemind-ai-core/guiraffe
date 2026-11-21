@@ -2220,8 +2220,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3e9ae5237737cfd110d0ff513fcd9c20f97d98ebabd0a73164068177f0aca4f"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2262,8 +2260,6 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e155c4914bd809d966660610d596f7b57c5cd38979ca2c132215057a91f23f03"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2324,8 +2320,6 @@ dependencies = [
 [[package]]
 name = "gpui-fast"
 version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a069272b90d908d15152711b38153edabcf67a5dcc490123197af7fd9ad78d9d"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2672,8 +2666,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre"
 version = "0.3.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29db89613527079737f53752eab27fb65c9a7dd94979256c65a0e590c9fd34d8"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3254,6 +3246,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "lru",
 ]
 
 [[package]]
@@ -4162,6 +4155,12 @@ checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
 ]
+
+[[package]]
+name = "lru"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 
 [[package]]
 name = "lru-slab"
@@ -9389,3 +9388,7 @@ dependencies = [
  "syn 3.0.10",
  "winnow 1.0.5",
 ]
+
+[[patch.unused]]
+name = "mermaid-rs-renderer"
+version = "0.3.1"

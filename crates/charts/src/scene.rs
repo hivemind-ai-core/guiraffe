@@ -3,7 +3,63 @@ use crate::{
     model::{Run, Sample},
     sample::lttb_with_cancel,
 };
-use std::{collections::BTreeSet, ops::Range, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashSet},
+    ops::Range,
+    sync::Arc,
+};
+
+const PICK_BLOCK: usize = 256;
+const SCATTER_CANDIDATES: usize = 2_048;
+
+struct ScatterCells {
+    pixel_columns: usize,
+    pixel_rows: usize,
+    scale: f32,
+    columns: usize,
+    cell_width: usize,
+    cell_height: usize,
+    occupied: [bool; SCATTER_CANDIDATES],
+    free: usize,
+}
+
+impl ScatterCells {
+    fn new(rect: Rect, scale: f32) -> Self {
+        let pixel_columns = (rect.width() * scale).floor().max(1.) as usize;
+        let pixel_rows = (rect.height() * scale).floor().max(1.) as usize;
+        let cell_width = pixel_columns.div_ceil(64).max(6);
+        let cell_height = pixel_rows.div_ceil(32).max(6);
+        let columns = pixel_columns.div_ceil(cell_width);
+        let rows = pixel_rows.div_ceil(cell_height);
+        Self {
+            pixel_columns,
+            pixel_rows,
+            scale,
+            columns,
+            cell_width,
+            cell_height,
+            occupied: [false; SCATTER_CANDIDATES],
+            free: columns * rows,
+        }
+    }
+
+    fn pixel(&self, rect: Rect, point: Position) -> (usize, usize) {
+        let x = ((point.0 - rect.left) * self.scale) as usize;
+        let y = ((point.1 - rect.top) * self.scale) as usize;
+        (x.min(self.pixel_columns - 1), y.min(self.pixel_rows - 1))
+    }
+
+    fn cell(&self, rect: Rect, point: Position) -> usize {
+        let (x, y) = self.pixel(rect, point);
+        let col = x / self.cell_width;
+        let row = y / self.cell_height;
+        row * self.columns + col
+    }
+}
+
+fn scatter_budget(runs: usize, index: usize) -> usize {
+    SCATTER_CANDIDATES / runs + usize::from(index < SCATTER_CANDIDATES % runs)
+}
 
 pub(crate) type Position = (f32, f32);
 
@@ -45,6 +101,7 @@ pub(crate) enum Geometry {
     Segment(Position, Position),
     Box(Position, Position),
     Dot(Position, f32),
+    Dots(Vec<(Position, f32)>),
     Text(Position, Arc<str>),
 }
 
@@ -78,9 +135,30 @@ impl Scene {
             .flat_map(|panel| &panel.draws)
             .map(|draw| match &draw.geometry {
                 Geometry::Path { points, .. } => points.len(),
+                Geometry::Dots(dots) => dots.len(),
                 _ => 1,
             })
             .sum()
+    }
+
+    pub(crate) fn cacheable(&self) -> bool {
+        self.panels.len() <= 64
+            && self.primitive_count() <= 8_192
+            && self.vertex_count() <= 16_384
+            && self
+                .panels
+                .iter()
+                .map(|panel| {
+                    panel.label.len()
+                        + panel
+                            .ticks
+                            .iter()
+                            .flatten()
+                            .map(|tick| std::mem::size_of::<Tick>() + tick.label.len())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+                <= 65_536
     }
 
     pub(crate) fn panel(&self, position: Position) -> Option<&Panel> {
@@ -90,7 +168,7 @@ impl Scene {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct Hit {
     pub id: DatumId,
     pub point: Position,
@@ -107,13 +185,14 @@ impl PreparedChart {
         domain: Domain,
         hidden: &BTreeSet<SeriesId>,
     ) -> Scene {
-        self.scene_with_cancel(width, height, domain, hidden, &|| false)
+        self.scene_with_cancel(width, height, 1., domain, hidden, &|| false)
     }
 
     pub(crate) fn scene_with_cancel(
         &self,
         width: f32,
         height: f32,
+        scale: f32,
         domain: Domain,
         hidden: &BTreeSet<SeriesId>,
         cancelled: &impl Fn() -> bool,
@@ -174,6 +253,8 @@ impl PreparedChart {
         }
 
         let mut scratch = Vec::new();
+        let mut scatter_ranges = Vec::new();
+        let mut scatter_pixels = HashSet::new();
         let mut panels = Vec::with_capacity(count);
         for (index, (facet, label)) in self.facets.iter().enumerate() {
             let x = (index % columns) as f32 * cell_width;
@@ -203,11 +284,24 @@ impl PreparedChart {
                 .runs
                 .iter()
                 .filter(|r| r.facet == *facet && !hidden.contains(&r.id));
-            let scatter_runs = visible_runs
+            scatter_ranges.clear();
+            let mut scatter_points = 0usize;
+            let mut scatter_count = 0;
+            for run in visible_runs
                 .clone()
                 .filter(|run| matches!(run.mark, Mark::Point | Mark::Bubble))
-                .count()
-                .max(1);
+            {
+                let visible = run.visible(domain.min(), domain.max(), false);
+                scatter_points = scatter_points.saturating_add(visible.len());
+                scatter_count += usize::from(!visible.is_empty());
+                scatter_ranges.push(visible);
+            }
+            let mut cells = ScatterCells::new(rect, scale);
+            let pixel_area = cells.pixel_columns.saturating_mul(cells.pixel_rows);
+            scatter_pixels.clear();
+            let dense_scatter = scatter_points > SCATTER_CANDIDATES.min(pixel_area);
+            let mut ranges = scatter_ranges.iter();
+            let mut scatter_index = 0;
             for run in visible_runs {
                 if cancelled() {
                     return Scene { panels: Vec::new() };
@@ -232,7 +326,11 @@ impl PreparedChart {
                             })
                             .all(|other| {
                                 other.rows.len() == run.rows.len()
-                                    && other.rows.iter().zip(&run.rows).all(|(a, b)| a.x == b.x)
+                                    && other
+                                        .rows
+                                        .iter()
+                                        .zip(run.rows.iter())
+                                        .all(|(a, b)| a.x == b.x)
                             });
                         if !aligned {
                             return None;
@@ -243,7 +341,7 @@ impl PreparedChart {
                             visible.len(),
                             budget,
                             |i| {
-                                let row = &run.rows[visible.start + i];
+                                let row = run.rows.row(visible.start + i);
                                 (row.x, row.top)
                             },
                             &mut indices,
@@ -264,7 +362,44 @@ impl PreparedChart {
                     }
                     continue;
                 }
-                projection.generate(&mut panel.draws, &mut scratch, scatter_runs, cancelled);
+                if matches!(run.mark, Mark::Point | Mark::Bubble) {
+                    let Some(visible) = ranges.next().filter(|range| !range.is_empty()) else {
+                        continue;
+                    };
+                    if dense_scatter {
+                        let budget = scatter_budget(scatter_count, scatter_index);
+                        scatter_index += 1;
+                        if cells.free > 0 && budget > 0 {
+                            projection.scatter(
+                                visible.clone(),
+                                &mut cells,
+                                budget,
+                                &mut panel.draws,
+                                cancelled,
+                            );
+                        }
+                    } else {
+                        for index in visible.clone() {
+                            let row = run.rows.row(index);
+                            let Some(point) = projection.anchor(&row).filter(|&p| rect.contains(p))
+                            else {
+                                continue;
+                            };
+                            let Some(radius) = projection.dot_radius(&row) else {
+                                continue;
+                            };
+                            if scatter_pixels.insert(cells.pixel(rect, point)) {
+                                panel.draws.push(Draw {
+                                    geometry: Geometry::Dot(point, radius),
+                                    series: run.id,
+                                    color: projection.color(&row),
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    projection.generate(&mut panel.draws, &mut scratch, cancelled);
+                }
             }
             panels.push(panel);
         }
@@ -313,7 +448,22 @@ impl PreparedChart {
                 }
                 _ => run.visible(min, max, false),
             };
-            for row in &run.rows[range] {
+            if !run.pick_bounds.is_empty() {
+                let mut search = PointPick {
+                    range,
+                    cursor,
+                    distance,
+                    hit: None,
+                };
+                projection.pick_points(1, 0..run.pick_bounds.len() / 2 * PICK_BLOCK, &mut search);
+                if search.hit.is_some() {
+                    best = search.hit;
+                    distance = search.distance;
+                }
+                continue;
+            }
+            for index in range {
+                let row = &run.rows.row(index);
                 if let Some(mut point) = projection.anchor(row) {
                     let mut d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
                     if let Mark::Bar(arrangement, orientation) = run.mark {
@@ -347,11 +497,36 @@ impl PreparedChart {
 }
 
 impl Run {
+    pub(crate) fn build_pick_bounds(&mut self, cancelled: &impl Fn() -> bool) {
+        if !matches!(self.mark, Mark::Line | Mark::Point | Mark::Bubble)
+            || self.rows.len() <= PICK_BLOCK
+        {
+            return;
+        }
+        let leaves = self.rows.len().div_ceil(PICK_BLOCK).next_power_of_two();
+        let mut bounds = vec![(f64::INFINITY, f64::NEG_INFINITY); 2 * leaves];
+        for (block, start) in (0..self.rows.len()).step_by(PICK_BLOCK).enumerate() {
+            if cancelled() {
+                return;
+            }
+            let entry = &mut bounds[leaves + block];
+            for index in start..(start + PICK_BLOCK).min(self.rows.len()) {
+                let y = self.rows.xy(index).1;
+                entry.0 = entry.0.min(y);
+                entry.1 = entry.1.max(y);
+            }
+        }
+        for index in (1..leaves).rev() {
+            let a = bounds[2 * index];
+            let b = bounds[2 * index + 1];
+            bounds[index] = (a.0.min(b.0), a.1.max(b.1));
+        }
+        self.pick_bounds = bounds;
+    }
+
     fn visible(&self, min: f64, max: f64, neighbors: bool) -> Range<usize> {
-        let start = self.rows.partition_point(|r| r.x < min - self.max_x_extent);
-        let end = self
-            .rows
-            .partition_point(|r| r.x <= max + self.max_x_extent);
+        let start = self.rows.partition_x(|x| x < min - self.max_x_extent);
+        let end = self.rows.partition_x(|x| x <= max + self.max_x_extent);
         let adjacent = usize::from(neighbors);
         start.saturating_sub(adjacent)..end.saturating_add(adjacent).min(self.rows.len())
     }
@@ -368,8 +543,13 @@ impl Run {
                 len,
                 len.div_ceil(8),
                 |i| {
-                    let row = &self.rows[previous.map_or(i, |level| level[i])];
-                    (row.x, row.top)
+                    let index = previous.map_or(i, |level| level[i]);
+                    if self.mark == Mark::Line {
+                        self.rows.xy(index)
+                    } else {
+                        let row = self.rows.row(index);
+                        (row.x, row.top)
+                    }
                 },
                 &mut scratch,
                 cancelled,
@@ -387,6 +567,27 @@ impl Run {
     }
 }
 
+fn scatter_candidates(visible: Range<usize>, budget: usize) -> impl Iterator<Item = usize> {
+    let len = visible.len();
+    let count = len.min(budget);
+    (0..count).map(move |slot| {
+        let width = len / count;
+        let extra = len % count;
+        let start = slot * width + slot.min(extra);
+        let width = width + usize::from(slot < extra);
+        // Decorrelate the stride from periodic input while keeping one point
+        // from each contiguous x interval.
+        visible.start + start + slot.wrapping_mul(41) % width
+    })
+}
+
+struct PointPick {
+    range: Range<usize>,
+    cursor: Position,
+    distance: f32,
+    hit: Option<Hit>,
+}
+
 struct Projection<'a> {
     chart: &'a PreparedChart,
     domains: [Domain; 3],
@@ -395,6 +596,61 @@ struct Projection<'a> {
 }
 
 impl Projection<'_> {
+    fn pick_points(&self, node: usize, block: Range<usize>, search: &mut PointPick) {
+        let start = block.start.max(search.range.start);
+        let end = block.end.min(search.range.end);
+        if start >= end {
+            return;
+        }
+        let (min_y, max_y) = self.run.pick_bounds[node];
+        let a = self.xy(self.run.rows.xy(start).0, min_y);
+        let b = self.xy(self.run.rows.xy(end - 1).0, max_y);
+        let cursor = search.cursor;
+        // A failed projection may be an overflow at the extremes. Descend
+        // without pruning so finite interior points still participate.
+        if let (Some((left, bottom)), Some((right, top))) = (a, b) {
+            if right < self.rect.left
+                || left > self.rect.right
+                || bottom < self.rect.top
+                || top > self.rect.bottom
+            {
+                return;
+            }
+            let dx = (left - cursor.0).max(cursor.0 - right).max(0.);
+            let dy = (top - cursor.1).max(cursor.1 - bottom).max(0.);
+            let lower_bound = dx.powi(2) + dy.powi(2);
+            if lower_bound > search.distance
+                || (search.hit.is_some() && lower_bound == search.distance)
+            {
+                return;
+            }
+        }
+        // Descending index preserves the linear scan's last-wins tie rule.
+        if block.len() > PICK_BLOCK {
+            let mid = block.start + block.len() / 2;
+            self.pick_points(2 * node + 1, mid..block.end, search);
+            self.pick_points(2 * node, block.start..mid, search);
+            return;
+        }
+        for index in (start..end).rev() {
+            let (x, y) = self.run.rows.xy(index);
+            let Some(point) = self.xy(x, y).filter(|&point| self.rect.contains(point)) else {
+                continue;
+            };
+            let d = (point.0 - cursor.0).powi(2) + (point.1 - cursor.1).powi(2);
+            if d < search.distance || (search.hit.is_none() && d == search.distance) {
+                search.distance = d;
+                search.hit = Some(Hit {
+                    id: self.run.rows.row(index).id,
+                    point,
+                    x,
+                    y,
+                    secondary: self.run.secondary,
+                });
+            }
+        }
+    }
+
     fn y_axis(&self) -> usize {
         if self.run.secondary { 2 } else { 1 }
     }
@@ -404,6 +660,15 @@ impl Projection<'_> {
         let x = self.chart.axes[0].scale.project(self.domains[0], x)?;
         let y = self.chart.axes[axis].scale.project(self.domains[axis], y)?;
         Some(self.rect.project(x, y))
+    }
+
+    fn anchor_at(&self, index: usize) -> Option<Position> {
+        if self.run.mark == Mark::Line {
+            let (x, y) = self.run.rows.xy(index);
+            self.xy(x, y)
+        } else {
+            self.anchor(&self.run.rows.row(index))
+        }
     }
 
     fn anchor(&self, row: &Sample) -> Option<Position> {
@@ -423,7 +688,6 @@ impl Projection<'_> {
         &self,
         out: &mut Vec<Draw>,
         scratch: &mut Vec<usize>,
-        scatter_runs: usize,
         cancelled: &impl Fn() -> bool,
     ) {
         let domain = self.domains[0];
@@ -454,20 +718,8 @@ impl Projection<'_> {
             }
             return;
         }
-        if matches!(self.run.mark, Mark::Point | Mark::Bubble) {
-            let pixels_per_series = self.rect.width() * self.rect.height() * scatter_runs as f32;
-            let cell_size = (pixels_per_series / 4_096.)
-                .sqrt()
-                .max(6. * (scatter_runs as f32).sqrt());
-            let columns = (self.rect.width() / cell_size).clamp(1., 128.) as usize;
-            let rows = (self.rect.height() / cell_size).clamp(1., 64.) as usize;
-            if visible.len() > 8_192 / scatter_runs.max(1) {
-                self.scatter(visible, columns, rows, out, cancelled);
-                return;
-            }
-        }
-        for row in &self.run.rows[visible] {
-            self.individual(row, out);
+        for index in visible {
+            self.individual(&self.run.rows.row(index), out);
         }
     }
 
@@ -498,24 +750,18 @@ impl Projection<'_> {
             source = Some(level);
             range = start..end;
         }
-        let row =
-            |i| &self.run.rows[source.map_or(range.start + i, |level| level[range.start + i])];
+        let source_index = |i| source.map_or(range.start + i, |level| level[range.start + i]);
         lttb_with_cancel(
             range.len(),
             budget,
             |i| {
-                let (x, y) = self.anchor(row(i)).unwrap_or_default();
+                let (x, y) = self.anchor_at(source_index(i)).unwrap_or_default();
                 (f64::from(x), f64::from(y))
             },
             scratch,
             cancelled,
         );
-        self.connected_path(
-            scratch
-                .iter()
-                .map(|&i| source.map_or(range.start + i, |level| level[range.start + i])),
-            out,
-        );
+        self.connected_path(scratch.iter().map(|&i| source_index(i)), out);
     }
 
     fn connected_path(
@@ -523,15 +769,12 @@ impl Projection<'_> {
         indices: impl DoubleEndedIterator<Item = usize> + Clone,
         out: &mut Vec<Draw>,
     ) {
-        let row = |i| &self.run.rows[i];
+        let row = |i| self.run.rows.row(i);
         let Some(first) = indices.clone().next() else {
             return;
         };
         let area = matches!(self.run.mark, Mark::Area(_));
-        let mut points: Vec<_> = indices
-            .clone()
-            .filter_map(|i| self.anchor(row(i)))
-            .collect();
+        let mut points: Vec<_> = indices.clone().filter_map(|i| self.anchor_at(i)).collect();
         if area {
             points.extend(indices.rev().filter_map(|i| {
                 let row = row(i);
@@ -546,13 +789,13 @@ impl Projection<'_> {
                     points,
                     closed: area,
                 },
-                color: self.color(row(first)),
+                color: self.color(&row(first)),
             });
         } else if let Some(point) = points.first() {
             out.push(Draw {
                 series: self.run.id,
                 geometry: Geometry::Dot(*point, 2.),
-                color: self.color(row(first)),
+                color: self.color(&row(first)),
             });
         }
     }
@@ -560,35 +803,52 @@ impl Projection<'_> {
     fn scatter(
         &self,
         visible: Range<usize>,
-        columns: usize,
-        rows: usize,
+        cells: &mut ScatterCells,
+        budget: usize,
         out: &mut Vec<Draw>,
         cancelled: &impl Fn() -> bool,
     ) {
-        // Share the viewport draw budget across visible series. Hit testing uses source points.
-        let mut free_cells = columns * rows;
-        let mut occupied = vec![false; columns * rows];
-        for (index, row) in self.run.rows[visible].iter().enumerate() {
-            if index.is_multiple_of(256) && cancelled() {
+        for (slot, index) in scatter_candidates(visible, budget).enumerate() {
+            if slot.is_multiple_of(256) && cancelled() {
                 return;
             }
-            let Some(point) = self.anchor(row).filter(|&p| self.rect.contains(p)) else {
+            let (x, y) = self.run.rows.xy(index);
+            let Some(point) = self.xy(x, y).filter(|&p| self.rect.contains(p)) else {
                 continue;
             };
-            let x = (self.rect.fraction(point.0) * columns as f64) as usize;
-            let y = ((point.1 - self.rect.top) / self.rect.height() * rows as f32) as usize;
-            let cell = y.min(rows - 1) * columns + x.min(columns - 1);
-            if !occupied[cell]
-                && let Some(radius) = self.dot_radius(row)
-            {
-                occupied[cell] = true;
-                out.push(Draw {
-                    geometry: Geometry::Dot(point, radius),
-                    series: self.run.id,
-                    color: self.color(row),
-                });
-                free_cells -= 1;
-                if free_cells == 0 {
+            let cell = cells.cell(self.rect, point);
+            if cells.occupied[cell] {
+                continue;
+            }
+            let row = &self.run.rows.row(index);
+            if let Some(radius) = self.dot_radius(row) {
+                cells.occupied[cell] = true;
+                let color = self.color(row);
+                if let Some(Draw {
+                    geometry: Geometry::Dots(dots),
+                    series,
+                    color: previous,
+                }) = out.last_mut()
+                    && *series == self.run.id
+                    && *previous == color
+                {
+                    dots.push((point, radius));
+                } else {
+                    let capacity = if self.run.rows.color_varies() {
+                        1
+                    } else {
+                        cells.free.min(budget)
+                    };
+                    let mut dots = Vec::with_capacity(capacity);
+                    dots.push((point, radius));
+                    out.push(Draw {
+                        geometry: Geometry::Dots(dots),
+                        series: self.run.id,
+                        color,
+                    });
+                }
+                cells.free -= 1;
+                if cells.free == 0 {
                     break;
                 }
             }
@@ -743,26 +1003,73 @@ mod tests {
     use crate::{Channels, ChartSpec, Layer};
 
     #[test]
-    fn dense_scatter_shares_screen_cells_across_series_budgets() {
-        let chart = ChartSpec::new("dense scatter")
-            .layer(Layer::new(
-                Mark::Point,
-                (0..10_000).collect::<Vec<_>>(),
-                Channels::new(|i| f64::from(i % 10), |i| f64::from((i / 10) % 10))
-                    .group(|i| (i / 100) as u32),
-            ))
-            .prepare();
-        let scene = chart.scene(480., 300., chart.x_domain(), &Default::default());
-        let draws = &scene.panels[0].draws;
-        assert!(draws.len() < 2_500);
-        assert_eq!(
-            draws
-                .iter()
-                .map(|draw| draw.series.group)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len(),
-            100,
-        );
+    fn dense_scatter_candidate_work_is_independent_of_total_size() {
+        for size in [10_000, 1_000_000, 10_000_000] {
+            let indices: Vec<_> = scatter_candidates(0..size, SCATTER_CANDIDATES).collect();
+            assert_eq!(indices.len(), SCATTER_CANDIDATES);
+            assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(indices.iter().all(|&index| index < size));
+        }
+    }
+
+    #[test]
+    fn dense_scatter_shares_screen_cells_across_series() {
+        for groups in [1, 100] {
+            let chart = ChartSpec::new("dense scatter")
+                .layer(Layer::new(
+                    Mark::Point,
+                    (0..10_000).collect::<Vec<_>>(),
+                    Channels::new(|i| f64::from(i % 10), |i| f64::from((i / 10) % 10))
+                        .group(move |i| (i / 100) as u32 % groups),
+                ))
+                .prepare();
+            let scene = chart.scene(480., 300., chart.x_domain(), &Default::default());
+            let panel = &scene.panels[0];
+            let cells = ScatterCells::new(panel.rect, 1.);
+            let mut occupied = BTreeSet::new();
+            for draw in &panel.draws {
+                let Geometry::Dots(dots) = &draw.geometry else {
+                    panic!("expected dense scatter batches");
+                };
+                for &(point, _) in dots {
+                    assert!(occupied.insert(cells.cell(panel.rect, point)));
+                }
+            }
+            let candidates = (0..groups as usize)
+                .map(|index| {
+                    scatter_candidates(
+                        0..10_000 / groups as usize,
+                        scatter_budget(groups as usize, index),
+                    )
+                    .count()
+                })
+                .sum::<usize>();
+            assert_eq!(candidates, SCATTER_CANDIDATES);
+            assert!((1..=100).contains(&occupied.len()));
+        }
+    }
+
+    #[test]
+    fn sparse_scatter_shares_device_pixels_at_each_scale() {
+        let mut spec = ChartSpec::new("nearby marks").layer(Layer::new(
+            Mark::Point,
+            vec![0., 0.006, 0.006],
+            Channels::new(|x| *x, |_| 0.5).group(|x| u32::from(*x > 0.)),
+        ));
+        spec.x.domain = Domain::new(0., 1.);
+        let chart = spec.prepare();
+        let scene = |scale| {
+            chart.scene_with_cancel(
+                200.,
+                100.,
+                scale,
+                chart.x_domain(),
+                &BTreeSet::new(),
+                &|| false,
+            )
+        };
+        assert_eq!(scene(1.).vertex_count(), 1);
+        assert_eq!(scene(2.).vertex_count(), 2);
     }
 
     #[test]
@@ -867,6 +1174,37 @@ mod tests {
                 .key,
             1
         );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn indexed_pick_matches_linear_scan(
+            values in proptest::collection::vec((1u16..80, 1u16..80), 257..800),
+            x in 0f32..600.,
+            y in 0f32..300.,
+            radius in 0f32..100.,
+            log_scale in proptest::bool::ANY,
+            scatter in proptest::bool::ANY,
+        ) {
+            let mut spec = ChartSpec::new("hover").layer(Layer::new(
+                if scatter { Mark::Point } else { Mark::Line },
+                values,
+                Channels::new(|row: &(u16, u16)| f64::from(row.0), |row| f64::from(row.1)),
+            ));
+            if log_scale {
+                spec.x.scale = crate::Scale::Log;
+                spec.y.scale = crate::Scale::Log;
+            }
+            let mut chart = spec.prepare();
+            let domain = chart.x_domain();
+            let hidden = BTreeSet::new();
+            let scene = chart.scene(600., 300., domain, &hidden);
+            let panel = &scene.panels[0];
+            let indexed = chart.nearest(panel, domain, &hidden, (x, y), radius);
+            chart.runs[0].pick_bounds.clear();
+            let linear = chart.nearest(panel, domain, &hidden, (x, y), radius);
+            proptest::prop_assert_eq!(indexed, linear);
+        }
     }
 
     #[test]
