@@ -22,7 +22,9 @@ use guiraffe_overlays::{
 use super::{column, example};
 use crate::catalog::Entry;
 use crate::events::EventLog;
-use crate::knobs::{Applied, Knob, KnobValues, Preview, SIZE_NAMES, playground_with};
+use crate::knobs::{
+    Knob, KnobValues, Preview, SIZE_NAMES, playground_with, playground_with_update,
+};
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -339,7 +341,7 @@ impl FloatingDemo {
 }
 
 fn floating(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live FloatingTooltip (hover a trigger)",
         &[
             Knob::new("Align", &["start", "center", "end"]).default(1),
@@ -348,28 +350,26 @@ fn floating(window: &mut Window, cx: &mut App) -> AnyView {
             Knob::toggle("Shift").default(1),
             Knob::toggle("Always open").default(1),
         ],
-        |_, cx| (cx.new(|_| FloatingDemo::new()), Applied::default()),
-        |(demo, applied), v, _, cx| {
-            if applied.changed(v) {
-                let align = v
-                    .pick(0, &[FloatAlign::Start, FloatAlign::Center, FloatAlign::End])
-                    .unwrap_or(FloatAlign::Center);
-                let gap = v.pick(1, &[0., 4., 12.]).unwrap_or(4.);
-                let (flip, shift, always) = (v.on(2), v.on(3), v.on(4));
-                demo.update(cx, |d, cx| {
-                    d.options = FloatingOptions {
-                        align,
-                        gap,
-                        flip,
-                        shift,
-                        ..d.options
-                    };
-                    d.always = always;
-                    cx.notify();
-                });
-            }
-            demo.clone().into_any_element()
+        |_, cx| cx.new(|_| FloatingDemo::new()),
+        |demo, v, cx| {
+            let align = v
+                .pick(0, &[FloatAlign::Start, FloatAlign::Center, FloatAlign::End])
+                .unwrap_or(FloatAlign::Center);
+            let gap = v.pick(1, &[0., 4., 12.]).unwrap_or(4.);
+            let (flip, shift, always) = (v.on(2), v.on(3), v.on(4));
+            demo.update(cx, |d, cx| {
+                d.options = FloatingOptions {
+                    align,
+                    gap,
+                    flip,
+                    shift,
+                    ..d.options
+                };
+                d.always = always;
+                cx.notify();
+            });
         },
+        |demo, _, _, _| demo.clone().into_any_element(),
         window,
         cx,
     )
@@ -476,34 +476,29 @@ struct LoadingDemo {
 }
 
 fn loading(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live LoadingOverlay",
         &[Knob::size(), Knob::color(), Knob::variant()],
         |_, cx| {
-            (
-                cx.new(|_| LoadingDemo {
-                    loading: true,
-                    size: Size::Md,
-                    color: ColorName::Blue,
-                    variant: Variant::Filled,
-                }),
-                Applied::default(),
-            )
+            cx.new(|_| LoadingDemo {
+                loading: true,
+                size: Size::Md,
+                color: ColorName::Blue,
+                variant: Variant::Filled,
+            })
         },
-        |(demo, applied), v, _, cx| {
-            if applied.changed(v) {
-                let (size, color, variant) = (
-                    v.size(0),
-                    v.color(1).unwrap_or(ColorName::Blue),
-                    v.variant(2),
-                );
-                demo.update(cx, |d, cx| {
-                    (d.size, d.color, d.variant) = (size, color, variant);
-                    cx.notify();
-                });
-            }
-            demo.clone().into_any_element()
+        |demo, v, cx| {
+            let (size, color, variant) = (
+                v.size(0),
+                v.color(1).unwrap_or(ColorName::Blue),
+                v.variant(2),
+            );
+            demo.update(cx, |d, cx| {
+                (d.size, d.color, d.variant) = (size, color, variant);
+                cx.notify();
+            });
         },
+        |demo, _, _, _| demo.clone().into_any_element(),
         window,
         cx,
     )

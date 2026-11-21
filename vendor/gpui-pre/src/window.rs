@@ -1212,6 +1212,9 @@ enum InputModality {
     Touch,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+type TestFrameObserver = Box<dyn Fn(&Window)>;
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -1250,6 +1253,8 @@ pub struct Window {
     focused_text_input: Option<FocusId>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
+    #[cfg(any(test, feature = "test-support"))]
+    test_frame_observer: Option<TestFrameObserver>,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
@@ -2375,6 +2380,8 @@ impl Window {
             last_text_input_configuration: None,
             focused_text_input: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            #[cfg(any(test, feature = "test-support"))]
+            test_frame_observer: None,
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
@@ -3122,6 +3129,12 @@ impl Window {
         &self.rendered_frame.scene
     }
 
+    /// Observe each completed draw after the scene swap, including retained frames.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn observe_test_frames(&mut self, observe: impl Fn(&Window) + 'static) {
+        self.test_frame_observer = Some(Box::new(observe));
+    }
+
     /// Returns the path count in the most recently rendered scene.
     #[cfg(any(test, feature = "test-support"))]
     pub fn painted_path_count(&self) -> usize {
@@ -3788,6 +3801,11 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(observe) = &self.test_frame_observer {
+            observe(self);
+        }
+
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;

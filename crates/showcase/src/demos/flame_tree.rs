@@ -1,7 +1,7 @@
 use crate::{
     catalog::Entry,
     events::EventLog,
-    knobs::{Knob, playground_with},
+    knobs::{Knob, playground_with_update},
 };
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Styled,
@@ -69,7 +69,7 @@ impl FrameSource for Profile {
 }
 
 fn flame(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Application profile",
         &[
             Knob::new("Orientation", &["Flame", "Icicle"]),
@@ -83,34 +83,31 @@ fn flame(window: &mut Window, cx: &mut App) -> AnyView {
             });
             let log = EventLog::new(cx);
             EventLog::watch(&log, &view, cx);
-            (view, log, Cell::new([0, 0, 0]))
+            (view, log)
         },
-        |(view, log, previous), knobs, _, cx| {
+        |(view, _), knobs, cx| {
             let settings = [knobs.index(0), knobs.index(1), knobs.index(2)];
-            if previous.replace(settings) != settings {
-                let view = view.clone();
-                cx.defer(move |cx| {
-                    view.update(cx, |view, cx| {
-                        view.set_orientation(
-                            if settings[0] == 0 {
-                                Orientation::Flame
-                            } else {
-                                Orientation::Icicle
-                            },
-                            cx,
-                        );
-                        view.set_colour_scheme(
-                            match settings[1] {
-                                1 => ColourScheme::Package,
-                                2 => ColourScheme::Heat,
-                                _ => ColourScheme::Name,
-                            },
-                            cx,
-                        );
-                        view.set_search(if settings[2] == 0 { "" } else { "render" }, cx);
-                    })
-                });
-            }
+            view.update(cx, |view, cx| {
+                view.set_orientation(
+                    if settings[0] == 0 {
+                        Orientation::Flame
+                    } else {
+                        Orientation::Icicle
+                    },
+                    cx,
+                );
+                view.set_colour_scheme(
+                    match settings[1] {
+                        1 => ColourScheme::Package,
+                        2 => ColourScheme::Heat,
+                        _ => ColourScheme::Name,
+                    },
+                    cx,
+                );
+                view.set_search(if settings[2] == 0 { "" } else { "render" }, cx);
+            });
+        },
+        |(view, log), _, _, cx| {
             let height = view.read(cx).full_plot_height() + px(38.);
             div()
                 .flex()
@@ -309,7 +306,7 @@ impl<const P: bool> TreeDemo<P> {
 }
 
 fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         if P {
             "Workspace properties"
         } else {
@@ -326,7 +323,7 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
             Knob::toggle("Taller first group").default(1),
         ],
         |window, cx| cx.new(|cx| TreeDemo::<P>::new(window, cx)),
-        |entity, knobs, _, cx| {
+        |entity, knobs, cx| {
             let demo = entity.read(cx);
             let open = knobs.on(0);
             let change_advanced = demo.advanced.replace(open) != open;
@@ -347,22 +344,20 @@ fn tree<const P: bool>(window: &mut Window, cx: &mut App) -> AnyView {
             let change_height = demo.tall_header.replace(tall) != tall;
             if change_advanced || change_style || change_height {
                 let view = demo.view.clone();
-                cx.defer(move |cx| {
-                    view.update(cx, |view, cx| {
-                        if change_advanced {
-                            view.set_expanded(6, open, cx);
-                        }
-                        if change_style {
-                            view.set_row_style(style, cx);
-                        }
-                        if change_height {
-                            view.set_row_heights(tall.then_some((0, 44.)), cx);
-                        }
-                    });
+                view.update(cx, |view, cx| {
+                    if change_advanced {
+                        view.set_expanded(6, open, cx);
+                    }
+                    if change_style {
+                        view.set_row_style(style, cx);
+                    }
+                    if change_height {
+                        view.set_row_heights(tall.then_some((0, 44.)), cx);
+                    }
                 });
             }
-            entity.clone().into_any_element()
         },
+        |entity, _, _, _| entity.clone().into_any_element(),
         window,
         cx,
     )

@@ -20,6 +20,7 @@ requests `wp_presentation` feedback for buffer submissions. Set
 | Both `src/scene.rs` | Changes `Path::vertices` to an `Arc<Vec<_>>`-backed `PathVertices` wrapper. Scene replay, insertion and fast gather share vertices. Mutation detaches via `Arc::make_mut`. Scaling still computes device-space coordinates in the same order. |
 | Both `src/elements/list.rs` | Retains the measurement tree when the viewport produces identical sizes and readiness. Changed records still follow the existing measurement update path. |
 | Both `src/arena.rs` | Invalidates the token before dropping values. Resets it in place when no handles survive and allocates a new token when a stale handle still owns the old one. |
+| Both `src/window.rs` | Exposes a test-support observer at the completed scene swap, so frame regressions capture drawn and retained paint. |
 | Both `src/window.rs` | Exposes the rendered path count under test support so the allocation test verifies replay produced all 1,000 paths. |
 | `gpui-pre/src/scene.rs` | Sorts paths in place by draw order and sequential `PathId`. Other primitive kinds share a reusable stable sort permutation capped at 65,536 entries per scene. |
 | `gpui-pre/src/window.rs`, `gpui-pre/src/view.rs`, `gpui-base/src/root.rs` | Kit opts its viewport root into cached layout and paint. Refresh and child invalidation rebuild as usual. The root prepaints live when accessibility is active. |

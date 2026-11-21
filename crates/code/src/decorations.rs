@@ -74,6 +74,20 @@ pub enum GutterMark {
     PartiallyCovered,
 }
 
+impl GutterMark {
+    pub(crate) fn color(self) -> ColorName {
+        match self {
+            Self::Breakpoint | Self::Error | Self::Deleted | Self::Uncovered => ColorName::Red,
+            Self::Bookmark | Self::Modified => ColorName::Blue,
+            Self::Added | Self::Covered => ColorName::Green,
+            Self::PartiallyCovered => ColorName::Yellow,
+        }
+    }
+}
+
+pub(crate) const OVERVIEW_BINS: usize = 256;
+type GutterOverview = [[Option<GutterMark>; 4]; OVERVIEW_BINS];
+
 /// Git metadata shared by every run attributed to this commit.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BlameCommit {
@@ -485,7 +499,8 @@ struct DecorationIndex {
     by_end: Vec<u32>,
     diagnostics: Vec<u32>,
     changes: Vec<u32>,
-    overview: [bool; 256],
+    overview: [bool; OVERVIEW_BINS],
+    gutter_overview: Option<Box<GutterOverview>>,
     disjoint: bool,
     has_blame: bool,
     has_widgets: bool,
@@ -519,7 +534,8 @@ impl DecorationLayer {
             by_end: Vec::new(),
             diagnostics: Vec::new(),
             changes: Vec::new(),
-            overview: [false; 256],
+            overview: [false; OVERVIEW_BINS],
+            gutter_overview: None,
             disjoint: false,
             has_blame: false,
             has_widgets: false,
@@ -541,14 +557,22 @@ impl DecorationLayer {
                 _ => {}
             }
         }
-        let mut bins = [0_i64; 257];
+        let mut bins = [0_i64; OVERVIEW_BINS + 1];
         let bin = |offset| {
             document.position(offset as usize).map_or(0, |position| {
-                ((position.line as u128 * 256) / document.line_count() as u128) as usize
+                ((position.line as u128 * OVERVIEW_BINS as u128) / document.line_count() as u128)
+                    as usize
             })
         };
         for record in &data.records {
             let first = bin(record.start);
+            if let Some(DecorationStyle::Gutter { lane, mark }) = styles.get(record.style as usize)
+            {
+                let overview = data
+                    .gutter_overview
+                    .get_or_insert_with(|| Box::new([[None; 4]; OVERVIEW_BINS]));
+                overview[first][usize::from((*lane).min(3))] = Some(*mark);
+            }
             let source = document.source();
             let mut tail = record.end.saturating_sub(1).max(record.start) as usize;
             while !source.is_char_boundary(tail) {
@@ -590,8 +614,12 @@ impl DecorationLayer {
     }
 
     /// Occupied rows in a fixed 256-bin overview of the source lines.
-    pub fn overview(&self) -> &[bool; 256] {
+    pub fn overview(&self) -> &[bool; OVERVIEW_BINS] {
         &self.index.overview
+    }
+
+    pub(crate) fn gutter_overview(&self) -> Option<&GutterOverview> {
+        self.index.gutter_overview.as_deref()
     }
 
     pub fn options(&self) -> DecorationLayerOptions {
@@ -778,6 +806,68 @@ mod tests {
             start_bias: AnchorBias::Left,
             end_bias: AnchorBias::Right,
         }
+    }
+
+    #[test]
+    fn gutter_overview_only_places_gutter_marks_at_their_source_line_and_lane() {
+        let mut decorations = store(Arc::new(CodeDocument::new("first\nsecond\nthird\nlast")));
+        let bookmark = decorations
+            .intern_style(DecorationStyle::Gutter {
+                lane: 1,
+                mark: GutterMark::Bookmark,
+            })
+            .expect("interned bookmark");
+        let coverage = decorations
+            .intern_style(DecorationStyle::Gutter {
+                lane: 3,
+                mark: GutterMark::Covered,
+            })
+            .expect("interned coverage");
+        let on_line = |id, line, style| DecorationInput {
+            range: SourceRange::new(Position::new(line, 0), Position::new(line, 0)),
+            style,
+            ..mark(id, 0, 0)
+        };
+        decorations
+            .update_layer(0, Default::default(), &[], [mark(1, 0, 3)])
+            .expect("published non-gutter layer");
+        decorations
+            .update_layer(
+                1,
+                Default::default(),
+                &[],
+                [on_line(2, 1, bookmark), on_line(3, 2, coverage)],
+            )
+            .expect("published gutter layer");
+
+        assert!(
+            decorations
+                .layer(0)
+                .expect("layer 0")
+                .gutter_overview()
+                .is_none()
+        );
+        let overview = decorations
+            .layer(1)
+            .expect("layer 1")
+            .gutter_overview()
+            .expect("gutter summary");
+        assert_eq!(
+            overview[64][1].map(GutterMark::color),
+            Some(ColorName::Blue)
+        );
+        assert_eq!(
+            overview[128][3].map(GutterMark::color),
+            Some(ColorName::Green)
+        );
+        assert_eq!(
+            overview
+                .iter()
+                .flatten()
+                .filter(|mark| mark.is_some())
+                .count(),
+            2
+        );
     }
 
     #[test]

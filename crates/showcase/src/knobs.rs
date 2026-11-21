@@ -192,8 +192,22 @@ pub fn playground_entity<S: 'static>(
     window: &mut Window,
     cx: &mut App,
 ) -> (Entity<Playground>, Entity<Preview<S>>) {
+    playground_entity_with_update(title, knobs, init, |_, _, _| {}, render, window, cx)
+}
+
+/// Build a playground whose stateful controls receive props before rendering starts.
+fn playground_entity_with_update<S: 'static>(
+    title: &'static str,
+    knobs: &[Knob],
+    init: impl FnOnce(&mut Window, &mut App) -> S,
+    apply: fn(&S, &KnobValues, &mut App),
+    render: StatefulPreviewFn<S>,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Entity<Playground>, Entity<Preview<S>>) {
     let values = KnobValues(knobs.iter().map(|k| k.default).collect());
     let state = init(window, cx);
+    apply(&state, &values, cx);
     let preview = cx.new(|_| Preview {
         state,
         values,
@@ -221,6 +235,7 @@ pub fn playground_entity<S: 'static>(
                     let SegmentedEvent::Changed(index) = e;
                     p.update(cx, |p, cx| {
                         if p.values.set(i, *index) {
+                            apply(&p.state, &p.values, cx);
                             cx.notify();
                         }
                     });
@@ -247,6 +262,21 @@ pub fn playground_with<S: 'static>(
     cx: &mut App,
 ) -> AnyView {
     playground_entity(title, knobs, init, render, window, cx)
+        .0
+        .into()
+}
+
+/// Stateful playground with a synchronous callback for initial and changed knob values.
+pub fn playground_with_update<S: 'static>(
+    title: &'static str,
+    knobs: &[Knob],
+    init: impl FnOnce(&mut Window, &mut App) -> S,
+    apply: fn(&S, &KnobValues, &mut App),
+    render: StatefulPreviewFn<S>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyView {
+    playground_entity_with_update(title, knobs, init, apply, render, window, cx)
         .0
         .into()
 }
@@ -323,6 +353,120 @@ pub fn with_knobs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Record automatic GPUI draws as well as explicitly stepped frames.
+    fn assert_immediate_transition(demo: &str, changes: &[(usize, usize)]) {
+        use gpui_kit::{HeadlessAppContext, platform, size};
+        use std::{
+            cell::{Cell, RefCell},
+            rc::Rc,
+            sync::Arc,
+        };
+
+        let entry = crate::catalog::entries()
+            .into_iter()
+            .find(|entry| entry.name == demo)
+            .expect("catalog demo");
+        let mut cx = HeadlessAppContext::with_platform(
+            platform::current_platform(true).text_system(),
+            Arc::new(guiraffe_icons::GuiraffeAssets),
+            platform::current_headless_renderer,
+        );
+        cx.update(crate::init);
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let armed = Rc::new(Cell::new(false));
+        let window = cx
+            .open_window(size(px(1100.), px(850.)), |window, cx| {
+                let playground = (entry.demo)(window, cx)
+                    .downcast::<Playground>()
+                    .unwrap_or_else(|_| panic!("{demo} is not a playground"));
+                let frames = frames.clone();
+                let armed = armed.clone();
+                window.observe_test_frames(move |window| {
+                    if armed.get() {
+                        frames
+                            .borrow_mut()
+                            .push(window.render_to_image().expect("capture frame"));
+                    }
+                });
+                cx.new(|_| FrameFixture(playground))
+            })
+            .expect("open window");
+        let draw = |cx: &mut HeadlessAppContext| {
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("draw frame");
+        };
+        for _ in 0..3 {
+            draw(&mut cx);
+            cx.run_until_parked();
+        }
+        for &(id, value) in changes {
+            let before = cx
+                .capture_screenshot(window.into())
+                .expect("capture baseline");
+            armed.set(true);
+            window
+                .update(&mut cx, |root, _, cx| {
+                    let knob = root.0.read(cx).knob(id).expect("knob").clone();
+                    knob.update(cx, |knob, cx| knob.select(value, cx));
+                })
+                .expect("change knob");
+
+            for _ in 0..2 {
+                cx.run_until_parked();
+                draw(&mut cx);
+            }
+            armed.set(false);
+            let settled = cx
+                .capture_screenshot(window.into())
+                .expect("capture settled frame");
+            let recorded = frames.take();
+            assert!(
+                before != settled,
+                "{demo} knob {id} must change preview paint"
+            );
+            assert!(!recorded.is_empty(), "{demo} knob {id} drew no frames");
+            for (index, frame) in recorded.iter().enumerate() {
+                assert!(
+                    *frame == settled,
+                    "{demo} knob {id} painted an intermediate frame at index {index}"
+                );
+            }
+        }
+
+        struct FrameFixture(Entity<Playground>);
+
+        impl gpui_kit::Render for FrameFixture {
+            fn render(
+                &mut self,
+                _: &mut Window,
+                cx: &mut gpui_kit::Context<Self>,
+            ) -> impl IntoElement {
+                div().size_full().child(self.0.read(cx).preview.clone())
+            }
+        }
+    }
+
+    #[test]
+    fn code_viewer_knobs_paint_complete_frames() {
+        assert_immediate_transition("CodeViewer", &[(1, 0), (1, 1), (3, 0), (6, 1)]);
+        assert_immediate_transition(
+            "Code annotations",
+            &[(1, 0), (4, 0), (3, 0), (6, 0), (6, 1)],
+        );
+    }
+
+    #[test]
+    fn property_grid_knobs_paint_complete_frames() {
+        assert_immediate_transition("Property grid", &[(2, 1), (2, 0), (3, 1)]);
+    }
+
+    #[test]
+    fn sample_component_knobs_paint_complete_frames() {
+        assert_immediate_transition("SegmentedControl", &[(0, 3), (2, 1)]);
+        assert_immediate_transition("Flame graph", &[(0, 1), (1, 1)]);
+        assert_immediate_transition("Chart grammar", &[(0, 1), (2, 0)]);
+    }
 
     #[test]
     fn values_fall_back_safely() {
