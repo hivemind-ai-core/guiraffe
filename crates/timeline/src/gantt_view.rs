@@ -967,6 +967,21 @@ mod tests {
     }
 
     #[test]
+    fn bars_cull_outside_time_view_and_keep_subpixel_markers() {
+        let axis = Axis::new(0.0, 100.0, 100.0);
+        let bar = |start, finish| Scheduled {
+            early_start: start,
+            early_finish: finish,
+            late_start: start,
+            late_finish: finish,
+        };
+        assert_eq!(bar_interval(axis, bar(-12.0, -1.0)), None);
+        assert_eq!(bar_interval(axis, bar(100.0, 102.0)), None);
+        assert_eq!(bar_interval(axis, bar(-12.0, 8.0)), Some((-12.0, 20.0)));
+        assert_eq!(bar_interval(axis, bar(10.0, 10.01)), Some((10.0, 2.0)));
+    }
+
+    #[test]
     fn arrows_include_only_incident_edges_and_emit_shared_edges_once() {
         let visible = |n| {
             let tasks: Vec<_> = (0..n)
