@@ -420,6 +420,13 @@ impl Rows {
         }
     }
 
+    pub fn color_varies(&self) -> bool {
+        match self {
+            Self::Plain(columns) => !columns.color.is_empty(),
+            Self::Styled(_) => true,
+        }
+    }
+
     pub fn xy(&self, index: usize) -> (f64, f64) {
         match self {
             Self::Plain(c) => (c.x[index], c.y[index]),

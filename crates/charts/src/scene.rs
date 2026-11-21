@@ -416,8 +416,13 @@ impl Run {
                 len,
                 len.div_ceil(8),
                 |i| {
-                    let row = self.rows.row(previous.map_or(i, |level| level[i]));
-                    (row.x, row.top)
+                    let index = previous.map_or(i, |level| level[i]);
+                    if self.mark == Mark::Line {
+                        self.rows.xy(index)
+                    } else {
+                        let row = self.rows.row(index);
+                        (row.x, row.top)
+                    }
                 },
                 &mut scratch,
                 cancelled,
@@ -530,6 +535,15 @@ impl Projection<'_> {
         Some(self.rect.project(x, y))
     }
 
+    fn anchor_at(&self, index: usize) -> Option<Position> {
+        if self.run.mark == Mark::Line {
+            let (x, y) = self.run.rows.xy(index);
+            self.xy(x, y)
+        } else {
+            self.anchor(&self.run.rows.row(index))
+        }
+    }
+
     fn anchor(&self, row: &Sample) -> Option<Position> {
         match self.run.mark {
             Mark::Area(_) | Mark::Bar(_, Orientation::Vertical) => self.xy(row.x, row.top),
@@ -628,27 +642,18 @@ impl Projection<'_> {
             source = Some(level);
             range = start..end;
         }
-        let row = |i| {
-            self.run
-                .rows
-                .row(source.map_or(range.start + i, |level| level[range.start + i]))
-        };
+        let source_index = |i| source.map_or(range.start + i, |level| level[range.start + i]);
         lttb_with_cancel(
             range.len(),
             budget,
             |i| {
-                let (x, y) = self.anchor(&row(i)).unwrap_or_default();
+                let (x, y) = self.anchor_at(source_index(i)).unwrap_or_default();
                 (f64::from(x), f64::from(y))
             },
             scratch,
             cancelled,
         );
-        self.connected_path(
-            scratch
-                .iter()
-                .map(|&i| source.map_or(range.start + i, |level| level[range.start + i])),
-            out,
-        );
+        self.connected_path(scratch.iter().map(|&i| source_index(i)), out);
     }
 
     fn connected_path(
@@ -661,10 +666,7 @@ impl Projection<'_> {
             return;
         };
         let area = matches!(self.run.mark, Mark::Area(_));
-        let mut points: Vec<_> = indices
-            .clone()
-            .filter_map(|i| self.anchor(&row(i)))
-            .collect();
+        let mut points: Vec<_> = indices.clone().filter_map(|i| self.anchor_at(i)).collect();
         if area {
             points.extend(indices.rev().filter_map(|i| {
                 let row = row(i);
@@ -727,8 +729,15 @@ impl Projection<'_> {
                 {
                     dots.push((point, radius));
                 } else {
+                    let capacity = if self.run.rows.color_varies() {
+                        1
+                    } else {
+                        free_cells.min(budget)
+                    };
+                    let mut dots = Vec::with_capacity(capacity);
+                    dots.push((point, radius));
                     out.push(Draw {
-                        geometry: Geometry::Dots(vec![(point, radius)]),
+                        geometry: Geometry::Dots(dots),
                         series: self.run.id,
                         color,
                     });
