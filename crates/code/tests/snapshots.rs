@@ -289,3 +289,155 @@ fn code_at_production_scale() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+#[test]
+fn layered_annotations_in_light_and_dark() -> Result<(), Box<dyn std::error::Error>> {
+    use guiraffe_code::{
+        AnchorBias, BlameCommit, DecorationInput, DecorationStyle, Decorations, GutterMark,
+        HighlightShape, Severity, UnderlinePattern,
+    };
+
+    let document = Arc::new(CodeDocument::new(
+        "fn total() {\n    let base = 4;\n    let tax = 2;\n    base + taz\n}\n",
+    ));
+    let mut decorations = Decorations::new(document.clone())?;
+    let ranges = [
+        (
+            0,
+            1,
+            8,
+            12,
+            DecorationStyle::Highlight {
+                shape: HighlightShape::Rounded,
+                color: ColorName::Blue,
+            },
+        ),
+        (
+            1,
+            3,
+            11,
+            14,
+            DecorationStyle::Diagnostic {
+                severity: Severity::Error,
+                pattern: UnderlinePattern::Wavy,
+                message: "Unknown variable".into(),
+            },
+        ),
+        (
+            2,
+            2,
+            0,
+            0,
+            DecorationStyle::Gutter {
+                lane: 0,
+                mark: GutterMark::Covered,
+            },
+        ),
+        (
+            2,
+            3,
+            0,
+            0,
+            DecorationStyle::Gutter {
+                lane: 0,
+                mark: GutterMark::Uncovered,
+            },
+        ),
+        (
+            3,
+            1,
+            8,
+            12,
+            DecorationStyle::Review {
+                markdown: "**Review**\nAdd a case without tax.".into(),
+            },
+        ),
+        (
+            3,
+            2,
+            8,
+            11,
+            DecorationStyle::Block {
+                estimated_rows: 2,
+                payload: "Coverage review · Verify the zero-tax case".into(),
+            },
+        ),
+    ];
+    for (id, (layer, line, start, end, style)) in ranges.into_iter().enumerate() {
+        let style = decorations.intern_style(style)?;
+        decorations.update_layer(
+            layer,
+            Default::default(),
+            &[],
+            [DecorationInput {
+                id: id as u64,
+                range: SourceRange::new(Position::new(line, start), Position::new(line, end)),
+                style,
+                start_bias: AnchorBias::Left,
+                end_bias: AnchorBias::Right,
+            }],
+        )?;
+    }
+    let blame = decorations.intern_style(DecorationStyle::Blame(Arc::new(BlameCommit {
+        author: "Ada Rivera".into(),
+        short_hash: "af86a44".into(),
+        message: "Include tax".into(),
+        date: "2026-11-07".into(),
+        age_days: 14,
+        url: None,
+    })))?;
+    decorations.update_layer(
+        4,
+        Default::default(),
+        &[],
+        [DecorationInput {
+            id: 0,
+            range: SourceRange::new(Position::new(0, 0), Position::new(4, 1)),
+            style: blame,
+            start_bias: AnchorBias::Left,
+            end_bias: AnchorBias::Right,
+        }],
+    )?;
+    let decorations = Arc::new(decorations);
+    let config = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for (scheme, name) in [
+        (Scheme::Light, "annotations-light"),
+        (Scheme::Dark, "annotations-dark"),
+    ] {
+        let mut snapshot = Snapshotter::new()?.with_setup(move |cx| {
+            guiraffe_code::init(cx);
+            apply(
+                GuiraffeTheme {
+                    scheme,
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        let data = decorations.clone();
+        let analysis = data.prepare_analysis(Vec::new(), Vec::new());
+        let image = snapshot.render(size(px(1000.), px(250.)), move |_, cx| {
+            let code = CodeHandle::new(1, data.document().clone(), cx);
+            code.set_analysis(analysis, cx);
+            code.set_decorations(Some(data), cx);
+            code.set_hover(Some(Position::new(1, 9)), cx);
+            code.on_block_widget(
+                Some(Rc::new(|widget, _, cx| {
+                    let surface = GuiraffeTheme::global(cx).surfaces();
+                    div()
+                        .h(px(30.))
+                        .pl(px(7.))
+                        .bg(surface.surface.to_hsla())
+                        .text_color(surface.dimmed.to_hsla())
+                        .child(widget.payload.to_string())
+                        .into_any_element()
+                })),
+                cx,
+            );
+            cx.new(|_| Scene(code))
+        })?;
+        assert_snapshot(name, &image, &config)?;
+    }
+    Ok(())
+}

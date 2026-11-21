@@ -68,3 +68,7 @@ test = true
 name = "production_frames"
 harness = false
 required-features = ["instruction-counts"]
+
+[[example]]
+name = "limits"
+test = true

@@ -25,6 +25,20 @@ features.
 
 # Draft pull request for longbridge/gpui-fast
 
+## Pace callback-only Wayland ticks from the compositor
+
+The Wayland loop arms a 16.667 ms local timer when a tick consumes a
+next-frame callback, schedules another, and leaves the current buffer in
+place. That interleaves software timers with native callback delivery.
+Request a `wl_surface.frame` on a mapped surface and commit its current
+state instead, reusing the one pending callback slot. Preserve the timer
+retry before the first successful presentation and preserve parking when
+demand ends. An obscured mapped surface can pause on the compositor callback,
+as it already can after a buffer submission.
+
+The state transition tests cover callback demand before and after the first
+present, idle parking, and both presentation failure states.
+
 ## Share tessellated path vertices through retained replay and gather
 
 The cached scene replays paths into its paint operations and gathers them

@@ -18,6 +18,7 @@ use std::{
 };
 struct Plain {
     focus: FocusHandle,
+    opener: Option<FocusHandle>,
     scrolls: Rc<Cell<usize>>,
     renders: Rc<Cell<usize>>,
 }
@@ -32,6 +33,7 @@ impl Render for Plain {
             .track_focus(&self.focus)
             .on_scroll(move |_, _, _| scrolls.set(scrolls.get() + 1))
             .child("Background")
+            .children(self.opener.as_ref().map(|focus| div().track_focus(focus)))
             .child(
                 div()
                     .id("background-corner")
@@ -53,6 +55,7 @@ fn open_with_content(cx: &mut TestAppContext) -> (WindowHandle<Root>, gpui_kit::
                     focus.focus(window, cx);
                     Plain {
                         focus,
+                        opener: None,
                         scrolls: Rc::default(),
                         renders: Rc::default(),
                     }
@@ -185,10 +188,13 @@ fn confirmation_click_and_programmatic_cancel(cx: &mut TestAppContext) {
     let handle = open(cx);
     let mut result = cx
         .update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let before = window.focused(cx);
             let (_, result) =
                 OverlayHost::confirm(window, cx, "Delete?", "Continue?").expect("confirm");
             window.render_frame(cx);
             window.click("ok", cx);
+            assert_eq!(window.focused(cx), before);
             result
         })
         .expect("window");
@@ -276,6 +282,8 @@ fn spotlight_typing_keyboard_and_click(cx: &mut TestAppContext) {
     let selected = Rc::new(RefCell::new(Vec::new()));
     let output = selected.clone();
     cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let before = window.focused(cx);
         let palette = cx.new(|cx| {
             Spotlight::new(
                 vec![
@@ -292,6 +300,12 @@ fn spotlight_typing_keyboard_and_click(cx: &mut TestAppContext) {
         window.input("cl", cx);
         window.render_frame(cx);
         window.press("enter", cx);
+        assert_eq!(window.focused(cx), before);
+
+        Spotlight::open(&palette, window, cx).expect("reopen palette");
+        window.render_frame(cx);
+        window.press("escape", cx);
+        assert_eq!(window.focused(cx), before);
     })
     .expect("window");
     cx.run_until_parked();
@@ -319,6 +333,8 @@ fn context_modals_and_native_outside_dismissal(cx: &mut TestAppContext) {
     cx.update(init);
     let handle = open(cx);
     cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let before = window.focused(cx);
         OverlayHost::register_context(window, cx, "help", Rc::new(|d, _, _| d.title("Help")))
             .expect("context");
         assert_eq!(
@@ -346,6 +362,7 @@ fn context_modals_and_native_outside_dismissal(cx: &mut TestAppContext) {
                 .map(|e| e.id),
             Some(id)
         );
+        assert_ne!(window.focused(cx), before);
         OverlayHost::close(window, cx, id).expect("close");
         OverlayHost::open_context(window, cx, "help", Policy::default()).expect("open");
         window.render_frame(cx);
@@ -358,6 +375,7 @@ fn context_modals_and_native_outside_dismissal(cx: &mut TestAppContext) {
                 .entries()
                 .is_empty()
         );
+        assert_eq!(window.focused(cx), before);
     })
     .expect("window");
 }
@@ -1214,6 +1232,8 @@ fn spotlight_rows_expose_listbox_semantics(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let rows = window.find_all_by_role(gpui_kit::Role::ListBoxOption);
         assert_eq!(rows.len(), 2);
+        assert_eq!(window.find(("spotlight-row", 0_usize)).label(), Some("One"));
+        assert_eq!(window.find(("spotlight-row", 1_usize)).label(), Some("Two"));
         assert_eq!(
             window.find(("spotlight-row", 0_usize)).selected(),
             Some(true)
@@ -1239,4 +1259,134 @@ fn scrims_are_scheme_tokens() {
         ..light.clone()
     };
     assert_ne!(light.scrim(), dark.scrim());
+}
+
+#[gpui_kit::test]
+fn modal_close_button_cancels_and_restores_focus(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestQueryExt;
+
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let before = window.focused(cx);
+        let cancelled = Rc::new(Cell::new(false));
+        let recorded = cancelled.clone();
+        OverlayHost::open(window, cx, Policy::default(), move |d, _, _| {
+            let recorded = recorded.clone();
+            d.title("Edit").on_cancel(move |_, _, _| {
+                recorded.set(true);
+                true
+            })
+        })
+        .expect("modal");
+        window.render_frame(cx);
+        assert_eq!(
+            window.find_by_label("Close").role(),
+            Some(gpui_kit::Role::Button)
+        );
+        window.click("close", cx);
+        assert!(cancelled.get());
+        assert_eq!(window.focused(cx), before);
+    })
+    .expect("window");
+}
+
+#[gpui_kit::test]
+fn escape_closes_popover_before_its_modal_and_restores_focus(cx: &mut TestAppContext) {
+    use gpui_kit::component::button::Button;
+
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let before = window.focused(cx);
+        let modal = OverlayHost::open(window, cx, Policy::default(), move |d, _, _| {
+            d.child(
+                Popover::new("nested-popover")
+                    .trigger(Button::new("popover-trigger").label("Options"))
+                    .content(|_, _, _| div().child("Choices")),
+            )
+        })
+        .expect("modal");
+        window.render_frame(cx);
+        let outer = window.focused(cx);
+        window.click("popover-trigger", cx);
+        window.render_frame(cx);
+        assert_ne!(window.focused(cx), outer);
+        window.press("escape", cx);
+        assert_eq!(window.focused(cx), outer);
+        let host = OverlayHost::entity(window, cx).expect("host");
+        assert_eq!(
+            host.read(cx).stack().top().map(|entry| entry.id),
+            Some(modal)
+        );
+        window.press("escape", cx);
+        assert!(host.read(cx).stack().entries().is_empty());
+        assert_eq!(window.focused(cx), before);
+    })
+    .expect("window");
+}
+
+#[gpui_kit::test]
+fn validation_failure_keeps_modal_and_focus_inside(cx: &mut TestAppContext) {
+    use gpui_kit::component::{button::Button, dialog::DialogAction};
+
+    cx.update(init);
+    let handle = open(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let attempts = Rc::new(Cell::new(0));
+        let recorded = attempts.clone();
+        let id = OverlayHost::open(window, cx, Policy::default(), move |d, _, _| {
+            let recorded = recorded.clone();
+            d.footer(DialogAction::new().child(Button::new("validate").label("Save")))
+                .on_ok(move |_, _, _| {
+                    recorded.set(recorded.get() + 1);
+                    false
+                })
+        })
+        .expect("open");
+        window.render_frame(cx);
+        window.click("validate", cx);
+        window.render_frame(cx);
+        assert_eq!(attempts.get(), 1);
+        let host = OverlayHost::entity(window, cx).expect("host");
+        assert_eq!(host.read(cx).stack().top().map(|entry| entry.id), Some(id));
+        let trap = gpui_kit::base::active_focus_trap(window, cx).expect("modal trap");
+        assert!(trap.contains_focused(window, cx));
+    })
+    .expect("window");
+}
+
+#[gpui_kit::test]
+fn removed_modal_opener_restores_focus_to_the_window(cx: &mut TestAppContext) {
+    cx.update(init);
+    let (handle, content) = open_with_content(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let opener = cx.focus_handle();
+        let background = content.update(cx, |view, cx| {
+            view.opener = Some(opener.clone());
+            view.focus = view.focus.clone().tab_stop(true);
+            cx.notify();
+            view.focus.clone()
+        });
+        window.focus(&opener, cx);
+        window.render_frame(cx);
+        assert!(opener.is_focused(window));
+        OverlayHost::open(window, cx, Policy::default(), |d, _, _| d.title("Edit")).expect("open");
+        content.update(cx, |view, cx| {
+            view.opener = None;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let modal = window.focused(cx).expect("modal focus");
+        window.press("escape", cx);
+        window.render_frame(cx);
+        let restored = window.focused(cx).expect("window fallback focus");
+        assert_ne!(restored, opener);
+        assert_ne!(restored, modal);
+        window.press("tab", cx);
+        assert!(background.is_focused(window));
+    })
+    .expect("window");
 }
