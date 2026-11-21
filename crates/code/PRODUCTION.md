@@ -123,3 +123,26 @@ The same 10M-line mounted CPU-only fixture observed 87,740–87,836 KiB RSS when
 GPUI's WGPU renderer callback was disabled. The full mounted probe still
 exceeds the process-wide RSS budget. The renderer-backed and CPU-only
 runs both use GPUI event handling, layout and scene construction.
+
+## Uniform line index
+
+When every complete line has the same byte length, the index stores one
+stride and one line count. A final partial line can have any length. A
+cancellable verification pass checks every expected newline before choosing
+this representation. Variable line lengths still use the explicit offset
+index. The allocator gate requires zero index allocations on the shared
+10M-line uniform source. The document tests cover CRLF, variable stride and
+offsets in a final line longer than the stride.
+
+| Isolated 20 MB source, optimized | Explicit offsets | Uniform stride |
+|---|---:|---:|
+| Index heap allocation | 40,000,000 B | 0 B |
+| Peak RSS, including source creation | 60,940 KiB | 41,456 KiB |
+| Instructions, including source creation | 1,379,895,455 | 1,330,246,568 |
+| Index construction, one loaded-host sample | 112.417 ms | 115.081 ms |
+
+The plain-source fixture has no highlight spans. For styled documents, the
+two theme span arrays in `Highlighted` still scale with document syntax.
+The renderer-backed process RSS budget remains a separate acceptance check.
+To compare the same frame sequence with scene construction alone, run
+`production_soak code --no-renderer`.

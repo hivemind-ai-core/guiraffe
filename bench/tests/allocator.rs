@@ -197,10 +197,8 @@ fn code_document_index_allocations_are_bounded() -> anyhow::Result<()> {
     // Warm the shared source before measuring only index construction.
     guiraffe_bench::suites::code_index_ten_million();
     let (_, counts) = count_allocations(guiraffe_bench::suites::code_index_ten_million)?;
-    let lines = 10_000_000;
-    let index_bytes = lines * size_of::<u32>();
-    assert_eq!(counts.allocations, 1, "{counts:?}");
-    assert_eq!(counts.bytes, index_bytes as u64, "{counts:?}");
+    assert_eq!(counts.allocations, 0, "{counts:?}");
+    assert_eq!(counts.bytes, 0, "{counts:?}");
     Ok(())
 }
 

@@ -95,21 +95,24 @@ fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let component = args
         .next()
-        .context("use: production_soak grid|code [--nightly]")?;
-    let nightly = match args.next().as_deref() {
-        None => false,
-        Some("--nightly") => true,
-        Some(other) => bail!("unknown argument {other}"),
-    };
-    ensure!(args.next().is_none(), "unexpected trailing argument");
+        .context("use: production_soak grid|code [--nightly] [--no-renderer]")?;
+    let mut nightly = false;
+    let mut renderer = true;
+    for arg in args {
+        match arg.as_str() {
+            "--nightly" => nightly = true,
+            "--no-renderer" => renderer = false,
+            other => bail!("unknown argument {other}"),
+        }
+    }
     ensure!(
         !nightly || !cfg!(debug_assertions),
         "nightly needs a release build"
     );
-    run(&component, nightly)
+    run(&component, nightly, renderer)
 }
 
-fn run(component: &str, nightly: bool) -> Result<()> {
+fn run(component: &str, nightly: bool, renderer: bool) -> Result<()> {
     let document = match component {
         "grid" => None,
         "code" => Some(Arc::new(CodeDocument::new(Arc::<str>::from(
@@ -118,11 +121,14 @@ fn run(component: &str, nightly: bool) -> Result<()> {
         _ => bail!("unknown component {component}"),
     };
     let text = gpui_kit::platform::current_platform(true).text_system();
-    let mut app = HeadlessAppContext::with_platform(
-        text,
-        Arc::new(gpui_kit::assets::Assets),
-        gpui_kit::platform::current_headless_renderer,
-    );
+    let mut app =
+        HeadlessAppContext::with_platform(text, Arc::new(gpui_kit::assets::Assets), move || {
+            if renderer {
+                gpui_kit::platform::current_headless_renderer()
+            } else {
+                Ok(None)
+            }
+        });
     let window = app.open_window(size(px(1200.), px(800.)), |_, cx| cx.new(|_| Empty))?;
     app.update_window(window.into(), |_, window, cx| {
         let _ = window.draw(cx);
@@ -212,11 +218,11 @@ mod tests {
 
     #[test]
     fn grid_production_smoke() -> Result<()> {
-        run("grid", false)
+        run("grid", false, true)
     }
 
     #[test]
     fn code_production_smoke() -> Result<()> {
-        run("code", false)
+        run("code", false, true)
     }
 }
