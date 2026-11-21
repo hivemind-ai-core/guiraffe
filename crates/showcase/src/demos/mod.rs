@@ -12,6 +12,7 @@ pub mod components;
 pub mod components_more;
 pub mod composed_charts;
 pub mod datagrid;
+pub mod desktop;
 pub mod dnd;
 pub mod flame_tree;
 pub mod flow;
