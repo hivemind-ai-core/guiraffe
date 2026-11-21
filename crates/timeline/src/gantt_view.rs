@@ -17,7 +17,7 @@ use crate::{
         EndEarlier, EndLater, Grab, KEY_CONTEXT, MoveEarlier, MoveLater, Nudge, ResizeEdges,
         SelectNextItem, SelectPrevItem, StartEarlier, StartLater, cursor_for, grab_at, key_step,
     },
-    gantt::{ScheduleError, SchedulePlan, Scheduled, Task, task_index},
+    gantt::{DENSE_DEPENDENCY_THRESHOLD, ScheduleError, SchedulePlan, Scheduled, Task, task_index},
 };
 
 pub const ROW_H: f32 = 32.0;
@@ -510,6 +510,32 @@ fn span(s: &Result<HashMap<u32, Scheduled>, ScheduleError>) -> (f64, f64) {
     }
 }
 
+/// Keep all distinct visible peers. Dense offscreen edges share a representative
+/// per direction, so a hub does not project every edge hidden by the viewport.
+fn for_each_arrow_peer(
+    peers: &[usize],
+    rows: &std::ops::Range<usize>,
+    mut visit: impl FnMut(usize),
+) {
+    if peers.len() <= DENSE_DEPENDENCY_THRESHOLD {
+        peers.iter().copied().for_each(visit);
+        return;
+    }
+    let first = peers.partition_point(|&row| row < rows.start);
+    let end = peers.partition_point(|&row| row < rows.end);
+    if first > 0 {
+        visit(peers[0]);
+    }
+    let mut visible = &peers[first..end];
+    while let Some((&row, rest)) = visible.split_first() {
+        visit(row);
+        visible = &rest[rest.partition_point(|&peer| peer == row)..];
+    }
+    if end < peers.len() {
+        visit(peers[peers.len() - 1]);
+    }
+}
+
 impl Geometry {
     fn schedule(&self, tasks: &[Task]) -> Result<HashMap<u32, Scheduled>, ScheduleError> {
         self.plan
@@ -531,25 +557,26 @@ impl Geometry {
         };
         let row_y = |row: usize| (row_top(row) - scroll_y) as f32 + ROW_H / 2.0;
         let visible = |x: f32, y: f32| x >= 0.0 && x < axis.width as f32 && y >= 0.0 && y < height;
-        for row in visible_rows(self.rows.len(), scroll_y, height) {
+        let rows = visible_rows(self.rows.len(), scroll_y, height);
+        for row in rows.clone() {
             let Some(sc) = schedule.get(&self.rows[row].id) else {
                 continue;
             };
             let y = row_y(row);
             let finish = axis.x(sc.early_finish) as f32;
             if visible(finish, y) {
-                for &to in plan.successors.get(row) {
+                for_each_arrow_peer(plan.successors.get(row), &rows, |to| {
                     if let Some(target) = schedule.get(&self.rows[to].id) {
                         let start = axis.x(target.early_start) as f32;
                         if start.is_finite() {
                             draw((finish, y), (start, row_y(to)));
                         }
                     }
-                }
+                });
             }
             let start = axis.x(sc.early_start) as f32;
             if visible(start, y) {
-                for &from in plan.predecessors.get(row) {
+                for_each_arrow_peer(plan.predecessors.get(row), &rows, |from| {
                     if let Some(source) = schedule.get(&self.rows[from].id) {
                         let finish = axis.x(source.early_finish) as f32;
                         let source_y = row_y(from);
@@ -558,7 +585,7 @@ impl Geometry {
                             draw((finish, source_y), (start, y));
                         }
                     }
-                }
+                });
             }
         }
     }
@@ -1045,6 +1072,20 @@ mod tests {
         assert_eq!(bar_interval(axis, bar(100.0, 102.0)), None);
         assert_eq!(bar_interval(axis, bar(-12.0, 8.0)), Some((-12.0, 20.0)));
         assert_eq!(bar_interval(axis, bar(10.0, 10.01)), Some((10.0, 2.0)));
+    }
+
+    #[test]
+    fn dense_dependency_peers_keep_visible_rows_with_bounded_projection_work() {
+        for size in [10_000, 10_000_000] {
+            let peers: Vec<_> = (0..size).collect();
+            let mut projected = Vec::new();
+            for_each_arrow_peer(&peers, &(100..104), |row| projected.push(row));
+            assert_eq!(projected, [0, 100, 101, 102, 103, size - 1]);
+        }
+        let duplicates = [101; DENSE_DEPENDENCY_THRESHOLD + 1];
+        let mut projected = Vec::new();
+        for_each_arrow_peer(&duplicates, &(100..104), |row| projected.push(row));
+        assert_eq!(projected, [101]);
     }
 
     #[test]

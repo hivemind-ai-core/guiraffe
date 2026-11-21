@@ -70,6 +70,9 @@ impl AdjacentRows {
     }
 }
 
+/// Sparse rows keep their original edge order. Dense rows are sorted for viewport lookup.
+pub(crate) const DENSE_DEPENDENCY_THRESHOLD: usize = 64;
+
 /// Schedule `tasks`; result keyed by id. Negative/NaN durations count as 0.
 pub fn schedule(tasks: &[Task]) -> Result<HashMap<u32, Scheduled>, ScheduleError> {
     let index = task_index(tasks);
@@ -109,6 +112,11 @@ impl SchedulePlan {
                     });
                 };
                 rows.push(row);
+            }
+            let start = offsets.last().copied().unwrap_or_default();
+            let incoming = &mut rows[start..];
+            if incoming.len() > DENSE_DEPENDENCY_THRESHOLD {
+                incoming.sort_unstable();
             }
             offsets.push(rows.len());
         }
