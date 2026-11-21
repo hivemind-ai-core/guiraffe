@@ -69,7 +69,7 @@ impl PropSpec {
             | "timeline-tracks" | "track-selection" | "gantt-tasks" | "board-columns"
             | "chart-layers" | "chart-axes" | "chart-labels" | "chat-messages"
             | "chat-attachments" | "chat-commands" | "calendar-presets" | "dock-panels"
-            | "avatar-people" => "array",
+            | "avatar-people" | "dope-channels" | "number-array" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -107,6 +107,8 @@ impl PropSpec {
             "calendar-presets" => schema["items"] = calendar_preset_schema(),
             "dock-panels" => schema["items"] = dock_panel_schema(),
             "avatar-people" => schema["items"] = avatar_person_schema(),
+            "dope-channels" => schema["items"] = dope_channel_schema(),
+            "number-array" => schema["items"] = json!({"type":"number"}),
             "chat-attachments" => schema["items"] = chat_attachment_schema(),
             "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => {
@@ -191,6 +193,10 @@ impl EventSpec {
             "dock-state" => dock_state_schema(),
             "gantt-reschedule" => gantt_event_schema(false),
             "gantt-resize" => gantt_event_schema(true),
+            kind @ ("dope-retime" | "dope-selection" | "dope-change" | "dope-channel") => {
+                dope_event_schema(kind)
+            }
+            "bar-edit" => bar_edit_schema(),
             "flow-selection" => {
                 let ids = json!({"type":"array","items":{"type":"integer","minimum":0}});
                 json!({"type":"object","required":["nodes","edges"],"additionalProperties":false,
@@ -791,5 +797,79 @@ pub fn avatar_person_schema() -> Value {
         "properties":{
             "name":{"type":"string"},"image":{"type":"string"}
         }
+    })
+}
+
+pub fn dope_channel_schema() -> Value {
+    dope_channel_schema_with_depth(8)
+}
+
+fn dope_channel_schema_with_depth(depth: usize) -> Value {
+    let mut schema = json!({
+        "type":"object","additionalProperties":false,
+        "required":["name"],
+        "properties":{
+            "name":{"type":"string"},
+            "color":{"enum":["dark","gray","red","pink","grape","violet","indigo","blue","cyan","teal","green","lime","yellow","orange"]},
+            "keys":{"type":"array","items":{"type":"number"}},
+            "keyframes":{"type":"array","items":{
+                "type":"object","additionalProperties":false,"required":["time","value"],
+                "properties":{
+                    "time":{"type":"number"},
+                    "value":{"type":"number"},
+                    "interpolation":{"enum":["constant","linear","bezier"]}
+                }
+            }},
+            "group":{"type":"boolean"},
+            "collapsed":{"type":"boolean"},
+            "locked":{"type":"boolean"},
+            "muted":{"type":"boolean"},
+            "visible":{"type":"boolean"}
+        }
+    });
+    if depth > 0 {
+        schema["properties"]["children"] =
+            json!({"type":"array","items":dope_channel_schema_with_depth(depth - 1)});
+    }
+    schema
+}
+
+fn dope_event_schema(kind: &str) -> Value {
+    let channel = json!({"type":"integer","minimum":0});
+    match kind {
+        "dope-retime" => json!({
+            "type":"object","additionalProperties":false,"required":["channel","from","to"],
+            "properties":{"channel":channel,"from":{"type":"number"},"to":{"type":"number"}}
+        }),
+        "dope-selection" => json!({"type":"array","items":{
+            "type":"object","additionalProperties":false,"required":["channel","time"],
+            "properties":{"channel":channel,"time":{"type":"number"}}
+        }}),
+        kind => {
+            let mut schema = json!({
+                "type":"object","additionalProperties":false,
+                "required":["channel","collapsed","locked","muted","visible"],
+                "properties":{
+                    "channel":channel,"collapsed":{"type":"boolean"},"locked":{"type":"boolean"},
+                    "muted":{"type":"boolean"},"visible":{"type":"boolean"}
+                }
+            });
+            if kind == "dope-change" {
+                schema["required"] =
+                    json!(["channel", "collapsed", "locked", "muted", "visible", "keys"]);
+                schema["properties"]["keys"] = json!({"type":"array","items":{"type":"number"}});
+                json!({"type":"array","items":schema})
+            } else {
+                schema
+            }
+        }
+    }
+}
+
+fn bar_edit_schema() -> Value {
+    let index = json!({"type":"integer","minimum":0});
+    json!({
+        "type":"object","additionalProperties":false,"required":["start","end","values"],
+        "properties":{"start":index,"end":index,"values":{"type":"array","items":{"type":"number"}}}
     })
 }

@@ -231,16 +231,7 @@ overlays::Spotlight
 overlays::Spotlight::new
 overlays::Spotlight::open
 overlays::Spotlight::set_commands
-timeline::BarCurveView
 timeline::BarCurveView::add_layer
-timeline::BarCurveView::draw_to
-timeline::BarCurveView::event BarEvent
-timeline::BarCurveView::model
-timeline::BarCurveView::new
-timeline::BarCurveView::release
-timeline::BarCurveView::set_editable
-timeline::BarCurveView::set_focusable
-timeline::BarCurveView::set_model
 timeline::CurveView
 timeline::CurveView::add_curve
 timeline::CurveView::add_key
@@ -269,28 +260,7 @@ timeline::CurveView::set_interpolation
 timeline::CurveView::set_tangent
 timeline::CurveView::set_tangent_mode
 timeline::CurveView::split_segment
-timeline::DopeSheet
 timeline::DopeSheet::add_layer
-timeline::DopeSheet::axis
-timeline::DopeSheet::channels
-timeline::DopeSheet::delete_selected
-timeline::DopeSheet::drag_to
-timeline::DopeSheet::duplicate_selected
-timeline::DopeSheet::event Changed
-timeline::DopeSheet::event ChannelChanged
-timeline::DopeSheet::event KeyRetimed
-timeline::DopeSheet::event SelectionChanged
-timeline::DopeSheet::model
-timeline::DopeSheet::new
-timeline::DopeSheet::nudge
-timeline::DopeSheet::press
-timeline::DopeSheet::press_with
-timeline::DopeSheet::release
-timeline::DopeSheet::select_all
-timeline::DopeSheet::set_editable
-timeline::DopeSheet::set_focusable
-timeline::DopeSheet::set_lock_style
-timeline::DopeSheet::set_locked
 timeline::GanttView::add_layer
 ui::BoundNode
 ui::DataUi

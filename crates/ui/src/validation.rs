@@ -570,6 +570,15 @@ impl Validation<'_> {
                             })
                     })
                 }),
+                "dope-channels" => got.as_array().is_some_and(|channels| {
+                    let schema = crate::widget_spec::dope_channel_schema();
+                    channels
+                        .iter()
+                        .all(|channel| matches_data_schema(channel, &schema))
+                }),
+                "number-array" => got
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(Value::is_number)),
                 "flame-frames" => check_flame_frames(got),
                 "grid-rows" => got.as_array().is_some_and(|rows| {
                     let schema = crate::widget_spec::grid_row_schema();

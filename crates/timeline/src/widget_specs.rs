@@ -114,4 +114,74 @@ pub static GANTT: WidgetSpec = WidgetSpec {
     a11y_role: "group",
 };
 
-pub const WIDGETS: &[&WidgetSpec] = &[&TRACKS, &GANTT];
+pub static DOPE_SHEET: WidgetSpec = WidgetSpec {
+    id: "dope-sheet",
+    krate: "timeline",
+    summary: "Hierarchical keyframe timing editor with selectable channels and frame snapping.",
+    props: &[
+        prop("channels", "dope-channels", "[]"),
+        choice("time-format", "\"seconds\"", &["seconds", "frames", "days"]),
+        PropSpec {
+            range: Some((1.0, 240.0)),
+            ..prop("frames-per-second", "number", "30")
+        },
+        PropSpec {
+            range: Some((0.001, f64::MAX)),
+            ..prop("length", "number", "10")
+        },
+        prop("editable", "boolean", "true"),
+        prop("focusable", "boolean", "null"),
+        choice("lock-style", "\"badge\"", LOCK),
+        prop("playhead", "number", "0"),
+    ],
+    accepts_children: false,
+    events: &[
+        EventSpec {
+            id: "key-retime",
+            payload_type: "dope-retime",
+        },
+        EventSpec {
+            id: "selection-change",
+            payload_type: "dope-selection",
+        },
+        EventSpec {
+            id: "change",
+            payload_type: "dope-change",
+        },
+        EventSpec {
+            id: "channel-change",
+            payload_type: "dope-channel",
+        },
+    ],
+    state: "keyed timing editor with local viewport, selection and key edits",
+    theme_tokens: &[],
+    a11y_role: "group",
+};
+
+pub static BAR_CURVE: WidgetSpec = WidgetSpec {
+    id: "bar-curve",
+    krate: "timeline",
+    summary: "Draw quantized values across a fixed set of bars.",
+    props: &[
+        prop("values", "number-array", "[]"),
+        prop("minimum", "number", "0"),
+        prop("maximum", "number", "1"),
+        PropSpec {
+            range: Some((1.0, u32::MAX as f64)),
+            ..prop("steps", "integer", "null")
+        },
+        prop("bipolar", "boolean", "false"),
+        prop("editable", "boolean", "true"),
+        prop("focusable", "boolean", "null"),
+    ],
+    accepts_children: false,
+    events: &[EventSpec {
+        id: "change",
+        payload_type: "bar-edit",
+    }],
+    state: "keyed plot with local viewport and bar edits",
+    theme_tokens: &[],
+    a11y_role: "group",
+};
+
+pub const WIDGETS: &[&WidgetSpec] = &[&TRACKS, &GANTT, &DOPE_SHEET, &BAR_CURVE];

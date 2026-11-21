@@ -55,6 +55,8 @@ fn kind(surface: &str) -> Option<&'static str> {
         "tree::TreeList" => "tree-list",
         "timeline::TracksView" => "tracks-view",
         "timeline::GanttView" => "gantt",
+        "timeline::DopeSheet" => "dope-sheet",
+        "timeline::BarCurveView" => "bar-curve",
         _ => return None,
     })
 }
@@ -180,6 +182,54 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "timeline::GanttView::resize_edge",
         "A Rust edit command. Update task duration directly or bind the resize event to receive user edits.",
+    ),
+    (
+        "timeline::DopeSheet::axis",
+        "Returns the native viewport axis. Documents supply the initial length and time format.",
+    ),
+    (
+        "timeline::DopeSheet::model",
+        "Returns the Rust view model and derived row and selection state.",
+    ),
+    (
+        "timeline::DopeSheet::select_all",
+        "Native editor command. The selection-change event exposes updates to application logic.",
+    ),
+    (
+        "timeline::DopeSheet::delete_selected",
+        "Native editor command. Documents supply channel keyframes and receive change events.",
+    ),
+    (
+        "timeline::DopeSheet::duplicate_selected",
+        "Native editor command. Documents supply channel keyframes and receive change events.",
+    ),
+    (
+        "timeline::DopeSheet::nudge",
+        "Native editor command. Documents can bind the changed channel keys.",
+    ),
+    (
+        "timeline::DopeSheet::press",
+        "Starts a native pointer gesture against one rendered row.",
+    ),
+    (
+        "timeline::DopeSheet::press_with",
+        "Starts a native pointer gesture with the current selection modifier.",
+    ),
+    (
+        "timeline::DopeSheet::drag_to",
+        "Continues the active native input gesture.",
+    ),
+    (
+        "timeline::DopeSheet::release",
+        "Finishes the active native input gesture.",
+    ),
+    (
+        "timeline::BarCurveView::draw_to",
+        "Native pointer gesture. Documents supply bar values and receive indexed changes.",
+    ),
+    (
+        "timeline::BarCurveView::release",
+        "Finishes the active native input gesture.",
     ),
     (
         "tree::TreeView::expand_loaded",
@@ -546,6 +596,9 @@ fn covered(surface: &str) -> bool {
             ("timeline::TracksView", "Seek") => "seek",
             ("timeline::GanttView", "Rescheduled") => "reschedule",
             ("timeline::GanttView", "Resized") => "resize",
+            ("timeline::DopeSheet", "KeyRetimed") => "key-retime",
+            ("timeline::DopeSheet", "ChannelChanged") => "channel-change",
+            ("timeline::BarCurveView", "BarEvent") => "change",
             ("chat::ChatState", "Submitted") => "submit",
             ("chat::ChatState", "Retry") => "retry",
             ("chat::ChatState", "Stopped") => "stop",
@@ -607,6 +660,8 @@ fn covered(surface: &str) -> bool {
                 ("timeline::TracksView", "select") => "selected".into(),
                 ("timeline::TracksView", "set_locked") => "tracks".into(),
                 ("timeline::GanttView", "select") => "selected".into(),
+                ("timeline::DopeSheet", "set_locked") => "channels".into(),
+                ("timeline::BarCurveView", "model" | "set_model") => "values".into(),
                 ("chat::ChatState", "begin_reply") => "streaming-message".into(),
                 ("chat::ChatState", "add_attachment") => "attachments".into(),
                 ("chat::ChatState", "with_props" | "props" | "set_props") => "title".into(),

@@ -1584,3 +1584,82 @@ fn ui_macro_accepts_native_indicator_swatch_and_avatar_builders() {
         }
     };
 }
+
+#[gpui_kit::test]
+fn timeline_editors_accept_structured_channels_and_bar_values(cx: &mut TestAppContext) {
+    cx.update(guiraffe_timeline::init);
+    let doc = Document::new(
+        Node::new("stack")
+            .child(
+                Node::new("dope-sheet")
+                    .prop(
+                        "channels",
+                        serde_json::json!([
+                            {"name":"Motion","group":true,"children":[
+                                {"name":"Position","locked":true,"color":"teal","keyframes":[
+                                    {"time":0,"value":1,"interpolation":"bezier"},
+                                    {"time":4,"value":0,"interpolation":"constant"}
+                                ]},
+                                {"name":"Opacity","visible":true,"muted":false,"keys":[1,2]}
+                            ]}
+                        ]),
+                    )
+                    .prop("time-format", "frames")
+                    .prop("frames-per-second", 25)
+                    .prop("length", 11)
+                    .prop("editable", false)
+                    .prop("focusable", false)
+                    .prop("lock-style", "hatched")
+                    .prop("playhead", 2)
+                    .on("key-retime", "retime")
+                    .on("selection-change", "select")
+                    .on("change", "update-keys")
+                    .on("channel-change", "update-channel"),
+            )
+            .child(
+                Node::new("bar-curve")
+                    .prop("values", serde_json::json!([0.25, 0.5, -0.5]))
+                    .prop("minimum", -1)
+                    .prop("maximum", 1)
+                    .prop("steps", 8)
+                    .prop("bipolar", true)
+                    .prop("editable", true)
+                    .prop("focusable", true)
+                    .on("change", "edit-bars"),
+            ),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let template = Arc::new(Template::compile(&doc, &registry).expect("timeline editors"));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{:?}",
+            template.diagnostics()
+        );
+        Shell {
+            ui: DataUi::from_template(template, registry, NoLogic, cx),
+        }
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_dope_sheet_and_bar_curve_views() {
+    use guiraffe_timeline::{BarCurve, BarCurveView, Channel, DopeSheet, TimeFormat};
+
+    fn example(cx: &mut gpui_kit::App) -> impl IntoElement {
+        let sheet = DopeSheet::new(
+            vec![Channel::new("Position", vec![1.0, 2.0])],
+            TimeFormat::Frames(24.0),
+            10.0,
+            cx,
+        );
+        let mut model = BarCurve::new(4, -1.0, 1.0);
+        model.set_steps(Some(8));
+        model.bipolar = true;
+        ui! { div { {sheet} {BarCurveView::new(model, cx)} } }
+    }
+    let _ = example;
+}

@@ -1079,3 +1079,5 @@ mod hierarchy_regressions {
         assert!(model.channels[0].decor.is_none());
     }
 }
+
+pub(crate) mod document;
