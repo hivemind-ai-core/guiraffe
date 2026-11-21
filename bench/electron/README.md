@@ -33,12 +33,12 @@ the scenarios). The harness:
 
 | metric | how |
 |---|---|
-| cold / warm start → first frame | harness launch time (epoch ms) to the app's first-presented-frame timestamp; also the app's own "since process start" from `/proc/self/stat` |
+| cold / warm start → first frame | harness launch time (epoch ms) to the app's startup marker; also the app's own "since process start" from `/proc/self/stat` |
 | idle memory | `idle` scenario: sum of `Rss` and `Pss` from `/proc/<pid>/smaps_rollup` over the whole process tree (Electron: main, zygotes, renderer, GPU, utility) 30 s after launch; per-kind PSS is in the raw data |
 | idle CPU | `utime + stime` ticks of the process tree over the following 60 s, as % of one core |
 | memory under load | `load` scenario: tree PSS sampled every 0.5 s while the grid is flung for 10 s and then chat streams for 10 s; peak reported |
 | frame times | p50/p95/p99/max of frame intervals from each app's continuous frame-callback chain (`grid-fling`, `chat`, `resize`, `load`) |
-| interaction cost | `sort`, `filter`, `theme`: time from issuing the action to the first frame presented with its result |
+| interaction cost | `sort`, `filter`, `theme`: time from issuing the action to the scenario's settled callback |
 | disk | installed size (GUIraffe: the stripped release binary; Electron: `dist/linux-unpacked` from electron-builder `--dir`), and a tar.gz of it as the download-size proxy |
 
 Output: `results/<date>/raw/<app>-<scenario>.json` (every run, every frame),
@@ -51,11 +51,17 @@ timestamps) and RAPL energy; both need hardware access the scripted run doesn't 
 
 ## Caveats when reading the numbers
 
-- Frame intervals measure how often each app's frame callback runs (rAF in Chromium,
-  `on_next_frame` in GPUI). On a 60 Hz display both are capped near 16.7 ms; the interesting
-  numbers are p95/p99/max.
-- "Settled" in Electron is `flushSync` + two rAFs; in GUIraffe it's "grid not busy" + the
-  next presented frame. Both include about one frame of latency by construction.
+- Both apps sample a monotonic clock at callback entry (`performance.now()` inside Chromium
+  rAF and `Instant::now()` inside GPUI `on_next_frame`). These intervals include callback
+  dispatch jitter. Display presentation would require compositor feedback. The November 20
+  Electron archive used the rAF timestamp argument, which tracks Chromium's animation timeline,
+  so its frame percentiles use a different sampling point within each frame.
+- The startup marker is GPUI's first next-frame callback, before that tick draws and submits.
+  Electron records its marker after showing the window and waiting for two rAFs. To trace
+  GUIraffe startup from main, run the app directly with `COMPARE_TRACE_STARTUP=1` and
+  `--bench startup`.
+- Electron waits for two rAFs after `flushSync`. GUIraffe waits until the grid is idle and
+  then waits for one more next-frame callback for grid actions.
 - GUIraffe keeps pages alive after the first visit (GPUI's idiomatic pattern); React unmounts
   them (idiomatic React). The scenarios only visit each page once per launch, so this doesn't
   affect timings, but it does affect memory after navigating around in interactive use.
