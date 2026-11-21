@@ -4,8 +4,15 @@
 //! [`Provide`] element pushes its context on a stack for exactly the extent of laying out its
 //! children. Widgets call [`StyleContext::current`] in `render`. Single-threaded (the UI
 //! thread), so the stack is a thread-local with no locking.
+//!
+//! gpui-fast draws a notified view again on its own, without running the views and elements
+//! around it, so no provider is on the stack then. The context is therefore also handed to the
+//! backend as one word ([`gpui_kit::InheritedState`]): it captures the word where each view is
+//! laid out, pushes it back while the view is built again there, and lays a retained view out
+//! afresh when the context around it changed. Upstream GPUI renders a view inside its
+//! ancestors, so it never needs the word.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use gpui_kit::{
     AnyElement, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
@@ -78,6 +85,32 @@ impl Default for StyleContext {
 
 thread_local! {
     static STACK: RefCell<Vec<StyleContext>> = const { RefCell::new(Vec::new()) };
+    static CARRIED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Hands the context to the backend, so that a view built again on its own reads the context
+/// it was laid out in (see the module docs). Called by the first provider laid out, which is
+/// before any view it encloses is laid out.
+fn carry_context() {
+    if !CARRIED.replace(true) {
+        gpui_kit::set_inherited_state(&Carried);
+    }
+}
+
+struct Carried;
+
+impl gpui_kit::InheritedState for Carried {
+    fn capture(&self) -> u64 {
+        StyleContext::current().to_word()
+    }
+    fn enter(&self, state: u64) {
+        STACK.with(|s| s.borrow_mut().push(StyleContext::from_word(state)));
+    }
+    fn leave(&self) {
+        STACK.with(|s| {
+            s.borrow_mut().pop();
+        });
+    }
 }
 
 impl StyleContext {
@@ -108,6 +141,62 @@ impl StyleContext {
     }
     pub fn with_emphasis(self, emphasis: Emphasis) -> Self {
         Self { emphasis, ..self }
+    }
+
+    /// The context as one word, `0` for the default (what the backend captures when nothing
+    /// is inherited).
+    fn to_word(self) -> u64 {
+        let density = match self.density {
+            Density::Comfortable => 0,
+            Density::Compact => 1,
+            Density::Spacious => 2,
+        };
+        let size = match self.control_size {
+            Size::Sm => 0,
+            Size::Xs => 1,
+            Size::Md => 2,
+            Size::Lg => 3,
+            Size::Xl => 4,
+        };
+        let surface = match self.surface {
+            SurfaceKind::Body => 0,
+            SurfaceKind::Raised => 1,
+            SurfaceKind::Sunken => 2,
+        };
+        let emphasis = match self.emphasis {
+            Emphasis::Default => 0,
+            Emphasis::Quiet => 1,
+        };
+        density | size << 2 | surface << 5 | emphasis << 7 | u64::from(self.keyboard_nav) << 8
+    }
+
+    /// The context [`StyleContext::to_word`] gave `word`; unknown bits read as the default.
+    fn from_word(word: u64) -> Self {
+        let d = StyleContext::default();
+        StyleContext {
+            density: match word & 0b11 {
+                1 => Density::Compact,
+                2 => Density::Spacious,
+                _ => d.density,
+            },
+            control_size: match word >> 2 & 0b111 {
+                1 => Size::Xs,
+                2 => Size::Md,
+                3 => Size::Lg,
+                4 => Size::Xl,
+                _ => d.control_size,
+            },
+            surface: match word >> 5 & 0b11 {
+                1 => SurfaceKind::Raised,
+                2 => SurfaceKind::Sunken,
+                _ => d.surface,
+            },
+            emphasis: match word >> 7 & 1 {
+                1 => Emphasis::Quiet,
+                _ => d.emphasis,
+            },
+            keyboard_nav: word >> 8 & 1 == 1,
+        }
     }
 }
 
@@ -223,6 +312,7 @@ impl Element for Provide {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, AnyElement) {
+        carry_context();
         let ctx = self.patch.apply(StyleContext::current());
         self.resolved = Some(ctx);
         let _guard = Push::new(ctx);
@@ -339,6 +429,52 @@ mod tests {
             outer,
             "empty patch is identity"
         );
+    }
+
+    #[test]
+    fn words_round_trip_and_default_is_zero() {
+        assert_eq!(StyleContext::default().to_word(), 0);
+        assert_eq!(StyleContext::from_word(0), StyleContext::default());
+        let mut seen = std::collections::HashSet::new();
+        for density in [Density::Compact, Density::Comfortable, Density::Spacious] {
+            for control_size in Size::ALL {
+                for surface in [SurfaceKind::Body, SurfaceKind::Raised, SurfaceKind::Sunken] {
+                    for emphasis in [Emphasis::Default, Emphasis::Quiet] {
+                        for keyboard_nav in [false, true] {
+                            let c = StyleContext {
+                                density,
+                                control_size,
+                                surface,
+                                emphasis,
+                                keyboard_nav,
+                            };
+                            let w = c.to_word();
+                            assert!(seen.insert(w), "{c:?} has its own word");
+                            assert_eq!(StyleContext::from_word(w), c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn carried_context_enters_and_leaves_over_the_stack() {
+        use gpui_kit::InheritedState;
+        let carried = StyleContext::default()
+            .with_control_size(Size::Lg)
+            .with_density(Density::Compact);
+        StyleContext::default()
+            .with_surface(SurfaceKind::Raised)
+            .scope(|| {
+                let outer = Carried.capture();
+                Carried.enter(carried.to_word());
+                assert_eq!(StyleContext::current(), carried, "replaces, not patches");
+                assert_eq!(Carried.capture(), carried.to_word());
+                Carried.leave();
+                assert_eq!(Carried.capture(), outer);
+            });
+        assert_eq!(Carried.capture(), 0);
     }
 
     #[test]
