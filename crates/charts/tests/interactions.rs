@@ -366,3 +366,32 @@ fn superseded_stream_batch_keeps_previous_plot_until_latest_spec_is_ready(cx: &m
         Domain::new(0., 999.).expect("valid stream domain"),
     );
 }
+
+#[gpui_kit::test]
+fn dense_scatter_paints_batches_and_picks_unsampled_source_points(cx: &mut TestAppContext) {
+    let (chart, window) = mount(cx);
+    let mut spec = ChartSpec::new("Dense scatter").layer(Layer::new(
+        Mark::Point,
+        (0..9_000).collect::<Vec<_>>(),
+        Channels::new(|_| 5., |_| 5.),
+    ));
+    spec.x.domain = Domain::new(0., 10.);
+    spec.y.domain = Domain::new(0., 10.);
+    window.update(|_, cx| {
+        chart
+            .view
+            .update(cx, |view, cx| view.replace(spec.prepare(), cx));
+    });
+    window.run_until_parked();
+    window.update(|window, cx| window.draw(cx).clear(cx));
+    let mid = mouse_at(window, 0.5, 0.5);
+    window.simulate_mouse_move(mid, None, Default::default());
+    window.run_until_parked();
+    assert_eq!(
+        chart
+            .view
+            .read_with(window, |view, cx| view.hovered(cx))
+            .map(|datum| datum.key),
+        Some(8_999),
+    );
+}
