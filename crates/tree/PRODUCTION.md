@@ -42,8 +42,8 @@ requested bytes to 185 per child at 125,000 and one million children.
 | PropertyGrid steady RSS, 1M rows | — | 110 MiB |
 
 Separate full-scale 256-frame runs peaked at 124 MiB for both controls.
-The TreeList reprofile attributed 11.86% of sampled self time to replacing
-affected block index entries. The warm forced window redraw made 894
+The final profiles attributed 12.31% of TreeList and 9.31% of PropertyGrid
+sampled self time to replacing affected block index entries. The warm forced window redraw made 894
 UI-thread allocation calls (357,995 bytes) for TreeList and 1,294 (576,768
 bytes) for the legacy 110k PropertyGrid workload both before and after
 the changes. Mounted repaint allocation, TreeList suffix-copy scaling,
