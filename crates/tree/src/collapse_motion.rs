@@ -102,7 +102,8 @@ mod tests {
         m.toggled(3, 100.0, t0, &p);
         let mid = t0 + Duration::from_millis(40); // visually at -60
         m.toggled(3, -100.0, mid, &p);
-        assert_eq!(m.sample(mid, &p).map(|s| s.offset), Some(40.0), "no jump");
+        let offset = m.sample(mid, &p).map_or(f32::NAN, |s| s.offset);
+        assert!((offset - 40.0).abs() < 1e-3, "no jump: {offset}");
     }
 
     #[test]
