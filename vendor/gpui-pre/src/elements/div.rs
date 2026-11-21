@@ -907,7 +907,7 @@ pub trait InteractiveElement: Sized {
     /// in release builds without the per-frame cost.
     #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     fn debug_selector(mut self, f: impl FnOnce() -> String) -> Self {
-        self.interactivity().debug_selector = Some(f());
+        self.interactivity().debug_selector = Some(f().into());
         self
     }
 
@@ -2252,7 +2252,7 @@ pub struct Interactivity {
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
     #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
-    pub(crate) debug_selector: Option<String>,
+    pub(crate) debug_selector: Option<Arc<str>>,
 }
 
 impl Interactivity {

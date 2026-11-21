@@ -159,3 +159,10 @@ This adds no third retained scene. A targeted regression checks that a
 complete replay retains the compiled groups and that an appended operation
 rejects reuse. The mounted Markdown fixture went from 91 requests and
 410,760 requested bytes to zero with this change and shared key contexts.
+
+## Share retained test-support bounds selectors
+
+Both backends use shared string storage for a recorded bounds selector.
+Paint stores the selector in the lookup map and record stream. Replay
+copies the shared reference without duplicating the string in either
+destination. Selector lookup continues to borrow plain strings.

@@ -1059,9 +1059,9 @@ pub(crate) struct Frame {
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: FxHashMap<Arc<str>, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    pub(crate) debug_bounds_records: Vec<(Arc<str>, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1097,7 +1097,7 @@ pub(crate) struct PaintIndex {
 
 impl Frame {
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
+    pub(crate) fn record_debug_bounds(&mut self, selector: Arc<str>, bounds: Bounds<Pixels>) {
         self.debug_bounds.insert(selector.clone(), bounds);
         self.debug_bounds_records.push((selector, bounds));
     }
