@@ -354,10 +354,10 @@ pub fn with_knobs(
 mod tests {
     use super::*;
 
-    /// Capture every explicitly drawn frame, including the first one before queued work runs.
+    /// Record automatic GPUI draws as well as explicitly stepped frames.
     fn assert_immediate_transition(demo: &str, changes: &[(usize, usize)]) {
-        use gpui_kit::{HeadlessAppContext, platform, size};
-        use std::sync::Arc;
+        use gpui_kit::{HeadlessAppContext, canvas, platform, size};
+        use std::{cell::Cell, rc::Rc, sync::Arc};
 
         let entry = crate::catalog::entries()
             .into_iter()
@@ -369,12 +369,29 @@ mod tests {
             platform::current_headless_renderer,
         );
         cx.update(crate::init);
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let armed = Rc::new(Cell::new(false));
+        let record: Rc<FrameRecorder> = Rc::new({
+            let frames = frames.clone();
+            let armed = armed.clone();
+            move |window, cx| {
+                if armed.get() {
+                    let frames = frames.clone();
+                    // The scene swaps after paint. Capture it before GPUI draws again.
+                    window.defer(cx, move |window, _| {
+                        frames
+                            .borrow_mut()
+                            .push(window.render_to_image().expect("capture frame"));
+                    });
+                }
+            }
+        });
         let window = cx
             .open_window(size(px(1100.), px(850.)), |window, cx| {
                 let playground = (entry.demo)(window, cx)
                     .downcast::<Playground>()
                     .unwrap_or_else(|_| panic!("{demo} is not a playground"));
-                cx.new(|_| FrameFixture(playground))
+                cx.new(|_| FrameFixture(playground, record))
             })
             .expect("open window");
         let capture = |cx: &mut HeadlessAppContext| {
@@ -390,6 +407,7 @@ mod tests {
         }
         for &(id, value) in changes {
             let before = capture(&mut cx);
+            armed.set(true);
             window
                 .update(&mut cx, |root, _, cx| {
                     let knob = root.0.read(cx).knob(id).expect("knob").clone();
@@ -397,23 +415,28 @@ mod tests {
                 })
                 .expect("change knob");
 
-            let first = capture(&mut cx);
-            cx.run_until_parked();
-            let second = capture(&mut cx);
-            cx.run_until_parked();
+            for _ in 0..2 {
+                cx.run_until_parked();
+                let _ = capture(&mut cx);
+            }
+            armed.set(false);
             let settled = capture(&mut cx);
-            assert!(before != settled, "{demo} knob {id} must change paint");
+            let recorded = frames.take();
             assert!(
-                first == settled,
-                "{demo} knob {id} painted an intermediate first frame"
+                before != settled,
+                "{demo} knob {id} must change preview paint"
             );
-            assert!(
-                second == settled,
-                "{demo} knob {id} painted an intermediate second frame"
-            );
+            assert!(!recorded.is_empty(), "{demo} knob {id} drew no frames");
+            for (index, frame) in recorded.iter().enumerate() {
+                assert!(
+                    *frame == settled,
+                    "{demo} knob {id} painted an intermediate frame at index {index}"
+                );
+            }
         }
 
-        struct FrameFixture(gpui_kit::Entity<Playground>);
+        type FrameRecorder = dyn Fn(&mut Window, &mut App);
+        struct FrameFixture(Entity<Playground>, Rc<FrameRecorder>);
 
         impl gpui_kit::Render for FrameFixture {
             fn render(
@@ -421,7 +444,14 @@ mod tests {
                 _: &mut Window,
                 cx: &mut gpui_kit::Context<Self>,
             ) -> impl IntoElement {
-                div().size_full().child(self.0.read(cx).preview.clone())
+                let record = self.1.clone();
+                div()
+                    .size_full()
+                    .child(self.0.read(cx).preview.clone())
+                    .child(canvas(
+                        |_, _, _| (),
+                        move |_, _, window, cx| record(window, cx),
+                    ))
             }
         }
     }
