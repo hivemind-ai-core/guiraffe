@@ -100,7 +100,7 @@ pub struct CodeOptions {
     pub size: Option<Size>,
     pub line_numbers: bool,
     pub minimap: bool,
-    /// Width of analysis cards in font cells. Zero hides the margin.
+    /// Width of analysis cards in font cells. Zero hides the margin and layered hover cards.
     pub margin_chars: usize,
 }
 impl Default for CodeOptions {
@@ -172,6 +172,7 @@ pub(crate) struct Shared {
     pub definition: RefCell<Option<DefinitionHandler>>,
     pub hover: Cell<Option<Position>>,
     pub bubbles: RefCell<BTreeMap<u64, Entity<MarkdownState>>>,
+    review_hover: RefCell<Option<Entity<MarkdownState>>>,
     pub hover_markdown: RefCell<Option<Entity<MarkdownState>>>,
     pub traces: RefCell<Arc<[Trace]>>,
     pub dependents: RefCell<Vec<WeakEntity<TraceView>>>,
@@ -229,6 +230,7 @@ impl CodeHandle {
             definition: RefCell::default(),
             hover: Cell::default(),
             bubbles: RefCell::default(),
+            review_hover: RefCell::default(),
             hover_markdown: RefCell::default(),
             traces: RefCell::new(Arc::from([])),
             dependents: RefCell::default(),
@@ -331,6 +333,7 @@ impl CodeHandle {
         if !unchanged {
             *self.shared.decorations.borrow_mut() = next;
             self.shared.hover_decoration.set(None);
+            self.shared.review_hover.borrow_mut().take();
             self.shared.hover_target.set(None);
             self.notify_all(cx);
         }
@@ -338,7 +341,7 @@ impl CodeHandle {
     }
 
     /// Set the renderer for inter-line block decorations. The default displays the payload
-    /// as text. Changing renderers remeasures visible widgets on their next layout.
+    /// on a themed surface. Changing renderers remeasures visible widgets on their next layout.
     pub fn on_block_widget(&self, renderer: Option<BlockWidgetRenderer>, cx: &mut App) {
         *self.shared.block_renderer.borrow_mut() = renderer;
         let mut layout = self.shared.block_layout.borrow_mut();
@@ -788,12 +791,22 @@ impl CodeHandle {
 
     fn set_hover_target(&self, position: Option<Position>, target: DecorationTarget, cx: &mut App) {
         let unchanged_target = self.shared.hover_target.replace(Some(target)) == Some(target);
-        if self.shared.hover.replace(position) == position && unchanged_target {
+        let prior_position = self.shared.hover.replace(position);
+        if prior_position == position && unchanged_target {
             return;
         }
         let next = self.decoration_at(position, target);
         let previous = self.shared.hover_decoration.replace(next);
         if previous != next {
+            *self.shared.review_hover.borrow_mut() = next.and_then(|(layer, id)| {
+                let decorations = self.shared.decorations.borrow();
+                let decorations = decorations.as_ref()?;
+                let mark = decorations.layer(layer)?.get(id)?;
+                let DecorationStyle::Review { markdown } = decorations.style(mark.style)? else {
+                    return None;
+                };
+                Some(cx.new(|cx| MarkdownState::new(markdown.to_string(), cx)))
+            });
             if let Some(previous) = previous {
                 self.emit_decoration(previous, DecorationAction::Leave, cx);
             }
@@ -802,28 +815,36 @@ impl CodeHandle {
             }
             self.notify_overlay(cx);
         }
-        let symbol = position.and_then(|p| {
-            if let Some(provider) = self.shared.provider.borrow().as_ref() {
-                return provider(p);
-            }
-            let doc = self.document();
-            let offset = doc.offset(p)?;
-            let mut hits = Vec::new();
-            self.shared
-                .index
-                .borrow()
-                .query(offset..offset.saturating_add(1), &mut hits);
-            let annotations = self.shared.annotations.borrow();
-            let a = hits
-                .iter()
-                .filter_map(|i| annotations.get(*i))
-                .find(|a| a.kind == AnnotationKind::Symbol)?;
-            Some(SymbolInfo {
-                range: a.range,
-                occurrences: Arc::from([a.range]),
-                markdown: a.payload.clone(),
-            })
-        });
+        if next.is_some()
+            && previous == next
+            && prior_position.map(|p| p.line) != position.map(|p| p.line)
+        {
+            self.notify_overlay(cx);
+        }
+        let symbol = position
+            .filter(|_| target == DecorationTarget::Text)
+            .and_then(|p| {
+                if let Some(provider) = self.shared.provider.borrow().as_ref() {
+                    return provider(p);
+                }
+                let doc = self.document();
+                let offset = doc.offset(p)?;
+                let mut hits = Vec::new();
+                self.shared
+                    .index
+                    .borrow()
+                    .query(offset..offset.saturating_add(1), &mut hits);
+                let annotations = self.shared.annotations.borrow();
+                let a = hits
+                    .iter()
+                    .filter_map(|i| annotations.get(*i))
+                    .find(|a| a.kind == AnnotationKind::Symbol)?;
+                Some(SymbolInfo {
+                    range: a.range,
+                    occurrences: Arc::from([a.range]),
+                    markdown: a.payload.clone(),
+                })
+            });
         if *self.shared.symbol.borrow() != symbol {
             *self.shared.hover_markdown.borrow_mut() = symbol
                 .as_ref()
@@ -982,6 +1003,7 @@ impl CodeHandle {
             self.shared.bubbles.borrow_mut().clear();
             self.shared.decorations.borrow_mut().take();
             self.shared.hover_decoration.set(None);
+            self.shared.review_hover.borrow_mut().take();
             self.shared.hover_target.set(None);
             self.shared.annotation_ids.borrow_mut().clear();
             self.shared.folds.borrow_mut().clear();
@@ -1390,51 +1412,71 @@ impl Render for OverlayLayer {
                 }
             }
         }
-        if let Some((layer, id)) = self.shared.hover_decoration.get()
-            && let Some(decorations) = self.shared.decorations.borrow().as_ref()
-            && let Some(record) = decorations.layer(layer).and_then(|layer| layer.get(id))
-            && let Some(style) = decorations.style(record.style)
-        {
-            let detail = match style {
-                DecorationStyle::Blame(commit) => Some(format!(
-                    "{} · {} · {}\n{}",
-                    commit.author, commit.date, commit.short_hash, commit.message
-                )),
-                DecorationStyle::Diagnostic { message, .. } => Some(message.as_ref().to_owned()),
-                _ => None,
+        let hover_row = self
+            .shared
+            .hover
+            .get()
+            .and_then(|position| rows.source_row(position.line))
+            .filter(|row| viewport.visible(rows.len(), lh, h).contains(row));
+        if let Some(row) = hover_row {
+            let card_height = (lh * 5.).min(h);
+            let y = (row as f64 * f64::from(lh) - viewport.y) as f32;
+            let right_padding = mini.max(8.) + 4.;
+            let available = (width - right_padding).max(0.);
+            let card_width = if margin > 8. {
+                (margin - 8.).min(available)
+            } else {
+                (lh * 14.).min(available)
             };
-            if let Some(detail) = detail {
-                root = root.child(
-                    div()
-                        .absolute()
-                        .right(px(mini))
-                        .bottom(px(lh))
-                        .max_w(px(margin.max(lh * 14.)))
-                        .rounded(px(Size::Sm.radius()))
-                        .bg(s.surface.to_hsla())
-                        .border_1()
-                        .border_color(s.border.to_hsla())
-                        .p(px(Size::Sm.spacing()))
-                        .child(detail),
-                );
-            }
-        }
-        if let Some(md) = self.shared.hover_markdown.borrow().as_ref() {
-            root = root.child(
+            let top = if margin > 8. || y + lh + card_height <= h {
+                y + lh
+            } else {
+                y - card_height
+            };
+            let card = || {
                 div()
                     .absolute()
-                    .right(px(mini))
-                    .bottom(px(lh))
-                    .w(px(margin.max(lh * 10.)))
-                    .h(px(lh * 4.))
+                    .right(px(right_padding))
+                    .top(px(top.clamp(0., (h - card_height).max(0.))))
+                    .w(px(card_width))
+                    .max_h(px(card_height))
                     .overflow_hidden()
-                    .bg(s.surface.to_hsla())
-                    .p(px(Size::Xs.spacing() * 0.5))
                     .rounded(px(Size::Sm.radius()))
+                    .bg(s.surface.to_hsla())
                     .border_1()
                     .border_color(s.border.to_hsla())
-                    .child(MarkdownView::new(format!("code-detail-{}", self.shared.id)).state(md)),
-            );
+                    .p(px(Size::Sm.spacing()))
+            };
+            let decorations = self.shared.decorations.borrow();
+            let detail = self.shared.hover_decoration.get().and_then(|(layer, id)| {
+                let decorations = decorations.as_ref()?;
+                let record = decorations.layer(layer)?.get(id)?;
+                match decorations.style(record.style)? {
+                    DecorationStyle::Blame(commit) => Some(format!(
+                        "{} · {} · {}\n{}",
+                        commit.author, commit.date, commit.short_hash, commit.message
+                    )),
+                    DecorationStyle::Diagnostic { message, .. } => Some(message.to_string()),
+                    _ => None,
+                }
+            });
+            if margin > 8.
+                && let Some(md) = self.shared.review_hover.borrow().as_ref()
+            {
+                root =
+                    root.child(card().h(px(card_height)).child(
+                        MarkdownView::new(format!("code-review-{}", self.shared.id)).state(md),
+                    ));
+            } else if margin > 8.
+                && let Some(detail) = detail
+            {
+                root = root.child(card().child(detail));
+            } else if let Some(md) = self.shared.hover_markdown.borrow().as_ref() {
+                root =
+                    root.child(card().h(px(card_height)).child(
+                        MarkdownView::new(format!("code-detail-{}", self.shared.id)).state(md),
+                    ));
+            }
         }
         let mut visible_widgets = Vec::new();
         let left = self.shared.geometry.borrow().gutter;
@@ -1487,7 +1529,14 @@ impl Render for OverlayLayer {
                 let content = if let Some(renderer) = &renderer {
                     renderer(widget, window, cx)
                 } else {
-                    div().child(widget.payload.to_string()).into_any_element()
+                    div()
+                        .p(px(Size::Sm.spacing()))
+                        .bg(s.surface.to_hsla())
+                        .border_1()
+                        .border_color(s.border.to_hsla())
+                        .rounded(px(Size::Sm.radius()))
+                        .child(widget.payload.to_string())
+                        .into_any_element()
                 };
                 let mut block = div()
                     .absolute()
@@ -1882,6 +1931,45 @@ mod review_tests {
         }
         assert!(called.borrow().contains(&5_000));
         assert_eq!(code.shared.block_layout.borrow().measured.len(), 2);
+    }
+
+    #[gpui_kit::test]
+    fn layered_review_opens_only_for_its_hover_target(cx: &mut TestAppContext) {
+        use crate::{AnchorBias, DecorationInput, DecorationStyle, Decorations};
+
+        cx.update(|cx| {
+            let document = Arc::new(CodeDocument::new("subtotal + fee"));
+            let code = CodeHandle::new(24, document.clone(), cx);
+            let mut decorations = Decorations::new(document).expect("fixture fits u32");
+            let style = decorations
+                .intern_style(DecorationStyle::Review {
+                    markdown: "Check the fee.".into(),
+                })
+                .expect("intern review style");
+            decorations
+                .update_layer(
+                    1,
+                    Default::default(),
+                    &[],
+                    [DecorationInput {
+                        id: 0,
+                        range: SourceRange::new(Position::new(0, 0), Position::new(0, 8)),
+                        style,
+                        start_bias: AnchorBias::Left,
+                        end_bias: AnchorBias::Right,
+                    }],
+                )
+                .expect("valid review span");
+            assert!(code.set_analysis(decorations.prepare_analysis(Vec::new(), Vec::new()), cx));
+            assert!(!code.shared.has_bubbles.get());
+            assert!(code.set_decorations(Some(Arc::new(decorations)), cx));
+            assert!(code.shared.review_hover.borrow().is_none());
+
+            code.set_hover(Some(Position::new(0, 3)), cx);
+            assert!(code.shared.review_hover.borrow().is_some());
+            code.set_hover(Some(Position::new(0, 12)), cx);
+            assert!(code.shared.review_hover.borrow().is_none());
+        });
     }
 
     #[gpui_kit::test]
