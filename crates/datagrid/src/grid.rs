@@ -3131,7 +3131,7 @@ fn paint_cell_labels(
 ) {
     let style = window.text_style();
     let font_size = style.font_size.to_pixels(window.rem_size());
-    let line_height = window.pixel_snap(window.line_height());
+    let line_height = window.pixel_snap(style.line_height_in_pixels(window.rem_size()));
     let text_system = window.text_system().clone();
     for label in labels {
         if let Some(background) = label.background {
@@ -3291,10 +3291,12 @@ impl Render for RowView {
             .filter(|e| e.row == row)
             .map(|e| (e.def, e.input.clone(), e.error.clone()));
         let mut text = std::mem::take(&mut m.text);
-        text.clear();
-        let _ = write!(text, "Row {}", row + 1);
-        let row_label = SharedString::from(text.as_str());
         let semantic_cells = window.is_a11y_active() || m.observe_cells;
+        let row_label = semantic_cells.then(|| {
+            text.clear();
+            let _ = write!(text, "Row {}", row + 1);
+            SharedString::from(text.as_str())
+        });
         let mut cells = 0usize;
         let weak_core = self.core.clone();
         let mut cell_text = core.cell_text.borrow_mut();
@@ -3546,7 +3548,7 @@ impl Render for RowView {
             .test_support()
             .role(Role::Row)
             .aria_row_index(aria_row_index(row))
-            .aria_label(row_label)
+            .when_some(row_label, |el, label| el.aria_label(label))
             .aria_selected(selected)
             .relative()
             .size_full()

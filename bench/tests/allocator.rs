@@ -83,7 +83,7 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
     let (grid_allocations, grid_bytes) = if gpui_kit::GPUI_FAST {
         (1_900, 420 * 1024)
     } else {
-        (1_150, 460 * 1024)
+        (1_020, 440 * 1024)
     };
     for (name, small, large, allocation_budget, byte_budget) in [
         (

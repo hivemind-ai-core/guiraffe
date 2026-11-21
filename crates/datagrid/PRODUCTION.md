@@ -88,7 +88,7 @@ rows and 37,185,423 instructions at 10M rows.
 The [instruction suite](../../bench/benches/production_frames.rs) warms a 1,200 by
 800 headless viewport and measures one scroll and draw. The [allocator
 test](../../bench/tests/allocator.rs) requires equal allocation counts at
-10k and 10M rows. The upstream cap is 1,150 allocations and 460 KiB,
+10k and 10M rows. The upstream cap is 1,020 allocations and 440 KiB,
 and the gpui-fast cap is 1,900 allocations and 420 KiB. The [mounted interaction test](tests/interaction.rs) requires
 equal source reads, row renders, constructed cells and pool size.
 
@@ -200,3 +200,43 @@ ranges at each source size. In the debug allocator gate, upstream requested
 1,076 allocations and 431,000 bytes at both sizes. GPUI-fast requested 1,798
 allocations and 385,096 bytes at both sizes.
 The 50-allocation target and the zero-allocation target remain open.
+
+## Warm jump allocation stack audit
+
+A thread-local stack capture around the mounted allocator gate resolved all
+1,076 upstream debug allocation requests for one warmed jump at each
+source size. Major allocation sites included:
+
+| Representative allocation site | Requests |
+|---|---:|
+| Taffy block items and child node arrays | 178 |
+| Taffy out-of-flow layout ID buffer growth | 62 |
+| GPUI div interactivity initialization in row and grid render | 87 |
+| GPUI row/view global element ID path creation | 57 |
+| GPUI per-row hover mouse listener registration (three hooks) | 87 |
+| GPUI row canvas closure allocation | 28 |
+| GPUI default text style construction in cell label paint | 56 |
+| GPUI keyboard dispatch action registration | 32 |
+
+Other stacks include GPUI element state, test-support observation and
+accessibility serialization, additional Taffy allocations, and construction
+of action and mouse handler closures. The grid now builds row names only when
+accessibility or cell observation needs them and reuses the paint text style
+to resolve line height. The allocator gate caps upstream at 1,020 requests
+and 440 KiB and requires equal counts at 10k and 10M rows.
+
+| Warm jump | Canvas baseline | After |
+|---|---:|---:|
+| Optimized upstream requests at both sizes | 1,073 | 989 |
+| Optimized upstream requested bytes at both sizes | 430,262 | 428,694 |
+| Debug upstream requests at both sizes | 1,076 | 992 |
+| Callgrind instructions, 10k rows | 6,262,601 | 6,284,842 |
+| Callgrind instructions, 10M rows | 6,265,028 | 6,253,163 |
+| Renderer-backed p99 (loaded host, ms) | 4.598 | 3.162–3.590 |
+
+The after captures use the mounted 1,200 × 800 fixture and a standalone
+driver of the production frame suite. Three renderer-backed runs reported
+108,104–108,732 KiB absolute RSS and 10,416–10,876 KiB above the empty
+window. The hot path still constructs per-row element and canvas subtrees
+and installs GPUI input listeners. The 50-request target, zero-allocation
+target and quiet-window timing acceptance remain open.
