@@ -203,9 +203,22 @@ The 50-allocation target and the zero-allocation target remain open.
 
 ## Warm jump allocation stack audit
 
-A thread-local stack capture around the mounted allocator gate resolved all
-1,076 upstream debug allocation requests for one warmed jump at each
-source size. Major allocation sites included:
+Thread-local stack captures resolved the 1,073 optimized requests and
+1,076 debug requests for a warmed upstream jump. At the first identifiable
+allocation site, optimized traffic grouped as follows.
+
+| Allocation site | Canvas baseline | After |
+|---|---:|---:|
+| GPUI core and its collections | 410 | 378 |
+| GPUI test support and accessibility | 146 | 150 |
+| Taffy layout | 485 | 485 |
+| Inlined in the grid render function | 32 | 32 |
+| Total | 1,073 | 1,045 |
+
+The inlined entries are consistent with action handler construction in
+the grid render function. The optimized stacks stop at that function.
+The following representative stacks show the largest groups in the
+original debug capture.
 
 | Representative allocation site | Requests |
 |---|---:|
