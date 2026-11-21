@@ -2143,7 +2143,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn number_scrub_previews_until_pointer_release(cx: &mut TestAppContext) {
-        use gpui_kit::test::TestQueryExt;
+        use gpui_kit::test::TestWindowExt;
         cx.update(|cx| {
             gpui_kit::base::init(cx);
             gpui_kit::component::init(cx);
