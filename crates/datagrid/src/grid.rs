@@ -183,7 +183,10 @@ impl Default for GridOptions {
             size: None,
             density: None,
             focusable: None,
-            overscan: 3,
+            // Rows outside the viewport are clipped, and the rows that scroll
+            // in are built in the frame they are needed: building rows the
+            // viewport does not show is about a fifth of a frame for nothing.
+            overscan: 0,
             sync_below: 50_000,
             label: "Data grid".into(),
         }

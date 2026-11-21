@@ -51,6 +51,10 @@ pub fn reveal_height(measured: Option<f32>, peek: f32, progress: f32) -> f32 {
 /// ```
 pub struct Spoiler {
     id: String,
+    /// The element ids, built from `id`: they change with the id, not with
+    /// every render.
+    element_id: SharedString,
+    toggle_id: SharedString,
     content: Build,
     expanded: bool,
     /// Reveal progress in 0..=1; sampling it re-renders only this view.
@@ -79,6 +83,8 @@ impl Spoiler {
             focus: cx.focus_handle(),
             focusable: None,
             id: "gr-spoiler".into(),
+            element_id: "gr-spoiler:gr-spoiler".into(),
+            toggle_id: "gr-spoiler-toggle:gr-spoiler".into(),
             content: std::rc::Rc::new(|_, _| div().into_any_element()),
             expanded: false,
             progress: Animated::new(
@@ -98,6 +104,8 @@ impl Spoiler {
     /// A stable identity for the reveal state; distinct spoilers need distinct ids.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.id = id.into();
+        self.element_id = format!("gr-spoiler:{}", self.id).into();
+        self.toggle_id = format!("gr-spoiler-toggle:{}", self.id).into();
         self
     }
 
@@ -196,7 +204,7 @@ impl Render for Spoiler {
             .label(label.clone());
         let expanded = self.expanded;
         div()
-            .id(SharedString::from(format!("gr-spoiler:{}", self.id)))
+            .id(self.element_id.clone())
             .debug_selector({
                 let id = self.id.clone();
                 move || format!("gr-spoiler:{id}")
@@ -240,7 +248,7 @@ impl Render for Spoiler {
             )
             .child(
                 div()
-                    .id(SharedString::from(format!("gr-spoiler-toggle:{}", self.id)))
+                    .id(self.toggle_id.clone())
                     .test_support()
                     .debug_selector({
                         let id = self.id.clone();

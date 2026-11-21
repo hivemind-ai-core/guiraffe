@@ -4,6 +4,7 @@ mod data_ui;
 mod production_frame;
 pub mod stats;
 pub mod suites;
+mod warm_repaint;
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};

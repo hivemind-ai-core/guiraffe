@@ -23,6 +23,9 @@ pub struct ExpandingList {
     progress: Vec<Animated<f32>>,
     body_height: Pixels,
     focusable: Option<bool>,
+    /// The element id prefix of the triggers: it never changes, so it is built
+    /// once instead of for every trigger of every frame.
+    trigger_prefix: SharedString,
 }
 
 impl EventEmitter<ExpandingListChange> for ExpandingList {}
@@ -30,12 +33,13 @@ impl EventEmitter<ExpandingListChange> for ExpandingList {}
 impl ExpandingList {
     /// The body height is reserved during expansion. Overflowing body content scrolls.
     pub fn new(items: Vec<DisclosureItem>, body_height: Pixels, cx: &mut App) -> Entity<Self> {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             progress: vec![Animated::new(0., Timing::Spring(Spring::SNAPPY)); items.len()],
             items,
             open: None,
             body_height: body_height.max(px(0.)),
             focusable: None,
+            trigger_prefix: format!("expanding-{}", cx.entity_id().as_u64()).into(),
         })
     }
 
@@ -73,6 +77,7 @@ impl Render for ExpandingList {
         let surface = surfaces(cx);
         let corner = radius(None, cx);
         let id = cx.entity_id().as_u64();
+        let trigger_prefix = self.trigger_prefix.clone();
         let row_height = px(40.);
         let vertical_gap = px(8.);
         let reserved = if self.items.is_empty() {
@@ -97,8 +102,7 @@ impl Render for ExpandingList {
                     let p =
                         disclosure_motion::progress(progress, &mut needs_frame, cx).clamp(0., 1.);
                     let open = self.open == Some(index);
-                    let trigger =
-                        ElementId::from((SharedString::from(format!("expanding-{id}")), index));
+                    let trigger = ElementId::from((trigger_prefix.clone(), index));
                     let focus = keyed_focus(trigger.clone(), window, cx);
                     let press = Press::new(colors)
                         .label(item.title.clone())
