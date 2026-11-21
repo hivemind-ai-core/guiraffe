@@ -18,25 +18,42 @@ use crate::text::{
 
 /// Parse Markdown into a tree of nodes.
 pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument, SharedString> {
-    parse_with_cancel(source, cx, || false)
+    parse_with_cancel(source, cx, false, || false)
 }
 
 pub(in crate::text) fn parse_with_cancel(
     source: &str,
     cx: &mut NodeContext,
+    defer_paragraphs: bool,
     cancelled: impl Fn() -> bool,
 ) -> Result<ParsedDocument, SharedString> {
     let options = cx.markdown_extensions.parse_options();
     let mut prose = cx.markdown_extensions.parse_options();
     prose.constructs.math_text = false;
     prose.constructs.math_flow = false;
+    let source_text: SharedString = source.to_owned().into();
+    let source_base = cx.offset;
+    let defer_paragraphs = defer_paragraphs && source.len() > 32 * 1024;
     let mut blocks = Vec::new();
+    let mut last = None;
     visit_ast_sections(source, &options, &cancelled, |mut root| {
         flatten_unclaimed_math(&mut root, source, &prose, cx);
-        blocks.extend(ast_into_blocks(source, root, cx));
+        let parsed = ast_into_blocks(source, root, cx);
+        if defer_paragraphs {
+            // Streaming starts at the last block. Keep that block eager so
+            // the fade tracker can compare its old and new inline runs.
+            for block in parsed {
+                if let Some(previous) = last.replace(block) {
+                    blocks.push(previous.into_cold_paragraph(&source_text, source_base));
+                }
+            }
+        } else {
+            blocks.extend(parsed);
+        }
     })?;
+    blocks.extend(last);
     Ok(ParsedDocument {
-        source: source.to_owned().into(),
+        source: source_text,
         blocks: Arc::new(blocks.into()),
     })
 }

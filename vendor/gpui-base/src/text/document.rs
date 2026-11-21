@@ -61,6 +61,7 @@ pub(crate) struct NodeRenderOptions {
     pub(crate) list_start: Option<u32>,
     pub(crate) depth: usize,
     pub(crate) is_last: bool,
+    pub(crate) retain_materialization: bool,
     /// Whether this block opens its flow -- the document or a blockquote --
     /// and so takes no gap above it. An HTML block container passes it on to
     /// its own first child.
@@ -300,6 +301,7 @@ impl ParsedDocument {
 
         let options = NodeRenderOptions {
             is_last: true,
+            retain_materialization: viewport_measurement.is_some(),
             ..Default::default()
         };
 
@@ -345,14 +347,78 @@ impl ParsedDocument {
 
 #[cfg(test)]
 mod tests {
-    use super::{PrevBlock, flow_position};
+    use super::{BlockNode, PrevBlock, SelectionFormat, ViewportBlockCache, flow_position};
     use crate::text::{format::markdown, node::NodeContext};
+    use std::sync::Arc;
 
     fn positions(source: &str) -> Vec<(bool, PrevBlock)> {
         let document = markdown::parse(source, &mut NodeContext::default()).unwrap();
         (0..document.blocks.len())
             .map(|ix| flow_position(ix, |i| &document.blocks[i]))
             .collect()
+    }
+
+    #[test]
+    fn cold_paragraph_copy_preserves_markup_and_evicted_endpoints() {
+        let source = "start **one**\n\nmiddle _raw_\n\nlast **two**";
+        let mut document = markdown::parse(source, &mut NodeContext::default()).unwrap();
+        document.blocks = Arc::new(
+            document
+                .blocks
+                .iter()
+                .cloned()
+                .map(|block| block.into_cold_paragraph(&document.source, 0))
+                .collect(),
+        );
+        for (index, range) in [(0, 6..9), (2, 0..4)] {
+            let BlockNode::ColdParagraph(block) = &document.blocks[index] else {
+                panic!("expected a cold paragraph");
+            };
+            {
+                let paragraph = block.materialize(true);
+                let mut state = paragraph.state.lock().unwrap();
+                state.set_text(paragraph.text().into());
+                state.selection = Some(range.into());
+            }
+            document.blocks[index].clear_render_caches();
+        }
+        assert_eq!(
+            document.selected_text(SelectionFormat::Source, Some(0..=2)),
+            "**one**\n\nmiddle _raw_\n\nlast"
+        );
+        assert_eq!(
+            document.selected_text(SelectionFormat::Plain, Some(0..=2)),
+            "one\nmiddle raw\nlast\n"
+        );
+        let begin = source.find("one").unwrap();
+        let end = source.find("last").unwrap() + "last".len();
+        assert_eq!(document.selected_source_range(), Some(begin..end));
+    }
+
+    #[test]
+    fn cold_paragraphs_drop_runs_outside_the_viewport_cache() {
+        let source = "plain **marked** text\n\n".repeat(2_000);
+        let document =
+            markdown::parse_with_cancel(&source, &mut NodeContext::default(), true, || false)
+                .unwrap();
+        let cache = ViewportBlockCache::default();
+        let BlockNode::ColdParagraph(first) = &document.blocks[0] else {
+            panic!("expected off-screen prose to start cold");
+        };
+        cache.touch(0, &document.blocks);
+        let old = Arc::downgrade(&first.materialize(true));
+        for (index, block) in document.blocks.iter().enumerate().skip(1) {
+            cache.touch(index, &document.blocks);
+            if let BlockNode::ColdParagraph(paragraph) = block {
+                let _ = paragraph.materialize(true);
+            }
+        }
+        assert!(old.upgrade().is_none());
+        assert_eq!(cache.0.borrow().len(), super::MAX_CACHED_BLOCKS);
+        assert!(matches!(
+            document.blocks.last(),
+            Some(BlockNode::Paragraph(_))
+        ));
     }
 
     #[test]

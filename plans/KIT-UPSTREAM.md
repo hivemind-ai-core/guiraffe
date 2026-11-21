@@ -47,6 +47,18 @@ previous snapshot. Verify sharing at multiple document sizes and preserve
 source ranges and list continuation. The contiguous source string still
 needs to be copied on append.
 
+## Materialize Markdown text runs near the viewport
+
+For opted-in, large Markdown TextViews, lower settled text-only paragraphs
+to source ranges and exact inline metadata. Materialize the runs when a
+paragraph enters the viewport or overscan and evict the furthest block
+at the existing 256-block limit. Keep formatting and absolute source
+positions from the canonical parse, and retain logical selection handles
+across eviction. Source copy uses original spans, while plain copy reads
+the stored source and normalization metadata. Exercise cross-window
+copy and full traversal on both backends. Keep paragraphs with inline
+objects and the streaming tail eager.
+
 ## Share immutable Tree-sitter queries across highlighters
 
 Cache compiled queries by canonical language and query purpose, checking

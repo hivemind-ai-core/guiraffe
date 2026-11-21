@@ -242,6 +242,7 @@ impl TextViewState {
             rx,
             tx_result,
             latest_replacement.clone(),
+            estimated_block_height.is_some(),
         ));
 
         let mut this = Self {
@@ -1325,6 +1326,7 @@ struct UpdateFuture {
     rx: Pin<Box<Receiver<UpdateOptions>>>,
     tx_result: Sender<ParsedUpdate>,
     latest_replacement: Arc<AtomicUsize>,
+    defer_paragraphs: bool,
 }
 
 impl UpdateFuture {
@@ -1333,6 +1335,7 @@ impl UpdateFuture {
         rx: Receiver<UpdateOptions>,
         tx_result: Sender<ParsedUpdate>,
         latest_replacement: Arc<AtomicUsize>,
+        defer_paragraphs: bool,
     ) -> Self {
         Self {
             format,
@@ -1340,6 +1343,7 @@ impl UpdateFuture {
             rx: Box::pin(rx),
             tx_result,
             latest_replacement,
+            defer_paragraphs,
         }
     }
 }
@@ -1360,6 +1364,7 @@ impl Future for UpdateFuture {
                         self.format,
                         self.content.clone(),
                         &options,
+                        self.defer_paragraphs,
                         cancelled,
                     );
                     if !cancelled() {
@@ -1446,13 +1451,14 @@ fn parse_content(
     content: ParsedContent,
     options: &UpdateOptions,
 ) -> Result<ParsedContent, SharedString> {
-    parse_content_with_cancel(format, content, options, || false)
+    parse_content_with_cancel(format, content, options, false, || false)
 }
 
 fn parse_content_with_cancel(
     format: TextViewFormat,
     mut content: ParsedContent,
     options: &UpdateOptions,
+    defer_paragraphs: bool,
     cancelled: impl Fn() -> bool,
 ) -> Result<ParsedContent, SharedString> {
     if cancelled() {
@@ -1493,9 +1499,12 @@ fn parse_content_with_cancel(
     }
 
     let new_document = match format {
-        TextViewFormat::Markdown => {
-            format::markdown::parse_with_cancel(&source, &mut node_cx, cancelled)
-        }
+        TextViewFormat::Markdown => format::markdown::parse_with_cancel(
+            &source,
+            &mut node_cx,
+            defer_paragraphs && !options.append,
+            cancelled,
+        ),
         TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
     }?;
 
@@ -2346,6 +2355,7 @@ mod tests {
             rx,
             tx_result,
             Arc::default(),
+            false,
         ));
         let waker = futures::task::noop_waker();
         let mut task_cx = std::task::Context::from_waker(&waker);

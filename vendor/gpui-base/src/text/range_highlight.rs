@@ -450,6 +450,13 @@ impl IndexBuilder {
                     paragraph.span.map(|span| TextLeafKey::block(span.start)),
                 );
             }
+            BlockNode::ColdParagraph(paragraph) => {
+                let paragraph = paragraph.materialize(false);
+                self.push_paragraph(
+                    &paragraph,
+                    paragraph.span.map(|span| TextLeafKey::block(span.start)),
+                );
+            }
             BlockNode::Heading { children, span, .. } => {
                 self.push_paragraph(children, span.map(|span| TextLeafKey::block(span.start)));
             }

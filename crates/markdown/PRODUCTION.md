@@ -62,3 +62,18 @@ source maps, and trimming run capacity reduced the inline run from 424 to
 fell from 145,256 to 74,488 KiB. The 50k fixture has a 67,686 KiB peak delta
 budget. These shared-machine development measurements leave production
 RSS and warm repaint allocation checks open.
+
+Large estimated-height views retain cold descriptions for settled text-only
+top-level paragraphs. The descriptions keep source ranges, exact marks
+and source maps. Transformed runs store their normalized text. Layout
+materializes the inline runs near the viewport and shares the 256-block
+limit with decoration and metric caches. Logical selection is separate
+from materialized runs. The final block, headings, tables, lists and
+paragraphs with inline objects use the ordinary representation.
+
+The [Kit tests](../../vendor/gpui-base/src/text/document.rs) verify eviction
+during traversal and source and plain copy across cold paragraphs,
+including after evicting both selection endpoints. With cold paragraphs,
+the shared-machine upstream dev probe drew the first useful frame in
+57 ms, measured 5.0–6.5 ms scroll/append p99, and peaked at 66,656 KiB
+above the empty window. The full parse and metadata settled in 1.03 s.
