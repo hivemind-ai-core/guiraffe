@@ -451,8 +451,7 @@ pub struct Scene {
 }
 impl Scene {
     pub fn new(graph: Graph) -> Result<Self, FlowError> {
-        graph.validate()?;
-        let node_refs: BTreeMap<_, _> = graph.nodes.iter().map(|(id, node)| (*id, node)).collect();
+        let node_refs = graph.validated_node_index()?;
         let paths: im::OrdMap<EdgeId, Arc<EdgePath>> = graph
             .edges
             .values()
@@ -471,6 +470,7 @@ impl Scene {
                 .map(|p| (e.id, Arc::new(p)))
             })
             .collect::<Result<_, _>>()?;
+        drop(node_refs);
         let nodes = SpatialIndex::new(graph.nodes.values().map(|n| (n.id, n.rect())));
         let edges = SpatialIndex::new(paths.iter().map(|(id, path)| (*id, path.bounds)));
         let bounds = graph.bounds();

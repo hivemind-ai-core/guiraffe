@@ -245,6 +245,9 @@ impl Graph {
             .ok_or_else(|| FlowError::MissingHandle(endpoint.clone()))
     }
     pub fn validate(&self) -> Result<(), FlowError> {
+        self.validated_node_index().map(|_| ())
+    }
+    pub(crate) fn validated_node_index(&self) -> Result<BTreeMap<NodeId, &Node>, FlowError> {
         // Bulk validation uses a transient read index, avoiding repeated persistent-tree walks.
         let nodes: BTreeMap<_, _> = self.nodes.iter().map(|(id, node)| (*id, node)).collect();
         for (id, node) in &nodes {
@@ -307,7 +310,7 @@ impl Graph {
                 }
             }
         }
-        Ok(())
+        Ok(nodes)
     }
     fn validate_endpoints(&self, source: &Endpoint, target: &Endpoint) -> Result<(), FlowError> {
         if self.handle(source)?.1.kind != HandleKind::Source
