@@ -136,6 +136,15 @@ pub struct FlameLayout {
 impl FlameLayout {
     /// Build outside the paint path. Child totals plus self must fit inside the parent.
     pub fn new(source: Arc<dyn FrameSource>) -> Result<Self, LayoutError> {
+        Self::build(source, || false).map(|(layout, _)| layout)
+    }
+
+    /// A cancelled build returns its private partial state for destruction on
+    /// the worker. Callers only publish a completed layout.
+    pub(crate) fn build(
+        source: Arc<dyn FrameSource>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(Self, bool), LayoutError> {
         let mut result = Self {
             locations: Locations::Sequential(Vec::new()),
             source,
@@ -144,6 +153,9 @@ impl FlameLayout {
         };
         let mut stack: Vec<(FrameId, f64, f64)> = Vec::new();
         for index in 0..result.source.len() {
+            if index.is_multiple_of(1024) && cancelled() {
+                return Ok((result, false));
+            }
             let frame = result.source.frame(index);
             if index == 0
                 && frame.id == 0
@@ -193,7 +205,7 @@ impl FlameLayout {
             row.push(Span { index, left, right });
             stack.push((frame.id, left, (right - frame.self_value).max(left)));
         }
-        Ok(result)
+        Ok((result, true))
     }
 
     pub fn rows(&self) -> usize {
@@ -440,6 +452,18 @@ mod tests {
                 package: "",
             }
         }
+    }
+
+    #[test]
+    fn cancelled_build_stops_before_the_next_batch() -> Result<(), LayoutError> {
+        let checks = std::cell::Cell::new(0);
+        let (layout, complete) = FlameLayout::build(Arc::new(Uniform(10_000)), || {
+            checks.set(checks.get() + 1);
+            checks.get() == 2
+        })?;
+        assert!(!complete);
+        assert_eq!(layout.domain(), 0. ..1024.);
+        Ok(())
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::{FlameLayout, FrameClicked, FrameId, Search};
+use crate::{FlameLayout, Frame, FrameClicked, FrameId, FrameSource, LayoutError, Search};
 use gpui_kit::{
     App, AppContext, Bounds, ContentMask, Context, DispatchPhase, Entity, EventEmitter,
     FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
@@ -15,7 +15,10 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     ops::Range,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 const ROW_HEIGHT: f64 = 21.;
@@ -66,6 +69,35 @@ impl LabelCache {
     }
 }
 
+const PREVIEW_FRAMES: usize = 4096;
+
+struct Prefix {
+    source: Arc<dyn FrameSource>,
+    len: usize,
+}
+
+impl FrameSource for Prefix {
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn frame(&self, index: usize) -> Frame<'_> {
+        self.source.frame(index)
+    }
+}
+
+struct PendingLayout {
+    cancelled: Arc<AtomicBool>,
+    _task: Task<()>,
+    search: String,
+}
+
+impl Drop for PendingLayout {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
 /// Flame and icicle plot. Tab into the plot, use the arrows to move among
 /// frames, Enter or Space to activate a frame, and Home or Escape to reset.
 pub struct FlameGraph {
@@ -85,6 +117,8 @@ pub struct FlameGraph {
     bounds: Bounds<Pixels>,
     first_row: usize,
     labels: Rc<RefCell<LabelCache>>,
+    pending_layout: Option<PendingLayout>,
+    load_failure: Option<LayoutError>,
 }
 
 impl EventEmitter<FrameClicked> for FlameGraph {}
@@ -108,7 +142,74 @@ impl FlameGraph {
             bounds: Bounds::default(),
             first_row: 0,
             labels: Rc::new(RefCell::new(LabelCache(std::array::from_fn(|_| None)))),
+            pending_layout: None,
+            load_failure: None,
         }
+    }
+
+    /// Mount a bounded preview of the first stacks and prepare the complete
+    /// layout on the background executor. The preview advertises its coverage
+    /// and the full domain replaces it automatically after validation.
+    pub fn from_source(
+        source: Arc<dyn FrameSource>,
+        cx: &mut Context<Self>,
+    ) -> Result<Self, LayoutError> {
+        if source.len() <= PREVIEW_FRAMES {
+            return Ok(Self::new(Arc::new(FlameLayout::new(source)?)));
+        }
+        let preview = FlameLayout::new(Arc::new(Prefix {
+            source: source.clone(),
+            len: PREVIEW_FRAMES,
+        }))?;
+        let mut graph = Self::new(Arc::new(preview));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let signal = cancelled.clone();
+        let task = cx.background_executor().spawn(async move {
+            match FlameLayout::build(source, || signal.load(Ordering::Relaxed)) {
+                Ok((layout, true)) => Some(Ok(Arc::new(layout))),
+                Ok((_, false)) => None,
+                Err(error) => Some(Err(error)),
+            }
+        });
+        let task = cx.spawn(async move |graph, cx| {
+            let Some(result) = task.await else {
+                return;
+            };
+            let _ = graph.update(cx, |graph, cx| {
+                let search = graph
+                    .pending_layout
+                    .take()
+                    .map(|mut pending| std::mem::take(&mut pending.search));
+                match result {
+                    Ok(layout) => {
+                        graph.layout = layout;
+                        graph.drag = None;
+                        graph.reset(cx);
+                        graph.set_search(search.as_deref().unwrap_or_default(), cx);
+                    }
+                    Err(error) => {
+                        graph.load_failure = Some(error);
+                        cx.notify();
+                    }
+                }
+            });
+        });
+        graph.pending_layout = Some(PendingLayout {
+            cancelled,
+            _task: task,
+            search: String::new(),
+        });
+        Ok(graph)
+    }
+
+    /// Whether the full source is still being prepared.
+    pub fn is_loading(&self) -> bool {
+        self.pending_layout.is_some()
+    }
+
+    /// Validation error reported by the deferred layout, if any.
+    pub fn load_failure(&self) -> Option<LayoutError> {
+        self.load_failure
     }
 
     /// Height of the plot area needed to display the full profile at once.
@@ -118,6 +219,10 @@ impl FlameGraph {
     }
 
     pub fn set_search(&mut self, query: &str, cx: &mut Context<Self>) {
+        if let Some(pending) = &mut self.pending_layout {
+            pending.search.clear();
+            pending.search.push_str(query);
+        }
         self.search_task = None;
         if self.search.take().is_some() {
             cx.notify();
@@ -387,6 +492,17 @@ impl Render for FlameGraph {
                             }),
                     ),
             )
+            .children(self.is_loading().then(|| {
+                div().child(format!(
+                    "Loading profile · showing first {PREVIEW_FRAMES} frames"
+                ))
+            }))
+            .children(self.load_failure.map(|error| {
+                div()
+                    .id("flame-layout-error")
+                    .role(Role::Alert)
+                    .child(format!("Could not load full profile ({error:?})"))
+            }))
             .child(
                 div()
                     .id("flame-plot")
@@ -696,6 +812,60 @@ mod tests {
         assert!(graph.set_domain(20., 20.));
         assert!(!graph.set_domain(20., 20.));
         Ok(())
+    }
+
+    struct LargeProfile {
+        invalid_tail: bool,
+    }
+
+    impl FrameSource for LargeProfile {
+        fn len(&self) -> usize {
+            PREVIEW_FRAMES + 1
+        }
+
+        fn frame(&self, index: usize) -> Frame<'_> {
+            let total = if self.invalid_tail && index == PREVIEW_FRAMES {
+                -1.
+            } else {
+                1.
+            };
+            Frame {
+                id: index as u64,
+                parent: None,
+                self_value: 0.,
+                total,
+                label: "frame",
+                package: "test",
+            }
+        }
+    }
+
+    #[gpui_kit::test]
+    fn deferred_source_validates_and_publishes_after_preview(cx: &mut TestAppContext) {
+        for invalid_tail in [false, true] {
+            let graph = cx.new(|cx| {
+                let graph = FlameGraph::from_source(Arc::new(LargeProfile { invalid_tail }), cx)
+                    .expect("valid preview");
+                assert!(graph.is_loading());
+                assert_eq!(graph.domain.end, PREVIEW_FRAMES as f64);
+                graph
+            });
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let graph = graph.read(cx);
+                assert!(!graph.is_loading());
+                if invalid_tail {
+                    assert_eq!(
+                        graph.load_failure(),
+                        Some(LayoutError::InvalidValue(PREVIEW_FRAMES as u64))
+                    );
+                    assert_eq!(graph.domain.end, PREVIEW_FRAMES as f64);
+                } else {
+                    assert_eq!(graph.load_failure(), None);
+                    assert_eq!(graph.domain.end, (PREVIEW_FRAMES + 1) as f64);
+                }
+            });
+        }
     }
 
     #[gpui_kit::test]
