@@ -371,7 +371,12 @@ impl Render for EventTimelineState {
         let size = self
             .size
             .unwrap_or(guiraffe_core::StyleContext::current().control_size);
-        let spacing = size.spacing() * theme.scale;
+        let scale = if theme.scale.is_finite() && theme.scale > 0.0 {
+            theme.scale
+        } else {
+            1.0
+        };
+        let spacing = size.spacing() * scale;
         let unit = f64::from(spacing);
         self.pitch = match self.orientation {
             EventOrientation::Vertical => (unit * 4.0, unit * 15.0),
@@ -500,6 +505,7 @@ impl Render for EventTimelineState {
                 };
                 let press = Press::new(theme.press_colors(Variant::Subtle, color))
                     .role(Role::ListBoxOption)
+                    .focusable(Some(false))
                     .label(label)
                     .selected(chosen);
                 let listener = event_owner.clone();
@@ -661,7 +667,8 @@ impl Render for EventTimelineState {
             .overflow_hidden()
             .bg(surfaces.body.to_hsla())
             .text_color(surfaces.text.to_hsla())
-            .text_size(px(size.font_size() * theme.scale))
+            .text_size(px(size.font_size() * scale))
+            .line_height(px(size.font_size() * scale * 1.12))
             .child(
                 canvas(
                     move |bounds, _, cx| measure::record(&body, bounds, cx, owner),

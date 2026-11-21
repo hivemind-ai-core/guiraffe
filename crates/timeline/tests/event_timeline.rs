@@ -145,6 +145,9 @@ fn navigation_reveals_offscreen_events_and_pointer_preserves_focus(cx: &mut Test
 fn soak_100k(cx: &mut TestAppContext) {
     use std::time::{Duration, Instant};
 
+    use gpui_kit::{ScrollDelta, point};
+    use guiraffe_timeline::{EventLink, LinkKind};
+
     fn rss_bytes() -> usize {
         let status =
             std::fs::read_to_string("/proc/self/status").unwrap_or_else(|error| panic!("{error}"));
@@ -171,13 +174,53 @@ fn soak_100k(cx: &mut TestAppContext) {
     vcx.update(|window, cx| window.render_frame(cx));
     let baseline = rss_bytes();
     let count = 100_000;
-    let raw_bytes = count as usize * std::mem::size_of::<TimelineEvent>()
-        + (0..count)
-            .map(|id| format!("Event {id}").capacity())
-            .sum::<usize>()
-        + 2 * (std::mem::size_of::<EventTrack>() + "Lane 0".len());
     let mount_started = Instant::now();
-    entity.update(vcx, |timeline, cx| timeline.replace(model(count), cx));
+    let tracks: Vec<_> = (0..4)
+        .map(|id| EventTrack {
+            id,
+            label: format!("Lane {id}"),
+            color: None,
+        })
+        .collect();
+    let events: Vec<_> = (0..count)
+        .map(|id| TimelineEvent {
+            id,
+            track: id % 4,
+            position: (id / 8) as i64,
+            label: format!("Event {id}"),
+            content: Some(format!("Completed stage {}", id % 11)),
+            tags: vec![],
+            color: None,
+        })
+        .collect();
+    let links: Vec<_> = (0..count - 17)
+        .step_by(32)
+        .map(|source| EventLink {
+            source,
+            destination: source + 17,
+            kind: if source % 64 == 0 {
+                LinkKind::Branch
+            } else {
+                LinkKind::Merge
+            },
+            color: None,
+        })
+        .collect();
+    let raw_bytes = std::mem::size_of_val(tracks.as_slice())
+        + tracks
+            .iter()
+            .map(|track| track.label.capacity())
+            .sum::<usize>()
+        + std::mem::size_of_val(events.as_slice())
+        + events
+            .iter()
+            .map(|event| {
+                event.label.capacity() + event.content.as_ref().map_or(0, String::capacity)
+            })
+            .sum::<usize>()
+        + std::mem::size_of_val(links.as_slice());
+    let model = EventModel::new(tracks, events, links).unwrap_or_else(|error| panic!("{error}"));
+    entity.update(vcx, |timeline, cx| timeline.replace(model, cx));
     vcx.update(|window, cx| {
         window.render_frame(cx);
         window.focus(&entity.read(cx).focus_handle(cx), cx);
@@ -204,7 +247,15 @@ fn soak_100k(cx: &mut TestAppContext) {
         };
         let frame = Instant::now();
         vcx.update(|window, cx| {
-            window.press(key, cx);
+            if samples % 120 == 30 {
+                window.scroll(
+                    "event-timeline",
+                    ScrollDelta::Pixels(point(px(0.), px(-540.))),
+                    cx,
+                );
+            } else {
+                window.press(key, cx);
+            }
             window.render_frame(cx);
         });
         let bucket = (frame.elapsed().as_micros() / 100).min(1000) as usize;

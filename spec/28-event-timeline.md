@@ -95,3 +95,19 @@ use the shared focus overlay without shifting geometry.
   report soak duration and environment alongside measurements.
 - Provide runnable Rustdoc and pass `scripts/gate.sh` using the isolated
   worktree target and `CARGO_BUILD_JOBS=4`.
+
+## Running the soak
+
+Run the ignored integration test on Linux with the worktree-local release target.
+It mounts an empty window, installs a 100,000-event dataset with duplicate
+positions and branch/merge links, then dispatches real keys and wheel events.
+The timer covers dataset construction and the first headless GPUI frame.
+The memory numbers are process RSS. CPU timings cover input dispatch and
+headless frame production. Use a native presentation trace for compositor
+timing. The default duration is 30 minutes. Set `EVENT_TIMELINE_SOAK_SECONDS`
+for a shorter diagnostic run.
+
+```sh
+CARGO_BUILD_JOBS=4 cargo test --release -p guiraffe-timeline --test event_timeline soak_100k -- --ignored --nocapture
+CARGO_BUILD_JOBS=4 cargo test --release -p guiraffe-timeline --features gpui-fast --test event_timeline soak_100k -- --ignored --nocapture
+```
