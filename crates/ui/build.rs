@@ -14,9 +14,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../inputs/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../code/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../charts/src/widget_specs.rs");
+    println!("cargo:rerun-if-changed=../chat/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../datagrid/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../dnd/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../flamegraph/src/widget_specs.rs");
+    println!("cargo:rerun-if-changed=../flow/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../layout/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../markdown/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../mermaid/src/widget_specs.rs");

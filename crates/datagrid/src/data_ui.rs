@@ -6,7 +6,6 @@ use gpui_kit::{App, ElementId, IntoElement, RenderOnce, Subscription, Window};
 use guiraffe_core::{
     Density,
     widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value,
 };
 
@@ -15,42 +14,12 @@ use crate::{
     GridSource, Pin, SelectionMode, SortDir, widget_specs,
 };
 
-const PROPS: &[&str] = &[
-    "rows",
-    "columns",
-    "selection",
-    "zebra",
-    "size",
-    "density",
-    "focusable",
-    "overscan",
-    "sync-below",
-    "label",
-];
-
-const EVENTS: &[&str] = &[
-    "selection-change",
-    "sort-change",
-    "cell-edit",
-    "edit-cancel",
-    "copy",
-    "edit-reject",
-    "row-activate",
-    "column-resize",
-    "column-reorder",
-    "cells-change",
-    "cells-reject",
-];
-
 pub(crate) fn register(cx: &mut App) {
     WidgetRegistry::install(
         cx,
         &[WidgetRegistration {
             spec: widget_specs::WIDGETS[0],
-            schema: &Schema {
-                props: PROPS,
-                events: EVENTS,
-            },
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| GridDocument::new(node).into_any_element(),
         }],
     );

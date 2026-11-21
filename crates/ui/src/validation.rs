@@ -52,6 +52,74 @@ fn suggestion(got: &str, choices: &[&str]) -> String {
         )
 }
 
+fn valid_iso_date(text: &str) -> bool {
+    let Some((year, month_day)) = text.split_once('-') else {
+        return false;
+    };
+    let Some((month, day)) = month_day.split_once('-') else {
+        return false;
+    };
+    if year.len() != 4
+        || month.len() != 2
+        || day.len() != 2
+        || !text.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+    {
+        return false;
+    }
+    let Ok(year) = year.parse::<u32>() else {
+        return false;
+    };
+    let Ok(month) = month.parse::<u32>() else {
+        return false;
+    };
+    let Ok(day) = day.parse::<u32>() else {
+        return false;
+    };
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let max = match month {
+        2 => {
+            if leap {
+                29
+            } else {
+                28
+            }
+        }
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return false,
+    };
+    (1..=max).contains(&day)
+}
+
+fn valid_iso_time(text: &str) -> bool {
+    let mut parts = text.split(':');
+    let segment = |part: &str, max: u8| {
+        part.len() == 2
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && part.parse::<u8>().is_ok_and(|value| value <= max)
+    };
+    parts.next().is_some_and(|hour| segment(hour, 23))
+        && parts.next().is_some_and(|minute| segment(minute, 59))
+        && parts.next().is_none_or(|second| segment(second, 59))
+        && parts.next().is_none()
+}
+
+fn calendar_value(value: &Value) -> bool {
+    let endpoint = |value: &Value| {
+        value.is_null()
+            || value.as_str().is_some_and(|text| {
+                text.split_once('T').map_or_else(
+                    || valid_iso_date(text),
+                    |(date, time)| valid_iso_date(date) && valid_iso_time(time),
+                )
+            })
+    };
+    value.as_array().map_or_else(
+        || endpoint(value),
+        |range| range.len() == 2 && range.iter().all(endpoint),
+    )
+}
+
 fn check_timeline_tracks(value: &Value) -> bool {
     let Some(tracks) = value.as_array() else {
         return false;
@@ -229,9 +297,14 @@ fn matches_data_schema(value: &Value, schema: &Value) -> bool {
             .filter_map(Value::as_str)
             .all(|name| fields.contains_key(name))
             && fields.iter().all(|(key, value)| {
-                schema["properties"]
-                    .get(key)
-                    .is_some_and(|field_schema| matches_data_schema(value, field_schema))
+                if let Some(field_schema) = schema["properties"].get(key) {
+                    return matches_data_schema(value, field_schema);
+                }
+                match &schema["additionalProperties"] {
+                    Value::Bool(false) => false,
+                    additional @ Value::Object(_) => matches_data_schema(value, additional),
+                    _ => true,
+                }
             });
     }
     true
@@ -380,6 +453,34 @@ impl Validation<'_> {
                     .as_str()
                     .is_some_and(|text| prop.accepted.is_empty() || prop.accepted.contains(&text)),
                 "boolean" => got.is_boolean(),
+                "iso-date" => got.as_str().is_some_and(valid_iso_date),
+                "iso-time" => got.as_str().is_some_and(valid_iso_time),
+                "calendar-value" => calendar_value(got),
+                "object" => got.is_object(),
+                "flow-graph" => {
+                    let schema = crate::widget_spec::flow_graph_schema();
+                    matches_data_schema(got, &schema)
+                        && ["nodes", "edges"].into_iter().all(|key| {
+                            got[key].as_object().is_some_and(|items| {
+                                items.iter().all(|(key, item)| {
+                                    key.parse::<u64>()
+                                        .ok()
+                                        .zip(item["id"].as_u64())
+                                        .is_some_and(|(key, id)| key == id)
+                                })
+                            })
+                        })
+                }
+                "calendar-presets" => got.as_array().is_some_and(|items| {
+                    items.iter().all(|preset| {
+                        preset
+                            .as_object()
+                            .is_some_and(|fields| fields.len() == 2 && fields.contains_key("value"))
+                            && preset["label"].is_string()
+                            && calendar_value(&preset["value"])
+                    })
+                }),
+                "integer" => got.as_u64().is_some(),
                 "number" => got.as_f64().is_some_and(|number| {
                     prop.range
                         .is_none_or(|(min, max)| (min..=max).contains(&number))
@@ -445,6 +546,19 @@ impl Validation<'_> {
                     };
                     got.as_array().is_some_and(|items| {
                         items.iter().all(|item| matches_data_schema(item, &schema))
+                    })
+                }
+                "chat-messages" | "chat-attachments" | "chat-commands" => {
+                    let schema = match prop.type_name {
+                        "chat-messages" => crate::widget_spec::chat_message_schema(),
+                        "chat-attachments" => crate::widget_spec::chat_attachment_schema(),
+                        _ => crate::widget_spec::chat_command_schema(),
+                    };
+                    let mut ids = BTreeSet::new();
+                    got.as_array().is_some_and(|items| {
+                        items.iter().all(|item| {
+                            matches_data_schema(item, &schema) && ids.insert(item["id"].to_string())
+                        })
                     })
                 }
                 "board-columns" => got.as_array().is_some_and(|columns| {

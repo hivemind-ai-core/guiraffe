@@ -8,7 +8,6 @@ use gpui_kit::{
 use guiraffe_core::{
     ColorName,
     widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value,
 };
 
@@ -20,15 +19,13 @@ use super::{TagRejected, TagRules, TagsEvent, TagsInput, accept_tag};
 use crate::widget_specs;
 
 pub(super) fn register(cx: &mut App) {
+    calendar::register(cx);
     WidgetRegistry::install(
         cx,
         &[
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[0],
-                schema: &Schema {
-                    props: &["password"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
                 render: |node, _, _, _| {
                     PasswordStrength::new(node.prop(0).as_str().unwrap_or_default())
                         .into_any_element()
@@ -36,57 +33,22 @@ pub(super) fn register(cx: &mut App) {
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[1],
-                schema: &Schema {
-                    props: &[
-                        "options",
-                        "multiple",
-                        "value",
-                        "disabled",
-                        "focusable",
-                        "color",
-                    ],
-                    events: &["change"],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[1]),
                 render: |node, _, _, _| ChipDocument::from_node(node).into_any_element(),
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[2],
-                schema: &Schema {
-                    props: &[
-                        "min",
-                        "max",
-                        "step",
-                        "min-distance",
-                        "value",
-                        "label",
-                        "disabled",
-                        "focusable",
-                    ],
-                    events: &["change"],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[2]),
                 render: |node, _, _, _| RangeDocument::from_node(node).into_any_element(),
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[3],
-                schema: &Schema {
-                    props: &["accept", "label", "disabled", "focusable"],
-                    events: &["accept", "reject", "browse"],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[3]),
                 render: |node, _, _, _| DropDocument::from_node(node).into_any_element(),
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[4],
-                schema: &Schema {
-                    props: &[
-                        "value",
-                        "placeholder",
-                        "allow-duplicates",
-                        "split-chars",
-                        "max-tags",
-                        "max-len",
-                    ],
-                    events: &["change", "reject"],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[4]),
                 render: |node, _, _, _| TagsDocument::from_node(node).into_any_element(),
             },
         ],
@@ -516,3 +478,5 @@ impl RenderOnce for TagsDocument {
         })
     }
 }
+
+mod calendar;

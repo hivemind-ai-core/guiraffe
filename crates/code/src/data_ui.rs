@@ -6,7 +6,6 @@ use gpui_kit::{App, ElementId, IntoElement, RenderOnce, SharedString, Window};
 use guiraffe_core::{
     ColorName,
     widget_catalog::{WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value,
 };
 
@@ -20,18 +19,7 @@ pub(crate) fn register(cx: &mut App) {
         cx,
         &[WidgetRegistration {
             spec: widget_specs::WIDGETS[0],
-            schema: &Schema {
-                props: &[
-                    "source",
-                    "language",
-                    "size",
-                    "line-numbers",
-                    "minimap",
-                    "margin-chars",
-                    "annotations",
-                ],
-                events: &[],
-            },
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| {
                 let annotations = node.prop(6);
                 CodeDocumentView {

@@ -1,6 +1,8 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
-use syn::{ImplItem, Item, Type, Visibility};
+use syn::{
+    GenericArgument, ImplItem, Item, PathArguments, ReturnType, Type, TypeParamBound, Visibility,
+};
 
 const TOOL_CRATES: &[&str] = &["bench", "cli", "gallery", "mocket", "showcase", "test"];
 
@@ -14,24 +16,14 @@ pub fn public_surface(crates: &Path) -> BTreeSet<String> {
         if TOOL_CRATES.contains(&name) || !src.is_dir() {
             continue;
         }
-        let mut structs = BTreeSet::new();
-        let mut renders = BTreeSet::new();
-        let mut methods = BTreeSet::new();
+        let mut inventory = Inventory::default();
         for source in rust_files(&src) {
             let text = fs::read_to_string(&source).expect("source file");
             let syntax = syn::parse_file(&text)
                 .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
-            scan(&syntax.items, &mut structs, &mut renders, &mut methods);
+            inventory.scan(&syntax.items);
         }
-        for ty in structs.intersection(&renders) {
-            result.insert(format!("{name}::{ty}"));
-            result.extend(
-                methods
-                    .iter()
-                    .filter(|(owner, _)| owner == ty)
-                    .map(|(_, method)| format!("{name}::{ty}::{method}")),
-            );
-        }
+        result.extend(inventory.surface(name));
     }
     result
 }
@@ -49,76 +41,185 @@ fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
     files
 }
 
-fn scan(
-    items: &[Item],
-    structs: &mut BTreeSet<String>,
-    renders: &mut BTreeSet<String>,
-    methods: &mut BTreeSet<(String, String)>,
-) {
-    for item in items {
-        match item {
-            Item::Struct(item) if matches!(item.vis, Visibility::Public(_)) => {
-                structs.insert(item.ident.to_string());
+#[derive(Default)]
+struct Inventory {
+    structs: BTreeSet<String>,
+    renders: BTreeSet<String>,
+    methods: BTreeSet<(String, String)>,
+    aliases: Vec<(String, Type)>,
+    factories: Vec<(String, Type)>,
+}
+
+impl Inventory {
+    fn surface(&self, krate: &str) -> BTreeSet<String> {
+        let render_types: BTreeSet<_> = self.structs.intersection(&self.renders).cloned().collect();
+        let mut result = BTreeSet::new();
+        for ty in &render_types {
+            result.insert(format!("{krate}::{ty}"));
+            result.extend(
+                self.methods
+                    .iter()
+                    .filter(|(owner, _)| owner == ty)
+                    .map(|(_, method)| format!("{krate}::{ty}::{method}")),
+            );
+        }
+        for (name, ty) in &self.aliases {
+            if returns_widget(ty, &render_types) {
+                result.insert(format!("{krate}::{name}"));
             }
-            Item::Mod(item)
-                if !item.attrs.iter().any(|attr| {
-                    attr.path().is_ident("cfg")
-                        && attr
-                            .parse_args::<syn::Ident>()
-                            .is_ok_and(|cfg| cfg == "test")
-                }) =>
-            {
-                if let Some((_, items)) = &item.content {
-                    scan(items, structs, renders, methods);
-                }
+        }
+        for (name, ty) in &self.factories {
+            if returns_widget(ty, &render_types) {
+                result.insert(format!("{krate}::fn {name}"));
             }
-            Item::Impl(item) => {
-                let Type::Path(path) = item.self_ty.as_ref() else {
-                    continue;
-                };
-                let Some(owner) = path.path.segments.last() else {
-                    continue;
-                };
-                let owner = owner.ident.to_string();
-                if let Some((_, trait_path, _)) = &item.trait_ {
-                    if let Some(name) = trait_path.segments.last()
-                        && (name.ident == "Render" || name.ident == "RenderOnce")
-                    {
-                        renders.insert(owner);
-                    }
-                    continue;
+        }
+        result
+    }
+
+    fn scan(&mut self, items: &[Item]) {
+        for item in items {
+            match item {
+                Item::Struct(item) if matches!(item.vis, Visibility::Public(_)) => {
+                    self.structs.insert(item.ident.to_string());
                 }
-                for method in &item.items {
-                    if let ImplItem::Fn(method) = method
-                        && matches!(method.vis, Visibility::Public(_))
-                    {
-                        methods.insert((owner.clone(), method.sig.ident.to_string()));
-                    }
-                }
-            }
-            Item::Macro(item) if item.mac.path.is_ident("props") => {
-                // GUIraffe's props! DSL is Type { setter: ValueType => field, ... }.
-                let mut tokens = item.mac.tokens.clone().into_iter();
-                if let (
-                    Some(proc_macro2::TokenTree::Ident(owner)),
-                    Some(proc_macro2::TokenTree::Group(props)),
-                ) = (tokens.next(), tokens.next())
+                Item::Mod(item)
+                    if !item.attrs.iter().any(|attr| {
+                        attr.path().is_ident("cfg")
+                            && attr
+                                .parse_args::<syn::Ident>()
+                                .is_ok_and(|cfg| cfg == "test")
+                    }) =>
                 {
-                    let tokens: Vec<_> = props.stream().into_iter().collect();
-                    for pair in tokens.windows(2) {
-                        if let [
-                            proc_macro2::TokenTree::Ident(name),
-                            proc_macro2::TokenTree::Punct(colon),
-                        ] = pair
-                            && colon.as_char() == ':'
-                            && colon.spacing() == proc_macro2::Spacing::Alone
+                    if let Some((_, items)) = &item.content {
+                        self.scan(items);
+                    }
+                }
+                Item::Type(item) if matches!(item.vis, Visibility::Public(_)) => {
+                    self.aliases
+                        .push((item.ident.to_string(), item.ty.as_ref().clone()));
+                }
+                Item::Fn(item) if matches!(item.vis, Visibility::Public(_)) => {
+                    if let ReturnType::Type(_, ty) = &item.sig.output {
+                        self.factories
+                            .push((item.sig.ident.to_string(), ty.as_ref().clone()));
+                    }
+                }
+                Item::Impl(item) => {
+                    let Type::Path(path) = item.self_ty.as_ref() else {
+                        continue;
+                    };
+                    let Some(owner) = path.path.segments.last() else {
+                        continue;
+                    };
+                    let owner = owner.ident.to_string();
+                    if let Some((_, trait_path, _)) = &item.trait_ {
+                        if let Some(name) = trait_path.segments.last()
+                            && (name.ident == "Render" || name.ident == "RenderOnce")
                         {
-                            methods.insert((owner.to_string(), name.to_string()));
+                            self.renders.insert(owner);
+                        }
+                        continue;
+                    }
+                    for method in &item.items {
+                        if let ImplItem::Fn(method) = method
+                            && matches!(method.vis, Visibility::Public(_))
+                        {
+                            self.methods
+                                .insert((owner.clone(), method.sig.ident.to_string()));
                         }
                     }
                 }
+                Item::Macro(item) if item.mac.path.is_ident("props") => {
+                    // GUIraffe's props! DSL is Type { setter: ValueType => field, ... }.
+                    let mut tokens = item.mac.tokens.clone().into_iter();
+                    if let (
+                        Some(proc_macro2::TokenTree::Ident(owner)),
+                        Some(proc_macro2::TokenTree::Group(props)),
+                    ) = (tokens.next(), tokens.next())
+                    {
+                        let tokens: Vec<_> = props.stream().into_iter().collect();
+                        for pair in tokens.windows(2) {
+                            if let [
+                                proc_macro2::TokenTree::Ident(name),
+                                proc_macro2::TokenTree::Punct(colon),
+                            ] = pair
+                                && colon.as_char() == ':'
+                                && colon.spacing() == proc_macro2::Spacing::Alone
+                            {
+                                self.methods.insert((owner.to_string(), name.to_string()));
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
+}
+
+fn returns_widget(ty: &Type, render_types: &BTreeSet<String>) -> bool {
+    match ty {
+        Type::Path(path) => {
+            let Some(segment) = path.path.segments.last() else {
+                return false;
+            };
+            let name = segment.ident.to_string();
+            if render_types.contains(&name)
+                || matches!(
+                    name.as_str(),
+                    "AnyElement" | "Button" | "DatePicker" | "DockArea" | "TimeField"
+                )
+            {
+                return true;
+            }
+            matches!(name.as_str(), "Entity" | "Option" | "Result")
+                && matches!(&segment.arguments, PathArguments::AngleBracketed(args)
+                    if args.args.first().is_some_and(|argument| matches!(argument,
+                        GenericArgument::Type(ty) if returns_widget(ty, render_types))))
+        }
+        Type::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .any(|ty| returns_widget(ty, render_types)),
+        Type::ImplTrait(implementation) => implementation.bounds.iter().any(|bound| {
+            matches!(bound, TypeParamBound::Trait(bound)
+                if bound.path.segments.last().is_some_and(|name| matches!(
+                    name.ident.to_string().as_str(), "IntoElement" | "Render" | "RenderOnce")))
+        }),
+        _ => false,
+    }
+}
+
+#[test]
+fn tracks_new_rust_types_aliases_factories_and_builder_methods() {
+    let file = syn::parse_file(
+        r#"
+        pub struct ButtonView;
+        impl Render for ButtonView {}
+        impl ButtonView {
+            pub fn new_prop(self) -> Self { self }
+        }
+        props!(ButtonView { macro_prop: Size => size });
+        pub type Alias = ButtonView;
+        pub fn factory() -> (Entity<DockArea>, Entity<ButtonView>) { todo!() }
+        #[cfg(test)]
+        mod tests {
+            pub struct PrivateTest;
+            impl Render for PrivateTest {}
+        }
+    "#,
+    )
+    .expect("source fixture");
+    let mut inventory = Inventory::default();
+    inventory.scan(&file.items);
+    assert_eq!(
+        inventory.surface("fixture"),
+        BTreeSet::from([
+            "fixture::Alias".into(),
+            "fixture::ButtonView".into(),
+            "fixture::ButtonView::macro_prop".into(),
+            "fixture::ButtonView::new_prop".into(),
+            "fixture::fn factory".into(),
+        ])
+    );
 }

@@ -59,7 +59,14 @@ impl RenderOnce for LoadingOverlay {
         let backdrop = theme.veil().to_hsla();
         let mut spinner = Spinner::new();
         if self.color.is_some() || self.variant != Variant::Light {
-            spinner = spinner.color(theme.variant(self.color, self.variant).foreground.to_hsla());
+            let colors = theme.variant(self.color, self.variant);
+            // A bare spinner sits on the veil, without the filled variant's surface.
+            let ink = if self.variant == Variant::Filled {
+                colors.background
+            } else {
+                colors.foreground
+            };
+            spinner = spinner.color(ink.to_hsla());
         }
         let surface = div()
             .id("guiraffe-loading-overlay")

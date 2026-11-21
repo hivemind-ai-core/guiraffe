@@ -9,7 +9,6 @@ use std::{
 use gpui_kit::{App, ElementId, Entity, IntoElement, RenderOnce, Subscription, Window};
 use guiraffe_core::{
     widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value as Data,
 };
 
@@ -18,59 +17,18 @@ use crate::{
     Children, NodeId, Property, PropertyOptions, TreeData, TreeSource, Value, widget_specs,
 };
 
-const TREE_PROPS: &[&str] = &[
-    "nodes",
-    "focusable",
-    "density",
-    "alternating",
-    "grid-lines",
-    "indent-guides",
-    "group-headers",
-    "sticky-headers",
-    "expanded",
-];
-const TREE_EVENTS: &[&str] = &["load-children", "select", "check", "reorder"];
-
-static PROPERTY_SCHEMA: Schema = Schema {
-    props: &[
-        TREE_PROPS[0],
-        TREE_PROPS[1],
-        TREE_PROPS[2],
-        TREE_PROPS[3],
-        TREE_PROPS[4],
-        TREE_PROPS[5],
-        TREE_PROPS[6],
-        TREE_PROPS[7],
-        TREE_PROPS[8],
-        "searchable",
-        "split-ratio",
-        "persist-key",
-    ],
-    events: &[
-        TREE_EVENTS[0],
-        TREE_EVENTS[1],
-        TREE_EVENTS[2],
-        TREE_EVENTS[3],
-        "edit",
-        "pick-path",
-    ],
-};
-
 pub(crate) fn register(cx: &mut App) {
     WidgetRegistry::install(
         cx,
         &[
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[0],
-                schema: &Schema {
-                    props: TREE_PROPS,
-                    events: TREE_EVENTS,
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
                 render: |node, _, _, _| DocumentTree::<false>::from_node(node).into_any_element(),
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[1],
-                schema: &PROPERTY_SCHEMA,
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[1]),
                 render: |node, _, _, _| DocumentTree::<true>::from_node(node).into_any_element(),
             },
         ],

@@ -131,7 +131,10 @@ fn identifies_removed_and_narrowed_descriptor_members() {
     widgets.retain(|widget| widget["id"] != "stack");
     for widget in widgets {
         match widget["id"].as_str() {
-            Some("button") => widget["events"] = serde_json::json!([]),
+            Some("button") => widget["events"]
+                .as_array_mut()
+                .expect("button events")
+                .retain(|event| event["id"] != "click"),
             Some("title") => widget["props"]
                 .as_array_mut()
                 .expect("title props")

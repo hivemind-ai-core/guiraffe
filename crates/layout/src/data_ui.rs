@@ -1,10 +1,7 @@
 //! Render document layout nodes using their ordinary Rust builders.
 
 use gpui_kit::{App, IntoElement, px};
-use guiraffe_core::{
-    widget_catalog::{WidgetNode, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
-};
+use guiraffe_core::widget_catalog::{WidgetNode, WidgetRegistration, WidgetRegistry};
 
 use crate::{
     Align, AspectRatio, Center, Container, Divider, DividerOrientation, Flex, FlexDirection,
@@ -17,10 +14,7 @@ pub(crate) fn register(cx: &mut App) {
         &[
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[0],
-                schema: &Schema {
-                    props: &["min-height"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
                 render: |node, children, _, _| {
                     let mut center = Center::new();
                     if let Some(height) = node.prop(0).as_f64() {
@@ -31,10 +25,7 @@ pub(crate) fn register(cx: &mut App) {
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[1],
-                schema: &Schema {
-                    props: &["ratio"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[1]),
                 render: |node, children, _, _| {
                     AspectRatio::new(node.prop(0).as_f64().unwrap_or(1.0) as f32)
                         .children(children)
@@ -43,10 +34,7 @@ pub(crate) fn register(cx: &mut App) {
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[2],
-                schema: &Schema {
-                    props: &["width", "height", "width-px", "height-px"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[2]),
                 render: |node, _, _, _| {
                     let mut space = Space::new();
                     if let Some(width) = node.prop(2).as_f64() {
@@ -64,50 +52,24 @@ pub(crate) fn register(cx: &mut App) {
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[3],
-                schema: &Schema {
-                    props: &["size", "fluid", "padding", "padding-px"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[3]),
                 render: |node, children, _, _| {
                     container(node).children(children).into_any_element()
                 },
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[4],
-                schema: &Schema {
-                    props: &[
-                        "direction",
-                        "gap",
-                        "gap-px",
-                        "align",
-                        "justify",
-                        "grow",
-                        "wrap",
-                    ],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[4]),
                 render: |node, children, _, _| flex(node).children(children).into_any_element(),
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[5],
-                schema: &Schema {
-                    props: &[
-                        "orientation",
-                        "label",
-                        "label-position",
-                        "color",
-                        "thickness",
-                    ],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[5]),
                 render: |node, _, _, _| divider(node).into_any_element(),
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[6],
-                schema: &Schema {
-                    props: &["scroll-x", "scroll-y"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[6]),
                 render: |node, children, _, _| {
                     ScrollArea::new(node.state_id())
                         .scroll_x(node.prop(0).as_bool().unwrap_or(false))
@@ -118,10 +80,7 @@ pub(crate) fn register(cx: &mut App) {
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[7],
-                schema: &Schema {
-                    props: &["cols", "spacing", "vertical-spacing", "min-child-width"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[7]),
                 render: |node, children, _, _| {
                     simple_grid(node).children(children).into_any_element()
                 },

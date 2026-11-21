@@ -5,7 +5,6 @@ use std::{collections::HashSet, sync::Arc};
 use gpui_kit::{App, ElementId, Entity, IntoElement, RenderOnce, Subscription, Window};
 use guiraffe_core::{
     widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value,
 };
 
@@ -17,23 +16,7 @@ pub(crate) fn register(cx: &mut App) {
         cx,
         &[WidgetRegistration {
             spec: widget_specs::WIDGETS[0],
-            schema: &Schema {
-                props: &[
-                    "tracks",
-                    "time-format",
-                    "frames-per-second",
-                    "length",
-                    "playhead",
-                    "snap",
-                    "resize-edges",
-                    "editable",
-                    "focusable",
-                    "lock-style",
-                    "global-lock-style",
-                    "selected",
-                ],
-                events: &["clip-change", "seek"],
-            },
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| TrackDocument::new(node).into_any_element(),
         }],
     );

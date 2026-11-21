@@ -240,9 +240,11 @@ pub fn run(path: PathBuf, screen: Option<String>) -> Result<()> {
             guiraffe_layout::init(cx);
             guiraffe_code::init(cx);
             guiraffe_charts::init(cx);
+            guiraffe_chat::init(cx);
             guiraffe_datagrid::init(cx);
             guiraffe_dnd::init(cx);
             guiraffe_flamegraph::init(cx);
+            guiraffe_flow::init(cx);
             guiraffe_markdown::init(cx);
             guiraffe_mermaid::init(cx);
             guiraffe_overlays::init(cx);

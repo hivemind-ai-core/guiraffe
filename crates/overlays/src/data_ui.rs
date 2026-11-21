@@ -4,7 +4,6 @@ use gpui_kit::{App, IntoElement, ParentElement};
 use guiraffe_core::{
     Variant,
     widget_catalog::{WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
 };
 
 use crate::{Affix, LoadingOverlay, toast::ToastPosition, widget_specs};
@@ -15,10 +14,7 @@ pub(crate) fn register(cx: &mut App) {
         &[
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[0],
-                schema: &Schema {
-                    props: &["position", "offset"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
                 render: |node, children, _, _| {
                     let position = match node.prop(0).as_str() {
                         Some("top-left") => ToastPosition::TopLeft,
@@ -37,10 +33,7 @@ pub(crate) fn register(cx: &mut App) {
             },
             WidgetRegistration {
                 spec: widget_specs::WIDGETS[1],
-                schema: &Schema {
-                    props: &["visible", "size", "color", "variant"],
-                    events: &[],
-                },
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[1]),
                 render: |node, _, _, _| {
                     let mut overlay =
                         LoadingOverlay::new().visible(node.prop(0).as_bool().unwrap_or(true));

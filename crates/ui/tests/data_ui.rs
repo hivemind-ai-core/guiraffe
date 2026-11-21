@@ -499,9 +499,11 @@ fn installed_widget_metadata_matches_compiler_schemas(cx: &mut TestAppContext) {
     cx.update(guiraffe_layout::init);
     cx.update(guiraffe_code::init);
     cx.update(guiraffe_charts::init);
+    cx.update(guiraffe_chat::init);
     cx.update(guiraffe_datagrid::init);
     cx.update(guiraffe_dnd::init);
     cx.update(guiraffe_flamegraph::init);
+    cx.update(guiraffe_flow::init);
     cx.update(guiraffe_markdown::init);
     cx.update(guiraffe_mermaid::init);
     cx.update(guiraffe_overlays::init);
@@ -1018,6 +1020,197 @@ fn ui_macro_can_embed_a_chart_entity() {
     use guiraffe_charts::{ChartOptions, ChartSpec, ChartView};
     fn example(cx: &mut App) -> impl IntoElement {
         ui! { div { {ChartView::from_spec(ChartSpec::new("Chart"), ChartOptions::default(), cx)} } }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn chat_document_drives_the_composer_and_receives_submits(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    struct ChatLogic(
+        Option<EventId>,
+        std::rc::Rc<std::cell::RefCell<Option<Value>>>,
+    );
+    impl Logic for ChatLogic {
+        fn bind(&mut self, names: &Names, _: &mut PatchBuf) {
+            self.0 = names.event("submitted");
+        }
+        fn on_event(&mut self, event: EventId, payload: &Value, _: &mut PatchBuf) {
+            if self.0 == Some(event) {
+                self.1.replace(Some(payload.clone()));
+            }
+        }
+    }
+
+    cx.update(guiraffe_chat::init);
+    let doc = Document::new(
+        Node::new("chat")
+            .prop("title", "Support")
+            .prop("subtitle", "Conversation")
+            .prop("messages", serde_json::json!([
+                {"id":100,"role":"assistant","text":"Welcome","timestamp":"Today",
+                 "reasoning":"A short greeting","tools":[{"id":"load","name":"Read log","status":"succeeded","result":"Ready"}]}
+            ]))
+            .bind("messages", "messages")
+            .prop("draft", "Hello")
+            .prop("attachments", serde_json::json!([{"id":"notes","name":"notes.txt"}]))
+            .prop("commands", serde_json::json!([{"id":"help","label":"Help"}]))
+            .prop("mentions", serde_json::json!([{"id":"assistant","label":"Assistant"}]))
+            .on("submit", "submitted"),
+    );
+    assert!(validation::Validation::default().check(&doc).is_empty());
+    let payload = std::rc::Rc::default();
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(
+            &doc,
+            Arc::new(Registry::for_app(cx)),
+            ChatLogic(None, std::rc::Rc::clone(&payload)),
+            cx,
+        )
+        .expect("chat document"),
+    });
+    window.run_until_parked();
+    window.update(|window, cx| window.click("send-chat", cx));
+    window.run_until_parked();
+    let payload = payload.borrow();
+    let payload = payload.as_ref().expect("submit payload");
+    assert_eq!(payload.field(&["text".into()]).as_str(), Some("Hello"));
+    assert_eq!(payload.field(&["attachments".into()]).list_len(), Some(1));
+}
+
+#[test]
+fn ui_macro_accepts_a_conversation_entity() {
+    use gpui_kit::Entity;
+    use guiraffe_chat::{Chat, ChatState};
+    fn example(chat: &Entity<ChatState>) -> impl IntoElement {
+        ui! { Chat(chat) }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn native_date_and_time_documents_validate_and_render(cx: &mut TestAppContext) {
+    cx.update(guiraffe_inputs::init);
+    let doc = Document::new(
+        Node::new("stack")
+            .child(Node::new("date-picker")
+                .prop("value", serde_json::json!(["2026-11-21", "2026-11-25"]))
+                .bind("value", "dates")
+                .prop("range", true)
+                .prop("placeholder", "Choose dates")
+                .prop("cleanable", true)
+                .prop("appearance", true)
+                .prop("disabled", false)
+                .prop("size", "lg")
+                .prop("focus-ring", true)
+                .prop("months", 2)
+                .prop("date-format", "%Y-%m-%d")
+                .prop("precision", "date")
+                .prop("hour-cycle", "h23")
+                .prop("default-time", "09:30")
+                .prop("first-day", "mon")
+                .prop("disabled-weekdays", serde_json::json!([0, 6]))
+                .prop("min-date", "2026-11-01")
+                .prop("max-date", "2026-12-01")
+                .prop("years", serde_json::json!([2020, 2030]))
+                .prop("presets", serde_json::json!([{"label":"This week","value":["2026-11-21","2026-11-25"]}]))
+                .on("change", "date-change"))
+            .child(Node::new("time-field")
+                .prop("value", "09:30:15")
+                .bind("value", "time")
+                .prop("precision", "second")
+                .prop("hour-cycle", "h12")
+                .prop("disabled", false)
+                .prop("invalid", true)
+                .prop("size", "sm")
+                .on("change", "time-change")),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::new(&doc, Arc::new(Registry::for_app(cx)), NoLogic, cx)
+            .expect("calendar document"),
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_uses_native_date_and_time_builder_methods() {
+    use gpui_kit::component::{
+        Disableable, Sizable,
+        date_picker::{DatePicker, DatePickerState},
+        time_field::{TimeField, TimeFieldState},
+    };
+
+    fn example(date: &Entity<DatePickerState>, time: &Entity<TimeFieldState>) -> impl IntoElement {
+        ui! {
+            div {
+                DatePicker(date) { placeholder: "Choose"; cleanable: true; appearance: false; number_of_months: 2; disabled: false }
+                TimeField(time) { invalid: true; disabled: false; with_size: px(32.) }
+            }
+        }
+    }
+    let _ = example;
+}
+
+#[gpui_kit::test]
+fn flow_document_accepts_and_renders_native_graph_records(cx: &mut TestAppContext) {
+    cx.update(guiraffe_flow::init);
+    let doc = Document::new(
+        Node::new("flow")
+            .prop("graph", serde_json::json!({
+                "nodes": {
+                    "1":{"id":1,"pos":{"x":40,"y":20},"size":{"x":120,"y":70},"data":"Start",
+                         "node_type":"default","parent":null,"selected":false,"draggable":true,
+                         "handles":[{"id":"out","kind":"Source","side":"Right","offset":0.5}]},
+                    "2":{"id":2,"pos":{"x":220,"y":20},"size":{"x":120,"y":70},"data":"Finish",
+                         "node_type":"default","parent":null,"selected":false,"draggable":true,
+                         "handles":[{"id":"in","kind":"Target","side":"Left","offset":0.5}]}
+                },
+                "edges":{"1":{"id":1,"source":{"node":1,"handle":"out"},"target":{"node":2,"handle":"in"},
+                              "edge_type":"Bezier","label":"then","animated":false,"marker_start":"None","marker_end":"ArrowClosed"}}
+            }))
+            .bind("graph", "flow-graph")
+            .prop("background", "cross")
+            .prop("minimap", false)
+            .prop("controls", true)
+            .prop("toolbar", false)
+            .prop("snap-grid", 10)
+            .prop("fit-on-init", false)
+            .prop("allow-self", false)
+            .prop("allow-parallel", true)
+            .prop("allow-cycles", false)
+            .prop("pan-x", 10)
+            .prop("pan-y", 20)
+            .prop("zoom", 1.5)
+            .on("change", "change")
+            .on("viewport-change", "viewport")
+            .on("selection-change", "selection")
+            .on("error", "error"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let template = Arc::new(Template::compile(&doc, &registry).expect("flow document"));
+        assert!(
+            template.diagnostics().is_empty(),
+            "{:?}",
+            template.diagnostics()
+        );
+        Shell {
+            ui: DataUi::from_template(template, registry, NoLogic, cx),
+        }
+    });
+    window.run_until_parked();
+}
+
+#[test]
+fn ui_macro_accepts_a_native_flow_canvas() {
+    use guiraffe_flow::{FlowCanvas, FlowState};
+    fn example(flow: &Entity<FlowState>) -> impl IntoElement {
+        ui! { FlowCanvas(flow) }
     }
     let _ = example;
 }

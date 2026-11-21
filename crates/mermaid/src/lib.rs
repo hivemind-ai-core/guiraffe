@@ -54,19 +54,13 @@ pub fn init(cx: &mut gpui_kit::App) {
         guiraffe_core::init(cx);
     }
     use gpui_kit::IntoElement;
-    use guiraffe_core::{
-        widget_catalog::{WidgetRegistration, WidgetRegistry},
-        widget_spec::Schema,
-    };
+    use guiraffe_core::widget_catalog::{WidgetRegistration, WidgetRegistry};
 
     WidgetRegistry::install(
         cx,
         &[WidgetRegistration {
             spec: widget_specs::WIDGETS[0],
-            schema: &Schema {
-                props: &["source"],
-                events: &[],
-            },
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| {
                 MermaidView::new(node.state_id())
                     .source(node.prop(0).display())

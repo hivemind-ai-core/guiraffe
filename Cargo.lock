@@ -3418,12 +3418,14 @@ dependencies = [
  "anyhow",
  "gpui-kit",
  "guiraffe-charts",
+ "guiraffe-chat",
  "guiraffe-code",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
  "guiraffe-dnd",
  "guiraffe-flamegraph",
+ "guiraffe-flow",
  "guiraffe-icons",
  "guiraffe-inputs",
  "guiraffe-layout",
@@ -3540,6 +3542,7 @@ dependencies = [
  "guiraffe-core",
  "guiraffe-flow-core",
  "guiraffe-test",
+ "serde_json",
 ]
 
 [[package]]
@@ -3583,6 +3586,7 @@ dependencies = [
 name = "guiraffe-inputs"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gpui-kit",
  "guiraffe-components",
  "guiraffe-core",
@@ -3757,12 +3761,14 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-charts",
+ "guiraffe-chat",
  "guiraffe-code",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
  "guiraffe-dnd",
  "guiraffe-flamegraph",
+ "guiraffe-flow",
  "guiraffe-inputs",
  "guiraffe-layout",
  "guiraffe-macros",

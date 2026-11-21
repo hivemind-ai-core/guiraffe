@@ -7,11 +7,13 @@ use std::{collections::BTreeSet, path::Path};
 
 fn kind(surface: &str) -> Option<&'static str> {
     Some(match surface {
+        "chat::Chat" | "chat::ChatState" | "chat::Composer" => "chat",
         "charts::ChartView" => "chart",
         "code::CodeViewer" => "code-viewer",
         "datagrid::DataGrid" => "data-grid",
         "dnd::SortableBoard" => "sortable-board",
         "flamegraph::FlameGraph" => "flame-graph",
+        "flow::Flow" | "flow::FlowCanvas" | "flow::FlowState" | "flow::FlowViewport" => "flow",
         "components::Card" => "card",
         "components::Highlight" => "highlight",
         "components::Pill" => "pill",
@@ -35,7 +37,8 @@ fn kind(surface: &str) -> Option<&'static str> {
         "mermaid::MermaidView" => "mermaid",
         "overlays::Affix" => "affix",
         "overlays::LoadingOverlay" => "loading-overlay",
-        "tree::TreeView" => "property-grid",
+        "tree::TreeView" | "tree::PropertyGrid" => "property-grid",
+        "tree::TreeList" => "tree-list",
         "timeline::TracksView" => "tracks-view",
         _ => return None,
     })
@@ -211,6 +214,186 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "charts::ChartView::viewport",
         "Read the current bounds through viewport-change events.",
     ),
+    (
+        "devtools::fn root",
+        "Window-root instrumentation is installed by the application.",
+    ),
+    (
+        "ui::fn cached",
+        "Internal ui! cache helper. The document host owns its render cache.",
+    ),
+    (
+        "ui::fn keyed",
+        "Internal ui! repeater helper. DataUi uses the document key field.",
+    ),
+    (
+        "chat::MessageView",
+        "Private history row type controlled by the chat adapter.",
+    ),
+    (
+        "chat::ChatState::cancel_edit",
+        "Native composer command performed via its Cancel control.",
+    ),
+    (
+        "chat::ChatState::composer",
+        "Native composer entity owned by ChatState.",
+    ),
+    (
+        "chat::ChatState::edit_last_user",
+        "Native chat command performed on the last user message.",
+    ),
+    (
+        "chat::ChatState::is_streaming",
+        "Read-only state with a document streaming-message binding.",
+    ),
+    (
+        "chat::ChatState::jump_to_latest",
+        "Interactive scroll command owned by the chat view.",
+    ),
+    (
+        "chat::ChatState::message",
+        "Read provider-owned messages through the messages binding.",
+    ),
+    (
+        "chat::ChatState::message_count",
+        "Read the current transcript length from the messages binding.",
+    ),
+    (
+        "chat::ChatState::stop",
+        "Native Stop control sends the stop event.",
+    ),
+    (
+        "chat::ChatState::submit",
+        "Native Send control sends the submit event.",
+    ),
+    (
+        "chat::Composer::input",
+        "Native textarea entity. The document drives the draft string.",
+    ),
+    (
+        "chat::Composer::is_busy",
+        "Read-only native state derived from streaming-message.",
+    ),
+    (
+        "flow::FlowState::arrange",
+        "A host-owned layout engine is a Rust trait implementation; documents provide graph positions.",
+    ),
+    (
+        "flow::FlowState::cancel_layout",
+        "Host-side layout task cancellation.",
+    ),
+    (
+        "flow::FlowState::connection_validator",
+        "A Rust callback is required for custom validation; use the declarative connection policy for structural constraints.",
+    ),
+    (
+        "flow::FlowState::edit",
+        "Native API for undoable edits; documents receive the changed graph through change.",
+    ),
+    (
+        "flow::FlowState::fit",
+        "The user can fit the graph through the native viewport controls.",
+    ),
+    (
+        "flow::FlowState::gesture_entity",
+        "Internal native pointer gesture layer.",
+    ),
+    (
+        "flow::FlowState::last_error",
+        "The renderer reports errors through the error event.",
+    ),
+    (
+        "flow::FlowState::node_renderer",
+        "Application-owned custom view factory. The document renders the default node content.",
+    ),
+    (
+        "flow::FlowState::paint_timings",
+        "Instrumentation for native rendering tests.",
+    ),
+    (
+        "flow::FlowState::redo",
+        "Native undo history can be redone through viewport keyboard shortcuts.",
+    ),
+    (
+        "flow::FlowState::selected_edges",
+        "Receive selected edge IDs through selection-change.",
+    ),
+    (
+        "flow::FlowState::selected_nodes",
+        "Receive selected node IDs through selection-change.",
+    ),
+    (
+        "flow::FlowState::size",
+        "Computed viewport geometry for the Rust host.",
+    ),
+    (
+        "flow::FlowState::undo",
+        "Native history can be undone through viewport keyboard shortcuts.",
+    ),
+    (
+        "flow::FlowState::viewport",
+        "The viewport-change event carries camera values.",
+    ),
+    (
+        "flow::FlowState::viewport_entity",
+        "Internal native viewport entity.",
+    ),
+    (
+        "flow::FlowState::visible_counts",
+        "Instrumentation for native rendering tests.",
+    ),
+    (
+        "flow::FlowViewport::connection_validator",
+        "A Rust callback is required for custom validation; use the declarative connection policy for structural constraints.",
+    ),
+    (
+        "flow::FlowViewport::edit",
+        "Native API for undoable edits; documents receive the changed graph through change.",
+    ),
+    (
+        "flow::FlowViewport::fit",
+        "The user can fit the graph through the native viewport controls.",
+    ),
+    (
+        "flow::FlowViewport::last_error",
+        "The renderer reports errors through the error event.",
+    ),
+    (
+        "flow::FlowViewport::node_renderer",
+        "Application-owned custom view factory. The document renders the default node content.",
+    ),
+    (
+        "flow::FlowViewport::paint_timings",
+        "Instrumentation for native rendering tests.",
+    ),
+    (
+        "flow::FlowViewport::redo",
+        "Native undo history can be redone through viewport keyboard shortcuts.",
+    ),
+    (
+        "flow::FlowViewport::selected_edges",
+        "Receive selected edge IDs through selection-change.",
+    ),
+    (
+        "flow::FlowViewport::selected_nodes",
+        "Receive selected node IDs through selection-change.",
+    ),
+    (
+        "flow::FlowViewport::undo",
+        "Native history can be undone through viewport keyboard shortcuts.",
+    ),
+    (
+        "flow::FlowViewport::viewport",
+        "The viewport-change event carries camera values.",
+    ),
+    (
+        "flow::FlowViewport::visible_counts",
+        "Instrumentation for native rendering tests.",
+    ),
+    (
+        "flow::FlowGesture",
+        "Native pointer gesture layer mounted by the flow canvas.",
+    ),
 ];
 
 fn covered(surface: &str) -> bool {
@@ -239,7 +422,20 @@ fn covered(surface: &str) -> bool {
                 ("timeline::TracksView", "seek") => "playhead".into(),
                 ("timeline::TracksView", "select") => "selected".into(),
                 ("timeline::TracksView", "set_locked") => "tracks".into(),
+                ("chat::ChatState", "begin_reply") => "streaming-message".into(),
+                ("chat::ChatState", "add_attachment") => "attachments".into(),
+                ("chat::ChatState", "with_props" | "props" | "set_props") => "title".into(),
+                ("chat::ChatState", "push_message" | "set_reasoning" | "update_tool") => {
+                    "messages".into()
+                }
+                ("chat::Composer", "set_completions") => "commands".into(),
                 ("charts::ChartView", "from_spec" | "replace_spec") => "layers".into(),
+                ("flow::FlowState" | "flow::FlowViewport", "options") => "background".into(),
+                ("flow::FlowState" | "flow::FlowViewport", "connection_policy") => {
+                    "allow-self".into()
+                }
+                ("flow::FlowState" | "flow::FlowViewport", "set_viewport") => "zoom".into(),
+                ("flow::FlowState", "from_editor") => "graph".into(),
                 ("components::Card", "p") => "padding".into(),
                 ("components::Text", "fw") => "font-weight".into(),
                 ("components::RingProgress", "section") => "sections".into(),

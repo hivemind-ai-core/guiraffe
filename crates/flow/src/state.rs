@@ -752,3 +752,5 @@ mod tests {
         assert!(state.read_with(cx, |s, _| s.viewport().zoom) > 1.);
     }
 }
+
+pub(crate) mod document;

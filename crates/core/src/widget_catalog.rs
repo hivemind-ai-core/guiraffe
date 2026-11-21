@@ -15,6 +15,8 @@ pub type EventHandler = Rc<dyn Fn(Value, &mut Window, &mut App)>;
 /// Resolved properties and events for one document node.
 pub trait WidgetNode {
     fn prop(&self, index: usize) -> &Value;
+    /// True for a defined literal or binding, including an explicitly empty value.
+    fn is_set(&self, index: usize) -> bool;
     fn size(&self, index: usize) -> Option<Size>;
     fn color(&self, index: usize) -> Option<ColorName>;
     fn handler(&self, index: usize) -> Option<EventHandler>;

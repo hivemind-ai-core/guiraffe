@@ -5,7 +5,6 @@ use std::sync::Arc;
 use gpui_kit::{App, ElementId, Entity, IntoElement, RenderOnce, Subscription, Window};
 use guiraffe_core::{
     widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value,
 };
 
@@ -20,21 +19,7 @@ pub(super) fn register(cx: &mut App) {
         cx,
         &[WidgetRegistration {
             spec: widget_specs::WIDGETS[0],
-            schema: &Schema {
-                props: &[
-                    "summary",
-                    "layers",
-                    "axes",
-                    "facet-labels",
-                    "height",
-                    "legend",
-                    "crosshair",
-                    "tooltip",
-                    "navigation",
-                    "keyboard",
-                ],
-                events: &["select", "viewport-change", "brush", "series-visibility"],
-            },
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| ChartDocument::new(node).into_any_element(),
         }],
     );

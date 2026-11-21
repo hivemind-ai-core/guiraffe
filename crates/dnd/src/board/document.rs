@@ -7,7 +7,6 @@ use gpui_kit::{
 };
 use guiraffe_core::{
     widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value,
 };
 
@@ -19,10 +18,7 @@ pub(crate) fn register(cx: &mut App) {
         cx,
         &[WidgetRegistration {
             spec: widget_specs::WIDGETS[0],
-            schema: &Schema {
-                props: &["columns", "cards-per-row"],
-                events: &["reorder"],
-            },
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| BoardDocument::new(node).into_any_element(),
         }],
     );

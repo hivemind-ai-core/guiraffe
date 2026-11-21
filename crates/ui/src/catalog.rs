@@ -10,6 +10,8 @@ use crate::widget_spec;
 
 #[path = "../../charts/src/widget_specs.rs"]
 mod charts;
+#[path = "../../chat/src/widget_specs.rs"]
+mod chat;
 #[path = "../../code/src/widget_specs.rs"]
 mod code;
 #[path = "../../datagrid/src/widget_specs.rs"]
@@ -18,6 +20,8 @@ mod datagrid;
 mod dnd;
 #[path = "../../flamegraph/src/widget_specs.rs"]
 mod flamegraph;
+#[path = "../../flow/src/widget_specs.rs"]
+mod flow;
 #[path = "../../inputs/src/widget_specs.rs"]
 mod inputs;
 #[path = "../../layout/src/widget_specs.rs"]
@@ -37,10 +41,12 @@ pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
     WIDGETS
         .iter()
         .chain(charts::WIDGETS)
+        .chain(chat::WIDGETS)
         .chain(code::WIDGETS)
         .chain(datagrid::WIDGETS)
         .chain(dnd::WIDGETS)
         .chain(flamegraph::WIDGETS)
+        .chain(flow::WIDGETS)
         .chain(inputs::WIDGETS)
         .chain(layout::WIDGETS)
         .chain(markdown::WIDGETS)

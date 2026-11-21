@@ -28,6 +28,8 @@ pub const WIDGETS: &[&WidgetSpec] = &[
     &RANGE_SLIDER,
     &DROPZONE,
     &TAGS_INPUT,
+    &DATE_PICKER,
+    &TIME_FIELD,
 ];
 
 const fn option(
@@ -163,6 +165,89 @@ pub static TAGS_INPUT: WidgetSpec = WidgetSpec {
         },
     ],
     state: "controlled or uncontrolled tags",
+    theme_tokens: &[],
+    a11y_role: "group",
+};
+
+pub static DATE_PICKER: WidgetSpec = WidgetSpec {
+    id: "date-picker",
+    krate: "gpui-kit",
+    summary: "Native date or date-range picker using ISO dates and local date-times.",
+    props: &[
+        option("value", "calendar-value", "null"),
+        option("range", "boolean", "false"),
+        option("placeholder", "string", "\"\""),
+        option("cleanable", "boolean", "false"),
+        option("appearance", "boolean", "true"),
+        option("disabled", "boolean", "false"),
+        PropSpec {
+            accepted: &["xs", "sm", "md", "lg", "xl"],
+            token_backed: true,
+            ..option("size", "string", "null")
+        },
+        option("focus-ring", "boolean", "true"),
+        PropSpec {
+            range: Some((1.0, 12.0)),
+            ..option("months", "number", "1")
+        },
+        option("date-format", "string", "null"),
+        PropSpec {
+            accepted: &["date", "minute", "second"],
+            ..option("precision", "string", "\"date\"")
+        },
+        PropSpec {
+            accepted: &["h12", "h23"],
+            ..option("hour-cycle", "string", "\"h23\"")
+        },
+        option("default-time", "iso-time", "\"00:00\""),
+        PropSpec {
+            accepted: &["sun", "mon", "tue", "wed", "thu", "fri", "sat"],
+            ..option("first-day", "string", "\"sun\"")
+        },
+        option("disabled-weekdays", "integer-array", "[]"),
+        option("min-date", "iso-date", "null"),
+        option("max-date", "iso-date", "null"),
+        option("years", "integer-array", "null"),
+        option("presets", "calendar-presets", "[]"),
+    ],
+    accepts_children: false,
+    events: &[super::widget_spec::EventSpec {
+        id: "change",
+        payload_type: "calendar-value",
+    }],
+    state: "controlled or uncontrolled date, with keyed native popup state",
+    theme_tokens: &[],
+    a11y_role: "combobox",
+};
+
+pub static TIME_FIELD: WidgetSpec = WidgetSpec {
+    id: "time-field",
+    krate: "gpui-kit",
+    summary: "Native segmented time editor using a local ISO time.",
+    props: &[
+        option("value", "iso-time", "\"00:00\""),
+        PropSpec {
+            accepted: &["minute", "second"],
+            ..option("precision", "string", "\"minute\"")
+        },
+        PropSpec {
+            accepted: &["h12", "h23"],
+            ..option("hour-cycle", "string", "\"h23\"")
+        },
+        option("disabled", "boolean", "false"),
+        option("invalid", "boolean", "false"),
+        PropSpec {
+            accepted: &["xs", "sm", "md", "lg", "xl"],
+            token_backed: true,
+            ..option("size", "string", "null")
+        },
+    ],
+    accepts_children: false,
+    events: &[super::widget_spec::EventSpec {
+        id: "change",
+        payload_type: "iso-time",
+    }],
+    state: "controlled or uncontrolled time, with keyed native segment focus",
     theme_tokens: &[],
     a11y_role: "group",
 };

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use gpui_kit::{App, ElementId, IntoElement, RenderOnce, Window, px};
 use guiraffe_core::{
     widget_catalog::{EventHandler, WidgetRegistration, WidgetRegistry},
-    widget_spec::Schema,
     widget_value::Value,
 };
 
@@ -16,17 +15,7 @@ pub(crate) fn register(cx: &mut App) {
         cx,
         &[WidgetRegistration {
             spec: widget_specs::WIDGETS[0],
-            schema: &Schema {
-                props: &[
-                    "source",
-                    "selectable",
-                    "scrollable",
-                    "min-height",
-                    "max-height",
-                    "code-copy",
-                ],
-                events: &["link-click", "task-toggle"],
-            },
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| {
                 let key = node.state_id();
                 let mut markdown = MarkdownView::new(key.to_string())

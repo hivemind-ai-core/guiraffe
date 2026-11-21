@@ -309,6 +309,10 @@ impl Registry {
         self.widgets.insert(kind, Arc::new(widget));
         self
     }
+    pub(crate) fn descriptor(&self, kind: &str) -> Option<&'static crate::catalog::WidgetSpec> {
+        self.specs.get(kind).copied()
+    }
+
     /// Metadata for widgets available to this host.
     pub fn specs(&self) -> impl Iterator<Item = &'static crate::catalog::WidgetSpec> + '_ {
         self.specs.values().copied()
@@ -325,6 +329,13 @@ impl Registry {
 impl guiraffe_core::widget_catalog::WidgetNode for NodeView<'_> {
     fn prop(&self, index: usize) -> &Value {
         self.prop(index)
+    }
+
+    fn is_set(&self, index: usize) -> bool {
+        self.spec
+            .props
+            .get(index)
+            .is_some_and(|prop| !matches!(prop, Prop::Unset))
     }
 
     fn size(&self, index: usize) -> Option<Size> {

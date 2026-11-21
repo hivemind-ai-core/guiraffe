@@ -53,6 +53,11 @@ use serde_json::{Value, json};
 pub const FORMAT_VERSION: u32 = 1;
 
 impl PropSpec {
+    /// Whether the compiler accepts a JSON record as a literal value for this property.
+    pub fn accepts_record(&self) -> bool {
+        matches!(self.type_name, "object" | "flow-graph")
+    }
+
     fn default_value(&self) -> Value {
         serde_json::from_str(self.default_json).unwrap_or(Value::Null)
     }
@@ -62,13 +67,17 @@ impl PropSpec {
             "ring-sections" | "integer-array" | "code-annotations" | "tree-nodes"
             | "range-value" | "grid-rows" | "grid-columns" | "flame-frames" | "timeline-tracks"
             | "track-selection" | "board-columns" | "chart-layers" | "chart-axes"
-            | "chart-labels" => "array",
+            | "chart-labels" | "chat-messages" | "chat-attachments" | "chat-commands"
+            | "calendar-presets" => "array",
             ty => ty,
         };
-        let mut schema = if self.type_name == "range-value" {
-            range_schema()
-        } else {
-            json!({"type": ty})
+        let mut schema = match self.type_name {
+            "range-value" => range_schema(),
+            "calendar-value" => calendar_value_schema(),
+            "flow-graph" => flow_graph_schema(),
+            "iso-time" => json!({"type":"string","pattern":ISO_TIME}),
+            "iso-date" => json!({"type":"string","pattern":ISO_DATE}),
+            _ => json!({"type": ty}),
         };
         if !self.accepted.is_empty() && ty == "string" {
             schema["enum"] = json!(self.accepted);
@@ -90,6 +99,10 @@ impl PropSpec {
             "chart-layers" => schema["items"] = chart_layer_schema(),
             "chart-axes" => schema["items"] = chart_axis_schema(),
             "chart-labels" => schema["items"] = chart_label_schema(),
+            "chat-messages" => schema["items"] = chat_message_schema(),
+            "calendar-presets" => schema["items"] = calendar_preset_schema(),
+            "chat-attachments" => schema["items"] = chat_attachment_schema(),
+            "chat-commands" => schema["items"] = chat_command_schema(),
             "track-selection" => {
                 schema["items"] = json!({"type":"integer","minimum":0,"maximum":u32::MAX});
                 schema["oneOf"] = json!([{"maxItems":0},{"minItems":2,"maxItems":2}]);
@@ -165,6 +178,28 @@ impl EventSpec {
                     "start":{"type":"number"},
                     "length":{"type":"number","minimum":0.001},
                     "sourceOffset":{"type":"number","minimum":0}
+                }
+            }),
+            "calendar-value" => calendar_value_schema(),
+            "flow-graph" => flow_graph_schema(),
+            "flow-selection" => {
+                let ids = json!({"type":"array","items":{"type":"integer","minimum":0}});
+                json!({"type":"object","required":["nodes","edges"],"additionalProperties":false,
+                    "properties":{"nodes":ids,"edges":ids}})
+            }
+            "flow-viewport" => json!({
+                "type":"object","required":["panX","panY","zoom"],"additionalProperties":false,
+                "properties":{
+                    "panX":{"type":"number"},"panY":{"type":"number"},
+                    "zoom":{"type":"number","minimum":0.02,"maximum":4}
+                }
+            }),
+            "iso-time" => json!({"type":"string","pattern":ISO_TIME}),
+            "chat-submit" => json!({
+                "type":"object","required":["id","text","attachments"],"additionalProperties":false,
+                "properties":{
+                    "id":{"type":"integer","minimum":0},"text":{"type":"string"},
+                    "attachments":{"type":"array","items":chat_attachment_schema()}
                 }
             }),
             "tree-check" => tree_event_schema("checked", json!({"type":"boolean"})),
@@ -531,4 +566,133 @@ fn chart_event_schema(payload: &str) -> Value {
             "properties":{"layer":index,"group":index,"visible":{"type":"boolean"}}
         }),
     }
+}
+
+/// Derive the compiler's positional schema from a widget descriptor.
+#[macro_export]
+macro_rules! widget_schema {
+    ($widget:expr) => {{
+        const SPEC: &$crate::widget_spec::WidgetSpec = $widget;
+        const PROPS: &[&str] = &{
+            let mut names = [""; SPEC.props.len()];
+            let mut index = 0;
+            while index < names.len() {
+                names[index] = SPEC.props[index].name;
+                index += 1;
+            }
+            names
+        };
+        const EVENTS: &[&str] = &{
+            let mut names = [""; SPEC.events.len()];
+            let mut index = 0;
+            while index < names.len() {
+                names[index] = SPEC.events[index].id;
+                index += 1;
+            }
+            names
+        };
+        &$crate::widget_spec::Schema {
+            props: PROPS,
+            events: EVENTS,
+        }
+    }};
+}
+
+pub fn chat_attachment_schema() -> Value {
+    json!({
+        "type":"object","required":["id","name"],"additionalProperties":false,
+        "properties":{"id":{"type":"string"},"name":{"type":"string"}}
+    })
+}
+
+pub fn chat_command_schema() -> Value {
+    json!({
+        "type":"object","required":["id","label"],"additionalProperties":false,
+        "properties":{
+            "id":{"type":"string"},"label":{"type":"string"},"keywords":{"type":"string"},"disabled":{"type":"boolean"}
+        }
+    })
+}
+
+pub fn chat_message_schema() -> Value {
+    json!({
+        "type":"object","required":["id","role","text"],"additionalProperties":false,
+        "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+            "role":{"enum":["user","assistant"]},
+            "text":{"type":"string"},"timestamp":{"type":"string"},"reasoning":{"type":"string"},
+            "attachments":{"type":"array","items":chat_attachment_schema()},
+            "tools":{"type":"array","items":{
+                "type":"object","required":["id","name","status"],"additionalProperties":false,
+                "properties":{
+                    "id":{"type":"string"},"name":{"type":"string"},
+                    "status":{"enum":["running","succeeded","failed"]},
+                    "arguments":{"type":"string"},"result":{"type":"string"}
+                }
+            }}
+        }
+    })
+}
+
+const ISO_DATE: &str = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$";
+const ISO_TIME: &str = r"^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$";
+const ISO_DATE_TIME: &str =
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?)?$";
+
+fn calendar_value_schema() -> Value {
+    let endpoint = json!({"type":["string","null"],"pattern":ISO_DATE_TIME});
+    json!({"oneOf":[endpoint,{"type":"array","minItems":2,"maxItems":2,"items":endpoint}]})
+}
+
+fn calendar_preset_schema() -> Value {
+    json!({
+        "type":"object","required":["label","value"],"additionalProperties":false,
+        "properties":{"label":{"type":"string"},"value":calendar_value_schema()}
+    })
+}
+
+pub fn flow_graph_schema() -> Value {
+    let id = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    let point = json!({
+        "type":"object","required":["x","y"],"additionalProperties":false,
+        "properties":{"x":{"type":"number"},"y":{"type":"number"}}
+    });
+    let endpoint = json!({
+        "type":"object","required":["node","handle"],"additionalProperties":false,
+        "properties":{"node":id,"handle":{"type":"string"}}
+    });
+    let marker = json!({"enum":["None","Arrow","ArrowClosed"]});
+    let node = json!({
+        "type":"object","required":["id","pos","size","data","node_type","selected","draggable","handles"],
+        "additionalProperties":false,
+        "properties":{
+            "id":id,"pos":point,"size":point,"data":{},"node_type":{"type":"string"},
+            "parent":{"type":["null","integer"],"minimum":0,"maximum":(1_u64<<53)-1},"selected":{"type":"boolean"},
+            "draggable":{"type":"boolean"},"handles":{"type":"array","items":{
+                "type":"object","required":["id","kind","side","offset"],"additionalProperties":false,
+                "properties":{
+                    "id":{"type":"string"},"kind":{"enum":["Source","Target"]},
+                    "side":{"enum":["Left","Right","Top","Bottom"]},"offset":{"type":"number","minimum":0,"maximum":1}
+                }
+            }}
+        }
+    });
+    let edge = json!({
+        "type":"object","required":["id","source","target","edge_type","label","animated","marker_start","marker_end"],
+        "additionalProperties":false,
+        "properties":{
+            "id":id,"source":endpoint,"target":endpoint,
+            "edge_type":{"enum":["Bezier","SmoothStep","Step","Straight","OrthogonalHorizontal","OrthogonalVertical"]},
+            "label":{"type":"string"},"animated":{"type":"boolean"},
+            "marker_start":marker,"marker_end":marker
+        }
+    });
+    json!({
+        "type":"object","required":["nodes","edges"],"additionalProperties":false,
+        "properties":{
+            "nodes":{"type":"object","additionalProperties":node},
+            "edges":{"type":"object","additionalProperties":edge},
+            "edge_id_high_water":id
+        }
+    })
 }
