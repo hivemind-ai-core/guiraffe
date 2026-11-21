@@ -9,6 +9,7 @@ use crate::{
 use gpui_kit::StatefulInteractiveElement;
 use gpui_kit::base::{Root, RootPlugin, TestSupportExt};
 use gpui_kit::component::{WindowExt, notification::Notification, progress::Progress};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Anchor, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Render, Styled, Task, Window, div, px,
@@ -53,6 +54,8 @@ pub struct OverlayHost {
     dialog_order: Vec<OverlayId>,
     native_restore_pending: bool,
     native_restore_previous: Option<gpui_kit::WeakFocusHandle>,
+    root_scope: Option<gpui_kit::FocusHandle>,
+    root_focus: Option<gpui_kit::FocusHandle>,
     focus_chain: HashMap<OverlayId, (gpui_kit::FocusHandle, Option<gpui_kit::WeakFocusHandle>)>,
     contexts: HashMap<String, ContextBuilder>,
     toasts: ToastQueue,
@@ -76,6 +79,14 @@ impl RootPlugin for OverlayHost {
     ) -> impl IntoElement {
         let escape = self.stack.top().is_none_or(|e| e.policy.escape);
         div()
+            .when_some(self.root_scope.as_ref(), |root, focus| {
+                let focus = focus.clone();
+                // Register the scope for containment checks without taking
+                // pointer focus from the application content.
+                root.on_children_prepainted(move |_, window, cx| {
+                    window.set_focus_handle(&focus, cx);
+                })
+            })
             .size_full()
             .key_context(if escape {
                 "GrModal"
@@ -104,6 +115,8 @@ impl OverlayHost {
             }
         });
         Self {
+            root_scope: Some(cx.focus_handle()),
+            root_focus: Some(cx.focus_handle()),
             _window_closed: Some(subscription),
             ..Self::default()
         }
@@ -182,12 +195,7 @@ impl OverlayHost {
                     }
                 }
                 if owns_focus {
-                    let restore = host
-                        .stack
-                        .top()
-                        .and_then(|entry| host.focus_chain.get(&entry.id))
-                        .map(|(focus, _)| focus.clone())
-                        .or_else(|| previous.and_then(|p| p.upgrade()));
+                    let restore = host.restore_target(previous, window);
                     if let Some(restore) = restore {
                         window.focus(&restore, cx);
                     }
@@ -201,6 +209,23 @@ impl OverlayHost {
             cx.notify();
         });
     }
+    fn restore_target(
+        &self,
+        previous: Option<gpui_kit::WeakFocusHandle>,
+        window: &Window,
+    ) -> Option<gpui_kit::FocusHandle> {
+        let outer = self
+            .stack
+            .top()
+            .and_then(|entry| self.focus_chain.get(&entry.id))
+            .map(|(focus, _)| focus);
+        let scope = outer.or(self.root_scope.as_ref())?;
+        previous
+            .and_then(|focus| focus.upgrade())
+            .filter(|focus| focus == scope || scope.contains(focus, window))
+            .or_else(|| outer.or(self.root_focus.as_ref()).cloned())
+    }
+
     pub(crate) fn release_modal(&mut self, id: OverlayId, cx: &mut Context<Self>) {
         if self.dialogs.remove(&id).is_some() {
             self.dialog_order.retain(|entry| *entry != id);
@@ -650,16 +675,8 @@ impl Render for OverlayHost {
             && (!window.has_active_dialog(cx) || window.focused(cx).is_none())
         {
             self.native_restore_pending = false;
-            let restore = self
-                .stack
-                .top()
-                .and_then(|entry| self.focus_chain.get(&entry.id))
-                .map(|(focus, _)| focus.clone())
-                .or_else(|| {
-                    self.native_restore_previous
-                        .take()
-                        .and_then(|focus| focus.upgrade())
-                });
+            let previous = self.native_restore_previous.take();
+            let restore = self.restore_target(previous, window);
             if let Some(focus) = restore {
                 window.defer(cx, move |window, cx| window.focus(&focus, cx));
             }
@@ -667,6 +684,12 @@ impl Render for OverlayHost {
         div()
             .absolute()
             .inset_0()
+            // The fallback is inside Kit's Root so its Tab actions still apply.
+            .children(
+                self.root_focus
+                    .as_ref()
+                    .map(|focus| div().absolute().size_0().track_focus(focus)),
+            )
             .children(self.dialog_order.iter().filter_map(|id| {
                 if native && self.stack.z_index(*id).is_some() {
                     None
