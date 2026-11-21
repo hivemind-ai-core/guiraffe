@@ -1,0 +1,36 @@
+[package]
+name = "getting-started-examples"
+description = "The runnable examples used by docs/getting-started.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-components.workspace = true
+guiraffe-datagrid.workspace = true
+guiraffe-devtools = { workspace = true, optional = true, features = ["devtools"] }
+guiraffe-icons.workspace = true
+guiraffe-inputs.workspace = true
+guiraffe-router.workspace = true
+guiraffe-state.workspace = true
+guiraffe-ui.workspace = true
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-devtools?/gpui-fast"]
+# Developer tools in example 6: `--features devtools`.
+devtools = ["dep:guiraffe-devtools"]
+
+# Run the unit tests inside these examples with `cargo test -p getting-started-examples`.
+[[example]]
+name = "03_form"
+test = true
+
+[[example]]
+name = "06_router_store"
+test = true
