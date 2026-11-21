@@ -124,6 +124,32 @@ fn warmed_flow_queries_reuse_storage() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Flow rendering
+
+#[test]
+fn flow_default_short_label_uses_only_the_element_allocation() -> anyhow::Result<()> {
+    use gpui_kit::{AppContext, EmptyView, TestAppContext, TestDispatcher, WindowOptions};
+    use guiraffe_flow::{
+        DefaultNodeRenderer, NodeRenderer,
+        core::{Node, Point},
+    };
+
+    let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_default_label"));
+    let (window, _) = cx.update(|cx| {
+        guiraffe_core::init(cx);
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| EmptyView))
+    })?;
+    let node = Node::new(1, "Flow node", Point::default());
+    let (_, counts) = window.update(&mut cx, |_, window, cx| {
+        drop(DefaultNodeRenderer.render(&node, 1., window, cx));
+        count_allocations(|| {
+            std::hint::black_box(DefaultNodeRenderer.render(&node, 1., window, cx))
+        })
+    })??;
+    assert_eq!(counts.allocations, 1, "{counts:?}");
+    Ok(())
+}
+
 #[test]
 fn production_flow_pan_and_hit_reuse_storage() -> anyhow::Result<()> {
     use guiraffe_bench::suites::flow_pan_hit_50k;

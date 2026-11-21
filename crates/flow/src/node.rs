@@ -73,9 +73,14 @@ pub(crate) fn render_card(
             }),
             zoom,
         );
+        let id = match handle.id.as_str() {
+            "in" => SharedString::new_static("handle-in"),
+            "out" => SharedString::new_static("handle-out"),
+            id => SharedString::from(format!("handle-{id}")),
+        };
         frame = frame.child(
             div()
-                .id(SharedString::from(format!("handle-{}", handle.id)))
+                .id(id)
                 .test_support()
                 .absolute()
                 // The dot is centred on the border of the node.

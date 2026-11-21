@@ -47,7 +47,7 @@ impl NodeRenderer for DefaultNodeRenderer {
                 * GuiraffeTheme::global(cx).scale
                 * zoom))
             .text_color(GuiraffeTheme::global(cx).surfaces().text.to_hsla())
-            .child(node.label().to_owned())
+            .child(SharedString::from(node.label()))
             .into_any_element()
     }
 }
