@@ -42,14 +42,14 @@ unsettled tail.
 
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
-| `view::Frame.scene: Option<(Domain, Scene)>` (`view.rs`) | last compiled scene | **bounded**: exactly one | replaced when the domain/size changes; `invalidate()` clears it (`view.rs`); dropping `SceneRequest` cancels a superseded build | behavioural: `viewport_culls_and_downsamples_connected_runs` (`scene.rs`) |
-| `view::Frame.previous_scene` (`view.rs`) | one previous scene, for zoom back-and-forth | **bounded**: one, and only while `Scene::cacheable()` | `publish_scene` (`view.rs`) drops the older scene on the next publish | none |
-| `view::Frame.pending: Option<SceneRequest>` (`view.rs`) | in-flight off-thread scene build | **bounded**: one | the request's `AtomicBool` is set on `Drop`, so a superseded job stops | none |
-| `view::PlotState.hidden: BTreeSet<SeriesId>` (`view.rs`) | hidden-series set | doc-scoped (series count) | user toggles | `categorical_facets_keep_secondary_domain_and_visibility` |
-| `model::Run.levels: Vec<Vec<usize>>` (`model.rs`) | LOD pyramid | **bounded**: halts at ≤ 16 384 samples, each level ÷8 (`scene.rs`), so ≤ len/7 extra indices | rebuilt with the run | `assert!(!model.runs[0].levels.is_empty())` (`scene.rs`) |
-| `model::Run.line_breaks: Vec<usize>` (`model.rs`) | break indices | doc-scoped | rebuilt | `nan_splits_a_line_into_two_paths` |
-| `data::Stream.chunks` (`data.rs`) | append chunks | **UNBOUNDED** unless `retain_last` is used | `retain_last` drains expired chunks (`data.rs`) | `rolling_window_preserves_snapshot_and_datum_keys`, `appends_preserve_snapshot_and_borrow_existing_rows` |
-| `scene::Panel.draws` / `.ticks: [Vec<Tick>; 3]` (`scene.rs`) | per-scene primitives and axis ticks | scene-scoped | discarded with the scene | `left_margin_grows_for_long_axis_title` |
+| `Frame.scene: Option<(Domain, Scene)>` (`view.rs`) | last compiled scene | **bounded**: exactly one | replaced when the domain/size changes; `invalidate()` clears it (`view.rs`); dropping `SceneRequest` cancels a superseded build | behavioural: `viewport_culls_and_downsamples_connected_runs` (`scene.rs`) |
+| `Frame.previous_scene` (`view.rs`) | one previous scene, for zoom back-and-forth | **bounded**: one, and only while `Scene::cacheable()` | `publish_scene` (`view.rs`) drops the older scene on the next publish | none |
+| `Frame.pending: Option<SceneRequest>` (`view.rs`) | in-flight off-thread scene build | **bounded**: one | the request's `AtomicBool` is set on `Drop`, so a superseded job stops | none |
+| `PlotState.hidden: BTreeSet<SeriesId>` (`view.rs`) | hidden-series set | doc-scoped (series count) | user toggles | `categorical_facets_keep_secondary_domain_and_visibility` |
+| `Run.levels: Vec<Vec<usize>>` (`model.rs`) | LOD pyramid | **bounded**: halts at ≤ 16 384 samples, each level ÷8 (`scene.rs`), so ≤ len/7 extra indices | rebuilt with the run | `assert!(!model.runs[0].levels.is_empty())` (`scene.rs`) |
+| `Run.line_breaks: Vec<usize>` (`model.rs`) | break indices | doc-scoped | rebuilt | `nan_splits_a_line_into_two_paths` |
+| `Stream.chunks` (`data.rs`) | append chunks | **UNBOUNDED** unless `retain_last` is used | `retain_last` drains expired chunks (`data.rs`) | `rolling_window_preserves_snapshot_and_datum_keys`, `appends_preserve_snapshot_and_borrow_existing_rows` |
+| `Panel.draws` / `.ticks: [Vec<Tick>; 3]` (`scene.rs`) | per-scene primitives and axis ticks | scene-scoped | discarded with the scene | `left_margin_grows_for_long_axis_title` |
 
 ## chat
 
@@ -98,11 +98,11 @@ unsettled tail.
 
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
-| `model::FrameLog.samples` (`model.rs`) | rolling frame samples | **bounded**: `capacity` (panel uses 240, `view.rs`) | `pop_front` at capacity (`model.rs`) | `rolling_histogram_percentiles_and_empty_log` |
-| `state::History.entries` (`state.rs`) | event snapshots (Arc-shared) | **bounded**: caller-supplied `capacity` (`inspect_store(.., capacity, ..)`) | oldest dropped by `Recorder` | `state.rs` (capacity = 2) |
+| `FrameLog.samples` (`model.rs`) | rolling frame samples | **bounded**: `capacity` (panel uses 240, `view.rs`) | `pop_front` at capacity (`model.rs`) | `rolling_histogram_percentiles_and_empty_log` |
+| `History.entries` (`state.rs`) | event snapshots (Arc-shared) | **bounded**: caller-supplied `capacity` (`inspect_store(.., capacity, ..)`) | oldest dropped by `Recorder` | `state.rs` (capacity = 2) |
 | `state::StoreAdapter.cache: Option<(RowKey, Rc<Vec<EventRow>>)>` (`state.rs`) | last built row page | **bounded**: one | keyed by `(seq, len, offset, limit)` | none |
-| `view::Shared.views: BTreeMap<SharedString, ViewInfo>` (`view.rs`) | instrumented view registry | **bounded**: template ids | `untrack` (`view.rs`) | `closed_tools_skip_tracking_and_opening_registers_views` |
-| `view::Shared.stores: Vec<Rc<dyn InspectStore>>` (`view.rs`) | connected stores | **UNBOUNDED** (append-only) | none | none |
+| `Shared.views: BTreeMap<SharedString, ViewInfo>` (`view.rs`) | instrumented view registry | **bounded**: template ids | `untrack` (`view.rs`) | `closed_tools_skip_tracking_and_opening_registers_views` |
+| `Shared.stores: Vec<Rc<dyn InspectStore>>` (`view.rs`) | connected stores | **UNBOUNDED** (append-only) | none | none |
 
 ## dnd
 
@@ -116,9 +116,9 @@ unsettled tail.
 
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
-| `model::FlameLayout` (`model.rs`) — `rows`, `locations`, `extent` | laid-out spans + id→(depth, offset) index | doc-scoped; `Locations` is `Sequential` (dense `u32` packing, `model.rs`) with an `Arbitrary` HashMap fallback (`model.rs`) | rebuilt with the layout | `sequential_index_falls_back_and_checks_duplicates`, `packed_locations_keep_wide_and_reserved_values` |
-| `model::Search.rows` (`model.rs`) | search hit rows | hit count | rebuilt per query | bucket-search property test (`model.rs`) |
-| `view::LabelCache` (`view.rs`) | shaped frame labels | **bounded**: `LABEL_SLOTS = 128` direct-mapped slots, labels ≤ 256 B (`view.rs`) | slot replacement by hash | `crates/flamegraph/PRODUCTION.md` label-cache table |
+| `FlameLayout` (`model.rs`) — `rows`, `locations`, `extent` | laid-out spans + id→(depth, offset) index | doc-scoped; `Locations` is `Sequential` (dense `u32` packing, `model.rs`) with an `Arbitrary` HashMap fallback (`model.rs`) | rebuilt with the layout | `sequential_index_falls_back_and_checks_duplicates`, `packed_locations_keep_wide_and_reserved_values` |
+| `Search.rows` (`model.rs`) | search hit rows | hit count | rebuilt per query | bucket-search property test (`model.rs`) |
+| `LabelCache` (`view.rs`) | shaped frame labels | **bounded**: `LABEL_SLOTS = 128` direct-mapped slots, labels ≤ 256 B (`view.rs`) | slot replacement by hash | `crates/flamegraph/PRODUCTION.md` label-cache table |
 | `FlameGraph.search` / `FlameGraph.tooltip` / `FlameGraph.pending_layout` | last search, tooltip entity, in-flight layout | **bounded**: one each | replaced / dropped | `crates/flamegraph/PRODUCTION.md` |
 
 ## flow / flow-core
@@ -170,9 +170,9 @@ unsettled tail.
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
 | `engine::Engine.cache: VecDeque<Entry>` (`engine.rs`) | drawn diagrams (source + SVG + parsed tree + raster) | **bounded**: `CACHE_ENTRIES = 16` and `CACHE_BYTES = 64 MiB` (`engine.rs`), enforced at `engine.rs` | FIFO `pop_back` after each render | `cache_evicts_beyond_its_entry_limit`, `cache_eviction_keeps_the_most_recent_entry` (`engine.rs`) |
-| `view::MermaidViewState.engine` (`view.rs`) | the cache above, lent to the background task | **bounded**: one | `take()`/restore around each render | `engine_rasterizes_and_the_second_render_reuses_layout_and_raster` |
-| `view::MermaidViewState.published` / `.preview` (`view.rs`) | current raster image / transient overview preview | **bounded**: one each | replaced or dropped on refinement | `crates/mermaid/PRODUCTION.md` cache-bound table |
-| `preview::Overview` buffers (`preview.rs`) | overview geometry | **bounded**: `MAX_PRIMITIVES = 2 048` (`preview.rs`) | rebuilt per preview | `crates/mermaid/PRODUCTION.md` |
+| `MermaidViewState.engine` (`view.rs`) | the cache above, lent to the background task | **bounded**: one | `take()`/restore around each render | `engine_rasterizes_and_the_second_render_reuses_layout_and_raster` |
+| `MermaidViewState.published` / `.preview` (`view.rs`) | current raster image / transient overview preview | **bounded**: one each | replaced or dropped on refinement | `crates/mermaid/PRODUCTION.md` cache-bound table |
+| `Overview` buffers (`preview.rs`) | overview geometry | **bounded**: `MAX_PRIMITIVES = 2 048` (`preview.rs`) | rebuilt per preview | `crates/mermaid/PRODUCTION.md` |
 | `source::CacheKey` | identity (hash + theme + font size) | n/a | n/a | `cache_key_separates_theme_and_font_size` |
 
 ## overlays
@@ -192,8 +192,8 @@ unsettled tail.
 
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
-| `showcase::shell::Showcase.demos: HashMap<usize, AnyView>` (`shell.rs`) | visited demo views | **bounded**: demo count | never (session app) | none |
-| `showcase::events::EventLines.lines: VecDeque` (`events.rs`) | event log | **bounded**: `CAPACITY = 5` (`events.rs`) | `truncate` | `keeps_newest_first_and_counts_all` |
+| `Showcase.demos: HashMap<usize, AnyView>` (`shell.rs`) | visited demo views | **bounded**: demo count | never (session app) | none |
+| `EventLines.lines: VecDeque` (`events.rs`) | event log | **bounded**: `CAPACITY = 5` (`events.rs`) | `truncate` | `keeps_newest_first_and_counts_all` |
 | `gallery::shell::Gallery.pages: HashMap<Page, AnyView>` (`shell.rs`) | visited pages | **bounded**: page count | never (session app) | — |
 
 ## state
@@ -242,7 +242,7 @@ unsettled tail.
 | `ui::widget::Registry.widgets` (`widget.rs`) | built-in widget registry | registered kinds | never (static set) | catalogue tests |
 | `ui::macro_support::Cached` / `CacheView` (`macro_support.rs`) | keyed view per call site via `window.use_keyed_state` | call sites | framework-managed with the window | render-counter tests |
 | `core::variant::CACHE` (thread-local, `variant.rs`, `SLOTS = 4`) | resolved colour variants | **bounded**: 4 contexts × `VARIANTS`(7) × `COLORS` cells | round-robin slot replacement | `all_variants_legible` |
-| `commands::model::Registry.index` (`model.rs`) | canonical binding → command ids | command count | `index_remove` on unregister/update (`model.rs`) | `binding_index_follows_every_mutation`, `mutations_are_change_checked_and_reindex` |
+| `Registry.index` (`model.rs`) | canonical binding → command ids | command count | `index_remove` on unregister/update (`model.rs`) | `binding_index_follows_every_mutation`, `mutations_are_change_checked_and_reindex` |
 | `commands::service::RegistryState.rows` / `.flat_rows` (`service.rs`) | menu projections | **bounded**: one per revision × 2 shapes | reset on revision bump (`service.rs`) | no test (`service.rs` has no test module) |
 | `commands::service::Configuration.routes` (`service.rs`) | route → binding count | live bindings | decremented, removed at zero (`swap_routes`, `service.rs`) | no test |
 | `commands::context::ContextStack.frames` | context stack | nesting depth | `pop` / scope drop | `deepest_matching_context_wins_over_catalog_order` |
