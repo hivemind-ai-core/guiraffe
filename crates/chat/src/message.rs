@@ -21,6 +21,8 @@ pub struct MessageView {
     pub(crate) data: Message,
     pub(crate) markdown: Entity<TextViewState>,
     pub(crate) menu: guiraffe_core::TextMenu,
+    /// Stable element id of this message's context menu, built once.
+    menu_key: SharedString,
     tools: Vec<Entity<ToolCard>>,
     reasoning: Option<Entity<Reasoning>>,
     reasoning_subscription: Option<Subscription>,
@@ -77,6 +79,7 @@ impl MessageView {
             data,
             markdown,
             menu: guiraffe_core::TextMenu::new(),
+            menu_key: format!("chat-message/{}", cx.entity_id()).into(),
             tools,
             reasoning,
             reasoning_subscription,
@@ -272,22 +275,31 @@ impl Render for MessageView {
                                     .children(self.tools.iter().cloned())
                                     .children(self.reasoning.iter().cloned())
                                     .child({
-                                        let raw = self.data.text.clone();
+                                        // The raw text is read when the menu opens, not on
+                                        // every render: a streaming message renders often and
+                                        // its text grows.
+                                        let weak = cx.weak_entity();
                                         guiraffe_core::text_menu::text_view_menu(
                                             div().child(markdown(&self.markdown)),
-                                            format!("chat-message/{}", cx.entity_id()),
+                                            self.menu_key.clone(),
                                             &self.menu,
                                             &self.markdown,
-                                            std::rc::Rc::new(move |_, _| {
-                                                let raw = raw.clone();
+                                            std::rc::Rc::new(move |_, cx: &mut App| {
+                                                let text = weak.upgrade().map(|view| {
+                                                    std::rc::Rc::new(
+                                                        view.read(cx).data.text.clone(),
+                                                    )
+                                                });
                                                 vec![guiraffe_core::TextMenuItem::new(
                                                     "Copy message",
                                                     move |_, cx| {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                raw.to_string(),
-                                                            ),
-                                                        )
+                                                        if let Some(text) = text.as_ref() {
+                                                            cx.write_to_clipboard(
+                                                                ClipboardItem::new_string(
+                                                                    text.as_str().to_owned(),
+                                                                ),
+                                                            )
+                                                        }
                                                     },
                                                 )]
                                             }),
