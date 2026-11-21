@@ -79,7 +79,7 @@ impl Highlighted {
             Ok(Ok(None)) => return None,
             Ok(Ok(Some(parser))) => Self {
                 document,
-                parser: Some(Arc::new(parser)),
+                parser: parser.tree().is_some().then(|| Arc::new(parser)),
                 dark,
                 error: None,
             },
@@ -156,6 +156,7 @@ mod tests {
             styles
         );
         let plain = Highlighted::compute(edited.document.clone(), "unregistered-language", true);
+        assert!(!plain.has_parser());
         assert!(plain.styles_for(window).next().is_none());
     }
 }

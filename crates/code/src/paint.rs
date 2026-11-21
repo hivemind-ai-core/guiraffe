@@ -878,7 +878,8 @@ pub(crate) fn paint_traces(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_SHAPE_CACHE_ENTRIES, MAX_SHAPE_CACHE_TEXT_BYTES, MAX_SHAPED_LINE_BYTES, ShapeCache,
+        MAX_SHAPE_CACHE_ENTRIES, MAX_SHAPE_CACHE_TEXT_BYTES, MAX_SHAPED_LINE_BYTES, RowMap,
+        ShapeCache,
     };
     use gpui_kit::{ShapedLine, SharedString};
     use std::rc::Rc;
@@ -907,11 +908,6 @@ mod tests {
         assert_eq!(cache.order.len(), cache.items.len());
         assert_eq!(cache.text_bytes, 0);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     #[test]
     fn styled_shape_cache_keeps_only_the_viewport_and_overscan() {

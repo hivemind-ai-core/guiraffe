@@ -142,7 +142,7 @@ offsets in a final line longer than the stride.
 | Index construction, one loaded-host sample | 112.417 ms | 115.081 ms |
 
 The plain-source fixture has no highlight spans. For styled documents, the
-two theme span arrays in `Highlighted` still scale with document syntax.
+two theme span arrays in the uniform-index revision scaled with document syntax.
 The renderer-backed process RSS budget remains a separate acceptance check.
 To compare the same frame sequence with scene construction alone, run
 `production_soak code --no-renderer`.
