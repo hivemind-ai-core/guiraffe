@@ -415,7 +415,7 @@ impl<const P: bool> TreeView<P> {
             let mut start = 0;
             loop {
                 executor.timer(std::time::Duration::from_millis(1)).await;
-                let Ok(next) = view.update(cx, |this, cx| {
+                let Ok((end, done)) = view.read_with(cx, |this, _| {
                     let count = this.model.row_count();
                     let end = (start + 512).min(count);
                     for rank in start..end {
@@ -428,20 +428,22 @@ impl<const P: bool> TreeView<P> {
                             matches.push(rank);
                         }
                     }
-                    if end == count
-                        && let Some(filter) = &mut this.filter
-                    {
-                        filter.ranks = std::mem::take(&mut matches);
-                        filter.pending = false;
-                        this.rebuild_geometry();
-                        cx.notify();
-                    }
-                    (end < count).then_some(end)
+                    (end, end == count)
                 }) else {
                     break;
                 };
-                let Some(next) = next else { break };
-                start = next;
+                if done {
+                    let _ = view.update(cx, |this, cx| {
+                        if let Some(filter) = &mut this.filter {
+                            filter.ranks = matches;
+                            filter.pending = false;
+                            this.rebuild_geometry();
+                            cx.notify();
+                        }
+                    });
+                    break;
+                }
+                start = end;
             }
         });
         self.filter = Some(Filter {
