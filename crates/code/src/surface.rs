@@ -1267,7 +1267,7 @@ impl Render for OverlayLayer {
 }
 
 impl OverlayLayer {
-    fn content(shared: &Rc<Shared>, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn content(shared: &Rc<Shared>, window: &mut Window, cx: &mut App) -> gpui_kit::Div {
         let s = GuiraffeTheme::global(cx).surfaces();
         let paint_shared = shared.clone();
         let g = shared.geometry.borrow();
@@ -1549,7 +1549,7 @@ impl OverlayLayer {
                     .w(px(widget_width))
                     .child(content);
                 if needs_measure {
-                    let paint_shared = shared.clone();
+                    let shared = shared.clone();
                     block = block.child(
                         canvas(
                             move |bounds, _, cx| {
