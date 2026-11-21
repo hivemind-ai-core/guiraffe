@@ -20,3 +20,10 @@ side and compares full layouts, edge coordinate bits and SVG bytes. It covers
 the packaged upstream fixtures, both GUIraffe showcase diagrams in light and
 dark, and the 500-node tree with cross links. Grid tests cover local candidate
 counts as distant data grows, deduplication and fallback order.
+
+On the 500-node workload at font size 14, hardware counters fell from 587.5
+billion to 54.5 billion retired user-space instructions. Allocator calls through
+malloc, calloc and realloc fell from 831.4 million to 9.0 million. Peak process
+RSS grew from roughly 14 MiB to 39 MiB in the standalone harness, which also
+renders and serializes the returned layout. All 47 packaged fixtures, the
+showcase cases and the 500-node case matched the released renderer.
