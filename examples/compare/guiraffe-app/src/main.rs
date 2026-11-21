@@ -71,6 +71,27 @@ fn main() {
             trace.mark("app-running");
             guiraffe_compare::init(cx);
             trace.mark("app-initialized");
+            #[cfg(target_os = "linux")]
+            {
+                // Match the shell's fonts on the background executor while
+                // open_window initializes the renderer.
+                let text_system = cx.text_system().clone();
+                let family = cx
+                    .global::<gpui_kit::component::Theme>()
+                    .font_family
+                    .clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        use gpui_kit::{FontWeight, font};
+
+                        let normal = font(family);
+                        let mut bold = normal.clone();
+                        bold.weight = FontWeight::BOLD;
+                        text_system.prewarm_fonts(&[normal, bold]);
+                        trace.mark("fonts-prewarmed");
+                    })
+                    .detach();
+            }
             let opts = WindowOptions {
                 titlebar: Some(gpui_kit::TitlebarOptions {
                     title: Some("Compare: GUIraffe".into()),
