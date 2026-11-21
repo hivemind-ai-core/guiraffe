@@ -69,3 +69,12 @@ except for the list index rebuild when the item count changes. The index
 stores one estimate or measurement per block. Paragraph decoration, table metrics, and fence highlight results for
 scrollable Markdown are retained for at most 256 top-level blocks per view. Chat
 retains selected rows until the window releases their selection endpoints.
+
+# Taffy 0.15.1 patches
+
+Both GPUI backends use the vendored crates.io release from Taffy commit
+`0064bd54cbe38bf1d8bcd6ec6ab0704d45fb048a`. The local patch reuses
+temporary block items, out-of-flow work entries, and hoisted IDs through
+`TaffyTree::clear`. Each pool keeps up to sixteen cleared buffers of up to
+16 KiB each. The layout algorithms, result ownership, and ordering stay the
+same.

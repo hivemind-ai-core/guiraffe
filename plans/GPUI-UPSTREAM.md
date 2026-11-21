@@ -74,3 +74,23 @@ In the upstream release soak probe, the tab-stop change reduced Gantt from
 74,104 requested bytes. The vendor regression replays grouped tab operations,
 checks forward and reverse traversal, and verifies the same vector allocation
 is reused after a clear.
+
+# Draft pull request for DioxusLabs/taffy
+
+## Retain bounded scratch for block and out-of-flow layout
+
+Let `LayoutPartialTree` opt into scratch storage and have `TaffyTree`
+retain it when the node tree is cleared. Recursive block sizing and
+out-of-flow layout take their vectors by ownership and return them once
+the pass completes, so descendants can use disjoint buffers. Custom trees
+get the existing temporary-vector behavior by default.
+
+Recycle block items, the out-of-flow worklist and temporary hoisted IDs.
+Each of the three pools retains at most sixteen buffers of at most 16 KiB
+each. Returning a buffer drops its contents, including any state attached
+to a block item. The bound is 768 KiB per tree, plus spare vector headers.
+Owned result vectors and per-node child lists keep their existing lifetimes.
+
+In the upstream mounted release probe, this removed 17 requests per retained
+draw in five fixtures and 20 in Charts, after tab-stop reuse. Taffy's 171
+library tests include a nested scratch reuse check.
