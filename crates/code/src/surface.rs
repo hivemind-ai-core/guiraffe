@@ -883,7 +883,15 @@ impl Render for OverlayLayer {
         }
         requests.sort_by_key(|(id, _, _)| *id);
         requests.dedup_by_key(|(id, _, _)| *id);
-        let placements = place_bubbles(&requests, h, lh * 0.25);
+        let placements = if margin > 0. {
+            place_bubbles(&requests, h, lh * 0.25)
+        } else {
+            Vec::new()
+        };
+        self.shared
+            .bubbles
+            .borrow_mut()
+            .retain(|id, _| placements.iter().any(|placement| placement.id == *id));
         let mut stats = self.shared.stats.get();
         stats.visible_bubbles = placements.len();
         self.shared.stats.set(stats);
@@ -1270,6 +1278,59 @@ mod review_tests {
             assert_eq!(lines[0].label(), Some("Line 9999997: "));
             assert_eq!(lines[3].label(), Some("Line 10000000: end"));
         });
+    }
+
+    #[gpui_kit::test]
+    fn bubble_cache_evicts_cards_when_they_leave_the_viewport(cx: &mut TestAppContext) {
+        use gpui_kit::{Context, IntoElement, Render, Window, test::TestWindowExt};
+
+        struct Fixture(CodeHandle);
+        impl Render for Fixture {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                crate::CodeViewer::new(&self.0)
+            }
+        }
+
+        let (view, vcx) = cx.add_window_view(|_, cx| {
+            let code = CodeHandle::new(1, Arc::new(CodeDocument::new("x\n".repeat(10_000))), cx);
+            code.set_annotations(
+                Arc::from([
+                    Annotation {
+                        kind: AnnotationKind::Bubble,
+                        ..annotation()
+                    },
+                    Annotation {
+                        id: 43,
+                        kind: AnnotationKind::Bubble,
+                        range: SourceRange::new(Position::new(5_000, 0), Position::new(5_000, 1)),
+                        ..annotation()
+                    },
+                ]),
+                cx,
+            );
+            Fixture(code)
+        });
+        let code = vcx.update(|_, cx| view.read(cx).0.clone());
+        vcx.update(|window, cx| window.render_frame(cx));
+        vcx.run_until_parked();
+        vcx.update(|window, cx| window.render_frame(cx));
+        assert!(code.shared.bubbles.borrow().contains_key(&42));
+
+        vcx.update(|window, cx| {
+            code.scroll_to_line(5_000, cx);
+            window.render_frame(cx);
+        });
+        vcx.run_until_parked();
+        vcx.update(|window, cx| window.render_frame(cx));
+        assert_eq!(
+            code.shared
+                .bubbles
+                .borrow()
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            [43]
+        );
     }
 
     #[gpui_kit::test]

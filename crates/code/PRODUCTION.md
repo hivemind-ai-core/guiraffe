@@ -201,3 +201,9 @@ uniform 20 MB fixture, standalone optimized Callgrind measured 1,300,246,524
 run measured document construction at 204 → 130 ms. The
 [construction benchmark](../../bench/benches/production_frames.rs) tracks
 indexing and summarization with source allocation outside the measured region.
+
+The review bubble cache holds only Markdown entities with a placed card in
+the current viewport. A card occupies three line heights, so the cache
+holds at most `floor(viewport_height / (3 × line_height))` entries. Hiding
+the analysis margin clears the cache. The GPUI regression test scrolls to
+a different part of the same document and checks that the old card is gone.

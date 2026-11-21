@@ -199,6 +199,14 @@ fn run(component: &str, nightly: bool, renderer: bool) -> Result<()> {
             let delta = i128::from(rss) - i128::from(empty_rss);
             let peak_delta = i128::from(peak) - i128::from(empty_rss);
             println!("rss_delta_kib={delta} peak_rss_kib={peak} peak_rss_delta_kib={peak_delta}");
+            if nightly && component == "code" {
+                let raw_bytes = (ROWS as i128) * 2 - 1;
+                let limit_kib = (raw_bytes * 5 / 4) / 1024 + 64 * 1024;
+                ensure!(
+                    peak_delta <= limit_kib,
+                    "CodeViewer peak RSS increase {peak_delta} KiB exceeds {limit_kib} KiB"
+                );
+            }
             if !nightly {
                 break;
             }
