@@ -50,6 +50,7 @@ pub struct DopeSheet {
     focus: FocusHandle,
     playhead: f64,
     lock_style: LockStyle,
+    headers: Vec<(ChannelHeader, Entity<ChannelHeader>)>,
 }
 impl EventEmitter<DopeEvent> for DopeSheet {}
 impl Focusable for DopeSheet {
@@ -77,6 +78,7 @@ impl DopeSheet {
             focus: cx.focus_handle(),
             playhead: 0.,
             lock_style: LockStyle::Badge,
+            headers: Vec::new(),
         })
     }
     pub fn channels(&self) -> &[Channel] {
@@ -239,6 +241,147 @@ impl DopeSheet {
         }
     }
 }
+#[derive(Clone, PartialEq)]
+struct ChannelHeader {
+    channel: usize,
+    depth: usize,
+    name: gpui_kit::SharedString,
+    color: ColorName,
+    group: bool,
+    collapsed: bool,
+    muted: bool,
+    locked: bool,
+    visible: bool,
+    owner: gpui_kit::WeakEntity<DopeSheet>,
+}
+
+impl ChannelHeader {
+    fn on_toggle(
+        &self,
+        action: u8,
+    ) -> impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + use<> {
+        let owner = self.owner.clone();
+        let channel = self.channel;
+        move |_, _, cx| {
+            if let Some(owner) = owner.upgrade() {
+                owner.update(cx, |view, cx| view.toggle(channel, action, cx));
+            }
+        }
+    }
+}
+
+impl Render for ChannelHeader {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = GuiraffeTheme::global(cx);
+        let c = self;
+        let i = c.channel;
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .pl(px(c.depth as f32 * 12.))
+            .child(crate::locks::probe(
+                "channel-expand",
+                i,
+                Button::new(("channel-expand", i))
+                    .ghost()
+                    .with_size(gpui_kit::component::Size::XSmall)
+                    .tab_stop(false)
+                    .disabled(!c.group)
+                    .icon(gpui_kit::component::Icon::new(if !c.group {
+                        gpui_kit::assets::IconName::Minus
+                    } else if c.collapsed {
+                        gpui_kit::assets::IconName::ChevronRight
+                    } else {
+                        gpui_kit::assets::IconName::ChevronDown
+                    }))
+                    .tooltip("Expand or collapse channel")
+                    .on_click(c.on_toggle(0)),
+            ))
+            .child(
+                div()
+                    .w(px(4.))
+                    .h(px(12.))
+                    .rounded(px(2.))
+                    .mr(px(4.))
+                    .bg(theme
+                        .variant(Some(c.color), Variant::Filled)
+                        .background
+                        .to_hsla()),
+            )
+            .child(div().flex_1().overflow_hidden().child(c.name.clone()))
+            .child(crate::locks::probe(
+                "channel-mute",
+                i,
+                Button::new(("channel-mute", i))
+                    .ghost()
+                    .with_size(gpui_kit::component::Size::XSmall)
+                    .tab_stop(false)
+                    .icon(gpui_kit::component::Icon::new(if c.muted {
+                        gpui_kit::assets::IconName::VolumeX
+                    } else {
+                        gpui_kit::assets::IconName::Volume2
+                    }))
+                    .tab_stop(false)
+                    .tooltip("Mute channel")
+                    .selected(c.muted)
+                    .on_click(c.on_toggle(1)),
+            ))
+            .child(crate::locks::probe(
+                "channel-lock",
+                i,
+                Button::new(("channel-lock", i))
+                    .ghost()
+                    .with_size(gpui_kit::component::Size::XSmall)
+                    .tab_stop(false)
+                    .icon(gpui_kit::component::Icon::new(if c.locked {
+                        gpui_kit::assets::IconName::Lock
+                    } else {
+                        gpui_kit::assets::IconName::LockOpen
+                    }))
+                    .tab_stop(false)
+                    .tooltip("Lock channel")
+                    .selected(c.locked)
+                    .on_click(c.on_toggle(2)),
+            ))
+            .child(crate::locks::probe(
+                "channel-visible",
+                i,
+                Button::new(("channel-visible", i))
+                    .ghost()
+                    .with_size(gpui_kit::component::Size::XSmall)
+                    .tab_stop(false)
+                    .icon(gpui_kit::component::Icon::new(if c.visible {
+                        gpui_kit::assets::IconName::Eye
+                    } else {
+                        gpui_kit::assets::IconName::EyeOff
+                    }))
+                    .tab_stop(false)
+                    .tooltip("Channel visibility")
+                    .on_click(c.on_toggle(3)),
+            ))
+    }
+}
+
+fn key_indices(
+    times: &[f64],
+    first: usize,
+    end: usize,
+    spacing: Option<f64>,
+) -> impl Iterator<Item = usize> + '_ {
+    std::iter::successors((first < end).then_some(first), move |&index| {
+        let next = index + 1;
+        // Preserve the source sequence for picking and editing. Only the
+        // rendered marks skip diamonds that overlap at this zoom.
+        let next = if let Some(spacing) = spacing {
+            next + times[next..end].partition_point(|&t| t < times[index] + spacing)
+        } else {
+            next
+        };
+        (next < end).then_some(next)
+    })
+}
+
 impl Render for DopeSheet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx).clone();
@@ -258,16 +401,59 @@ impl Render for DopeSheet {
         );
         let start = (self.offset / f64::from(ROW_H)).floor() as usize;
         let end = ((self.offset + h) / f64::from(ROW_H)).ceil() as usize;
-        let rows: Vec<_> = self
+        let rows = self
             .model
             .rows()
             .get(start..end.min(self.model.rows().len()))
-            .unwrap_or(&[])
+            .unwrap_or(&[]);
+        let owner = cx.weak_entity();
+        let headers: Vec<_> = rows
             .iter()
-            .copied()
             .enumerate()
-            .map(|(i, r)| (start + i, r))
+            .map(|(index, row)| {
+                let c = &self.model.channels[row.channel];
+                let current = self.headers.get_mut(index);
+                let name = current
+                    .as_ref()
+                    .map(|(old, _)| &old.name)
+                    .filter(|name| name.as_str() == c.name.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| c.name.clone().into());
+                let header = ChannelHeader {
+                    channel: row.channel,
+                    depth: row.depth,
+                    name,
+                    color: c.color,
+                    group: c.group,
+                    collapsed: c.collapsed,
+                    muted: c.muted,
+                    locked: c.locked,
+                    visible: c.visible,
+                    owner: owner.clone(),
+                };
+                if let Some((old, entity)) = current {
+                    if *old != header {
+                        entity.update(cx, |view, cx| {
+                            *view = header.clone();
+                            cx.notify();
+                        });
+                        *old = header;
+                    }
+                } else {
+                    self.headers.push((header.clone(), cx.new(|_| header)));
+                }
+                self.headers[index].1.clone().cached(
+                    gpui_kit::StyleRefinement::default()
+                        .absolute()
+                        .top(px(
+                            ((start + index) as f64 * f64::from(ROW_H) - self.offset) as f32,
+                        ))
+                        .w(px(NAME_W))
+                        .h(px(ROW_H)),
+                )
+            })
             .collect();
+        self.headers.truncate(rows.len());
         let mut background = self.surface.clone();
         background.insert_layer(
             0,
@@ -289,7 +475,7 @@ impl Render for DopeSheet {
         let axis = self.surface.axis;
         let offset = self.offset;
         let mut keys = Vec::new();
-        for (r, row) in &rows {
+        for (row_index, row) in rows.iter().enumerate() {
             let channel = row.channel;
             let c = &self.model.channels[channel];
             if !c.visible {
@@ -302,7 +488,6 @@ impl Render for DopeSheet {
             };
             let first = times.partition_point(|t| *t < axis.t(-KEY_GRAB));
             let end = times.partition_point(|t| *t <= axis.t(axis.width + KEY_GRAB));
-            let mut index = first;
             let has_selection = self
                 .model
                 .selected
@@ -314,16 +499,22 @@ impl Render for DopeSheet {
                 && !has_selection
                 && end.saturating_sub(first) > (axis.width / 4.) as usize;
             let locked = !self.model.editable(channel);
-            let y = *r as f64 * f64::from(ROW_H) - offset;
-            while index < end {
+            let y = (start + row_index) as f64 * f64::from(ROW_H) - offset;
+            for index in key_indices(times, first, end, compact.then_some(4. * axis.scale)) {
                 let time = times[index];
                 let x = axis.x(time);
-                let selected = if row.summary {
+                let selected = if compact {
+                    false
+                } else if row.summary {
                     self.model.summary_selected(channel, time)
                 } else {
                     self.model.selected.contains(&(channel, time.to_bits()))
                 };
-                let (shape, hold) = self.model.key_display(channel, row.summary, index);
+                let (shape, hold) = if compact {
+                    (KeyShape::Diamond, None)
+                } else {
+                    self.model.key_display(channel, row.summary, index)
+                };
                 keys.push((
                     x,
                     y,
@@ -334,19 +525,21 @@ impl Render for DopeSheet {
                     row.summary,
                     locked,
                 ));
-                index += 1;
-                if compact {
-                    // Overlapping undecorated diamonds represent the same visual
-                    // region. Keep source times intact for hit testing and edits.
-                    index += times[index..end].partition_point(|&t| t < time + 4. * axis.scale);
-                }
             }
         }
         // Small scenes retain per-key rasterization and its original coverage.
         let batch_diamonds = keys.len() > 512;
         let body = self.body.clone();
         let owner = cx.entity_id();
-        let key_theme = theme.clone();
+        let key_selected = theme
+            .state(StateKind::Selected, Variant::Filled, None)
+            .background
+            .to_hsla();
+        let key_muted = s.dimmed.to_hsla();
+        let key_normal = theme
+            .variant(Some(ColorName::Yellow), Variant::Filled)
+            .background
+            .to_hsla();
         let lock_style = self.lock_style;
         let tab = guiraffe_core::tab_stop(self.focusable);
         let focus_visible = guiraffe_core::ring_visible(&self.focus, window);
@@ -436,103 +629,7 @@ impl Render for DopeSheet {
                             .w(px(NAME_W))
                             .flex_none()
                             .overflow_hidden()
-                            .children(rows.iter().map(|(r, row)| {
-                                let i = row.channel;
-                                let c = &self.model.channels[i];
-                                div()
-                                    .absolute()
-                                    .top(px((*r as f64 * f64::from(ROW_H) - self.offset) as f32))
-                                    .h(px(ROW_H))
-                                    .w_full()
-                                    .flex()
-                                    .items_center()
-                                    .pl(px(row.depth as f32 * 12.))
-                                    .child(crate::locks::probe(
-                                        "channel-expand",
-                                        i,
-                                        Button::new(("channel-expand", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .disabled(!c.group)
-                                            .icon(gpui_kit::component::Icon::new(if !c.group {
-                                                gpui_kit::assets::IconName::Minus
-                                            } else if c.collapsed {
-                                                gpui_kit::assets::IconName::ChevronRight
-                                            } else {
-                                                gpui_kit::assets::IconName::ChevronDown
-                                            }))
-                                            .tooltip("Expand or collapse channel")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 0, cx)
-                                            })),
-                                    ))
-                                    .child(
-                                        div().w(px(4.)).h(px(12.)).rounded(px(2.)).mr(px(4.)).bg(
-                                            theme
-                                                .variant(Some(c.color), Variant::Filled)
-                                                .background
-                                                .to_hsla(),
-                                        ),
-                                    )
-                                    .child(div().flex_1().overflow_hidden().child(c.name.clone()))
-                                    .child(crate::locks::probe(
-                                        "channel-mute",
-                                        i,
-                                        Button::new(("channel-mute", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .icon(gpui_kit::component::Icon::new(if c.muted {
-                                                gpui_kit::assets::IconName::VolumeX
-                                            } else {
-                                                gpui_kit::assets::IconName::Volume2
-                                            }))
-                                            .tab_stop(false)
-                                            .tooltip("Mute channel")
-                                            .selected(c.muted)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 1, cx)
-                                            })),
-                                    ))
-                                    .child(crate::locks::probe(
-                                        "channel-lock",
-                                        i,
-                                        Button::new(("channel-lock", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .icon(gpui_kit::component::Icon::new(if c.locked {
-                                                gpui_kit::assets::IconName::Lock
-                                            } else {
-                                                gpui_kit::assets::IconName::LockOpen
-                                            }))
-                                            .tab_stop(false)
-                                            .tooltip("Lock channel")
-                                            .selected(c.locked)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 2, cx)
-                                            })),
-                                    ))
-                                    .child(crate::locks::probe(
-                                        "channel-visible",
-                                        i,
-                                        Button::new(("channel-visible", i))
-                                            .ghost()
-                                            .with_size(gpui_kit::component::Size::XSmall)
-                                            .tab_stop(false)
-                                            .icon(gpui_kit::component::Icon::new(if c.visible {
-                                                gpui_kit::assets::IconName::Eye
-                                            } else {
-                                                gpui_kit::assets::IconName::EyeOff
-                                            }))
-                                            .tab_stop(false)
-                                            .tooltip("Channel visibility")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle(i, 3, cx)
-                                            })),
-                                    ))
-                            })),
+                            .children(headers),
                     )
                     .child(
                         div()
@@ -546,18 +643,31 @@ impl Render for DopeSheet {
                             .on_scroll(cx.listener(|this, e: &gpui_kit::ScrollEvent, _, cx| {
                                 let d = e.delta.pixel_delta(px(16.));
                                 let (x, _) = this.local(e.position);
-                                if e.modifiers.control || e.modifiers.platform || e.modifiers.shift
+                                let changed = if e.modifiers.control
+                                    || e.modifiers.platform
+                                    || e.modifiers.shift
                                 {
                                     this.surface.navigate(
                                         x,
                                         f64::from(f32::from(d.x)),
                                         f64::from(f32::from(d.y)),
                                         e.modifiers.control || e.modifiers.platform,
-                                    );
+                                    )
                                 } else {
-                                    this.offset = (this.offset - f64::from(f32::from(d.y))).max(0.);
+                                    let height =
+                                        f64::from(f32::from(this.body.get().size.height)).max(1.);
+                                    let max = (this.model.rows().len() as f64 * f64::from(ROW_H)
+                                        - height)
+                                        .max(0.);
+                                    let offset =
+                                        (this.offset - f64::from(f32::from(d.y))).clamp(0., max);
+                                    let changed = offset != this.offset;
+                                    this.offset = offset;
+                                    changed
+                                };
+                                if changed {
+                                    cx.notify();
                                 }
-                                cx.notify();
                             }))
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -652,26 +762,14 @@ impl Render for DopeSheet {
                                             &keys
                                         {
                                             let ink = if *selected {
-                                                key_theme
-                                                    .state(
-                                                        StateKind::Selected,
-                                                        Variant::Filled,
-                                                        None,
-                                                    )
-                                                    .background
+                                                key_selected
                                             } else if *muted
                                                 || (*locked && lock_style == LockStyle::Dimmed)
                                             {
-                                                key_theme.surfaces().dimmed
+                                                key_muted
                                             } else {
-                                                key_theme
-                                                    .variant(
-                                                        Some(ColorName::Yellow),
-                                                        Variant::Filled,
-                                                    )
-                                                    .background
-                                            }
-                                            .to_hsla();
+                                                key_normal
+                                            };
                                             let cy = *y + f64::from(ROW_H) / 2.;
                                             let radius =
                                                 if *selected || *summary { 6. } else { 4. };
@@ -779,6 +877,20 @@ impl Render for DopeSheet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dense_plain_keys_emit_the_same_marks_across_input_scales() {
+        for count in [10_000, 100_000, 10_000_000] {
+            let times: Vec<_> = (0..count).map(|i| i as f64 * 100. / count as f64).collect();
+            let marks: Vec<_> = key_indices(&times, 0, count, Some(4.))
+                .map(|i| times[i])
+                .collect();
+            assert_eq!(
+                marks,
+                (0..25).map(|i| f64::from(i) * 4.).collect::<Vec<_>>()
+            );
+        }
+    }
 
     #[test]
     fn channels_sort_dedup_and_refuse_collisions() {
