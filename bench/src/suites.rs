@@ -694,12 +694,12 @@ pub fn tree_scroll_million() {
             model.set_expanded(id, true, &source);
         }
         model.set_expanded(0, true, &source);
-        assert_eq!(model.rows().len(), 1_000_000);
+        assert_eq!(model.row_count(), 1_000_000);
         model
     });
     for scroll in [12_000_000.5, 30_000_123.5] {
-        for row in &model.rows()[model.window(black_box(scroll), 720., 36.)] {
-            black_box(row);
+        for index in model.window(black_box(scroll), 720., 36.) {
+            black_box(model.row(index));
         }
     }
 }

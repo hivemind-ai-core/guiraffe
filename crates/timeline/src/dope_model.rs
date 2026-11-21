@@ -243,16 +243,17 @@ impl DopeModel {
         let Some(c) = self.channels.get(channel).filter(|_| !summary) else {
             return (crate::KeyShape::Diamond, None);
         };
-        let decor = c
-            .decor
+        let Some(metadata) = &c.decor else {
+            return (crate::KeyShape::Diamond, None);
+        };
+        let decor = metadata
             .get(index)
             .copied()
             .unwrap_or((None, crate::KeyShape::Diamond));
         let Some(next_index) = index.checked_add(1) else {
             return (decor.1, None);
         };
-        let hold = c
-            .decor
+        let hold = metadata
             .get(next_index)
             .filter(|next| decor.0.is_some() && decor.0 == next.0)
             .and_then(|_| c.keys().get(next_index))

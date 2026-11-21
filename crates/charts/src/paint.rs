@@ -68,31 +68,21 @@ pub(crate) fn box_fill(
     window.paint_quad(fill(bounds, color).corner_radii(px(radius)));
 }
 
-fn paint_dots(window: &mut Window, origin: Point<Pixels>, dots: &[(Position, f32)], color: Hsla) {
-    const DIAGONAL: f32 = std::f32::consts::FRAC_1_SQRT_2;
-    const CIRCLE: [(f32, f32); 8] = [
-        (1., 0.),
-        (DIAGONAL, DIAGONAL),
-        (0., 1.),
-        (-DIAGONAL, DIAGONAL),
-        (-1., 0.),
-        (-DIAGONAL, -DIAGONAL),
-        (0., -1.),
-        (DIAGONAL, -DIAGONAL),
-    ];
-    let Some(&(first, _)) = dots.first() else {
-        return;
-    };
-    let mut path = gpui_kit::Path::new(at(origin, first));
-    let uv = point(0., 1.);
-    for &((x, y), radius) in dots {
-        let center = at(origin, (x, y));
-        let offset = |(dx, dy)| at(origin, (x + radius * dx, y + radius * dy));
-        for (a, b) in CIRCLE.into_iter().zip(CIRCLE.into_iter().cycle().skip(1)) {
-            path.push_triangle((center, offset(a), offset(b)), (uv, uv, uv));
-        }
-    }
-    window.paint_path(path, color);
+fn paint_dot(
+    window: &mut Window,
+    origin: Point<Pixels>,
+    (x, y): Position,
+    radius: f32,
+    color: Hsla,
+) {
+    box_fill(
+        window,
+        origin,
+        (x - radius, y - radius),
+        (x + radius, y + radius),
+        color,
+        radius,
+    );
 }
 
 pub(crate) fn segment(
@@ -283,7 +273,9 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
         ] {
             segment(window, origin, (x, y), end, grid);
         }
-        window.with_content_mask(Some(mask(origin, r)), |window| {
+        let clip = mask(origin, r);
+        let plot_bounds = clip.bounds;
+        window.with_content_mask(Some(clip), |window| {
             for draw in &panel.draws {
                 let ink = match draw.color {
                     Color::Category(index) => palette[index as usize % palette.len()],
@@ -306,17 +298,18 @@ pub(crate) fn paint_scene(options: PaintScene<'_>, window: &mut Window, cx: &mut
                 match &draw.geometry {
                     Geometry::Segment(a, b) => segment(window, origin, *a, *b, color),
                     Geometry::Box(a, b) => box_fill(window, origin, *a, *b, color, 0.),
-                    Geometry::Dot((x, y), radius) => {
-                        box_fill(
-                            window,
-                            origin,
-                            (x - radius, y - radius),
-                            (x + radius, y + radius),
-                            color,
-                            *radius,
-                        );
+                    Geometry::Dot(point, radius) => {
+                        paint_dot(window, origin, *point, *radius, color)
                     }
-                    Geometry::Dots(dots) => paint_dots(window, origin, dots, color),
+                    Geometry::Dots(dots) => {
+                        // One bounds-tree entry for this batch. Quads remain
+                        // in draw order within the layer.
+                        window.paint_layer(plot_bounds, |window| {
+                            for &(point, radius) in dots {
+                                paint_dot(window, origin, point, radius, color);
+                            }
+                        });
+                    }
                     Geometry::Text(pos, text) => label(
                         window,
                         cx,

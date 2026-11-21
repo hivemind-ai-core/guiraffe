@@ -3,7 +3,7 @@ use gpui_kit::base::Selectable;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
-    ScrollEvent, StatefulInteractiveElement, Styled, TestSupportExt, Window,
+    ScrollEvent, SharedString, StatefulInteractiveElement, Styled, TestSupportExt, Window,
     component::{
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
@@ -149,20 +149,31 @@ impl<const P: bool> TreeView<P> {
     }
 
     pub fn set_expanded(&mut self, id: NodeId, open: bool, cx: &mut Context<Self>) {
-        let visible_change = self.model.row_index(id).is_some() && self.model.expanded(id) != open;
+        let rank = self
+            .model
+            .row_index(id)
+            .filter(|_| self.model.expanded(id) != open);
+        let viewport_end = self
+            .model
+            .window(self.scroll, f64::from(self.height), ROW)
+            .end;
+        let cursor = self.model.cursor();
         if let Some(id) = self.model.set_expanded(id, open, self.source.as_ref()) {
             cx.emit(TreeEvent::LoadChildren(id));
         }
-        if visible_change {
+        if let Some(rank) = rank {
+            let scroll = self.scroll;
             self.clamp_scroll();
-            cx.notify();
+            if rank < viewport_end || self.scroll != scroll || self.model.cursor() != cursor {
+                cx.notify();
+            }
         }
     }
 
     fn clamp_scroll(&mut self) {
         self.scroll = self.scroll.clamp(
             0.,
-            (self.model.rows().len() as f64 * ROW - f64::from(self.height)).max(0.),
+            (self.model.row_count() as f64 * ROW - f64::from(self.height)).max(0.),
         );
     }
 
@@ -362,14 +373,16 @@ impl<const P: bool> Render for TreeView<P> {
         let colours = theme.press_colors(Variant::Light, None);
         let range = self.model.window(self.scroll, f64::from(self.height), ROW);
         let offset = range.start as f64 * ROW - self.scroll;
-        let rows = range.map(|index| {
-            let row = self.model.rows()[index];
+        let hover_background = colours.hover.background.to_hsla();
+        let selection_background = colours.selected.background.to_hsla();
+        let rows = range.filter_map(|index| {
+            let (row, siblings) = self.model.row_and_siblings(index)?;
             let id = row.id;
             let open = self.model.expanded(id);
             let branch = self.source.children(id) != Children::Ready(&[]);
             let selected = self.model.selected(id);
             let active = self.model.cursor() == Some(id);
-            let label = self.source.label(id).to_owned();
+            let label = SharedString::from(self.source.label(id).to_owned());
             let select = cx.listener(move |this, event: &gpui_kit::ClickEvent, _, cx| {
                 this.model
                     .select(id, event.modifiers().control || event.modifiers().platform);
@@ -389,8 +402,8 @@ impl<const P: bool> Render for TreeView<P> {
                 .items_center()
                 .gap(px(4.))
                 .pl(px((row.depth.min(45) * 16) as f32))
-                .hover(|style| style.bg(colours.hover.background.to_hsla()));
-            if let Some((position, count)) = self.model.sibling_position(index) {
+                .hover(|style| style.bg(hover_background));
+            if let Some((position, count)) = siblings {
                 element = element
                     .aria_position_in_set(position)
                     .aria_size_of_set(count);
@@ -403,7 +416,7 @@ impl<const P: bool> Render for TreeView<P> {
             }
             if selected || active {
                 element = element
-                    .bg(colours.selected.background.to_hsla())
+                    .bg(selection_background)
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD);
             }
             if !P {
@@ -425,7 +438,10 @@ impl<const P: bool> Render for TreeView<P> {
                                     .row_index(node)
                                     .zip(this.model.row_index(id))
                                     .is_some_and(|(a, b)| {
-                                        this.model.rows()[a].parent == this.model.rows()[b].parent
+                                        this.model
+                                            .row(a)
+                                            .zip(this.model.row(b))
+                                            .is_some_and(|(a, b)| a.parent == b.parent)
                                     })
                             {
                                 cx.emit(TreeEvent::Reorder { node, before: id });
@@ -433,52 +449,54 @@ impl<const P: bool> Render for TreeView<P> {
                         }),
                     );
             }
-            element
-                .child(div().w(px(28.)).flex_none().children(branch.then(|| {
-                    Button::new(("tree-expand", id as usize))
-                        .tab_stop(false)
-                        .compact()
-                        .w_full()
-                        .label(if open { "▾" } else { "▸" })
-                        .accessibility_label(format!(
-                            "{} {label}",
-                            if open { "Collapse" } else { "Expand" }
-                        ))
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.set_expanded(id, !open, cx)),
-                        )
-                })))
-                .children((!P).then(|| self.source.icon_element(id)).flatten())
-                .child(
-                    div().flex_1().overflow_hidden().child(
-                        Button::new(("tree-select", id as usize))
+            Some(
+                element
+                    .child(div().w(px(28.)).flex_none().children(branch.then(|| {
+                        Button::new(("tree-expand", id as usize))
                             .tab_stop(false)
-                            .ghost()
-                            .justify_start()
-                            .accessibility_label(label.clone())
-                            .child(div().w_full().text_left().child(label))
-                            .on_click(select),
-                    ),
-                )
-                .children(
-                    (!P).then(|| self.source.badge(id))
-                        .flatten()
-                        .map(str::to_owned),
-                )
-                .children(
-                    (!P).then(|| self.source.checked(id))
-                        .flatten()
-                        .map(|checked| {
-                            Checkbox::new(("tree-check", id as usize))
-                                .accessibility_label(format!("Check {}", self.source.label(id)))
+                            .compact()
+                            .w_full()
+                            .label(if open { "▾" } else { "▸" })
+                            .accessibility_label(format!(
+                                "{} {label}",
+                                if open { "Collapse" } else { "Expand" }
+                            ))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.set_expanded(id, !open, cx)),
+                            )
+                    })))
+                    .children((!P).then(|| self.source.icon_element(id)).flatten())
+                    .child(
+                        div().flex_1().overflow_hidden().child(
+                            Button::new(("tree-select", id as usize))
                                 .tab_stop(false)
-                                .checked(checked)
-                                .on_change(cx.listener(move |_, value: &bool, _, cx| {
-                                    cx.emit(TreeEvent::Checked(id, *value))
-                                }))
-                        }),
-                )
-                .children(if P { self.property_cell(id, cx) } else { None })
+                                .ghost()
+                                .justify_start()
+                                .accessibility_label(label.clone())
+                                .child(div().w_full().text_left().child(label))
+                                .on_click(select),
+                        ),
+                    )
+                    .children(
+                        (!P).then(|| self.source.badge(id))
+                            .flatten()
+                            .map(str::to_owned),
+                    )
+                    .children(
+                        (!P).then(|| self.source.checked(id))
+                            .flatten()
+                            .map(|checked| {
+                                Checkbox::new(("tree-check", id as usize))
+                                    .accessibility_label(format!("Check {}", self.source.label(id)))
+                                    .tab_stop(false)
+                                    .checked(checked)
+                                    .on_change(cx.listener(move |_, value: &bool, _, cx| {
+                                        cx.emit(TreeEvent::Checked(id, *value))
+                                    }))
+                            }),
+                    )
+                    .children(if P { self.property_cell(id, cx) } else { None }),
+            )
         });
         let mut tree = div()
             .id("virtual-tree")

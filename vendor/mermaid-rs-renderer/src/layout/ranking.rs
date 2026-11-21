@@ -120,39 +120,21 @@ pub(super) fn order_rank_nodes(
     }
 }
 
-fn pair_crossings(
-    a: &str,
-    b: &str,
-    neighbors: &HashMap<String, Vec<String>>,
-    positions: &HashMap<String, usize>,
-) -> (usize, usize) {
-    let mut a_pos: Vec<usize> = neighbors
-        .get(a)
-        .into_iter()
-        .flatten()
-        .filter_map(|id| positions.get(id).copied())
-        .collect();
-    let mut b_pos: Vec<usize> = neighbors
-        .get(b)
-        .into_iter()
-        .flatten()
-        .filter_map(|id| positions.get(id).copied())
-        .collect();
-    if a_pos.is_empty() || b_pos.is_empty() {
-        return (0, 0);
-    }
-    a_pos.sort_unstable();
-    b_pos.sort_unstable();
-    let mut crossings_ab = 0usize;
-    let mut crossings_ba = 0usize;
-    for pa in &a_pos {
-        for pb in &b_pos {
-            if pa > pb {
-                crossings_ab += 1;
-            } else if pb > pa {
-                crossings_ba += 1;
-            }
+fn pair_crossings(a: &[usize], b: &[usize]) -> (usize, usize) {
+    let mut less = 0;
+    let mut at_most = 0;
+    let mut crossings_ab = 0;
+    let mut crossings_ba = 0;
+    for &position in a {
+        while less < b.len() && b[less] < position {
+            less += 1;
         }
+        at_most = at_most.max(less);
+        while at_most < b.len() && b[at_most] == position {
+            at_most += 1;
+        }
+        crossings_ab += less;
+        crossings_ba += b.len() - at_most;
     }
     (crossings_ab, crossings_ba)
 }
@@ -166,23 +148,38 @@ fn transpose_bucket(
     if bucket.len() <= 1 {
         return;
     }
+    // Neighbor positions stay fixed throughout a transpose. Carry their
+    // sorted positions and tie-break key along when swapping nodes.
+    let mut keys: Vec<_> = bucket
+        .iter()
+        .map(|id| {
+            let mut adjacent: Vec<_> = neighbors
+                .get(id)
+                .into_iter()
+                .flatten()
+                .filter_map(|neighbor| positions.get(neighbor).copied())
+                .collect();
+            adjacent.sort_unstable();
+            (adjacent, node_order.get(id).copied().unwrap_or(usize::MAX))
+        })
+        .collect();
     let mut improved = true;
     while improved {
         improved = false;
         for i in 0..bucket.len().saturating_sub(1) {
-            let a = bucket[i].as_str();
-            let b = bucket[i + 1].as_str();
-            let (crossings_ab, crossings_ba) = pair_crossings(a, b, neighbors, positions);
+            let (a, order_a) = &keys[i];
+            let (b, order_b) = &keys[i + 1];
+            let (crossings_ab, crossings_ba) = pair_crossings(a, b);
             let should_swap = if crossings_ba < crossings_ab {
                 true
             } else if crossings_ba > crossings_ab {
                 false
             } else {
-                node_order.get(a).copied().unwrap_or(usize::MAX)
-                    > node_order.get(b).copied().unwrap_or(usize::MAX)
+                order_a > order_b
             };
             if should_swap {
                 bucket.swap(i, i + 1);
+                keys.swap(i, i + 1);
                 improved = true;
             }
         }
@@ -544,6 +541,36 @@ fn dfs_finish_order(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crossing_counts_match_pairwise_oracle_with_ties() {
+        for left in 0..81 {
+            for right in 0..81 {
+                let positions = |mut encoded: usize| {
+                    let mut values = [0; 4];
+                    for value in &mut values {
+                        *value = encoded % 3;
+                        encoded /= 3;
+                    }
+                    values.sort_unstable();
+                    values
+                };
+                let a = positions(left);
+                let b = positions(right);
+                let mut expected = (0, 0);
+                for x in a {
+                    for y in b {
+                        expected.0 += usize::from(x > y);
+                        expected.1 += usize::from(x < y);
+                    }
+                }
+                assert_eq!(pair_crossings(&a, &b), expected);
+            }
+        }
+        assert_eq!(pair_crossings(&[], &[0]), (0, 0));
+        assert_eq!(pair_crossings(&[0], &[]), (0, 0));
+    }
+
     use std::collections::HashMap;
 
     fn edge(from: &str, to: &str) -> crate::ir::Edge {

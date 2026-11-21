@@ -7,7 +7,7 @@ use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Styled,
     Window, assets::IconName, component::Icon, div, px,
 };
-use guiraffe_flamegraph::{ColourScheme, FlameGraph, FlameLayout, Frame, FrameSource, Orientation};
+use guiraffe_flamegraph::{ColourScheme, FlameGraph, Frame, FrameSource, Orientation};
 use guiraffe_tree::{Children, NodeId, Property, TreeData, TreeEvent, TreeSource, TreeView, Value};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};
 
@@ -74,9 +74,10 @@ fn flame(window: &mut Window, cx: &mut App) -> AnyView {
             Knob::toggle("Highlight render"),
         ],
         |_, cx| {
-            let layout = FlameLayout::new(Arc::new(Profile))
-                .unwrap_or_else(|error| panic!("Invalid demo profile {error:?}"));
-            let view = cx.new(|_| FlameGraph::new(Arc::new(layout)));
+            let view = cx.new(|cx| {
+                FlameGraph::from_source(Arc::new(Profile), cx)
+                    .unwrap_or_else(|error| panic!("Invalid demo profile {error:?}"))
+            });
             let log = EventLog::new(cx);
             EventLog::watch(&log, &view, cx);
             (view, log, Cell::new([0, 0, 0]))

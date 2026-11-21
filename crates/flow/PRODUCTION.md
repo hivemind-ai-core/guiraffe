@@ -39,3 +39,59 @@ The zoom regression measures arrow proportions and handle contact at 0.25×,
 0.5×, 1×, 2× and 4×. The showcase includes inspected 0.5× and 2× Flow
 snapshots on both GPUI backends. Arrowheads, handles, open-marker strokes,
 animated markers and connection previews share the camera scale.
+
+
+## Retained paint geometry
+
+The edge mesh cache holds at most 8,192 route entries and 16 MiB of
+position and UV data in exact-sized arrays, plus mesh and map-entry metadata. Each
+entry shares its immutable route with the scene. A route replacement
+invalidates that entry. Cached triangles use world coordinates and are
+shared across pan and zoom. If admission hits either limit, the next camera
+or canvas-size change drops cached entries outside the new visible set.
+Oversize meshes and meshes that cannot be admitted draw transiently.
+
+Grid and minimap geometry each retain one representation. The grid depends
+on canvas size, spacing and background style. The dense minimap is
+bounded to 8,100 vertices per layer. The edge submission batches reserve
+capacity based on the previous visible frame and GPUI owns their submitted
+vertices. The cache regression simulates 216,000 camera frames and checks
+both retained mesh limits on every frame.
+
+
+At 0.05× zoom and below, graphs with at least 4,096 nodes use the coarse
+overview. Between 0.05× and 0.10×, the overview activates when a viewport
+query finds more than 1,024 nodes. The BVH stops counting at the cutoff
+before the renderer collects visible IDs or tessellates edges. Sparse
+views, active gestures and accessibility rendering use detailed geometry.
+
+
+For mounted graphs with at least 4,096 nodes or edges, Flow validates the document
+during setup and computes routes as paint needs them. The first frame queries
+nearby nodes and edges. The first zoomed-out preview uses at most 4,096
+occupied cells. A cancellable background job builds immutable node and edge
+BVHs. Once indexed, incident-edge lookups can query the edge BVH at the
+affected node and verify the endpoint IDs. The edge BVH uses endpoint and control
+bounds, so indexed queries include viewport-crossing edges whose endpoints
+lie outside the screen. The renderer tests exact route bounds before
+submitting triangles.
+
+The deferred route cache uses edge ID and half-octave zoom buckets. It keeps
+up to 1,024 entries and 1 MiB of sampled points and compact vertex buffers.
+Eviction uses the last frame that accessed each entry. A document change
+clears cached routes and cancels stale background work. The immutable
+edge BVH stores bounds and IDs without the eager per-edge route table or
+the mutable index's ID-to-leaf map.
+
+
+At each zoom bucket, Flow simplifies deferred stroke geometry within an
+eighth of a screen pixel. Picking, labels and arrowheads use exact route
+points. On gpui-fast, large viewports with the default node renderer build
+the visible cards inline to reduce retained view state. Custom renderers and
+accessibility use the normal node entity path.
+
+The viewport uses a sized GPUI cached view boundary. Unchanged incremental
+window draws reuse the previous paint ranges without invoking Flow render
+callbacks. Camera, gesture and document notifications invalidate the viewport.
+GPUI's scene replay can allocate transient buffers. Forced window refreshes
+rebuild the viewport, and accessibility rendering takes the normal entity path.
