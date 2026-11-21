@@ -242,7 +242,9 @@ pub(crate) struct Preview {
 
 impl Render for Preview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = GuiraffeTheme::global(cx).clone();
+        // Translucent theme token: what lies beneath stays visible while moving, and the
+        // primary outline marks the ghost as "being moved" (not translucency alone).
+        let ghost = GuiraffeTheme::global(cx).drag_preview();
         let offset = self.position - self.origin.get();
         div()
             .absolute()
@@ -251,8 +253,9 @@ impl Render for Preview {
             .px_3()
             .py_2()
             .border_1()
-            .border_color(theme.surfaces().border.to_hsla())
-            .bg(theme.surfaces().surface.to_hsla())
+            .border_color(ghost.border.to_hsla())
+            .bg(ghost.background.to_hsla())
+            .text_color(ghost.foreground.to_hsla())
             .child(self.label.clone())
     }
 }
