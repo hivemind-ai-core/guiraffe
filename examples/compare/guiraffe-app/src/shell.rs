@@ -6,7 +6,7 @@ use gpui_kit::{
 };
 use guiraffe_components::{ActionIcon, Text, Title};
 use guiraffe_core::{GuiraffeTheme, Scheme, Size, Variant, set_scheme};
-use guiraffe_overlays::{Spotlight, search::Command};
+use guiraffe_overlays::{SpotlightAction, SpotlightState};
 use guiraffe_router::{Route, Router, routes};
 
 use crate::pages::{ChatPage, Dashboard, DocsPage, FormPage, GridPage};
@@ -57,18 +57,21 @@ pub struct Shell {
     pub docs: Option<Entity<DocsPage>>,
     pub chat: Option<Entity<ChatPage>>,
     pub form: Option<Entity<FormPage>>,
-    palette: Entity<Spotlight>,
+    palette: Entity<SpotlightState>,
 }
 
-fn commands() -> Vec<Command> {
-    let mut c: Vec<Command> = PAGES
+fn commands() -> Vec<SpotlightAction> {
+    let mut c: Vec<SpotlightAction> = PAGES
         .iter()
-        .map(|(p, label)| Command::new(p.to_path(), format!("Go to {label}")))
+        .map(|(p, label)| {
+            SpotlightAction::new(p.to_path(), format!("Go to {label}")).group("Navigate")
+        })
         .collect();
-    c.push(Command {
-        keywords: "dark light scheme".into(),
-        ..Command::new("theme", "Toggle theme")
-    });
+    c.push(
+        SpotlightAction::new("theme", "Toggle theme")
+            .group("View")
+            .keywords("dark light scheme"),
+    );
     c
 }
 
@@ -78,13 +81,15 @@ impl Shell {
         let page = router.select(cx, |p| *p);
         let r = router.clone();
         let palette = cx.new(|cx| {
-            Spotlight::new(commands(), window, cx, move |id, _, cx| {
-                if id == "theme" {
-                    toggle_theme(cx);
-                } else {
-                    r.navigate_path(id, cx);
-                }
-            })
+            SpotlightState::new(window, cx)
+                .actions(commands())
+                .on_activate(move |id, _, cx| {
+                    if id == "theme" {
+                        toggle_theme(cx);
+                    } else {
+                        r.navigate_path(id, cx);
+                    }
+                })
         });
         Self {
             router,
@@ -168,7 +173,7 @@ impl Render for Shell {
             .id("shell")
             .key_context("CompareShell")
             .on_action(move |_: &OpenPalette, window, cx| {
-                let _ = Spotlight::open(&palette, window, cx);
+                let _ = SpotlightState::open(&palette, window, cx);
             })
             .size_full()
             .flex()
