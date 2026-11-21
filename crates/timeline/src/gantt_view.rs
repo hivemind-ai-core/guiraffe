@@ -564,6 +564,44 @@ impl Geometry {
     }
 }
 
+fn paint_bar(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    fill: Hsla,
+    border: Hsla,
+    selection: Option<Hsla>,
+) {
+    let corners = gpui_kit::Corners::all(px(4.0)).clamp_radii_for_quad_size(bounds.size);
+    let border_style = gpui_kit::BorderStyle::Solid;
+    window.paint_quad(gpui_kit::quad(
+        bounds,
+        corners,
+        fill,
+        gpui_kit::Edges::default(),
+        gpui_kit::transparent_black(),
+        border_style,
+    ));
+    // Match the styled bar: draw the selection overlay inside the bar's outline.
+    if let Some(selection) = selection {
+        window.paint_quad(gpui_kit::quad(
+            bounds,
+            corners,
+            gpui_kit::transparent_black(),
+            gpui_kit::Edges::all(px(2.0)),
+            selection,
+            border_style,
+        ));
+    }
+    window.paint_quad(gpui_kit::quad(
+        bounds,
+        corners,
+        gpui_kit::transparent_black(),
+        gpui_kit::Edges::all(px(1.0)),
+        border,
+        border_style,
+    ));
+}
+
 fn arrow(
     window: &mut Window,
     from: gpui_kit::Point<Pixels>,
@@ -851,24 +889,13 @@ impl Render for GanttView {
                                             };
                                             let colors =
                                                 if sc.critical() { critical } else { normal };
-                                            window.paint_quad(gpui_kit::quad(
+                                            paint_bar(
+                                                window,
                                                 bounds,
-                                                gpui_kit::Corners::all(px(4.0)),
                                                 colors.background.to_hsla(),
-                                                gpui_kit::Edges::all(px(1.0)),
                                                 colors.foreground.to_hsla(),
-                                                gpui_kit::BorderStyle::Solid,
-                                            ));
-                                            if selected_row == Some(i) {
-                                                window.paint_quad(gpui_kit::quad(
-                                                    bounds,
-                                                    gpui_kit::Corners::all(px(4.0)),
-                                                    gpui_kit::transparent_black(),
-                                                    gpui_kit::Edges::all(px(2.0)),
-                                                    selected_color,
-                                                    gpui_kit::BorderStyle::Solid,
-                                                ));
-                                            }
+                                                (selected_row == Some(i)).then_some(selected_color),
+                                            );
                                         }
                                     },
                                 )
