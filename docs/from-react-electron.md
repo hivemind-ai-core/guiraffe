@@ -18,8 +18,8 @@ to its examples.
 | Controlled input widget (`<input value onChange>`) | **Control**: an `Entity<XState>` that owns interaction state and emits events, rendered with `X::new(&state)` | `InputState`/`Input`, `SegmentedControl`, `GridHandle`/`DataGrid`. See [spec/00-api-conventions.md](../spec/00-api-conventions.md) §1. |
 | Props | Builder methods named after Mantine props: `.size(Size::Md)`, `.color(ColorName::Teal)`, `.dimmed(true)`. In `ui!`, `name: value` | `#[component]` makes each function argument a prop. `#[prop(default)]` makes it optional. |
 | JSX | The `ui!` macro, or plain builder chains (`div().flex().child(..)`) | Both produce the same GPUI elements. See [ui-macro.md](ui-macro.md). |
-| `useState` + `setState` | A field on the view, mutated in `cx.listener(|this, _, _, cx| { …; cx.notify() })` | Nothing re-renders until you call `cx.notify()`, and then only that view. |
-| Redux / Zustand / re-frame | `guiraffe_state::Store<S>`: typed `Event`s, pure handlers, effects as data, undo | `store.select(cx, |s| …)` is a selector. The view re-renders only when the selected value changes. |
+| `useState` + `setState` | A field on the view, mutated in `cx.listener(\|this, _, _, cx\| { …; cx.notify() })` | Nothing re-renders until you call `cx.notify()`. On GPUI Fast only that view re-renders; on upstream GPUI its ancestors do too (see below). |
+| Redux / Zustand / re-frame | `guiraffe_state::Store<S>`: typed `Event`s, pure handlers, effects as data, undo | `store.select(cx, \|s\| …)` is a selector. The view re-renders only when the selected value changes. |
 | `useMemo` / reselect | `store.select_memo(cx, input, compute)` | `compute` runs only when `input` changes. |
 | Context (`createContext`, `useContext`) | `GuiraffeTheme` (an app-wide global) and `StyleContext` (inherited down the tree with `provide(StylePatch, child)`) | Read them with `GuiraffeTheme::global(cx)` and `StyleContext::current()`. |
 | React Router / TanStack Router | `guiraffe_router`: `routes!` declares a typed route enum, `Router<R>` navigates | Routes are enum values (`Page::Todo { id: 7 }`), so a typo in a path is a compile error. Paths still round-trip for deep links. |
@@ -58,7 +58,7 @@ re-rendering its parent and siblings 12 times over 12 frames on upstream, and 0 
 GPUI Fast. Apps and templates default to GPUI Fast. Library crates work on both.
 
 **Virtualise anything long.** A React app reaches for `react-window` once a list gets big.
-In GUIraffe it's the default for big collections. `DataGrid` builds only the visible rows
+GUIraffe's collection widgets are virtualised from the start. `DataGrid` builds only the visible rows
 *and* columns, borrows cells from your data without copying, and sorts and filters by
 producing a row permutation, on the background executor for large data. GPUI's
 `uniform_list` and `list` do the same for simple lists. Example 4 in the guide shows 5,000
@@ -208,14 +208,15 @@ Sources:
   (raw data in `bench/electron/results/2026-11-21_084034/`). That run measured only
   GUIraffe.
 - Electron startup, memory and size come from the full two-app run on 2026-11-20
-  (`bench/electron/results/2026-11-20_214939/`). That run is on `release/0.1`
-  (commit `539a2ed`) and isn't part of this branch. `bench/electron/RESULTS.md` on this
-  branch still says no valid measurement exists yet.
+  (`bench/electron/results/2026-11-20_214939/`). That run was committed on `release/0.1`
+  (commit `539a2ed`) and its files aren't in this tree, where `bench/electron/RESULTS.md`
+  still says no valid measurement exists. The two columns therefore come from runs on
+  different days, on the same machine with the same startup and memory method.
 - Frame pacing uses the matched metric, where both apps sample a monotonic clock at
   callback entry (`performance.now()` inside Chromium's rAF, `Instant::now()` inside GPUI's
   `on_next_frame`). The 2026-11-20 Electron frame figures used the rAF timestamp argument
   instead, which is a different sampling point, so they aren't comparable and aren't
-  quoted here. The raw data for the callback-entry rerun isn't committed to this branch yet.
+  quoted here. The raw data for the callback-entry run isn't in the repository yet.
 
 Neither "cold" start is a true cold start: the machine had no passwordless sudo to drop the
 page cache. Electron's startup marker comes after showing the window and two rAFs. GUIraffe's
