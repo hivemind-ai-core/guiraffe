@@ -58,4 +58,13 @@ check that views without an explicit opt-in preserve pointer focus.
   pan, zoom and key edits. The key canvas uses four-pixel spacing for dense
   undecorated rows without selection. Decorated, summary and selected rows
   retain their individual marks. Plain channels store only the sorted key
-  times, with no parallel decoration array.
+  times, with no parallel decoration array. The key canvas traverses the
+  visible rows at paint time using the current scroll offset and keeps no
+  key-mark vector. GPUI receives owned path meshes. The pinned backends
+  still invalidate the editor view when scrolling shifts the row headers.
+- The curve editor indexes visible markers by time. When more than 512
+  markers from one series intersect the viewport, consecutive unselected
+  markers share a mesh. Selected markers and tangent handles remain
+  individually painted. The editor retains no marker geometry between
+  frames. The viewport test varies the number of offscreen keys and keeps
+  the viewport fixed.
