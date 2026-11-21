@@ -333,6 +333,38 @@ mod tests {
 
     proptest! {
         #[test]
+        fn interval_index_retains_connectors_with_offscreen_endpoints(
+            routes in prop::collection::vec((0u64..64, 0u64..64), 0..200),
+            start in 0usize..64,
+            length in 1usize..32,
+        ) {
+            let tracks = (0..2).map(|id| EventTrack {
+                id, label: id.to_string(), color: None,
+            }).collect();
+            let events = (0..128).map(|id| TimelineEvent {
+                id, track: id % 2, position: (id / 2) as i64, label: String::new(),
+                content: None, tags: vec![], color: None,
+            }).collect();
+            let links: Vec<_> = routes.into_iter().map(|(a, b)| EventLink {
+                source: a.min(b) * 2, destination: a.max(b) * 2 + 1,
+                kind: LinkKind::Branch, color: None,
+            }).collect();
+            let model = EventModel::new(tracks, events, links.clone())
+                .unwrap_or_else(|error| panic!("{error}"));
+            let end = start + length;
+            let mut expected: Vec<_> = links.into_iter().filter(|link| {
+                link.source / 2 < end as u64 && link.destination / 2 >= start as u64
+            }).map(|link| (link.source, link.destination)).collect();
+            expected.sort_unstable();
+            let mut found = Vec::new();
+            model.links(start..end, |route| found.push((route.link.source, route.link.destination)));
+            found.sort_unstable();
+            prop_assert_eq!(found, expected);
+        }
+    }
+
+    proptest! {
+        #[test]
         fn route_attaches_and_crosses_through_slot_gutter(from in 0usize..100, distance in 0usize..100, from_track in 0usize..15, lane_delta in 1usize..10) {
             let to = from + distance;
             let to_track = from_track + lane_delta;

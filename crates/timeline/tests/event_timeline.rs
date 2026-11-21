@@ -2,8 +2,7 @@ use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, Role, Styled, TestAppContext, Window, div, px,
-    test::{TestQueryExt, TestWindowExt},
+    ParentElement, Render, Role, Styled, TestAppContext, Window, div, px, test::TestWindowExt,
 };
 use guiraffe_timeline::{
     EventModel, EventOrientation, EventTimeline, EventTimelineEvent, EventTimelineState,
@@ -98,19 +97,22 @@ fn navigation_reveals_offscreen_events_and_pointer_preserves_focus(cx: &mut Test
                 host.activated.clone(),
             )
         });
-        vcx.update(|window, cx| {
+        let original_bounds = vcx.update(|window, cx| {
             window.focus(&previous, cx);
             window.render_frame(cx);
+            let bounds = window.find(("event-timeline-item", 0usize)).bounds();
             window.click(("event-timeline-item", 0usize), cx);
             assert!(previous.is_focused(window));
             window.focus_next(cx);
             assert!(timeline.read(cx).focus_handle(cx).is_focused(window));
+            bounds
         });
         vcx.update(|window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("event-timeline").role(), Some(Role::ListBox));
             let option = window.find(("event-timeline-item", 0usize));
             assert_eq!(option.role(), Some(Role::ListBoxOption));
+            assert_eq!(option.bounds(), original_bounds);
             assert_eq!(option.selected(), Some(true));
             assert!(
                 option

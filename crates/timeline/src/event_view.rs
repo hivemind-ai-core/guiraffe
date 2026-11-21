@@ -504,7 +504,7 @@ impl Render for EventTimelineState {
                     .selected(chosen);
                 let listener = event_owner.clone();
                 let title = div()
-                    .id(("event-timeline-item", placement.event))
+                    .id(("event-timeline-item", item.id))
                     .test_support()
                     .when(current, |item| item.aria_active_descendant())
                     .aria_position_in_set(placement.row + 1)
