@@ -50,37 +50,64 @@ pub struct Segment {
     pub highlighted: bool,
 }
 
-// Sequential source IDs need only a packed row/offset pair. Fall back to
-// the general index as soon as an arbitrary ID or wide location appears.
+// Sequential IDs directly index a packed location. Reserve the high bit
+// for non-root rows so a flat profile has room for over two billion spans.
+#[derive(Default)]
+struct SequentialLocations {
+    packed: Vec<u32>,
+    wide: HashMap<usize, (usize, usize)>,
+}
+
+impl SequentialLocations {
+    fn get(&self, index: usize) -> Option<(usize, usize)> {
+        let &value = self.packed.get(index)?;
+        match value {
+            u32::MAX => self.wide.get(&index).copied(),
+            value if value < (1 << 31) => Some((0, value as usize)),
+            value => Some((
+                ((value >> 22) & 511) as usize,
+                (value & ((1 << 22) - 1)) as usize,
+            )),
+        }
+    }
+
+    fn push(&mut self, depth: usize, offset: usize) {
+        let value = if depth == 0 && offset < 1 << 31 {
+            offset as u32
+        } else if depth < 512 && offset < 1 << 22 {
+            (1 << 31) | ((depth as u32) << 22) | offset as u32
+        } else {
+            u32::MAX
+        };
+        if value == u32::MAX {
+            self.wide.insert(self.packed.len(), (depth, offset));
+        }
+        self.packed.push(value);
+    }
+}
+
 enum Locations {
-    Sequential(Vec<(u32, u32)>),
+    Sequential(SequentialLocations),
     Arbitrary(HashMap<FrameId, (usize, usize)>),
 }
 
 impl Locations {
     fn get(&self, id: FrameId) -> Option<(usize, usize)> {
         match self {
-            Self::Sequential(locations) => locations
-                .get(usize::try_from(id).ok()?)
-                .map(|&(depth, offset)| (depth as usize, offset as usize)),
+            Self::Sequential(locations) => locations.get(usize::try_from(id).ok()?),
             Self::Arbitrary(locations) => locations.get(&id).copied(),
         }
     }
 
     fn insert(&mut self, id: FrameId, depth: usize, offset: usize) -> Result<(), LayoutError> {
         if let Self::Sequential(locations) = self {
-            if id == locations.len() as u64
-                && let (Ok(depth), Ok(offset)) = (u32::try_from(depth), u32::try_from(offset))
-            {
-                locations.push((depth, offset));
+            if id == locations.packed.len() as u64 {
+                locations.push(depth, offset);
                 return Ok(());
             }
-            let mut index = HashMap::with_capacity(locations.len() + 1);
+            let mut index = HashMap::with_capacity(locations.packed.len() + 1);
             index.extend(
-                locations
-                    .iter()
-                    .enumerate()
-                    .map(|(id, &(depth, offset))| (id as u64, (depth as usize, offset as usize))),
+                (0..locations.packed.len()).filter_map(|id| Some((id as u64, locations.get(id)?))),
             );
             *self = Self::Arbitrary(index);
         }
@@ -93,20 +120,130 @@ impl Locations {
     }
 }
 
+const SPAN_BLOCK: usize = 1024;
+
+enum SpanBlock {
+    Linear {
+        first: Span,
+        index_step: usize,
+        coordinate_step: f64,
+        len: usize,
+    },
+    Explicit(Vec<Span>),
+}
+
+impl SpanBlock {
+    fn get(&self, offset: usize) -> Option<Span> {
+        match self {
+            Self::Linear { first, .. } if offset == 0 => Some(*first),
+            Self::Linear {
+                first,
+                index_step,
+                coordinate_step,
+                len,
+            } if offset < *len => {
+                let delta = *coordinate_step * offset as f64;
+                Some(Span {
+                    index: first.index + *index_step * offset,
+                    left: first.left + delta,
+                    right: first.right + delta,
+                })
+            }
+            Self::Explicit(spans) => spans.get(offset).copied(),
+            _ => None,
+        }
+    }
+
+    fn push(&mut self, span: Span) {
+        if let Self::Linear {
+            first,
+            index_step,
+            coordinate_step,
+            len,
+        } = self
+        {
+            if *len == 1 {
+                *index_step = span.index - first.index;
+                *coordinate_step = span.left - first.left;
+            }
+            let delta = *coordinate_step * *len as f64;
+            if index_step
+                .checked_mul(*len)
+                .and_then(|step| first.index.checked_add(step))
+                == Some(span.index)
+                && (first.left + delta).to_bits() == span.left.to_bits()
+                && (first.right + delta).to_bits() == span.right.to_bits()
+            {
+                *len += 1;
+                return;
+            }
+            let mut spans = Vec::with_capacity((*len + 1).next_power_of_two().min(SPAN_BLOCK));
+            spans.extend((0..*len).filter_map(|index| self.get(index)));
+            *self = Self::Explicit(spans);
+        }
+        if let Self::Explicit(spans) = self {
+            spans.push(span);
+        }
+    }
+}
+
+#[derive(Default)]
+struct Spans {
+    blocks: Vec<SpanBlock>,
+    len: usize,
+}
+
+impl Spans {
+    fn push(&mut self, span: Span) {
+        if self.len.is_multiple_of(SPAN_BLOCK) {
+            self.blocks.push(SpanBlock::Linear {
+                first: span,
+                index_step: 0,
+                coordinate_step: 0.,
+                len: 1,
+            });
+        } else if let Some(block) = self.blocks.last_mut() {
+            block.push(span);
+        }
+        self.len += 1;
+    }
+
+    fn get(&self, index: usize) -> Option<Span> {
+        self.blocks.get(index / SPAN_BLOCK)?.get(index % SPAN_BLOCK)
+    }
+
+    fn last(&self) -> Option<Span> {
+        self.get(self.len.checked_sub(1)?)
+    }
+
+    fn partition_point(&self, range: Range<usize>, predicate: impl Fn(Span) -> bool) -> usize {
+        let mut low = range.start;
+        let mut high = range.end;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if self.get(mid).is_some_and(&predicate) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low
+    }
+}
+
 #[derive(Default)]
 struct FlameRow {
-    spans: Vec<Span>,
+    spans: Spans,
     widest: f64,
+    last_right: f64,
     has_gap: bool,
 }
 
 impl FlameRow {
     fn push(&mut self, span: Span) {
         self.widest = self.widest.max(span.right - span.left);
-        self.has_gap |= self
-            .spans
-            .last()
-            .is_some_and(|last| last.right != span.left);
+        self.has_gap |= self.spans.len != 0 && self.last_right != span.left;
+        self.last_right = span.right;
         self.spans.push(span);
     }
 
@@ -119,7 +256,7 @@ impl FlameRow {
             return None;
         }
         let pixel = |x: f64| ((x - domain.start) * scale).clamp(0., width);
-        let start = pixel(self.spans.first()?.left);
+        let start = pixel(self.spans.get(0)?.left);
         let end = pixel(self.spans.last()?.right);
         // Keep the detailed path for tiny clipped fragments at either edge.
         (end - start >= 1.).then_some(start..end)
@@ -146,7 +283,7 @@ impl FlameLayout {
         cancelled: impl Fn() -> bool,
     ) -> Result<(Self, bool), LayoutError> {
         let mut result = Self {
-            locations: Locations::Sequential(Vec::new()),
+            locations: Locations::Sequential(SequentialLocations::default()),
             source,
             rows: Vec::new(),
             extent: 0.,
@@ -161,7 +298,7 @@ impl FlameLayout {
                 && frame.id == 0
                 && let Locations::Sequential(locations) = &mut result.locations
             {
-                locations.reserve_exact(result.source.len());
+                locations.packed.reserve_exact(result.source.len());
             }
             if !frame.total.is_finite()
                 || !frame.self_value.is_finite()
@@ -201,7 +338,7 @@ impl FlameLayout {
                 result.rows.push(FlameRow::default());
             }
             let row = &mut result.rows[depth];
-            result.locations.insert(frame.id, depth, row.spans.len())?;
+            result.locations.insert(frame.id, depth, row.spans.len)?;
             row.push(Span { index, left, right });
             stack.push((frame.id, left, (right - frame.self_value).max(left)));
         }
@@ -216,7 +353,7 @@ impl FlameLayout {
         0.0..self.extent
     }
 
-    fn span(&self, id: FrameId) -> Option<&Span> {
+    fn span(&self, id: FrameId) -> Option<Span> {
         let (depth, offset) = self.locations.get(id)?;
         self.rows.get(depth)?.spans.get(offset)
     }
@@ -264,10 +401,10 @@ impl FlameLayout {
         let adjacent = if forward {
             self.hit(depth, current.right)?
         } else {
-            let previous = row[..offset]
-                .partition_point(|span| span.left < current.left)
+            let previous = row
+                .partition_point(0..offset, |span| span.left < current.left)
                 .checked_sub(1)?;
-            let span = &row[previous];
+            let span = row.get(previous)?;
             if span.left == span.right || span.right != current.left {
                 return None;
             }
@@ -278,7 +415,7 @@ impl FlameLayout {
 
     pub fn hit(&self, depth: usize, x: f64) -> Option<FrameId> {
         let row = &self.rows.get(depth)?.spans;
-        let span = row.get(row.partition_point(|span| span.right <= x))?;
+        let span = row.get(row.partition_point(0..row.len, |span| span.right <= x))?;
         (span.left <= x && x < span.right).then(|| self.source.frame(span.index).id)
     }
 
@@ -304,16 +441,17 @@ impl FlameLayout {
             return;
         }
         let pixel = |x: f64| ((x - domain.start) * scale).clamp(0., width);
-        let mut cursor = row.partition_point(|span| span.right <= domain.start);
+        let mut cursor = row.partition_point(0..row.len, |span| span.right <= domain.start);
         while let Some(span) = row.get(cursor).filter(|span| span.left < domain.end) {
             let x = pixel(span.left);
             let right = pixel(span.right);
             let mut end = cursor + 1;
             if right - x < 1. {
                 let bucket_end = domain.start + (x.floor() + 2.) / scale;
-                end += skip_bucket(&row[end..], bucket_end);
+                end = skip_bucket(row, end, bucket_end);
             }
-            let range_end = pixel(row[end - 1].right).max((x + 1.).min(width));
+            let range_end = pixel(row.get(end - 1).map_or(span.right, |last| last.right))
+                .max((x + 1.).min(width));
             let highlighted = search.is_some_and(|search| {
                 let Some(matches) = search.rows.get(depth) else {
                     return false;
@@ -391,9 +529,8 @@ impl FlameLayout {
                 .rows
                 .iter()
                 .map(|row| {
-                    row.spans
-                        .iter()
-                        .enumerate()
+                    (0..row.spans.len)
+                        .filter_map(|offset| row.spans.get(offset).map(|span| (offset, span)))
                         .filter(|(_, span)| {
                             label.clear();
                             label.extend(
@@ -417,17 +554,21 @@ pub struct Search {
     rows: Vec<Vec<usize>>,
 }
 
-fn skip_bucket(spans: &[Span], right: f64) -> usize {
-    // Adjacent pixel buckets commonly cover only a few frames. Bound the
-    // search from the near end so its cost depends on the frames skipped.
+fn skip_bucket(spans: &Spans, start: usize, right: f64) -> usize {
+    let remaining = spans.len - start;
     let mut low = 0;
     let mut high = 1;
-    while high <= spans.len() && spans[high - 1].right <= right {
+    while high <= remaining
+        && spans
+            .get(start + high - 1)
+            .is_some_and(|span| span.right <= right)
+    {
         low = high;
         high = high.saturating_mul(2);
     }
-    let high = high.min(spans.len());
-    low + spans[low..high].partition_point(|span| span.right <= right)
+    spans.partition_point(start + low..start + high.min(remaining), |span| {
+        span.right <= right
+    })
 }
 
 #[cfg(test)]
@@ -471,7 +612,7 @@ mod tests {
         for count in [10_000, 1_000_000, 10_000_000] {
             let layout = FlameLayout::new(Arc::new(Uniform(count)))?;
             assert!(matches!(&layout.locations, Locations::Sequential(index)
-                if index.len() == count && index.capacity() == count));
+                if index.packed.len() == count && index.packed.capacity() == count && index.wide.is_empty()));
             let width = 1_000.;
             assert_eq!(
                 layout.rows[0].overview(&layout.domain(), width),
@@ -522,7 +663,7 @@ mod tests {
 
     #[test]
     fn sequential_index_falls_back_and_checks_duplicates() -> Result<(), LayoutError> {
-        let mut index = Locations::Sequential(Vec::new());
+        let mut index = Locations::Sequential(SequentialLocations::default());
         index.insert(0, 0, 1)?;
         index.insert(u64::MAX, 2, 3)?;
         assert_eq!(index.get(0), Some((0, 1)));
@@ -530,6 +671,60 @@ mod tests {
         assert_eq!(index.get(1), None);
         assert_eq!(index.insert(0, 0, 2), Err(LayoutError::DuplicateId(0)));
         Ok(())
+    }
+
+    #[test]
+    fn span_blocks_preserve_coordinates_through_linear_and_explicit_storage() {
+        let mut spans = Spans::default();
+        let expected: Vec<_> = (0..2 * SPAN_BLOCK + 1)
+            .map(|index| {
+                let left = if index < SPAN_BLOCK {
+                    index as f64
+                } else {
+                    index as f64 * 2.
+                };
+                Span {
+                    index: index * 500,
+                    left,
+                    right: left + if index == SPAN_BLOCK + 10 { 0.75 } else { 1. },
+                }
+            })
+            .collect();
+        for &span in &expected {
+            spans.push(span);
+        }
+        assert!(matches!(
+            &spans.blocks[..],
+            [
+                SpanBlock::Linear { .. },
+                SpanBlock::Explicit(_),
+                SpanBlock::Linear { .. }
+            ]
+        ));
+        for (index, span) in expected.iter().enumerate() {
+            let actual = spans.get(index).expect("stored span");
+            assert_eq!(actual.index, span.index);
+            assert_eq!(actual.left.to_bits(), span.left.to_bits());
+            assert_eq!(actual.right.to_bits(), span.right.to_bits());
+        }
+    }
+
+    #[test]
+    fn packed_locations_keep_wide_and_reserved_values() {
+        let mut locations = SequentialLocations::default();
+        for (id, (depth, offset)) in [
+            (0, 10_000_000),
+            (499, 19_999),
+            (511, (1 << 22) - 1),
+            (512, 0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            locations.push(depth, offset);
+            assert_eq!(locations.get(id), Some((depth, offset)));
+        }
+        assert_eq!(locations.wide.len(), 2);
     }
 
     proptest! {
@@ -542,8 +737,12 @@ mod tests {
                 .map(|(index, end)| Span { index, left: 0., right: f64::from(end) })
                 .collect::<Vec<_>>();
             let edge = f64::from(edge);
+            let mut indexed = Spans::default();
+            for &span in &spans {
+                indexed.push(span);
+            }
             prop_assert_eq!(
-                skip_bucket(&spans, edge),
+                skip_bucket(&indexed, 0, edge),
                 spans.partition_point(|span| span.right <= edge),
             );
         }
