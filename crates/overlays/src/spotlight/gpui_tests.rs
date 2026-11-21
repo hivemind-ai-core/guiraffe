@@ -238,10 +238,15 @@ fn pointer_hover_and_click_keep_input_focus(cx: &mut TestAppContext) {
 
 struct Inline {
     state: Entity<SpotlightState>,
+    /// A tab stop after the palette.
+    next: FocusHandle,
 }
 impl Render for Inline {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(Spotlight::new(&self.state))
+        div()
+            .size_full()
+            .child(Spotlight::new(&self.state))
+            .child(div().size(px(10.)).track_focus(&self.next))
     }
 }
 
@@ -256,7 +261,10 @@ fn open_inline(
             cx.open_window(gpui_kit::WindowOptions::default(), |window, cx| {
                 let state = cx.new(|cx| build(SpotlightState::new(window, cx)));
                 slot = Some(state.clone());
-                let view = cx.new(|_| Inline { state });
+                let view = cx.new(|cx| Inline {
+                    state,
+                    next: cx.focus_handle().tab_stop(true),
+                });
                 crate::root(view, window, cx)
             })
         })
@@ -287,6 +295,21 @@ fn inline_click_runs_without_moving_focus(cx: &mut TestAppContext) {
     cx.run_until_parked();
     // Inline: the click and the Enter on the clicked (now selected) row both run it.
     assert_eq!(*log.borrow(), ["commit", "commit"]);
+}
+
+#[gpui_kit::test]
+fn inline_tab_moves_focus_instead_of_trapping_it(cx: &mut TestAppContext) {
+    let (handle, state) = open_inline(cx, |s| s.actions(actions()));
+    cx.update_window(handle.into(), |_, window, cx| {
+        let input = input_focus(&state, cx);
+        input.focus(window, cx);
+        window.render_frame(cx);
+        let before = selected(&state, cx);
+        window.press("tab", cx);
+        assert_eq!(selected(&state, cx), before, "no group cycling inline");
+        assert!(!input.is_focused(window), "Tab leaves the inline palette");
+    })
+    .expect("window");
 }
 
 #[gpui_kit::test]

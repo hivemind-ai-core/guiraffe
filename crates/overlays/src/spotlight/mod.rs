@@ -31,7 +31,8 @@
 //! ```
 //!
 //! Keyboard (key context `GrSpotlight`, rebindable): ↑/↓ (and Ctrl+P/Ctrl+N) move, PageUp/
-//! PageDown jump, Tab/Shift+Tab cycle groups, Enter runs, Escape closes. The search input
+//! PageDown jump, Tab/Shift+Tab cycle groups in the overlay (inline they move focus as
+//! usual), Enter runs, Escape closes. The search input
 //! keeps keyboard focus throughout; pointer hover and clicks on rows never take it.
 mod action;
 #[cfg(test)]
@@ -1012,12 +1013,24 @@ impl Render for SpotlightState {
                 let moved = this.model.move_clamped(-8);
                 this.navigate(moved, cx);
             }))
-            .on_action(cx.listener(|this, _: &NextGroup, _, cx| {
+            .on_action(cx.listener(|this, _: &NextGroup, window, cx| {
+                // Inline, Tab keeps its usual meaning so the page has no keyboard trap;
+                // inside the overlay (a focus-trapped dialog) it cycles groups.
+                if this.overlay.is_none() {
+                    window.focus_next(cx);
+                    return;
+                }
                 this.sync_query(cx);
                 let moved = this.model.cycle_section(true);
                 this.navigate(moved, cx);
             }))
-            .on_action(cx.listener(|this, _: &PreviousGroup, _, cx| {
+            .on_action(cx.listener(|this, _: &PreviousGroup, window, cx| {
+                // Inline, Tab keeps its usual meaning so the page has no keyboard trap;
+                // inside the overlay (a focus-trapped dialog) it cycles groups.
+                if this.overlay.is_none() {
+                    window.focus_prev(cx);
+                    return;
+                }
                 this.sync_query(cx);
                 let moved = this.model.cycle_section(false);
                 this.navigate(moved, cx);
