@@ -28,15 +28,18 @@ pub(in crate::text) fn parse_with_cancel(
     cancelled: impl Fn() -> bool,
 ) -> Result<ParsedDocument, SharedString> {
     let options = cx.markdown_extensions.parse_options();
-    let mut root = parse_ast_with_cancel(source, &options, &cancelled)?;
-    if cancelled() {
-        return Err("Markdown parse superseded".into());
-    }
-    let mut prose = options;
+    let mut prose = cx.markdown_extensions.parse_options();
     prose.constructs.math_text = false;
     prose.constructs.math_flow = false;
-    flatten_unclaimed_math(&mut root, source, &prose, cx);
-    Ok(ast_to_document(source, root, cx))
+    let mut blocks = Vec::new();
+    visit_ast_sections(source, &options, &cancelled, |mut root| {
+        flatten_unclaimed_math(&mut root, source, &prose, cx);
+        blocks.extend(ast_into_blocks(source, root, cx));
+    })?;
+    Ok(ParsedDocument {
+        source: source.to_owned().into(),
+        blocks: Arc::new(blocks),
+    })
 }
 
 const CHUNK_BYTES: usize = 8 * 1024;
@@ -113,45 +116,42 @@ pub(in crate::text) fn first_chunk_end(source: &str, options: &ParseOptions) -> 
         .map(|point| point.offset)
 }
 
-/// Parse Markdown using independent sections when their boundaries are safe.
-/// All positions address the original source.
-pub fn parse_markdown_ast(source: &str, options: &ParseOptions) -> Result<Node, SharedString> {
-    parse_ast_with_cancel(source, options, &|| false)
+/// Visit the Markdown AST in source order, releasing each section after the
+/// callback returns. Node positions always address the entire source. A
+/// document with references or an ambiguous boundary is visited once.
+pub fn visit_markdown_sections(
+    source: &str,
+    options: &ParseOptions,
+    visit: impl FnMut(Node),
+) -> Result<(), SharedString> {
+    visit_ast_sections(source, options, &|| false, visit)
 }
 
-fn parse_ast_with_cancel(
+fn visit_ast_sections(
     source: &str,
     options: &ParseOptions,
     cancelled: &dyn Fn() -> bool,
-) -> Result<Node, SharedString> {
-    let section = |text| {
+    mut visit: impl FnMut(Node),
+) -> Result<(), SharedString> {
+    let starts = chunk_starts(source, options);
+    let origin = Point::new(1, 1, 0);
+    let sections = std::iter::once(&origin).chain(&starts);
+    for (index, origin) in sections.enumerate() {
         if cancelled() {
             return Err("Markdown parse superseded".into());
         }
-        markdown::to_mdast(text, options).map_err(|error| SharedString::from(error.to_string()))
-    };
-    let starts = chunk_starts(source, options);
-    let Some(first) = starts.first() else {
-        return section(source);
-    };
-    let Node::Root(mut root) = section(&source[..first.offset])? else {
-        return section(source);
-    };
-    for (index, origin) in starts.iter().enumerate() {
-        let end = starts
-            .get(index + 1)
-            .map_or(source.len(), |point| point.offset);
-        let mut chunk = section(&source[origin.offset..end])?;
-        shift_positions(&mut chunk, origin);
-        let Node::Root(mut chunk) = chunk else {
-            return section(source);
-        };
-        if let (Some(document), Some(position)) = (&mut root.position, chunk.position.take()) {
-            document.end = position.end;
+        let end = starts.get(index).map_or(source.len(), |point| point.offset);
+        let mut section = markdown::to_mdast(&source[origin.offset..end], options)
+            .map_err(|error| SharedString::from(error.to_string()))?;
+        if cancelled() {
+            return Err("Markdown parse superseded".into());
         }
-        root.children.append(&mut chunk.children);
+        if origin.offset != 0 {
+            shift_positions(&mut section, origin);
+        }
+        visit(section);
     }
-    Ok(Node::Root(root))
+    Ok(())
 }
 
 /// Math parsing is on by default, so prose that merely contains two dollar
@@ -1104,31 +1104,26 @@ fn collect_definitions(node: &Node, definitions: &mut BTreeMap<String, LinkMark>
     }
 }
 
-fn ast_to_document(source: &str, root: mdast::Node, cx: &mut NodeContext) -> ParsedDocument {
+fn ast_into_blocks(
+    source: &str,
+    root: mdast::Node,
+    cx: &mut NodeContext,
+) -> impl Iterator<Item = BlockNode> {
     let mut definitions = BTreeMap::new();
     collect_definitions(&root, &mut definitions);
     for (identifier, definition) in definitions {
         cx.add_ref(identifier.into(), definition);
     }
 
-    let root = match root {
-        Node::Root(r) => r,
-        _ => panic!("expected root node"),
-    };
-
     let has_surfaces = cx.markdown_extensions.has_block_surfaces();
-    let blocks = root
-        .children
-        .into_iter()
-        .map(|node| match node {
-            Node::Blockquote(quote) if has_surfaces => blockquote_to_node(source, quote, cx),
-            node => ast_to_node(source, node, cx),
-        })
-        .collect();
-    ParsedDocument {
-        source: source.to_string().into(),
-        blocks: Arc::new(blocks),
-    }
+    let children = match root {
+        Node::Root(root) => root.children,
+        node => vec![node],
+    };
+    children.into_iter().map(move |node| match node {
+        Node::Blockquote(quote) if has_surfaces => blockquote_to_node(source, quote, cx),
+        node => ast_to_node(source, node, cx),
+    })
 }
 
 /// A top-level blockquote, which is a block surface when it opens with the
@@ -2982,6 +2977,25 @@ mod tests {
 mod chunk_tests {
     use super::*;
 
+    fn parse_markdown_ast(source: &str, options: &ParseOptions) -> Node {
+        let mut root = None::<mdast::Root>;
+        visit_markdown_sections(source, options, |section| {
+            let Node::Root(mut section) = section else {
+                panic!("expected root node");
+            };
+            if let Some(root) = &mut root {
+                if let (Some(document), Some(position)) = (&mut root.position, section.position) {
+                    document.end = position.end;
+                }
+                root.children.append(&mut section.children);
+            } else {
+                root = Some(section);
+            }
+        })
+        .unwrap();
+        Node::Root(root.unwrap())
+    }
+
     #[test]
     fn chunking_preserves_ast_and_positions() {
         let blocks = [
@@ -3002,7 +3016,7 @@ mod chunk_tests {
             }
             assert!(!chunk_starts(&source, &options).is_empty());
             assert_eq!(
-                parse_markdown_ast(&source, &options).unwrap(),
+                parse_markdown_ast(&source, &options),
                 markdown::to_mdast(&source, &options).unwrap()
             );
         }
@@ -3017,12 +3031,17 @@ mod chunk_tests {
         let options = ParseOptions::gfm();
         assert_eq!(chunk_starts(&source, &options).len(), 7);
         let checks = Cell::new(0);
-        let result = parse_ast_with_cancel(&source, &options, &|| {
-            checks.set(checks.get() + 1);
-            checks.get() == 2
-        });
+        let result = visit_ast_sections(
+            &source,
+            &options,
+            &|| {
+                checks.set(checks.get() + 1);
+                checks.get() == 3
+            },
+            |_| {},
+        );
         assert!(result.is_err());
-        assert_eq!(checks.get(), 2);
+        assert_eq!(checks.get(), 3);
     }
 
     #[test]
@@ -3034,7 +3053,7 @@ mod chunk_tests {
         let options = ParseOptions::gfm();
         assert!(chunk_starts(&source, &options).is_empty());
         assert_eq!(
-            parse_markdown_ast(&source, &options).unwrap(),
+            parse_markdown_ast(&source, &options),
             markdown::to_mdast(&source, &options).unwrap()
         );
     }

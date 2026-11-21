@@ -17,8 +17,8 @@ on append.
 ## Parse independently delimited Markdown sections
 
 Use unindented ATX headings after a blank line as conservative boundaries,
-shift mdast positions back into the original source, and pass the combined
-AST to the existing renderer. Use the canonical parser for link definitions,
+shift mdast positions back into the original source, and pass each section
+to the existing renderer and metadata visitor. Use the canonical parser for link definitions,
 footnotes, and constructs whose scope is uncertain. Publish one complete
 initial section for the estimated-height viewer while the background parser
 produces the full document. Check for replacement or teardown between

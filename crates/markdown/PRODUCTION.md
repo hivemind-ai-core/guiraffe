@@ -19,7 +19,8 @@ headings as boundaries. When the first complete section is at most 32 KiB,
 the initial view can show it while the background parser works. The parser
 checks for source replacement and view teardown between sections. Documents
 with link definitions, footnotes, or ambiguous blocks use the one-shot
-parser. The published background result holds the entire parsed document.
+parser. The background renderer and metadata pass consume one raw AST section at a
+time. The published background result still holds the entire render tree.
 [AST equivalence tests](../../vendor/gpui-base/src/text/format/markdown.rs)
 cover GFM block combinations and source positions.
 
@@ -28,5 +29,7 @@ produced 10,205 blocks in both modes. On the shared machine, stock parsing
 took 20.21 s and peaked at 226,948 KiB. Section parsing took 2.22 s and
 peaked at 51,392 KiB. Callgrind at 5,000 lines counted 617,890,968 stock
 instructions and 375,697,874 with sections, a 39.2% reduction. These
-measure the isolated parser process. Mounted
+measure the isolated parser process. The section visitor that drops each
+AST after counting its blocks took 1.60 s and used 14,184 KiB peak RSS on
+the same fixture. Mounted
 latency, memory, and repaint allocations remain open.

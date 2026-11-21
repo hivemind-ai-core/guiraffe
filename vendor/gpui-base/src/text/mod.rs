@@ -21,7 +21,7 @@ mod style;
 mod text_view;
 mod utils;
 
-pub use format::markdown::parse_markdown_ast;
+pub use format::markdown::visit_markdown_sections;
 use gpui::{App, ElementId, IntoElement, RenderOnce, SharedString, Window};
 pub use inline_element::*;
 pub use markdown_ext::*;
