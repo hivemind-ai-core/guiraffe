@@ -514,3 +514,52 @@ fn a_scrollable_view_in_an_auto_height_parent_still_shows_its_document(cx: &mut 
         .expect("window");
     assert!(painted, "the document's code block ({id}) is painted");
 }
+
+#[gpui_kit::test]
+fn large_initial_analysis_matches_canonical_metadata_after_streaming(cx: &mut TestAppContext) {
+    let mut source = "# Repeated heading\n\n- [x] existing task\n\n\
+                     Long enough prose for multiple independently parsed sections.\n\n"
+        .repeat(750);
+    let state = cx.update(|cx| cx.new(|cx| MarkdownState::new(source.clone(), cx)));
+    settle(cx);
+    state.read_with(cx, |state, _| {
+        assert_eq!(
+            state.stats().analyzed_bytes,
+            0,
+            "metadata shares the initial parse"
+        );
+        assert_eq!(
+            state.document(),
+            &crate::document::Document::analyze(&source)
+        );
+    });
+
+    let chunk = "# Repeated heading\n\n- [ ] streamed task\n";
+    source.push_str(chunk);
+    state.update(cx, |state, cx| state.append(chunk, cx));
+    settle(cx);
+    state.read_with(cx, |state, _| {
+        assert_eq!(
+            state.document(),
+            &crate::document::Document::analyze(&source)
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn replacing_before_initial_parse_keeps_the_new_metadata(cx: &mut TestAppContext) {
+    let source = "# Old heading\n\nSome text to parse.\n\n".repeat(1_200);
+    let replacement = "# New heading\n\n- [x] new task";
+    let state = cx.update(|cx| {
+        let state = cx.new(|cx| MarkdownState::new(source, cx));
+        state.update(cx, |state, cx| state.set_source(replacement, cx));
+        state
+    });
+    settle(cx);
+    state.read_with(cx, |state, _| {
+        assert_eq!(
+            state.document(),
+            &crate::document::Document::analyze(replacement)
+        );
+    });
+}

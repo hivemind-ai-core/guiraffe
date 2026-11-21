@@ -216,7 +216,8 @@ a different part of the same document and checks that the old card is gone.
 | Style and blame tables | One interned entry per distinct style or commit in the published snapshot. Store consecutive lines from one commit as one range to avoid per-line author strings or indexes. |
 | Overview | 256 presence bins per layer. The minimap paints at most eight layers and coalesces adjacent occupied bins into strokes. |
 | Viewport paint | At most 64 detailed matches per visible row and layer, plus a density marker if more match. After eight detailed diagnostic strokes, the renderer paints a line-level diagnostic marker. |
-| Review Markdown | Only the currently placed cards, using the viewport bound above. |
+| Review Markdown | One active layered review card, released on hover exit or decoration replacement. Legacy annotation bubbles retain only the currently placed cards, using the viewport bound above. |
+| Inline hint colours | One colour entry per projected text insertion, created with prepared analysis. Warm shaping reuses the existing bounded shape cache. |
 
 The [stress probe](../../bench/examples/soak.rs) is `soak code-annotations`.
 `SOAK_FRAMES=1200` selects the profiling replay. For the original mounted

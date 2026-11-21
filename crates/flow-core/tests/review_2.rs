@@ -216,13 +216,17 @@ fn coarse_node_regions_keep_coverage_with_fewer_primitives() {
 #[test]
 fn default_node_payload_fits_document_storage_budget() {
     let node = Node::new(1, "", Point::new(0., 0.));
-    let bytes = size_of::<Node>()
-        + node.node_type.capacity()
-        + node.handles.capacity() * size_of::<Handle>()
-        + node
-            .handles
-            .iter()
-            .map(|handle| handle.id.capacity())
-            .sum::<usize>();
-    assert!(bytes <= 256, "default node payload uses {bytes} bytes");
+    let other = Node::new(2, "", Point::new(0., 0.));
+    // Default handles and type names are shared, so only the inline node is per-node storage.
+    assert!(node.handles.ptr_eq(&other.handles));
+    assert_eq!(node.node_type.as_ptr(), other.node_type.as_ptr());
+    for (handle, shared) in node.handles.iter().zip(other.handles.iter()) {
+        assert_eq!(handle.id.as_ptr(), shared.id.as_ptr());
+    }
+    let bytes = size_of::<Node>();
+    assert!(bytes <= 160, "default node payload uses {bytes} bytes");
+    let mut edited = node.clone();
+    edited.handles[0].side = Side::Top;
+    assert!(!edited.handles.ptr_eq(&node.handles));
+    assert_eq!(node.handles[0].side, Side::Left);
 }
