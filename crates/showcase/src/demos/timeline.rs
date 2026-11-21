@@ -748,9 +748,13 @@ fn history(
             .size(Size::Xs)
             .focusable(true)
             .item_content(|item, _, _| {
-                Text::new(item.content.as_deref().unwrap_or_default().to_owned())
-                    .size(Size::Xs)
-                    .dimmed(true)
+                div()
+                    .truncate()
+                    .child(
+                        Text::new(item.content.as_deref().unwrap_or_default().to_owned())
+                            .size(Size::Xs)
+                            .dimmed(true),
+                    )
                     .into_any_element()
             })
     });

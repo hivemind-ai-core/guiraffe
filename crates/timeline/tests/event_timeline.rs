@@ -151,7 +151,7 @@ fn navigation_reveals_offscreen_events_and_pointer_preserves_focus(cx: &mut Test
 fn soak_100k(cx: &mut TestAppContext) {
     use std::time::{Duration, Instant};
 
-    use gpui_kit::{ScrollDelta, point};
+    use gpui_kit::{KeyUpEvent, Keystroke, PlatformInput, ScrollDelta, ScrollEvent, point};
     use guiraffe_timeline::{EventLink, LinkKind};
 
     fn rss_bytes() -> usize {
@@ -254,16 +254,23 @@ fn soak_100k(cx: &mut TestAppContext) {
         let frame = Instant::now();
         vcx.update(|window, cx| {
             if samples % 120 == 30 {
-                window.scroll(
-                    "event-timeline",
-                    ScrollDelta::Pixels(point(px(0.), px(-540.))),
+                let viewport = window.viewport_size();
+                window.dispatch_event(
+                    PlatformInput::Scroll(ScrollEvent {
+                        position: point(viewport.width / 2.0, viewport.height / 2.0),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-540.))),
+                        ..Default::default()
+                    }),
                     cx,
                 );
             } else {
-                window.press(key, cx);
+                let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os)
+                    .unwrap_or_else(|error| panic!("{error}"));
+                window.dispatch_keystroke(keystroke.clone(), cx);
+                window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
             }
-            window.render_frame(cx);
         });
+        vcx.update(|window, cx| window.draw(cx).clear(cx));
         let bucket = (frame.elapsed().as_micros() / 100).min(1000) as usize;
         if let Some(bin) = histogram.get_mut(bucket) {
             *bin += 1;

@@ -384,7 +384,7 @@ impl Render for EventTimelineState {
         };
         self.header = match self.orientation {
             EventOrientation::Vertical => unit * 2.25,
-            EventOrientation::Horizontal => unit * 7.0,
+            EventOrientation::Horizontal => unit * 9.6,
         };
         self.clamp();
         let projection = Projection {
@@ -565,7 +565,7 @@ impl Render for EventTimelineState {
                     .gap(px(spacing / 5.0))
                     .overflow_hidden()
                     .top(match self.orientation {
-                        EventOrientation::Vertical => dot_y - px(spacing * 0.65),
+                        EventOrientation::Vertical => dot_y - px(spacing * 0.75),
                         EventOrientation::Horizontal => px(spacing * 0.8),
                     })
                     .left(match self.orientation {
@@ -573,7 +573,7 @@ impl Render for EventTimelineState {
                         EventOrientation::Horizontal => px(spacing * 1.6),
                     })
                     .right(px(spacing * 1.15))
-                    .bottom(px(spacing * 0.8))
+                    .bottom(px(spacing * 0.2))
                     .bg(surfaces.body.to_hsla())
                     .child(title)
                     .when_some(content, |card, content| card.child(content));
