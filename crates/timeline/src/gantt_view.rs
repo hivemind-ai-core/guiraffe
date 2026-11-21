@@ -65,7 +65,7 @@ fn geometry(tasks: &[Task]) -> Rc<Geometry> {
             .iter()
             .map(|t| Row {
                 id: t.id,
-                name: t.name.clone().into(),
+                name: t.name.as_str().into(),
             })
             .collect(),
         plan,
