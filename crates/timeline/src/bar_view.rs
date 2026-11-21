@@ -43,7 +43,7 @@ impl BarColumns {
             return;
         };
         let first = dirty.start * columns / self.count;
-        let last = (dirty.end * columns).div_ceil(self.count);
+        let last = (dirty.end - 1) * columns / self.count + 1;
         for column in first..last {
             let start = (column * self.count).div_ceil(columns);
             let end = ((column + 1) * self.count).div_ceil(columns);
@@ -277,6 +277,18 @@ impl Render for BarCurveView {
 #[cfg(test)]
 mod tests {
     use super::BarColumns;
+
+    #[test]
+    fn dirty_range_excludes_the_next_column_when_sizes_do_not_divide() {
+        let mut values = [0.; 5];
+        let mut columns = BarColumns::default();
+        columns.update(&values, 3.);
+        values[1] = 1.;
+        values[2] = 0.5;
+        columns.invalidate(1..2);
+        columns.update(&values, 3.);
+        assert_eq!(columns.extrema, [(0., 1.), (0., 0.), (0., 0.)]);
+    }
 
     #[test]
     fn aggregation_keeps_extrema_and_recomputes_only_dirty_columns() {
