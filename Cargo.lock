@@ -3569,6 +3569,7 @@ dependencies = [
 name = "guiraffe-inputs"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gpui-kit",
  "guiraffe-components",
  "guiraffe-core",
@@ -3666,6 +3667,7 @@ name = "guiraffe-showcase"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "gpui-kit",
  "guiraffe-charts",
  "guiraffe-chat",
