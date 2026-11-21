@@ -64,14 +64,43 @@ timing, merges). Workers never merge, push or create branches other than their o
   (straight lines, no ports/labels, batched), culling via spatial index, staged mount (first screen then
   background indexing), find and bound the growing structure.
 
+- **Gantt** (26.7 s mount, 6.9 s frames, 6.7 GiB): every row/bar is a GPUI element tree (flexbox layout,
+  element state, dispatch nodes; large layout memcpy `fun_18f780` 19 %); no virtualisation, no vertical scroll.
+  Fix: one painted canvas (bars, dependency arrows, grid) with interval/row culling, virtualised row headers,
+  real vertical scroll, schedule computed once and cached, dependency arrows only for visible ends, LOD.
+- **Tracks** (2.4 s mount, ~1 s frames, 721 MiB): one stateful element per clip → element state hashing,
+  BoundsTree, layout. Fix: painted canvas per track with interval index culling; clips as batched quads; text
+  only where it fits; selection/hover via hit-test on the index.
+- **Bar editor** (p99 24 ms): `paint_quad` for all 100k bars every frame. Fix: per-pixel-column aggregation
+  (min/max/avg per column), batch, paint only dirty range during strokes.
+- **FlameGraph** (1.47 s mount, 343 ms frames, 729 MiB): 80 % `BoundsTree::insert` — one quad per segment
+  including sub-pixel ones; 6 % HashMap insert per frame. Fix: cull, merge sub-pixel segments per row/pixel,
+  batch quads, reuse per-frame maps (no rehash), cache label shaping; memory: compact layout arrays.
+- **TreeList** (p99 64 ms): 92 % `HashMap<u64,usize>::insert` — `set_expanded` rebuilds the id→row map O(n)
+  on every expand/collapse. Fix: incremental row index (Fenwick/segment tree over subtree sizes, or offsets
+  updated only for the changed range), no full rebuild.
+- **Markdown** (4.7 s mount, p99 49 ms, 799 MiB for a ~2 MB doc): 45 % `markdown::edit_map::add_impl` —
+  re-parses the whole document per streamed chunk; `Paragraph::clone` 7 %. Fix: incremental parsing (re-parse
+  only the open tail block), block-level virtualisation (lay out/shape only visible blocks), no paragraph
+  clones, bounded shaped-text cache.
+- **Chat** (130 s mount, 4.5 GiB): eager markdown tokenising of every message + tree-sitter query compilation
+  per code block (`ts_query__perform_analysis`). Fix: virtualised message list, parse/highlight lazily for
+  visible messages only, compile highlight queries once per language (global cache), store raw text compactly.
+- **Mermaid** (31.8 s mount at 500 nodes): 99.6 % inside third-party mermaid-rs-renderer edge path cleanup
+  (`flowchart_path_hits_non_endpoint_nodes` 32 %, `segments_intersect` 31 %, `reduce_crossing_sweep`) —
+  brute force O(E²·segments). Fix options: spatial grid for segment/node tests via a patched vendored copy
+  (`[patch.crates-io]`) and upstream PR; cap/skip crossing cleanup above a size threshold; staged render
+  (fast first layout, refined in background, cancellable). Zoom re-raster spike p99 15.7 ms → raster off-thread.
+
 ## Work packages (owners)
-1. Charts (line, scatter, series, stream) — codex
-2. Timeline family (dope sheet, Gantt, tracks, curve + bar editors; add mounted probes for each) — codex
-3. Flow — codex
-4. FlameGraph + TreeList/PropertyGrid (add mounted probes, profile, fix) — codex
-5. DataGrid + CodeViewer + Sheet-ready grid paths (mounted probes exist: production_soak) — codex
-6. Frame pacing in the Electron comparison app (p99 17.5 → ≤16.7 ms; GPUI frame scheduling, idle work,
-   text shaping caches) + cross-cutting render allocation audit — kilo
-7. Markdown 50k lines streaming, Mermaid 500 nodes, Chat 100k messages: mounted probes + profiles (side
-   work, slow is fine, commit often) — omp
-8. Independent reviews of the riskiest rewrites (batched painting, canvas rewrites) — Claude subagents
+1. Charts (line memory, scatter frames+memory, stream rebuild) — codex perf-charts
+2. Timeline: dope sheet, tracks, bar editor (curve editor already ✅) — codex perf-timeline
+3. Gantt — codex perf-gantt
+4. Flow (mount, drift, edge path clones) — codex perf-flow
+5. FlameGraph + TreeList/PropertyGrid — codex perf-flame-tree
+6. DataGrid + CodeViewer (code memory; grid tight) — codex perf-grid-code
+7. Markdown + Chat (incremental parse, lazy/virtualised, query cache) — codex perf-markdown-chat
+8. Mermaid (vendored patch / staged layout) — codex perf-mermaid
+9. Frame pacing in the Electron comparison app + warm-repaint allocation audit — kilo perf-pacing
+10. PRODUCTION.md cache inventory (every cache per crate, its bound, link to check) — omp (side work)
+11. Independent reviews of risky rewrites — Claude subagents
