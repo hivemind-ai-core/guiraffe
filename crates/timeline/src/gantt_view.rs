@@ -545,6 +545,50 @@ fn span(s: &Result<HashMap<u32, Scheduled>, ScheduleError>) -> (f64, f64) {
     }
 }
 
+impl Geometry {
+    fn visible_arrows(
+        &self,
+        schedule: &HashMap<u32, Scheduled>,
+        axis: Axis,
+        scroll_y: f32,
+        height: f32,
+        mut draw: impl FnMut((f32, f32), (f32, f32)),
+    ) {
+        let row_y = |row: usize| row as f32 * ROW_H - scroll_y + ROW_H / 2.0;
+        let visible = |x: f32, y: f32| x >= 0.0 && x < axis.width as f32 && y >= 0.0 && y < height;
+        for row in visible_rows(self.rows.len(), scroll_y, height) {
+            let Some(sc) = schedule.get(&self.rows[row].id) else {
+                continue;
+            };
+            let y = row_y(row);
+            let finish = axis.x(sc.early_finish) as f32;
+            if visible(finish, y) {
+                for &to in self.successors.get(row) {
+                    if let Some(target) = schedule.get(&self.rows[to].id) {
+                        let start = axis.x(target.early_start) as f32;
+                        if start.is_finite() {
+                            draw((finish, y), (start, row_y(to)));
+                        }
+                    }
+                }
+            }
+            let start = axis.x(sc.early_start) as f32;
+            if visible(start, y) {
+                for &from in self.predecessors.get(row) {
+                    if let Some(source) = schedule.get(&self.rows[from].id) {
+                        let finish = axis.x(source.early_finish) as f32;
+                        let source_y = row_y(from);
+                        // A visible source already produced this edge.
+                        if finish.is_finite() && !visible(finish, source_y) {
+                            draw((finish, source_y), (start, y));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn arrow(
     window: &mut Window,
     from: gpui_kit::Point<Pixels>,
@@ -901,42 +945,17 @@ impl Render for GanttView {
                                         let Ok(schedule) = schedule.as_ref() else {
                                             return;
                                         };
-                                        let in_x = |x| x >= 0.0 && x < f32::from(b.size.width);
-                                        let row_y = |row: usize| {
-                                            row as f32 * ROW_H - scroll_y + ROW_H / 2.0
-                                        };
-                                        let visible_end = |row, x| {
-                                            let y = row_y(row);
-                                            y >= 0.0 && y < f32::from(b.size.height) && in_x(x)
-                                        };
-                                        let mut draw = |from: usize, to: usize, outgoing| {
-                                            let (Some(a), Some(c)) = (
-                                                schedule.get(&geo.rows[from].id),
-                                                schedule.get(&geo.rows[to].id),
-                                            ) else {
-                                                return;
-                                            };
-                                            let x0 = axis.x(a.early_finish) as f32;
-                                            let x1 = axis.x(c.early_start) as f32;
-                                            if if outgoing {
-                                                !visible_end(from, x0)
-                                            } else {
-                                                visible_end(from, x0) || !visible_end(to, x1)
-                                            } {
-                                                return;
-                                            }
-                                            let p0 = b.origin + point(px(x0), px(row_y(from)));
-                                            let p1 = b.origin + point(px(x1), px(row_y(to)));
-                                            arrow(window, p0, p1, arrow_color);
-                                        };
-                                        for row in visible.clone() {
-                                            for &to in geo.successors.get(row) {
-                                                draw(row, to, true);
-                                            }
-                                            for &from in geo.predecessors.get(row) {
-                                                draw(from, row, false);
-                                            }
-                                        }
+                                        geo.visible_arrows(
+                                            schedule,
+                                            axis,
+                                            scroll_y,
+                                            f32::from(b.size.height),
+                                            |(x0, y0), (x1, y1)| {
+                                                let p0 = b.origin + point(px(x0), px(y0));
+                                                let p1 = b.origin + point(px(x1), px(y1));
+                                                arrow(window, p0, p1, arrow_color);
+                                            },
+                                        );
                                     },
                                 )
                                 .absolute()
@@ -968,6 +987,34 @@ mod tests {
         assert_eq!(visible_rows(10_000, 45.0, 640.0), 1..22);
         assert_eq!(visible_rows(10_000_000, 45.0, 640.0), 1..22);
         assert_eq!(visible_rows(5, 128.0, 640.0), 4..5);
+    }
+
+    #[test]
+    fn arrows_include_only_incident_edges_and_emit_shared_edges_once() {
+        let visible = |n| {
+            let tasks: Vec<_> = (0..n)
+                .map(|id: u32| Task {
+                    id,
+                    name: String::new(),
+                    not_before: 0.0,
+                    duration: 0.0,
+                    after: id.checked_sub(1).into_iter().collect(),
+                })
+                .collect();
+            let schedule = schedule(&tasks).expect("acyclic chain");
+            let mut edges = Vec::new();
+            geometry(&tasks).visible_arrows(
+                &schedule,
+                Axis::new(-1.0, 1.0, 100.0),
+                ROW_H,
+                ROW_H * 2.0,
+                |(_, from), (_, to)| edges.push((from, to)),
+            );
+            edges
+        };
+        let expected = vec![(16.0, 48.0), (-16.0, 16.0), (48.0, 80.0)];
+        assert_eq!(visible(10_000), expected);
+        assert_eq!(visible(100_000), expected);
     }
 
     fn tasks() -> Vec<Task> {
