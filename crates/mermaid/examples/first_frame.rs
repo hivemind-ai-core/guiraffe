@@ -45,7 +45,7 @@ impl Render for Probe {
                     let timer = cx.background_executor().timer(Duration::from_millis(50));
                     cx.spawn(async move |_, cx| {
                         timer.await;
-                        let _ = cx.update(|cx| cx.quit());
+                        cx.update(|cx| cx.quit());
                     })
                     .detach();
                 }
