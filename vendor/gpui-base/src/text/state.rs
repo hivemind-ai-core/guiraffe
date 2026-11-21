@@ -25,7 +25,7 @@ use crate::{
         CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, MarkdownExtensions,
         RangeHighlight, RangeHighlightError, RenderedText, TableActionsFn, TaskToggleHandlerFn,
         TextViewStyle,
-        document::ParsedDocument,
+        document::{ParsedDocument, ViewportBlockCache},
         format,
         node::{self, NodeContext},
         range_highlight::{
@@ -114,6 +114,7 @@ pub struct TextViewState {
     pub(super) focus_handle: FocusHandle,
     pub(super) list_state: ListState,
     estimated_block_height: Option<Pixels>,
+    viewport_blocks: ViewportBlockCache,
 
     /// The bounds of the text view
     bounds: Bounds<Pixels>,
@@ -255,6 +256,7 @@ impl TextViewState {
                 }
             },
             estimated_block_height,
+            viewport_blocks: ViewportBlockCache::default(),
             text_view_style: Arc::default(),
             code_block_actions: None,
             code_block_highlighter: None,
@@ -551,6 +553,7 @@ impl TextViewState {
         self.revision += 1;
         if !append {
             self.full_update_revision = self.revision;
+            self.viewport_blocks.clear();
             self.selection_revision = self.selection_revision.wrapping_add(1);
             // Old native layouts must not project a still-active gesture back
             // into replaced content, including while a large parse is pending.
@@ -676,6 +679,7 @@ impl TextViewState {
                 self.parsed_error = None;
                 self.compatible_layout_update = parsed_update.selection_compatible;
                 if parsed_update.full_parse {
+                    self.viewport_blocks.clear();
                     self.invalidate_measured_heights();
                 }
             }
@@ -1210,17 +1214,20 @@ impl Render for TextViewState {
             // the capped box would hide the overflow the clamp has to measure.
             .when(self.max_lines.is_none(), |this| this.h_full())
             .map(|this| match &self.parsed_error {
-                None => this.child(self.parsed_content.document.render_root(
-                    if self.scrollable {
-                        Some(self.list_state.clone())
-                    } else {
-                        None
-                    },
-                    self.estimated_block_height,
-                    &node_cx,
-                    window,
-                    cx,
-                )),
+                None => this.child(
+                    self.parsed_content.document.render_root(
+                        if self.scrollable {
+                            Some(self.list_state.clone())
+                        } else {
+                            None
+                        },
+                        self.estimated_block_height
+                            .map(|height| (height, self.viewport_blocks.clone())),
+                        &node_cx,
+                        window,
+                        cx,
+                    ),
+                ),
                 Some(err) => this.child(
                     v_flex()
                         .gap_1()

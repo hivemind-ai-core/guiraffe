@@ -10,8 +10,9 @@ The scrollable viewer seeds Kit's list with 28 px per block. The list
 updates heights after measuring visible blocks and overscan. It stores one
 height per block. Growth rebuilds the height index and preserves the
 logical top item. Kit retains up to 4,096 shaped layouts per UI thread
-across all text views. Paragraph decoration, table metrics, and fence
-highlight caches can still grow with the number of visited blocks.
+across all text views. The scrollable view caches paragraph decorations,
+table metrics, and fence highlights for up to 256 top-level blocks. A
+single large block may still use memory proportional to its content.
 
 The renderer parses eligible documents in sections, using unindented ATX
 headings as boundaries. When the first complete section is at most 32 KiB,
@@ -24,5 +25,7 @@ cover GFM block combinations and source positions.
 An isolated release parser run on the 1,761,032-byte, 50k-line soak fixture
 produced 10,205 blocks in both modes. On the shared machine, stock parsing
 took 20.21 s and peaked at 226,948 KiB. Section parsing took 2.22 s and
-peaked at 51,392 KiB. These are parser process measurements. Mounted
+peaked at 51,392 KiB. Callgrind at 5,000 lines counted 617,890,968 stock
+instructions and 375,697,874 with sections, a 39.2% reduction. These
+measure the isolated parser process. Mounted
 latency, memory, and repaint allocations remain open.

@@ -791,6 +791,43 @@ impl BlockNode {
         }
     }
 
+    /// Release decorations and metrics without changing logical selection.
+    pub(super) fn clear_render_caches(&self) {
+        match self {
+            Self::Root { children, .. }
+            | Self::Blockquote { children, .. }
+            | Self::Surface { children, .. }
+            | Self::List { children, .. }
+            | Self::ListItem { children, .. } => {
+                for child in children {
+                    child.clear_render_caches();
+                }
+            }
+            Self::Heading { children, .. } | Self::Paragraph(children) => {
+                children.clear_render_cache();
+            }
+            Self::Table(table) => {
+                if let Ok(mut cache) = table.table_data_cache.0.lock() {
+                    *cache = None;
+                }
+                if let Ok(mut cache) = table.column_widths_cache.0.lock() {
+                    *cache = None;
+                }
+                for row in &table.children {
+                    for cell in &row.children {
+                        cell.children.clear_render_cache();
+                    }
+                }
+            }
+            Self::CodeBlock(code) => {
+                if let Ok(mut cache) = code.highlight_cache.lock() {
+                    *cache = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn clear_selection(&self) {
         match self {
             BlockNode::Root { children, .. }
@@ -2391,6 +2428,12 @@ impl Paragraph {
     }
 
     /// The children changed, so what was derived from them is stale.
+    fn clear_render_cache(&self) {
+        if let Ok(mut cache) = self.render_cache.0.lock() {
+            *cache = None;
+        }
+    }
+
     fn invalidate_render_cache(&mut self) {
         self.render_cache = ParagraphRenderCache::default();
     }

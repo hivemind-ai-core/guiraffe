@@ -3,7 +3,10 @@ use gpui::{
 };
 
 use std::{
+    cell::RefCell,
+    collections::BTreeSet,
     ops::{Range, RangeInclusive},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -17,6 +20,36 @@ use crate::text::{
 pub(crate) struct ParsedDocument {
     pub(crate) source: SharedString,
     pub(crate) blocks: Arc<Vec<BlockNode>>,
+}
+
+const MAX_CACHED_BLOCKS: usize = 256;
+
+#[derive(Clone, Default)]
+pub(super) struct ViewportBlockCache(Rc<RefCell<BTreeSet<usize>>>);
+
+impl ViewportBlockCache {
+    fn touch(&self, index: usize, blocks: &[BlockNode]) {
+        let mut cached = self.0.borrow_mut();
+        if !cached.insert(index) || cached.len() <= MAX_CACHED_BLOCKS {
+            return;
+        }
+        let victim = cached
+            .first()
+            .into_iter()
+            .chain(cached.last())
+            .copied()
+            .max_by_key(|candidate| candidate.abs_diff(index));
+        if let Some(victim) = victim {
+            cached.remove(&victim);
+            if let Some(block) = blocks.get(victim) {
+                block.clear_render_caches();
+            }
+        }
+    }
+
+    pub(super) fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -240,7 +273,7 @@ impl ParsedDocument {
     pub(super) fn render_root(
         &self,
         list_state: Option<ListState>,
-        estimated_block_height: Option<gpui::Pixels>,
+        viewport_measurement: Option<(gpui::Pixels, ViewportBlockCache)>,
         node_cx: &NodeContext,
         window: &mut Window,
         cx: &mut App,
@@ -272,8 +305,8 @@ impl ParsedDocument {
 
         let blocks = &self.blocks;
         if list_state.item_count() != blocks.len() {
-            if let Some(height) = estimated_block_height {
-                list_state.reset_with_uniform_height(blocks.len(), height);
+            if let Some((height, _)) = &viewport_measurement {
+                list_state.reset_with_uniform_height(blocks.len(), *height);
             } else {
                 list_state.reset(blocks.len());
             }
@@ -284,6 +317,9 @@ impl ParsedDocument {
                 let node_cx = node_cx.clone();
                 let blocks = blocks.clone();
                 move |ix, window, cx| {
+                    if let Some((_, cache)) = &viewport_measurement {
+                        cache.touch(ix, &blocks);
+                    }
                     let is_last = ix + 1 == blocks.len();
                     let (is_first, prev) = flow_position(&blocks, ix);
                     blocks[ix]
