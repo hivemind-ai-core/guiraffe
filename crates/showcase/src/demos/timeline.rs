@@ -664,14 +664,20 @@ struct EventHistory(Entity<EventTimelineState>, Entity<EventTimelineState>);
 impl Render for EventHistory {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         column([
-            example(
-                "Vertical",
-                div().h(px(286.)).child(EventTimeline::new(&self.0)),
-            ),
-            example(
-                "Horizontal",
-                div().h(px(166.)).child(EventTimeline::new(&self.1)),
-            ),
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(Text::new("Vertical").size(Size::Sm).dimmed(true))
+                .child(div().h(px(275.)).child(EventTimeline::new(&self.0)))
+                .into_any_element(),
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(Text::new("Horizontal").size(Size::Sm).dimmed(true))
+                .child(div().h(px(158.)).child(EventTimeline::new(&self.1)))
+                .into_any_element(),
         ])
     }
 }

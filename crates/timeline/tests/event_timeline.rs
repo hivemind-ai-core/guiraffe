@@ -130,6 +130,12 @@ fn navigation_reveals_offscreen_events_and_pointer_preserves_focus(cx: &mut Test
         );
         vcx.simulate_keystrokes("end enter");
         assert_eq!(activated.get(), Some(998));
+        vcx.update(|window, cx| {
+            window.render_frame(cx);
+            let root = window.find("event-timeline").bounds();
+            let target = window.find(("event-timeline-item", 998u64)).bounds();
+            assert!(root.contains(&target.center()));
+        });
         timeline.update(vcx, |timeline, cx| timeline.replace(model(1_000), cx));
         assert_eq!(
             timeline.read_with(vcx, |timeline, _| timeline.selected()),

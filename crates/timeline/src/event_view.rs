@@ -192,8 +192,8 @@ impl EventTimelineState {
     fn viewport(&self) -> (f64, f64) {
         let bounds = self.body.get();
         let (time, cross) = self.orientation.xy(
-            f64::from(f32::from(bounds.size.height)),
             f64::from(f32::from(bounds.size.width)),
+            f64::from(f32::from(bounds.size.height)),
         );
         ((time - self.header).max(0.0), cross)
     }
@@ -287,7 +287,7 @@ impl Direction {
             Self::First => lane.first().copied(),
             Self::Last => lane.last().copied(),
             Self::Screen(x, y) => {
-                let (time, cross) = orientation.xy(y, x);
+                let (time, cross) = orientation.xy(x, y);
                 if time != 0 {
                     return lane.get(item.row.checked_add_signed(time)?).copied();
                 }
@@ -397,8 +397,8 @@ impl Render for EventTimelineState {
         let (mut chronological, mut cross) = self.viewport();
         if cross == 0.0 {
             (chronological, cross) = self.orientation.xy(
-                f64::from(f32::from(window.viewport_size().height)),
                 f64::from(f32::from(window.viewport_size().width)),
+                f64::from(f32::from(window.viewport_size().height)),
             );
         }
         let slots = visible_range(
@@ -482,9 +482,10 @@ impl Render for EventTimelineState {
                 let badge = theme.variant(color, Variant::Light);
                 let (x, y) = projection.coordinates(placement.slot as f64, track as f64);
                 let (w, h) = self.orientation.xy(self.pitch.0, self.pitch.1);
-                let (dot_x, dot_y) = self
-                    .orientation
-                    .xy(px((self.pitch.0 / 2.0) as f32), px(0.0));
+                let (dot_x, dot_y) = self.orientation.xy(
+                    px((self.pitch.0 * crate::event_layout::DOT_OFFSET) as f32),
+                    px(0.0),
+                );
                 let dot = px(spacing * 0.55);
                 let label: SharedString = if window.is_a11y_active() {
                     let [branches, merges] = model.relations(item.id);
@@ -516,6 +517,7 @@ impl Render for EventTimelineState {
                     .aria_position_in_set(placement.row + 1)
                     .aria_size_of_set(lane.len())
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap(px(spacing / 3.0))
                     .min_w_0()
@@ -563,15 +565,16 @@ impl Render for EventTimelineState {
                     .gap(px(spacing / 5.0))
                     .overflow_hidden()
                     .top(match self.orientation {
-                        EventOrientation::Vertical => px((h as f32) / 2.0 - spacing * 0.65),
+                        EventOrientation::Vertical => dot_y - px(spacing * 0.65),
                         EventOrientation::Horizontal => px(spacing * 0.8),
                     })
                     .left(match self.orientation {
                         EventOrientation::Vertical => px(spacing * 0.8),
-                        EventOrientation::Horizontal => px(0.0),
+                        EventOrientation::Horizontal => px(spacing * 1.6),
                     })
                     .right(px(spacing * 1.15))
-                    .bottom(px(0.0))
+                    .bottom(px(spacing * 0.8))
+                    .bg(surfaces.body.to_hsla())
                     .child(title)
                     .when_some(content, |card, content| card.child(content));
                 items.push(
@@ -646,7 +649,7 @@ impl Render for EventTimelineState {
             }))
             .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
                 let delta = event.delta.pixel_delta(px(spacing));
-                let (time, lane) = this.orientation.xy(f32::from(delta.y), f32::from(delta.x));
+                let (time, lane) = this.orientation.xy(f32::from(delta.x), f32::from(delta.y));
                 let previous = this.offset;
                 if event.modifiers.shift {
                     this.offset.1 -= f64::from(if lane == 0.0 { time } else { lane });
@@ -691,7 +694,7 @@ impl Render for EventTimelineState {
                             move |bounds, (), window, _| {
                                 let length = paint_projection
                                     .orientation
-                                    .xy(bounds.size.height, bounds.size.width)
+                                    .xy(bounds.size.width, bounds.size.height)
                                     .0;
                                 let extent = f64::from(f32::from(length));
                                 for lane in paint_lanes.clone() {

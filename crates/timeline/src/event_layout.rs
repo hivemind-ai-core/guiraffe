@@ -77,17 +77,19 @@ pub(crate) struct RoutedLink {
     pub link: EventLink,
 }
 
+pub(crate) const DOT_OFFSET: f64 = 0.4;
+
 impl RoutedLink {
     /// In (chronology, track) coordinates, measured in slots and lanes.
     pub fn points(self) -> [(f64, f64); 4] {
-        let start = self.from.slot as f64 + 0.5;
-        let end = self.to.slot as f64 + 0.5;
+        let start = self.from.slot as f64 + DOT_OFFSET;
+        let end = self.to.slot as f64 + DOT_OFFSET;
         let from = self.from.track as f64;
         let to = self.to.track as f64;
         let gutter = if start == end {
-            start - 0.375
+            self.from.slot as f64 + 0.08
         } else {
-            start + 0.375
+            self.from.slot as f64 + 0.97
         };
         [(start, from), (gutter, from), (gutter, to), (end, to)]
     }
@@ -374,12 +376,17 @@ mod tests {
                 link: EventLink { source: 0, destination: 1, kind: LinkKind::Branch, color: None },
             };
             let [start, turn, exit, end] = route.points();
-            prop_assert_eq!(start, (from as f64 + 0.5, from_track as f64));
-            prop_assert_eq!(end, (to as f64 + 0.5, to_track as f64));
+            prop_assert_eq!(start, (from as f64 + DOT_OFFSET, from_track as f64));
+            prop_assert_eq!(end, (to as f64 + DOT_OFFSET, to_track as f64));
             prop_assert_eq!(turn.0, exit.0);
             prop_assert_eq!(turn.1, start.1);
             prop_assert_eq!(exit.1, end.1);
-            prop_assert!((turn.0 - start.0).abs() == 0.375);
+            let turn_is_in_gutter = if distance == 0 {
+                turn.0 < start.0
+            } else {
+                turn.0 > start.0 && turn.0 < (from + 1) as f64
+            };
+            prop_assert!(turn_is_in_gutter);
         }
     }
 }
