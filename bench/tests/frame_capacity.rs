@@ -1,6 +1,6 @@
 use gpui_kit::{
-    Context, FocusHandle, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, TestAppContext, Window, div,
+    Context, FocusHandle, InteractiveElement, IntoElement, ParentElement, Render, TestAppContext,
+    Window, div,
 };
 
 struct KeyedRows {
@@ -21,7 +21,7 @@ impl Render for KeyedRows {
 #[gpui_kit::test]
 #[ignore = "100k keyed rows, run with --ignored --nocapture"]
 fn alternating_frames_retain_peak_storage(cx: &mut TestAppContext) {
-    let (rows, mut window) = cx.add_window_view(|_, _| KeyedRows { focus: Vec::new() });
+    let (rows, window) = cx.add_window_view(|_, _| KeyedRows { focus: Vec::new() });
     let mut measure = |count| {
         window.update(|_, cx| {
             rows.update(cx, |rows, cx| {
