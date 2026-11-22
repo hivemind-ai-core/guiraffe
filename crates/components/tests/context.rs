@@ -1,4 +1,4 @@
-//! Context-driven styling (spec/14): the same widget adapts to the layout it is in.
+//! Context-driven styling: the same widget adapts to the layout it is in.
 
 use gpui_kit::{
     Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window, assets::IconName,

@@ -1,4 +1,4 @@
-//! The inspect API (spec/21 §2): stable node ids map to the element tree and
+//! The inspect API: stable node ids map to the element tree and
 //! to the accessibility facts of the platform, and the inspector answers what
 //! the last frame says.
 

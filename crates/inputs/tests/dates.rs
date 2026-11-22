@@ -1,4 +1,4 @@
-//! Date & time picker interaction tests (spec/00 §12): open, pick, range pick, presets,
+//! Date & time picker interaction tests (API conventions §12): open, pick, range pick, presets,
 //! clear, disabled/excluded suppression, keyboard operation, controlled values, time
 //! editing, focus on click, focus-ring layout stability and render counts.
 use std::{cell::RefCell, rc::Rc, time::Duration};

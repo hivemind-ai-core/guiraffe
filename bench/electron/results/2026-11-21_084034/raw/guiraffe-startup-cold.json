@@ -1,1 +1,0 @@
-[{"app": "guiraffe", "scenario": "startup", "first_frame_epoch_ms": 1795250434710.1682, "process_start_epoch_ms": 1795250434540.0, "first_frame_since_process_start_ms": 170.168212890625, "frames_ms": [], "timings_ms": {}, "info": {}, "ok": true, "launch_epoch_ms": 1795250434557.0593, "launch_to_first_frame_ms": 153.10888671875, "run": 0}]

@@ -1,4 +1,4 @@
-//! Opt-in focus for non-text controls (spec/00 §12.3), prototype.
+//! Opt-in focus for non-text controls (API conventions §12.3), prototype.
 //!
 //! [`ScopedButton`] wraps a GPUI Controls `Button` and decides its tab stop at render time
 //! from [`guiraffe_core::StyleContext`]: inside [`guiraffe_core::focus_scope`] it joins Tab

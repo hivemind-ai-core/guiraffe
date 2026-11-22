@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "bench", "examples/ui-macro-demo", "examples/getting-started", "examples/desktop-integration"]
+members = ["crates/*", "bench", "examples/getting-started", "examples/team-tasks", "examples/desktop"]
 exclude = ["vendor/gpui-base", "vendor/gpui-component", "vendor/gpui-fast-linux", "vendor/mermaid-rs-renderer", "vendor/taffy"]
 resolver = "3"
 

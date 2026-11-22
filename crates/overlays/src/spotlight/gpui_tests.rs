@@ -1,4 +1,4 @@
-//! Interaction tests for the command bar (spec/00 §12, spec/04 dismissal and focus contract).
+//! Interaction tests for the command bar (API conventions §12).
 use super::*;
 use crate::gpui_tests::{open as open_window, open_with_content};
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
@@ -397,7 +397,7 @@ fn searching_rerenders_only_the_palette(cx: &mut TestAppContext) {
     }
     let after = content.read_with(cx, |c, _| c.renders.get());
     // Upstream GPUI re-renders the uncached children of a notified view's ancestors
-    // (spec/00 §6), so only gpui-fast can promise an untouched page.
+    // (API conventions §6), so only gpui-fast can promise an untouched page.
     if gpui_kit::GPUI_FAST {
         assert_eq!(
             after, renders,

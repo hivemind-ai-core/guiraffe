@@ -70,7 +70,7 @@ pub fn cursor_for(grab: Option<Grab>) -> CursorStyle {
     }
 }
 
-// ------------------------------------------------------------------ keyboard (spec/00 §12)
+// ------------------------------------------------------------------ keyboard (API conventions §12)
 
 gpui_kit::actions!(
     guiraffe_timeline,

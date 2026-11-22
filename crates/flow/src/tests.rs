@@ -754,7 +754,7 @@ fn minimap_drag_continuously_updates_camera_without_moving_nodes(cx: &mut TestAp
     );
     assert_eq!(view.read_with(cx, |v, _| v.graph().clone()), old_graph);
 }
-/// spec/00 §12: toolbar buttons are named, not tab stops outside a focus scope, and the
+/// API conventions §12: toolbar buttons are named, not tab stops outside a focus scope, and the
 /// canvas is exposed as a named Canvas.
 #[gpui_kit::test]
 fn toolbar_and_canvas_accessibility(cx: &mut TestAppContext) {

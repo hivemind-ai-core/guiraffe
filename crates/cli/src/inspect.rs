@@ -1,5 +1,5 @@
 //! `guiraffe mcp` and `guiraffe test --script`: the inspect and drive API of a
-//! running app, over MCP or a local socket (spec/21 §2).
+//! running app, over MCP or a local socket.
 //!
 //! The app runs headless (the snapshot renderer), so the tools work without a
 //! display server.

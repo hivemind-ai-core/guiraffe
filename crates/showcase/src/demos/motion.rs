@@ -1,4 +1,4 @@
-//! guiraffe-motion: opt-in layout animation (spec/29).
+//! guiraffe-motion: opt-in layout animation.
 
 use std::rc::Rc;
 

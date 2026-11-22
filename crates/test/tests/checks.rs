@@ -1,4 +1,4 @@
-//! The checks (spec/21 §2): the findings an agent gets about a screen.
+//! The checks: the findings an agent gets about a screen.
 
 use gpui_kit::prelude::*;
 use gpui_kit::{

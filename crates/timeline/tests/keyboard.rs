@@ -1,4 +1,4 @@
-//! spec/00 §12: Gantt and tracks views are keyboard-operable when focused (opt-in), a pointer
+//! API conventions §12: Gantt and tracks views are keyboard-operable when focused (opt-in), a pointer
 //! press preserves focus by default, items expose roles / labels / selected state, locked items use
 //! disabled tokens, and focus / selection never move layout.
 use gpui_kit::{

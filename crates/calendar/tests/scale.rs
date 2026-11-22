@@ -1,4 +1,4 @@
-//! Release-only 10,000-event probes (spec/27 §Performance budgets and probes).
+//! Release-only 10,000-event probes.
 use std::{
     cell::Cell,
     rc::Rc,

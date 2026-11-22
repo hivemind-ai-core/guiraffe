@@ -1,4 +1,4 @@
-//! Opt-in collapse/expand animation for TreeList and PropertyGrid (spec/29).
+//! Opt-in collapse/expand animation for TreeList and PropertyGrid.
 //!
 //! Kept apart from the view on purpose: the view only reports a toggle (`toggled`) and asks
 //! for the current shift (`sample`). Rows from `anchor` on are painted shifted by the value,

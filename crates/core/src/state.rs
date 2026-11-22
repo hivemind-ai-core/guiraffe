@@ -1,4 +1,4 @@
-//! Semantic interaction-state tokens (spec/00 §12.1).
+//! Semantic interaction-state tokens (API conventions §12.1).
 //!
 //! Widgets ask the theme for the colors of a state (`theme.state(kind, variant, color)`) and
 //! never apply raw opacity or fixed shades for hover, pressed, selected, disabled, dimmed or
@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Theme contrast setting. `High` also follows an OS high-contrast preference when the
-/// platform exposes one (gpui-kit 0.9.1 does not; see spec/18).
+/// platform exposes one (gpui-kit 0.9.1 does not).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Contrast {
     #[default]
@@ -511,12 +511,12 @@ mod tests {
 
     /// Documented exemption: in Standard contrast the Default variant keeps the subtle grey
     /// control border (≈1.5:1, Mantine/Refactoring UI style). High contrast meets 3:1. See
-    /// spec/18 "Contrast report" for the rationale; everything else must pass.
+    /// the contrast report for the rationale; everything else must pass.
     ///
     /// Second exemption, Standard only: the selected fill is the Filled shade (Mantine), and
     /// for light hues (cyan, teal, green, lime, yellow, orange in light; pink…indigo, cyan in
     /// dark) it reaches only 1.9–2.8:1 against the body. Its text still meets 4.5:1. Changing
-    /// it would recolour every filled control, so it is a palette decision (spec/18); High
+    /// it would recolour every filled control, so it is a palette decision; High
     /// contrast meets 3:1.
     fn exempt(contrast: Contrast, failure: &str) -> bool {
         contrast == Contrast::Standard

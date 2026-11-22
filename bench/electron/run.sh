@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GUIraffe vs Electron + React: measurement harness (plans/ELECTRON-COMPARISON.md).
+# GUIraffe vs Electron + React: measurement harness (bench/electron/README.md).
 #
 #   bench/electron/run.sh            # full run: 20 runs per scenario per app (~1.5 h)
 #   bench/electron/run.sh --smoke    # 2 runs, short idle; results marked INVALID
@@ -14,8 +14,8 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-gapp="$repo/examples/compare/guiraffe-app"
-eapp="$repo/examples/compare/electron-app"
+gapp="$repo/bench/electron/guiraffe-app"
+eapp="$repo/bench/electron/electron-app"
 
 smoke=0 force=0 build=1 pass=()
 for a in "$@"; do

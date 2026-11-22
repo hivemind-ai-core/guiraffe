@@ -1,7 +1,7 @@
 //! The GPUI control: [`GridHandle`] (state + API), [`DataGrid`] (the element) and the
 //! retained views behind it.
 //!
-//! Render isolation (spec/00 §6): the grid view and a pool of row views read shared state
+//! Render isolation (API conventions §6): the grid view and a pool of row views read shared state
 //! from an `Rc<Core>`; every mutation notifies exactly the views whose output changed with
 //! `cx.notify(entity_id)`, never through an `update` on an ancestor. Rows live in a recycled
 //! pool keyed by `view_row % pool`, so scrolling by one row re-renders one row view, selecting
@@ -166,7 +166,7 @@ pub struct GridOptions {
     /// `None` reads `StyleContext::density`.
     pub density: Option<Density>,
     /// Keyboard focus: `Some(true)` opts in, `None` follows the enclosing focus scope
-    /// (spec/00 §12.3). A pointer click never takes focus unless this resolves to true.
+    /// (API conventions §12.3). A pointer click never takes focus unless this resolves to true.
     pub focusable: Option<bool>,
     /// Extra rows built above and below the viewport.
     pub overscan: usize,
@@ -2346,7 +2346,7 @@ impl Core {
         if self.tab_stop() {
             window.focus(&self.focus, cx);
         } else {
-            // A pointer press never takes keyboard focus (spec/00 §12.3).
+            // A pointer press never takes keyboard focus (API conventions §12.3).
             window.prevent_default();
         }
         let mut m = self.m.borrow_mut();
@@ -3590,7 +3590,7 @@ impl Render for RowView {
             el = el.child(band.child(text_band(2)));
         }
         if selected {
-            // Shape cue besides color (spec/00 §12.1): an accent bar, overlaid.
+            // Shape cue besides color (API conventions §12.1): an accent bar, overlaid.
             el = el.child(
                 div()
                     .absolute()

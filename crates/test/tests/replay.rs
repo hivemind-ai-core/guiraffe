@@ -1,4 +1,4 @@
-//! The replay (spec/21 §2): a recorded interaction script the agent can run
+//! The replay: a recorded interaction script the agent can run
 //! again after a fix.
 
 use std::cell::Cell;

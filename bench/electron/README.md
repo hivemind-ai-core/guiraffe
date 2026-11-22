@@ -1,6 +1,6 @@
 # GUIraffe vs Electron + React: measurement harness
 
-Plan: `plans/ELECTRON-COMPARISON.md`. Apps and their shared contract: `examples/compare/`.
+The two apps are in `guiraffe-app/` and `electron-app/`, their shared fixtures in `shared/`, and the contract both follow in [APPS.md](APPS.md).
 
 ```sh
 bench/electron/run.sh                 # full run: builds both, 20 runs per scenario per app
@@ -28,7 +28,7 @@ windows alone (each run opens a window on the real display).
 
 ## What it measures
 
-Each run is a fresh launch of `<app> --bench <scenario>` (see `examples/compare/README.md` for
+Each run is a fresh launch of `<app> --bench <scenario>` (see `bench/electron/APPS.md` for
 the scenarios). The harness:
 
 | metric | how |

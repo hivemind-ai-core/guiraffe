@@ -2,125 +2,35 @@
 
 ## 0.2.0 (unreleased)
 
-- New: Sheet, Calendar (year/month/week/day), multi-track event timeline, date and time pickers,
-  redesigned Spotlight, desktop notifications and system tray, opt-in layout animation,
-  `ui!` macro, and DataUi catalogue coverage for the built-in widgets.
-- Performance and memory work across every component. The budgets that are still open are listed
-  in KNOWN_ISSUES.md.
-- `scripts/leak-check.py`: short Valgrind leak check over every soak scenario.
-- Apps must copy the vendored `[patch.crates-io]` table (vendor/README.md).
+### Added
+
+- Sheet, Calendar, multi-track event timeline, and date and time pickers.
+- A redesigned Spotlight, system notifications, notification windows and a system tray.
+- The `ui!` and `#[component]` macros, and opt-in layout animation.
+- DataUi coverage for the built-in widgets, with a generated catalogue and schema.
+- CodeViewer annotations: squiggles, gutter lanes, blame, inlays, code lens, review bubbles.
+- PropertyGrid editing options, resizable columns, search and typed editors.
+- `scripts/leak-check.py`, a short Valgrind leak check over every soak scenario.
+
+### Changed
+
+- Extensive time, memory and allocation work across the components. Budgets still open are in
+  [known issues](KNOWN_ISSUES.md).
+- Flow's public model now uses `Name` and `Handles`.
+- `Decorations` style keys stay valid until `release_unused_styles` is called.
+- `TreeView::forget_removed` and other removal APIs release state for deleted data.
+- Kanban columns, rather than cards, are the drop zones.
+- Apps must copy the vendored `[patch.crates-io]` table. `guiraffe new` does this.
 
 ## 0.1.0 (unreleased)
 
-First release of GUIraffe 🦒: a Mantine-inspired framework and component library for rich,
-fast desktop apps on GPUI (gpui-kit 0.9.1), aiming to be as convenient as React and lighter than Electron.
+The first version: theming, layout, components, inputs, overlays, windows, state, routing,
+motion, data grid, charts, timeline editors, flow, code, Markdown, Mermaid, chat, devtools, DataUi
+and the CLI.
+
+## Catalogue versions
 
 Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema for the built-in DataUi vocabulary.
-
-### Framework
-- **core:** theme (light/dark, Mantine palette, radius/spacing/type scales), inherited
-  `StyleContext` (layouts decide size/spacing; per-instance props are escape hatches),
-  semantic state tokens (`theme.state`, scrim, veil) meeting WCAG contrast floors for all
-  primaries in standard and high contrast, Kit (GPUI Controls) theme bridge, shared control
-  behaviour (`Press`: hover/pressed/disabled, no focus on click, opt-in tab stops, AccessKit
-  roles), non-layout focus ring, focus release on view swap.
-- **motion:** springs/tweens, presence, reduce-motion aware; opt-in layout animation
-  (`AnimatedSize`, `AnimatedList` FLIP, `KeyedPresence`, `Reveal`; `MotionPrefs::layout`; spec/29),
-  used by `Stack::animate_layout` and TreeList/PropertyGrid group expand/collapse.
-- **state:** re-frame-style store: pure handlers, effects/coeffects, interceptors, lens undo,
-  change-only selections, debounce.
-- **router:** typed routes (`routes!`), guards, history.
-- **windows:** multi-window manager (keys, open modes, persistence).
-  `WindowManager::forget_saved_layout` explicitly removes one saved record.
-  Covered by `forgotten_window_layouts_do_not_return_after_reload`.
-- **code decorations:** `Decorations::release_unused_styles` frees styles no layer uses; saved style
-  keys stay valid until it is called.
-- **overlays:** modals, confirm, toasts, desktop notifications, popovers, floating tooltips,
-  Spotlight, LoadingOverlay, Affix.
-- **ui:** UI-as-data host (`DataUi`) with granular re-rendering, keyed repeats with stable
-  identity, scoped row events, native two-way bindings, typed payloads.
-- **mocket:** Mocket design → GUIraffe importer.
-
-### Components
-- **layout:** Stack, Group, Flex, Grid/Col, SimpleGrid, Container, Center, AspectRatio,
-  Divider, Space, ScrollArea (`track_scroll`), Splitter (persisted), AppShell.
-- **components:** Text, Title, Highlight, Mark, Paper, Card, Blockquote, ThemeIcon,
-  ActionIcon, Indicator, Pill, RingProgress, SegmentedControl.
-- **inputs:** ChipGroup, TagsInput, RangeSlider, PasswordStrength, Dropzone.
-- **icons:** full Lucide set (2,359, ISC) as an asset source.
-- Plus GPUI Controls (buttons, inputs, select, checkbox/radio/switch, slider, date picker,
-  tabs, accordion, menus, table, badges, progress, avatar, alert, breadcrumb, pagination) and
-  Kit charts, themed by GUIraffe.
-
-### Rich widgets
-- **markdown:** streaming Markdown viewer (code highlighting, tables, task lists, Mermaid).
-- **mermaid:** standalone diagram viewer; background rendering; pan/zoom with sharp re-raster.
-- **flow / flow-core:** React-Flow-style graph editor: drag, connect, box-select, undo/redo,
-  minimap (drag to pan), animated edges.
-- **chat:** agent chat UI (streaming replies, reasoning, tool calls, attachments, composer).
-- **calendar:** year, six-week month, virtualized week/day schedules; UTC timed and civil all-day
-  events, named time zones, source visibility/colors, business hours, ISO weeks, 12h/24-hour
-  formats, custom item content, overlap/overflow handling, 15-minute drag and keyboard editing,
-  focus semantics, and light/dark snapshots on both backends. The release-only 10,000-event
-  mount/frame gate is `cargo test -p guiraffe-calendar --release --test scale -- --ignored`.
-- **timeline:** Gantt (critical path, resize either edge, locks), DAW track timeline (move,
-  trim, snap, locks, keyboard editing), dope sheet, curve editor.
-- **code:** virtualized code viewer: highlighting, analysis highlights, inlay hints, lenses,
-  bubbles, folds, trace lines (gutter-routed, cross-viewer), minimap (click/drag), symbol
-  cards with go-to-definition; million-line documents.
-- **tree** adds `TreeModel::forget_removed` and `TreeView::forget_removed` for permanently deleted
-  IDs. DataUi TreeList and PropertyGrid reconcile removed IDs on document row replacement.
-- **datagrid:** virtualized data grid over a zero-copy source (1M × 50): pinned, resizable,
-  reorderable columns; multi-column sort and filters off the UI thread; row/cell/range
-  selection that follows rows through sorting; keyboard navigation; inline editing with
-  validation; TSV copy; AccessKit grid roles.
-- **sheet:** sparse virtualized spreadsheet (A1 formulas recalculated off the UI thread, fill
-  handle, TSV clipboard, undo, resizable rows/columns, frozen panes, read-only); `SheetEvent::Edited`
-  for user edits; DataUi `sheet` kind (cells, extents, read-only, frozen panes, `edit` event).
-- **timeline (overhaul):** composable plot surface layers (ruler, gridlines, marks, playhead,
-  selection, markers, stripes, bands); lock state separate from lock styling; Blender-style
-  dope sheet (hierarchy, summaries, toggles, key types, hold bars, box selection, keyboard);
-  curve editor with a full external editing API (keys, segments, tangents, multi-curve);
-  quantized bar curve editor.
-
-- **text menu:** shared right-click menu for selectable text (Copy, Select all, extras;
-  Shift+F10) in code, markdown and chat.
-- **keys:** `guiraffe_core::keys::{binding, bind_keys}`: OS-aware (`secondary-` → ⌘/Ctrl),
-  fallible key bindings that report bad specs instead of panicking.
-- **components:** `ActionIcon::loading` (spinner, ignores presses, announced to screen readers).
-
-### Tooling
-- **cli:** `guiraffe new` (standalone app), `dev` (watch, rebuild, relaunch; failed builds keep
-  the previous app), `add <crate>` (idempotent, reuses the app's checkout), `doctor`
-  (toolchain, system libraries with install hints, Vulkan, pins), `preview` (hot-reloaded
-  UI-as-data), `import`.
-- **showcase:** every component live, searchable, both themes, live option panels; a
-  coverage test fails when a public component has no entry.
-- **gallery:** reference app.
-- **test:** headless snapshot harness with per-backend goldens, image diff, render counters,
-  layout-bounds assertions.
-- **bench:** reproducible benchmarks, baselines, commit-to-commit compare.
-
-### Fixes since the first showcase review
-- Layout: ScrollArea scrolls and supports `track_scroll`; Flex/Grid `grow` work (Mantine
-  semantics); vertical `Divider` is drawn inside rows.
-- Controls: no focus on click, working Tab order, focus rings that never move layout, AccessKit
-  roles; SegmentedControl selects on first click; tooltips and overlays dismiss correctly.
-- Theme: every state colour meets WCAG contrast in both schemes and all primaries; Kit primary,
-  pressed and semantic (danger/success/warning/info) colours follow the GUIraffe theme.
-- Mermaid renders and re-rasterises sharply on zoom; Markdown scrollable mode keeps its height.
-- Data grid: even cell cursor, editor matches the cell, horizontal scrollbar drag and paging.
-- Icons: build script no longer embeds zero icons from a stale build cache.
-
-### Measurement
-- `examples/compare`: the same app in GUIraffe and in Electron + React (Mantine, TanStack
-  Table/Virtual, Recharts, react-markdown/Shiki), and `bench/electron/run.sh`, which refuses to
-  publish numbers from a loaded or software-rendered machine.
-
-### Known limitations
-See KNOWN_ISSUES.md. Notably: gpui-fast pinned to 0.1.15; no OS high-contrast/forced-colours
-signal yet; Kit has four size steps; Kit charts lack legends.
-
 Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select states.
 Catalogue 1.2.0 snapshot `9cfca66b723596b0` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper and event-timeline kinds, and PropertyGrid editing options).
 Catalogue 1.3.0 snapshot `f02fd1904da6e29f` adds the `sheet` kind, PropertyGrid and Stack `animate-layout`, and ActionIcon `toggled` and `tooltip`.

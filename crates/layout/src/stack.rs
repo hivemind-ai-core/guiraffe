@@ -49,7 +49,7 @@ impl Stack {
         }
     }
 
-    /// Animate the stack's height when its children change (spec/29), following
+    /// Animate the stack's height when its children change, following
     /// `guiraffe_motion::MotionPrefs::layout`. The stack then fills its parent's width.
     /// `id` keys the animation state; keep it stable.
     pub fn animate_layout(self, id: impl Into<ElementId>) -> Self {

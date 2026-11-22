@@ -29,4 +29,4 @@ view.update(cx, |view, cx| {
 
 `BarCurve::new(n, min, max)` stores N bounded values; `set_steps(Some(n))` quantizes to N intervals and `bipolar=true` draws around zero. `draw(from, to)` fills every intervening bar in either direction and returns the changed index range. `BarCurveView` emits `BarEvent` for pointer drawing, and `from_curve`/`to_curve` sample between finite time endpoints. Render captures share the values; edits copy on write if a previous frame retains them.
 
-See `examples/plot_layers.rs` and the five showcase timeline entries. `VALIDATION-3.md` records the review fixes, full showcase validation and rendering boundaries; `VALIDATION-2.md` remains the historical first handoff.
+See `examples/plot_layers.rs` and the five showcase timeline entries.

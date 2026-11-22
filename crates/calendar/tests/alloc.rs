@@ -1,4 +1,4 @@
-//! Allocation gates (spec/27 §Performance, spec/23): the per-frame hot paths that
+//! Allocation gates: the per-frame hot paths that
 //! run on every repaint and hour scroll allocate nothing once warm, and a warm
 //! repaint of an unchanged calendar allocates the same amount every time.
 #![allow(unsafe_code)]
@@ -299,7 +299,7 @@ impl Render for ReplayHost {
     }
 }
 
-/// spec/23: an unchanged repaint allocates nothing. Same definition as the bench
+/// An unchanged repaint allocates nothing. Same definition as the bench
 /// mounted replay gate: viewport-sized cached view, nothing invalidated, eight
 /// consecutive draws after warm-up.
 #[gpui_kit::test]

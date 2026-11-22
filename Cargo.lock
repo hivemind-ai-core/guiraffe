@@ -1520,7 +1520,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "desktop-integration"
+name = "desktop"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
@@ -3632,26 +3632,6 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "guiraffe-gallery"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui-kit",
- "guiraffe-chat",
- "guiraffe-components",
- "guiraffe-core",
- "guiraffe-devtools",
- "guiraffe-flow",
- "guiraffe-icons",
- "guiraffe-motion",
- "guiraffe-overlays",
- "guiraffe-router",
- "guiraffe-state",
- "guiraffe-test",
- "guiraffe-windows",
 ]
 
 [[package]]
@@ -8022,6 +8002,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "team-tasks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "guiraffe-components",
+ "guiraffe-core",
+ "guiraffe-test",
+ "guiraffe-ui",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8532,18 +8524,6 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "ui-macro-demo"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui-kit",
- "guiraffe-components",
- "guiraffe-core",
- "guiraffe-test",
- "guiraffe-ui",
 ]
 
 [[package]]

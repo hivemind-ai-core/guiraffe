@@ -36,7 +36,7 @@ pub enum ChipEvent {
 
 /// A group of toggleable chips (single or multiple selection).
 ///
-/// Interaction (spec/00 §12): each chip is a toggle button (AccessKit `CheckBox` with toggled
+/// Interaction (API conventions §12): each chip is a toggle button (AccessKit `CheckBox` with toggled
 /// state when multiple, `RadioButton` with selected state when single). A pointer press never
 /// takes focus; chips are tab stops only inside a focus scope or with
 /// [`ChipGroup::set_focusable`], and then Enter/Space toggle and a focus ring shows.
@@ -352,7 +352,7 @@ pub enum RangeEvent {
 
 /// A two-thumb slider. Drag either thumb (the nearer one is grabbed).
 ///
-/// Interaction (spec/00 §12): a pointer press drags without taking keyboard focus. The slider
+/// Interaction (API conventions §12): a pointer press drags without taking keyboard focus. The slider
 /// is a tab stop only inside a focus scope or with [`RangeSlider::set_focusable`]; focused,
 /// ←/→ move the low thumb, Shift+←/→ the high thumb, Home sends the low thumb to the minimum
 /// and End the high thumb to the maximum, and a focus ring shows. AccessKit: `Slider` with
@@ -645,7 +645,7 @@ pub enum DropEvent {
 
 /// A file drop target with an accept filter (`[".png", "image/*"]`).
 ///
-/// Interaction (spec/00 §12): also a button (AccessKit `Button` named by its label) that
+/// Interaction (API conventions §12): also a button (AccessKit `Button` named by its label) that
 /// emits [`DropEvent::BrowseRequested`] on click or Enter/Space. It never takes focus on
 /// pointer press; it is a tab stop inside a focus scope or with [`Dropzone::set_focusable`].
 pub struct Dropzone {

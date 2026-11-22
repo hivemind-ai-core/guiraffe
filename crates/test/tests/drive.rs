@@ -1,4 +1,4 @@
-//! The drive API (spec/21 §2): the actions an agent performs on a running app,
+//! The drive API: the actions an agent performs on a running app,
 //! and what they changed.
 
 use std::cell::{Cell, RefCell};

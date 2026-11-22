@@ -62,7 +62,7 @@ pub struct ColorSwatch {
     /// `None`: inherit the context's control size.
     size: Option<Size>,
     disabled: bool,
-    /// `None`: a clickable swatch is a tab stop only inside a focus scope (spec/00 §12.3).
+    /// `None`: a clickable swatch is a tab stop only inside a focus scope (API conventions §12.3).
     focusable: Option<bool>,
     on_click: Option<OnClick>,
     style: StyleRefinement,
@@ -158,7 +158,7 @@ impl RenderOnce for ColorSwatch {
             });
         // The selection ring sits outside the colour with a gap, so it reads on any colour.
         // Its room is always reserved (transparent when unselected): selecting never moves
-        // layout (spec/00 §12.2).
+        // layout (API conventions §12.2).
         let chip = div()
             .rounded(r)
             .border_2()

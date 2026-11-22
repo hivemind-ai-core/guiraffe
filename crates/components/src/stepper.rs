@@ -114,7 +114,7 @@ pub struct Stepper {
     size: Option<Size>,
     color: Option<ColorName>,
     on_step_click: Option<OnStepClick>,
-    /// `None`: clickable steps are tab stops only inside a focus scope (spec/00 §12.3).
+    /// `None`: clickable steps are tab stops only inside a focus scope (API conventions §12.3).
     focusable: Option<bool>,
     style: StyleRefinement,
 }

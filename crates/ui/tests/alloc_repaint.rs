@@ -91,7 +91,7 @@ fn median(values: &[u64]) -> u64 {
 
 /// The host itself (empty stack + shell) costs 14 allocations per repaint and
 /// each extra node ~9 more (AnyElement erasure, the children `Vec`), with the
-/// widget's own render on top. Both numbers are recorded in plans/ALLOC-AUDIT.md.
+/// widget's own render on top. See docs/performance.md.
 const DOC_BUDGET: u64 = 200;
 
 #[gpui_kit::test]

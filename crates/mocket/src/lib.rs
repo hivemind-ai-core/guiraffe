@@ -1,10 +1,10 @@
-//! Mocket → GUIraffe importer (spec/10 "Authoring: Mocket").
+//! Mocket → GUIraffe importer.
 //!
 //! Converts a Mocket document (its JSON: `screens` + a `nodes` map) into a GUIraffe
 //! [`Document`]. Every node maps through one table ([`MAPPING`]); each import reports
 //! **coverage** per node (mapped / partial / unsupported), like Mocket's own export targets.
 //!
-//! Design choices (spec/14, spec/10):
+//! Design choices:
 //! - Mocket pixel gaps become the nearest `Size` token, so imported screens stay on the app's
 //!   spacing scale instead of carrying one-off pixels.
 //! - Every text-bearing node binds its text to a slot named after the Mocket node id (with the

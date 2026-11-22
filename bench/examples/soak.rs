@@ -623,7 +623,7 @@ fn limit_report(mount: Duration, mut times: Vec<u128>) -> Result<()> {
     Ok(())
 }
 
-/// Mounted spec/23 scale probes: each mounts the real component over a large
+/// Mounted scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
     use super::{Instant, Result, finish_replay_frame, open_soak_window, scaled};

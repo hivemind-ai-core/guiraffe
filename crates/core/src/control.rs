@@ -1,4 +1,4 @@
-//! Shared interaction plumbing for GUIraffe's own controls (spec/00 §12, spec/18).
+//! Shared interaction plumbing for GUIraffe's own controls (API conventions §12).
 //!
 //! GUIraffe widgets that cannot be a Kit `Button` (custom shapes, segments, chips, list rows)
 //! replicate its behavior with [`PressableExt::press`]:
@@ -64,7 +64,7 @@ impl GuiraffeTheme {
     }
 }
 
-/// Focus ring stroke width (spec/00 §12.2).
+/// Focus ring stroke width (API conventions §12.2).
 pub const RING_WIDTH: f32 = 2.0;
 /// Distance the ring's box extends past the control's box (§12.2 `inset: -offset`).
 pub const RING_OFFSET: f32 = 2.0;
@@ -74,7 +74,7 @@ pub fn ring_visible(focus: &FocusHandle, window: &Window) -> bool {
     focus.is_focused(window) && window.last_input_was_keyboard()
 }
 
-/// The one shared focus ring (spec/00 §12.2): an absolutely positioned, non-interactive
+/// The one shared focus ring (API conventions §12.2): an absolutely positioned, non-interactive
 /// overlay outside the control's box (`inset: -RING_OFFSET`, radius = `radius + RING_OFFSET`,
 /// 2px stroke in `state(FocusRing)` color). It is separate from the control's own border and
 /// never takes part in layout, so focusing never moves or resizes anything. The element gets
@@ -169,7 +169,7 @@ impl Press {
     }
 }
 
-/// Release focus held inside a view that is about to be swapped out (spec/00 §12): if the
+/// Release focus held inside a view that is about to be swapped out (API conventions §12): if the
 /// focus is within `container`, move it to `container` itself (whose element is still
 /// rendered, so it stays valid and receives nothing). Routers and shells call this before
 /// replacing a page so a hidden control never keeps keyboard focus. Returns whether focus

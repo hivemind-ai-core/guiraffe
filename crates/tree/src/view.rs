@@ -233,7 +233,7 @@ pub struct TreeView<const PROPERTIES: bool> {
     focus_row: bool,
     reset_button: bool,
     edit_buttons: EditButtons,
-    /// Opt-in collapse/expand animation (spec/29); see `collapse_motion.rs`.
+    /// Opt-in collapse/expand animation; see `collapse_motion.rs`.
     collapse_motion: CollapseMotion,
 }
 
@@ -371,7 +371,7 @@ impl<const P: bool> TreeView<P> {
         }
     }
 
-    /// Animate group expand/collapse (spec/29). `None` (the default) follows
+    /// Animate group expand/collapse. `None` (the default) follows
     /// `guiraffe_motion::MotionPrefs::layout`; reduced motion always makes it instant.
     pub fn animate_layout(mut self, enabled: Option<bool>) -> Self {
         self.collapse_motion.enabled = enabled;
@@ -1774,7 +1774,7 @@ impl<const P: bool> Render for TreeView<P> {
         let range = self.window();
         let row_height = self.row_style.density.height();
         let offset = self.row_top(range.start) - self.scroll;
-        // Collapse motion (spec/29): rows from the anchor on are painted shifted; while they
+        // Collapse motion: rows from the anchor on are painted shifted; while they
         // are drawn higher than laid out, render enough extra rows to fill the viewport.
         let shift = if self.filter.is_some() {
             self.collapse_motion.reset();
@@ -3166,7 +3166,7 @@ mod tests {
         );
     }
 
-    /// Collapse motion (spec/29) composes with the editing options: an open editor and its
+    /// Collapse motion composes with the editing options: an open editor and its
     /// buttons keep working while rows below an expanding group slide, rows are never
     /// highlighted with focus_row(false), and everything settles at the laid-out position.
     #[gpui_kit::test]

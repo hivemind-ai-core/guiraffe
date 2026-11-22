@@ -3,7 +3,7 @@
 //! - Pure, deterministic core: [`Easing`], [`Spring`], [`Timing`], [`Lerp`], [`TransitionKind`], [`Presence`].
 //! - GPUI drivers: [`Animated`] and [`sample_presence`] request animation frames only while
 //!   moving, from within the leaf view that renders the value.
-//! - Layout animation (spec/29, opt-in via [`LayoutMotion`]): [`AnimatedSize`], [`AnimatedList`]
+//! - Layout animation: [`AnimatedSize`], [`AnimatedList`]
 //!   (FLIP), [`KeyedPresence`] and [`Reveal`] for enter/exit.
 //! - [`MotionPrefs`]: reduced motion and a slow-motion time scale, applied everywhere.
 //!

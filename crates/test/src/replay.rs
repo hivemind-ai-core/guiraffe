@@ -1,4 +1,4 @@
-//! The replay (spec/21 §2): a recorded interaction script the agent can run
+//! The replay: a recorded interaction script the agent can run
 //! again after a fix.
 //!
 //! A script is a list of actions with the assertions that must hold after

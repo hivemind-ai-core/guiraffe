@@ -144,7 +144,7 @@ impl RenderOnce for Menu {
                 uniform_list((self.id, "items"), count, move |range, _, cx| {
                     let theme = GuiraffeTheme::global(cx);
                     let surfaces = theme.surfaces();
-                    // Semantic state tokens (spec/00 §12.1), resolved per scheme.
+                    // Semantic state tokens (API conventions §12.1), resolved per scheme.
                     let state = |kind| theme.state(kind, Variant::Subtle, None);
                     let dimmed = state(StateKind::Dimmed).foreground.to_hsla();
                     let disabled = state(StateKind::Disabled).foreground.to_hsla();

@@ -149,7 +149,7 @@ On Linux, run the headless interaction soak with
 `cargo run --release --locked -p guiraffe-bench --example soak -- timeline`.
 The other component arguments are `flow`, `chart-line` and `chart-scatter`.
 Each run warms for 10 seconds, samples for 30 minutes, and prints frame-time
-percentiles, the maximum, RSS and PSS every 10 seconds. It fails on the spec/23
+percentiles, the maximum, RSS and PSS every 10 seconds. It fails on the budgets in docs/performance.md,
 timing limits or more than 2% upward drift from the warmed sample.
 Use `--short` for two 10-second windows with absolute limits disabled for CI.
 The runner measures headless dispatch and CPU paint and reads `/proc/self/smaps_rollup`.

@@ -8,7 +8,7 @@ use std::{path::Path, process::Command};
 
 /// Minimum Rust version (workspace `rust-version`).
 pub const MIN_RUST: (u32, u32) = (1, 90);
-/// gpui-fast 0.1.16 does not compile with gpui-kit 0.9.1 (KNOWN_ISSUES #3).
+/// gpui-fast 0.1.16 does not compile with gpui-kit 0.9.1 (KNOWN_ISSUES.md, pinned gpui-fast).
 pub const GPUI_FAST_PIN: &str = "0.1.15";
 pub const GPUI_KIT_PIN: &str = "0.9.1";
 
@@ -188,7 +188,7 @@ pub fn check_manifest(manifest: &str) -> Option<Vec<Check>> {
             _ => Check::bad(
                 "gpui-fast pin",
                 Status::Fail,
-                format!("gpui-fast must be pinned to ={GPUI_FAST_PIN} (0.1.16 breaks gpui-kit {GPUI_KIT_PIN}; KNOWN_ISSUES #3)"),
+                format!("gpui-fast must be pinned to ={GPUI_FAST_PIN} (0.1.16 breaks gpui-kit {GPUI_KIT_PIN}; KNOWN_ISSUES.md, pinned gpui-fast)"),
                 format!("add: gpui-fast = \"={GPUI_FAST_PIN}\""),
             ),
         });

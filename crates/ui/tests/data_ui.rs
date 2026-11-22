@@ -245,7 +245,7 @@ fn a_patch_re_renders_only_the_nodes_bound_to_that_slot(cx: &mut TestAppContext)
         assert_eq!(after.1, before.1, "a sibling bound node did not");
         assert_eq!(after.0, before.0, "the document root did not");
     }
-    // Upstream GPUI re-renders ancestors (and their child views) on a child notify (DESIGN §2c).
+    // Upstream GPUI re-renders ancestors (and their child views) on a child notify.
     // On either backend, a change that alters a node's *size* may re-layout its ancestors.
     vcx.update(|_, cx| {
         h.patch(

@@ -1,4 +1,4 @@
-//! GPUI elements for opt-in layout animation (spec/29): [`AnimatedSize`], [`AnimatedList`]
+//! GPUI elements for opt-in layout animation: [`AnimatedSize`], [`AnimatedList`]
 //! and [`Reveal`].
 //!
 //! Each element keeps its state in GPUI element state (keyed by its id path) and requests an

@@ -1,4 +1,4 @@
-//! The in-process inspect API (spec/21 §2).
+//! The in-process inspect API.
 //!
 //! Every node of the app under inspection carries a stable id, and the API
 //! answers what the last frame says about it: where it is, what an assistive

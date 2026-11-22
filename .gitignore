@@ -9,3 +9,5 @@ Refactoring_UI_-_Complete_Package/
 
 /perf-run/
 /bench-run/
+bench/electron/results/
+bench/electron/RESULTS.md

@@ -5,7 +5,7 @@ description: Implement or refactor a GUIraffe desktop interface in Rust using GP
 
 # GUIraffe UI Implementation
 
-Read the repository instructions, the spec overview, then the assigned crate spec. Consult the [GUIraffe recommendations](../../../docs/ui-ux/guiraffe-recommendations.md) for the affected area.
+Read the repository instructions, the [architecture](../../../docs/architecture.md) and the [API conventions](../../../docs/contributing/api-conventions.md) for the affected area.
 
 1. Preserve the pinned workspace Kit version. Reuse Controls and the current GUIraffe theme and focus layers. Put outer spacing in the parent and intrinsic control padding in the widget.
 2. Verify behavior through the real entry point. Keep resolution logic GPUI-free where practical. Test focus, dispatch and recovery in TestAppContext, and capture representative theme and density states when appearance changes.

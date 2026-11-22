@@ -1,4 +1,4 @@
-//! GUIraffe data-driven UI (spec/10): documents (typically designed in Mocket) compiled once
+//! GUIraffe data-driven UI: documents (typically designed in Mocket) compiled once
 //! into templates, instantiated by a [`DataUi`] host that can live anywhere in a static UI.
 //!
 //! - **Pre-created:** compile resolves widget kinds to shared `dyn Widget`s and binding/event

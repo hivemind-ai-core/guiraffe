@@ -1,4 +1,4 @@
-//! Inherited style context (spec/14): containers provide, widgets read.
+//! Inherited style context: containers provide, widgets read.
 //!
 //! Stateless components and views render during their parent's `request_layout`, so a
 //! [`Provide`] element pushes its context on a stack for exactly the extent of laying out its
@@ -66,7 +66,7 @@ pub struct StyleContext {
     pub control_size: Size,
     pub surface: SurfaceKind,
     pub emphasis: Emphasis,
-    /// Inside a focus scope (form): non-text controls join Tab navigation (spec/00 §12.3).
+    /// Inside a focus scope (form): non-text controls join Tab navigation (API conventions §12.3).
     /// Outside one they never take keyboard focus.
     pub keyboard_nav: bool,
 }
@@ -360,7 +360,7 @@ impl Element for Provide {
 
 /// Opt a subtree into Tab navigation (a form, dialog or settings page): non-text controls
 /// inside become tab stops and show focus rings for keyboard focus. Outside a scope,
-/// clicking a button, segment or chip never takes keyboard focus (spec/00 §12.3).
+/// clicking a button, segment or chip never takes keyboard focus (API conventions §12.3).
 pub fn focus_scope(child: impl gpui_kit::IntoElement) -> Provide {
     provide(StylePatch::new().keyboard_nav(true), child)
 }

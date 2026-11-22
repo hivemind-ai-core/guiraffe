@@ -36,7 +36,7 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
     (
         "components",
         "ScopedButton",
-        "focus-scope prototype (spec/18 §12 audit); a Kit Button with opt-in tab stop",
+        "focus-scope prototype; a Kit Button with opt-in tab stop",
     ),
     (
         "core",
@@ -46,7 +46,7 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
     (
         "devtools",
         "DevtoolsRoot",
-        "feature-gated developer overlay host, not an app component; shown in the gallery (`--features devtools`)",
+        "feature-gated developer overlay host, not an app component; shown in getting-started example 6 (`--features devtools`)",
     ),
     (
         "devtools",

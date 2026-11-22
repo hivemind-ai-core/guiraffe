@@ -283,7 +283,7 @@ impl SortableBoard {
     }
 }
 
-/// Status line shown before any move: the keyboard affordance (spec/00 §12.4).
+/// Status line shown before any move: the keyboard affordance (API conventions §12.4).
 const IDLE_HINT: &str = "Drag a card to move it, or focus it and press Space to pick it up.";
 
 /// The insertion gap for a pointer over a column whose cards (in list order) have `cards`

@@ -1,4 +1,4 @@
-//! GPUI tests for layout animation (spec/29), on both backends.
+//! GPUI tests for layout animation, on both backends.
 
 use std::{cell::Cell, rc::Rc, time::Duration};
 

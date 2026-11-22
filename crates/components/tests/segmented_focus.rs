@@ -1,4 +1,4 @@
-//! SegmentedControl, spec/00 §12 / §12.2: no focus on click, opt-in keyboard, disabled,
+//! SegmentedControl, API conventions §12 / §12.2: no focus on click, opt-in keyboard, disabled,
 //! AccessKit roles, and layout that never moves on focus / click / selection.
 //! Regression: the showcase Grid knob ("4 / 6 / 12") grew by a 1px border on click/focus.
 use gpui_kit::{

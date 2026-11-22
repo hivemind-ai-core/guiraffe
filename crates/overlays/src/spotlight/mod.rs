@@ -1,7 +1,7 @@
 //! Spotlight: a keyboard-first command bar (Mantine Spotlight, VS Code's command palette,
 //! macOS Spotlight).
 //!
-//! [`SpotlightState`] is the Control (spec/00 §1): it owns the actions, the query, the
+//! [`SpotlightState`] is the Control (API conventions §1): it owns the actions, the query, the
 //! selection and recents, emits [`SpotlightEvent`]s and renders the panel. Open it as a
 //! window overlay (centered in the upper third over the theme scrim, focus restored on
 //! close) with [`SpotlightState::open`], or embed it with [`Spotlight::new`].
@@ -95,7 +95,7 @@ pub(crate) fn init(cx: &mut App) {
     }
 }
 
-/// Typed events (spec/00 §3). Subscribe with `cx.subscribe(&spotlight, ..)`.
+/// Typed events (API conventions §3). Subscribe with `cx.subscribe(&spotlight, ..)`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpotlightEvent {
     /// Opened as an overlay.

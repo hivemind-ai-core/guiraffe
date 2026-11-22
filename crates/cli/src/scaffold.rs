@@ -136,10 +136,7 @@ mod tests {
             cargo.contains("guiraffe-icons = { path"),
             "main.rs uses guiraffe_icons"
         );
-        assert!(
-            cargo.contains("\"gpui-fast\""),
-            "apps default to gpui-fast (DESIGN §2c)"
-        );
+        assert!(cargo.contains("\"gpui-fast\""), "apps default to gpui-fast");
         assert!(
             cargo.contains(&format!(
                 "guiraffe-router = {{ path = {:?} }}",

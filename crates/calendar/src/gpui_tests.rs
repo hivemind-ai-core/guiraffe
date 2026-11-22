@@ -1054,7 +1054,7 @@ fn bounds_named(
     })
 }
 
-/// spec/27 §Keyboard: the focus ring is the focused event's rect, whatever its
+/// the focus ring is the focused event's rect, whatever its
 /// duration, lane, continuation or scroll position.
 #[gpui_kit::test]
 fn focus_ring_rect_equals_the_focused_event_rect(cx: &mut TestAppContext) {
@@ -1168,7 +1168,7 @@ fn focus_ring_rect_equals_the_focused_event_rect(cx: &mut TestAppContext) {
     assert!(checked > 300, "only {checked} positions were checked");
 }
 
-/// spec/27 §Keyboard: focus and selection rings do not change layout.
+/// focus and selection rings do not change layout.
 #[gpui_kit::test]
 fn cell_and_selection_rings_do_not_move_content(cx: &mut TestAppContext) {
     let (state, _, vcx) = open(cx, CalendarViewKind::Month);

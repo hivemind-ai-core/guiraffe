@@ -9,7 +9,7 @@ use syn::{
     UseTree, Visibility,
 };
 
-const TOOL_CRATES: &[&str] = &["bench", "cli", "gallery", "mocket", "showcase", "test"];
+const TOOL_CRATES: &[&str] = &["bench", "cli", "mocket", "showcase", "test"];
 
 pub fn public_surface(crates: &Path) -> BTreeSet<String> {
     let mut result = BTreeSet::new();

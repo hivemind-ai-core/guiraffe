@@ -5,7 +5,7 @@ description: Design or visually refactor desktop screens and components, includi
 
 # UI Design
 
-Read [Visual design](../../../docs/ui-ux/visual-design.md) and [Interaction patterns](../../../docs/ui-ux/interaction-patterns.md).
+Read [Visual design](../../../docs/contributing/ui-ux/visual-design.md) and [Interaction patterns](../../../docs/contributing/ui-ux/interaction-patterns.md).
 
 1. Use one task and realistic content. Establish a reading order and pick an action hierarchy before choosing surfaces and decoration.
 2. Make grouping, spacing, type roles and semantic surfaces reusable. Specify narrow and wide behavior, long labels, light and dark schemes, and relevant interaction states.

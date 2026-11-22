@@ -2,7 +2,7 @@
 //! and the selected entry's live demo. Demo views are created once and cached, so demo
 //! state survives navigation and a demo re-renders independently of the shell.
 //!
-//! Keyboard (spec/00 §12): Tab / Shift+Tab cycle the search, the theme toggle, the catalog
+//! Keyboard (API conventions §12): Tab / Shift+Tab cycle the search, the theme toggle, the catalog
 //! list (↑/↓ move the selection) and the current page's controls (the page is a focus scope).
 //! Pointer clicks on the list or page controls never take focus, and switching pages
 //! releases any focus left inside the old page.

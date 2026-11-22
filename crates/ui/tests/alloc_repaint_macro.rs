@@ -14,7 +14,7 @@ use guiraffe_ui::ui;
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator;
 
-/// Measured on the upstream backend: see plans/ALLOC-AUDIT.md.
+/// Measured on the upstream backend (see docs/performance.md).
 const BUDGET: u64 = 120;
 
 struct MacroView {

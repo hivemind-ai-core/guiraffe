@@ -1,5 +1,5 @@
 //! Built-in document widgets, mapped onto GUIraffe components and GPUI Controls.
-//! Spacing comes from the inherited style context (spec/14), not from the document.
+//! Spacing comes from the inherited style context, not from the document.
 
 use gpui_kit::{
     AnyElement, FontWeight, InteractiveElement, IntoElement, ParentElement,
@@ -220,7 +220,7 @@ pub fn register(r: &mut Registry) {
                 .justify(flow_justify(n))
                 .grow(n.bool(n.prop_index("grow")))
                 .children(kids);
-            // spec/29: "auto" follows MotionPrefs::layout, "on" forces it (reduced motion wins).
+            // "auto" follows MotionPrefs::layout, "on" forces it (reduced motion wins).
             let enabled = match n.prop(n.prop_index("animate-layout")).as_str() {
                 Some("auto") => Some(None),
                 Some("on") => Some(Some(true)),

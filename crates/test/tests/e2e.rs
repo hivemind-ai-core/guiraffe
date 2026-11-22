@@ -20,7 +20,7 @@ impl Drop for App {
 }
 
 #[test]
-#[ignore = "requires built probe_app, X11 server, renderer, import and xdotool; see spikes/visual-snapshots.md"]
+#[ignore = "requires built probe_app, X11 server, renderer, import and xdotool; see crates/test/src"]
 fn real_app_input_and_five_fresh_captures() -> Result<()> {
     let root = PathBuf::from(format!("/tmp/guiraffe-visual-{}", std::process::id()));
     fs::create_dir(&root)?;

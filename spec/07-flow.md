@@ -1,3 +1,0 @@
-# guiraffe-flow (xyflow-style)
-Core (no GPUI): Node{id,pos,size,data,type,parent,selected,draggable}, Edge{id,source,target,handles,type(bezier/smoothstep/step/straight),label,animated,markers}, Viewport transform, spatial index for hit-testing, selection, history (undo/redo), connection validation, layout hooks (dagre-like layered), serialization (serde).
-UI: canvas with pan/zoom (wheel, pinch, keyboard), custom node renderers via trait, handles & drag-to-connect, box selection, snap to grid, Background (dots/lines/cross), MiniMap, Controls (zoom/fit), NodeToolbar, edge labels, viewport culling, 60fps with 5k nodes/10k edges (benchmark). Port best parts of ../gui/workbench/crates/{graph-core,graph-ui}.

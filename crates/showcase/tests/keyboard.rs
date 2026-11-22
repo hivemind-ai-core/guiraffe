@@ -1,4 +1,4 @@
-//! spec/00 §12 in the showcase shell: Tab cycles search → theme → catalog → page controls
+//! API conventions §12 in the showcase shell: Tab cycles search → theme → catalog → page controls
 //! and Shift+Tab goes back; clicks never take focus or move layout (regression: the Grid
 //! "Columns 4 / 6 / 12" knob grew a 1px border on click/focus); switching pages releases
 //! focus left on the old page.

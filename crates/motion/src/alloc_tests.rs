@@ -1,4 +1,4 @@
-//! Allocation bound for steady layout animation (spec/29): an animating frame of an
+//! Allocation bound for steady layout animation: an animating frame of an
 //! `AnimatedSize` + `AnimatedList` view allocates no more than an idle re-render of the same
 //! view (GPUI's own per-frame work is the baseline), plus [`EXTRA_PER_FRAME`].
 #![allow(unsafe_code)]

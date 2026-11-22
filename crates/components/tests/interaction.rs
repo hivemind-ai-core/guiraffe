@@ -111,7 +111,7 @@ fn indicator_animation_does_not_rerender_the_host(cx: &mut TestAppContext) {
             "spring animation re-renders only the control"
         );
     } else {
-        // Upstream GPUI re-renders ancestors on child notify (DESIGN §2c); recorded, not hidden.
+        // Upstream GPUI re-renders ancestors on child notify; recorded, not hidden.
         assert!(renders.get() >= before);
     }
 }
@@ -150,7 +150,7 @@ fn the_first_click_selects_without_taking_focus(cx: &mut TestAppContext) {
     assert_eq!(*events.borrow(), vec![SegmentedEvent::Changed(2)]);
     assert!(
         !vcx.update(|w, cx| control.read(cx).focus_handle(cx).is_focused(w)),
-        "spec/00 §12.3: a pointer press never takes keyboard focus"
+        "API conventions §12.3: a pointer press never takes keyboard focus"
     );
 }
 

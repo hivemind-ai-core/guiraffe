@@ -1,6 +1,6 @@
 //! The slot table: view data addressed by index, updated through patches.
 //!
-//! Logic never sends views, only [`Patch`]es (data motion ∝ change, spec/15). Applying a
+//! Logic never sends views, only [`Patch`]es (data motion ∝ change). Applying a
 //! patch that doesn't change the value is a no-op, so nothing re-renders for it.
 
 use crate::value::Value;

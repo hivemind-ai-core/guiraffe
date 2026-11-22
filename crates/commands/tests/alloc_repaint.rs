@@ -12,7 +12,7 @@ use guiraffe_test::alloc::{CountingAllocator, count_allocations};
 
 fn noop(_: &Payload, _: &mut Window, _: &mut gpui_kit::App) {}
 
-/// 18 rows in 3 categories; measured ~858 upstream: see plans/ALLOC-AUDIT.md.
+/// 18 rows in 3 categories; measured ~858 upstream (see docs/performance.md).
 const MENU_BUDGET: u64 = 1_000;
 
 #[global_allocator]

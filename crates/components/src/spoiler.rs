@@ -71,7 +71,7 @@ pub struct Spoiler {
     /// Natural height of the body, as last measured by the recorder canvas.
     measured: std::rc::Rc<std::cell::Cell<f32>>,
     focus: FocusHandle,
-    /// `None`: the toggle is a tab stop only inside a focus scope (spec/00 §12.3).
+    /// `None`: the toggle is a tab stop only inside a focus scope (API conventions §12.3).
     focusable: Option<bool>,
 }
 

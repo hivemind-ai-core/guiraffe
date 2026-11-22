@@ -360,7 +360,7 @@ fn cached_label_updates_and_selector_scaling() {
                 "row {id}"
             );
         }
-        // TODO(plans/ROADMAP-0.3.md#e-fine-grained-reactivity-below-the-view-response-to-a-critique-of-gpui):
+        // TODO(ROADMAP.md, reactive sinks):
         // Tighten to O(changed sinks) once Store can route writes to their dependent sinks.
         assert_eq!(probe.selectors.get() - visits, n);
         close(window);

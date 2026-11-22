@@ -10,7 +10,7 @@ use toml_edit::{DocumentMut, InlineTable, Item, Value};
 
 /// Crates in a GUIraffe checkout that apps can depend on (`crates/<name>` with a library).
 pub fn available(checkout: &Path) -> Vec<String> {
-    const NOT_FOR_APPS: &[&str] = &["test", "bench", "cli", "gallery", "showcase"];
+    const NOT_FOR_APPS: &[&str] = &["test", "bench", "cli", "showcase"];
     let mut names: Vec<String> = std::fs::read_dir(checkout.join("crates"))
         .into_iter()
         .flatten()

@@ -1,4 +1,4 @@
-//! The drive API (spec/21 §2): the actions an agent performs on a running app.
+//! The drive API: the actions an agent performs on a running app.
 //!
 //! Every action answers with what it changed: the events the app emitted, the
 //! focus that moved and the nodes that were laid out again.

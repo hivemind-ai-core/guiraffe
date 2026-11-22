@@ -134,7 +134,7 @@ pub struct MotionPrefs {
     /// Slow-motion factor for tuning (devtools): 10.0 plays ten times slower.
     pub time_scale: f32,
     pub tokens: MotionTokens,
-    /// Opt-in layout animation (spec/29): containers that support it interpolate size and
+    /// Opt-in layout animation: containers that support it interpolate size and
     /// position changes instead of jumping. Off by default.
     pub layout: LayoutMotion,
 }
@@ -150,7 +150,7 @@ impl Default for MotionPrefs {
     }
 }
 
-/// App-wide default for layout animation (spec/29). Containers override it per instance
+/// App-wide default for layout animation. Containers override it per instance
 /// with `.enabled(bool)` / `.timing(Timing)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayoutMotion {

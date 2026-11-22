@@ -1,5 +1,5 @@
 //! Mid-drag golden for the Kanban demo: the drag preview is the theme's translucent
-//! drag-preview token (spec/00 §12.1), so the card beneath stays visible through it.
+//! drag-preview token (API conventions §12.1), so the card beneath stays visible through it.
 //!
 //! The snapshot helper only renders, so this drives the headless window by hand: press on a
 //! card, move past the drag threshold, draw, capture.

@@ -168,7 +168,7 @@ impl NodeView<'_> {
 }
 
 /// A widget kind usable from documents. Created once per kind and shared; `Send + Sync` so
-/// templates can be compiled off the UI thread (spec/15).
+/// templates can be compiled off the UI thread.
 pub trait Widget: Send + Sync + 'static {
     /// Opt-in proof that this leaf's height is bounded by Size::Xl.control_height().
     /// The compiler otherwise uses natural layout, including for overridden kinds.

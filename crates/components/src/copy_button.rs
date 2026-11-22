@@ -55,7 +55,7 @@ pub struct CopyButton {
     disabled: bool,
     on_copy: Option<OnCopy>,
     focus: FocusHandle,
-    /// `None`: a tab stop only inside a focus scope (spec/00 §12.3).
+    /// `None`: a tab stop only inside a focus scope (API conventions §12.3).
     focusable: Option<bool>,
 }
 

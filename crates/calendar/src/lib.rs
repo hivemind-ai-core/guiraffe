@@ -1,4 +1,4 @@
-//! Year, month, week, and day calendar views from `spec/27-calendar.md`.
+//! Year, month, week, and day calendar views.
 //!
 //! The model is independent of GPUI and safely shares immutable event storage:
 //!

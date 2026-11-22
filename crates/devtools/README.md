@@ -84,11 +84,10 @@ cargo clippy -p guiraffe-devtools --all-targets --features devtools -- -D warnin
 cargo clippy -p guiraffe-devtools --all-targets --features devtools,gpui-kit/gpui-fast -- -D warnings
 ```
 
-## Gallery
+## Try it
 
-`cargo run -p guiraffe-gallery --features devtools` adds a Devtools toolbar button, tracks the
-gallery shell and inspects the router's navigation Store; `tests/devtools.rs` in the gallery
-covers the toolbar and shortcut toggles.
+`cargo run -p getting-started-examples --example 06_router_store --features devtools` runs the
+router and store tutorial app with the developer tools attached.
 
 ## Known limits
 

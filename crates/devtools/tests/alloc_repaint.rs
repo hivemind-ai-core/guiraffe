@@ -14,7 +14,7 @@ use guiraffe_test::alloc::{CountingAllocator, count_allocations};
 static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 /// Measured on both backends with the panel open, paused and one tracked view
-/// (upstream ~758, gpui-fast ~490): see plans/ALLOC-AUDIT.md. The panel samples
+/// (upstream ~758, gpui-fast ~490) (see docs/performance.md). The panel samples
 /// its own frames, so a single frame can be an outlier; the growth check uses
 /// medians. Raising the budget needs a recorded reason.
 const BUDGET: u64 = 900;

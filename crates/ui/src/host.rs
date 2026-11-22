@@ -31,7 +31,7 @@ use crate::{
     widget::{Emit, NodeView, Registry},
 };
 
-/// Application logic behind a document: events in, slot patches out (spec/10).
+/// Application logic behind a document: events in, slot patches out.
 /// Native Rust today; the same message-shaped boundary can later be a wasm component.
 pub trait Logic: 'static {
     /// Called after every (re)compile: cache slot/event ids by name, and push data for any

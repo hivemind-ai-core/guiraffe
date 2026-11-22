@@ -5,7 +5,7 @@ description: Scope and prioritize UX work, turn research findings into design br
 
 # UX Product
 
-Read [UX research](../../../docs/ui-ux/ux-research.md) and the [refactoring playbook](../../../docs/ui-ux/refactoring-playbook.md).
+Read [UX research](../../../docs/contributing/ui-ux/ux-research.md) and the [refactoring playbook](../../../docs/contributing/ui-ux/refactoring-playbook.md).
 
 1. Define the user, outcome, workflow and current baseline. Identify what evidence supports the problem and what still needs research.
 2. Rank by task impact, affected users, confidence and implementation dependencies. Slice work into journeys that can be validated independently.

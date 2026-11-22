@@ -82,7 +82,7 @@ pub fn run_data(
     started: Instant,
     run: impl FnOnce(Frame, Duration),
 ) -> Result<()> {
-    // spec/23 scale target for both DataGrid and CodeViewer.
+    // Scale target (docs/performance.md) for both DataGrid and CodeViewer.
     let count = scaled(10_000_000);
     let (mut window, view) = mount(
         "data_soak",

@@ -1,5 +1,5 @@
 //! Shared drag feedback: the pointer preview and the drop indicator. Every color, radius and
-//! shadow comes from the theme (spec/00 §12.1).
+//! shadow comes from the theme (API conventions §12.1).
 
 use gpui_kit::{
     App, Bounds, BoxShadow, Context, CursorStyle, IntoElement, ParentElement, Pixels, Point,

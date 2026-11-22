@@ -918,7 +918,7 @@ impl TabGroupRenderer for Renderer {
         if center_controls && let Some(area) = area {
             let active = area.read(cx);
             // Toggle buttons (pressed = dock open) with a tooltip; a click never takes focus
-            // from the editor (spec/00 §12.3), but they stay in the Tab order.
+            // from the editor (API conventions §12.3), but they stay in the Tab order.
             let controls = [
                 (DockPlacement::Left, IconName::PanelLeft, "Left panel"),
                 (DockPlacement::Bottom, IconName::PanelBottom, "Bottom panel"),
@@ -1222,7 +1222,7 @@ mod tests {
 
     /// The center group's dock toggles are ActionIcon toggle buttons: pressed while the dock
     /// is open, named and described for assistive technology, and a click flips the dock
-    /// without taking focus from the panel the user is working in (spec/00 §12).
+    /// without taking focus from the panel the user is working in (API conventions §12).
     #[gpui_kit::test]
     fn dock_toggles_are_pressed_buttons_that_keep_focus(cx: &mut TestAppContext) {
         cx.update(guiraffe_components::init);

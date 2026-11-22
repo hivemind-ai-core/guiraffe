@@ -10,7 +10,7 @@ one is a runnable file in [examples/getting-started](../examples/getting-started
 The code shown here is copied from those files, and a test in that crate fails if they drift
 apart.
 
-Coming from React or Electron? Read [GUIraffe for React and Electron developers](from-react-electron.md)
+Coming from React or Electron? Read [GUIraffe for React and Electron developers](guides/from-react-electron.md)
 alongside this guide.
 
 - [Prerequisites](#prerequisites)
@@ -91,7 +91,7 @@ run it from the directory you want the app in:
 ```sh
 cargo build -p guiraffe-cli          # in the checkout; the binary is target/debug/guiraffe
 cd ~/projects
-/path/to/anteater/target/debug/guiraffe new my-app --path /path/to/anteater
+/path/to/guiraffe/target/debug/guiraffe new my-app --path /path/to/guiraffe
 cd my-app && cargo run
 ```
 
@@ -106,8 +106,7 @@ cd my-app && cargo run
 - `Cargo.lock`, copied from the checkout, so you build with the dependency versions
   GUIraffe was tested with.
 
-Then **add the `[patch.crates-io]` block** from the next section to the generated
-`Cargo.toml`. The scaffold doesn't include it yet. The checkout patches GPUI, GPUI Fast and
+The generated `Cargo.toml` also repeats the checkout's `[patch.crates-io]` block. The checkout patches GPUI, GPUI Fast and
 GPUI Kit with fixes and performance work ([vendor/README.md](../vendor/README.md)), and a
 standalone app doesn't inherit the workspace's patches.
 
@@ -118,7 +117,7 @@ standalone app doesn't inherit the workspace's patches.
 ### By hand
 
 Any Cargo binary works. This is the `Cargo.toml` for an app in a directory next to the
-checkout (`../anteater`). Adjust the paths to your layout.
+checkout (`../guiraffe`). Adjust the paths to your layout.
 
 ```toml
 [package]
@@ -131,12 +130,12 @@ edition = "2024"
 
 [dependencies]
 gpui-kit = { version = "=0.9.1", features = ["component", "assets", "gpui-fast"] }
-# gpui-kit 0.9.1 needs the pre-0.1.16 GPUI Fast API (KNOWN_ISSUES #3).
+# gpui-kit 0.9.1 needs the pre-0.1.16 GPUI Fast API (KNOWN_ISSUES.md, pinned gpui-fast).
 gpui-fast = "=0.1.15"
-guiraffe-core = { path = "../anteater/crates/core" }
-guiraffe-components = { path = "../anteater/crates/components" }
-guiraffe-ui = { path = "../anteater/crates/ui" }
-guiraffe-icons = { path = "../anteater/crates/icons" }
+guiraffe-core = { path = "../guiraffe/crates/core" }
+guiraffe-components = { path = "../guiraffe/crates/components" }
+guiraffe-ui = { path = "../guiraffe/crates/ui" }
+guiraffe-icons = { path = "../guiraffe/crates/icons" }
 # Add what you use: guiraffe-inputs, -datagrid, -router, -state, -layout, -overlays, ...
 
 # Interactive graphics need optimised dependencies even in dev builds.
@@ -145,17 +144,18 @@ opt-level = 2
 
 # The same patches as the GUIraffe workspace. Apps outside the workspace must repeat them.
 [patch.crates-io]
-gpui-fast = { path = "../anteater/vendor/gpui-fast" }
-gpui-fast-linux = { path = "../anteater/vendor/gpui-fast-linux" }
-gpui-pre = { path = "../anteater/vendor/gpui-pre" }
-gpui-base = { path = "../anteater/vendor/gpui-base" }
-gpui-component = { path = "../anteater/vendor/gpui-component" }
-mermaid-rs-renderer = { path = "../anteater/vendor/mermaid-rs-renderer" }
+gpui-fast = { path = "../guiraffe/vendor/gpui-fast" }
+gpui-fast-linux = { path = "../guiraffe/vendor/gpui-fast-linux" }
+gpui-pre = { path = "../guiraffe/vendor/gpui-pre" }
+gpui-base = { path = "../guiraffe/vendor/gpui-base" }
+gpui-component = { path = "../guiraffe/vendor/gpui-component" }
+mermaid-rs-renderer = { path = "../guiraffe/vendor/mermaid-rs-renderer" }
+taffy = { path = "../guiraffe/vendor/taffy" }
 ```
 
 Copy the checkout's `Cargo.lock` into your app before the first build, as `guiraffe new`
 does. A fresh resolve can pick newer upstream patch releases that don't work with
-`gpui-kit 0.9.1`. [examples/compare/guiraffe-app/Cargo.toml](../examples/compare/guiraffe-app/Cargo.toml)
+`gpui-kit 0.9.1`. [bench/electron/guiraffe-app/Cargo.toml](../bench/electron/guiraffe-app/Cargo.toml)
 is a complete, working standalone manifest.
 
 Cargo warns that a patch "was not used in the crate graph" when your app doesn't depend on
@@ -332,7 +332,7 @@ impl Render for Counter {
   method after a `name: value` prop, end the prop with `;`, as in `label: "+1";`. Otherwise
   the method would apply to the value.
 
-[docs/ui-macro.md](ui-macro.md) covers the rest of the macro: `for … key …` loops,
+[the `ui!` guide](guides/ui-macro.md) covers the rest of the macro: `for … key …` loops,
 `match`, embedding entities with `view(..)`, and cached subtrees.
 
 ## 3. A form with validation
@@ -729,7 +729,7 @@ apply(
 
 **The style context** is inherited down the tree. Containers set density, control size,
 surface and emphasis, and widgets read them, so widgets don't carry their own spacing
-([spec/14-style-context.md](../spec/14-style-context.md)). `provide(StylePatch, child)`
+([architecture](architecture.md#style-flows-down)). `provide(StylePatch, child)`
 patches the context for a subtree:
 
 ```rust
@@ -1098,7 +1098,7 @@ Library code should stay backend-neutral and be tested on both. To give your own
 same switch, leave `gpui-fast` out of `gpui-kit`'s features and add
 `[features] gpui-fast = ["gpui-kit/gpui-fast"]`, like this crate's
 [Cargo.toml](../examples/getting-started/Cargo.toml). The performance rules in
-[spec/00-api-conventions.md](../spec/00-api-conventions.md) §6 get the most out of both
+[API conventions](contributing/api-conventions.md) §6 get the most out of both
 backends: small views for fast-changing state, notify only when output changes, and
 virtualise long lists.
 
@@ -1149,41 +1149,16 @@ More tips:
   state into a smaller child view, and select narrower values from the store.
 - **Test without a window.** Keep logic in plain functions (example 3) and store handlers
   (example 6). `guiraffe-test` adds headless snapshot rendering in both themes. See
-  `pages_in_both_themes` in [examples/ui-macro-demo/src/main.rs](../examples/ui-macro-demo/src/main.rs).
+  `pages_in_both_themes` in [examples/team-tasks/src/main.rs](../examples/team-tasks/src/main.rs).
 - **A build or link error after updating?** Check the pins with `guiraffe doctor`, and make
   sure your app has the `[patch.crates-io]` block and the checkout's `Cargo.lock`.
 - [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) lists known problems and workarounds.
 
 ## Where to go next
 
-- **The showcase** (`cargo run -p guiraffe-showcase`) and the **gallery**
-  (`cargo run -p guiraffe-gallery`), a reference app with state, routing, motion, flow,
-  overlays and windows.
-- **[docs/ui-macro.md](ui-macro.md)**: the `ui!` macro and `#[component]` in depth, and the
-  team tasks demo (`cargo run -p ui-macro-demo --features gpui-fast`).
-- **[GUIraffe for React and Electron developers](from-react-electron.md)**: concept mapping,
-  the performance model, and the measured comparison with Electron.
-- **Specs**, the design of each part: [00-overview](../spec/00-overview.md),
-  [00-api-conventions](../spec/00-api-conventions.md) (how every crate's API is shaped),
-  [14-style-context](../spec/14-style-context.md),
-  [15-performance-architecture](../spec/15-performance-architecture.md),
-  [12-app-framework](../spec/12-app-framework.md),
-  [22-table-grid-sheet](../spec/22-table-grid-sheet.md) and
-  [24-ui-macro](../spec/24-ui-macro.md).
-- **Component crates** in [crates/](../crates):
-
-  | Crate | What it gives you |
-  |---|---|
-  | `guiraffe-core` | Theme, palettes, sizes, variants, style context |
-  | `guiraffe-layout` | Stack, Group, Flex, Grid, SimpleGrid, Container, Center, AppShell, Splitter |
-  | `guiraffe-components` | Mantine-style components GPUI Controls lacks: Card, Text, Title, SegmentedControl, Stepper, Timeline, RingProgress, ... |
-  | `guiraffe-inputs` | ChipGroup, TagsInput, RangeSlider, PasswordStrength, Dropzone |
-  | `guiraffe-overlays` | Modals, drawers, popovers, context menus, toasts, spotlight, desktop notifications |
-  | `guiraffe-datagrid` | Virtualised data grid: sort, filter, selection, inline editing |
-  | `guiraffe-tree` | Virtualised trees and property grids |
-  | `guiraffe-charts`, `guiraffe-flamegraph`, `guiraffe-timeline` | Charts, flame graphs, Gantt and time-based editors |
-  | `guiraffe-markdown`, `guiraffe-mermaid`, `guiraffe-code`, `guiraffe-chat` | Markdown, Mermaid diagrams, code views, streaming agent chat |
-  | `guiraffe-flow` | Node-graph editor in the style of React Flow |
-  | `guiraffe-state`, `guiraffe-router`, `guiraffe-windows`, `guiraffe-commands` | Store, typed routing, multi-window management, commands and keybindings |
-  | `guiraffe-motion`, `guiraffe-dnd`, `guiraffe-icons` | Animation, drag and drop, the Lucide icon set |
-  | `guiraffe-ui` | `ui!`, `#[component]`, and DataUi, which renders JSON screen documents ([README](../README.md#authoring-dataui-screens)) |
+- [Reference](reference.md): every crate, example and command.
+- [Writing views with `ui!`](guides/ui-macro.md), and the team tasks app
+  (`cargo run -p team-tasks --features gpui-fast`).
+- [DataUi documents](guides/dataui.md) for screens written as JSON.
+- [GUIraffe for React and Electron developers](guides/from-react-electron.md).
+- The showcase: `cargo run --release -p guiraffe-showcase --features gpui-fast`.

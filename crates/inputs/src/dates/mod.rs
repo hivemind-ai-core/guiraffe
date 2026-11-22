@@ -6,7 +6,7 @@
 //! They compose Kit 0.9.1's time widgets (`CalendarState` + the unstyled base `Calendar`,
 //! `TimeFieldState` + base `TimeField`, `Button`) rather than wrapping Kit's `DatePicker`
 //! facade, because that facade cannot be configured to follow GUIraffe's conventions:
-//! - it takes keyboard focus on pointer press and is always a tab stop (spec/00 §12.3);
+//! - it takes keyboard focus on pointer press and is always a tab stop (API conventions §12.3);
 //! - its open state is private (no controlled `open`/`on_open_change`, no Space/↓ to open);
 //! - its calendar has no keyboard day navigation;
 //! - disabled is `opacity(0.5)` and the focus style changes the border (§12.1, §12.2);

@@ -56,9 +56,6 @@ cleanup also breaks accidental strong Root/host cycles.
 ```sh
 cargo run -p guiraffe-overlays --example overlays
 cargo run -p guiraffe-overlays --example floating_tooltip
-rustc --edition=2024 -O crates/overlays/examples/search_bench.rs -o /tmp/search-bench
-/tmp/search-bench
+rustc --edition=2024 -O crates/overlays/examples/search_bench.rs -o target/search-bench
+target/search-bench
 ```
-
-See `INVENTORY.md` for upstream boundaries, `REPORT.md` for the initial hand-in,
-and `REVIEW-1-FIXES.md` for review regressions, gates and benchmark evidence.

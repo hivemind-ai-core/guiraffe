@@ -56,7 +56,7 @@ pub struct Burger {
     /// Called with the new state after a click.
     on_change: Option<OnChange>,
     focus: FocusHandle,
-    /// `None`: a tab stop only inside a focus scope (spec/00 §12.3).
+    /// `None`: a tab stop only inside a focus scope (API conventions §12.3).
     focusable: Option<bool>,
     /// Accessible names for the closed / open states.
     labels: (SharedString, SharedString),

@@ -20,7 +20,7 @@ pub enum InputVariant {
 }
 
 /// The colors of an input frame in one state. The border is always painted (same width in
-/// every state, spec/00 §12.2); only its color changes.
+/// every state, API conventions §12.2); only its color changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameColors {
     pub background: Rgb,
@@ -217,7 +217,7 @@ mod tests {
             assert_ne!(rest.border, bad.border, "invalid shows a red border");
             assert_eq!(rest.background, open.background);
             assert_ne!(off.background, rest.background, "disabled is not opacity");
-            // Placeholder (dimmed) text keeps 4.5:1 on the frame (spec/00 §12.1).
+            // Placeholder (dimmed) text keeps 4.5:1 on the frame (API conventions §12.1).
             assert!(
                 rest.placeholder.contrast(rest.background) >= 4.5,
                 "{scheme:?}"

@@ -19,7 +19,7 @@ snapshot = ["dep:gpui-kit", "dep:anyhow", "dep:image", "dep:guiraffe-icons", "gp
 render = []
 # Layout-stability assertions (focus / hover / selected never move anything).
 layout = ["dep:gpui-kit", "gpui-kit/test-support"]
-# The in-process inspect and drive API (spec/21 §2): node ids, layout and
+# The in-process inspect and drive API: node ids, layout and
 # accessibility facts, the drive API, the checks and the replay.
 inspect = [
     "dep:serde",

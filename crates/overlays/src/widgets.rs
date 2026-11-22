@@ -55,7 +55,7 @@ impl RenderOnce for LoadingOverlay {
             return div().into_any_element();
         }
         let theme = GuiraffeTheme::global(cx);
-        // Scheme-aware scrim token (spec/00 §12.1), not a raw alpha on the variant color.
+        // Scheme-aware scrim token (API conventions §12.1), not a raw alpha on the variant color.
         let backdrop = theme.veil().to_hsla();
         let mut spinner = Spinner::new();
         if self.color.is_some() || self.variant != Variant::Light {

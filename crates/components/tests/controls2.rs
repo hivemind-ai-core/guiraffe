@@ -1,4 +1,4 @@
-//! spec/00 §12 interaction tests for the components-2 controls: Burger, CopyButton, Spoiler,
+//! API conventions §12 interaction tests for the components-2 controls: Burger, CopyButton, Spoiler,
 //! Stepper, ColorSwatch and Loader. Pointer presses never take focus, Tab reaches them inside a
 //! focus scope, Enter/Space activate, AccessKit sees role/label/state, and selection never moves
 //! layout.

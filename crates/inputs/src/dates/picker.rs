@@ -5,7 +5,7 @@
 //! matcher) rendered through the unstyled `gpui_kit::base::Calendar`, Kit's segmented
 //! `TimeFieldState`/`base::TimeField` for times, Kit `Button`s for presets, and Kit's
 //! positioning via GPUI `anchored`. GUIraffe owns the trigger, the popover, the theme
-//! tokens and spec/00 §12 behaviour, which Kit's `DatePicker` facade cannot be configured to
+//! tokens and API conventions §12 behaviour, which Kit's `DatePicker` facade cannot be configured to
 //! follow (see the crate docs for the gaps).
 
 use std::{cell::Cell, rc::Rc, sync::Arc};
@@ -146,7 +146,7 @@ pub struct PickerProps<V: PickerValue> {
     pub color: Option<ColorName>,
     pub disabled: bool,
     pub read_only: bool,
-    /// Tab stop outside a focus scope (`None`: only inside `focus_scope`, spec/00 §12.3).
+    /// Tab stop outside a focus scope (`None`: only inside `focus_scope`, API conventions §12.3).
     pub focusable: Option<bool>,
     /// The "today" the calendar marks and presets resolve from; `None`: the local clock.
     pub today: Option<NaiveDate>,
@@ -293,7 +293,7 @@ impl<V: PickerValue> PickerProps<V> {
 
 /// A date and/or time picker (one control, five value types; see the type aliases).
 ///
-/// Interaction (spec/00 §12): the trigger is a combo box (AccessKit `ComboBox`, expanded
+/// Interaction (API conventions §12): the trigger is a combo box (AccessKit `ComboBox`, expanded
 /// state, the value as its value). A pointer press opens the popover without taking
 /// keyboard focus; the trigger is a tab stop only inside a `focus_scope` or with
 /// `focusable(true)`. Focused: Enter, Space or ↓ open; arrows move the day cursor, PageUp/
@@ -1455,7 +1455,7 @@ impl<V: PickerValue> Picker<V> {
             .border_color(s.border.to_hsla())
             .rounded(r)
             .shadow(shadows)
-            // Pointer presses inside the popover never take keyboard focus (spec/00 §12.3);
+            // Pointer presses inside the popover never take keyboard focus (API conventions §12.3);
             // the time fields focus themselves, like text inputs.
             .capture_any_mouse_down(|_, window, _| window.prevent_default())
             .on_mouse_down_out({
@@ -1515,7 +1515,7 @@ impl<V: PickerValue> Picker<V> {
                 (false, true) => el.cursor_default(),
                 _ => el.cursor_pointer(),
             })
-            // A pointer press opens without taking keyboard focus (spec/00 §12.3).
+            // A pointer press opens without taking keyboard focus (API conventions §12.3).
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .when(!self.open && !inert, |el| {
                 el.on_click(cx.listener(|this, _, window, cx| this.request_open(true, window, cx)))

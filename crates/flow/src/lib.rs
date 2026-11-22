@@ -775,7 +775,7 @@ impl Render for FlowViewport {
             .id("flow")
             .test_support()
             // The canvas is an editor surface (keys act on the selection), so it does take
-            // focus on click, like a text input (spec/00 §12.3).
+            // focus on click, like a text input (API conventions §12.3).
             .role(gpui_kit::Role::Canvas)
             .aria_label("Flow diagram")
             .track_focus(&self.focus)

@@ -1,7 +1,7 @@
 //! SegmentedControl: a Control (state entity + element) whose active indicator slides with
 //! a spring. Only the control's own entity re-renders while it animates (conventions §6.5).
 //!
-//! Interaction (spec/00 §12): a pointer press selects without taking keyboard focus; the
+//! Interaction (API conventions §12): a pointer press selects without taking keyboard focus; the
 //! control is a tab stop only inside [`guiraffe_core::focus_scope`] or when opted in with
 //! [`SegmentedControl::set_focusable`], and then ←/→/Home/End move the selection and a
 //! focus-visible ring is drawn. AccessKit: `RadioGroup` of `RadioButton`s with selected state.

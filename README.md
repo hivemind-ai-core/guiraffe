@@ -1,41 +1,85 @@
 # GUIraffe 🦒
 
-Rich, beautiful and FAST desktop UI for Rust, built on GPUI Kit + GPUI Controls (gpui-component), heavily inspired by Mantine.
+Rich, fast desktop applications in Rust: the components and conveniences you would reach for in
+React, without shipping a browser.
 
-## New to GUIraffe?
+<p>
+<img src="crates/showcase/tests/snapshots/upstream/recipe-dashboard/dark.png" width="32%" alt="Dashboard built with GUIraffe">
+<img src="crates/showcase/tests/snapshots/upstream/node-graph/dark.png" width="32%" alt="Node graph editor">
+<img src="crates/showcase/tests/snapshots/upstream/flame-graph/dark.png" width="32%" alt="Flame graph">
+</p>
 
-- [Getting started](docs/getting-started.md): prerequisites, creating an app, and six runnable
-  examples (hello window, counter, form validation, data grid, theming, router and store).
-- [GUIraffe for React and Electron developers](docs/from-react-electron.md): how React concepts
-  map to GUIraffe, the rendering model, and the measured comparison with Electron.
+> **Status: pre-1.0.** Developed and tested on Linux. macOS and Windows are untested, the crates
+> aren't published, and APIs will change. See [known issues](KNOWN_ISSUES.md).
 
-## Build a small desktop tool
+## What it is
 
-Start with the [GUIraffe quickstart](docs/ui-macro.md#start-a-small-desktop-tool) for a runnable
-counter, dependencies for your own Rust binary, and examples of `ui!` and `#[component]`.
+GUIraffe is a framework and component library built on [GPUI](https://www.gpui.rs/), the GPU UI
+framework from the Zed editor, and GPUI Kit. It adds:
 
-## Calendar views
+- **Components:** layout, inputs, pickers, overlays, Spotlight, trees and property grids, data
+  grid, spreadsheet, calendar, charts, flame graphs, Gantt and timeline editors, node graphs,
+  code, Markdown, Mermaid and agent chat.
+- **An app framework:** theming, typed routing, an event-driven store with undo, commands and
+  keybindings, multiple windows, docking, motion, notifications and a system tray.
+- **Three ways to write UI:** plain Rust builders, the [`ui!` macro](docs/guides/ui-macro.md), or
+  [JSON documents](docs/guides/dataui.md) that tools and agents can write and validate.
 
-Use `guiraffe-calendar` for year, month, week, and day schedules with shared multi-source events,
-chrono time zones, editing callbacks, keyboard access, and virtualized hours. See the
-[calendar API and interaction specification](spec/27-calendar.md), or run the four live showcase
-pages with `cargo run -p guiraffe-showcase --features gpui-fast`.
+The [architecture](docs/architecture.md) page explains how the pieces fit.
 
-## Authoring DataUi screens
+## Why use it
 
-Run the catalogue commands from a checkout, or use an installed `guiraffe` binary.
+- **You need serious components.** The large ones are virtualized and built for big data: ten
+  million grid rows, code lines, flame-graph frames or chart points.
+- **You want native weight with web convenience.** It is one Rust process with no browser, no
+  JavaScript runtime and no bridge between your UI and your logic.
+- **You want one design language.** Containers set size, spacing and density, and widgets inherit
+  them. Light, dark and high-contrast themes come from semantic tokens.
+- **You want to pay for what changed.** Views notify narrowly, unchanged subtrees can be replayed
+  from cache, and long work runs off the UI thread.
+
+Choose something else if you need macOS, Windows or mobile today, stable APIs, published crates,
+or verified screen-reader support.
+
+## Why trust it
+
+Check it, don't take our word for it:
+
+- **Tested on two rendering backends.** About 1,700 tests run on upstream GPUI and again on GPUI
+  Fast, including interaction, property, allocation and scaling tests.
+- **Visually tested.** Screenshot goldens cover the showcase in light and dark.
+- **Measured at scale, failures included.** [Performance](docs/performance.md) lists the budgets,
+  what was measured, under which conditions, and what still misses.
+- **Open about problems.** [Known issues](KNOWN_ISSUES.md) includes the budgets 0.2 doesn't meet.
+- **Reproducible.** `scripts/gate.sh` runs the whole gate and `scripts/leak-check.py` runs the
+  leak check. [Testing](docs/testing.md) explains both.
+
+## How to use it
+
+You need Rust 1.90 or newer and the [Linux packages](docs/getting-started.md#prerequisites).
 
 ```sh
-cargo run -p guiraffe-cli -- catalog --json > catalogue.json
-cargo run -p guiraffe-cli -- catalog --schema > screen.schema.json
-cargo run -p guiraffe-cli -- catalog --markdown > widget-reference.md
-cargo run -p guiraffe-cli -- preview crates/showcase/recipes/settings.json
+git clone https://github.com/hivemind-ai-core/anteater guiraffe
+cd guiraffe
+cargo run --release -p guiraffe-showcase --features gpui-fast    # every component, live
+cargo run -p getting-started-examples --example 00_quickstart --features gpui-fast
 ```
 
-The catalogue, schema and widget reference come from the DataUi widget descriptors.
-The [showcase recipes](crates/showcase/recipes) provide screen documents validated against
-the generated schema and rendered in both themes by the headless snapshot suite. See
-[coverage](crates/showcase/COVERAGE.md#authoring-catalogue-coverage) for the static widget inventory.
+Create an app that uses your checkout:
 
-Bump the catalogue major version for breaking changes. Record the new catalogue fingerprint
-in the changelog when publishing a catalogue revision. The CLI test prints the fingerprint.
+```sh
+cargo build -p guiraffe-cli
+target/debug/guiraffe new ../my-app --path "$PWD"
+cd ../my-app && cargo run
+```
+
+| | |
+|---|---|
+| **Tutorial** | [Getting started](docs/getting-started.md): six small apps, from a window to pages with a store |
+| **Guides** | [`ui!` and components](docs/guides/ui-macro.md) · [DataUi documents](docs/guides/dataui.md) · [Coming from React or Electron](docs/guides/from-react-electron.md) |
+| **Reference** | [Crates, examples, commands and API docs](docs/reference.md) |
+| **Project** | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) |
+
+## License
+
+[MIT](LICENSE). Vendored dependencies and the Lucide icons keep their own licenses.

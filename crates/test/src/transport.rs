@@ -1,4 +1,4 @@
-//! The transport (spec/21 §2): the inspect and drive API over a local socket
+//! The transport: the inspect and drive API over a local socket
 //! and as MCP tools.
 //!
 //! The socket speaks one JSON document per line: a call in, an answer out.

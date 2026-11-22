@@ -5,7 +5,7 @@ description: Review desktop UI changes for usability, visual consistency, keyboa
 
 # UI UX Review
 
-Read the [refactoring playbook](../../../docs/ui-ux/refactoring-playbook.md) and [Accessibility](../../../docs/ui-ux/accessibility.md).
+Read the [refactoring playbook](../../../docs/contributing/ui-ux/refactoring-playbook.md) and [Accessibility](../../../docs/contributing/ui-ux/accessibility.md).
 
 1. Identify the user's task and revision. Inspect comparable captures, then exercise the live flow or available interaction evidence, including error and recovery.
 2. Check the highest-impact risks first: inaccessible or blocked actions, data loss, poor recovery, unclear focus and broken narrow layouts. Verify color pairs in context and record which checks require native assistive technology.

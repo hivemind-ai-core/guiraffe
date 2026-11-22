@@ -1,4 +1,4 @@
-//! The transport (spec/21 §2): the API over a local socket and as MCP tools.
+//! The transport: the API over a local socket and as MCP tools.
 
 use gpui_kit::prelude::*;
 use gpui_kit::{

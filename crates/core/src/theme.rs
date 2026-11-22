@@ -27,11 +27,11 @@ pub struct GuiraffeTheme {
     pub scale: f32,
     /// Layout recipes: what each kind of container provides to the widgets inside it.
     pub recipes: Recipes,
-    /// Contrast setting (spec/00 §12.1).
+    /// Contrast setting (API conventions §12.1).
     pub contrast: crate::state::Contrast,
 }
 
-/// Style recipes per layout kind (spec/14). Containers apply these as [`crate::StylePatch`]es;
+/// Style recipes per layout kind. Containers apply these as [`crate::StylePatch`]es;
 /// restyle an app globally by editing recipes rather than call sites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Recipes {

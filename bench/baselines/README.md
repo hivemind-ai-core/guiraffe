@@ -22,6 +22,4 @@ cargo run --release --locked -p guiraffe-bench -- report
 The 10M-item DataGrid and CodeViewer suites are model workloads. Use an explicit
 small batch for expensive recomputes, for example
 `cargo run --release --locked -p guiraffe-bench -- run --suite code-index-10m --iterations 1`.
-Loaded-host exploratory results and coverage limits are recorded in
-[DataGrid's production audit](../../crates/datagrid/PRODUCTION.md) and
-[CodeViewer's production audit](../../crates/code/PRODUCTION.md).
+See [performance](../../docs/performance.md).

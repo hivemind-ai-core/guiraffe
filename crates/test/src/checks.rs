@@ -1,4 +1,4 @@
-//! The checks (spec/21 §2): the findings an agent gets about a screen.
+//! The checks: the findings an agent gets about a screen.
 //!
 //! Every check answers with structured findings, so an agent can tell which
 //! node is wrong and why, and a test can fail when a defect is introduced.

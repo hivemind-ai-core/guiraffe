@@ -1,5 +1,5 @@
 //! `guiraffe preview <file>`: render a data-UI document (or a Mocket design) in a window and
-//! hot-reload it on save, keeping live slot values (spec/10).
+//! hot-reload it on save, keeping live slot values.
 
 use std::{
     path::{Path, PathBuf},

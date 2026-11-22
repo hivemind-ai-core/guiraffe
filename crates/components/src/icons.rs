@@ -133,7 +133,7 @@ impl RenderOnce for ThemeIcon {
 
 type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-/// An icon-only button with Mantine variants. Behaves like a Kit `Button` (spec/00 §12):
+/// An icon-only button with Mantine variants. Behaves like a Kit `Button` (API conventions §12):
 /// hover / pressed / disabled state tokens, pointer cursor, a press never takes focus,
 /// opt-in tab stop ([`guiraffe_core::focus_scope`] or [`ActionIcon::focusable`]) with a
 /// focus-visible ring and Enter/Space activation, and an AccessKit `Button` named by
@@ -271,7 +271,7 @@ impl RenderOnce for ActionIcon {
             press = press.toggled(on).selected(on);
         }
         let on = toggled == Some(true);
-        // Shape cue for "on" (spec/00 §12.4): an overlay bar along the bottom edge, so the
+        // Shape cue for "on" (API conventions §12.4): an overlay bar along the bottom edge, so the
         // box keeps its size (§12.2) and the state reads without colour.
         let indicator = on.then(|| {
             let bar = if self.disabled {

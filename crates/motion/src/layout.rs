@@ -1,4 +1,4 @@
-//! Pure core of layout animation (spec/29): size tracks, FLIP offsets and keyed presence.
+//! Pure core of layout animation: size tracks, FLIP offsets and keyed presence.
 //!
 //! Time and preferences are passed in, so everything here is deterministic and testable
 //! without a window. The GPUI elements in [`crate::layout_elements`] drive these.

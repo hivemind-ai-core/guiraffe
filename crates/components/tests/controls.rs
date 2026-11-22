@@ -1,4 +1,4 @@
-//! spec/00 §12.5 interaction tests for ActionIcon, close_button and Pill remove.
+//! API conventions §12.5 interaction tests for ActionIcon, close_button and Pill remove.
 use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{

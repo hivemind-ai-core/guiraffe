@@ -1,4 +1,4 @@
-//! Layout-stability assertions (spec/00 §12.2): focus, hover and selected states must not
+//! Layout-stability assertions (API conventions §12.2): focus, hover and selected states must not
 //! change a control's bounds or its neighbours'.
 //!
 //! Wrap each control and its siblings in a `debug_selector` (a wrapper sizes to its child,

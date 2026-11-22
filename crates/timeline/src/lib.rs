@@ -1,4 +1,4 @@
-//! GUIraffe timeline: time-based editors on one shared axis (spec/16 Foundation D).
+//! GUIraffe timeline: time-based editors on one shared axis.
 //!
 //! A Rust `ui!` example. Create shared entities before rendering when the host owns their state.
 //!

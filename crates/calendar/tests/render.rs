@@ -188,7 +188,7 @@ fn every_view_in_both_schemes() -> anyhow::Result<()> {
 
 type Setup = fn(&mut CalendarState, &mut gpui_kit::Context<CalendarState>);
 
-/// Knob and state coverage beyond the defaults (spec/27 §Showcase): overflow
+/// Knob and state coverage beyond the defaults: overflow
 /// open, ISO weeks, Monday start and 24-hour time; dense overlap with a drag
 /// preview; custom content; keyboard cursor with a hidden source.
 #[test]

@@ -1337,7 +1337,7 @@ impl CalendarState {
     }
 }
 
-/// Short events keep a fifteen-minute visual target (spec/27).
+/// Short events keep a fifteen-minute visual target.
 pub(crate) fn painted_end_second(start: i32, end: i32) -> i32 {
     end.max(start + 15 * 60)
 }

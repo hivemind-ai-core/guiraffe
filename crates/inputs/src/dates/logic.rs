@@ -47,7 +47,7 @@ impl PartialEq for DateRules {
 
 impl DateRules {
     /// Rules with `min` and `max`, swapped when given in the wrong order (bad props are
-    /// clamped, not a panic; spec/00 §7).
+    /// clamped, not a panic; API conventions §7).
     pub fn new(min: Option<NaiveDate>, max: Option<NaiveDate>) -> Self {
         let (min, max) = match (min, max) {
             (Some(a), Some(b)) if a > b => {

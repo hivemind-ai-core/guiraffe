@@ -1,4 +1,4 @@
-//! spec/00 §12 / §12.2 interaction tests: ChipGroup, TagsInput remove, RangeSlider, Dropzone.
+//! API conventions §12 / §12.2 interaction tests: ChipGroup, TagsInput remove, RangeSlider, Dropzone.
 use std::{cell::RefCell, rc::Rc};
 
 use gpui_kit::{

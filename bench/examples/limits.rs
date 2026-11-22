@@ -40,7 +40,7 @@ struct Args {
     /// Safety cap. Reaching it without a failure gives a lower bound.
     #[arg(long, default_value_t = 16_777_216)]
     max: usize,
-    #[arg(long, default_value = "plans/PERF-LIMITS.md")]
+    #[arg(long, default_value = "target/PERF-LIMITS.md")]
     output: PathBuf,
 }
 
@@ -53,7 +53,7 @@ struct Measurement {
 
 impl Measurement {
     /// `rss_kib` is peak RSS; the budget applies to its increase over an empty window in the
-    /// same harness (plans/PERF-0.2.md, user decision 2026-11-22).
+    /// same harness (docs/performance.md).
     fn failures(&self, empty_kib: u64) -> Vec<&'static str> {
         let mut failures = Vec::new();
         if self.mount_us > 200_000 {

@@ -84,8 +84,8 @@ def cpu_ticks(root):
 
 def command(app, repo):
     if app == "guiraffe":
-        return [str(repo / "examples/compare/guiraffe-app/target/release/guiraffe-compare")]
-    e = repo / "examples/compare/electron-app"
+        return [str(repo / "bench/electron/guiraffe-app/target/release/guiraffe-compare")]
+    e = repo / "bench/electron/electron-app"
     packaged = e / "dist/linux-unpacked/compare-electron-app"
     if packaged.exists():
         return [str(packaged)]
@@ -193,9 +193,9 @@ def gz_size(path, tmpdir):
 
 def disk(app, repo, tmpdir):
     if app == "guiraffe":
-        p = repo / "examples/compare/guiraffe-app/target/release/guiraffe-compare"
+        p = repo / "bench/electron/guiraffe-app/target/release/guiraffe-compare"
     else:
-        p = repo / "examples/compare/electron-app/dist/linux-unpacked"
+        p = repo / "bench/electron/electron-app/dist/linux-unpacked"
         if not p.exists():
             return {"note": "run `pnpm package` for an installable directory"}
     if not p.exists():
