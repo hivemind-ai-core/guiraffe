@@ -2149,7 +2149,7 @@ mod mounted {
                 }
                 count_draw(&mut window)
             };
-            let markdown_small = markdown_allocs(10_000)?;
+            let markdown_small = markdown_allocs(5_000)?;
             let markdown_large = markdown_allocs(50_000)?;
             let chat_small = chat_allocs(10_000)?;
             let chat_large = chat_allocs(100_000)?;
