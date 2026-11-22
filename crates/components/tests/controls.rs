@@ -224,3 +224,92 @@ fn loading_ignores_presses_and_announces_progress(cx: &mut TestAppContext) {
     });
     assert_eq!(hits.get(), 0, "a loading ActionIcon ignores clicks");
 }
+
+/// A toggle ActionIcon: clicking flips it without taking focus (§12.3), its state is exposed
+/// as pressed/selected (§12.4), "on" adds a shape cue (not colour only) without moving
+/// layout (§12.2), and the tooltip is the accessible description and shows on hover.
+#[gpui_kit::test]
+fn toggled_action_icon_exposes_pressed_state_and_tooltip(cx: &mut TestAppContext) {
+    struct V {
+        on: Rc<Cell<bool>>,
+        input: Entity<InputState>,
+    }
+    impl Render for V {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let on = self.on.clone();
+            div()
+                .flex()
+                .gap(px(8.))
+                .child(div().w(px(200.)).child(Input::new(&self.input)))
+                .child(
+                    div().debug_selector(|| "toggle-box".into()).child(
+                        ActionIcon::new("left", IconName::PanelLeft)
+                            .label("Left panel")
+                            .tooltip("Show or hide the left panel")
+                            .toggled(self.on.get())
+                            .on_click(move |_, _, _| on.set(!on.get())),
+                    ),
+                )
+                .child(
+                    ActionIcon::new("named-by-tooltip", IconName::PanelRight)
+                        .tooltip("Right panel"),
+                )
+        }
+    }
+    cx.update(guiraffe_components::init);
+    let on = Rc::new(Cell::new(false));
+    let o = on.clone();
+    let (view, vcx) = cx.add_window_view(|window, cx| V {
+        on: o,
+        input: cx.new(|cx| InputState::new(window, cx)),
+    });
+    vcx.run_until_parked();
+    let input = vcx.update(|window, cx| {
+        let h = view.read(cx).input.focus_handle(cx);
+        window.focus(&h, cx);
+        window.render_frame(cx);
+        h
+    });
+    let base = capture(vcx, &["toggle-box"]);
+    vcx.update(|window, cx| {
+        let left = window.find_by_label("Left panel");
+        assert_eq!(left.role(), Some(Role::Button));
+        assert_eq!(
+            left.checked(),
+            Some(false),
+            "exposed as a toggle, not pressed"
+        );
+        assert_eq!(left.selected(), Some(false));
+        assert_eq!(left.description(), Some("Show or hide the left panel"));
+        // Without a label the tooltip names the button.
+        let right = window.find_by_label("Right panel");
+        assert_eq!(right.role(), Some(Role::Button));
+        assert_eq!(right.description(), None);
+        assert_eq!(right.checked(), None, "not a toggle unless asked");
+        window.click("left", cx);
+        assert!(input.is_focused(window), "toggle click stole focus");
+    });
+    assert!(on.get());
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        window.render_frame(cx);
+        let left = window.find_by_label("Left panel");
+        assert_eq!(left.checked(), Some(true), "pressed");
+        assert_eq!(left.selected(), Some(true));
+    });
+    assert!(
+        vcx.debug_bounds("action-icon-toggled").is_some(),
+        "the on state has a shape cue, not colour alone"
+    );
+    assert_same_bounds(vcx, &["toggle-box"], &base, "toggled on");
+    // Hover past the show delay: the Kit tooltip appears.
+    vcx.update(|window, cx| window.hover("left", cx));
+    vcx.executor()
+        .advance_clock(std::time::Duration::from_millis(800));
+    vcx.run_until_parked();
+    vcx.update(|window, cx| window.render_frame(cx));
+    assert!(
+        vcx.debug_bounds("action-icon-tooltip").is_some(),
+        "tooltip shows on hover"
+    );
+}

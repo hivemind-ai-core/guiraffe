@@ -55,6 +55,30 @@ pub struct StateColors {
     pub border: Rgb,
 }
 
+/// Colors of a drag preview (the "ghost" that follows the pointer). Unlike [`StateColors`],
+/// `background` is **translucent**: the content under the pointer shows through so the user
+/// keeps their bearings. Measure contrast with `background.over(underlying)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DragPreviewColors {
+    pub foreground: Rgb,
+    pub background: Rgb,
+    /// Outline marking the ghost as "being moved" (primary hue, >= 3:1 on every surface), so
+    /// the preview is not distinguished by translucency alone.
+    pub border: Rgb,
+}
+
+/// What a drag preview may float over: every surface, plus body text (darkest content in
+/// light, lightest in dark) as the worst case for the composited background.
+fn drag_underlays(s: &crate::theme::Surfaces) -> [(&'static str, Rgb); 5] {
+    [
+        ("body", s.body),
+        ("surface", s.surface),
+        ("raised", s.raised),
+        ("track", s.track),
+        ("text", s.text),
+    ]
+}
+
 /// `b + (b - a)` per channel, clamped: one more step in the direction a -> b.
 fn extrapolate(a: Rgb, b: Rgb) -> Rgb {
     let e = |x: u8, y: u8| (2 * i16::from(y) - i16::from(x)).clamp(0, 255) as u8;
@@ -213,6 +237,27 @@ impl GuiraffeTheme {
             // Cool near-black rather than pure black (Refactoring UI: greys carry a tint).
             Scheme::Light => crate::ColorName::Gray.shade(9).alpha(0.35),
             Scheme::Dark => Rgb::BLACK.alpha(0.6),
+        }
+    }
+}
+
+impl GuiraffeTheme {
+    /// Drag preview token: a translucent surface, scheme-aware like [`scrim`](Self::scrim).
+    /// High contrast makes it nearly opaque so text never competes with what is beneath.
+    pub fn drag_preview(&self) -> DragPreviewColors {
+        let s = self.surfaces();
+        let alpha = match (self.contrast, self.scheme) {
+            (Contrast::High, _) => 0.94,
+            (Contrast::Standard, Scheme::Light) => 0.8,
+            // Dark surfaces sit closer to the body, so a little more opacity keeps the edge.
+            (Contrast::Standard, Scheme::Dark) => 0.85,
+        };
+        DragPreviewColors {
+            foreground: s.text,
+            background: s.surface.alpha(alpha),
+            border: self
+                .state(StateKind::FocusRing, Variant::Default, None)
+                .border,
         }
     }
 }
@@ -382,6 +427,35 @@ pub fn contrast_checks(t: &GuiraffeTheme) -> Vec<ContrastCheck> {
         push(format!("Dimmed text on {surface}"), dimmed, bg, TEXT_MIN);
         push(format!("Focus ring on {surface}"), ring, bg, NON_TEXT_MIN);
     }
+    // Drag preview: translucent, so text and outline are measured on the composite over
+    // everything it can float over.
+    let ghost = t.drag_preview();
+    for (under, bg) in drag_underlays(&s) {
+        let composite = ghost.background.over(bg);
+        push(
+            format!("Drag preview text over {under}"),
+            ghost.foreground,
+            composite,
+            TEXT_MIN,
+        );
+        // The outline's neighbours are the ghost's interior and the surface around it. Text
+        // beneath only shows through in thin glyph strokes, so it is a text-legibility
+        // worst case, not an outline neighbour.
+        if under != "text" {
+            push(
+                format!("Drag preview outline inside, over {under}"),
+                ghost.border,
+                composite,
+                NON_TEXT_MIN,
+            );
+            push(
+                format!("Drag preview outline against {under}"),
+                ghost.border,
+                bg,
+                NON_TEXT_MIN,
+            );
+        }
+    }
     // Focus on a selected item: the ring is offset outside the control, so it is read
     // against the surface around the selected fill (covered above), never against the fill
     // itself. The selected fill must itself stand out from the body as a state indicator.
@@ -484,6 +558,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The drag preview is translucent (content shows through), scheme-aware, and its text
+    /// and outline meet the floors over every surface and over body text, for every primary
+    /// in both contrast levels.
+    #[test]
+    fn drag_preview_is_translucent_scheme_aware_and_legible() {
+        let mut bad = Vec::new();
+        for contrast in [Contrast::Standard, Contrast::High] {
+            for scheme in [Scheme::Light, Scheme::Dark] {
+                for primary in PRIMARIES {
+                    let t = GuiraffeTheme {
+                        scheme,
+                        primary,
+                        contrast,
+                        ..Default::default()
+                    };
+                    let ghost = t.drag_preview();
+                    assert!(
+                        ghost.background.a > 0 && ghost.background.a < 255,
+                        "{scheme:?}/{contrast:?}: drag preview must be translucent"
+                    );
+                    for c in contrast_checks(&t)
+                        .into_iter()
+                        .filter(|c| c.label.starts_with("Drag preview") && !c.passes())
+                    {
+                        bad.push(format!(
+                            "{scheme:?}/{primary:?}/{contrast:?}: {} {:.2} < {}",
+                            c.label, c.ratio, c.floor
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+        let l = GuiraffeTheme::default();
+        let d = GuiraffeTheme {
+            scheme: Scheme::Dark,
+            ..Default::default()
+        };
+        assert_ne!(l.drag_preview(), d.drag_preview());
     }
 
     #[test]
