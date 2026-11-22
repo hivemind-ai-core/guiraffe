@@ -321,6 +321,7 @@ impl<K: Clone + Eq + Hash> KeyedPresence<K> {
     /// Sample every entry at `now`, dropping finished exits. Returns whether any entry is
     /// still animating (the caller needs another frame).
     pub fn frame(&mut self, now: Instant, prefs: &MotionPrefs) -> bool {
+        let before = self.entries.len();
         let mut animating = false;
         self.entries
             .retain_mut(|e| match e.presence.frame(now, prefs) {
@@ -334,6 +335,10 @@ impl<K: Clone + Eq + Hash> KeyedPresence<K> {
                     true
                 }
             });
+        let remaining = self.entries.len();
+        if remaining < before && self.entries.capacity() > remaining.saturating_mul(4).max(64) {
+            self.entries.shrink_to(remaining.saturating_mul(2).max(64));
+        }
         animating
     }
 

@@ -155,17 +155,27 @@ impl ksni::Tray for SniTray {
     }
 }
 
-#[derive(Default)]
-struct Shared {
-    handle: Option<ksni::Handle<SniTray>>,
+struct Shared<H> {
+    handle: Option<H>,
     /// The newest snapshot not yet applied (updates coalesce; order can't invert).
     pending: Option<TrayState>,
+    flushing: bool,
+}
+
+impl<H> Default for Shared<H> {
+    fn default() -> Self {
+        Self {
+            handle: None,
+            pending: None,
+            flushing: false,
+        }
+    }
 }
 
 /// The StatusNotifierItem backend.
 #[derive(Default)]
 pub struct SniBackend {
-    shared: Arc<Mutex<Shared>>,
+    shared: Arc<Mutex<Shared<ksni::Handle<SniTray>>>>,
 }
 
 impl SniBackend {
@@ -174,16 +184,37 @@ impl SniBackend {
     }
 }
 
-fn lock(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
+fn lock<H>(shared: &Mutex<Shared<H>>) -> std::sync::MutexGuard<'_, Shared<H>> {
     shared.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-async fn flush(shared: Arc<Mutex<Shared>>) {
-    let (handle, state) = {
-        let mut s = lock(&shared);
-        (s.handle.clone(), s.pending.take())
-    };
-    if let (Some(handle), Some(state)) = (handle, state) {
+impl<H: Clone> Shared<H> {
+    fn reserve_flush(&mut self) -> bool {
+        if self.flushing || self.handle.is_none() || self.pending.is_none() {
+            return false;
+        }
+        self.flushing = true;
+        true
+    }
+
+    fn next_update(&mut self) -> Option<(H, TrayState)> {
+        if let Some(handle) = self.handle.clone()
+            && let Some(snapshot) = self.pending.take()
+        {
+            return Some((handle, snapshot));
+        }
+        // Check for more work and relinquish ownership under the same lock.
+        self.flushing = false;
+        None
+    }
+}
+
+async fn flush(shared: Arc<Mutex<Shared<ksni::Handle<SniTray>>>>) {
+    loop {
+        let update = lock(&shared).next_update();
+        let Some((handle, state)) = update else {
+            return;
+        };
         handle.update(move |tray| tray.state = state).await;
     }
 }
@@ -208,22 +239,38 @@ impl TrayBackend for SniBackend {
                 }
                 other => TrayError::Platform(other.to_string()),
             })?;
-            lock(&shared).handle = Some(handle);
+            let flush_pending = {
+                let mut state = lock(&shared);
+                state.handle = Some(handle);
+                state.reserve_flush()
+            };
             // Apply anything that changed while connecting.
-            flush(shared).await;
+            if flush_pending {
+                flush(shared).await;
+            }
             Ok(())
         })
     }
 
     fn update(&mut self, state: TrayState, cx: &mut App) {
-        lock(&self.shared).pending = Some(state);
-        cx.background_executor()
-            .spawn(flush(self.shared.clone()))
-            .detach();
+        let start = {
+            let mut shared = lock(&self.shared);
+            shared.pending = Some(state);
+            shared.reserve_flush()
+        };
+        if start {
+            cx.background_executor()
+                .spawn(flush(self.shared.clone()))
+                .detach();
+        }
     }
 
     fn shutdown(&mut self, cx: &mut App) {
-        let handle = lock(&self.shared).handle.take();
+        let handle = {
+            let mut shared = lock(&self.shared);
+            shared.pending = None;
+            shared.handle.take()
+        };
         if let Some(handle) = handle {
             let done = handle.shutdown();
             cx.background_executor().spawn(done).detach();
@@ -235,6 +282,37 @@ impl TrayBackend for SniBackend {
 mod tests {
     use super::*;
     use crate::menu::TrayItemId;
+
+    #[test]
+    fn sni_updates_keep_one_flush_owner_and_the_final_snapshot() {
+        let snapshot = |title| TrayState {
+            id: "tray".into(),
+            title,
+            tooltip_title: String::new(),
+            tooltip_body: String::new(),
+            icon: None,
+            badge: Badge::None,
+            badge_color: [0; 4],
+            attention: false,
+            menu: Vec::new(),
+        };
+        let mut shared = Shared::<()>::default();
+        shared.pending = Some(snapshot("connecting".into()));
+        assert!(!shared.reserve_flush());
+        shared.handle = Some(());
+        assert!(shared.reserve_flush());
+        let (_, in_flight) = shared.next_update().unwrap();
+        for index in 0..10_000 {
+            shared.pending = Some(snapshot(index.to_string()));
+            assert!(!shared.reserve_flush());
+        }
+        assert_eq!(in_flight.title, "connecting");
+        assert_eq!(shared.next_update().unwrap().1.title, "9999");
+        assert!(shared.next_update().is_none());
+        shared.pending = Some(snapshot("after idle".into()));
+        assert!(shared.reserve_flush());
+        assert_eq!(shared.next_update().unwrap().1.title, "after idle");
+    }
 
     #[test]
     fn menu_converts_items_checks_submenus_and_escapes_mnemonics() {
@@ -271,7 +349,7 @@ mod tests {
 
     #[test]
     fn menu_activation_sends_the_item_id() {
-        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        let (tx, rx) = EventSink::channel();
         let mut tray = SniTray {
             state: TrayState {
                 id: "t".into(),
@@ -284,14 +362,14 @@ mod tests {
                 attention: false,
                 menu: vec![TrayMenuItem::custom("x", "X")],
             },
-            events: EventSink(tx),
+            events: tx,
         };
         let items = ksni::Tray::menu(&tray);
         if let Some(MenuItem::Standard(item)) = items.first() {
             (item.activate)(&mut tray);
         }
         assert_eq!(
-            rx.try_recv().ok(),
+            rx.try_recv(),
             Some(BackendEvent::MenuItem(TrayItemId::Custom("x".into())))
         );
     }
