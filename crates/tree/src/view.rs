@@ -697,6 +697,37 @@ impl<const P: bool> TreeView<P> {
         )
     }
 
+    /// Forget state for permanently deleted IDs before calling
+    /// [Self::replace_source]. Include every deleted descendant explicitly.
+    pub fn forget_removed(&mut self, ids: impl IntoIterator<Item = NodeId>) {
+        for id in ids {
+            self.model.forget_removed([id]);
+            self.geometry.remove_override(id);
+            if self.edit.as_ref().is_some_and(|edit| edit.id == id) {
+                self.edit = None;
+            }
+            if self.error.as_ref().is_some_and(|error| error.0 == id) {
+                self.error = None;
+            }
+            if self
+                .colour_picker
+                .as_ref()
+                .is_some_and(|picker| picker.0 == id)
+            {
+                self.colour_picker = None;
+            }
+            if self.slider.as_ref().is_some_and(|slider| slider.0 == id) {
+                self.slider = None;
+            }
+            if self.scrub.as_ref().is_some_and(|scrub| scrub.id == id) {
+                self.scrub = None;
+            }
+            if self.drag.as_ref().is_some_and(|drag| drag.0 == id) {
+                self.drag = None;
+            }
+        }
+    }
+
     pub fn replace_source(&mut self, source: Rc<dyn TreeData>, cx: &mut Context<Self>) {
         self.expand_task = None;
         self.source = source;

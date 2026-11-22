@@ -193,7 +193,7 @@ impl ChatState {
                     if index >= history.rows.len() {
                         return Vec::new();
                     }
-                    let removed = history.rows.split_off(index + 1);
+                    let removed = history.split_off(index + 1);
                     let listed = history.list.item_count();
                     if index + 1 < listed {
                         history.list.splice(index + 1..listed, 0);
@@ -348,7 +348,10 @@ impl ChatState {
         if let Some((id, _)) = self.active.as_ref()
             && let Some(row) = self.mounted_message(*id, cx).cloned()
         {
-            row.update(cx, |row, _| row.streaming = false);
+            row.update(cx, |row, cx| {
+                row.streaming = false;
+                cx.notify();
+            });
         }
     }
 

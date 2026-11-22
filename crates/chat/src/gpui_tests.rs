@@ -12,7 +12,7 @@ impl Render for Host {
         Chat::new(&self.0)
     }
 }
-fn open(cx: &mut TestAppContext) -> (WindowHandle<Root>, Entity<ChatState>) {
+pub(crate) fn open(cx: &mut TestAppContext) -> (WindowHandle<Root>, Entity<ChatState>) {
     cx.update(|cx| {
         init(cx);
         MotionPrefs::set(
