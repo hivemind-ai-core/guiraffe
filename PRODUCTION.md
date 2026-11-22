@@ -42,7 +42,8 @@ Mounted allocation measurements and validation limits are recorded in the
 ### Frame storage retention probe
 
 `alternating_frames_retain_peak_storage` draws two frames at each workload
-size, then measures both frame buffers at 100 keyed focusable elements.
+size in the dev test profile, then measures both frame buffers at 100 keyed
+focusable elements.
 Vectors report capacity bytes. Map figures are usable entry capacity times
 entry size and exclude hash-table control bytes and slack. Neither figure
 includes retained element payloads or the renderer's other storage.
@@ -55,9 +56,9 @@ includes retained element payloads or the renderer's other storage.
 
 ### Proposed idle trim for frame storage
 
-Arm one cancellable maintenance job after both alternating frames have reported
-at most one quarter of retained capacity for each candidate buffer throughout
-a sustained low-water interval. Recheck at execution and shrink each qualifying
+Arm one cancellable maintenance job for five seconds after both alternating
+frames report live entries at or below one quarter of capacity for a candidate
+buffer. Recheck at execution and shrink each qualifying
 buffer toward twice its live high-water over that interval, subject to a small
 floor. An intervening larger frame cancels that job. If the window stays idle it
 performs no recurring work. Trim in the maintenance callback outside draw, with

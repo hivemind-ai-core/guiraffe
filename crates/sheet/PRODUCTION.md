@@ -18,3 +18,21 @@ revisions while leaving the output unread.
 
 `initial_submit_allocations_are_independent_of_batch_size` compares 1,000 and
 100,000 entries using calling-thread allocation counts and bytes.
+
+
+### Release-scale Sheet probe
+
+`cargo test --release -p guiraffe-sheet --test submit_allocations
+sheet_submission_and_mount_probe -- --ignored --nocapture` measures
+100,000 chained formulas in a sparse 1,000,000 × 1,000 sheet at 1,280 × 760.
+Submit samples time the prepared batch handoff. Mount samples include fixture
+model construction and the first drawn frame. Five fresh processes per revision
+ran on a shared AMD Ryzen 7 8745HS host with the upstream test backend.
+
+| Revision | Median submit | Cold submit allocations and bytes | Median mount |
+|---|---:|---:|---:|
+| `5fc20c8` | 16.156 ms | 6,246 allocations, 16,334,536 B | 53.726 ms |
+| `896167f` | 16.831 µs | 4 allocations, 2,896 B | 41.667 ms |
+
+The warm-thread regression failed at 61 versus 6,245 allocations on the
+before build, and passed with equal counts and bytes on the after build.
