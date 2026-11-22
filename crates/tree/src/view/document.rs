@@ -476,7 +476,12 @@ fn document_rows_keep_only_state_vouched_for_by_unloaded_ancestors(
                 },
             );
             if let Some(parent) = parent {
-                source.nodes.get_mut(&parent).unwrap().children.push(id);
+                source
+                    .nodes
+                    .get_mut(&parent)
+                    .expect("parent precedes child")
+                    .children
+                    .push(id);
             } else {
                 source.roots.push(id);
             }
