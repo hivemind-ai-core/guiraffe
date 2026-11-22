@@ -3635,6 +3635,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-gallery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "guiraffe-chat",
+ "guiraffe-components",
+ "guiraffe-core",
+ "guiraffe-devtools",
+ "guiraffe-flow",
+ "guiraffe-icons",
+ "guiraffe-motion",
+ "guiraffe-overlays",
+ "guiraffe-router",
+ "guiraffe-state",
+ "guiraffe-test",
+ "guiraffe-windows",
+]
+
+[[package]]
 name = "guiraffe-icons"
 version = "0.1.0"
 dependencies = [

@@ -25,6 +25,9 @@ step test-upstream $UP cargo test -q $T
 step test-fast $FAST cargo test -q $T --features gpui-kit/gpui-fast
 for c in $CRATES; do $UP cargo test -q -p "$c" --doc > "$LOG/doc-$c.log" 2>&1 || { echo "doctest FAIL $c"; fail=1; }; done
 echo "doctests done"
+# The gallery devtools test only exists with that feature, which the workspace runs do not enable.
+step devtools-upstream $UP cargo test -q -p guiraffe-gallery --features devtools --test devtools
+step devtools-fast $FAST cargo test -q -p guiraffe-gallery --features devtools,gpui-fast --test devtools
 # The standalone compare app must still build with --locked (the Electron comparison needs it).
 step compare-lock bash -c 'cd bench/electron/guiraffe-app && cargo metadata --offline --locked --format-version 1 > /dev/null'
 step clippy $UP cargo clippy -q --workspace --all-targets -- -D warnings

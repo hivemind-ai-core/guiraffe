@@ -1161,4 +1161,6 @@ More tips:
   (`cargo run -p team-tasks --features gpui-fast`).
 - [DataUi documents](guides/dataui.md) for screens written as JSON.
 - [GUIraffe for React and Electron developers](guides/from-react-electron.md).
-- The showcase: `cargo run --release -p guiraffe-showcase --features gpui-fast`.
+- The showcase, every component: `cargo run --release -p guiraffe-showcase --features gpui-fast`.
+- The gallery, components working together as an app:
+  `cargo run --release -p guiraffe-gallery --features gpui-fast`.

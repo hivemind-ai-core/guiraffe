@@ -82,6 +82,7 @@ Generate the API documentation with `cargo doc --workspace --no-deps --open`.
 | Example | Run |
 |---|---|
 | Showcase | `cargo run --release -p guiraffe-showcase --features gpui-fast` |
+| Gallery: components working together as an app | `cargo run --release -p guiraffe-gallery --features gpui-fast` |
 | Quickstart | `cargo run -p getting-started-examples --example 00_quickstart --features gpui-fast` |
 | Tutorial apps | `cargo run -p getting-started-examples --example 01_hello --features gpui-fast` (through `06_router_store`) |
 | Team tasks, written with `ui!` | `cargo run -p team-tasks --features gpui-fast` |

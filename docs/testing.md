@@ -14,6 +14,7 @@ It needs about 100 GB of disk for both backends and takes 10 to 25 minutes on a 
 | Model and property tests | Edits, undo, sorting, layout and indexing against simple reference models |
 | Interaction tests | Pointer, keyboard, focus and accessibility roles in a headless window |
 | Screenshot goldens | Appearance in light and dark on both backends |
+| Integration app | The [gallery](../examples/gallery): real shell, router, store, overlays and devtools together |
 | Render counters | That a change re-renders only what it should |
 | Allocation gates | Warm paths, judged by allocation counts that machine load can't distort |
 | Scaling tests | That per-frame work doesn't follow dataset size |

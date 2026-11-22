@@ -46,7 +46,7 @@ pub const INTERNAL: &[(&str, &str, &str)] = &[
     (
         "devtools",
         "DevtoolsRoot",
-        "feature-gated developer overlay host, not an app component; shown in getting-started example 6 (`--features devtools`)",
+        "feature-gated developer overlay host, not an app component; shown in examples/gallery (`--features devtools`)",
     ),
     (
         "devtools",

@@ -62,6 +62,7 @@ You need Rust 1.90 or newer and the [Linux packages](docs/getting-started.md#pre
 git clone https://github.com/hivemind-ai-core/anteater guiraffe
 cd guiraffe
 cargo run --release -p guiraffe-showcase --features gpui-fast    # every component, live
+cargo run --release -p guiraffe-gallery --features gpui-fast     # components working together as an app
 cargo run -p getting-started-examples --example 00_quickstart --features gpui-fast
 ```
 
