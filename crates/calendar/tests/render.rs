@@ -25,10 +25,14 @@ fn date() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 11, 21).unwrap_or(NaiveDate::MIN)
 }
 
-fn instant(hour: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 11, 21, hour, 0, 0)
+fn instant_on(day: u32, hour: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, day, hour, 0, 0)
         .single()
         .unwrap_or(DateTime::UNIX_EPOCH)
+}
+
+fn instant(hour: u32) -> DateTime<Utc> {
+    instant_on(21, hour)
 }
 
 fn fixture() -> CalendarModel {
@@ -37,26 +41,65 @@ fn fixture() -> CalendarModel {
         CalendarSource::new(SourceId(2), "Personal", ColorName::Teal),
     ];
     let mut items = Vec::new();
+    let titles = [
+        "Design review",
+        "Focus block",
+        "Standup",
+        "Client call",
+        "Planning",
+        "Lunch",
+        "Code review",
+        "Release",
+    ];
     for index in 0..8u64 {
         let start = instant(8 + index as u32 % 8);
         let item = CalendarItem::timed(
             EventId(index + 1),
             SourceId(if index % 2 == 0 { 1 } else { 2 }),
-            format!("Event {index}"),
+            titles.get(index as usize).copied().unwrap_or("Event"),
             start,
             start + Duration::minutes(30 + (index % 3) as i64 * 30),
         )
         .unwrap_or_else(|error| panic!("{error}"));
         items.push(Arc::new(item));
     }
-    for index in 0..3u64 {
+    for (index, title) in ["Conference", "Family dinner", "Museum"]
+        .into_iter()
+        .enumerate()
+    {
         items.push(Arc::new(
             CalendarItem::all_day(
-                EventId(100 + index),
+                EventId(100 + index as u64),
                 SourceId(2),
-                format!("All-day {index}"),
+                title,
                 date(),
                 date().succ_opt().unwrap_or(NaiveDate::MIN),
+            )
+            .unwrap_or_else(|error| panic!("{error}")),
+        ));
+    }
+    for (index, day) in [2, 5, 9, 14, 18, 27].into_iter().enumerate() {
+        let start = instant_on(day, 11);
+        items.push(Arc::new(
+            CalendarItem::timed(
+                EventId(200 + index as u64),
+                SourceId(if index % 2 == 0 { 1 } else { 2 }),
+                titles.get(index).copied().unwrap_or("Event"),
+                start,
+                start + Duration::hours(1),
+            )
+            .unwrap_or_else(|error| panic!("{error}")),
+        ));
+    }
+    for month in 1..=12u64 {
+        let date = NaiveDate::from_ymd_opt(2026, month as u32, 15).unwrap_or_else(date);
+        items.push(Arc::new(
+            CalendarItem::all_day(
+                EventId(300 + month),
+                SourceId(1),
+                "Monthly review",
+                date,
+                date.succ_opt().unwrap_or(NaiveDate::MIN),
             )
             .unwrap_or_else(|error| panic!("{error}")),
         ));

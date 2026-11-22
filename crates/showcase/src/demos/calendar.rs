@@ -12,7 +12,7 @@ use guiraffe_calendar::{
 use guiraffe_core::{ColorName, Density, StylePatch, provide};
 
 use crate::catalog::Entry;
-use crate::knobs::{Knob, KnobValues, playground_with};
+use crate::knobs::{Knob, KnobValues, playground_with_preview_first};
 
 pub fn entries() -> Vec<Entry> {
     [
@@ -81,7 +81,7 @@ fn day(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn demo(view: CalendarViewKind, window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_preview_first(
         "Interactive calendar",
         KNOBS,
         move |_, cx| {
@@ -156,8 +156,13 @@ fn render(
         2 => Density::Spacious,
         _ => Density::Comfortable,
     };
+    let height = match state.read(cx).view() {
+        CalendarViewKind::Year => 680.,
+        CalendarViewKind::Month => 720.,
+        CalendarViewKind::Week | CalendarViewKind::Day => 520.,
+    };
     div()
-        .h(px(600.))
+        .h(px(height))
         .min_h_0()
         .child(provide(StylePatch::new().density(density), calendar))
         .into_any_element()
@@ -182,10 +187,14 @@ fn date() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 11, 21).unwrap_or(NaiveDate::MIN)
 }
 
-fn instant(hour: u32, minute: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 11, 21, hour, minute, 0)
+fn instant_at(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, day, hour, minute, 0)
         .single()
         .unwrap_or(DateTime::UNIX_EPOCH)
+}
+
+fn instant(hour: u32, minute: u32) -> DateTime<Utc> {
+    instant_at(21, hour, minute)
 }
 
 fn fixture() -> CalendarModel {
@@ -194,12 +203,24 @@ fn fixture() -> CalendarModel {
         CalendarSource::new(SourceId(2), "Personal", ColorName::Teal),
     ];
     let mut items = Vec::new();
+    let titles = [
+        "Design review",
+        "Focus block",
+        "Team standup",
+        "Client call",
+        "Project planning",
+        "Lunch with Ada",
+        "Code review",
+        "Release checklist",
+        "Research time",
+        "Weekly retro",
+    ];
     for index in 0..10u64 {
         let start = instant(8 + index as u32 % 9, if index % 2 == 0 { 0 } else { 30 });
         let item = CalendarItem::timed(
             EventId(index + 1),
             SourceId(if index % 2 == 0 { 1 } else { 2 }),
-            format!("Event {index}"),
+            titles.get(index as usize).copied().unwrap_or("Event"),
             start,
             start + Duration::minutes(45),
         )
@@ -207,14 +228,41 @@ fn fixture() -> CalendarModel {
         .locked(index == 7);
         items.push(Arc::new(item));
     }
-    for index in 0..4u64 {
+    for (index, title) in ["Conference", "Family dinner"].into_iter().enumerate() {
         items.push(Arc::new(
             CalendarItem::all_day(
-                EventId(100 + index),
+                EventId(100 + index as u64),
                 SourceId(2),
-                format!("All-day {index}"),
+                title,
                 date(),
                 date().succ_opt().unwrap_or(NaiveDate::MIN),
+            )
+            .unwrap_or_else(|error| panic!("{error}")),
+        ));
+    }
+    let month_days = [2, 4, 6, 9, 12, 15, 18, 24, 26, 28];
+    for (index, day) in month_days.into_iter().enumerate() {
+        let start = instant_at(day, 10 + index as u32 % 5, 0);
+        items.push(Arc::new(
+            CalendarItem::timed(
+                EventId(200 + index as u64),
+                SourceId(if index % 2 == 0 { 1 } else { 2 }),
+                titles.get(index).copied().unwrap_or("Event"),
+                start,
+                start + Duration::hours(1),
+            )
+            .unwrap_or_else(|error| panic!("{error}")),
+        ));
+    }
+    for month in 1..=12u64 {
+        let date = NaiveDate::from_ymd_opt(2026, month as u32, 15).unwrap_or_else(|| date());
+        items.push(Arc::new(
+            CalendarItem::all_day(
+                EventId(300 + month),
+                SourceId(1),
+                "Monthly review",
+                date,
+                date.succ_opt().unwrap_or(NaiveDate::MIN),
             )
             .unwrap_or_else(|error| panic!("{error}")),
         ));

@@ -9,7 +9,7 @@ use gpui_kit::{
     canvas,
     component::{
         Selectable,
-        button::{Button, ButtonVariants},
+        button::{Button, ButtonGroup, ButtonVariants},
     },
     div,
     prelude::*,
@@ -197,47 +197,40 @@ fn toolbar(state: &Entity<CalendarState>, cx: &mut App) -> impl IntoElement {
             anchor.year()
         ),
     };
+    let navigation = ButtonGroup::new("calendar-navigation")
+        .outline()
+        .child(navigation_button(state, "calendar-previous", "‹", -1))
+        .child(today_button(state))
+        .child(navigation_button(state, "calendar-next", "›", 1));
     let mut bar = div()
         .flex()
         .flex_wrap()
         .items_center()
         .gap(px(Size::Sm.spacing()))
-        .child(navigation_button(
-            state,
-            "calendar-previous",
-            "Previous",
-            -1,
-        ))
-        .child(today_button(state))
-        .child(navigation_button(state, "calendar-next", "Next", 1))
-        .child(Title::new(heading).order(2));
-    for (index, (label, view)) in [
-        ("Year", CalendarViewKind::Year),
-        ("Month", CalendarViewKind::Month),
-        ("Week", CalendarViewKind::Week),
-        ("Day", CalendarViewKind::Day),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let entity = state.clone();
-        bar = bar.child(
-            Button::new(("calendar-view", index))
-                .label(label)
-                .selected(kind == view)
-                .when(kind == view, Button::primary)
-                .on_click(move |_, _, cx| entity.update(cx, |state, cx| state.set_view(view, cx))),
-        );
-    }
+        .child(navigation)
+        .child(div().flex_1().child(Title::new(heading).order(2)))
+        .child(current.view_switcher.clone());
     for source in sources {
         let entity = state.clone();
         let id = source.id;
         let visible = source.visible;
+        let colors = resolved_color(
+            source.color,
+            if visible {
+                Variant::Light
+            } else {
+                Variant::Subtle
+            },
+            cx,
+        );
         bar = bar.child(
             Button::new(("calendar-source", id.0 as usize))
+                .compact()
+                .rounded_full()
                 .label(source.name.to_string())
                 .selected(visible)
-                .when(visible, Button::outline)
+                .bg(colors.background.to_hsla())
+                .text_color(colors.foreground.to_hsla())
                 .on_click(move |_, _, cx| {
                     entity.update(cx, |state, cx| state.set_source_visible(id, !visible, cx))
                 }),
@@ -254,6 +247,8 @@ fn navigation_button(
 ) -> Button {
     let state = state.clone();
     Button::new(id)
+        .compact()
+        .accessibility_label(if delta < 0 { "Previous" } else { "Next" })
         .label(label)
         .on_click(move |_, _, cx| state.update(cx, |state, cx| state.navigate(delta, cx)))
 }
@@ -261,6 +256,7 @@ fn navigation_button(
 fn today_button(state: &Entity<CalendarState>) -> Button {
     let state = state.clone();
     Button::new("calendar-today")
+        .compact()
         .label("Today")
         .on_click(move |_, _, cx| state.update(cx, |state, cx| state.today(cx)))
 }
@@ -314,13 +310,26 @@ fn timed_view(
         .iter()
         .map(|date| {
             let is_now = now_date == Some(*date);
+            let weekday: String = locale.weekday(date.weekday()).chars().take(3).collect();
+            let label = format!("{weekday} {}", date.day());
+            let content = if is_now {
+                let colors = GuiraffeTheme::global(cx).variant(None, Variant::Filled);
+                div()
+                    .rounded_full()
+                    .px(px(Size::Sm.spacing()))
+                    .py(px(Size::Xs.spacing()))
+                    .bg(colors.background.to_hsla())
+                    .text_color(colors.foreground.to_hsla())
+                    .child(label)
+                    .into_any_element()
+            } else {
+                Text::new(label).into_any_element()
+            };
             div()
                 .flex_1()
                 .flex()
-                .flex_col()
-                .items_center()
-                .child(Text::new(locale.weekday(date.weekday())).dimmed(!is_now))
-                .child(Text::new(date.day().to_string()))
+                .justify_center()
+                .child(content)
                 .into_any_element()
         })
         .collect::<Vec<_>>();
@@ -352,7 +361,7 @@ fn timed_view(
             .relative()
             .h(px(1_440.0 / 60.0 * hour_height))
             .border_l_1()
-            .border_color(current_border_color(cx));
+            .border_color(current_grid_color(cx));
         if show_business {
             for hour in visible_hours(scroll_minutes) {
                 let local = date.and_hms_opt(hour, 0, 0);
@@ -380,7 +389,6 @@ fn timed_view(
             {
                 continue;
             }
-            let label = format_hour(hour, format);
             day = day.child(
                 div()
                     .absolute()
@@ -389,7 +397,7 @@ fn timed_view(
                     .w_full()
                     .h(px(hour_height))
                     .border_t_1()
-                    .border_color(current_border_color(cx))
+                    .border_color(current_grid_color(cx))
                     .child(
                         div()
                             .id(ElementId::Name(format!("empty-hour-{date}-{hour}").into()))
@@ -427,9 +435,17 @@ fn timed_view(
                                         )
                                     });
                                 }
-                            })
-                            .child(Text::new(label).text_size(px(Size::Xs.font_size()))),
+                            }),
                     ),
+            );
+            day = day.child(
+                div()
+                    .absolute()
+                    .top(px(hour as f32 * hour_height + hour_height / 2.0))
+                    .left_0()
+                    .w_full()
+                    .border_t_1()
+                    .border_color(current_grid_color(cx)),
             );
         }
         for position in positions.iter().take(64) {
@@ -437,7 +453,14 @@ fn timed_view(
                 continue;
             };
             let height = ((position.end_second - position.start_second) as f32 / 60.0).max(15.0);
-            let title = SharedString::from(item.title.to_string());
+            let full_title = SharedString::from(item.title.to_string());
+            let title = if one_day {
+                full_title.clone()
+            } else {
+                let max_chars = (12 / position.lanes.max(1)).max(2);
+                SharedString::from(clip_label(&item.title, max_chars))
+            };
+            let compact = height < Size::Xl.control_height() || (!one_day && position.lanes > 1);
             let local_start = match item.time {
                 ItemTime::Timed { start, .. } => Some(zone.local(start)),
                 _ => None,
@@ -447,7 +470,9 @@ fn timed_view(
                 .unwrap_or_else(|| SharedString::from("All day"));
             let content = renderer
                 .and_then(|renderer| renderer(item, title.clone(), time_text.clone()))
-                .unwrap_or_else(|| default_item_content(item, title.clone(), time_text.clone()));
+                .unwrap_or_else(|| {
+                    default_item_content(item, title.clone(), time_text.clone(), compact)
+                });
             let color = item_color(current, item);
             let entity = state.clone();
             let id = item.id;
@@ -457,7 +482,7 @@ fn timed_view(
                 .id(("timed-event", id.0 as usize))
                 .test_support()
                 .role(Role::Button)
-                .aria_label(title.clone())
+                .aria_label(full_title.clone())
                 .aria_selected(current.selected_item == Some(id))
                 .absolute()
                 .top(px(position.start_second as f32 / 60.0))
@@ -477,6 +502,20 @@ fn timed_view(
                     resolved_color(color, Variant::Light, cx)
                         .foreground
                         .to_hsla(),
+                )
+                .py(px(Size::Xs.spacing()))
+                .pr(px(Size::Xs.spacing()))
+                .pl(px(Size::Sm.spacing()))
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .h_full()
+                        .w(px(guiraffe_core::RING_WIDTH))
+                        .bg(resolved_color(color, Variant::Filled, cx)
+                            .background
+                            .to_hsla()),
                 )
                 .child(content);
             block = block.on_click({
@@ -603,11 +642,7 @@ fn timed_view(
             .items_center()
             .gap(px(Size::Xs.spacing()))
             .border_b_1()
-            .border_color(current_border_color(cx))
-            .when_some(
-                all_day_items.is_empty().then_some("All day"),
-                |lane, label| lane.child(Text::new(label).text_size(px(Size::Xs.font_size()))),
-            )
+            .border_color(current_grid_color(cx))
             .on_mouse_down(MouseButton::Left, {
                 let state = state.clone();
                 move |_, _, cx| state.update(cx, |state, cx| state.begin_all_day_create(date, cx))
@@ -618,7 +653,8 @@ fn timed_view(
                     state.update(cx, |state, cx| state.update_day_drag(date, cx))
                 }
             });
-        for item in all_day_items.iter().take(1) {
+        let all_day_capacity = if one_day { 3 } else { 1 };
+        for item in all_day_items.iter().take(all_day_capacity) {
             all_day_lane = all_day_lane.child(month_chip(state, item, current, date, None, cx));
         }
         if let Some(ItemTime::AllDay {
@@ -630,11 +666,13 @@ fn timed_view(
         {
             all_day_lane = all_day_lane.child(Text::new("All-day edit preview"));
         }
-        let remaining = all_day_items.len().saturating_sub(1);
+        let remaining = all_day_items.len().saturating_sub(all_day_capacity);
         if remaining > 0 {
             let entity = state.clone();
             all_day_lane = all_day_lane.child(
                 Button::new(ElementId::Name(format!("all-day-overflow-{date}").into()))
+                    .compact()
+                    .ghost()
                     .label(format!("+{remaining} more"))
                     .on_mouse_down(MouseButton::Left, |_, window, cx| {
                         window.prevent_default();
@@ -648,13 +686,59 @@ fn timed_view(
         all_day_lanes.push(div().flex_1().child(all_day_lane).into_any_element());
         columns.push(div().flex_1().child(day).into_any_element());
     }
+    let gutter_width = Size::Xl.control_height() + Size::Lg.spacing();
+    let mut time_gutter = div()
+        .w(px(gutter_width))
+        .flex_none()
+        .relative()
+        .h(px(1_440.0 / 60.0 * hour_height));
+    for hour in visible_hours(scroll_minutes) {
+        time_gutter = time_gutter.child(
+            div()
+                .absolute()
+                .top(px(hour as f32 * hour_height - Size::Xs.font_size() / 2.0))
+                .right_0()
+                .pr(px(Size::Sm.spacing()))
+                .child(
+                    Text::new(format_hour(hour, format))
+                        .text_size(px(Size::Xs.font_size()))
+                        .dimmed(true),
+                ),
+        );
+    }
     let scroll = state.read(cx).scroll.clone();
     div()
         .size_full()
         .flex()
         .flex_col()
-        .child(div().flex().children(weekdays))
-        .child(div().flex().children(all_day_lanes))
+        .child(
+            div()
+                .flex()
+                .child(div().w(px(gutter_width)).flex_none())
+                .children(weekdays),
+        )
+        .child(
+            div()
+                .flex()
+                .child(
+                    div()
+                        .w(px(gutter_width))
+                        .flex_none()
+                        .h(px(Size::Md.control_height()))
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .pr(px(Size::Sm.spacing()))
+                        .border_b_1()
+                        .border_color(current_grid_color(cx))
+                        .child(
+                            Text::new("all-day")
+                                .text_size(px(Size::Xs.font_size()))
+                                .dimmed(true),
+                        ),
+                )
+                .children(all_day_lanes),
+        )
         .child(
             div()
                 .id("calendar-hour-scroll")
@@ -666,6 +750,7 @@ fn timed_view(
                     div()
                         .flex()
                         .h(px(1_440.0 / 60.0 * hour_height))
+                        .child(time_gutter)
                         .children(columns),
                 ),
         )
@@ -793,16 +878,41 @@ fn day_resize_handle(
         .into_any_element()
 }
 
+fn clip_label(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let mut label: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        label.push('…');
+    }
+    label
+}
+
 fn default_item_content(
     item: &CalendarItem,
     title: SharedString,
     time: SharedString,
+    compact: bool,
 ) -> AnyElement {
-    let mut content = div().flex().flex_col();
-    if matches!(item.time, ItemTime::Timed { .. }) {
-        content = content.child(time);
+    let mut content = div().size_full().flex().flex_col().overflow_hidden().child(
+        div()
+            .w_full()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .font_weight(gpui_kit::FontWeight::MEDIUM)
+            .child(title),
+    );
+    if matches!(item.time, ItemTime::Timed { .. }) && !compact {
+        content = content.child(
+            div()
+                .w_full()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(Size::Xs.font_size()))
+                .child(time),
+        );
     }
-    let mut content = content.child(title);
     if let Some(icon) = item.icon.as_ref() {
         content =
             content.child(Text::new(format!("Icon: {icon}")).text_size(px(Size::Xs.font_size())));
@@ -827,6 +937,10 @@ fn current_border_color(cx: &App) -> gpui_kit::Hsla {
         .to_hsla()
 }
 
+fn current_grid_color(cx: &App) -> gpui_kit::Hsla {
+    GuiraffeTheme::global(cx).surfaces().border.to_hsla()
+}
+
 fn year_view(state: &Entity<CalendarState>, cx: &mut App) -> AnyElement {
     let current = state.read(cx);
     let index = current.index.clone();
@@ -845,6 +959,30 @@ fn year_view(state: &Entity<CalendarState>, cx: &mut App) -> AnyElement {
             .grid()
             .grid_cols(if iso { 8 } else { 7 })
             .gap(px(Size::Xs.spacing()));
+        if iso {
+            grid = grid.child(div());
+        }
+        for weekday in week_dates(anchor, first_weekday) {
+            let initial = locale
+                .weekday(weekday.weekday())
+                .chars()
+                .next()
+                .unwrap_or(' ')
+                .to_string();
+            grid = grid.child(
+                div()
+                    .h(px(Size::Sm.control_height()))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Text::new(initial)
+                            .text_size(px(Size::Xs.font_size()))
+                            .dimmed(true),
+                    ),
+            );
+        }
+        let cell_height = Size::Sm.control_height() + Size::Xs.font_size() + Size::Xs.spacing();
         for day in &cells {
             if iso && day.date.weekday() == first_weekday {
                 grid = grid.child(
@@ -854,32 +992,41 @@ fn year_view(state: &Entity<CalendarState>, cx: &mut App) -> AnyElement {
                 );
             }
             if !day.in_month {
-                grid = grid.child(div());
+                grid = grid.child(div().h(px(cell_height)));
                 continue;
             }
             let count = index.count(day.date);
             let date = day.date;
             let entity = state.clone();
-            let marker = if count == 0 {
-                " ".into()
-            } else {
-                format!("• {count}")
-            };
+            let marker = if count == 0 { " " } else { "•" };
             let intensity = if count >= 3 {
-                Variant::Light
+                Variant::Filled
             } else {
-                Variant::Subtle
+                Variant::Light
             };
-            let tint = resolved_color(ColorName::Blue, intensity, cx)
-                .background
-                .to_hsla();
+            let tint_colors = resolved_color(ColorName::Blue, intensity, cx);
+            let tint = tint_colors.background.to_hsla();
+            let tint_text = tint_colors.foreground.to_hsla();
+            let today_colors = GuiraffeTheme::global(cx).variant(None, Variant::Filled);
             let button = Button::new(ElementId::Name(format!("year-day-{date}").into()))
+                .ghost()
                 .compact()
+                .rounded_full()
+                .w(px(Size::Sm.control_height()))
+                .h(px(Size::Sm.control_height()))
+                .self_center()
                 .accessibility_label(format!("{date}, {count} events"))
                 .label(date.day().to_string())
                 .selected(selected == date)
-                .when(today == date, Button::outline)
-                .when(count > 0, |button| button.bg(tint))
+                .when(today == date, |button| {
+                    button
+                        .bg(today_colors.background.to_hsla())
+                        .text_color(today_colors.foreground.to_hsla())
+                })
+                .when(today != date && selected == date, Button::outline)
+                .when(today != date && count > 0, |button| {
+                    button.bg(tint).text_color(tint_text)
+                })
                 .on_click(move |_, _, cx| {
                     entity.update(cx, |state, cx| {
                         state.select_date(date, cx);
@@ -888,6 +1035,8 @@ fn year_view(state: &Entity<CalendarState>, cx: &mut App) -> AnyElement {
                 });
             grid = grid.child(
                 div()
+                    .h(px(cell_height))
+                    .w_full()
                     .flex()
                     .flex_col()
                     .items_center()
@@ -904,6 +1053,10 @@ fn year_view(state: &Entity<CalendarState>, cx: &mut App) -> AnyElement {
                 .gap(px(Size::Xs.spacing()))
                 .child(
                     Button::new(("year-month", month as usize))
+                        .ghost()
+                        .compact()
+                        .self_start()
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .label(title)
                         .on_click(move |_, _, cx| {
                             entity.update(cx, |state, cx| {
@@ -944,10 +1097,30 @@ fn month_view(
     let today = current.zone.local(current.now).date_naive();
     let selected = current.selected_date;
     let iso = current.show_iso_weeks;
-    let mut grid = div()
-        .grid()
-        .grid_cols(if iso { 8 } else { 7 })
-        .gap(px(Size::Xs.spacing()));
+    let mut header = div().grid().grid_cols(if iso { 8 } else { 7 });
+    if iso {
+        header = header.child(div());
+    }
+    for date in week_dates(current.anchor, first_weekday) {
+        let weekday: String = current
+            .locale
+            .weekday(date.weekday())
+            .chars()
+            .take(3)
+            .collect();
+        header = header.child(
+            div()
+                .flex()
+                .justify_center()
+                .py(px(Size::Xs.spacing()))
+                .child(
+                    Text::new(weekday)
+                        .text_size(px(Size::Xs.font_size()))
+                        .dimmed(true),
+                ),
+        );
+    }
+    let mut grid = div().grid().grid_cols(if iso { 8 } else { 7 });
     for cell in month_cells(current.anchor, first_weekday) {
         if iso && cell.date.weekday() == first_weekday {
             grid = grid.child(
@@ -960,17 +1133,19 @@ fn month_view(
         let items = index.day(date);
         let entity = state.clone();
         let mut column = div()
-            .min_h(px(Size::Xl.control_height() * 2.0))
+            .relative()
+            .h(px(Size::Xl.control_height() * 2.0))
+            .overflow_hidden()
             .p(px(Size::Xs.spacing()))
             .flex()
             .flex_col()
             .gap(px(Size::Xs.spacing()))
             .border_1()
-            .border_color(current_border_color(cx))
+            .border_color(current_grid_color(cx))
             .bg(if cell.in_month {
                 GuiraffeTheme::global(cx).surfaces().surface.to_hsla()
             } else {
-                GuiraffeTheme::global(cx).surfaces().track.to_hsla()
+                GuiraffeTheme::global(cx).surfaces().body.to_hsla()
             })
             .on_mouse_down(MouseButton::Left, {
                 let state = entity.clone();
@@ -982,21 +1157,38 @@ fn month_view(
                     state.update(cx, |state, cx| state.update_day_drag(date, cx))
                 }
             });
-        column = column.child(
-            Button::new(ElementId::Name(format!("month-day-{date}").into()))
-                .label(date.day().to_string())
-                .selected(selected == date)
-                .when(today == date, Button::outline)
-                .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })
-                .on_click({
-                    let state = entity.clone();
-                    move |_, _, cx| state.update(cx, |state, cx| state.select_date(date, cx))
-                }),
-        );
-        for item in items.iter().take(3) {
+        let today_colors = GuiraffeTheme::global(cx).variant(None, Variant::Filled);
+        let number_color = if cell.in_month {
+            GuiraffeTheme::global(cx).surfaces().text.to_hsla()
+        } else {
+            GuiraffeTheme::global(cx).surfaces().dimmed.to_hsla()
+        };
+        let day_number = Button::new(ElementId::Name(format!("month-day-{date}").into()))
+            .ghost()
+            .compact()
+            .rounded_full()
+            .w(px(Size::Md.control_height()))
+            .h(px(Size::Md.control_height()))
+            .text_color(number_color)
+            .label(date.day().to_string())
+            .selected(selected == date)
+            .when(today == date, |button| {
+                button
+                    .bg(today_colors.background.to_hsla())
+                    .text_color(today_colors.foreground.to_hsla())
+            })
+            .when(today != date && selected == date, Button::outline)
+            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+            })
+            .on_click({
+                let state = entity.clone();
+                move |_, _, cx| state.update(cx, |state, cx| state.select_date(date, cx))
+            });
+        column = column.child(div().w_full().flex().justify_end().child(day_number));
+        let chip_capacity = 1;
+        for item in items.iter().take(chip_capacity) {
             column = column.child(month_chip(&entity, item, current, date, renderer, cx));
         }
         if let Some(ItemTime::AllDay {
@@ -1008,10 +1200,16 @@ fn month_view(
         {
             column = column.child(Text::new("All-day edit preview"));
         }
-        let remaining = items.len().saturating_sub(3);
+        let remaining = items.len().saturating_sub(chip_capacity);
         if remaining > 0 {
             column = column.child(
                 Button::new(ElementId::Name(format!("month-overflow-{date}").into()))
+                    .absolute()
+                    .top(px(Size::Xs.spacing()))
+                    .left(px(Size::Xs.spacing()))
+                    .compact()
+                    .ghost()
+                    .self_start()
                     .label(format!("+{remaining} more"))
                     .on_mouse_down(MouseButton::Left, |_, window, cx| {
                         window.prevent_default();
@@ -1027,7 +1225,12 @@ fn month_view(
         }
         grid = grid.child(column);
     }
-    grid.into_any_element()
+    div()
+        .flex()
+        .flex_col()
+        .child(header)
+        .child(grid)
+        .into_any_element()
 }
 
 fn month_chip(
@@ -1048,11 +1251,26 @@ fn month_chip(
     });
     let content = renderer
         .and_then(|renderer| renderer(item, title.clone(), time.clone()))
-        .unwrap_or_else(|| default_item_content(item, title.clone(), time.clone()));
+        .unwrap_or_else(|| {
+            let label = match &item.time {
+                ItemTime::Timed { .. } => format!("{time} {title}"),
+                ItemTime::AllDay { .. } => title.to_string(),
+            };
+            div()
+                .w_full()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(label)
+                .into_any_element()
+        });
     let entity = state.clone();
     let colors = resolved_color(item_color(current, item), Variant::Light, cx);
     let mut chip = Button::new(("month-event", id.0 as usize))
         .compact()
+        .rounded_full()
+        .w_full()
+        .justify_start()
         .accessibility_label(title)
         .selected(current.selected_item == Some(id))
         .bg(colors.background.to_hsla())

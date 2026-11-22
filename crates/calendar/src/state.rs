@@ -127,6 +127,7 @@ pub struct CalendarState {
     pub(crate) editable: bool,
     pub(crate) focusable: Option<bool>,
     pub(crate) focus: FocusHandle,
+    pub(crate) view_switcher: Entity<guiraffe_components::SegmentedControl>,
     pub(crate) scroll: ScrollHandle,
     pub(crate) scroll_minutes: i32,
     pub(crate) selected_date: NaiveDate,
@@ -150,6 +151,20 @@ impl CalendarState {
     ) -> Self {
         let index = model.index(zone);
         let focus = cx.focus_handle();
+        let view_switcher =
+            guiraffe_components::SegmentedControl::new(["Year", "Month", "Week", "Day"], cx);
+        view_switcher.update(cx, |switcher, cx| switcher.select(1, cx));
+        cx.subscribe(&view_switcher, |state, _, event, cx| {
+            let guiraffe_components::SegmentedEvent::Changed(index) = event;
+            let view = match index {
+                0 => CalendarViewKind::Year,
+                1 => CalendarViewKind::Month,
+                2 => CalendarViewKind::Week,
+                _ => CalendarViewKind::Day,
+            };
+            state.set_view(view, cx);
+        })
+        .detach();
         let scroll = ScrollHandle::new();
         scroll.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-480.)));
         let now = Utc::now();
@@ -171,6 +186,7 @@ impl CalendarState {
             editable: true,
             focusable: None,
             focus,
+            view_switcher,
             scroll,
             scroll_minutes: 480,
             selected_date: anchor,
@@ -262,6 +278,14 @@ impl CalendarState {
         }
         self.cancel(cx);
         self.view = view;
+        let selected = match view {
+            CalendarViewKind::Year => 0,
+            CalendarViewKind::Month => 1,
+            CalendarViewKind::Week => 2,
+            CalendarViewKind::Day => 3,
+        };
+        self.view_switcher
+            .update(cx, |switcher, cx| switcher.select(selected, cx));
         self.overflow = None;
         cx.emit(CalendarEvent::ViewChanged(view));
         cx.notify();

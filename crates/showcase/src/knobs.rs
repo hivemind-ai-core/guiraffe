@@ -172,6 +172,7 @@ impl<S: 'static> Render for Preview<S> {
 
 pub struct Playground {
     title: &'static str,
+    preview_first: bool,
     knobs: Vec<(&'static str, Entity<SegmentedControl>)>,
     preview: AnyView,
     _subs: Vec<Subscription>,
@@ -229,6 +230,7 @@ pub fn playground_entity<S: 'static>(
             .collect();
         Playground {
             title,
+            preview_first: false,
             knobs: controls,
             preview: p.into(),
             _subs: subs,
@@ -249,6 +251,19 @@ pub fn playground_with<S: 'static>(
     playground_entity(title, knobs, init, render, window, cx)
         .0
         .into()
+}
+
+pub fn playground_with_preview_first<S: 'static>(
+    title: &'static str,
+    knobs: &[Knob],
+    init: impl FnOnce(&mut Window, &mut App) -> S,
+    render: StatefulPreviewFn<S>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyView {
+    let (playground, _) = playground_entity(title, knobs, init, render, window, cx);
+    playground.update(cx, |playground, _| playground.preview_first = true);
+    playground.into()
 }
 
 /// A stateless playground: `render` draws the preview from the knob values alone.
@@ -274,25 +289,28 @@ impl Render for Playground {
         if self.knobs.is_empty() {
             return column([example(self.title, self.preview.clone())]);
         }
-        column([
-            example(
-                "Options",
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_x(px(20.))
-                    .gap_y(px(10.))
-                    .children(self.knobs.iter().map(|(label, c)| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(Text::new(*label).size(Size::Xs).dimmed(true))
-                            .child(c.clone())
-                    })),
-            ),
-            example(self.title, self.preview.clone()),
-        ])
+        let options = example(
+            "Options",
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_x(px(20.))
+                .gap_y(px(10.))
+                .children(self.knobs.iter().map(|(label, c)| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(Text::new(*label).size(Size::Xs).dimmed(true))
+                        .child(c.clone())
+                })),
+        );
+        let preview = example(self.title, self.preview.clone());
+        if self.preview_first {
+            column([preview, options])
+        } else {
+            column([options, preview])
+        }
     }
 }
 

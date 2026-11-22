@@ -45,7 +45,7 @@ pub use model::{
 
 /// Register theme dependencies and calendar keyboard bindings. Idempotent.
 pub fn init(cx: &mut gpui_kit::App) {
-    guiraffe_core::init(cx);
+    guiraffe_components::init(cx);
     state::register_keys(cx);
 }
 
