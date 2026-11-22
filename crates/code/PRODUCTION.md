@@ -278,3 +278,16 @@ DHAT located a recurring 1,840-byte allocation in the upstream
 `TabStopMap::clear` call from `Window::draw`, and recurring context clones
 in `DispatchTree::reuse_subtree`. These allocations occur while GPUI reuses
 the cached CodeViewer subtree.
+
+## Decoration and trace lifetimes
+
+After its first use, a decoration style remains interned while any layer still
+references it. Removing the final reference releases both map entries. IDs increase
+monotonically within the decoration set and a retired ID resolves to no style.
+Interned styles awaiting their first layer remain available to the caller for the
+owner's lifetime. See `style_churn_releases_payloads_without_reusing_keys`.
+
+Trace registration sweeps weak records when their count reaches at least twice
+the population after the prior sweep, with a minimum threshold of 32. A
+notification also prunes dead entries and updates the threshold. Live observers
+remain owner data. See `dead_trace_registration_churn_is_pruned_without_scanning_every_push`.

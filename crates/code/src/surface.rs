@@ -143,6 +143,34 @@ pub(crate) struct Geometry {
     pub font: Font,
     pub content_width: f64,
 }
+struct Dependents<T> {
+    entries: Vec<T>,
+    sweep_at: usize,
+}
+
+impl<T> Default for Dependents<T> {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            sweep_at: 32,
+        }
+    }
+}
+
+impl<T> Dependents<T> {
+    fn retain(&mut self, live: impl FnMut(&T) -> bool) {
+        self.entries.retain(live);
+        self.sweep_at = self.entries.len().saturating_mul(2).max(32);
+    }
+
+    fn push(&mut self, entry: T, live: impl FnMut(&T) -> bool) {
+        if self.entries.len() >= self.sweep_at {
+            self.retain(live);
+        }
+        self.entries.push(entry);
+    }
+}
+
 pub(crate) struct Shared {
     pub id: u64,
     pub highlighted: RefCell<Highlighted>,
@@ -179,7 +207,7 @@ pub(crate) struct Shared {
     review_hover: RefCell<Option<Entity<MarkdownState>>>,
     pub hover_markdown: RefCell<Option<Entity<MarkdownState>>>,
     pub traces: RefCell<Arc<[Trace]>>,
-    pub dependents: RefCell<Vec<WeakEntity<TraceView>>>,
+    dependents: RefCell<Dependents<WeakEntity<TraceView>>>,
     pub revision: Cell<u64>,
     pending: RefCell<Option<AnalysisRequest>>,
     analysis_generation: Arc<AtomicU64>,
@@ -1148,7 +1176,7 @@ impl Render for TextLayer {
                     || truncated != (shared.stats.get().last_truncated_rows > 0);
                 if overlay_changed {
                     let dependents = if changed {
-                        shared.dependents.borrow().clone()
+                        shared.dependents.borrow().entries.clone()
                     } else {
                         Vec::new()
                     };
@@ -1882,7 +1910,10 @@ impl TraceHandle {
             renders: renders.clone(),
         });
         for h in viewers {
-            h.shared.dependents.borrow_mut().push(view.downgrade());
+            h.shared
+                .dependents
+                .borrow_mut()
+                .push(view.downgrade(), WeakEntity::is_upgradable);
         }
         Self {
             view,
@@ -2351,4 +2382,23 @@ mod review_tests {
         assert_eq!(code.document().source().as_ref(), "latest");
         assert!(code.shared.annotations.borrow().is_empty());
     }
+}
+
+#[cfg(test)]
+#[test]
+fn dead_trace_registration_churn_is_pruned_without_scanning_every_push() {
+    let mut dependents = Dependents::default();
+    let checks = Cell::new(0);
+    for index in 0..10_000 {
+        dependents.push(index < 100, |alive| {
+            checks.set(checks.get() + 1);
+            *alive
+        });
+        assert!(dependents.entries.len() <= 200);
+    }
+    assert_eq!(
+        dependents.entries.iter().filter(|&&alive| alive).count(),
+        100
+    );
+    assert!(checks.get() <= 20_000);
 }

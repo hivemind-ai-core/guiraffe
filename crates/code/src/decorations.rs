@@ -6,7 +6,10 @@ use guiraffe_core::ColorName;
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 /// Stable identifier scoped to a document layer.
@@ -201,7 +204,8 @@ impl std::error::Error for DecorationError {}
 pub struct Decorations {
     document: Arc<CodeDocument>,
     layers: BTreeMap<DecorationLayerId, DecorationLayer>,
-    styles: Vec<DecorationStyle>,
+    styles: HashMap<u32, (DecorationStyle, usize)>,
+    next_style: Arc<AtomicU64>,
     style_ids: HashMap<DecorationStyle, u32>,
     paint_order: Vec<DecorationLayerId>,
     has_blame: bool,
@@ -214,7 +218,8 @@ impl Decorations {
         Ok(Self {
             document,
             layers: BTreeMap::new(),
-            styles: Vec::new(),
+            styles: HashMap::new(),
+            next_style: Arc::default(),
             style_ids: HashMap::new(),
             paint_order: Vec::new(),
             has_blame: false,
@@ -230,12 +235,20 @@ impl Decorations {
         self.layers.get(&id)
     }
 
-    /// Intern a style and return the stable document-local key used by batch inputs.
+    /// Intern a style and return its document-local key. Once used, a style is
+    /// released when its last decoration is removed. Released keys are never reused.
     pub fn intern_style(&mut self, style: DecorationStyle) -> Result<u32, DecorationError> {
         if let Some(&id) = self.style_ids.get(&style) {
             return Ok(id);
         }
-        let id = u32::try_from(self.styles.len()).map_err(|_| DecorationError::Capacity)?;
+        // Clones can build different successor snapshots. Share the allocator so
+        // a key retired in one successor cannot alias new data in another.
+        let id = self
+            .next_style
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                (next <= u64::from(u32::MAX)).then_some(next + 1)
+            })
+            .map_err(|_| DecorationError::Capacity)? as u32;
         match &style {
             DecorationStyle::Blame(_) => self.has_blame = true,
             DecorationStyle::Gutter { lane, .. } => {
@@ -243,13 +256,13 @@ impl Decorations {
             }
             _ => {}
         }
-        self.styles.push(style.clone());
+        self.styles.insert(id, (style.clone(), 0));
         self.style_ids.insert(style, id);
         Ok(id)
     }
 
     pub fn style(&self, id: u32) -> Option<&DecorationStyle> {
-        self.styles.get(id as usize)
+        self.styles.get(&id).map(|(style, _)| style)
     }
 
     pub(crate) fn has_blame(&self) -> bool {
@@ -273,8 +286,43 @@ impl Decorations {
     }
 
     pub fn remove_layer(&mut self, id: DecorationLayerId) {
-        self.layers.remove(&id);
-        self.update_paint_order();
+        if let Some(layer) = self.layers.remove(&id) {
+            self.release_layer_styles(&layer);
+            self.update_paint_order();
+        }
+    }
+
+    fn release_layer_styles(&mut self, layer: &DecorationLayer) {
+        let mut refresh_gutter = false;
+        for record in layer.records() {
+            let std::collections::hash_map::Entry::Occupied(mut entry) =
+                self.styles.entry(record.style)
+            else {
+                continue;
+            };
+            entry.get_mut().1 -= 1;
+            if entry.get().1 == 0 {
+                let (style, _) = entry.remove();
+                refresh_gutter |= matches!(
+                    style,
+                    DecorationStyle::Blame(_) | DecorationStyle::Gutter { .. }
+                );
+                self.style_ids.remove(&style);
+            }
+        }
+        if refresh_gutter {
+            self.has_blame = false;
+            self.gutter_lanes = 0;
+            for (style, _) in self.styles.values() {
+                match style {
+                    DecorationStyle::Blame(_) => self.has_blame = true,
+                    DecorationStyle::Gutter { lane, .. } => {
+                        self.gutter_lanes = self.gutter_lanes.max((*lane).min(3) + 1);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     pub fn mark_stale(&mut self, id: DecorationLayerId) {
@@ -338,7 +386,16 @@ impl Decorations {
             records.sort_unstable_by_key(|record| record.id);
         }
         let layer = DecorationLayer::build(records, options, false, &self.styles, &self.document)?;
-        self.layers.insert(id, layer);
+        // Acquire the new references first so a style carried over from the previous
+        // layer keeps its key even when this is its only layer.
+        for record in layer.records() {
+            if let Some((_, references)) = self.styles.get_mut(&record.style) {
+                *references += 1;
+            }
+        }
+        if let Some(previous) = self.layers.insert(id, layer) {
+            self.release_layer_styles(&previous);
+        }
         self.update_paint_order();
         Ok(())
     }
@@ -522,7 +579,7 @@ impl DecorationLayer {
         mut records: Vec<Decoration>,
         options: DecorationLayerOptions,
         stale: bool,
-        styles: &[DecorationStyle],
+        styles: &HashMap<u32, (DecorationStyle, usize)>,
         document: &CodeDocument,
     ) -> Result<Self, DecorationError> {
         let count = u32::try_from(records.len()).map_err(|_| DecorationError::Capacity)?;
@@ -544,7 +601,7 @@ impl DecorationLayer {
         indices.sort_unstable_by_key(|&i| data.records[i as usize].start);
         for &index in &indices {
             let record = data.records[index as usize];
-            match styles.get(record.style as usize) {
+            match styles.get(&record.style).map(|(style, _)| style) {
                 Some(DecorationStyle::Blame(_)) => data.has_blame = true,
                 Some(DecorationStyle::Inline { .. } | DecorationStyle::Block { .. }) => {
                     data.has_widgets = true
@@ -566,7 +623,8 @@ impl DecorationLayer {
         };
         for record in &data.records {
             let first = bin(record.start);
-            if let Some(DecorationStyle::Gutter { lane, mark }) = styles.get(record.style as usize)
+            if let Some(DecorationStyle::Gutter { lane, mark }) =
+                styles.get(&record.style).map(|(style, _)| style)
             {
                 let overview = data
                     .gutter_overview
@@ -813,6 +871,7 @@ mod tests {
         let mut decorations = store(Arc::new(CodeDocument::new("one")));
         let first = 1;
         let second = 2;
+        let mut parallel = decorations.clone();
         for index in 0..10_000 {
             let style = DecorationStyle::Review {
                 markdown: format!("revision {index}").into(),
@@ -823,7 +882,7 @@ mod tests {
                 ..mark(1, 0, 1)
             };
             decorations
-                .update_layer(first, Default::default(), &[], [input.clone()])
+                .update_layer(first, Default::default(), &[], [input])
                 .unwrap();
             decorations
                 .update_layer(second, Default::default(), &[], [input])
@@ -849,6 +908,14 @@ mod tests {
                 .unwrap();
             decorations.remove_layer(first);
         }
+        let first_original_key = 1;
+        let sibling_key = parallel
+            .intern_style(DecorationStyle::Review {
+                markdown: "sibling".into(),
+            })
+            .unwrap();
+        assert_ne!(sibling_key, first_original_key);
+        assert!(parallel.style(first_original_key).is_none());
     }
 
     #[test]
