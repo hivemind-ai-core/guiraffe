@@ -391,6 +391,39 @@ fn store_is_freed_when_handles_drop_even_with_effect_handlers_and_timers(cx: &mu
 }
 
 #[gpui_kit::test]
+fn debounce_churn_releases_superseded_actions_immediately(cx: &mut TestAppContext) {
+    #[derive(Debug)]
+    struct Schedule(Rc<String>);
+    impl Event<App> for Schedule {
+        fn handle(self, fx: &mut Fx<'_, App>) {
+            fx.dispatch_debounced("payload", Duration::from_secs(60), Payload(self.0));
+        }
+    }
+    #[derive(Debug)]
+    struct Payload(Rc<String>);
+    impl Event<App> for Payload {
+        fn handle(self, fx: &mut Fx<'_, App>) {
+            fx.update(|state| state.a += self.0.len() as i32);
+        }
+    }
+    let store = cx.update(|cx| Store::new(App::default(), cx));
+    let payload = Rc::new("old".repeat(1024));
+    cx.update(|cx| {
+        for _ in 0..1_000 {
+            store.dispatch(Schedule(payload.clone()), cx);
+            store.flush(cx);
+        }
+        store.dispatch(Schedule(Rc::new("latest".into())), cx);
+        store.flush(cx);
+        assert_eq!(Rc::strong_count(&payload), 1);
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| store.state(cx).a), 6);
+}
+
+#[gpui_kit::test]
 fn debounced_dispatch_keeps_only_the_latest(cx: &mut TestAppContext) {
     let store = cx.update(|cx| Store::new(App::default(), cx));
     #[derive(Debug)]
