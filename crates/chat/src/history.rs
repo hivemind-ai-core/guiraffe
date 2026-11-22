@@ -236,6 +236,9 @@ impl History {
             view
         });
         *row = Row::Mounted(view.clone());
+        // Replies can materialize without entering the virtual list. Give those
+        // rows the same eviction path as rows materialized during rendering.
+        RowCache::use_row(&self.row_cache, &cx.entity(), index, &view, cx);
         Some(view)
     }
 
@@ -330,18 +333,109 @@ mod tests {
     use gpui_kit::{AppContext, TestAppContext};
 
     #[gpui_kit::test]
+    #[ignore = "100k-row drag retention probe, run with --ignored --nocapture"]
+    fn selection_drag_across_one_hundred_thousand_rows(cx: &mut TestAppContext) {
+        use gpui_kit::{
+            ListOffset, Modifiers, MouseButton, VisualTestContext, base::TextSelection, point, px,
+        };
+        let (window, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                for index in 0..100_000 {
+                    history.push(
+                        Message::new(MessageId(index), Role::Assistant, "selectable history row"),
+                        false,
+                        cx,
+                    );
+                }
+                history.sync_list();
+                history.list.scroll_to(ListOffset {
+                    item_ix: 0,
+                    offset_in_item: px(0.),
+                });
+            });
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        let draw = |visual: &mut VisualTestContext| {
+            visual.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+            visual.run_until_parked();
+        };
+        draw(&mut visual);
+        let points = visual.update(|window, cx| {
+            (10..550)
+                .step_by(4)
+                .filter_map(|y| {
+                    [65., 75., 85., 95., 105.]
+                        .into_iter()
+                        .map(|x| point(px(x), px(y as f32)))
+                        .find(|&position| TextSelection::is_selectable_at(position, window, cx))
+                })
+                .collect::<Vec<_>>()
+        });
+        let start = *points.first().expect("first selectable history row");
+        let end = *points.last().expect("last selectable history row");
+        assert_ne!(start, end);
+        let modifiers = Modifiers::none();
+        visual.simulate_mouse_move(start, None, modifiers);
+        visual.simulate_mouse_down(start, MouseButton::Left, modifiers);
+        visual.simulate_mouse_move(end, MouseButton::Left, modifiers);
+        draw(&mut visual);
+        assert!(visual.update(|window, cx| TextSelection::has_selection(window, cx)));
+
+        let mut peak_pins = 0;
+        let mut last_selected_index = 0;
+        for index in (8..99_999).step_by(32).chain([99_999]) {
+            visual.update(|_, cx| {
+                history.read(cx).list.scroll_to(ListOffset {
+                    item_ix: index,
+                    offset_in_item: px(0.),
+                });
+            });
+            draw(&mut visual);
+            visual.simulate_mouse_move(end, MouseButton::Left, modifiers);
+            visual.update(|window, cx| {
+                peak_pins = peak_pins.max(history.read(cx).row_cache.borrow().pinned.len());
+                if TextSelection::has_selection(window, cx) {
+                    last_selected_index = index;
+                }
+            });
+        }
+        visual.simulate_mouse_up(end, MouseButton::Left, modifiers);
+        visual.update(|window, cx| {
+            let selected = TextSelection::has_selection(window, cx);
+            let history = history.read(cx);
+            let mounted = history.rows.iter().filter(|row| row.mounted().is_some()).count();
+            println!("rows={}, mounted={mounted}, peak_pins={peak_pins}, last_selected_index={last_selected_index}, selection_at_end={selected}", history.rows.len());
+            assert_eq!(history.rows.len(), 100_000);
+        });
+    }
+
+    #[gpui_kit::test]
     fn superseded_offscreen_replies_respect_the_row_cache(cx: &mut TestAppContext) {
         let (_, chat) = crate::gpui_tests::open(cx);
         let history = cx.update(|cx| chat.read(cx).history.clone());
         cx.update(|cx| {
             for _ in 0..1_000 {
-                chat.update(cx, |chat, cx| { chat.begin_reply(cx); });
+                chat.update(cx, |chat, cx| {
+                    chat.begin_reply(cx);
+                });
             }
         });
         cx.update(|cx| {
             let history = history.read(cx);
             assert_eq!(history.rows.len(), 1_000);
-            assert_eq!(history.rows.iter().filter(|row| row.mounted().is_some()).count(), RETAINED_ROWS);
+            assert_eq!(
+                history
+                    .rows
+                    .iter()
+                    .filter(|row| row.mounted().is_some())
+                    .count(),
+                RETAINED_ROWS
+            );
             assert_eq!(history.row_cache.borrow().pinned.len(), 0);
         });
     }
