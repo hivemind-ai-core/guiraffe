@@ -479,7 +479,13 @@ mod tests {
             wait_for_enter.recv_timeout(timeout)?,
             thread::current().id()
         );
+        let payload: Arc<str> = Arc::from("=99");
+        for _ in 0..10_000 {
+            worker.submit(vec![(pos, payload.clone())]);
+        }
         let latest = worker.submit(vec![(pos, Arc::from("=100"))]);
+        assert_eq!(Arc::strong_count(&payload), 1);
+
         release.send(())?;
         let result = worker.output.recv_timeout(timeout)?;
         assert_eq!(Some(result.revision), latest);
