@@ -1114,18 +1114,7 @@ impl CalendarState {
                 }
             }
             CalendarViewKind::Week | CalendarViewKind::Day => {
-                let slot = (self.cursor.minute * 60, (self.cursor.minute + 15) * 60);
-                let zone = self.zone;
-                let covering: Vec<EventId> = self
-                    .index
-                    .day(date)
-                    .iter()
-                    .filter(|item| {
-                        crate::seconds_in_display_day(item, date, zone)
-                            .is_some_and(|(start, end)| start < slot.1 && end > slot.0)
-                    })
-                    .map(|item| item.id)
-                    .collect();
+                let covering: Vec<EventId> = self.events_at_cursor().map(|item| item.id).collect();
                 let next = match self
                     .selected_item
                     .and_then(|id| covering.iter().position(|item| *item == id))
@@ -1139,6 +1128,31 @@ impl CalendarState {
                 }
             }
         }
+    }
+
+    /// Timed events whose painted rect covers the cursor's fifteen-minute slot.
+    fn events_at_cursor(&self) -> impl Iterator<Item = &std::sync::Arc<crate::CalendarItem>> {
+        let CalendarCursor { date, minute } = self.cursor;
+        let (slot_start, slot_end) = (minute * 60, (minute + 15) * 60);
+        let zone = self.zone;
+        self.index.day(date).iter().filter(move |item| {
+            crate::seconds_in_display_day(item, date, zone).is_some_and(|(start, end)| {
+                start < slot_end && painted_end_second(start, end) > slot_start
+            })
+        })
+    }
+
+    /// The event keyboard focus is on: the selected one if the cursor is on it,
+    /// otherwise the first under the cursor. The focus ring is this event's rect.
+    pub(crate) fn focused_event(&self) -> Option<EventId> {
+        let mut first = None;
+        for item in self.events_at_cursor() {
+            if self.selected_item == Some(item.id) {
+                return Some(item.id);
+            }
+            first.get_or_insert(item.id);
+        }
+        first
     }
 
     /// Home: move the cursor to today without changing the view kind.
@@ -1321,6 +1335,11 @@ impl CalendarState {
             });
         }));
     }
+}
+
+/// Short events keep a fifteen-minute visual target (spec/27).
+pub(crate) fn painted_end_second(start: i32, end: i32) -> i32 {
+    end.max(start + 15 * 60)
 }
 
 /// Default hour viewport before the first paint measures it.

@@ -1034,3 +1034,246 @@ fn state_changes_repaint_inside_a_cached_host(cx: &mut TestAppContext) {
         "December must be painted after navigating"
     );
 }
+
+/// Bounds of the elements named `name`, in paint order.
+fn bounds_named(
+    vcx: &mut VisualTestContext,
+    name: &str,
+) -> Vec<gpui_kit::Bounds<gpui_kit::Pixels>> {
+    use gpui_kit::test::TestQueryExt;
+    vcx.update(|window, _| {
+        window
+            .elements()
+            .into_iter()
+            .filter(|element| match element.path().last() {
+                Some(gpui_kit::ElementId::Name(id)) => id.as_ref() == name,
+                _ => false,
+            })
+            .map(|element| element.bounds())
+            .collect()
+    })
+}
+
+/// spec/27 §Keyboard: the focus ring is the focused event's rect, whatever its
+/// duration, lane, continuation or scroll position.
+#[gpui_kit::test]
+fn focus_ring_rect_equals_the_focused_event_rect(cx: &mut TestAppContext) {
+    // (start, duration) in minutes from midnight of the 21st, and the focused index.
+    let mut cases: Vec<(Vec<(i64, i64)>, usize)> = Vec::new();
+    for duration in [1, 5, 10, 14, 15, 16, 20, 30, 45, 60, 90, 135, 600] {
+        for start in [480, 485, 497] {
+            cases.push((vec![(start, duration)], 0));
+        }
+    }
+    for focused in 0..2 {
+        cases.push((vec![(540, 90), (570, 30)], focused));
+    }
+    for focused in 0..3 {
+        cases.push((vec![(540, 90), (545, 90), (550, 90)], focused));
+        // Five deep: Week collapses two lanes and narrows the rest for "+N".
+        cases.push((
+            vec![(540, 120), (545, 120), (550, 120), (555, 120), (560, 120)],
+            focused,
+        ));
+    }
+    cases.push((vec![(-60, 150)], 0)); // continues from the previous day
+    cases.push((vec![(1_410, 90)], 0)); // continues into the next day
+
+    let (state, _, vcx) = open(cx, CalendarViewKind::Week);
+    vcx.update(|window, cx| {
+        let focus = state.read(cx).focus.clone();
+        window.focus(&focus, cx);
+    });
+    let midnight = instant(0, 0);
+    let mut checked = 0;
+    for view in [CalendarViewKind::Week, CalendarViewKind::Day] {
+        for (events, focused) in &cases {
+            let items: Vec<_> = events
+                .iter()
+                .enumerate()
+                .map(|(index, (start, duration))| {
+                    let start = midnight + chrono::Duration::minutes(*start);
+                    Arc::new(
+                        CalendarItem::timed(
+                            EventId(index as u64 + 1),
+                            SourceId(1),
+                            "Focused",
+                            start,
+                            start + chrono::Duration::minutes(*duration),
+                        )
+                        .unwrap_or_else(|error| panic!("{error}")),
+                    )
+                })
+                .collect();
+            let source = CalendarSource::new(SourceId(1), "Work", ColorName::Blue);
+            let model =
+                CalendarModel::new(items, [source]).unwrap_or_else(|error| panic!("{error}"));
+            let id = EventId(*focused as u64 + 1);
+            let (start, duration) = events[*focused];
+            let visible_start = start.max(0) as i32;
+            let painted_end = ((start + duration).min(1_440) as i32).max(visible_start + 15);
+            // With several candidates the selected one is the focused one.
+            let selected = (events.len() > 1).then_some(id);
+            vcx.update(|_, cx| {
+                state.update(cx, |state, cx| {
+                    state.set_view(view, cx);
+                    state.set_date(date(), cx);
+                    state.set_model(model, cx);
+                    state.selected_item = selected;
+                })
+            });
+            // Every slot the block covers: at the top, middle and bottom of it.
+            let first = visible_start / 15 * 15;
+            let last = ((painted_end - 1) / 15 * 15).min(1_425);
+            for minute in [first, (first + last) / 2 / 15 * 15, last] {
+                // Event top in view, and cursor at the viewport top (block cut off above).
+                for scroll in [visible_start - 20, minute] {
+                    vcx.update(|_, cx| {
+                        state.update(cx, |state, cx| {
+                            state.cursor = CalendarCursor {
+                                date: date(),
+                                minute,
+                            };
+                            state.set_scroll_minutes(scroll, cx);
+                            cx.notify();
+                        })
+                    });
+                    vcx.run_until_parked();
+                    vcx.run_until_parked();
+                    let column = vcx
+                        .debug_bounds("calendar-day-2026-11-21")
+                        .unwrap_or_else(|| panic!("Saturday column"));
+                    let block = bounds_named(vcx, &format!("timed-event-{}", id.0))
+                        .into_iter()
+                        .find(|bounds| {
+                            bounds.left() >= column.left() - gpui_kit::px(1.)
+                                && bounds.left() < column.right()
+                        });
+                    // A block scrolled wholly out of the virtual window has no element.
+                    let Some(block) = block else { continue };
+                    let case =
+                        format!("{view:?} {events:?}#{focused} cursor={minute} scroll={scroll}");
+                    let rings = bounds_named(vcx, "calendar-cursor");
+                    assert_eq!(rings, vec![block], "ring rect != event rect: {case}");
+                    let height: f32 = block.size.height.into();
+                    assert!(
+                        (height - (painted_end - visible_start) as f32).abs() <= 1.,
+                        "event rect is not its painted duration: {case}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 300, "only {checked} positions were checked");
+}
+
+/// spec/27 §Keyboard: focus and selection rings do not change layout.
+#[gpui_kit::test]
+fn cell_and_selection_rings_do_not_move_content(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Month);
+    let before = bounds_named(vcx, "month-event-1");
+    assert!(!before.is_empty());
+    vcx.update(|window, cx| {
+        let focus = state.read(cx).focus.clone();
+        window.focus(&focus, cx);
+    });
+    vcx.run_until_parked();
+    assert_eq!(
+        bounds_named(vcx, "month-event-1"),
+        before,
+        "the cell cursor moved its chips"
+    );
+
+    vcx.update(|_, cx| state.update(cx, |state, cx| state.set_view(CalendarViewKind::Week, cx)));
+    vcx.run_until_parked();
+    let before = vcx
+        .debug_bounds("calendar-event-title")
+        .unwrap_or_else(|| panic!("event title"));
+    vcx.update(|_, cx| state.update(cx, |state, cx| state.select_item(EventId(2), cx)));
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.debug_bounds("calendar-event-title"),
+        Some(before),
+        "selection moved the event's content"
+    );
+}
+
+#[gpui_kit::test]
+fn the_ring_marks_what_enter_selects_and_lets_clicks_through(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Week);
+    vcx.update(|window, cx| {
+        let focus = state.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        state.update(cx, |state, cx| {
+            state.cursor = CalendarCursor {
+                date: date(),
+                minute: 9 * 60 + 30,
+            };
+            state.set_scroll_minutes(8 * 60 + 30, cx);
+            cx.notify();
+        })
+    });
+    vcx.run_until_parked();
+    let event = bounds_named(vcx, "timed-event-2");
+    assert_eq!(bounds_named(vcx, "calendar-cursor"), event);
+    vcx.update(|window, cx| window.press("enter", cx));
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_, cx| state.read(cx).selected_item()),
+        Some(EventId(2))
+    );
+
+    vcx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            state.selected_item = None;
+            cx.notify();
+        })
+    });
+    vcx.run_until_parked();
+    let point = event[0].origin + gpui_kit::point(gpui_kit::px(20.), gpui_kit::px(10.));
+    vcx.simulate_click(point, Default::default());
+    vcx.run_until_parked();
+    assert_eq!(
+        vcx.update(|_, cx| state.read(cx).selected_item()),
+        Some(EventId(2)),
+        "the ring overlay must not swallow clicks"
+    );
+}
+
+#[gpui_kit::test]
+fn a_collapsed_focused_event_is_ringed_on_its_count(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Week);
+    let items = (0..5u64).map(|index| {
+        Arc::new(
+            CalendarItem::timed(
+                EventId(index + 1),
+                SourceId(1),
+                "Deep",
+                instant(9, index as u32 * 5),
+                instant(11, index as u32 * 5),
+            )
+            .unwrap_or_else(|error| panic!("{error}")),
+        )
+    });
+    let source = CalendarSource::new(SourceId(1), "Work", ColorName::Blue);
+    let model = CalendarModel::new(items, [source]).unwrap_or_else(|error| panic!("{error}"));
+    vcx.update(|window, cx| {
+        let focus = state.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        state.update(cx, |state, cx| {
+            state.set_model(model, cx);
+            state.selected_item = Some(EventId(5));
+            state.cursor = CalendarCursor {
+                date: date(),
+                minute: 9 * 60 + 30,
+            };
+            cx.notify();
+        })
+    });
+    vcx.run_until_parked();
+    let count = bounds_named(vcx, "overlap-overflow-2026-11-21");
+    let rings = bounds_named(vcx, "calendar-cursor");
+    assert_eq!((count.len(), rings.len()), (1, 1));
+    assert_eq!(rings, count, "the ring is the +N affordance's rect");
+}

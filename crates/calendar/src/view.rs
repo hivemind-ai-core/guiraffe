@@ -686,22 +686,47 @@ fn timed_view(
                 frame, current, item, position, date, one_day, renderer, cx,
             ));
         }
+        // Rings are siblings placed by `place_block`, exactly like their event:
+        // the same rect, above every block, and no effect on the event's content.
+        let cursor_here = frame.focused && current.drag.is_none() && current.cursor.date == date;
+        let focused_event = cursor_here.then(|| current.focused_event()).flatten();
+        let mut focus_is_collapsed = focused_event.is_some();
+        for (item_index, position) in &layout.blocks {
+            let focused = focused_event == Some(position.id);
+            if focused {
+                focus_is_collapsed = false;
+            }
+            if !focused && current.selected_item != Some(position.id)
+                || position.start_second >= last_minute * 60
+                || position.end_second <= first_minute * 60
+            {
+                continue;
+            }
+            let Some(item) = day_events.get(*item_index) else {
+                continue;
+            };
+            let (before, after) = continuations(item, date, zone);
+            let id = if focused {
+                "calendar-cursor"
+            } else {
+                "calendar-selection-ring"
+            };
+            blocks = blocks.child(
+                place_block(ring(id, frame.ring), position)
+                    .rounded(px(Size::Sm.radius()))
+                    .when(before, |ring| ring.rounded_t(px(0.)))
+                    .when(after, |ring| ring.rounded_b(px(0.))),
+            );
+        }
         day = day.child(blocks);
-        if frame.focused
-            && current.drag.is_none()
-            && current.cursor.date == date
-            && matches!(current.view, CalendarViewKind::Week | CalendarViewKind::Day)
-        {
+        if cursor_here && focused_event.is_none() {
+            // Nothing under the cursor: the free fifteen-minute slot.
             day = day.child(
-                div()
-                    .id("calendar-cursor")
-                    .absolute()
+                ring("calendar-cursor", frame.ring)
                     .left_0()
                     .w_full()
                     .top(px(current.cursor.minute as f32 / 60.0 * hour_height))
                     .h(px(15.0 / 60.0 * hour_height))
-                    .border_2()
-                    .border_color(frame.ring)
                     .rounded(px(Size::Xs.radius())),
             );
         }
@@ -755,6 +780,15 @@ fn timed_view(
                     .absolute()
                     .top(px(hidden_top as f32 / 60.0 + 2.0))
                     .right(px(1.0))
+                    // A focused event collapsed into the count is ringed there.
+                    .when(focus_is_collapsed, |count| {
+                        count.child(
+                            ring("calendar-cursor", frame.ring)
+                                .top_0()
+                                .left_0()
+                                .size_full(),
+                        )
+                    })
                     .child(
                         Button::new(ElementId::Name(format!("overlap-overflow-{date}").into()))
                             .ghost()
@@ -929,6 +963,50 @@ fn day_layout(
     }
 }
 
+fn block_height(position: &crate::PositionedEvent) -> f32 {
+    (crate::state::painted_end_second(position.start_second, position.end_second)
+        - position.start_second) as f32
+        / 60.0
+}
+
+/// The one definition of an event's rect, used by the block and by its rings.
+fn place_block<E: Styled>(element: E, position: &crate::PositionedEvent) -> E {
+    let lanes = position.lanes.max(1) as f32;
+    element
+        .absolute()
+        .top(px(position.start_second as f32 / 60.0))
+        .left(relative(position.lane as f32 / lanes))
+        .w(relative(1.0 / lanes))
+        .h(px(block_height(position)))
+}
+
+/// A focus or selection ring: an overlay, so it never moves what it surrounds.
+fn ring(
+    id: &'static str,
+    color: Hsla,
+) -> impl ParentElement + Styled + StatefulInteractiveElement + IntoElement {
+    div()
+        .id(id)
+        .test_support()
+        .absolute()
+        .border_2()
+        .border_color(color)
+}
+
+/// Whether a timed item continues before and after `date`.
+fn continuations(item: &CalendarItem, date: NaiveDate, zone: crate::CalendarZone) -> (bool, bool) {
+    let ItemTime::Timed { start, end } = item.time else {
+        return (false, false);
+    };
+    let (start, end) = (zone.local(start), zone.local(end));
+    let ends_at_midnight =
+        date.succ_opt() == Some(end.date_naive()) && end.time() == chrono::NaiveTime::MIN;
+    (
+        start.date_naive() < date,
+        end.date_naive() > date && !ends_at_midnight,
+    )
+}
+
 /// Wall-clock minute under window `y` in the hour grid, snapped down to
 /// fifteen minutes. The content origin is the scroll viewport top plus offset.
 fn minute_at(state: &CalendarState, y: f32) -> i32 {
@@ -952,7 +1030,7 @@ fn event_block(
     let zone = current.zone;
     let format = current.time_format();
     let labels = current.locale.labels;
-    let height = ((position.end_second - position.start_second) as f32 / 60.0).max(15.0);
+    let height = block_height(position);
     let full_title = SharedString::from(item.title.clone());
     let title = if one_day || position.lanes <= 1 {
         full_title.clone()
@@ -960,18 +1038,7 @@ fn event_block(
         SharedString::from(clip_label(&item.title, (14 / position.lanes).max(3)))
     };
     let compact = height < Size::Xl.control_height();
-    let (continues_before, continues_after) = match item.time {
-        ItemTime::Timed { start, end } => {
-            let (start, end) = (zone.local(start), zone.local(end));
-            (
-                start.date_naive() < date,
-                end.date_naive() > date
-                    && !(end.date_naive() == date.succ_opt().unwrap_or(date)
-                        && end.time() == chrono::NaiveTime::MIN),
-            )
-        }
-        ItemTime::AllDay { .. } => (false, false),
-    };
+    let (continues_before, continues_after) = continuations(item, date, zone);
     let color = item_color(current, item);
     let locked = item.locked || !current.editable;
     let labels_for = current.labels.event((item.id, date), || {
@@ -1030,22 +1097,15 @@ fn event_block(
         .role(Role::Button)
         .aria_label(label)
         .aria_selected(selected)
-        .absolute()
-        .top(px(position.start_second as f32 / 60.0))
-        .left(relative(
-            position.lane as f32 / position.lanes.max(1) as f32,
-        ))
-        .w(relative(1.0 / position.lanes.max(1) as f32))
-        .h(px(height))
+        .map(|block| place_block(block, position))
         // Rounded but not clipped: content clips itself rectangularly. A rounded
         // overflow clip per item makes gpui-fast rebuild the scene each frame.
         .rounded(radius)
         .when(continues_before, |block| block.rounded_t(px(0.)))
         .when(continues_after, |block| block.rounded_b(px(0.)))
-        // The source accent is the left border; selection adds a ring.
+        // The source accent is the left border; rings are drawn as overlays.
         .border_l(px(3.))
         .border_color(filled.background.to_hsla())
-        .when(selected, |block| block.border_2().border_color(frame.ring))
         .bg(light
             .background
             .over(GuiraffeTheme::global(cx).surfaces().body)
@@ -1431,6 +1491,7 @@ fn default_item_content(content: &ItemContent<'_>) -> AnyElement {
     // The title keeps priority; the time shrinks first. Three elements in
     // either layout, so dense weeks stay cheap.
     let title = div()
+        .debug_selector(|| "calendar-event-title".into())
         .flex_shrink_0()
         .max_w_full()
         .overflow_hidden()
@@ -1689,6 +1750,7 @@ fn month_view(frame: &Frame<'_>, renderer: Option<&ItemRenderer>, cx: &mut App) 
     let locale = &current.locale;
     let theme = GuiraffeTheme::global(cx);
     let surfaces = theme.surfaces();
+    let (in_month, outside) = month_surfaces(theme.scheme, &surfaces);
     let grid_color = surfaces.border.to_hsla();
     let today_colors = theme.variant(None, Variant::Filled);
     let columns = if iso { 8 } else { 7 };
@@ -1731,6 +1793,7 @@ fn month_view(frame: &Frame<'_>, renderer: Option<&ItemRenderer>, cx: &mut App) 
                     .border_r_1()
                     .border_b_1()
                     .border_color(grid_color)
+                    .bg(outside.to_hsla())
                     .text_size(px(Size::Xs.font_size() - 1.0))
                     .text_color(surfaces.dimmed.to_hsla())
                     .child(format!("W{}", row_iso_week(cell.date))),
@@ -1775,12 +1838,17 @@ fn month_view(frame: &Frame<'_>, renderer: Option<&ItemRenderer>, cx: &mut App) 
             .border_b_1()
             .border_color(grid_color)
             .bg(if cell.in_month {
-                surfaces.surface.to_hsla()
+                in_month.to_hsla()
             } else {
-                surfaces.body.to_hsla()
+                outside.to_hsla()
             })
             .when(frame.focused && cursor == date, |cell| {
-                cell.border_2().border_color(frame.ring)
+                cell.child(
+                    ring("calendar-cell-cursor", frame.ring)
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                )
             })
             .on_mouse_down(MouseButton::Left, {
                 let state = entity.clone();
@@ -1884,6 +1952,19 @@ fn month_view(frame: &Frame<'_>, renderer: Option<&ItemRenderer>, cx: &mut App) 
         .into_any_element()
 }
 
+/// `(current month, adjacent months)`: the month sits on the base surface and
+/// outside days are recessed. That is lighter than its surroundings in both
+/// schemes, which takes a different token pair in each.
+fn month_surfaces(
+    scheme: guiraffe_core::Scheme,
+    surfaces: &guiraffe_core::theme::Surfaces,
+) -> (guiraffe_core::Rgb, guiraffe_core::Rgb) {
+    match scheme {
+        guiraffe_core::Scheme::Light => (surfaces.body, surfaces.track),
+        guiraffe_core::Scheme::Dark => (surfaces.surface, surfaces.body),
+    }
+}
+
 /// Month cell geometry: (cell height, day-number size, chip height, gap, padding).
 fn month_geometry() -> (f32, f32, f32, f32, f32) {
     (
@@ -1983,7 +2064,6 @@ fn month_chip(
             chip.bg(colors.background.to_hsla())
                 .text_color(colors.foreground.to_hsla())
         })
-        .when(selected, |chip| chip.border_2().border_color(frame.ring))
         .when(editable, |chip| chip.cursor_grab())
         .hover(|style| style.opacity(0.85))
         .child(content)
@@ -2006,7 +2086,16 @@ fn month_chip(
         .w_full()
         .min_w_0()
         .overflow_hidden()
-        .child(chip);
+        .child(chip)
+        .when(selected, |wrapper| {
+            wrapper.child(
+                ring("calendar-chip-ring", frame.ring)
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .rounded(px(Size::Sm.radius())),
+            )
+        });
     if editable && !timed {
         wrapper = wrapper
             .child(day_resize_handle(state, id, ResizeEdge::Start, date))
@@ -2202,4 +2291,31 @@ fn bind_actions<E: InteractiveElement>(root: E, state: &Entity<CalendarState>) -
         s.pick_up(cx);
     });
     on::<CalendarCancel, _>(root, state, |s, cx| s.cancel(cx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::month_surfaces;
+    use guiraffe_core::{GuiraffeTheme, Rgb, Scheme};
+
+    #[test]
+    fn the_current_month_is_the_base_and_outside_days_recede_readably() {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let theme = GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            };
+            let surfaces = theme.surfaces();
+            let (inside, outside) = month_surfaces(scheme, &surfaces);
+            assert!(
+                inside.contrast(Rgb::BLACK) > outside.contrast(Rgb::BLACK),
+                "{scheme:?}: outside days must be recessed (darker)"
+            );
+            assert!(surfaces.text.contrast(inside) >= 7.0, "{scheme:?} day text");
+            assert!(
+                surfaces.dimmed.contrast(outside) >= 4.5,
+                "{scheme:?} outside day text"
+            );
+        }
+    }
 }
