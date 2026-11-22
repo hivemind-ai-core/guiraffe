@@ -435,3 +435,86 @@ fn selections_created_repeatedly_do_not_pile_up(cx: &mut TestAppContext) {
         "replaced selections are pruned on registration"
     );
 }
+
+#[gpui_kit::test]
+fn synchronous_writes_preserve_history_interceptors_and_effect_order(cx: &mut TestAppContext) {
+    use std::{cell::RefCell, sync::Arc};
+
+    #[derive(Debug)]
+    struct SetA(i32);
+
+    impl Event<App> for SetA {
+        fn handle(self, fx: &mut Fx<'_, App>) {
+            fx.set_field(self.0, |state| &state.a, |state, value| state.a = value);
+        }
+    }
+
+    type RecordedEvent = (u64, String, bool);
+    struct Observe(Rc<RefCell<Vec<RecordedEvent>>>);
+
+    impl Interceptor<App> for Observe {
+        fn after(&mut self, record: &EventRecord, before: &Arc<App>, after: &Arc<App>) {
+            assert_eq!(record.changed, before != after);
+            self.0
+                .borrow_mut()
+                .push((record.seq, record.description.clone(), record.changed));
+        }
+    }
+
+    let (f, window) = fixture(cx);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    window.update(|_, cx| {
+        f.store.enable_undo(8, cx);
+        f.store.add_interceptor(Observe(events.clone()), cx);
+        let snapshot = f.store.state(cx);
+        f.store.dispatch_now(SetA(0), cx);
+        assert!(Arc::ptr_eq(&snapshot, &f.store.state(cx)));
+        assert!(!f.store.can_undo(cx));
+
+        f.store.dispatch_now(SetA(1), cx);
+        assert_eq!(f.store.state(cx).a, 1);
+        f.store.dispatch_now(UndoEvent, cx);
+        assert_eq!(f.store.state(cx).a, 0);
+        f.store.dispatch_now(SetA(0), cx);
+        assert!(f.store.can_redo(cx));
+        f.store.dispatch_now(RedoEvent, cx);
+        assert_eq!(f.store.state(cx).a, 1);
+
+        f.store.on_effect::<Save>(cx, |Save(value), store, cx| {
+            assert_eq!(value, 2);
+            store.dispatch_now(SetA(3), cx);
+            assert_eq!(
+                store.state(cx).a,
+                2,
+                "effect appends the event to the batch"
+            );
+        });
+        f.store.dispatch(SetA(2), cx);
+        f.store.dispatch_now(SaveA, cx);
+        assert_eq!(
+            f.store.state(cx).a,
+            1,
+            "the earlier batch still owns dispatch order"
+        );
+    });
+
+    assert_eq!(window.update(|_, cx| f.store.state(cx).a), 3);
+    let description = [
+        "SetA(0)",
+        "SetA(1)",
+        "UndoEvent",
+        "SetA(0)",
+        "RedoEvent",
+        "SetA(2)",
+        "SaveA",
+        "SetA(3)",
+    ];
+    let changed = [false, true, true, false, true, true, false, true];
+    assert_eq!(events.borrow().len(), description.len());
+    for (index, (seq, text, change)) in events.borrow().iter().enumerate() {
+        assert_eq!(
+            (*seq, text.as_str(), *change),
+            (index as u64 + 1, description[index], changed[index])
+        );
+    }
+}

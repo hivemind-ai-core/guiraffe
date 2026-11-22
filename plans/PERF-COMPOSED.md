@@ -48,6 +48,29 @@ flush, formatted the event description and constructed a tentative
 copy of the state before recognizing equality. The page-side guard
 reached zero allocations by avoiding dispatch altogether.
 
+## Synchronous equal writes
+
+`Store::dispatch_now` runs the typed event directly when the Store is idle.
+The label handler uses `Fx::set_field` to compare the field before taking
+a mutable copy of the state. Both paths still process the event through
+the engine, and an installed interceptor still receives its event
+record. When dispatch is already batched, the event joins the existing
+queue in FIFO order.
+
+| Backend | Cached rows | Before median / p99 (µs) | After median / p99 (µs) | Allocations before → after |
+| --- | ---: | ---: | ---: | ---: |
+| Upstream | 1,000 | 5.020 / 6.762 | 1.192 / 1.423 | 7 → 0 |
+| Upstream | 3,000 | 17.513 / 21.560 | 1.123 / 1.332 | 7 → 0 |
+| gpui-fast | 1,000 | 5.180 / 8.386 | 1.252 / 1.543 | 7 → 0 |
+| gpui-fast | 3,000 | 18.094 / 22.172 | 1.263 / 1.513 | 7 → 0 |
+
+Both variants and all three sizes measured zero allocations, selector
+evaluations and renders on the synchronous equal write. The gate also
+checks that the Store processed the event. These measurements cover
+an idle Store without an interceptor. Re-run the equal-write portion
+with `COMPOSED_EQUAL_ONLY=1`. The after measurements ran on the same
+busy host at a one-minute load of roughly 15–20.
+
 ## Profiling
 
 Build each release executable with
@@ -57,7 +80,7 @@ Set `COMPOSED_PROFILE=1` to select only the cached 3,000-row label workload.
 
 ```sh
 COMPOSED_PROFILE=1 valgrind --tool=callgrind --collect-atstart=no \
-  --toggle-collect='*composed::label_edit*' --callgrind-out-file=target/composed.callgrind \
+  --toggle-collect='composed::label_edit' --callgrind-out-file=target/composed.callgrind \
   "$bench_binary" --ignored --exact composed_measurements --nocapture
 callgrind_annotate --inclusive=yes target/composed.callgrind
 ```

@@ -275,9 +275,16 @@ fn label_edit(window: &mut Mounted<'_>, store: &Store<State>, label: SharedStrin
     window.update(|_, cx| store.dispatch(Change::Label(label), cx));
 }
 
-fn guarded_label_write(store: &Store<State>, label: SharedString, cx: &mut App) {
-    if store.state(cx).rows[EDITED].label != label {
-        store.dispatch(Change::Label(label), cx);
+#[derive(Debug)]
+struct WriteLabel(SharedString);
+
+impl Event<State> for WriteLabel {
+    fn handle(self, fx: &mut Fx<'_, State>) {
+        fx.set_field(
+            self.0,
+            |state| &state.rows[EDITED].label,
+            |state, label| state.rows[EDITED].label = label,
+        );
     }
 }
 
@@ -313,11 +320,17 @@ fn cached_label_updates_and_selector_scaling() {
         );
         let root_before = probe.root.get();
         let visits = probe.selectors.get();
+        let processed = window.update(|_, cx| store.stats(cx).events_processed);
         let (_, counts) = count_allocations(|| {
-            window.update(|_, cx| guarded_label_write(&store, label.clone(), cx));
+            window.update(|_, cx| store.dispatch_now(WriteLabel(label.clone()), cx));
         })
         .expect("allocation scope");
         assert_eq!(counts.allocations, 0);
+        assert_eq!(
+            window.update(|_, cx| store.stats(cx).events_processed),
+            processed + 1,
+            "the equal write went through the Store"
+        );
         assert_eq!(probe.root.get(), root_before);
         assert_eq!(probe.selectors.get(), visits);
         assert!(probe.rows.iter().zip(&before).all(|(r, &b)| r.get() == b));
@@ -360,6 +373,7 @@ fn percentile(values: &mut [u64], percent: usize) -> u64 {
 fn composed_measurements() {
     let mut app = app();
     let profile = std::env::var_os("COMPOSED_PROFILE").is_some();
+    let equal_only = !profile && std::env::var_os("COMPOSED_EQUAL_ONLY").is_some();
     let samples = if profile { 10 } else { 31 };
     println!(
         "variant,n,operation,median_cpu_ns,p99_cpu_ns,median_allocs,root_renders,row_renders,selector_calls,fast_views_reused"
@@ -373,7 +387,7 @@ fn composed_measurements() {
             let (page, mut window) = fixture(&mut app, cached, probe.clone());
             let store = window.update(|_, cx| page.read(cx).store.clone());
             for operation in ["label", "key", "hover", "equal", "filter"] {
-                if profile && operation != "label" {
+                if profile && operation != "label" || equal_only && operation != "equal" {
                     continue;
                 }
                 let mut time = Vec::with_capacity(samples);
@@ -398,7 +412,7 @@ fn composed_measurements() {
                         match operation {
                             "label" => label_edit(&mut window, &store, label),
                             "equal" => {
-                                window.update(|_, cx| store.dispatch(Change::Label(label), cx))
+                                window.update(|_, cx| store.dispatch_now(WriteLabel(label), cx))
                             }
                             "filter" => {
                                 window.update(|_, cx| store.dispatch(Change::Half(true), cx));
@@ -456,7 +470,7 @@ fn composed_measurements() {
             }
             close(window);
 
-            if !profile {
+            if !profile && !equal_only {
                 let mut time = Vec::new();
                 let mut allocations = Vec::new();
                 let mut activity = Vec::new();

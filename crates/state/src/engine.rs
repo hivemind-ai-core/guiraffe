@@ -152,6 +152,19 @@ impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
         self.changed = true;
     }
 
+    /// Write a projected field without cloning the state when the value is equal.
+    /// The reader and writer must address the same field.
+    pub fn set_field<T: PartialEq>(
+        &mut self,
+        value: T,
+        read: impl FnOnce(&S) -> &T,
+        write: impl FnOnce(&mut S, T),
+    ) {
+        if *read(self.state()) != value {
+            self.update(|state| write(state, value));
+        }
+    }
+
     /// Queue another event; it runs after the current one (and after earlier queued events).
     pub fn dispatch(&mut self, event: impl Event<S>) {
         self.queue.push_back(Queued(Box::new(event)));
@@ -393,11 +406,20 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
     /// through effects and back are caught too). When the budget runs out the remaining queue
     /// **and this batch's effects** are dropped and an error is reported, instead of hanging.
     pub fn process_with_budget(&mut self, cofx: &Coeffects, budget: &mut usize) -> Outcome {
+        self.process_with_first::<UndoEvent>(None, cofx, budget)
+    }
+
+    pub(crate) fn process_with_first<E: Event<S>>(
+        &mut self,
+        mut first: Option<E>,
+        cofx: &Coeffects,
+        budget: &mut usize,
+    ) -> Outcome {
         let mut effects = Vec::new();
         let mut processed = 0;
         let mut any_change = false;
         let mut error = None;
-        while let Some(Queued(event)) = self.queue.pop_front() {
+        while first.is_some() || !self.queue.is_empty() {
             if *budget == 0 {
                 self.queue.clear();
                 effects.clear();
@@ -408,47 +430,86 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
             }
             *budget -= 1;
             processed += 1;
-            self.seq += 1;
-            let description = event.describe();
-            let ty = event.event_type();
-            let before = self.state.clone();
-            let changed = if ty == TypeId::of::<UndoEvent>() {
-                self.undo()
-            } else if ty == TypeId::of::<RedoEvent>() {
-                self.redo()
-            } else {
-                let undoable = event.undoable();
-                let compare = event.compare_state();
-                let mut fx = Fx {
-                    state: &mut self.state,
-                    changed: false,
-                    effects: &mut effects,
-                    queue: &mut self.queue,
+            let changed = if let Some(event) = first.take() {
+                let description = (!self.interceptors.is_empty()).then(|| format!("{event:?}"));
+                self.process_event(
+                    TypeId::of::<E>(),
+                    event.undoable(),
+                    event.compare_state(),
+                    description,
+                    &mut effects,
                     cofx,
-                };
-                event.handle(&mut fx);
-                let touched = fx.changed;
-                let moved = touched && !Arc::ptr_eq(&before, &self.state);
-                // Only a different value counts (unless the event opted out of comparing), so
-                // no-op updates create no undo step and notify nobody.
-                let changed = moved && (!compare || *before != *self.state);
-                if moved && !changed {
-                    // Keep the original allocation so pointer-equality fast paths stay valid.
-                    self.state = before.clone();
-                }
-                if changed
-                    && undoable
-                    && let Some(u) = self.undo.as_mut()
-                {
-                    u.past.push_back((u.capture)(&before));
-                    while u.past.len() > u.limit {
-                        u.past.pop_front();
-                    }
-                    u.future.clear();
-                }
-                changed
+                    |fx| event.handle(fx),
+                )
+            } else if let Some(Queued(event)) = self.queue.pop_front() {
+                let description = (!self.interceptors.is_empty()).then(|| event.describe());
+                self.process_event(
+                    event.event_type(),
+                    event.undoable(),
+                    event.compare_state(),
+                    description,
+                    &mut effects,
+                    cofx,
+                    |fx| event.handle(fx),
+                )
+            } else {
+                break;
             };
             any_change |= changed;
+        }
+        Outcome {
+            changed: any_change,
+            processed,
+            effects,
+            error,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_event(
+        &mut self,
+        ty: TypeId,
+        undoable: bool,
+        compare: bool,
+        description: Option<String>,
+        effects: &mut Vec<Effect>,
+        cofx: &Coeffects,
+        handle: impl FnOnce(&mut Fx<'_, S>),
+    ) -> bool {
+        self.seq += 1;
+        let before = self.state.clone();
+        let changed = if ty == TypeId::of::<UndoEvent>() {
+            self.undo()
+        } else if ty == TypeId::of::<RedoEvent>() {
+            self.redo()
+        } else {
+            let mut fx = Fx {
+                state: &mut self.state,
+                changed: false,
+                effects,
+                queue: &mut self.queue,
+                cofx,
+            };
+            handle(&mut fx);
+            let moved = fx.changed && !Arc::ptr_eq(&before, &self.state);
+            let changed = moved && (!compare || *before != *self.state);
+            if moved && !changed {
+                // Keep the original allocation so pointer-equality fast paths stay valid.
+                self.state = before.clone();
+            }
+            if changed
+                && undoable
+                && let Some(u) = self.undo.as_mut()
+            {
+                u.past.push_back((u.capture)(&before));
+                while u.past.len() > u.limit {
+                    u.past.pop_front();
+                }
+                u.future.clear();
+            }
+            changed
+        };
+        if let Some(description) = description {
             let record = EventRecord {
                 seq: self.seq,
                 description,
@@ -458,12 +519,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                 i.after(&record, &before, &self.state);
             }
         }
-        Outcome {
-            changed: any_change,
-            processed,
-            effects,
-            error,
-        }
+        changed
     }
 }
 
