@@ -24,8 +24,8 @@ pub(crate) fn register(cx: &mut App) {
     WidgetRegistry::install(
         cx,
         &[WidgetRegistration {
-            spec: &widget_specs::SHEET,
-            schema: guiraffe_core::widget_schema!(&widget_specs::SHEET),
+            spec: widget_specs::WIDGETS[0],
+            schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[0]),
             render: |node, _, _, _| SheetDocument::new(node).into_any_element(),
         }],
     );
