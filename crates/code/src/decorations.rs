@@ -876,24 +876,24 @@ mod tests {
             let style = DecorationStyle::Review {
                 markdown: format!("revision {index}").into(),
             };
-            let id = decorations.intern_style(style.clone()).unwrap();
+            let id = decorations.intern_style(style.clone()).expect("new style");
             let input = DecorationInput {
                 style: id,
                 ..mark(1, 0, 1)
             };
             decorations
                 .update_layer(first, Default::default(), &[], [input])
-                .unwrap();
+                .expect("valid style and layer fixture");
             decorations
                 .update_layer(second, Default::default(), &[], [input])
-                .unwrap();
+                .expect("valid style and layer fixture");
             decorations.remove_layer(first);
             assert_eq!(decorations.style(id), Some(&style));
             decorations.remove_layer(second);
             assert!(decorations.style(id).is_none());
             assert_eq!(decorations.style_ids.len(), 1);
             assert_eq!(decorations.styles.len(), 1);
-            assert!(decorations.intern_style(style).unwrap() > id);
+            assert!(decorations.intern_style(style).expect("re-interned style") > id);
             let next = id + 1;
             decorations
                 .update_layer(
@@ -905,7 +905,7 @@ mod tests {
                         ..mark(1, 0, 1)
                     }],
                 )
-                .unwrap();
+                .expect("valid style and layer fixture");
             decorations.remove_layer(first);
         }
         let first_original_key = 1;
@@ -913,7 +913,7 @@ mod tests {
             .intern_style(DecorationStyle::Review {
                 markdown: "sibling".into(),
             })
-            .unwrap();
+            .expect("valid style and layer fixture");
         assert_ne!(sibling_key, first_original_key);
         assert!(parallel.style(first_original_key).is_none());
     }

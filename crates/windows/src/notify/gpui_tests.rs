@@ -82,7 +82,7 @@ fn overflow_notifications_release_callbacks_and_payloads_on_dismiss_and_clear(
             first.get_or_insert(id);
         }
         (
-            first.unwrap(),
+            first.expect("first queued notification"),
             service.entity().read(cx).model().queued().count(),
         )
     });
