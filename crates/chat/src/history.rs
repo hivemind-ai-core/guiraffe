@@ -350,6 +350,9 @@ mod tests {
                     );
                 }
                 history.sync_list();
+                history.list.pause_following_tail();
+                history.sticky.user_scroll(false);
+                cx.notify();
                 history.list.scroll_to(ListOffset {
                     item_ix: 0,
                     offset_in_item: px(0.),
@@ -365,20 +368,25 @@ mod tests {
             visual.run_until_parked();
         };
         draw(&mut visual);
-        let points = visual.update(|window, cx| {
-            (10..550)
-                .step_by(4)
-                .filter_map(|y| {
-                    [65., 75., 85., 95., 105.]
-                        .into_iter()
-                        .map(|x| point(px(x), px(y as f32)))
-                        .find(|&position| TextSelection::is_selectable_at(position, window, cx))
-                })
-                .collect::<Vec<_>>()
+        let (start, end) = visual.update(|_, cx| {
+            let history = history.read(cx);
+            let text_bounds = |index: usize| {
+                let row = history.rows[index]
+                    .mounted()
+                    .expect("visible history row")
+                    .read(cx);
+                row.markdown
+                    .as_ref()
+                    .expect("rendered Markdown")
+                    .read(cx)
+                    .bounds()
+            };
+            (
+                text_bounds(0).origin + point(px(3.), px(5.)),
+                text_bounds(2).origin + point(px(35.), px(5.)),
+            )
         });
-        let start = *points.first().expect("first selectable history row");
-        let end = *points.last().expect("last selectable history row");
-        assert_ne!(start, end);
+        assert!(start.y < end.y);
         let modifiers = Modifiers::none();
         visual.simulate_mouse_move(start, None, modifiers);
         visual.simulate_mouse_down(start, MouseButton::Left, modifiers);
@@ -390,9 +398,12 @@ mod tests {
         let mut last_selected_index = 0;
         for index in (8..99_999).step_by(32).chain([99_999]) {
             visual.update(|_, cx| {
-                history.read(cx).list.scroll_to(ListOffset {
-                    item_ix: index,
-                    offset_in_item: px(0.),
+                history.update(cx, |history, cx| {
+                    history.list.scroll_to(ListOffset {
+                        item_ix: index,
+                        offset_in_item: px(0.),
+                    });
+                    cx.notify();
                 });
             });
             draw(&mut visual);
