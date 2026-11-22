@@ -15,6 +15,13 @@
 
 - **Native GPUI drag refreshes the entire window on pointer movement.** Both pinned backends bypass cached views during that refresh. A `SortableBoard` uses window-level pointer tracking with a separate `drag_overlay()` for in-window moves. The native `DragSource::attach` adapter and opt-in `new_native_dock` use GPUI’s native drag path. Use `new_dock` with its separately mounted gesture overlay for in-window docking.
 
+### GPUI frame buffers keep their peak size (accepted 0.2 exception)
+
+After an unusually large frame, GPUI's per-frame element-state, access-log and tab-stop buffers
+keep that capacity until the window closes: 6-10 MB after 10,000 live elements and 64-99 MiB after
+100,000. Virtualized components stay far below this. This is the one accepted exception to
+"every cache is bounded" (2026-11-22); trimming is planned in plans/ROADMAP-0.3.md §E.
+
 ### Selecting text across Chat history
 
 A drag selection in Chat clears when one end scrolls out of the rendered rows.

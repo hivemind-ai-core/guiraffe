@@ -28,7 +28,7 @@ The chart tests cover irregular ID and style preservation, storage capacity, ind
 
 | Storage | Bound and invalidation |
 |---|---|
-| Tab-stop order, element states and access logs | **OPEN high-water capacity.** Each alternating frame retains historical capacity in the state map, access log, and tab insertion history. Upstream also retains the tab lookup and order buffers. Fast drops its lazy tab index on frame clear. See the ignored `alternating_frames_retain_peak_storage` probe in [frame_capacity.rs](bench/tests/frame_capacity.rs). |
+| Tab-stop order, element states and access logs | **EXCEPTION (accepted for 0.2, 2026-11-22; not bounded; fix in 0.3 §E): high-water capacity.** Each alternating frame retains historical capacity in the state map, access log, and tab insertion history. Upstream also retains the tab lookup and order buffers. Fast drops its lazy tab index on frame clear. See the ignored `alternating_frames_retain_peak_storage` probe in [frame_capacity.rs](bench/tests/frame_capacity.rs). |
 | Taffy layout scratch | Up to 768 KiB per layout tree, plus buffer headers. Three pools each retain up to sixteen buffers of at most 16 KiB. Returning a buffer clears its contents. |
 | Upstream stable scene sort | Up to 65,536 sort entries per scene, or 1 MiB on 64-bit systems. The two window scenes reuse their own scratch. A larger primitive batch uses the standard stable sort for that frame. |
 | Upstream Kit root | One cache record per window root for the preceding viewport render. View invalidation, refresh, and changes to the viewport or render context rebuild the record. An active accessibility tree uses live root prepaint. |
