@@ -10,7 +10,7 @@ use gpui_kit::{
     App, AppContext, Bounds, ClipboardItem, ContentMask, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton, ParentElement, Pixels,
     Point, Render, RenderOnce, Role, ScrollEvent, SharedString, StatefulInteractiveElement, Styled,
-    Window, canvas,
+    TestSupportExt, Window, canvas,
     component::input::{Input, InputState},
     div, fill, point, px, size,
 };
@@ -800,6 +800,7 @@ impl Render for SheetState {
         });
         let grid = div()
             .id("sheet")
+            .test_support()
             .role(Role::Grid)
             .aria_label("Spreadsheet")
             .aria_description(if self.model.read_only {

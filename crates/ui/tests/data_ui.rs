@@ -2723,8 +2723,6 @@ fn every_catalogue_property_validates_and_mounts_a_literal(cx: &mut TestAppConte
 
 #[gpui_kit::test]
 fn sheet_document_applies_options_and_reports_user_edits(cx: &mut TestAppContext) {
-    use gpui_kit::test::TestWindowExt as _;
-
     #[derive(Default)]
     struct SheetLogic(
         Option<EventId>,
@@ -2776,9 +2774,9 @@ fn sheet_document_applies_options_and_reports_user_edits(cx: &mut TestAppContext
         Shell { ui }
     });
     window.run_until_parked();
-    let origin = window.update(|window, cx| {
-        window.render_frame(cx);
-        window.find("sheet").bounds().origin
+    let origin = window.update(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.find_by_label("Spreadsheet").bounds().origin
     });
     // Past the row-number gutter and the header: cell A1.
     window.simulate_click(
