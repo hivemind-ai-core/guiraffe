@@ -34,6 +34,6 @@ Reply creation admits materialized views to the same cache even when no frame
 renders between streams. A chat has a single active producer. The test
 `superseded_offscreen_replies_respect_the_row_cache` exercises 1,000 consecutive
 reply starts and checks ordinary residency and ended stream pins. The ignored
-`selection_drag_across_one_hundred_thousand_rows` probe reports mounted rows,
+`selection_retention_across_one_hundred_thousand_rows` probe reports mounted rows,
 peak pins, and whether the current window projection preserves a drag across
 virtualized history.

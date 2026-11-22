@@ -328,46 +328,48 @@ impl Render for History {
 
 #[cfg(test)]
 mod tests {
-    use super::{RETAINED_ROWS, RowCache};
+    use super::{History, RETAINED_ROWS, RowCache};
     use crate::{Message, MessageId, Role};
-    use gpui_kit::{AppContext, TestAppContext};
+    use gpui_kit::{
+        AppContext, Entity, ListOffset, Modifiers, MouseButton, Pixels, Point, TestAppContext,
+        VisualTestContext, base::TextSelection, point, px,
+    };
 
-    #[gpui_kit::test]
-    #[ignore = "100k-row drag retention probe, run with --ignored --nocapture"]
-    fn selection_drag_across_one_hundred_thousand_rows(cx: &mut TestAppContext) {
-        use gpui_kit::{
-            ListOffset, Modifiers, MouseButton, VisualTestContext, base::TextSelection, point, px,
-        };
-        let (window, chat) = crate::gpui_tests::open(cx);
-        let history = cx.update(|cx| chat.read(cx).history.clone());
-        cx.update(|cx| {
+    const HISTORY_SCALE: usize = 100_000;
+
+    #[derive(Clone, Copy, Debug)]
+    enum SelectionProbe {
+        HeldDrag,
+        CompletedDrag,
+        SelectAll,
+    }
+
+    fn draw_probe_frame(visual: &mut VisualTestContext) {
+        visual.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        visual.run_until_parked();
+    }
+
+    fn scroll_probe_to(visual: &mut VisualTestContext, history: &Entity<History>, index: usize) {
+        visual.update(|_, cx| {
             history.update(cx, |history, cx| {
-                for index in 0..100_000 {
-                    history.push(
-                        Message::new(MessageId(index), Role::Assistant, "selectable history row"),
-                        false,
-                        cx,
-                    );
-                }
-                history.sync_list();
-                history.list.pause_following_tail();
-                history.sticky.user_scroll(false);
-                cx.notify();
                 history.list.scroll_to(ListOffset {
-                    item_ix: 0,
+                    item_ix: index,
                     offset_in_item: px(0.),
                 });
+                cx.notify();
             });
         });
-        let mut visual = VisualTestContext::from_window(window.into(), cx);
-        let draw = |visual: &mut VisualTestContext| {
-            visual.update(|window, cx| {
-                window.refresh();
-                window.draw(cx).clear(cx);
-            });
-            visual.run_until_parked();
-        };
-        draw(&mut visual);
+        draw_probe_frame(visual);
+    }
+
+    fn start_probe_selection(
+        visual: &mut VisualTestContext,
+        history: &Entity<History>,
+        probe: SelectionProbe,
+    ) -> Point<Pixels> {
         let (start, end) = visual.update(|_, cx| {
             let history = history.read(cx);
             let text_bounds = |index: usize| {
@@ -390,39 +392,95 @@ mod tests {
         let modifiers = Modifiers::none();
         visual.simulate_mouse_move(start, None, modifiers);
         visual.simulate_mouse_down(start, MouseButton::Left, modifiers);
-        visual.simulate_mouse_move(end, MouseButton::Left, modifiers);
-        draw(&mut visual);
-        assert!(visual.update(|window, cx| TextSelection::has_selection(window, cx)));
-
-        let mut peak_pins = 0;
-        let mut last_selected_index = 0;
-        for index in (8..99_999).step_by(32).chain([99_999]) {
-            visual.update(|_, cx| {
-                history.update(cx, |history, cx| {
-                    history.list.scroll_to(ListOffset {
-                        item_ix: index,
-                        offset_in_item: px(0.),
-                    });
-                    cx.notify();
-                });
-            });
-            draw(&mut visual);
+        if matches!(probe, SelectionProbe::SelectAll) {
+            visual.simulate_mouse_up(start, MouseButton::Left, modifiers);
+            if cfg!(target_os = "macos") {
+                visual.simulate_keystrokes("cmd-a");
+            } else {
+                visual.simulate_keystrokes("ctrl-a");
+            }
+        } else {
             visual.simulate_mouse_move(end, MouseButton::Left, modifiers);
+            if matches!(probe, SelectionProbe::CompletedDrag) {
+                visual.simulate_mouse_up(end, MouseButton::Left, modifiers);
+            }
+        }
+        draw_probe_frame(visual);
+        assert!(
+            visual.update(|window, cx| TextSelection::has_selection(window, cx)),
+            "{probe:?} did not select text"
+        );
+        end
+    }
+
+    fn probe_selection_retention(cx: &mut TestAppContext, probe: SelectionProbe) {
+        let (window, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                for index in 0..HISTORY_SCALE {
+                    history.push(
+                        Message::new(
+                            MessageId(index as u64),
+                            Role::Assistant,
+                            "selectable history row",
+                        ),
+                        false,
+                        cx,
+                    );
+                }
+                history.sync_list();
+                history.list.pause_following_tail();
+                history.sticky.user_scroll(false);
+                cx.notify();
+            });
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        scroll_probe_to(&mut visual, &history, 0);
+        let end = start_probe_selection(&mut visual, &history, probe);
+        let mut peak_pins = 0;
+        let mut peak_mounted = 0;
+        let mut first_selection_loss = None;
+        for index in (0..HISTORY_SCALE).step_by(8).chain([HISTORY_SCALE - 1]) {
+            if index > 0 {
+                scroll_probe_to(&mut visual, &history, index);
+                if matches!(probe, SelectionProbe::HeldDrag) {
+                    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+                }
+            }
             visual.update(|window, cx| {
-                peak_pins = peak_pins.max(history.read(cx).row_cache.borrow().pinned.len());
-                if TextSelection::has_selection(window, cx) {
-                    last_selected_index = index;
+                let cache = history.read(cx).row_cache.borrow();
+                peak_pins = peak_pins.max(cache.pinned.len());
+                peak_mounted = peak_mounted.max(cache.pinned.len() + cache.recent.len());
+                drop(cache);
+                if !TextSelection::has_selection(window, cx) {
+                    first_selection_loss.get_or_insert(index);
                 }
             });
         }
-        visual.simulate_mouse_up(end, MouseButton::Left, modifiers);
+        if matches!(probe, SelectionProbe::HeldDrag) {
+            visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        }
         visual.update(|window, cx| {
             let selected = TextSelection::has_selection(window, cx);
             let history = history.read(cx);
             let mounted = history.rows.iter().filter(|row| row.mounted().is_some()).count();
-            println!("rows={}, mounted={mounted}, peak_pins={peak_pins}, last_selected_index={last_selected_index}, selection_at_end={selected}", history.rows.len());
-            assert_eq!(history.rows.len(), 100_000);
+            println!("{probe:?}: rows={}, mounted={mounted}, peak_mounted={peak_mounted}, peak_pins={peak_pins}, first_selection_loss={first_selection_loss:?}, selection_at_end={selected}", history.rows.len());
+            assert_eq!(history.rows.len(), HISTORY_SCALE);
+            window.remove_window();
         });
+    }
+
+    #[gpui_kit::test]
+    #[ignore = "100k-row selection retention probe, run with --ignored --nocapture"]
+    fn selection_retention_across_one_hundred_thousand_rows(cx: &mut TestAppContext) {
+        for probe in [
+            SelectionProbe::HeldDrag,
+            SelectionProbe::CompletedDrag,
+            SelectionProbe::SelectAll,
+        ] {
+            probe_selection_retention(cx, probe);
+        }
     }
 
     #[gpui_kit::test]

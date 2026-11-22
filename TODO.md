@@ -35,6 +35,8 @@ batches; nothing goes to main without the user.
       comparison; commit a new full bench baseline.
 - [ ] Chat memory (delta 106/116 vs 76 MiB before batch 12 — confirm fixed); Markdown gpui-fast
       memory ~6 MiB over.
+- [ ] Design Chat selection across virtualized history using logical message IDs and text
+      offsets. Preserve rendered Markdown copy behavior when selected rows are offscreen.
 - [ ] PRODUCTION.md performance rows ✅ for every component, linked to checks; merge the cache
       inventory into them.
 
