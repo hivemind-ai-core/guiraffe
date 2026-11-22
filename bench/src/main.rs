@@ -105,6 +105,8 @@ fn iterations_for(suite: &guiraffe_bench::Suite, requested: Option<usize>) -> us
         | "chart-scatter-1m-100-series"
         | "ui-macro-frame-1k"
         | "ui-builder-frame-1k" => 1,
+        // A whole mounted frame per iteration: 10,000 of them per sample takes hours.
+        name if name.contains("-frame-") || name.starts_with("warm-") => 1,
         _ => 10_000,
     })
 }
