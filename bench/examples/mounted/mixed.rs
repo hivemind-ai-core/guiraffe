@@ -276,7 +276,11 @@ pub fn run(short: bool) -> Result<()> {
     } else if short {
         2
     } else {
-        180
+        // 10 s each: 30 minutes, or longer via SOAK_SAMPLES (overnight runs).
+        std::env::var("SOAK_SAMPLES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(180)
     } {
         let deadline = clock + Duration::from_secs(10 * (sample + 1));
         while profile_frames.map_or_else(|| Instant::now() < deadline, |limit| input < limit) {
