@@ -166,14 +166,17 @@ impl RenderOnce for Menu {
                                 .into_any_element(),
                             MenuRow::Item {
                                 id,
+                                element_id,
                                 title,
                                 hint,
                                 enabled,
                             } => {
+                                // Both clones are reference-count bumps: the row owns a shared
+                                // id, and its element id was formatted when the row was built.
                                 let id = id.clone();
                                 let commands = service.clone();
                                 let quiet = theme.variant(None, Variant::Subtle);
-                                Button::new(gpui_kit::SharedString::from(id.to_string()))
+                                Button::new(element_id.clone())
                                     .w_full()
                                     .with_size(px(height))
                                     .rounded(px(theme.default_radius.radius()))

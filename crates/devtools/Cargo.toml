@@ -27,3 +27,7 @@ guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
 [[test]]
 name = "panels"
 required-features = ["devtools"]
+
+[[test]]
+name = "alloc_repaint"
+required-features = ["devtools"]
