@@ -14,9 +14,12 @@ timing, merges). Workers never merge, push or create branches other than their o
     of 2026-11-20 used the rAF timestamp, a different metric.
   - Check warm start in the same run: the 2026-11-21 rerun measured 141 → 156 ms against the earlier
     session, over the 10 % line, while an interleaved A/B that day showed no regression.
-- peak RSS at scale ≤ 1.25 × raw data + 64 MiB; every cache bounded and documented in PRODUCTION.md;
-  soak drift ≤ 2 % over 30 min
-- warm repaint of an unchanged view allocates nothing; per-frame work at 10M items == at 10k
+- peak RSS at scale, measured as the increase over an empty window in the same harness,
+  ≤ 1.25 × raw data + 64 MiB (baseline: user decision 2026-11-22); every cache bounded and
+  documented in PRODUCTION.md; soak drift ≤ 2 % over 30 min (drift is of total RSS, not the delta)
+- warm repaint of an unchanged view allocates nothing; per-frame work is O(viewport + log n), which
+  is what "10M items equals 10k" means (user decision 2026-11-22). Only index lookups may grow, and
+  only logarithmically: elements built, draw calls and allocations must not grow with n
 - every improvement locked by an instruction-count, allocation-count or scaling test
 
 ## Tools
