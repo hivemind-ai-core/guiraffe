@@ -16,6 +16,7 @@ im = "15.1"
 lru = { version = "0.12.5", default-features = false }
 
 [dev-dependencies]
+guiraffe-test.workspace = true
 proptest = "1"
 gpui-kit = { workspace = true, features = ["test-support"] }
 

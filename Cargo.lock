@@ -3742,6 +3742,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-datagrid",
+ "guiraffe-test",
  "im",
  "lru",
  "proptest",
