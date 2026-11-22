@@ -29,7 +29,7 @@ requests `wp_presentation` feedback for buffer submissions. Set
 | Both `src/keymap/context.rs` | Shares immutable key context entries during retained dispatch replay and detaches on mutation. |
 | Both `src/window.rs` and `src/elements/div.rs` | Shares test-only bounds selector strings across replay records and lookup maps. |
 | `gpui-fast/src/window.rs`, `gpui-fast/src/fast/rounded_clip*.rs` | Reuses the preceding compiled scene after a complete replay with matching layer metadata. |
-| Both `src/tab_stop.rs` | Reuses the tab-stop order buffer across frames and sorts it on the first keyboard traversal. Group paths and insertion order resolve ties. |
+| `gpui-pre/src/tab_stop.rs`, `gpui-fast/src/fast/tab_stop.rs` | Upstream reuses tab lookup and order buffers across frames. Fast builds its query index on demand and drops it at frame clear. Both retain tab insertion history capacity. Group paths and insertion order resolve ties. |
 | `gpui-pre/src/text_system/font_features.rs` | Shares one empty font feature vector across default styles. |
 | `gpui-fast/src/fast/layers/paint.rs` | Keeps shared backing when all vertex masks are empty and preserves clipping for custom masks. |
 | `gpui-fast/src/fast/path_cache.rs` | Converts the path-cache test fixture from a vector to the wrapper. |

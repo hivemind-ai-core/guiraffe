@@ -522,9 +522,7 @@ mod tests {
                         false,
                         cx,
                     );
-                    history
-                        .materialize(index, cx)
-                        .expect("materialize history row")
+                    history.materialize(index, cx).expect("new history row")
                 });
                 row.update(cx, |row, cx| {
                     if index == 0 {

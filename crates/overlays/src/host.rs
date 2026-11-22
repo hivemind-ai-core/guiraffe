@@ -972,18 +972,21 @@ mod review_tests {
         cx.update_window(handle.into(), |_, window, cx| {
             let builder: ContextBuilder = Rc::new(|dialog, _, _| dialog);
             OverlayHost::register_context(window, cx, "keep", builder.clone())
-                .expect("register context");
+                .expect("register persistent context");
             for id in 0..1024 {
                 let name = format!("temporary-{id}");
                 OverlayHost::register_context(window, cx, &name, builder.clone())
-                    .expect("register context");
-                assert!(OverlayHost::remove_context(window, cx, &name).expect("remove context"));
+                    .expect("register temporary context");
+                assert!(
+                    OverlayHost::remove_context(window, cx, &name)
+                        .expect("remove temporary context")
+                );
             }
             let host = OverlayHost::entity(window, cx).expect("overlay host");
             assert_eq!(host.read(cx).contexts.len(), 1);
             assert_eq!(Rc::strong_count(&builder), 2);
         })
-        .expect("update test window");
+        .expect("test window");
     }
 
     #[gpui_kit::test]
