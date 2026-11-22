@@ -3,7 +3,7 @@ use std::{rc::Rc, sync::Arc};
 use chrono::{Datelike, NaiveDate, Timelike};
 use gpui_kit::{
     AnyElement, App, ElementId, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Role, SharedString,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, RenderOnce, Role, SharedString,
     StatefulInteractiveElement, StyleRefinement, Styled, TestSupportExt, Window,
     base::StyledExt,
     canvas,
@@ -67,6 +67,7 @@ impl Default for CalendarProps {
 /// The calendar control. It is a reactive view keyed by its state, so a state
 /// change repaints it (also inside cached hosts) in the same frame. As with any
 /// view, one state cannot be shown twice as siblings under the same parent.
+#[derive(IntoElement)]
 pub struct Calendar {
     state: Entity<CalendarState>,
     props: CalendarProps,
@@ -125,20 +126,28 @@ struct Frame<'a> {
     ring: Hsla,
 }
 
-impl IntoElement for Calendar {
-    type Element = gpui_kit::ViewElement<Self>;
-
-    fn into_element(self) -> Self::Element {
-        gpui_kit::ViewElement::new(self)
+impl RenderOnce for Calendar {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        gpui_kit::ViewElement::new(CalendarView(self))
     }
 }
 
-impl gpui_kit::View for Calendar {
+/// The reactive boundary: keyed by the state, so `notify` marks it and every
+/// hosting view dirty before the draw rather than from an observer after it.
+struct CalendarView(Calendar);
+
+impl gpui_kit::View for CalendarView {
     fn entity_id(&self) -> Option<gpui_kit::EntityId> {
-        Some(self.state.entity_id())
+        Some(self.0.state.entity_id())
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.0.render_view(window, cx)
+    }
+}
+
+impl Calendar {
+    fn render_view(self, window: &mut Window, cx: &mut App) -> impl IntoElement + use<> {
         let state = self.state.read(cx);
         let view = state.view;
         let overflow = state.overflow;
