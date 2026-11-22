@@ -82,7 +82,8 @@ pub fn run_data(
     started: Instant,
     run: impl FnOnce(Frame, Duration),
 ) -> Result<()> {
-    let count = scaled(1_000_000);
+    // spec/23 scale target for both DataGrid and CodeViewer.
+    let count = scaled(10_000_000);
     let (mut window, view) = mount(
         "data_soak",
         |_| {},

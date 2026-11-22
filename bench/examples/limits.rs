@@ -52,7 +52,9 @@ struct Measurement {
 }
 
 impl Measurement {
-    fn failures(&self) -> Vec<&'static str> {
+    /// `rss_kib` is peak RSS; the budget applies to its increase over an empty window in the
+    /// same harness (plans/PERF-0.2.md, user decision 2026-11-22).
+    fn failures(&self, empty_kib: u64) -> Vec<&'static str> {
         let mut failures = Vec::new();
         if self.mount_us > 200_000 {
             failures.push("mount");
@@ -60,7 +62,7 @@ impl Measurement {
         if self.p99_us > 8_000 {
             failures.push("p99");
         }
-        if self.rss_kib * 1_024 > self.raw * 5 / 4 + 64 * 1_024 * 1_024 {
+        if self.rss_kib.saturating_sub(empty_kib) * 1_024 > self.raw * 5 / 4 + 64 * 1_024 * 1_024 {
             failures.push("RSS");
         }
         failures
@@ -122,6 +124,15 @@ fn probe(executable: &Path, component: &str, n: usize, bytes_per_item: u64) -> R
     })
 }
 
+/// Median peak RSS of five empty windows, the baseline for every memory verdict.
+fn empty_baseline(executable: &Path) -> Result<u64> {
+    let mut peaks = (0..5)
+        .map(|_| probe(executable, "empty", 1, 1).map(|measurement| measurement.rss_kib))
+        .collect::<Result<Vec<_>>>()?;
+    peaks.sort_unstable();
+    Ok(peaks[peaks.len() / 2])
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     ensure!(
@@ -142,8 +153,9 @@ fn main() -> Result<()> {
         })
         .collect();
     ensure!(!scenarios.is_empty(), "unknown component");
+    let empty_kib = empty_baseline(&executable).context("measuring the empty-window baseline")?;
     let mut table = String::from(
-        "| Component | Size unit | Largest passing | First failing | Budget or stop reason | Mount ms | p99 ms | Peak RSS MiB | Raw MiB |\n|---|---|---:|---:|---|---:|---:|---:|---:|\n",
+        "| Component | Size unit | Largest passing | First failing | Budget or stop reason | Mount ms | p99 ms | RSS over empty MiB | Raw MiB |\n|---|---|---:|---:|---|---:|---:|---:|---:|\n",
     );
     let mut incomplete = false;
     for &(component, unit, bytes_per_item) in scenarios {
@@ -159,7 +171,7 @@ fn main() -> Result<()> {
                     break (None, format!("probe error at {size}"), None);
                 }
             };
-            let failures = measurement.failures();
+            let failures = measurement.failures(empty_kib);
             if !failures.is_empty() {
                 break (Some(size), failures.join(", "), Some(measurement));
             }
@@ -181,7 +193,7 @@ fn main() -> Result<()> {
                 format!(
                     "{:.3} | {p99} | {:.2} | {:.2}",
                     m.mount_us as f64 / 1_000.,
-                    m.rss_kib as f64 / 1_024.,
+                    m.rss_kib.saturating_sub(empty_kib) as f64 / 1_024.,
                     m.raw as f64 / 1_048_576.
                 )
             },
@@ -216,8 +228,10 @@ fn main() -> Result<()> {
     let mut output = tempfile::NamedTempFile::new_in(directory)?;
     writeln!(
         output,
-        "# GUIraffe performance limits\n\nCheckout {revision}, backend {backend}. Start {}, doubling cap {}.\n\nEach size ran in a fresh process. Headless CPU mount includes fixture construction. Measurements describe the first failure or the last tested size. Raw bytes approximate fixture payloads before derived indexes and caches. The grid payload models 50 i64 cells per row, generated on demand. A probe error leaves the threshold unknown.\n\n{table}",
-        args.start, args.max
+        "# GUIraffe performance limits\n\nCheckout {revision}, backend {backend}. Start {}, doubling cap {}.\n\nEach size ran in a fresh process. Headless CPU mount includes fixture construction. Measurements describe the first failure or the last tested size. Raw bytes approximate fixture payloads before derived indexes and caches. The grid payload models 50 i64 cells per row, generated on demand. A probe error leaves the threshold unknown. RSS is the peak above an empty window ({:.2} MiB, median of 5).\n\n{table}",
+        args.start,
+        args.max,
+        empty_kib as f64 / 1_024.
     )?;
     output.persist(&args.output)?;
     ensure!(
@@ -239,10 +253,12 @@ mod tests {
             rss_kib: 64 * 1_024 + 5,
             raw: 4 * 1_024,
         };
-        assert!(measurement.failures().is_empty());
+        assert!(measurement.failures(0).is_empty());
         measurement.mount_us += 1;
         measurement.p99_us += 1;
         measurement.rss_kib += 1;
-        assert_eq!(measurement.failures(), ["mount", "p99", "RSS"]);
+        assert_eq!(measurement.failures(0), ["mount", "p99", "RSS"]);
+        // The empty window's own memory is not charged to the component.
+        assert_eq!(measurement.failures(1), ["mount", "p99"]);
     }
 }

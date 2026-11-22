@@ -3246,6 +3246,8 @@ name = "guiraffe-core"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "im",
+ "serde_json",
 ]
 
 [[package]]

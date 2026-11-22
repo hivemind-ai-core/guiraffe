@@ -25,6 +25,8 @@ step test-upstream $UP cargo test -q $T
 step test-fast $FAST cargo test -q $T --features gpui-kit/gpui-fast
 for c in $CRATES; do $UP cargo test -q -p "$c" --doc > "$LOG/doc-$c.log" 2>&1 || { echo "doctest FAIL $c"; fail=1; }; done
 echo "doctests done"
+# The standalone compare app must still build with --locked (the Electron comparison needs it).
+step compare-lock bash -c 'cd examples/compare/guiraffe-app && cargo metadata --offline --locked --format-version 1 > /dev/null'
 step clippy $UP cargo clippy -q --workspace --all-targets -- -D warnings
 step fmt cargo fmt --all --check
 echo "changed goldens:"; git status --short -- '*.png' | head -50
