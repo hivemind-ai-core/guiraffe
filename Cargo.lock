@@ -3418,6 +3418,8 @@ dependencies = [
  "guiraffe-mermaid",
  "guiraffe-motion",
  "guiraffe-overlays",
+ "guiraffe-state",
+ "guiraffe-test",
  "guiraffe-timeline",
  "guiraffe-tree",
  "guiraffe-ui",
