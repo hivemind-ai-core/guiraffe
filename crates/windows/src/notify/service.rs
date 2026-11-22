@@ -783,3 +783,49 @@ impl NotificationWindows {
         cx.subscribe(&self.stack, move |_, e, cx| f(e, cx))
     }
 }
+
+#[cfg(test)]
+mod teardown_tests {
+    use super::*;
+    use gpui_kit::TestAppContext;
+
+    #[gpui_kit::test]
+    fn notification_owner_teardown_releases_queued_handlers(cx: &mut TestAppContext) {
+        let payload = Rc::new("captured action".repeat(128));
+        let service = cx.update(|cx| {
+            gpui_kit::component::init(cx);
+            let service = init(
+                NotificationWindowsConfig {
+                    stack: StackConfig {
+                        max_visible: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                cx,
+            );
+            service.show(WindowNotification::new("visible").timeout(None), cx);
+            for _ in 0..512 {
+                let payload = payload.clone();
+                service.show_with(
+                    WindowNotification::new("queued payload"),
+                    move |_, _| assert!(!payload.is_empty()),
+                    cx,
+                );
+            }
+            service
+        });
+        assert_eq!(Rc::strong_count(&payload), 513);
+        let weak_stack = service.stack.downgrade();
+        cx.update(|cx| {
+            if let Some(surface) = service.stack.read(cx).window() {
+                close_window(surface, cx);
+            }
+            cx.remove_global::<Installed>();
+            drop(service);
+        });
+        cx.run_until_parked();
+        assert!(weak_stack.upgrade().is_none());
+        assert_eq!(Rc::strong_count(&payload), 1);
+    }
+}

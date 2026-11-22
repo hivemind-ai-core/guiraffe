@@ -8,7 +8,8 @@ outstanding requests. Dismiss releases queued content and sends its terminal
 event, which releases the handler after delivery. Clear discards all pending
 content in one pass, then starts visible exits. Service teardown drops its
 remaining content and handlers. See
-`overflow_notifications_release_callbacks_and_payloads_on_dismiss_and_clear`.
+`overflow_notifications_release_callbacks_and_payloads_on_dismiss_and_clear`
+and `notification_owner_teardown_releases_queued_handlers`.
 
 Saved layouts are app data. Closing a window retains its saved record.
 `WindowManager::forget_saved_layout` removes one record and writes the remaining
