@@ -20,6 +20,7 @@ pub(crate) enum Family {
     Inputs,
     Layout,
     Overlays,
+    Calendar,
 }
 
 /// One mounted fixture: the widgets it holds are built once and drawn again.
@@ -32,6 +33,7 @@ struct Host {
     tags: Entity<guiraffe_inputs::TagsInput>,
     range: Entity<guiraffe_inputs::RangeSlider>,
     dropzone: Entity<guiraffe_inputs::Dropzone>,
+    calendar: Entity<guiraffe_calendar::CalendarState>,
 }
 
 impl Render for Host {
@@ -89,6 +91,12 @@ impl Render for Host {
                 .size_full()
                 .child(guiraffe_overlays::LoadingOverlay::new())
                 .into_any_element(),
+            // Week view: toolbar, all-day lane, virtualized hours, overlap
+            // lanes, business hours and the now-line.
+            Family::Calendar => div()
+                .size_full()
+                .child(guiraffe_calendar::Calendar::new(&self.calendar))
+                .into_any_element(),
         }
     }
 }
@@ -134,6 +142,8 @@ impl Warm {
                 cx,
             );
             let dropzone = guiraffe_inputs::Dropzone::new(vec!["text/plain"], "Drop files", cx);
+            guiraffe_calendar::init(cx);
+            let calendar = calendar_state(cx);
             let control = cx.new(|_| Host {
                 family,
                 accordion,
@@ -143,6 +153,7 @@ impl Warm {
                 tags,
                 range,
                 dropzone,
+                calendar,
             });
             host = Some(control.clone());
             control
@@ -163,6 +174,55 @@ impl Warm {
         self.app.run_until_parked();
         Ok(())
     }
+}
+
+/// A fixed week of timed, overlapping and all-day events with an injected now.
+fn calendar_state(cx: &mut gpui_kit::App) -> Entity<guiraffe_calendar::CalendarState> {
+    use chrono::{Duration, NaiveDate, TimeZone, Utc};
+    use guiraffe_calendar::{
+        CalendarItem, CalendarModel, CalendarSource, CalendarState, CalendarViewKind, CalendarZone,
+        EventId, SourceId,
+    };
+    let day = NaiveDate::from_ymd_opt(2026, 11, 21).unwrap_or(NaiveDate::MIN);
+    let at = |d: u32, h: u32| {
+        Utc.with_ymd_and_hms(2026, 11, d, h, 0, 0)
+            .single()
+            .unwrap_or(chrono::DateTime::UNIX_EPOCH)
+    };
+    let mut items = Vec::new();
+    for index in 0..40u64 {
+        let start = at(15 + (index % 7) as u32, 8 + (index % 9) as u32);
+        if let Ok(item) = CalendarItem::timed(
+            EventId(index + 1),
+            SourceId(1 + index % 2),
+            "Warm event",
+            start,
+            start + Duration::minutes(30 + (index % 4) as i64 * 30),
+        ) {
+            items.push(Arc::new(item));
+        }
+    }
+    if let Ok(item) = CalendarItem::all_day(
+        EventId(100),
+        SourceId(1),
+        "All day",
+        day,
+        day.succ_opt().unwrap_or(day),
+    ) {
+        items.push(Arc::new(item));
+    }
+    let sources = [
+        CalendarSource::new(SourceId(1), "Work", guiraffe_core::ColorName::Blue),
+        CalendarSource::new(SourceId(2), "Personal", guiraffe_core::ColorName::Teal),
+    ];
+    let model = CalendarModel::new(items, sources)
+        .unwrap_or_else(|error| panic!("warm calendar fixture: {error}"));
+    let state = CalendarState::state(model, day, CalendarZone::Utc, cx);
+    state.update(cx, |state, cx| {
+        state.set_now(at(21, 11), cx);
+        state.set_view(CalendarViewKind::Week, cx);
+    });
+    state
 }
 
 /// One suite per family: draw the fixture once.
@@ -192,3 +252,4 @@ warm_suite!(warm_components, Components);
 warm_suite!(warm_inputs, Inputs);
 warm_suite!(warm_layout, Layout);
 warm_suite!(warm_overlays, Overlays);
+warm_suite!(warm_calendar, Calendar);

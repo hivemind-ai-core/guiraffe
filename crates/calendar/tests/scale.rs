@@ -46,7 +46,37 @@ fn model() -> CalendarModel {
     CalendarModel::new(items, sources).unwrap_or_else(|error| panic!("{error}"))
 }
 
-fn measure(cx: &mut TestAppContext, view: CalendarViewKind) -> (Duration, Duration) {
+/// Adversarial fixture: all 10,000 items overlap inside one week of January.
+fn dense_week_model() -> CalendarModel {
+    let epoch = Utc
+        .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
+        .single()
+        .unwrap_or(DateTime::UNIX_EPOCH);
+    let items = (0..10_000u64).map(|index| {
+        let start = epoch
+            + chrono::Duration::days((index % 7) as i64)
+            + chrono::Duration::hours(8)
+            + chrono::Duration::minutes((index % 480) as i64);
+        Arc::new(
+            CalendarItem::timed(
+                EventId(index + 1),
+                SourceId(index % 4 + 1),
+                "Dense fixture",
+                start,
+                start + chrono::Duration::minutes(60),
+            )
+            .unwrap_or_else(|error| panic!("{error}")),
+        )
+    });
+    let sources = (1..=4).map(|id| CalendarSource::new(SourceId(id), "Source", ColorName::Blue));
+    CalendarModel::new(items, sources).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn measure_with(
+    cx: &mut TestAppContext,
+    view: CalendarViewKind,
+    model: fn() -> CalendarModel,
+) -> (Duration, Duration) {
     cx.update(init);
     let start = Instant::now();
     let (host, vcx) = cx.add_window_view(|_, cx| {
@@ -104,19 +134,21 @@ fn measure(cx: &mut TestAppContext, view: CalendarViewKind) -> (Duration, Durati
             }),
             _ => {}
         }
+        // `VisualTestContext::update` flushes effects and redraws the notified
+        // window, so the update already includes the frame. A forced second
+        // `window.draw` would count two frames per input; instead, settle any
+        // deferred paint-time work and count it.
         updates.push(start.elapsed());
-        let draw_start = Instant::now();
-        vcx.update(|window, cx| {
-            let _ = window.draw(cx);
-        });
-        draws.push(draw_start.elapsed());
+        let settle_start = Instant::now();
+        vcx.run_until_parked();
+        draws.push(settle_start.elapsed());
         frames.push(start.elapsed());
     }
     frames.sort();
     updates.sort();
     draws.sort();
     eprintln!(
-        "calendar {view:?} phase maxima: update={:?}, draw={:?}",
+        "calendar {view:?} phase maxima: update+frame={:?}, settle={:?}",
         updates.last(),
         draws.last()
     );
@@ -207,16 +239,35 @@ fn month_and_week_meet_ten_thousand_event_budgets(cx: &mut TestAppContext) {
     let cpus = std::thread::available_parallelism()
         .map(|value| value.get() as f32)
         .unwrap_or(1.0);
-    if let Some(load) = load_average() {
-        assert!(
-            load <= cpus,
-            "quiet-window precondition failed: load average {load} exceeds {cpus} CPUs"
+    // GUIRAFFE_INDICATIVE=1 prints numbers on a busy machine but never accepts
+    // them: the budgets are only asserted in a quiet window.
+    let indicative = std::env::var("GUIRAFFE_INDICATIVE").is_ok_and(|value| value == "1");
+    let quiet = load_average().is_none_or(|load| load <= cpus);
+    if !quiet && !indicative {
+        panic!(
+            "quiet-window precondition failed: load average {:?} exceeds {cpus} CPUs",
+            load_average()
         );
     }
     let mut failures = Vec::new();
-    for view in [CalendarViewKind::Month, CalendarViewKind::Week] {
-        let (mount, p99) = measure(cx, view);
-        eprintln!("calendar {view:?}: 10k mount={mount:?}, warm interaction p99={p99:?}");
+    for (view, fixture, model) in [
+        (
+            CalendarViewKind::Month,
+            "spread",
+            model as fn() -> CalendarModel,
+        ),
+        (CalendarViewKind::Week, "spread", model),
+        (CalendarViewKind::Week, "dense-week", dense_week_model),
+    ] {
+        let (mount, p99) = measure_with(cx, view, model);
+        eprintln!(
+            "calendar {view:?} ({fixture}): 10k mount={mount:?}, warm interaction p99={p99:?}{}",
+            if quiet {
+                ""
+            } else {
+                " [INDICATIVE: machine busy, not accepted]"
+            }
+        );
         if mount > Duration::from_millis(200) {
             failures.push(format!("{view:?} mount exceeded 200 ms: {mount:?}"));
         }
@@ -224,5 +275,7 @@ fn month_and_week_meet_ten_thousand_event_budgets(cx: &mut TestAppContext) {
             failures.push(format!("{view:?} p99 exceeded 8 ms: {p99:?}"));
         }
     }
-    assert!(failures.is_empty(), "{}", failures.join("; "));
+    if quiet {
+        assert!(failures.is_empty(), "{}", failures.join("; "));
+    }
 }

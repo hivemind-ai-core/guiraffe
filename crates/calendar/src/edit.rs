@@ -203,6 +203,44 @@ pub fn chip_capacity(
     potential.min(with_overflow.max(1))
 }
 
+/// How many of `items` chips a month cell shows, and how many go behind `+N more`.
+///
+/// The overflow affordance is only reserved when the items do not all fit, so a
+/// cell never hides an item just to make room for a `+0` button.
+pub fn month_chip_plan(
+    items: usize,
+    available_height: f32,
+    header_height: f32,
+    chip_height: f32,
+    overflow_height: f32,
+) -> (usize, usize) {
+    let all = chip_capacity(available_height, header_height, chip_height, 0.0);
+    if items <= all {
+        return (items, 0);
+    }
+    let shown = chip_capacity(
+        available_height,
+        header_height,
+        chip_height,
+        overflow_height,
+    )
+    .min(items);
+    (shown, items - shown)
+}
+
+/// Limit a day column to `max_lanes` lanes. Events in lanes beyond the limit are
+/// dropped from `positions` and counted, so a dense cluster renders a bounded
+/// number of blocks plus one count affordance instead of sub-pixel children.
+pub fn collapse_lanes(positions: &mut Vec<PositionedEvent>, max_lanes: usize) -> usize {
+    let max_lanes = max_lanes.max(1);
+    let before = positions.len();
+    positions.retain(|position| position.lane < max_lanes);
+    for position in positions.iter_mut() {
+        position.lanes = position.lanes.min(max_lanes);
+    }
+    before - positions.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +317,49 @@ mod tests {
         assert_eq!(visible_hour_range(-50, 100, 2), (0, 220));
         assert_eq!(chip_capacity(10.0, 10.0, 2.0, 0.0), 0);
         assert_eq!(chip_capacity(100.0, 20.0, 20.0, 0.0), 4);
+    }
+
+    #[test]
+    fn month_chip_plan_reserves_overflow_only_when_needed() {
+        // Four chip rows fit; reserving one row for "+N" leaves three.
+        assert_eq!(month_chip_plan(0, 100.0, 20.0, 20.0, 20.0), (0, 0));
+        assert_eq!(month_chip_plan(4, 100.0, 20.0, 20.0, 20.0), (4, 0));
+        assert_eq!(month_chip_plan(5, 100.0, 20.0, 20.0, 20.0), (3, 2));
+        assert_eq!(month_chip_plan(9, 100.0, 20.0, 20.0, 0.0), (4, 5));
+        // Zero-size and non-finite cells hide everything behind the count.
+        assert_eq!(month_chip_plan(3, 0.0, 20.0, 20.0, 20.0), (0, 3));
+        assert_eq!(month_chip_plan(3, f32::NAN, 20.0, 20.0, 20.0), (0, 3));
+    }
+
+    #[test]
+    fn dense_clusters_collapse_to_a_bounded_lane_count() {
+        let mut items: Vec<TimedSlice> = (0..10_000)
+            .map(|index| TimedSlice {
+                id: EventId(index),
+                start_second: 3_600,
+                end_second: 7_200,
+            })
+            .collect();
+        let mut positions = layout_overlaps(&mut items);
+        assert_eq!(positions.len(), 10_000);
+        let hidden = collapse_lanes(&mut positions, 4);
+        assert_eq!(hidden, 9_996);
+        assert_eq!(positions.len(), 4);
+        assert!(positions.iter().all(|p| p.lanes == 4 && p.lane < 4));
+        let mut single = vec![PositionedEvent {
+            id: EventId(1),
+            start_second: 0,
+            end_second: 60,
+            lane: 0,
+            lanes: 1,
+            continued_before: false,
+            continued_after: false,
+        }];
+        assert_eq!(
+            collapse_lanes(&mut single, 0),
+            0,
+            "at least one lane is kept"
+        );
     }
 
     proptest::proptest! {

@@ -268,15 +268,17 @@ pub fn playground_with<S: 'static>(
         .into()
 }
 
-pub fn playground_with_preview_first<S: 'static>(
+pub fn playground_with_update_preview_first<S: 'static>(
     title: &'static str,
     knobs: &[Knob],
     init: impl FnOnce(&mut Window, &mut App) -> S,
+    apply: fn(&S, &KnobValues, &mut App),
     render: StatefulPreviewFn<S>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyView {
-    let (playground, _) = playground_entity(title, knobs, init, render, window, cx);
+    let (playground, _) =
+        playground_entity_with_update(title, knobs, init, apply, render, window, cx);
     playground.update(cx, |playground, _| playground.preview_first = true);
     playground.into()
 }

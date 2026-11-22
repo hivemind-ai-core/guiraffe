@@ -27,16 +27,18 @@ mod view;
 pub use state::{
     CalendarChange, CalendarCursor, CalendarEvent, CalendarState, ChangeKind, DragMode, DragPreview,
 };
-pub use view::{Calendar, CalendarProps, ItemRenderer, default_hour_height};
+pub use view::{Calendar, CalendarProps, ItemContent, ItemRenderer, default_hour_height};
 
 pub use calendar::{
-    BusinessHours, CalendarLocale, CalendarViewKind, DateCell, TimeFormat, WorkingHours,
-    format_hour, format_local_time, initial_scroll_minutes, minute_of_day, month_cells, navigate,
-    week_dates,
+    BusinessHours, CalendarLabels, CalendarLocale, CalendarViewKind, DateCell, TimeFormat,
+    WorkingHours, format_hour, format_local_time, format_time_range, hour_label,
+    initial_scroll_minutes, iso_week, minute_of_day, month_cells, navigate, row_iso_week,
+    week_dates, week_start,
 };
 pub use edit::{
-    PositionedEvent, ResizeEdge, TimedSlice, chip_capacity, layout_overlaps, move_all_day,
-    move_timed, resize_all_day, resize_timed, snap_minutes, visible_hour_range,
+    PositionedEvent, ResizeEdge, TimedSlice, chip_capacity, collapse_lanes, layout_overlaps,
+    month_chip_plan, move_all_day, move_timed, resize_all_day, resize_timed, snap_minutes,
+    visible_hour_range,
 };
 pub use model::{
     CalendarError, CalendarIndex, CalendarItem, CalendarModel, CalendarSource, CalendarZone,

@@ -808,13 +808,16 @@ macro_rules! make_registry {
                 Suite { name: "warm-components", run: crate::warm_repaint::warm_components },
                 Suite { name: "warm-inputs", run: crate::warm_repaint::warm_inputs },
                 Suite { name: "warm-layout", run: crate::warm_repaint::warm_layout },
-                Suite { name: "warm-overlays", run: crate::warm_repaint::warm_overlays },            ]
+                Suite { name: "warm-overlays", run: crate::warm_repaint::warm_overlays },
+                Suite { name: "warm-calendar", run: crate::warm_repaint::warm_calendar },            ]
         }
     };
 }
 crate::with_production_suites!(make_registry);
 
-pub use crate::warm_repaint::{warm_components, warm_inputs, warm_layout, warm_overlays};
+pub use crate::warm_repaint::{
+    warm_calendar, warm_components, warm_inputs, warm_layout, warm_overlays,
+};
 
 /// A 1,000-node tree constructed in GPUI's active frame arena.
 pub fn ui_macro_tree() {

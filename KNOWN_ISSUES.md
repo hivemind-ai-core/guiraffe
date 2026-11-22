@@ -66,3 +66,19 @@ gpui-fast assertion for expansion and scrolling.
   `QuitPolicy::Never`; provide a Quit menu item. Without a tray host, closing works normally.
 - **Accessibility:** cards expose `Status`/`Alert` roles with a label; the notification surface never takes
   keyboard focus, so its buttons are pointer-only (system notifications are the accessible path).
+
+### Calendar accessibility limits (guiraffe-calendar)
+
+- **Screen-reader verification is pending.** The calendar exposes `Grid`/`GridCell` roles,
+  localized date and event-count names, selected/expanded/toggled state, and row/column
+  indexes for Month cells. The `grid_exposes_cells_sources_and_labels_to_accessibility` test
+  checks these through the inspect API. Nobody has yet checked them with VoiceOver, NVDA or Orca.
+- **No live region.** Edit commits, cancellations and pick-ups are emitted as
+  `CalendarEvent::Announcement` for the host to announce. GPUI 0.9.1 has no live-region role,
+  so the calendar does not speak them by itself.
+- **Virtualized set counts are partial.** Week/Day hour rows are virtualized, so only the
+  visible hours exist as nodes. The grid reports its row/column counts, but GPUI does not
+  expose hidden virtualized rows to assistive technology.
+- **Overflow focus.** The `+N more` list is operated with the calendar's roving keyboard
+  cursor (Enter opens it, Up/Down choose, Enter selects, Escape closes). Focus stays on the
+  calendar grid instead of moving into the list.
