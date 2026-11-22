@@ -137,6 +137,22 @@ impl<T> Channels<T> {
         }
     }
 
+    pub(crate) fn optional_fields(
+        mut self,
+        color: impl Fn(&T) -> Option<Color> + Send + Sync + 'static,
+        x2: impl Fn(&T) -> Option<f64> + Send + Sync + 'static,
+        y2: impl Fn(&T) -> Option<f64> + Send + Sync + 'static,
+        low: impl Fn(&T) -> Option<f64> + Send + Sync + 'static,
+        ohlc: impl Fn(&T) -> Option<Ohlc> + Send + Sync + 'static,
+    ) -> Self {
+        self.color = Box::new(color);
+        self.x2 = Box::new(x2);
+        self.y2 = Box::new(y2);
+        self.low = Box::new(low);
+        self.ohlc = Box::new(ohlc);
+        self
+    }
+
     pub fn group(mut self, get: impl Fn(&T) -> u32 + Send + Sync + 'static) -> Self {
         self.group = Box::new(get);
         self

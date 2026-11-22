@@ -34,7 +34,7 @@ pub enum ChartEvent {
     SeriesVisibility { series: SeriesId, visible: bool },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChartOptions {
     pub height: f32,
     pub legend: bool,
@@ -198,6 +198,10 @@ impl PlotState {
 /// Upstream GPUI paints hover in a root layer so a cached embedding view
 /// can stay cached. The fast backend retains the chart-local overlay.
 pub fn init(cx: &mut App) {
+    if !cx.has_global::<gpui_kit::component::Theme>() {
+        guiraffe_core::init(cx);
+    }
+    document::register(cx);
     if !gpui_kit::GPUI_FAST {
         Root::register_plugin(cx, |_, _| ChartOverlayLayer::default());
     }
@@ -1090,3 +1094,5 @@ mod navigation_tests {
         assert!(zoomed.min() > 0. && zoomed.span() > tiny.span());
     }
 }
+
+pub(crate) mod document;

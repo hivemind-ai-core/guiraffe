@@ -1,5 +1,14 @@
 //! GUIraffe core: theme tokens (Mantine-style palette, sizes, variants), color math,
 //! and the bridge that keeps GPUI Controls' theme in sync.
+//!
+//! Apply a style context to a Rust `ui!` subtree with `provide`.
+//!
+//! ```ignore
+//! ui! {
+//!     provide(StylePatch::new().density(Density::Compact),
+//!         ui! { div { "Compact content" } })
+//! }
+//! ```
 
 pub mod color;
 pub mod context;
@@ -40,3 +49,7 @@ pub fn init(cx: &mut gpui_kit::App) {
 #[cfg(test)]
 mod gpui_tests;
 pub mod keys;
+
+pub mod widget_catalog;
+pub mod widget_spec;
+pub mod widget_value;

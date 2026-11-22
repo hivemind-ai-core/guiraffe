@@ -79,8 +79,18 @@ pub(crate) struct Rebuild {
     text_style_stack: TextStyleStack,
     element_offset: Point<Pixels>,
     rem_size: Pixels,
+    /// The embedder's inherited state where it was laid out. See
+    /// [`crate::inherited`].
+    inherited: u64,
     /// The style it is laid out at, when it is a cached view.
     cached_style: Option<StyleRefinement>,
+}
+
+/// The embedder's inherited state a view was laid out in: `layout`'s, or, for
+/// a view without one, what is in effect now.
+#[inline]
+pub(crate) fn inherited_at(layout: Option<&RetainedLayout>) -> u64 {
+    layout.map_or_else(crate::inherited::capture, |layout| layout.inherited)
 }
 
 impl Rebuild {
@@ -98,12 +108,14 @@ impl Rebuild {
 impl Window {
     /// How the view whose [`RebuildHandle`] is `handle` can be built again on
     /// its own, from here, if it can: its element was requested under
-    /// `parent_layout_key`, and nothing it inherits is out of reach.
+    /// `parent_layout_key` in the embedder's `inherited` state, and nothing it
+    /// inherits is out of reach.
     pub(crate) fn rebuild_here(
         &self,
         handle: &RebuildHandle,
         cached_style: Option<&StyleRefinement>,
         parent_layout_key: Option<u64>,
+        inherited: u64,
     ) -> Option<Rebuild> {
         if !self.image_cache_stack.is_empty() {
             return None;
@@ -114,6 +126,7 @@ impl Window {
             text_style_stack: self.text_style_stack.clone(),
             element_offset: self.element_offset(),
             rem_size: self.rem_size(),
+            inherited,
             cached_style: cached_style.cloned(),
         })
     }
@@ -258,6 +271,8 @@ struct Inherited {
     element_offset_stack: Vec<Point<Pixels>>,
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     element_opacity: f32,
+    /// The embedder's hook, if it was given the state the view inherited.
+    embedder: Option<&'static dyn crate::inherited::InheritedState>,
 }
 
 impl Window {
@@ -293,6 +308,7 @@ impl Window {
                 SmallVec::from_slice(&[rebuild.rem_size]),
             ),
             element_opacity: mem::replace(&mut self.element_opacity, opacity),
+            embedder: crate::inherited::enter(rebuild.inherited),
         }
     }
 
@@ -303,6 +319,7 @@ impl Window {
         self.element_offset_stack = inherited.element_offset_stack;
         self.rem_size_override_stack = inherited.rem_size_override_stack;
         self.element_opacity = inherited.element_opacity;
+        crate::inherited::leave(inherited.embedder);
     }
 
     /// Lays out the view `id`, dirty only because views nested in it are, as
@@ -330,6 +347,7 @@ impl Window {
         let layout = record.layout.as_ref()?;
         if layout.rem_size != self.rem_size()
             || layout.text_style != self.text_style()
+            || layout.inherited != crate::inherited::capture()
             || cx.dependencies_changed(&record.own_dependencies, self.inside_notified_view())
             || crate::fast::layers::invalidate::offset_read_changed(self, &record.own_dependencies)
             || !self.hovers_unchanged(&record.own_hovers)
@@ -471,6 +489,7 @@ impl Window {
                         element_states,
                         text_style: previous_layout.text_style.clone(),
                         rem_size: previous_layout.rem_size,
+                        inherited: previous_layout.inherited,
                         parent_layout_key: previous_layout.parent_layout_key,
                     })
                 }

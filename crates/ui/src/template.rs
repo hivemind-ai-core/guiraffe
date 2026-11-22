@@ -241,11 +241,20 @@ impl Compiler<'_> {
         };
         let schema = widget.schema();
         let mut props = vec![Prop::Unset; schema.props.len()];
+        let descriptor = self.registry.descriptor(&n.kind);
         for (name, v) in &n.props {
-            match (
-                schema.props.iter().position(|p| p == name),
-                Value::try_from_json(v),
-            ) {
+            let is_record = descriptor.is_some_and(|descriptor| {
+                descriptor
+                    .props
+                    .iter()
+                    .any(|prop| prop.name == name && prop.accepts_record())
+            });
+            let value = if is_record {
+                Value::item_from_json(v)
+            } else {
+                Value::try_from_json(v)
+            };
+            match (schema.props.iter().position(|p| p == name), value) {
                 (Some(i), Ok(v)) => props[i] = Prop::Lit(v),
                 (Some(_), Err(e)) => {
                     self.diag(Severity::Warning, &path, format!("prop `{name}`: {e}"))

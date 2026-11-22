@@ -201,6 +201,27 @@ impl AppShellState {
         }
     }
 
+    pub(crate) fn apply_document_layout(
+        &mut self,
+        [navbar_collapsed, aside_collapsed]: [Option<bool>; 2],
+        [navbar_width, aside_width]: [Option<Pixels>; 2],
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(collapsed) = navbar_collapsed {
+            self.navbar_collapsed = collapsed;
+        }
+        if let Some(collapsed) = aside_collapsed {
+            self.aside_collapsed = collapsed;
+        }
+        if let Some(width) = navbar_width {
+            self.navbar_width = width;
+        }
+        if let Some(width) = aside_width {
+            self.aside_width = width;
+        }
+        cx.notify();
+    }
+
     /// The band the navbar collapses below.
     pub fn collapse_below(&self) -> Option<Breakpoint> {
         self.collapse_below
@@ -312,7 +333,7 @@ pub struct AppShell {
     navbar: Option<AnyElement>,
     aside: Option<AnyElement>,
     footer: Option<AnyElement>,
-    main: Option<AnyView>,
+    main: Option<ShellMain>,
     header_height: Pixels,
     footer_height: Pixels,
     padding: f32,
@@ -322,6 +343,11 @@ pub struct AppShell {
     resizable_navbar: bool,
     resizable_aside: bool,
     style: StyleRefinement,
+}
+
+enum ShellMain {
+    Cached(AnyView),
+    Document(AnyElement),
 }
 
 impl AppShell {
@@ -364,7 +390,12 @@ impl AppShell {
     /// rendered again when the shell collapses a bar or gives it another
     /// width.
     pub fn main(mut self, main: impl Into<AnyView>) -> Self {
-        self.main = Some(main.into());
+        self.main = Some(ShellMain::Cached(main.into()));
+        self
+    }
+
+    pub(crate) fn document_main(mut self, main: AnyElement) -> Self {
+        self.main = Some(ShellMain::Document(main));
         self
     }
 
@@ -510,7 +541,11 @@ impl RenderOnce for AppShell {
             if padding > 0. {
                 main_style = main_style.p(px(padding));
             }
-            body = body.child(main.cached(main_style));
+            body = match main {
+                ShellMain::Cached(main) => body.child(main.cached(main_style)),
+                ShellMain::Document(main) => body
+                    .child(gpui_kit::base::StyledExt::refine_style(div(), &main_style).child(main)),
+            };
         }
         if let Some(aside) = aside {
             body = body.child(bar(

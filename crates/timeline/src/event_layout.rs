@@ -95,8 +95,8 @@ impl RoutedLink {
     }
 }
 
-/// Validated immutable input and its reusable indexes.
-#[derive(Debug)]
+/// Validated immutable input and its reusable indexes. The default is the empty model.
+#[derive(Debug, Default)]
 pub struct EventModel {
     pub(crate) tracks: Vec<EventTrack>,
     pub(crate) events: Vec<TimelineEvent>,

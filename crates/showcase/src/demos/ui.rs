@@ -44,7 +44,7 @@ fn widget_reference(_: &mut Window, _: &mut App) -> gpui_kit::AnyElement {
     ui! {
         div {
             flex flex_col gap: gpui_kit::px(12.)
-            for widget in guiraffe_ui::catalog::WIDGETS {
+            for widget in guiraffe_ui::catalog::all_widgets() {
                 {
                     let props = widget.props.iter().map(|prop| prop.name).collect::<Vec<_>>();
                     ui! {

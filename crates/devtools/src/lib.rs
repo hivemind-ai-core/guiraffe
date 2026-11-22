@@ -5,6 +5,12 @@
 //! each inspected view's render output with [`Devtools::track`]. Unwrapped views are
 //! deliberately not enumerated: GPUI does not expose their inherited StyleContext.
 //!
+//! With the `devtools` feature enabled and a per-window `Devtools` handle named
+//! `tools`, embed a tracked view in a `ui!` tree.
+//!
+//! ```ignore
+//! ui! { div { {tools.track("settings", ui! { div { "Settings" } })} } }
+//! ```
 
 #![cfg_attr(not(feature = "devtools"), allow(rustdoc::broken_intra_doc_links))]
 

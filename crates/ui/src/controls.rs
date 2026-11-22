@@ -5,14 +5,14 @@ use crate::{
     widget::{NodeView, Registry, Schema, Widget},
 };
 use gpui_kit::component::{
-    Disableable, Sizable,
+    Disableable, FocusableExt, Sizable,
     checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
     select::{Select, SelectEvent, SelectState},
     switch::Switch,
 };
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, ParentElement, Render,
+    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Role,
     SharedString, Styled, Subscription, Window, div, px,
 };
 use guiraffe_core::{ColorName, GuiraffeTheme, Size, StateKind, StyleContext, Variant};
@@ -20,6 +20,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
     rc::Rc,
+    time::Duration,
 };
 pub(crate) type Change = Rc<dyn Fn(Payload, &mut Window, &mut App)>;
 pub(crate) type PropsRead = Rc<dyn Fn(u32, u64) -> Option<Props>>;
@@ -80,6 +81,61 @@ enum Kind {
     Switch,
     Select,
 }
+
+#[derive(Clone, PartialEq)]
+struct ToggleProps {
+    size: Option<Size>,
+    accessibility_label: Option<SharedString>,
+    tooltip: Option<SharedString>,
+    tooltip_delay: Option<Duration>,
+    tab_stop: bool,
+    tab_index: isize,
+    focus_ring: bool,
+    role: Option<Role>,
+    color: Option<ColorName>,
+}
+
+impl ToggleProps {
+    const DEFAULT: Self = Self {
+        size: None,
+        accessibility_label: None,
+        tooltip: None,
+        tooltip_delay: None,
+        tab_stop: true,
+        tab_index: 0,
+        focus_ring: true,
+        role: None,
+        color: None,
+    };
+
+    fn from_node(n: &NodeView<'_>) -> Option<Rc<Self>> {
+        let prop = |name| n.prop(n.prop_index(name));
+        let text = |name| match prop(name) {
+            Value::Str(text) => Some(text.clone()),
+            _ => None,
+        };
+        let props = Self {
+            size: n.size(n.prop_index("size")),
+            accessibility_label: text("accessibility-label"),
+            tooltip: text("tooltip"),
+            tooltip_delay: prop("tooltip-show-delay-ms")
+                .as_f64()
+                .map(|delay| Duration::from_millis(delay.clamp(0.0, 60_000.0) as u64)),
+            tab_stop: prop("tab-stop").as_bool().unwrap_or(true),
+            tab_index: prop("tab-index").as_f64().unwrap_or_default() as isize,
+            focus_ring: prop("focus-ring").as_bool().unwrap_or(true),
+            role: match prop("role").as_str() {
+                Some("checkbox") => Some(Role::CheckBox),
+                Some("radio") => Some(Role::RadioButton),
+                Some("switch") => Some(Role::Switch),
+                _ => None,
+            },
+            color: n.color(n.prop_index("color")),
+        };
+        (props != Self::DEFAULT).then(|| Rc::new(props))
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub(crate) struct Props {
     value: Value,
@@ -88,6 +144,7 @@ pub(crate) struct Props {
     disabled: bool,
     invalid: bool,
     placeholder: SharedString,
+    toggle: Option<Rc<ToggleProps>>,
 }
 impl Props {
     pub(crate) fn from_node(n: &NodeView<'_>) -> Self {
@@ -98,6 +155,10 @@ impl Props {
             disabled: n.bool(n.prop_index("disabled")),
             invalid: n.bool(n.prop_index("invalid")),
             placeholder: n.text(n.prop_index("placeholder")),
+            toggle: match n.spec.kind.as_ref() {
+                "checkbox" | "switch" => ToggleProps::from_node(n),
+                _ => None,
+            },
         }
     }
 }
@@ -263,7 +324,11 @@ impl Render for Control {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.state;
         let props = state.props.borrow().clone();
-        let control_size = StyleContext::current().control_size;
+        let control_size = props
+            .toggle
+            .as_ref()
+            .and_then(|toggle| toggle.size)
+            .unwrap_or_else(|| StyleContext::current().control_size);
         let size = px(control_size.control_height());
         let theme = GuiraffeTheme::global(cx);
         let font_size = px(control_size.font_size() * theme.scale);
@@ -276,28 +341,73 @@ impl Render for Control {
         let change = state.change.clone();
         let disabled = props.disabled;
         let element = match state.kind {
-            Kind::Checkbox => Checkbox::new(state.id.clone())
-                .label(props.label)
-                .checked(props.value.as_bool().unwrap_or(false))
-                .disabled(disabled)
-                .with_size(size)
-                .on_change(move |value, w, cx| {
-                    if !disabled {
-                        change(Payload::Bool(*value), w, cx);
+            Kind::Checkbox => {
+                let mut checkbox = Checkbox::new(state.id.clone())
+                    .label(props.label)
+                    .checked(props.value.as_bool().unwrap_or(false))
+                    .disabled(disabled)
+                    .with_size(size)
+                    .on_change(move |value, w, cx| {
+                        if !disabled {
+                            change(Payload::Bool(*value), w, cx);
+                        }
+                    });
+                if let Some(toggle) = props.toggle.as_deref() {
+                    checkbox = checkbox
+                        .tab_stop(toggle.tab_stop)
+                        .tab_index(toggle.tab_index)
+                        .focus_ring(toggle.focus_ring);
+                    if let Some(label) = &toggle.accessibility_label {
+                        checkbox = checkbox.accessibility_label(label.clone());
                     }
-                })
-                .into_any_element(),
-            Kind::Switch => Switch::new(state.id.clone())
-                .label(props.label)
-                .checked(props.value.as_bool().unwrap_or(false))
-                .disabled(disabled)
-                .with_size(size)
-                .on_change(move |value, w, cx| {
-                    if !disabled {
-                        change(Payload::Bool(*value), w, cx);
+                    if let Some(tooltip) = &toggle.tooltip {
+                        checkbox = checkbox.tooltip(tooltip.clone());
                     }
-                })
-                .into_any_element(),
+                    if let Some(delay) = toggle.tooltip_delay {
+                        checkbox = checkbox.tooltip_show_delay(delay);
+                    }
+                    if let Some(role) = toggle.role {
+                        checkbox = checkbox.role(role);
+                    }
+                }
+                checkbox.into_any_element()
+            }
+            Kind::Switch => {
+                let mut switch = Switch::new(state.id.clone())
+                    .label(props.label)
+                    .checked(props.value.as_bool().unwrap_or(false))
+                    .disabled(disabled)
+                    .with_size(size)
+                    .on_change(move |value, w, cx| {
+                        if !disabled {
+                            change(Payload::Bool(*value), w, cx);
+                        }
+                    });
+                if let Some(toggle) = props.toggle.as_deref() {
+                    switch = switch
+                        .tab_stop(toggle.tab_stop)
+                        .tab_index(toggle.tab_index)
+                        .focus_ring(toggle.focus_ring);
+                    if let Some(label) = &toggle.accessibility_label {
+                        switch = switch.accessibility_label(label.clone());
+                    }
+                    if let Some(tooltip) = &toggle.tooltip {
+                        switch = switch.tooltip(tooltip.clone());
+                    }
+                    if let Some(delay) = toggle.tooltip_delay {
+                        switch = switch.tooltip_show_delay(delay);
+                    }
+                    if let Some(color) = toggle.color {
+                        switch = switch.color(
+                            theme
+                                .variant(Some(color), Variant::Filled)
+                                .background
+                                .to_hsla(),
+                        );
+                    }
+                }
+                switch.into_any_element()
+            }
             Kind::Text => state
                 .input
                 .as_ref()

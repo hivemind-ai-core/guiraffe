@@ -71,7 +71,7 @@ pub struct SimpleGrid {
     /// The measurement is keyed by the place the grid was built: two grids
     /// built in the same place share their measurement, because they are in
     /// the same container and have the same width.
-    key: ElementId,
+    pub(crate) key: ElementId,
 }
 
 impl Default for SimpleGrid {

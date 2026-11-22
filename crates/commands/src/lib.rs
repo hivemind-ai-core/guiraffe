@@ -19,6 +19,16 @@
 //! the same registry; Ctrl+Shift+P opens the overlays Spotlight command bar, with
 //! categories as groups and shortcuts as keycap chips.
 //! See the crate README and `examples/commands.rs` for host context management.
+//!
+//! A `ui!` view can mount a menu using the window's `Commands` service.
+//!
+//! ```ignore
+//! ui! { Menu("file-menu", &commands) { show_categories: true; show_keybindings: true } }
+//! ```
+use guiraffe_core::widget_spec;
+mod document;
+mod widget_specs;
+
 pub mod context;
 mod error;
 pub mod keybinding;

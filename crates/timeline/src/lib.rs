@@ -1,4 +1,10 @@
 //! GUIraffe timeline: time-based editors on one shared axis (spec/16 Foundation D).
+//!
+//! A Rust `ui!` example. Create shared entities before rendering when the host owns their state.
+//!
+//! ```ignore
+//! ui! { div { {TracksView::new(tracks, TimeFormat::Seconds, 10.0, cx)} } }
+//! ```
 
 pub mod axis;
 pub mod clips;
@@ -37,6 +43,15 @@ pub use edit::ResizeEdges;
 
 /// Register the keyboard bindings of the editable views (see [`edit::init`]).
 pub fn init(cx: &mut gpui_kit::App) {
+    if !cx.has_global::<gpui_kit::component::Theme>() {
+        guiraffe_core::init(cx);
+    }
+    tracks_view::document::register(cx);
+    gantt_view::document::register(cx);
+    dope_sheet::document::register(cx);
+    bar_view::document::register(cx);
+    curve_view::document::register(cx);
+    event_view::document::register(cx);
     edit::init(cx);
     event_view::init(cx);
 }
@@ -93,3 +108,5 @@ pub use event_layout::{
     EventLink, EventModel, EventModelError, EventTrack, LinkKind, TimelineEvent,
 };
 pub use event_view::{EventOrientation, EventTimeline, EventTimelineEvent, EventTimelineState};
+use guiraffe_core::widget_spec;
+mod widget_specs;

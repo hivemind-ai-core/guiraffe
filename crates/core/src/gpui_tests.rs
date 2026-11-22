@@ -177,3 +177,192 @@ mod style_context {
         assert_eq!(StyleContext::current(), d, "stack empty after the frame");
     }
 }
+
+/// A view re-rendered on its own (gpui-fast draws a notified view again without its
+/// ancestors) still reads the context its ancestors' providers gave it.
+mod isolated_render {
+    use std::{cell::RefCell, rc::Rc};
+
+    use gpui_kit::{
+        AppContext, Context, Entity, IntoElement, ParentElement, Render, TestAppContext,
+        VisualTestContext, Window, div,
+    };
+
+    use crate::{Density, Size, StyleContext, StylePatch, SurfaceKind, focus_scope, provide};
+
+    type Log = Rc<RefCell<Vec<StyleContext>>>;
+
+    struct Leaf(Log);
+
+    impl Render for Leaf {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.borrow_mut().push(StyleContext::current());
+            div()
+        }
+    }
+
+    /// A view between the root's providers and the leaf, with a provider of its own.
+    struct Middle {
+        log: Log,
+        leaf: Entity<Leaf>,
+    }
+
+    impl Render for Middle {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.log.borrow_mut().push(StyleContext::current());
+            div().child(provide(
+                StylePatch::new().surface(SurfaceKind::Sunken),
+                div().child(self.leaf.clone()),
+            ))
+        }
+    }
+
+    struct Root {
+        renders: Rc<RefCell<usize>>,
+        patch: StylePatch,
+        middle: Entity<Middle>,
+    }
+
+    impl Render for Root {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            *self.renders.borrow_mut() += 1;
+            div().child(focus_scope(
+                div().child(provide(self.patch, div().child(self.middle.clone()))),
+            ))
+        }
+    }
+
+    struct Scene {
+        root: Entity<Root>,
+        middle: Entity<Middle>,
+        leaf: Entity<Leaf>,
+        root_renders: Rc<RefCell<usize>>,
+        middle_log: Log,
+        leaf_log: Log,
+    }
+
+    fn scene(cx: &mut TestAppContext) -> (Scene, &mut VisualTestContext) {
+        let middle_log: Log = Rc::default();
+        let leaf_log: Log = Rc::default();
+        let root_renders = Rc::new(RefCell::new(0));
+        let (ml, ll, rr) = (middle_log.clone(), leaf_log.clone(), root_renders.clone());
+        let mut handles = None;
+        let (root, vcx) = cx.add_window_view(|_, cx| {
+            let leaf = cx.new(|_| Leaf(ll));
+            let middle = cx.new(|_| Middle {
+                log: ml,
+                leaf: leaf.clone(),
+            });
+            handles = Some((middle.clone(), leaf));
+            Root {
+                renders: rr,
+                patch: StylePatch::new()
+                    .control_size(Size::Lg)
+                    .density(Density::Compact),
+                middle,
+            }
+        });
+        vcx.run_until_parked();
+        let Some((middle, leaf)) = handles else {
+            unreachable!("the window builds its root view")
+        };
+        (
+            Scene {
+                root,
+                middle,
+                leaf,
+                root_renders,
+                middle_log,
+                leaf_log,
+            },
+            vcx,
+        )
+    }
+
+    fn provided(surface: SurfaceKind) -> StyleContext {
+        StyleContext {
+            density: Density::Compact,
+            control_size: Size::Lg,
+            surface,
+            keyboard_nav: true,
+            ..StyleContext::default()
+        }
+    }
+
+    fn last(log: &Log) -> Option<StyleContext> {
+        log.borrow().last().copied()
+    }
+
+    #[gpui_kit::test]
+    fn notified_leaf_keeps_nested_providers(cx: &mut TestAppContext) {
+        let (s, vcx) = scene(cx);
+        assert_eq!(last(&s.leaf_log), Some(provided(SurfaceKind::Sunken)));
+        let (roots, leaves) = (*s.root_renders.borrow(), s.leaf_log.borrow().len());
+        for _ in 0..3 {
+            vcx.update(|_, cx| s.leaf.update(cx, |_, cx| cx.notify()));
+            vcx.run_until_parked();
+        }
+        assert!(s.leaf_log.borrow().len() > leaves, "the leaf re-renders");
+        assert!(
+            s.leaf_log
+                .borrow()
+                .iter()
+                .all(|c| *c == provided(SurfaceKind::Sunken)),
+            "every render of the leaf sees both providers: {:?}",
+            s.leaf_log.borrow()
+        );
+        if gpui_kit::GPUI_FAST {
+            assert_eq!(
+                *s.root_renders.borrow(),
+                roots,
+                "the root never re-renders for the leaf"
+            );
+        }
+        assert_eq!(StyleContext::current(), StyleContext::default());
+    }
+
+    #[gpui_kit::test]
+    fn notified_middle_view_keeps_root_providers(cx: &mut TestAppContext) {
+        let (s, vcx) = scene(cx);
+        let roots = *s.root_renders.borrow();
+        vcx.update(|_, cx| s.middle.update(cx, |_, cx| cx.notify()));
+        vcx.run_until_parked();
+        vcx.update(|_, cx| s.leaf.update(cx, |_, cx| cx.notify()));
+        vcx.run_until_parked();
+        assert!(s.middle_log.borrow().len() >= 2, "the middle re-renders");
+        assert!(
+            s.middle_log
+                .borrow()
+                .iter()
+                .all(|c| *c == provided(SurfaceKind::Body)),
+            "{:?}",
+            s.middle_log.borrow()
+        );
+        assert_eq!(last(&s.leaf_log), Some(provided(SurfaceKind::Sunken)));
+        if gpui_kit::GPUI_FAST {
+            assert_eq!(*s.root_renders.borrow(), roots, "isolation holds");
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_changed_provider_reaches_retained_views(cx: &mut TestAppContext) {
+        let (s, vcx) = scene(cx);
+        vcx.update(|_, cx| {
+            s.root.update(cx, |r, cx| {
+                r.patch = r.patch.density(Density::Spacious);
+                cx.notify();
+            })
+        });
+        vcx.run_until_parked();
+        let expect = |surface| StyleContext {
+            density: Density::Spacious,
+            ..provided(surface)
+        };
+        assert_eq!(last(&s.middle_log), Some(expect(SurfaceKind::Body)));
+        assert_eq!(last(&s.leaf_log), Some(expect(SurfaceKind::Sunken)));
+        // The new context is the one kept for the next isolated render.
+        vcx.update(|_, cx| s.leaf.update(cx, |_, cx| cx.notify()));
+        vcx.run_until_parked();
+        assert_eq!(last(&s.leaf_log), Some(expect(SurfaceKind::Sunken)));
+    }
+}

@@ -24,6 +24,8 @@ use guiraffe_core::{
     focus_ring, ring_visible,
 };
 
+pub(crate) mod document;
+
 use crate::event_layout::{
     DOT_OFFSET, EventModel, LinkKind, Placement, TimelineEvent, clip_segment, visible_events,
     visible_range,
@@ -185,6 +187,48 @@ impl EventTimelineState {
         self.model = Rc::new(model);
         self.clamp();
         cx.notify();
+    }
+
+    /// Runtime form of [`Self::orientation`].
+    pub fn set_orientation(&mut self, orientation: EventOrientation, cx: &mut Context<Self>) {
+        if self.orientation != orientation {
+            self.orientation = orientation;
+            self.clamp();
+            cx.notify();
+        }
+    }
+
+    /// Runtime form of [`Self::color`]; `None` uses the theme primary.
+    pub fn set_color(&mut self, color: Option<ColorName>, cx: &mut Context<Self>) {
+        if self.color != color {
+            self.color = color;
+            cx.notify();
+        }
+    }
+
+    /// Runtime form of [`Self::size`]; `None` follows the inherited control size.
+    pub fn set_size(&mut self, size: Option<Size>, cx: &mut Context<Self>) {
+        if self.size != size {
+            self.size = size;
+            cx.notify();
+        }
+    }
+
+    /// Runtime form of [`Self::label`].
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if self.label != label {
+            self.label = label;
+            cx.notify();
+        }
+    }
+
+    /// Runtime form of [`Self::focusable`]; `None` is a tab stop only inside a focus scope.
+    pub fn set_focusable(&mut self, focusable: Option<bool>, cx: &mut Context<Self>) {
+        if self.focusable != focusable {
+            self.focusable = focusable;
+            cx.notify();
+        }
     }
 
     /// Current selection by stable ID.

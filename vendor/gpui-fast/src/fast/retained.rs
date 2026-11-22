@@ -169,6 +169,9 @@ pub(crate) struct RetainedLayout {
     pub(crate) element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) text_style: TextStyle,
     pub(crate) rem_size: Pixels,
+    /// The embedder's inherited state it was laid out in. See
+    /// [`crate::inherited`].
+    pub(crate) inherited: u64,
     /// The layout key of the element the view hangs off, which keys the
     /// view's own node, when it was laid out in the request-layout walk.
     pub(crate) parent_layout_key: Option<u64>,
@@ -182,6 +185,7 @@ pub(crate) struct RetainedLayoutRecording {
     dependencies: DependencyRecording,
     text_style: TextStyle,
     rem_size: Pixels,
+    inherited: u64,
     parent_layout_key: Option<u64>,
     /// What the view read while its `render` ran. See
     /// [`RetainedLayoutRecording::rendered`].
@@ -654,7 +658,10 @@ impl Window {
     ) -> Option<LayoutId> {
         let record = &self.rendered_frame.retained.records[previous];
         let layout = record.layout.as_ref()?;
-        if layout.rem_size != self.rem_size() || layout.text_style != self.text_style() {
+        if layout.rem_size != self.rem_size()
+            || layout.text_style != self.text_style()
+            || layout.inherited != crate::inherited::capture()
+        {
             return None;
         }
         if !self
@@ -706,6 +713,7 @@ impl Window {
             dependencies: cx.begin_recording_dependencies(),
             text_style: self.text_style(),
             rem_size: self.rem_size(),
+            inherited: crate::inherited::capture(),
             parent_layout_key: self.parent_layout_key(),
             render: None,
         }
@@ -733,6 +741,7 @@ impl Window {
                 .to_vec(),
             text_style: recording.text_style,
             rem_size: recording.rem_size,
+            inherited: recording.inherited,
             parent_layout_key: recording.parent_layout_key,
         };
         (Some(Rc::new(layout)), dependencies)
@@ -1606,6 +1615,7 @@ impl<V: View> ViewElement<V> {
                         &self.rebuild,
                         None,
                         layout.as_ref().and_then(|layout| layout.parent_layout_key),
+                        crate::fast::splice::inherited_at(layout.as_deref()),
                     );
                     let recording = window.begin_retained(global_id, cx);
                     element.prepaint(window, cx);
@@ -1671,6 +1681,7 @@ impl<V: View> ViewElement<V> {
                             &self.rebuild,
                             self.cached_style.as_ref(),
                             layout.as_ref().and_then(|layout| layout.parent_layout_key),
+                            crate::fast::splice::inherited_at(layout.as_deref()),
                         );
                         let prepaint = window.splice_prepaint(global_id, splice, cx);
                         if let ViewPrepaint::Spliced(spliced) = &prepaint {
@@ -1687,6 +1698,7 @@ impl<V: View> ViewElement<V> {
                             &self.rebuild,
                             self.cached_style.as_ref(),
                             layout.as_ref().and_then(|layout| layout.parent_layout_key),
+                            crate::fast::splice::inherited_at(layout.as_deref()),
                         );
                         let index = window.reuse_retained_prepaint(previous, false, cx);
                         // Cached paint can survive a changed element path, but
@@ -1713,6 +1725,7 @@ impl<V: View> ViewElement<V> {
                         &self.rebuild,
                         self.cached_style.as_ref(),
                         layout.as_ref().and_then(|layout| layout.parent_layout_key),
+                        crate::fast::splice::inherited_at(layout.as_deref()),
                     );
                     let record = window.finish_retained_prepaint(
                         recording,
@@ -1806,7 +1819,12 @@ impl<V: View> ViewElement<V> {
             element.prepaint_at(bounds.origin, window, cx);
             window.request_animation_frame();
         }
-        let rebuild = window.rebuild_here(&self.rebuild, None, parent_layout_key);
+        let rebuild = window.rebuild_here(
+            &self.rebuild,
+            None,
+            parent_layout_key,
+            crate::fast::splice::inherited_at(layout.as_deref()),
+        );
         let record = window.finish_retained_prepaint(
             recording,
             bounds,

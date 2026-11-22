@@ -4,8 +4,17 @@
 //! with guiraffe-windows, return [`root`] from the window builder. Use [`OverlayHost`]
 //! for owned layers. Managed modal storage is independent of native dialogs,
 //! with Base focus/actions, Controls surface parts and shared motion transitions.
+//!
+//! A Rust `ui!` example. Create shared entities before rendering when the host owns their state.
+//!
+//! ```ignore
+//! ui! { Affix { position: ToastPosition::TopRight; offset: Size::Sm LoadingOverlay { visible: false } } }
+//! ```
 mod confirm;
+mod data_ui;
+mod document_services;
 mod host;
+mod kit_surfaces;
 pub mod position;
 pub mod search;
 pub mod stack;
@@ -33,3 +42,6 @@ pub use floating::FloatingTooltip;
 
 mod modal;
 pub use modal::Modal;
+
+use guiraffe_core::widget_spec;
+mod widget_specs;

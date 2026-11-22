@@ -86,8 +86,12 @@ pub struct PropertyOptions<'a> {
     pub step: Option<f64>,
     pub mixed: bool,
     pub advanced: bool,
-    /// Maximum rows for a growing text editor, up to eight.
+    /// Opt this text property into a multi-line editor that grows with its content up to this
+    /// many lines (two to eight), then scrolls. Single-line editing is the default.
     pub multiline_rows: Option<usize>,
+    /// Show or hide the "Reset" button for this property, overriding the grid's
+    /// `reset_button` setting. `None` follows the grid.
+    pub reset_button: Option<bool>,
 }
 
 impl PropertyOptions<'_> {

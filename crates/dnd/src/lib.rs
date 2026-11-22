@@ -1,3 +1,9 @@
+//!
+//! A Rust `ui!` example.
+//!
+//! ```ignore
+//! ui! { div { {cx.new(|cx| SortableBoard::new(columns, cx).with_grid(2))} } }
+//! ```
 mod board;
 mod chrome;
 pub use board::{BoardDragOverlay, Card, SortableBoard, gap_at};
@@ -341,4 +347,16 @@ mod tests {
             point(px(30.), px(60.))
         );
     }
+}
+
+use guiraffe_core::widget_spec;
+mod widget_specs;
+
+/// Register the sortable board for document authoring.
+pub fn init(cx: &mut gpui_kit::App) {
+    if !cx.has_global::<guiraffe_core::GuiraffeTheme>() {
+        guiraffe_core::init(cx);
+    }
+    board::document::register(cx);
+    dock::document::register(cx);
 }

@@ -1,4 +1,8 @@
 //! Retained GPUI flow canvas. Model and geometry live in `guiraffe-flow-core`.
+//!
+//! ```ignore
+//! ui! { FlowCanvas(&state) }
+//! ```
 mod gesture;
 mod interaction;
 mod node;
@@ -59,7 +63,7 @@ pub enum Background {
     Cross,
     None,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FlowOptions {
     pub background: Background,
     pub minimap: bool,
@@ -1054,4 +1058,15 @@ impl FlowViewport {
                     .on_click(cx.listener(|this, _, _, cx| this.redo(cx))),
             )
     }
+}
+
+use guiraffe_core::widget_spec;
+mod widget_specs;
+
+/// Register the retained node graph for document authoring.
+pub fn init(cx: &mut App) {
+    if !cx.has_global::<GuiraffeTheme>() {
+        guiraffe_core::init(cx);
+    }
+    state::document::register(cx);
 }

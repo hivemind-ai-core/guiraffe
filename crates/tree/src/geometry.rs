@@ -19,6 +19,15 @@ impl RowGeometry {
         self.overrides.dedup_by_key(|(id, _)| *id);
     }
 
+    /// The configured height of `id`, if it has an override.
+    pub fn override_height(&self, id: NodeId) -> Option<f64> {
+        self.overrides
+            .binary_search_by_key(&id, |&(id, _)| id)
+            .ok()
+            .and_then(|index| self.overrides.get(index))
+            .map(|&(_, height)| height)
+    }
+
     pub fn rebuild(
         &mut self,
         base: f64,

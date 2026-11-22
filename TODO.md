@@ -82,16 +82,19 @@ batches; nothing goes to main without the user.
 - [ ] Animate everything. An option to animate all layout changes, eg when something is added to a list,
       or a state is toggled, that causes the size to change (eg collapsing a property list group) it
       should (optionally) animate by lerping between the old and new size.
-- [ ] PropertyGrid options (user 2026-11-21): (a) `focus_row(bool)` — when disabled, a row is never
+- [x] PropertyGrid options (user 2026-11-21): (a) `focus_row(bool)` — when disabled, a row is never
       focused/highlighted, even while its value is being edited; (b) reset affordance configurable
       (`reset_button(bool)` / per-property) — today "Reset" always shows when value ≠ default
       (crates/tree/src/view.rs:1412). Bundle with the PropertyGrid editing items below.
-- [ ] The property tree component visual bugs: when editing text in the showcase text value, the textboxes
+- [x] The property tree component visual bugs: when editing text in the showcase text value, the textboxes
       bottom border spills below the rows space. Additionally, the input should default to a single line
       input where pressing enter saves it (save button, tick/x icons should be optional settings).
       Need to be able to tab to the next property value (and shift+tab) to the previous.
       Multiline text should make the row expand to multiple lines, look at other GUI property lists for
       inspiration (godot, unity, blender, etc).
+      Done on feat-property-grid-editing: `focus_row`, `reset_button` (+ `PropertyOptions::reset_button`),
+      `edit_buttons(EditButtons)`; Enter/Escape, Tab/Shift+Tab, multi-line rows grow while editing.
+      Follow-up: multi-line values still display on one line ("↵") when not being edited.
 
 ## 0.3 (plans/ROADMAP-0.3.md, decided 2026-11-21)
 - [ ] **Core state model + control protocol** (spec/30): stable control ids, typed snapshots and

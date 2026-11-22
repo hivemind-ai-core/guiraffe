@@ -245,3 +245,5 @@ mod tests {
         assert_eq!(COPIED_MS, 2000);
     }
 }
+
+pub(crate) mod document;

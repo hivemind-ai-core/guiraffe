@@ -14,6 +14,7 @@
 //! - names come from the global `rust-i18n` locale, not per picker;
 //! - a range cannot carry times.
 
+mod document;
 pub mod locale;
 pub mod logic;
 pub mod picker;
@@ -31,7 +32,8 @@ pub use picker::{
 };
 pub use wrapper::{FrameColors, InputVariant, InputWrapper, error_color, frame_colors};
 
-/// Register the picker key bindings.
+/// Register the picker key bindings and the `picker` / `input-wrapper` document widgets.
 pub fn init(cx: &mut gpui_kit::App) {
     picker::init(cx);
+    document::register(cx);
 }

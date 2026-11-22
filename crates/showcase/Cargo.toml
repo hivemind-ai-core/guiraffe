@@ -38,6 +38,8 @@ serde_json.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]
+proc-macro2 = "1"
+syn = { version = "2", features = ["full"] }
 jsonschema = { version = "0.58", default-features = false }
 gpui-kit = { workspace = true, features = ["test-support"] }
 guiraffe-test = { path = "../test", features = ["snapshot", "render", "layout"] }
