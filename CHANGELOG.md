@@ -49,6 +49,8 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
 - **code:** virtualized code viewer: highlighting, analysis highlights, inlay hints, lenses,
   bubbles, folds, trace lines (gutter-routed, cross-viewer), minimap (click/drag), symbol
   cards with go-to-definition; million-line documents.
+- **tree** adds `TreeModel::forget_removed` and `TreeView::forget_removed` for permanently deleted
+  IDs. DataUi TreeList and PropertyGrid reconcile removed IDs on document row replacement.
 - **datagrid:** virtualized data grid over a zero-copy source (1M × 50): pinned, resizable,
   reorderable columns; multi-column sort and filters off the UI thread; row/cell/range
   selection that follows rows through sorting; keyboard navigation; inline editing with

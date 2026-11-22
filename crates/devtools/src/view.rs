@@ -213,6 +213,20 @@ impl Devtools {
         self.shared.stores.borrow_mut().push(store);
         cx.notify(self.panel.entity_id());
     }
+    /// Disconnect all registrations of this adapter and stop listening for its events.
+    pub fn remove_store(&self, store: &Rc<dyn InspectStore>, cx: &mut App) -> bool {
+        let mut stores = self.shared.stores.borrow_mut();
+        let count = stores.len();
+        stores.retain(|candidate| !Rc::ptr_eq(candidate, store));
+        if stores.len() == count {
+            return false;
+        }
+        drop(stores);
+        store.set_on_record(None);
+        cx.notify(self.panel.entity_id());
+        true
+    }
+
     /// Smallest tracked view beneath a screen-space pointer (not a GPUI entity read).
     pub fn inspect_at(&self, point: gpui_kit::Point<Pixels>) -> Option<ViewInfo> {
         inspect_at(&self.shared.views.borrow(), point)
@@ -897,6 +911,24 @@ mod tests {
         let views = tools.views();
         assert_eq!(views.len(), 1, "opening registers tracked views");
         assert!(views[0].bounds.size.width > px(0.));
+    }
+
+    #[gpui_kit::test]
+    fn disconnected_stores_release_adapters_under_churn(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            let tools = Devtools::new(cx);
+            let mut adapters = Vec::new();
+            for id in 0..1024 {
+                let store = guiraffe_state::Store::new(id, cx);
+                let (adapter, _) =
+                    crate::inspect_store("temporary", &store, 2, |n| serde_json::json!(n), cx);
+                tools.add_store(adapter.clone(), cx);
+                adapters.push(Rc::downgrade(&adapter));
+                assert!(tools.remove_store(&adapter, cx));
+            }
+            assert!(tools.shared.stores.borrow().is_empty());
+            assert!(adapters.iter().all(|adapter| adapter.upgrade().is_none()));
+        });
     }
 
     #[gpui_kit::test]

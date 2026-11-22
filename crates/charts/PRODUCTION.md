@@ -122,3 +122,15 @@ scene gather. With layered quads, DHAT found 29 allocations in each of
 single 24-byte arena clear allocation. The allocator regression test caps
 the mounted draw at 100 calls and 96 KiB upstream and 80 calls and 24 KiB
 on fast. Both paths use the existing cached chart canvas and scene cache.
+
+## Stream retention
+
+`Stream` holds caller-owned samples, one chunk per nonempty append. Without trimming,
+size follows all appended chunks and rows. If the caller applies `retain_last(n)`
+immediately after each append, the current stream keeps at most `n` chunks, including at
+most one partially consumed chunk. That boundary chunk may retain expired rows until the
+whole chunk expires. The directory can retain its capacity from the peak chunk count, and each retained
+append vector keeps its allocated capacity.
+Existing snapshots keep their own data alive until dropped. Covered by
+`rolling_window_bounds_chunks_under_append_churn` and
+`rolling_window_preserves_snapshot_and_datum_keys`.

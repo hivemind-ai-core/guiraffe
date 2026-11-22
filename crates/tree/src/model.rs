@@ -67,6 +67,19 @@ impl TreeModel {
         }
     }
 
+    /// Forget interaction state for permanently deleted IDs before refreshing
+    /// from the replacement source. Include every deleted descendant explicitly.
+    pub fn forget_removed(&mut self, ids: impl IntoIterator<Item = NodeId>) {
+        for id in ids {
+            self.expanded.remove(&id);
+            self.selected.remove(&id);
+            self.pending.remove(&id);
+            if self.cursor == Some(id) {
+                self.cursor = None;
+            }
+        }
+    }
+
     /// Materialize a contiguous snapshot after the most recent structural edit.
     /// Use [Self::row] and [Self::row_count] to access a viewport without a copy.
     pub fn rows(&self) -> &[Row] {
@@ -316,6 +329,55 @@ mod tests {
 
         fn label(&self, _: NodeId) -> &str {
             "row"
+        }
+    }
+
+    #[test]
+    fn deleted_ids_release_state_under_churn() {
+        let mut model = TreeModel::default();
+        for id in 1..=4096 {
+            let source = Forest(vec![id]);
+            model.refresh(&source);
+            model.select(id, true);
+            model.set_expanded(id, true, &source);
+            model.forget_removed([id]);
+        }
+        assert!(model.expanded.is_empty());
+        assert!(model.selected.is_empty());
+        assert!(model.pending.is_empty());
+        assert_eq!(model.cursor(), None);
+    }
+
+    #[test]
+    fn refresh_preserves_state_when_nodes_temporarily_disappear() {
+        struct Snapshot(bool);
+        impl TreeSource for Snapshot {
+            fn roots(&self) -> &[NodeId] {
+                &[0]
+            }
+            fn children(&self, id: NodeId) -> Children<'_> {
+                match (id, self.0) {
+                    (0, true) => Children::Ready(&[1]),
+                    (0, false) => Children::Unloaded,
+                    _ => Children::Ready(&[]),
+                }
+            }
+            fn label(&self, _: NodeId) -> &str {
+                "row"
+            }
+        }
+        let ready = Snapshot(true);
+        let mut model = TreeModel::new(&ready);
+        model.set_expanded(0, true, &ready);
+        model.set_expanded(1, true, &ready);
+        model.select(1, false);
+        for source in [&Snapshot(false) as &dyn TreeSource, &Forest(vec![])] {
+            model.refresh(source);
+            assert!(model.row_index(1).is_none());
+            model.refresh(&ready);
+            assert!(model.row_index(1).is_some());
+            assert!(model.expanded(1));
+            assert!(model.selected(1));
         }
     }
 

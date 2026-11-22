@@ -130,3 +130,18 @@ The Callgrind allocator calls cover setup and all 64 scripted frames.
 The geometry allocation check covers viewport traversal. Mounted
 unchanged-repaint allocations and release acceptance at one million
 rows still require separate end-to-end measurements.
+
+## Tree interaction state
+
+Expansion, selection and pending loads are user state keyed by node ID. The size follows
+the IDs the user has interacted with and whose permanent removal the owner has not
+reported. Call `forget_removed` with every deleted ID, including descendants, before
+refreshing or replacing the source. Custom sources that never report removals retain
+these IDs. Refresh preserves state across filtering and unloaded children. The DataUi
+TreeList and PropertyGrid adapters report removed document rows on replacement and
+retain links only from absent expanded or selected IDs to their nearest surviving
+unloaded ancestor. Loading or deleting that ancestor reconciles those links. Covered by
+`deleted_ids_release_state_under_churn`,
+`refresh_preserves_state_when_nodes_temporarily_disappear`,
+`document_tree_and_property_grid_release_replaced_rows`, and
+`document_rows_keep_only_state_vouched_for_by_unloaded_ancestors`.

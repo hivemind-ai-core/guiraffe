@@ -1,31 +1,32 @@
 use crate::NodeId;
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 /// Stores one prefix sum per visible override. Ordinary rows need no storage.
 #[derive(Default)]
 pub(crate) struct RowGeometry {
-    overrides: Vec<(NodeId, f64)>,
+    overrides: HashMap<NodeId, f64>,
     offsets: Vec<(usize, f64, f64)>,
 }
 
 impl RowGeometry {
     pub fn set(&mut self, overrides: impl IntoIterator<Item = (NodeId, f32)>) {
-        self.overrides = overrides
-            .into_iter()
-            .filter(|(_, height)| height.is_finite() && *height > 0.)
-            .map(|(id, height)| (id, f64::from(height.clamp(24., 8_192.))))
-            .collect();
-        self.overrides.sort_by_key(|(id, _)| *id);
-        self.overrides.dedup_by_key(|(id, _)| *id);
+        let mut next = HashMap::new();
+        for (id, height) in overrides {
+            if height.is_finite() && height > 0. {
+                next.entry(id)
+                    .or_insert_with(|| f64::from(height.clamp(24., 8_192.)));
+            }
+        }
+        self.overrides = next;
+    }
+
+    pub fn remove_override(&mut self, id: NodeId) {
+        self.overrides.remove(&id);
     }
 
     /// The configured height of `id`, if it has an override.
     pub fn override_height(&self, id: NodeId) -> Option<f64> {
-        self.overrides
-            .binary_search_by_key(&id, |&(id, _)| id)
-            .ok()
-            .and_then(|index| self.overrides.get(index))
-            .map(|&(_, height)| height)
+        self.overrides.get(&id).copied()
     }
 
     pub fn rebuild(
@@ -36,17 +37,14 @@ impl RowGeometry {
     ) {
         self.offsets.clear();
         self.offsets
-            .extend(self.overrides.iter().filter_map(|&(id, height)| {
+            .extend(self.overrides.iter().filter_map(|(&id, &height)| {
                 let height = editor
                     .filter(|(row, _)| *row == id)
                     .map_or(height, |(_, edit)| height.max(edit));
                 Some((rank(id)?, height - base, 0.))
             }));
         if let Some((id, height)) = editor
-            && self
-                .overrides
-                .binary_search_by_key(&id, |&(id, _)| id)
-                .is_err()
+            && !self.overrides.contains_key(&id)
             && let Some(rank) = rank(id)
         {
             self.offsets.push((rank, height.max(base) - base, 0.));
