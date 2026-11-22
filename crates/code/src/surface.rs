@@ -1913,7 +1913,7 @@ impl TraceHandle {
             h.shared
                 .dependents
                 .borrow_mut()
-                .push(view.downgrade(), WeakEntity::is_upgradable);
+                .push(view.downgrade(), |weak| weak.is_upgradable());
         }
         Self {
             view,
