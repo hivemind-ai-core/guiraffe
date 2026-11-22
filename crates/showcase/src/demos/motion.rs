@@ -48,10 +48,11 @@ struct LayoutDemo {
 fn layout_animation(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| {
         let grid = cx.new(|cx| {
-            let mut grid = TreeView::new(Rc::new(Props), cx).animate_layout(Some(true));
+            // Open the groups before enabling animation so the first frame is settled.
+            let mut grid = TreeView::new(Rc::new(Props), cx);
             grid.set_expanded(0, true, cx);
             grid.set_expanded(10, true, cx);
-            grid
+            grid.animate_layout(Some(true))
         });
         let items = vec![0, 1, 2, 3];
         LayoutDemo {
@@ -189,7 +190,7 @@ impl Render for LayoutDemo {
             "layout-panel",
             if self.panel {
                 div()
-                    .w(px(160.))
+                    .w(px(110.))
                     .h_full()
                     .p(px(8.))
                     .border_r_1()
@@ -203,7 +204,7 @@ impl Render for LayoutDemo {
         .enabled(animate);
         let shell = div()
             .flex()
-            .h(px(120.))
+            .h(px(96.))
             .w_full()
             .border_1()
             .border_color(border)
@@ -226,33 +227,28 @@ impl Render for LayoutDemo {
             )
             .animate_layout_with("layout-details", Some(animate));
 
+        // Three side-by-side columns so every example fits the 1100x760 showcase frame.
+        let col = |width: f32| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(16.))
+                .w(px(width))
+                .flex_none()
+        };
         column([
             example("Options", controls),
             div()
                 .flex()
+                .items_start()
                 .gap(px(16.))
-                .child(div().w(px(320.)).child(example(
-                    "Keyed list: add, remove, reverse (AnimatedList + KeyedPresence)",
-                    list,
-                )))
-                .child(div().w(px(320.)).child(example(
-                    "Collapsing details (Stack::animate_layout)",
-                    details,
-                )))
-                .into_any_element(),
-            div()
-                .flex()
-                .gap(px(16.))
+                .child(col(230.).child(example("Keyed list (AnimatedList + KeyedPresence)", list)))
                 .child(
-                    div()
-                        .w(px(420.))
-                        .child(example("Panel collapse (AnimatedSize, horizontal)", shell)),
+                    col(270.)
+                        .child(example("Collapsing details (Stack)", details))
+                        .child(example("Panel collapse (AnimatedSize)", shell)),
                 )
-                .child(
-                    div()
-                        .w(px(420.))
-                        .child(example("PropertyGrid group collapse", self.grid.clone())),
-                )
+                .child(col(280.).child(example("PropertyGrid group collapse", self.grid.clone())))
                 .into_any_element(),
         ])
     }

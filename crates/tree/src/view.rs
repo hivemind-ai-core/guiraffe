@@ -3135,6 +3135,67 @@ mod tests {
         );
     }
 
+    /// Collapse motion (spec/29) composes with the editing options: an open editor and its
+    /// buttons keep working while rows below an expanding group slide, rows are never
+    /// highlighted with focus_row(false), and everything settles at the laid-out position.
+    #[gpui_kit::test]
+    fn collapse_motion_composes_with_editing_options(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        let (view, window, events) = open_fields(cx, Fields::new(), |grid| {
+            grid.animate_layout(Some(true))
+                .focus_row(false)
+                .reset_button(false)
+                .edit_buttons(EditButtons::Icons)
+        });
+        let top = |window: &mut gpui_kit::VisualTestContext, label: &str| {
+            window.update(|window, _| f32::from(window.find_by_label(label).bounds().origin.y))
+        };
+        let frame = |window: &mut gpui_kit::VisualTestContext| {
+            window
+                .executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            window.update(|window, cx| window.simulate_next_frame(cx));
+            window.run_until_parked();
+        };
+        let size_before = top(window, "Size");
+        click_label(window, "Alpha");
+        assert_eq!(editing(&view, window), Some(0));
+        type_text(&view, window, "Moving");
+        view.update(window, |view, cx| view.set_expanded(2, true, cx));
+        window.run_until_parked();
+        frame(window);
+        // Mid-flight: the rows below the group start where they were and the editor stays open.
+        let size_mid = top(window, "Size");
+        assert!(
+            size_mid < size_before + 32.,
+            "Size jumped to its final row: {size_before} -> {size_mid}"
+        );
+        assert_eq!(editing(&view, window), Some(0));
+        view.read_with(window, |view, _| {
+            assert!((0..6).all(|id| !view.highlighted(id)), "focus_row(false)");
+        });
+        click_label(window, "Apply");
+        assert_eq!(editing(&view, window), None);
+        assert_eq!(
+            events.borrow().last(),
+            Some(&TreeEvent::Edited(0, Value::Text("Moving".into())))
+        );
+        for _ in 0..40 {
+            frame(window);
+        }
+        let inner = top(window, "Inner");
+        let size_after = top(window, "Size");
+        assert!(inner > top(window, "Group"), "child below its group");
+        assert!(size_after > inner, "Size settles below the new row");
+        assert!(
+            window.update(|window, _| window.try_find_by_label("Reset").is_none()),
+            "reset_button(false) still hides Reset after the animation"
+        );
+        // Rows that moved stay editable at their settled position.
+        click_label(window, "3");
+        assert_eq!(editing(&view, window), Some(4));
+    }
+
     #[gpui_kit::test]
     fn focus_row_false_never_highlights(cx: &mut TestAppContext) {
         let (view, window, _) = open_fields(cx, Fields::new(), |grid| grid.focus_row(false));
