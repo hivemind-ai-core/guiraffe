@@ -15,20 +15,34 @@ checkout. Adjust the dependency path to match your layout.
 ```sh
 cargo new my-tool
 cd my-tool
+cp ../guiraffe/Cargo.lock .
 ```
 
-Add the dependencies to `Cargo.toml`.
+Add the dependencies and the checkout's patch table to `Cargo.toml`. An app outside the
+workspace does not inherit the patches, and does not compile without them.
 
 ```toml
 [dependencies]
 gpui-kit = { version = "=0.9.1", features = ["component", "assets", "gpui-fast"] }
+guiraffe-components = { path = "../guiraffe/crates/components" }
 guiraffe-ui = { path = "../guiraffe/crates/ui" }
+
+[patch.crates-io]
+gpui-fast = { path = "../guiraffe/vendor/gpui-fast" }
+gpui-fast-linux = { path = "../guiraffe/vendor/gpui-fast-linux" }
+gpui-pre = { path = "../guiraffe/vendor/gpui-pre" }
+gpui-base = { path = "../guiraffe/vendor/gpui-base" }
+gpui-component = { path = "../guiraffe/vendor/gpui-component" }
+mermaid-rs-renderer = { path = "../guiraffe/vendor/mermaid-rs-renderer" }
+taffy = { path = "../guiraffe/vendor/taffy" }
 ```
 
 Copy the counter example into `src/main.rs` and run `cargo run`. The `Counter` struct
 owns the app's state. Its `Render` implementation reads that state and builds the view.
 `cx.listener` gives a click handler mutable access to the struct, and `cx.notify()` schedules
-a redraw after the state changes. Use `#[component]` for reusable pieces that only need props.
+a redraw after the state changes. In `main`, `guiraffe_components::init` installs the theme and
+`Root` paints its background and text color, so wrap each window's view in a `Root`.
+Use `#[component]` for reusable pieces that only need props.
 
 For a tool with editable input, filtering and more than one page, run the team tasks demo.
 

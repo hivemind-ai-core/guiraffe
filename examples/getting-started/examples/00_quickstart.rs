@@ -1,4 +1,9 @@
-use gpui_kit::{AppContext, WindowOptions, component::button::Button, div, prelude::*};
+use gpui_kit::{
+    AppContext, WindowOptions,
+    component::{Root, button::Button},
+    div,
+    prelude::*,
+};
 use guiraffe_ui::ui;
 
 #[derive(Default)]
@@ -33,9 +38,12 @@ impl Render for Counter {
 
 fn main() {
     gpui_kit::application().run(|cx| {
-        gpui_kit::init(cx);
-        if let Err(error) = cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|_| Counter::default())
+        // Installs GPUI Controls and the GUIraffe theme.
+        guiraffe_components::init(cx);
+        if let Err(error) = cx.open_window(WindowOptions::default(), |window, cx| {
+            let counter = cx.new(|_| Counter::default());
+            // Root paints the theme background and sets the text color.
+            cx.new(|cx| Root::new(counter, window, cx))
         }) {
             eprintln!("Could not open the counter window: {error}");
             cx.quit();
