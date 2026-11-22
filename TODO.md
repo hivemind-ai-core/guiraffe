@@ -74,6 +74,11 @@ batches; nothing goes to main without the user.
 - [ ] **Multi-window docking**: pop-out panels, cross-window drag, layout restore across monitors/DPI.
 - [ ] Moved from 0.2 (user 2026-11-22): inspect/drive node ids; agent authoring rest (spec/21);
       `feat-mermaid-2` salvage; calendar agenda view; UI/UX backlog; DnD source-card ghost.
+- [ ] **Bounded undo history** (user 2026-11-22): every undo history drops its oldest steps beyond
+      a bound, or at least offers one. Today all are bounded by step count only (Store caller-set,
+      DataGrid and Sheet 200, Flow 100, Kit text inputs 1,000). Gaps: no bound on bytes (one step
+      can hold 100k cells, a whole state or a whole graph), and the DataGrid, Sheet and text-input
+      limits are not configurable through GUIraffe. Audit new components and the spec/30 bus too.
 - [ ] Trim GPUI per-frame high-water buffers (user-accepted 0.2 exception, roadmap 0.3 §E).
 - [ ] spec/30 phase 1 starts by extending the Catalogue 1.2 descriptors (feat-catalog-coverage,
       `49dbc28`) with optional actions and snapshot sections.

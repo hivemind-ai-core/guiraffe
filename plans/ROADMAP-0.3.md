@@ -89,6 +89,13 @@ layer. 0.3 has to remove them at the element layer too, or spec/30/31 inherit th
 Done when: the bench in 1 meets "per-change work independent of row count" on gpui-fast, a label
 edit at 3,000 live rows is ≤0.5 ms CPU, and nothing in the 0.2 baseline regresses >10 %.
 
+## F. Bounded undo history
+
+User request 2026-11-22. Every undo history drops its oldest steps once over a bound, or at least
+makes one optionally available. Count limits exist today; add an optional byte or weight limit,
+expose both limits on every component with undo and on `Store::enable_undo`, and test eviction
+order and redo under churn.
+
 ## Carry-over from 0.2 (user decision 2026-11-22)
 
 Stable inspect/drive node ids (superseded by spec/30 ids, so do them together); agent authoring
