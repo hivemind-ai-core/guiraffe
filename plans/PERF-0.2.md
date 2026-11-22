@@ -6,7 +6,14 @@ timing, merges). Workers never merge, push or create branches other than their o
 
 ## Budgets (release build, quiet machine)
 - mount → first useful frame ≤ 200 ms; scroll/pan/zoom/hover/select p99 ≤ 8 ms; no main-thread task > 50 ms
-- Electron comparison scenarios: p99 frame ≤ 16.7 ms, no regression elsewhere
+- Electron comparison scenarios: p99 frame no worse than Electron on the same metric (user decision
+  2026-11-22, replacing ≤ 16.7 ms), no regression elsewhere
+  - Evidence still needed: run both apps in one quiet window with the callback-entry harness and
+    commit the raw data. The only matched figures so far (2026-11-21: GUIraffe 17.07–17.44 ms,
+    Electron 18.13–21.90 ms) were reported by a worker and never archived; the archived Electron run
+    of 2026-11-20 used the rAF timestamp, a different metric.
+  - Check warm start in the same run: the 2026-11-21 rerun measured 141 → 156 ms against the earlier
+    session, over the 10 % line, while an interleaved A/B that day showed no regression.
 - peak RSS at scale ≤ 1.25 × raw data + 64 MiB; every cache bounded and documented in PRODUCTION.md;
   soak drift ≤ 2 % over 30 min
 - warm repaint of an unchanged view allocates nothing; per-frame work at 10M items == at 10k

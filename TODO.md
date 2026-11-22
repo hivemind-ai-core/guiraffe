@@ -31,7 +31,7 @@ batches; nothing goes to main without the user.
 
 ## Performance goal — remaining (plans/PERF-0.2.md)
 - [ ] Final quiet window (all agents paused): re-measure all scenarios on both backends; 30-minute
-      mixed soak (≤2 % drift); stress-limits sweep (plans/PERF-LIMITS.md); GUIraffe-side Electron
+      mixed soak (≤2 % drift); stress-limits sweep (plans/PERF-LIMITS.md); both-sided matched-metric Electron
       comparison; commit a new full bench baseline.
 - [ ] Chat memory (delta 106/116 vs 76 MiB before batch 12 — confirm fixed); Markdown gpui-fast
       memory ~6 MiB over.
