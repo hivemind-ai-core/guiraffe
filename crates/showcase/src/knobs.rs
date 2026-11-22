@@ -416,6 +416,7 @@ mod tests {
                 cx.run_until_parked();
                 draw(&mut cx);
             }
+            cx.run_until_parked();
             armed.set(false);
             let settled = cx
                 .capture_screenshot(window.into())
@@ -452,13 +453,15 @@ mod tests {
         assert_immediate_transition("CodeViewer", &[(1, 0), (1, 1), (3, 0), (6, 1)]);
         assert_immediate_transition(
             "Code annotations",
-            &[(1, 0), (4, 0), (3, 0), (6, 0), (6, 1)],
+            &[(6, 0), (6, 1), (1, 0), (1, 1), (4, 0), (4, 1), (3, 0)],
         );
     }
 
     #[test]
-    fn property_grid_knobs_paint_complete_frames() {
-        assert_immediate_transition("Property grid", &[(2, 1), (2, 0), (3, 1)]);
+    fn tree_knobs_paint_complete_frames() {
+        let row_style_changes = &[(2, 1), (2, 0), (3, 1)];
+        assert_immediate_transition("Property grid", row_style_changes);
+        assert_immediate_transition("Tree list", row_style_changes);
     }
 
     #[test]
