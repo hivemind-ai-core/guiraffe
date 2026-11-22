@@ -330,6 +330,23 @@ mod tests {
     use gpui_kit::{AppContext, TestAppContext};
 
     #[gpui_kit::test]
+    fn superseded_offscreen_replies_respect_the_row_cache(cx: &mut TestAppContext) {
+        let (_, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        cx.update(|cx| {
+            for _ in 0..1_000 {
+                chat.update(cx, |chat, cx| { chat.begin_reply(cx); });
+            }
+        });
+        cx.update(|cx| {
+            let history = history.read(cx);
+            assert_eq!(history.rows.len(), 1_000);
+            assert_eq!(history.rows.iter().filter(|row| row.mounted().is_some()).count(), RETAINED_ROWS);
+            assert_eq!(history.row_cache.borrow().pinned.len(), 0);
+        });
+    }
+
+    #[gpui_kit::test]
     fn ended_pins_evict_without_entering_another_row(cx: &mut TestAppContext) {
         let (_, chat) = crate::gpui_tests::open(cx);
         let history = cx.update(|cx| chat.read(cx).history.clone());
