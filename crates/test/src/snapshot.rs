@@ -8,6 +8,10 @@
 //! Goldens live at `<dir>/<name>.png`. When a golden is missing (or `update` is set) the image
 //! is written and the check passes; on mismatch `<name>.actual.png` and `<name>.diff.png` are
 //! written next to it for review.
+//!
+//! GPUs round anti-aliasing differently. Where a named renderer can't match the shared golden,
+//! `<name>.<renderer>.png` replaces it for that renderer only, compared with the same tolerance
+//! (CI sets `GUIRAFFE_SNAPSHOT_RENDERER=lavapipe`).
 
 use std::{
     path::{Path, PathBuf},
@@ -83,8 +87,11 @@ impl Snapshotter {
 pub struct SnapshotConfig {
     pub dir: PathBuf,
     pub tolerance: Tolerance,
-    /// Overwrite goldens instead of comparing (accepting new output).
+    /// Overwrite goldens instead of comparing (accepting new output). With a `renderer`, only
+    /// that renderer's goldens are written, and only where the shared golden doesn't match.
     pub update: bool,
+    /// The renderer whose own goldens take precedence over the shared ones.
+    pub renderer: Option<String>,
 }
 
 impl SnapshotConfig {
@@ -101,13 +108,18 @@ impl SnapshotConfig {
             dir: dir.into().join(backend),
             tolerance: Tolerance::DEFAULT,
             update: false,
+            renderer: None,
         }
     }
 
-    /// Opt-in convenience for test binaries: `update` when `GUIRAFFE_UPDATE_SNAPSHOTS=1`.
+    /// Opt-in convenience for test binaries: `update` when `GUIRAFFE_UPDATE_SNAPSHOTS=1`, and
+    /// `renderer` from `GUIRAFFE_SNAPSHOT_RENDERER`.
     /// (Read explicitly by the caller, never implicitly by the library.)
     pub fn update_from_env(mut self) -> Self {
         self.update = std::env::var("GUIRAFFE_UPDATE_SNAPSHOTS").is_ok_and(|v| v == "1");
+        self.renderer = std::env::var("GUIRAFFE_SNAPSHOT_RENDERER")
+            .ok()
+            .filter(|v| !v.is_empty());
         self
     }
 }
@@ -141,8 +153,21 @@ pub fn assert_snapshot(
     cfg: &SnapshotConfig,
 ) -> Result<SnapshotOutcome> {
     safe_name(name)?;
-    let golden = cfg.dir.join(format!("{name}.png"));
-    if cfg.update || !golden.exists() {
+    let shared = cfg.dir.join(format!("{name}.png"));
+    // The renderer's own golden. Without a shared golden there is nothing to override.
+    let own = match &cfg.renderer {
+        Some(renderer) if shared.exists() => {
+            let name = format!("{name}.{renderer}");
+            safe_name(&name)?;
+            Some(cfg.dir.join(format!("{name}.png")))
+        }
+        _ => None,
+    };
+    let golden = match &own {
+        Some(own) if own.exists() => own.clone(),
+        _ => shared,
+    };
+    if !golden.exists() || (cfg.update && own.is_none()) {
         write(&golden, image)?;
         return Ok(SnapshotOutcome::Written(golden));
     }
@@ -156,6 +181,12 @@ pub fn assert_snapshot(
     );
     if report.matches(cfg.tolerance) {
         return Ok(SnapshotOutcome::Matched(report));
+    }
+    if cfg.update
+        && let Some(own) = own
+    {
+        write(&own, image)?;
+        return Ok(SnapshotOutcome::Written(own));
     }
     let actual = cfg.dir.join(format!("{name}.actual.png"));
     write(&actual, image)?;

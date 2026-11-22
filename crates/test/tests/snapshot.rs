@@ -93,3 +93,39 @@ fn unsafe_names_are_rejected() {
         assert!(assert_snapshot(bad, &img, &cfg).is_err(), "{bad:?}");
     }
 }
+
+#[test]
+fn a_renderer_keeps_its_own_golden_without_loosening_the_shared_one() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let shared = SnapshotConfig::new(tmp.path());
+    let ours = image::RgbaImage::from_pixel(4, 4, image::Rgba([10, 10, 10, 255]));
+    let theirs = image::RgbaImage::from_pixel(4, 4, image::Rgba([14, 10, 10, 255]));
+    let third = image::RgbaImage::from_pixel(4, 4, image::Rgba([20, 10, 10, 255]));
+    assert_snapshot("card", &ours, &shared)?;
+
+    let mut soft = shared.clone();
+    soft.renderer = Some("soft".into());
+    assert!(assert_snapshot("card", &theirs, &soft).is_err());
+
+    // Accepting on that renderer writes only its own file, and only where it has to.
+    let mut accept = soft.clone();
+    accept.update = true;
+    assert!(matches!(
+        assert_snapshot("card", &ours, &accept)?,
+        SnapshotOutcome::Matched(_)
+    ));
+    assert!(!shared.dir.join("card.soft.png").exists());
+    assert!(matches!(
+        assert_snapshot("card", &theirs, &accept)?,
+        SnapshotOutcome::Written(_)
+    ));
+    assert!(shared.dir.join("card.soft.png").exists());
+
+    assert!(matches!(
+        assert_snapshot("card", &theirs, &soft)?,
+        SnapshotOutcome::Matched(_)
+    ));
+    assert!(assert_snapshot("card", &third, &soft).is_err());
+    assert!(assert_snapshot("card", &theirs, &shared).is_err());
+    Ok(())
+}
