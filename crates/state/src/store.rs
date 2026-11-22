@@ -575,4 +575,23 @@ mod registration_tests {
         let large = cx.update(|cx| checks(cx, 10_000));
         assert!(large <= 2 * 10_000, "1k: {small}, 10k: {large}");
     }
+
+    #[gpui_kit::test]
+    fn registration_and_single_drops_do_not_sweep(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = Store::new((), cx);
+            let checks = Rc::new(Cell::new(0));
+            let mut live: Vec<_> = (0..10)
+                .map(|_| store.register(CountedSlot(checks.clone()), cx))
+                .collect();
+
+            // Any per-operation sweep, however it tests liveness, would remove this dead entry.
+            live.pop();
+            let entries = store.inner.read(cx).slots.borrow().entries.len();
+            assert_eq!(entries, 10, "dropping one selection swept the registry");
+            live.push(store.register(CountedSlot(checks.clone()), cx));
+            let entries = store.inner.read(cx).slots.borrow().entries.len();
+            assert_eq!(entries, 11, "registering swept the registry");
+        });
+    }
 }
