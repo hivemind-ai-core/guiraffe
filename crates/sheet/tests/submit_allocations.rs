@@ -11,7 +11,7 @@ const ROWS: usize = 1_000_000;
 const COLS: usize = 1_000;
 const FORMULAS: usize = 100_000;
 
-fn submit_formula_chain(count: usize) -> io::Result<(Counts, std::time::Duration)> {
+fn submit_formula_chain(count: usize, finish: bool) -> io::Result<(Counts, std::time::Duration)> {
     let mut worker = Recalculator::new(ROWS, COLS, Arc::new(BuiltinEngine))?;
     let batch = (1..=count)
         .map(|row| (CellPos::new(row, 0), Arc::from(format!("=A{row}+1"))))
@@ -20,15 +20,18 @@ fn submit_formula_chain(count: usize) -> io::Result<(Counts, std::time::Duration
     let (revision, counts) = count_allocations(|| worker.submit(batch));
     let elapsed = start.elapsed();
     assert!(revision.is_some());
+    if finish {
+        assert_eq!(worker.recv().map(|result| result.revision), revision);
+    }
     Ok((counts, elapsed))
 }
 
 #[test]
 fn initial_submit_allocations_are_independent_of_batch_size() -> io::Result<()> {
     // Initialize the caller thread's mailbox machinery outside the comparison.
-    submit_formula_chain(1)?;
-    let (small, _) = submit_formula_chain(1_000)?;
-    let (large, _) = submit_formula_chain(FORMULAS)?;
+    submit_formula_chain(1, false)?;
+    let (small, _) = submit_formula_chain(1_000, false)?;
+    let (large, _) = submit_formula_chain(FORMULAS, false)?;
     assert_eq!(small, large);
     Ok(())
 }
@@ -36,7 +39,7 @@ fn initial_submit_allocations_are_independent_of_batch_size() -> io::Result<()> 
 #[gpui_kit::test]
 #[ignore = "release-mode scale probe, run with --ignored --nocapture"]
 fn sheet_submission_and_mount_probe(cx: &mut TestAppContext) {
-    let (counts, submit) = submit_formula_chain(FORMULAS).expect("submit formula chain");
+    let (counts, submit) = submit_formula_chain(FORMULAS, true).expect("submit formula chain");
     println!("submit {FORMULAS} formulas: {submit:?}, {counts:?}");
 
     cx.update(guiraffe_core::init);
