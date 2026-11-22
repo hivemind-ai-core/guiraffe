@@ -407,7 +407,7 @@ mod tests {
         }
         draw_probe_frame(visual);
         assert!(
-            visual.update(|window, cx| TextSelection::has_selection(window, cx)),
+            visual.update(TextSelection::has_selection),
             "{probe:?} did not select text"
         );
         end

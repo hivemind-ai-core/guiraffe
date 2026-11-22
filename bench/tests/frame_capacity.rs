@@ -48,9 +48,12 @@ fn alternating_frames_retain_peak_storage(cx: &mut TestAppContext) {
         let retained = measure(100);
         println!("100 after {peak}: {retained:?}");
         for (frame, baseline) in retained.into_iter().zip(initial) {
-            for index in 0..3 {
-                assert!(frame[index] > baseline[index]);
-            }
+            assert!(
+                frame[..3]
+                    .iter()
+                    .zip(&baseline[..3])
+                    .all(|(size, old)| size > old)
+            );
         }
     }
 }
