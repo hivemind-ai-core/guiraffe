@@ -155,6 +155,21 @@ impl TabStopMap {
         self.index.get_mut().take();
     }
 
+    #[cfg(feature = "test-support")]
+    pub(crate) fn test_capacity_bytes(&self) -> [usize; 3] {
+        let (lookup, order) = self.index.borrow().as_ref().map_or((0, 0), |index| {
+            (
+                index.by_id.capacity() * std::mem::size_of::<(FocusId, TabStopNode)>(),
+                index.order.capacity() * std::mem::size_of::<TabStopNode>(),
+            )
+        });
+        [
+            self.insertion_history.capacity() * std::mem::size_of::<TabStopOperation>(),
+            lookup,
+            order,
+        ]
+    }
+
     /// Runs `f` with the index of the current insertion history.
     fn with_index<R>(&self, f: impl FnOnce(&TabStopIndex) -> R) -> R {
         let mut index = self.index.borrow_mut();

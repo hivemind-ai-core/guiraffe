@@ -112,15 +112,6 @@ impl TabStopMap {
         self.order_dirty.set(false);
     }
 
-    #[cfg(feature = "test-support")]
-    pub(crate) fn test_capacity_bytes(&self) -> [usize; 3] {
-        [
-            self.insertion_history.capacity() * std::mem::size_of::<TabStopOperation>(),
-            self.by_id.capacity() * std::mem::size_of::<(FocusId, TabStopNode)>(),
-            self.order.borrow().capacity() * std::mem::size_of::<TabStopNode>(),
-        ]
-    }
-
     // Paint and retained replay only append. Order the frame's entries on the
     // first focus traversal, with insertion order breaking equal path ties.
     fn ordered(&self) -> Ref<'_, Vec<TabStopNode>> {

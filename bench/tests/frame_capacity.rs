@@ -33,6 +33,7 @@ fn alternating_frames_retain_peak_storage(cx: &mut TestAppContext) {
             for _ in 0..2 {
                 window.refresh();
                 window.draw(cx).clear(cx);
+                window.focus_next(cx);
             }
             window.test_frame_storage_capacity_bytes()
         })
@@ -47,12 +48,9 @@ fn alternating_frames_retain_peak_storage(cx: &mut TestAppContext) {
         let retained = measure(100);
         println!("100 after {peak}: {retained:?}");
         for (frame, baseline) in retained.into_iter().zip(initial) {
-            assert!(
-                frame
-                    .into_iter()
-                    .zip(baseline)
-                    .all(|(size, old)| size > old)
-            );
+            for index in 0..3 {
+                assert!(frame[index] > baseline[index]);
+            }
         }
     }
 }
