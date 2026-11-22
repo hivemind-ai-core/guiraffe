@@ -289,7 +289,12 @@ impl TextViewState {
             line_spans: Arc::default(),
             clamped: false,
             list_state: {
-                let list = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
+                let overdraw = if estimated_block_height.is_some() {
+                    512.
+                } else {
+                    1000.
+                };
+                let list = ListState::new(0, gpui::ListAlignment::Top, px(overdraw));
                 if estimated_block_height.is_some() {
                     list
                 } else {
@@ -1522,41 +1527,49 @@ fn parse_content_with_cancel(
         })
         .flatten();
 
-    let mut source = String::new();
-    if let Some(span) = last_span {
+    let mut joined_tail;
+    let source = if let Some(span) = last_span {
         Arc::make_mut(&mut content.document.blocks).pop_back();
         node_cx.offset = span.start;
-        source.push_str(&content.document.source[span.start..]);
-        source.push_str(&options.pending_text);
+        let last_block = &content.document.source[span.start..];
+        joined_tail = String::with_capacity(last_block.len() + options.pending_text.len());
+        joined_tail.push_str(last_block);
+        joined_tail.push_str(&options.pending_text);
+        joined_tail.as_str()
     } else {
         if options.append {
             node_cx.offset = content.document.source.len();
         }
-        source.push_str(&options.pending_text);
-    }
+        options.pending_text.as_str()
+    };
 
     let new_document = match format {
         TextViewFormat::Markdown => format::markdown::parse_with_cancel(
-            &source,
+            source,
             &mut node_cx,
             defer_paragraphs && !options.append,
             &cancelled,
             |root| {
                 if let Some(observe) = &mut observe {
-                    observe(&source, Some(root));
+                    observe(source, Some(root));
                 }
             },
         ),
-        TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
+        TextViewFormat::Html => format::html::parse(source, &mut node_cx),
     }?;
 
-    if !cancelled() && let Some(observe) = &mut observe {
-        observe(&source, None);
+    if !cancelled()
+        && let Some(observe) = &mut observe
+    {
+        observe(source, None);
     }
 
     if options.append {
-        content.document.source =
-            format!("{}{}", content.document.source, options.pending_text).into();
+        let mut joined =
+            String::with_capacity(content.document.source.len() + options.pending_text.len());
+        joined.push_str(&content.document.source);
+        joined.push_str(&options.pending_text);
+        content.document.source = joined.into();
         Arc::make_mut(&mut content.document.blocks)
             .extend(Arc::unwrap_or_clone(new_document.blocks));
     } else {

@@ -32,10 +32,10 @@ pub(in crate::text) fn parse_with_cancel(
     let mut prose = cx.markdown_extensions.parse_options();
     prose.constructs.math_text = false;
     prose.constructs.math_flow = false;
-    let source_text: SharedString = source.to_owned().into();
+    let source_text: SharedString = source.into();
     let source_base = cx.offset;
     let defer_paragraphs = defer_paragraphs && source.len() > 32 * 1024;
-    let mut blocks = Vec::new();
+    let mut blocks = im::Vector::new();
     let mut last = None;
     visit_ast_sections(source, &options, &cancelled, |mut root| {
         observe_section(&root);
@@ -46,7 +46,7 @@ pub(in crate::text) fn parse_with_cancel(
             // the fade tracker can compare its old and new inline runs.
             for block in parsed {
                 if let Some(previous) = last.replace(block) {
-                    blocks.push(previous.into_cold_paragraph(&source_text, source_base));
+                    blocks.push_back(previous.into_cold_paragraph(&source_text, source_base));
                 }
             }
         } else {
@@ -56,7 +56,7 @@ pub(in crate::text) fn parse_with_cancel(
     blocks.extend(last);
     Ok(ParsedDocument {
         source: source_text,
-        blocks: Arc::new(blocks.into()),
+        blocks: Arc::new(blocks),
     })
 }
 
@@ -417,18 +417,20 @@ fn parse_inline_children(
 }
 
 fn parse_table_row(source: &str, table: &mut Table, node: &mdast::TableRow, cx: &mut NodeContext) {
-    let mut row = TableRow::default();
-    node.children.iter().for_each(|c| {
-        match c {
-            Node::TableCell(cell) => {
-                parse_table_cell(source, &mut row, cell, cx);
-            }
-            _ => {}
-        };
-    });
-    // GFM fixes the column count with the header/delimiter. Leave missing
-    // cells implicit; the renderer places them on the shared column grid.
-    row.children.truncate(table.column_aligns.len());
+    let mut row = TableRow {
+        children: Vec::with_capacity(node.children.len().min(table.column_aligns.len())),
+    };
+    node.children
+        .iter()
+        .take(table.column_aligns.len())
+        .for_each(|c| {
+            match c {
+                Node::TableCell(cell) => {
+                    parse_table_cell(source, &mut row, cell, cx);
+                }
+                _ => {}
+            };
+        });
     table.children.push(row);
 }
 
@@ -473,6 +475,7 @@ fn push_merged(
     {
         last.1.merge(new_mark);
     } else {
+        node.marks.reserve_exact(1);
         node.marks.push((0..len, new_mark));
     }
     paragraph.push(node);
@@ -1415,6 +1418,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
         },
         Node::Table(val) => {
             let mut table = Table::default();
+            table.children.reserve_exact(val.children.len());
             table.column_aligns = val
                 .align
                 .clone()
@@ -2152,7 +2156,7 @@ mod tests {
             .iter()
             .find(|child| child.image.is_some())
             .expect("expected image");
-        let mut state = image.state.lock().unwrap();
+        let mut state = image.state.as_ref().unwrap().lock().unwrap();
         state.set_text("before ".into());
         state.selection = Some((0..7).into());
         drop(state);
@@ -2189,7 +2193,7 @@ mod tests {
             .iter()
             .find(|child| child.image.is_some())
             .expect("expected image");
-        let mut before = image.state.lock().unwrap();
+        let mut before = image.state.as_ref().unwrap().lock().unwrap();
         before.set_text("before ".into());
         before.selection = Some((0..7).into());
         drop(before);
@@ -2214,14 +2218,14 @@ mod tests {
             .iter()
             .find(|child| child.image.is_some())
             .expect("expected image");
-        let mut before = image.state.lock().unwrap();
+        let mut before = image.state.as_ref().unwrap().lock().unwrap();
         before.set_text("before ".into());
         before.selection = Some((0..3).into());
         drop(before);
 
         assert_eq!(document.selected_source_range(), Some(0..3));
 
-        image.state.lock().unwrap().selection = None;
+        image.state.as_ref().unwrap().lock().unwrap().selection = None;
         let after_start = source.find("after").unwrap();
         let mut after = paragraph.state.lock().unwrap();
         after.set_text(" after".into());

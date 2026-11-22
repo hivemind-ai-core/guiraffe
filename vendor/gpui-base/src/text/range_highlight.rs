@@ -1353,8 +1353,8 @@ mod tests {
                     let (mut run_start, mut offset) = (0, 0);
                     for child in paragraph.children() {
                         assert!(child.custom.is_none(), "inline objects select on their own");
-                        if child.image.is_some() {
-                            select_run(&child.state, run_start..offset);
+                        if let Some(state) = &child.state {
+                            select_run(state, run_start..offset);
                             run_start = offset;
                         }
                         offset += child.text.len();
