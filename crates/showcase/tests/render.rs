@@ -31,11 +31,12 @@ fn every_entry_renders_in_both_themes() {
         if only.as_deref().is_some_and(|o| !slug(e.name).contains(o)) {
             continue;
         }
+        let viewport_height = if e.krate == "calendar" { 1_100. } else { 760. };
         for scheme in [Scheme::Light, Scheme::Dark] {
             let name = e.name;
             let mut s = Snapshotter::new().unwrap_or_else(|err| panic!("{err}"));
             let img = s
-                .render(size(px(1100.), px(760.)), move |window, cx| {
+                .render(size(px(1100.), px(viewport_height)), move |window, cx| {
                     guiraffe_showcase::init(cx);
                     apply(
                         GuiraffeTheme {

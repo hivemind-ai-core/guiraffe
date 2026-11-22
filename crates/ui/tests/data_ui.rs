@@ -513,6 +513,7 @@ fn init_document_widgets(cx: &mut TestAppContext) {
     cx.update(guiraffe_sheet::init);
     cx.update(guiraffe_tree::init);
     cx.update(guiraffe_timeline::init);
+    cx.update(guiraffe_calendar::init);
 }
 
 #[gpui_kit::test]
@@ -2599,6 +2600,40 @@ fn kit_overlay_documents_validate_and_mount(cx: &mut TestAppContext) {
         .expect("window with overlay root")
     });
     cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn calendar_document_validates_and_mounts_records(cx: &mut TestAppContext) {
+    cx.update(guiraffe_calendar::init);
+    let calendar = |items: serde_json::Value| {
+        Document::new(
+            Node::new("calendar")
+                .prop("items", items)
+                .prop(
+                    "sources",
+                    serde_json::json!([{"id":1,"name":"Work","color":"teal"}]),
+                )
+                .prop("view", "week")
+                .prop("date", "2026-11-21")
+                .prop("now", "2026-11-21T11:00:00Z")
+                .on("edit-request", "edit"),
+        )
+    };
+    let bad = calendar(serde_json::json!([{"id":1,"title":"No source or time"}]));
+    assert_eq!(validation::Validation::default().check(&bad).len(), 1);
+    let document = calendar(serde_json::json!([
+        {"id":1,"source":1,"title":"Review","start":"2026-11-21T09:00:00Z","end":"2026-11-21T10:00:00Z"},
+        {"id":2,"source":1,"title":"Release","start":"2026-11-21","end":"2026-11-22","allDay":true}
+    ]));
+    let issues = validation::Validation::default().check(&document);
+    assert!(issues.is_empty(), "{issues:?}");
+    let registry = cx.update(|cx| Arc::new(Registry::for_app(cx)));
+    let template = Arc::new(Template::compile(&document, &registry).expect("calendar document"));
+    let (_, window) = cx.add_window_view(|_, cx| Shell {
+        ui: DataUi::from_template(template, registry, NoLogic, cx),
+    });
+    window.run_until_parked();
+    assert!(window.debug_bounds("calendar-day-2026-11-21").is_some());
 }
 
 #[test]

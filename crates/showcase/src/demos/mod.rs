@@ -4,6 +4,7 @@ use gpui_kit::{AnyElement, IntoElement, ParentElement, SharedString, Styled, div
 use guiraffe_components::{Paper, Text};
 use guiraffe_core::Size;
 
+pub mod calendar;
 pub mod charts;
 pub mod chat;
 pub mod code;

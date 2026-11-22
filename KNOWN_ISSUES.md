@@ -78,3 +78,52 @@ gpui-fast assertion for expansion and scrolling.
   `QuitPolicy::Never`; provide a Quit menu item. Without a tray host, closing works normally.
 - **Accessibility:** cards expose `Status`/`Alert` roles with a label; the notification surface never takes
   keyboard focus, so its buttons are pointer-only (system notifications are the accessible path).
+
+### Calendar accessibility limits (guiraffe-calendar)
+
+- **Screen-reader verification is pending.** The calendar exposes `Grid`/`GridCell` roles,
+  localized date and event-count names, selected/expanded/toggled state, and row/column
+  indexes for Month cells. The `grid_exposes_cells_sources_and_labels_to_accessibility` test
+  checks these through the inspect API. Nobody has yet checked them with VoiceOver, NVDA or Orca.
+- **No live region.** Edit commits, cancellations and pick-ups are emitted as
+  `CalendarEvent::Announcement` for the host to announce. GPUI 0.9.1 has no live-region role,
+  so the calendar does not speak them by itself.
+- **Virtualized set counts are partial.** Week/Day hour rows are virtualized, so only the
+  visible hours exist as nodes. The grid reports its row/column counts, but GPUI does not
+  expose hidden virtualized rows to assistive technology.
+- **Overflow focus.** The `+N more` list is operated with the calendar's roving keyboard
+  cursor (Enter opens it, Up/Down choose, Enter selects, Escape closes). Focus stays on the
+  calendar grid instead of moving into the list.
+
+### Calendar gaps against spec/27 (guiraffe-calendar)
+
+- **Performance margin is thin.** On an 8-core/16-thread laptop the Month/Week 8 ms p99 gate
+  passed in a run at load 4 and failed (about 9-11 ms) as other builds raised the load, although
+  the probe's quiet-window rule (load <= CPU count) accepts both. Year misses its 8 ms target
+  (p99 about 12-16 ms); it is outside the Month/Week gate.
+- **Changed frames are bounded, not zero.** An unchanged calendar in a cached view repaints
+  with zero allocations on both backends. A changed frame rebuilds every element of the view
+  (about 13,000 allocations for a full Month, mostly GPUI layout, listeners and element state);
+  it is not yet split into cached cells. See the budgets in `tests/alloc.rs`.
+- **Density** changes only the toolbar gap, not row or chip targets.
+- **Tab stops.** Event chips, timed blocks and `+N more` are reached with the roving cursor;
+  they are not separate Tab stops when `focusable` is set.
+- **Resize handles** of timed events appear only on the selected event (select, then drag).
+- **Edge auto-scroll** steps once per pointer move; a pointer held still at the edge does not
+  keep scrolling. Pointer-capture loss and theme changes do not cancel a drag.
+- **DST fold.** The two occurrences of a repeated local hour share wall-clock rows and are
+  shown side by side in lanes, not as two chronological rows.
+- **Month capacity** comes from the fixed cell height, not from measured host height.
+- **Multi-day all-day items** repeat a chip per day without continuation cues.
+- **Localization.** View-switcher labels are fixed at construction; `set_locale` does not
+  relabel them.
+- **Agenda/schedule view** is a follow-up, outside spec/27.
+
+### gpui-fast rebuilds the scene for every rounded overflow clip
+
+When any element both clips (both axes) and has rounded corners,
+`fast::rounded_clip_scene::compile` copies the frame into new zero-capacity scenes on every
+changed draw. The calendar's month chips made that about 10 MB per measured frame, and an extra
+glyph could move it across a capacity doubling. The calendar now clips rectangularly inside
+rounded shapes. Other controls that use `rounded` with `overflow_hidden` still pay this cost;
+reusing the buffers would be a fix in the vendored backend.

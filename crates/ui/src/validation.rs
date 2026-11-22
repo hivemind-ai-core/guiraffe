@@ -578,9 +578,8 @@ impl Validation<'_> {
                             })
                     })
                 }),
-                "spotlight-labels" | "event-tracks" | "timeline-events" | "event-links" => {
-                    matches_data_schema(got, &prop.schema())
-                }
+                "spotlight-labels" | "event-tracks" | "timeline-events" | "event-links"
+                | "calendar-items" | "calendar-sources" => matches_data_schema(got, &prop.schema()),
                 "menu-commands" => got.as_array().is_some_and(|commands| {
                     let schema = crate::widget_spec::menu_command_schema();
                     commands.iter().all(|command| {

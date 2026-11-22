@@ -104,6 +104,9 @@ fn warm_repaints_allocate_a_bounded_amount() -> anyhow::Result<()> {
             "warm-inputs" => 500,
             "warm-layout" => 250,
             "warm-overlays" => 100,
+            // A week of 41 events: toolbar, all-day lane, virtualized hours,
+            // overlap lanes, business hours and the now-line (2,892 today).
+            "warm-calendar" => 3_200,
             _ => 4_000,
         };
         assert!(
@@ -159,6 +162,25 @@ fn mounted_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn calendar_frame_allocations_do_not_grow_with_source_size() -> anyhow::Result<()> {
+    use guiraffe_bench::suites::{calendar_frame_10k, calendar_frame_100k};
+    calendar_frame_10k();
+    calendar_frame_100k();
+    let (_, small) = count_allocations(calendar_frame_10k)?;
+    let (_, large) = count_allocations(calendar_frame_100k)?;
+    eprintln!("calendar: 10k {small:?}, 100k {large:?}");
+    assert!(
+        large.allocations <= small.allocations,
+        "calendar frame allocations grew with source size: {small:?} vs {large:?}"
+    );
+    assert!(
+        large.bytes <= small.bytes + 4096,
+        "calendar frame bytes grew with source size: {small:?} vs {large:?}"
+    );
     Ok(())
 }
 

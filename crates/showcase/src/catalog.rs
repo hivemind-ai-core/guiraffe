@@ -80,6 +80,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::markdown::entries());
     v.extend(crate::demos::mermaid::entries());
     v.extend(crate::demos::chat::entries());
+    v.extend(crate::demos::calendar::entries());
     v.extend(crate::demos::flow::entries());
     v.extend(crate::demos::timeline::entries());
     v.extend(crate::demos::datagrid::entries());

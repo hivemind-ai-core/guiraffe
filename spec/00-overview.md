@@ -29,6 +29,8 @@ Wrap/theme them instead; fill the gaps Mantine has.
 | guiraffe-markdown | Markdown viewer (+ `mermaid` feature) | 06-markdown-mermaid.md |
 | guiraffe-mermaid | standalone Mermaid viewer | 06-markdown-mermaid.md |
 | guiraffe-flow-core / guiraffe-flow | xyflow-style graph (model is GPUI-free) | 07-flow.md |
+| guiraffe-timeline | time-based editors, composable plot surfaces | 16-advanced-components.md |
+| guiraffe-calendar | year/month/week/day events and schedules | 27-calendar.md |
 | guiraffe-gallery | storybook app | — |
 
 ## Prior art to mine

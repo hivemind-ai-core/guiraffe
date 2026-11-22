@@ -48,6 +48,11 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
 - **flow / flow-core:** React-Flow-style graph editor: drag, connect, box-select, undo/redo,
   minimap (drag to pan), animated edges.
 - **chat:** agent chat UI (streaming replies, reasoning, tool calls, attachments, composer).
+- **calendar:** year, six-week month, virtualized week/day schedules; UTC timed and civil all-day
+  events, named time zones, source visibility/colors, business hours, ISO weeks, 12h/24-hour
+  formats, custom item content, overlap/overflow handling, 15-minute drag and keyboard editing,
+  focus semantics, and light/dark snapshots on both backends. The release-only 10,000-event
+  mount/frame gate is `cargo test -p guiraffe-calendar --release --test scale -- --ignored`.
 - **timeline:** Gantt (critical path, resize either edge, locks), DAW track timeline (move,
   trim, snap, locks, keyboard editing), dope sheet, curve editor.
 - **code:** virtualized code viewer: highlighting, analysis highlights, inlay hints, lenses,
@@ -109,3 +114,4 @@ signal yet; Kit has four size steps; Kit charts lack legends.
 Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select states.
 Catalogue 1.2.0 snapshot `9cfca66b723596b0` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper and event-timeline kinds, and PropertyGrid editing options).
 Catalogue 1.3.0 snapshot `f02fd1904da6e29f` adds the `sheet` kind, PropertyGrid and Stack `animate-layout`, and ActionIcon `toggled` and `tooltip`.
+Catalogue 1.4.0 snapshot `32f852d2b157035f` adds the `calendar` kind.

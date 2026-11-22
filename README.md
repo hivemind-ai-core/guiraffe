@@ -14,6 +14,13 @@ Rich, beautiful and FAST desktop UI for Rust, built on GPUI Kit + GPUI Controls 
 Start with the [GUIraffe quickstart](docs/ui-macro.md#start-a-small-desktop-tool) for a runnable
 counter, dependencies for your own Rust binary, and examples of `ui!` and `#[component]`.
 
+## Calendar views
+
+Use `guiraffe-calendar` for year, month, week, and day schedules with shared multi-source events,
+chrono time zones, editing callbacks, keyboard access, and virtualized hours. See the
+[calendar API and interaction specification](spec/27-calendar.md), or run the four live showcase
+pages with `cargo run -p guiraffe-showcase --features gpui-fast`.
+
 ## Authoring DataUi screens
 
 Run the catalogue commands from a checkout, or use an installed `guiraffe` binary.

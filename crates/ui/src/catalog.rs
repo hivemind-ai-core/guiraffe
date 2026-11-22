@@ -4,10 +4,12 @@ use serde_json::{Value, json};
 
 pub use crate::widget_spec::{EventSpec, FORMAT_VERSION, PropSpec, Schema, WidgetSpec};
 
-pub const VERSION: &str = "1.3.0";
+pub const VERSION: &str = "1.4.0";
 
 use crate::widget_spec;
 
+#[path = "../../calendar/src/widget_specs.rs"]
+mod calendar;
 #[path = "../../charts/src/widget_specs.rs"]
 mod charts;
 #[path = "../../chat/src/widget_specs.rs"]
@@ -46,6 +48,7 @@ mod tree;
 pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
     WIDGETS
         .iter()
+        .chain(calendar::WIDGETS)
         .chain(charts::WIDGETS)
         .chain(chat::WIDGETS)
         .chain(code::WIDGETS)

@@ -752,6 +752,8 @@ production_frame_suite!(datagrid_frame_100k, Grid, 100_000);
 production_frame_suite!(datagrid_frame_10m, Grid, 10_000_000);
 production_frame_suite!(code_frame_100k, Code, 100_000);
 production_frame_suite!(code_frame_10m, Code, 10_000_000);
+production_frame_suite!(calendar_frame_10k, Calendar, 10_000);
+production_frame_suite!(calendar_frame_100k, Calendar, 100_000);
 
 /// Shared workload list, extended by the wall-clock harnesses.
 #[macro_export]
@@ -798,19 +800,24 @@ macro_rules! make_registry {
                 Suite { name: "datagrid-frame-10m", run: datagrid_frame_10m },
                 Suite { name: "code-frame-100k", run: code_frame_100k },
                 Suite { name: "code-frame-10m", run: code_frame_10m },
+                Suite { name: "calendar-frame-10k", run: calendar_frame_10k },
+                Suite { name: "calendar-frame-100k", run: calendar_frame_100k },
                 Suite { name: "ui-macro-frame-1k", run: ui_macro_tree },
                 Suite { name: "ui-builder-frame-1k", run: ui_builder_tree },
                 // Warm repaints of the crates every frame goes through.
                 Suite { name: "warm-components", run: crate::warm_repaint::warm_components },
                 Suite { name: "warm-inputs", run: crate::warm_repaint::warm_inputs },
                 Suite { name: "warm-layout", run: crate::warm_repaint::warm_layout },
-                Suite { name: "warm-overlays", run: crate::warm_repaint::warm_overlays },            ]
+                Suite { name: "warm-overlays", run: crate::warm_repaint::warm_overlays },
+                Suite { name: "warm-calendar", run: crate::warm_repaint::warm_calendar },            ]
         }
     };
 }
 crate::with_production_suites!(make_registry);
 
-pub use crate::warm_repaint::{warm_components, warm_inputs, warm_layout, warm_overlays};
+pub use crate::warm_repaint::{
+    warm_calendar, warm_components, warm_inputs, warm_layout, warm_overlays,
+};
 
 /// A 1,000-node tree constructed in GPUI's active frame arena.
 pub fn ui_macro_tree() {
