@@ -2,52 +2,59 @@
 
 ## Start a small desktop tool
 
-From the GUIraffe checkout, run the [counter example](../../examples/getting-started/examples/00_quickstart.rs).
-
-```sh
-cargo run -p getting-started-examples --example 00_quickstart --features gpui-fast
-```
-
-For your own app, `guiraffe new` is the shortest route because it copies the vendored patch
-table and the lockfile. To do it by hand, create a Rust binary in a sibling directory and point it at your GUIraffe
-checkout. Adjust the dependency path to match your layout.
+You don't need a checkout. Create a binary and download the tested lockfile and the
+[counter example](../../examples/getting-started/examples/00_quickstart.rs):
 
 ```sh
 cargo new my-tool
 cd my-tool
-cp ../guiraffe/Cargo.lock .
+curl -fsSLO https://raw.githubusercontent.com/hivemind-ai-core/guiraffe/716d957e4cdd3c950099800dcee5d4210508117e/Cargo.lock
+curl -fsSL -o src/main.rs https://raw.githubusercontent.com/hivemind-ai-core/guiraffe/716d957e4cdd3c950099800dcee5d4210508117e/examples/getting-started/examples/00_quickstart.rs
 ```
 
-Add the dependencies and the checkout's patch table to `Cargo.toml`. An app outside the
-workspace does not inherit the patches, and does not compile without them.
+Replace `Cargo.toml` with this. An app doesn't inherit GUIraffe's patches, and does not compile
+without them.
 
 ```toml
+[package]
+name = "my-tool"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
 [dependencies]
 gpui-kit = { version = "=0.9.1", features = ["component", "assets", "gpui-fast"] }
-guiraffe-components = { path = "../guiraffe/crates/components" }
-guiraffe-ui = { path = "../guiraffe/crates/ui" }
+gpui-fast = "=0.1.15"
+guiraffe-components = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-ui = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+
+[profile.dev.package."*"]
+opt-level = 2
 
 [patch.crates-io]
-gpui-fast = { path = "../guiraffe/vendor/gpui-fast" }
-gpui-fast-linux = { path = "../guiraffe/vendor/gpui-fast-linux" }
-gpui-pre = { path = "../guiraffe/vendor/gpui-pre" }
-gpui-base = { path = "../guiraffe/vendor/gpui-base" }
-gpui-component = { path = "../guiraffe/vendor/gpui-component" }
-mermaid-rs-renderer = { path = "../guiraffe/vendor/mermaid-rs-renderer" }
-taffy = { path = "../guiraffe/vendor/taffy" }
+gpui-fast = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-fast-linux = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-pre = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-base = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-component = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+mermaid-rs-renderer = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+taffy = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
 ```
 
-Copy the counter example into `src/main.rs` and run `cargo run`. The `Counter` struct
-owns the app's state. Its `Render` implementation reads that state and builds the view.
-`cx.listener` gives a click handler mutable access to the struct, and `cx.notify()` schedules
-a redraw after the state changes. In `main`, `guiraffe_components::init` installs the theme and
-`Root` paints its background and text color, so wrap each window's view in a `Root`.
-Use `#[component]` for reusable pieces that only need props.
+Run `cargo run`. The `Counter` struct owns the app's state. Its `Render` implementation reads
+that state and builds the view. `cx.listener` gives a click handler mutable access to the struct,
+and `cx.notify()` schedules a redraw after the state changes. In `main`,
+`guiraffe_components::init` installs the theme and `Root` paints its background and text color,
+so wrap each window's view in a `Root`. Use `#[component]` for reusable pieces that only need props.
 
 For a tool with editable input, filtering and more than one page, run the team tasks demo.
 
 ```sh
-cargo run -p team-tasks --features gpui-fast
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --debug --features gpui-fast team-tasks
+team-tasks
 ```
 
 ## Macro syntax

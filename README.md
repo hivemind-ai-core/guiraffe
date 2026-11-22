@@ -57,22 +57,34 @@ Check it, don't take our word for it:
 ## How to use it
 
 You need Rust 1.97 or newer and the [Linux packages](docs/getting-started.md#prerequisites).
+You don't need to clone the repository.
+
+Try the examples:
 
 ```sh
-git clone https://github.com/hivemind-ai-core/anteater guiraffe
-cd guiraffe
-cargo run --release -p guiraffe-showcase --features gpui-fast    # every component, live
-cargo run --release -p guiraffe-gallery --features gpui-fast     # components working together as an app
-cargo run -p getting-started-examples --example 00_quickstart --features gpui-fast
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --debug --features gpui-fast getting-started-examples --examples
+00_quickstart
 ```
 
-Create an app that uses your checkout:
+See every component, or the components working together as an app:
 
 ```sh
-cargo build -p guiraffe-cli
-target/debug/guiraffe new ../my-app --path "$PWD"
-cd ../my-app && cargo run
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --features gpui-fast guiraffe-showcase
+guiraffe-showcase
+
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --features gpui-fast guiraffe-gallery
+guiraffe-gallery
 ```
+
+To build your own app, [copy the manifest and lockfile](docs/getting-started.md#create-your-own-app)
+from the tutorial. They use git dependencies, so the app builds in any directory on any supported
+machine. The first build downloads about 700 MB, mostly screenshot-test history.
 
 | | |
 |---|---|

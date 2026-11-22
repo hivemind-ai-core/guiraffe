@@ -79,6 +79,9 @@ Generate the API documentation with `cargo doc --workspace --no-deps --open`.
 
 ## Examples
 
+These commands run from a checkout. To run the apps without one, see the
+[install commands](../README.md#how-to-use-it).
+
 | Example | Run |
 |---|---|
 | Showcase | `cargo run --release -p guiraffe-showcase --features gpui-fast` |
@@ -92,12 +95,19 @@ Several crates also have focused examples in their `examples` directory.
 
 ## Command line
 
-Build it with `cargo build -p guiraffe-cli`.
+Install it without a checkout:
+
+```sh
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --debug guiraffe-cli
+```
+
 
 | Command | Does |
 |---|---|
-| `guiraffe new <dir> --path <checkout>` | Create an app |
-| `guiraffe add <crate>...` | Add GUIraffe crates to an app |
+| `guiraffe new <dir> [--path <checkout>]` | Create an app with path dependencies on that checkout, or on the CLI's own source |
+| `guiraffe add <crate>...` | Add GUIraffe crates to an app with path dependencies |
 | `guiraffe dev` | Rebuild and relaunch on change |
 | `guiraffe doctor` | Check pins and setup |
 | `guiraffe catalog --json\|--schema\|--markdown` | Print the DataUi catalogue |

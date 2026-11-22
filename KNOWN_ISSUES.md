@@ -5,12 +5,13 @@
 - Only Linux is tested, mainly Wayland. The macOS and Windows code for notifications and the tray
   has never been compiled.
 - No component has been checked with a screen reader.
-- The crates aren't published. Apps use a checkout and must repeat its `[patch.crates-io]` table.
+- The crates aren't published. Apps use git or path dependencies and must repeat the
+  `[patch.crates-io]` table, because Cargo doesn't pass patches on from dependencies.
 
 ## Pinned gpui-fast
 
 gpui-fast 0.1.16 doesn't compile with gpui-kit 0.9.1, and a fresh dependency resolution picks it.
-The workspace pins 0.1.15. `guiraffe new` copies the lockfile, and `guiraffe doctor` checks the pin.
+The workspace pins 0.1.15. Apps copy the lockfile (`guiraffe new` does it), and `guiraffe doctor` checks the pin.
 
 ## Soundness
 

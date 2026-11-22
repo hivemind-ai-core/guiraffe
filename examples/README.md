@@ -1,5 +1,8 @@
 # Examples
 
+These commands run from a checkout. To run the examples without one, see the
+[install commands](../README.md#how-to-use-it).
+
 | Directory | What it is | Run |
 |---|---|---|
 | [getting-started](getting-started) | Quickstart and the six tutorial apps | `cargo run -p getting-started-examples --example 00_quickstart --features gpui-fast` |

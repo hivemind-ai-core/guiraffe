@@ -50,74 +50,50 @@ alongside this guide.
     libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan1 mesa-vulkan-drivers
   ```
 
-- **A local GUIraffe checkout.** GUIraffe isn't published to crates.io yet, so apps depend
-  on the crates by path.
+- **`curl` and an internet connection.** GUIraffe isn't published to crates.io, so Cargo fetches
+  it from GitHub. You don't need to clone it. The first fetch is about 700 MB.
 
 `guiraffe doctor` checks all of this. It reports the Rust version, each library (via
 `pkg-config`), the Vulkan loader, and, when run inside an app, the dependency pins.
 
 ```sh
-cargo run -p guiraffe-cli -- doctor
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --debug guiraffe-cli
+guiraffe doctor
 ```
+
+Cargo installs programs into `~/.cargo/bin`, which must be on your `PATH`.
 
 ## Run the examples
 
-From the checkout:
+Install all of them, then run any by name:
 
 ```sh
-cargo run -p getting-started-examples --example 01_hello --features gpui-fast
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --debug --features gpui-fast getting-started-examples --examples
+01_hello
 ```
 
 The examples are `01_hello`, `02_counter`, `03_form`, `04_datagrid`, `05_theme` and
-`06_router_store`. The first build compiles GPUI and takes a while. Dependencies build with
-`opt-level = 2` even in dev builds, because interactive graphics need optimised code.
-
-`--features gpui-fast` selects the GPUI Fast backend. Leave it off to run on upstream GPUI.
-See [the two GPUI backends](#the-two-gpui-backends).
-
-The examples in `03_form` and `06_router_store` include unit tests:
-
-```sh
-cargo test -p getting-started-examples
-```
+`06_router_store`, plus `00_quickstart`. The first build compiles GPUI and takes a while.
+`--features gpui-fast` selects the GPUI Fast backend. See
+[the two GPUI backends](#the-two-gpui-backends).
 
 ## Create your own app
 
-### With `guiraffe new`
+### From git
 
-The `guiraffe` CLI scaffolds a standalone app that uses your checkout. Build it once, then
-run it from the directory you want the app in:
+This works in any directory and is what to use for an app you share or commit.
 
 ```sh
-cargo build -p guiraffe-cli          # in the checkout; the binary is target/debug/guiraffe
-cd ~/projects
-/path/to/guiraffe/target/debug/guiraffe new my-app --path /path/to/guiraffe
-cd my-app && cargo run
+cargo new my-app
+cd my-app
+curl -fsSLO https://raw.githubusercontent.com/hivemind-ai-core/guiraffe/716d957e4cdd3c950099800dcee5d4210508117e/Cargo.lock
 ```
 
-`guiraffe new` refuses to overwrite an existing directory. It writes:
-
-- `Cargo.toml` with path dependencies on `guiraffe-core`, `-components`, `-motion`,
-  `-state`, `-router`, `-windows`, `-overlays` and `-icons`, the pinned `gpui-kit =0.9.1`
-  with the `gpui-fast` backend, and an empty `[workspace]` table so the app never joins an
-  enclosing workspace.
-- `src/main.rs`: a shell with a sidebar, typed routes, a store with undo, and a window
-  opened through the window manager.
-- `Cargo.lock`, copied from the checkout, so you build with the dependency versions
-  GUIraffe was tested with.
-
-The generated `Cargo.toml` also repeats the checkout's `[patch.crates-io]` block. The checkout patches GPUI, GPUI Fast and
-GPUI Kit with fixes and performance work ([vendor/README.md](../vendor/README.md)), and a
-standalone app doesn't inherit the workspace's patches.
-
-`guiraffe add <crate>…` adds more GUIraffe crates to the app, for example
-`guiraffe add datagrid inputs`. Run it with no arguments to list them.
-`guiraffe dev` watches the app, rebuilds and relaunches it.
-
-### By hand
-
-Any Cargo binary works. This is the `Cargo.toml` for an app in a directory next to the
-checkout (`../guiraffe`). Adjust the paths to your layout.
+Replace `Cargo.toml` with this. It covers all six examples.
 
 ```toml
 [package]
@@ -132,39 +108,73 @@ edition = "2024"
 gpui-kit = { version = "=0.9.1", features = ["component", "assets", "gpui-fast"] }
 # gpui-kit 0.9.1 needs the pre-0.1.16 GPUI Fast API (KNOWN_ISSUES.md, pinned gpui-fast).
 gpui-fast = "=0.1.15"
-guiraffe-core = { path = "../guiraffe/crates/core" }
-guiraffe-components = { path = "../guiraffe/crates/components" }
-guiraffe-ui = { path = "../guiraffe/crates/ui" }
-guiraffe-icons = { path = "../guiraffe/crates/icons" }
-# Add what you use: guiraffe-inputs, -datagrid, -router, -state, -layout, -overlays, ...
+guiraffe-core = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-components = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-ui = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-icons = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-inputs = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-datagrid = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-router = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-state = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+guiraffe-devtools = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e", optional = true, features = ["devtools", "gpui-fast"] }
+
+[features]
+# Developer tools in example 6: `cargo run --features devtools`.
+devtools = ["dep:guiraffe-devtools"]
 
 # Interactive graphics need optimised dependencies even in dev builds.
 [profile.dev.package."*"]
 opt-level = 2
 
-# The same patches as the GUIraffe workspace. Apps outside the workspace must repeat them.
+# GUIraffe's patched GPUI. Cargo doesn't pass patches on from dependencies, so every app needs this.
 [patch.crates-io]
-gpui-fast = { path = "../guiraffe/vendor/gpui-fast" }
-gpui-fast-linux = { path = "../guiraffe/vendor/gpui-fast-linux" }
-gpui-pre = { path = "../guiraffe/vendor/gpui-pre" }
-gpui-base = { path = "../guiraffe/vendor/gpui-base" }
-gpui-component = { path = "../guiraffe/vendor/gpui-component" }
-mermaid-rs-renderer = { path = "../guiraffe/vendor/mermaid-rs-renderer" }
-taffy = { path = "../guiraffe/vendor/taffy" }
+gpui-fast = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-fast-linux = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-pre = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-base = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+gpui-component = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+mermaid-rs-renderer = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
+taffy = { git = "https://github.com/hivemind-ai-core/guiraffe", rev = "716d957e4cdd3c950099800dcee5d4210508117e" }
 ```
 
-Copy the checkout's `Cargo.lock` into your app before the first build, as `guiraffe new`
-does. A fresh resolve can pick newer upstream patch releases that don't work with
-`gpui-kit 0.9.1`. [bench/electron/guiraffe-app/Cargo.toml](../bench/electron/guiraffe-app/Cargo.toml)
-is a complete, working standalone manifest.
+Keep both the patch table and the downloaded `Cargo.lock`. The app doesn't compile without the
+patches, and without the lockfile Cargo picks newer dependencies than GUIraffe was tested with.
+The patches carry fixes and performance work ([vendor/README.md](../vendor/README.md)).
 
 Cargo warns that a patch "was not used in the crate graph" when your app doesn't depend on
 that crate (for example `mermaid-rs-renderer` without `guiraffe-markdown`). The warning is
-harmless, and keeping the full block means adding crates later needs no manifest changes.
+harmless.
 
-Then copy any example below into `src/main.rs` and run `cargo run`. Examples 1, 2 and 5 need
-only the crates above. Add `guiraffe-inputs` for example 3, `guiraffe-datagrid` for
-example 4, and `guiraffe-router` and `guiraffe-state` for example 6.
+Copy any example below into `src/main.rs`, or download it, then run it:
+
+```sh
+curl -fsSL -o src/main.rs https://raw.githubusercontent.com/hivemind-ai-core/guiraffe/716d957e4cdd3c950099800dcee5d4210508117e/examples/getting-started/examples/01_hello.rs
+cargo run
+```
+
+`cargo test` runs the unit tests that examples 3 and 6 contain.
+
+To add another GUIraffe crate, copy one of the `guiraffe-*` lines and change the name. To update
+GUIraffe, change the revision on every line and download that revision's `Cargo.lock`.
+
+### With `guiraffe new`
+
+The CLI writes a larger starting app: a shell with a sidebar, typed routes, a store with undo,
+and the window manager.
+
+```sh
+guiraffe new my-shell-app
+cd my-shell-app && cargo run
+```
+
+It writes absolute paths to the GUIraffe source the CLI was built from. For an installed CLI
+that is Cargo's cache, so the app builds only on this machine. Before sharing it, replace those
+paths with the git dependencies above. If you work on GUIraffe itself, pass
+`--path /path/to/checkout`.
+
+`guiraffe add <crate>…` adds crates to such an app, also by path. Don't use it in an app with git
+dependencies, because mixing the two builds two copies of GUIraffe. `guiraffe dev` watches either
+kind of app, rebuilds and relaunches it.
 
 ## 1. Hello, window
 
@@ -1086,12 +1096,14 @@ GUIraffe runs on two GPUI implementations, chosen with a cargo feature and no co
   ancestors and their uncached children. GPUI Fast doesn't. Apps and the `guiraffe new`
   template use GPUI Fast.
 
-In this repository, crates expose a `gpui-fast` feature that forwards to
-`gpui-kit/gpui-fast`:
+The examples expose a `gpui-fast` feature that forwards to `gpui-kit/gpui-fast`. Leave it
+out to install one on upstream GPUI:
 
 ```sh
-cargo run -p getting-started-examples --example 04_datagrid                       # upstream GPUI
-cargo run -p getting-started-examples --example 04_datagrid --features gpui-fast  # GPUI Fast
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --debug --force getting-started-examples --example 04_datagrid
+04_datagrid
 ```
 
 Library code should stay backend-neutral and be tested on both. To give your own app the
@@ -1112,16 +1124,21 @@ quickest way to see what a component can do and how its demo is written
 (`crates/showcase/src/demos/`). Pass an entry name to open it directly:
 
 ```sh
-cargo run -p guiraffe-showcase --features gpui-fast
-cargo run -p guiraffe-showcase --features gpui-fast -- "Data grid"
+cargo install --locked --git https://github.com/hivemind-ai-core/guiraffe \
+  --rev 716d957e4cdd3c950099800dcee5d4210508117e \
+  --features gpui-fast guiraffe-showcase
+guiraffe-showcase
+guiraffe-showcase "Data grid"
 ```
 
 **Devtools** (`guiraffe-devtools`) add render counters, an inspector that shows each
 tracked view's bounds and inherited style context, a frame-time profiler, and a store event
 log with time travel. Example 6 wires them up behind a feature:
 
+In the app from this guide, with example 6 as `src/main.rs`:
+
 ```sh
-cargo run -p getting-started-examples --example 06_router_store --features gpui-fast,devtools
+cargo run --features devtools
 ```
 
 Press Ctrl-Shift-I to open the panel. The setup is in the example's `devtools` function.
@@ -1151,16 +1168,14 @@ More tips:
   (example 6). `guiraffe-test` adds headless snapshot rendering in both themes. See
   `pages_in_both_themes` in [examples/team-tasks/src/main.rs](../examples/team-tasks/src/main.rs).
 - **A build or link error after updating?** Check the pins with `guiraffe doctor`, and make
-  sure your app has the `[patch.crates-io]` block and the checkout's `Cargo.lock`.
+  sure your app has the `[patch.crates-io]` block and the `Cargo.lock` of the same revision.
 - [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) lists known problems and workarounds.
 
 ## Where to go next
 
 - [Reference](reference.md): every crate, example and command.
-- [Writing views with `ui!`](guides/ui-macro.md), and the team tasks app
-  (`cargo run -p team-tasks --features gpui-fast`).
+- [Writing views with `ui!`](guides/ui-macro.md), and the team tasks app.
 - [DataUi documents](guides/dataui.md) for screens written as JSON.
 - [GUIraffe for React and Electron developers](guides/from-react-electron.md).
-- The showcase, every component: `cargo run --release -p guiraffe-showcase --features gpui-fast`.
-- The gallery, components working together as an app:
-  `cargo run --release -p guiraffe-gallery --features gpui-fast`.
+- The showcase (every component) and the gallery (components working together as an app):
+  [install commands](../README.md#how-to-use-it).

@@ -21,6 +21,18 @@ It needs about 100 GB of disk for both backends and takes 10 to 25 minutes on a 
 | Catalogue drift | That builder options are available to DataUi or documented as Rust-only |
 | Fuzz targets | Clipboard and line-index models (see [fuzz](../fuzz/README.md)) |
 
+## Screenshots and CI
+
+Text is compared pixel for pixel, so goldens depend on fonts. CI runs the screenshot tests in an
+Arch Linux image with a dated package snapshot and on a pinned Rust, both set in
+[ci.yml](../.github/workflows/ci.yml). On other fonts the screenshot tests fail.
+
+CI draws with lavapipe, which rounds a few anti-aliased pixels differently from a GPU. Where that
+exceeds the tolerance, `<name>.lavapipe.png` is compared instead, with the same tolerance. After an
+intended change to such an image, regenerate it in that image with
+`GUIRAFFE_SNAPSHOT_RENDERER=lavapipe GUIRAFFE_UPDATE_SNAPSHOTS=1`, which writes only those files.
+A failed CI test run lists the failing tests and differences as annotations on the run.
+
 ## Leaks
 
 ```sh

@@ -44,4 +44,5 @@ unified into every crate. On upstream, notifying a child also re-renders its anc
 
 GUIraffe patches GPUI, GPUI Kit, Taffy and the Mermaid renderer. [vendor/README.md](../vendor/README.md)
 lists every change. Apps outside the workspace must repeat the `[patch.crates-io]` table, which
-`guiraffe new` does for you.
+`guiraffe new` does for you and [getting started](getting-started.md#create-your-own-app) shows for git
+dependencies.
