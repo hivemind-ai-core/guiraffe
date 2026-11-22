@@ -17,6 +17,10 @@ timing, merges). Workers never merge, push or create branches other than their o
 - peak RSS at scale, measured as the increase over an empty window in the same harness,
   ≤ 1.25 × raw data + 64 MiB (baseline: user decision 2026-11-22); every cache bounded and
   documented in PRODUCTION.md; soak drift ≤ 2 % over 30 min (drift is of total RSS, not the delta)
+- one accepted exception to "every cache bounded" (user decision 2026-11-22): GPUI per-frame
+  element-state, access-log and tab-stop buffers keep their high-water capacity (6-10 MB after a
+  10k-element frame, 64-99 MiB after 100k live elements). Document it in PRODUCTION.md and
+  KNOWN_ISSUES.md as an exception, never as bounded; fixed in 0.3 §E. It covers nothing else
 - warm repaint of an unchanged view allocates nothing; per-frame work is O(viewport + log n), which
   is what "10M items equals 10k" means (user decision 2026-11-22). Only index lookups may grow, and
   only logarithmically: elements built, draw calls and allocations must not grow with n

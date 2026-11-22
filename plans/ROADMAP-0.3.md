@@ -82,16 +82,19 @@ layer. 0.3 has to remove them at the element layer too, or spec/30/31 inherit th
    changed (props equality + store-slice versioning), so app authors don't need `.cached()`.
 5. Follow Zed's retained-view-tree work (zed#63800, `retained_extraction_plan.md`); align rather
    than fork if it lands.
+6. **Trim per-frame high-water buffers** (accepted 0.2 exception, user 2026-11-22): element-state
+   maps, access logs and tab-stop buffers keep their peak capacity. Use a one-shot idle trim with
+   hysteresis; unchanged repaints stay at zero allocations and deallocations.
 
 Done when: the bench in 1 meets "per-change work independent of row count" on gpui-fast, a label
 edit at 3,000 live rows is ≤0.5 ms CPU, and nothing in the 0.2 baseline regresses >10 %.
 
-## Carry-over (only if 0.2 doesn't ship them)
+## Carry-over from 0.2 (user decision 2026-11-22)
 
-Sheet (spec/22); stable inspect/drive node ids (superseded by spec/30 ids, so do them together);
-agent authoring rest (spec/21: fixtures, typed handlers, custom widget registration, Mocket
-coverage overlay, recipes); `feat-mermaid-2` salvage; calendar agenda view; UI/UX backlog;
-startup study (roadmap 0.2 §F, after 0.2 is on main).
+Stable inspect/drive node ids (superseded by spec/30 ids, so do them together); agent authoring
+rest (spec/21: fixtures, typed handlers, custom widget registration, Mocket coverage overlay,
+recipes); `feat-mermaid-2` salvage; calendar agenda view; UI/UX backlog; DnD source-card ghost.
+The startup study (roadmap 0.2 §F) still runs after 0.2 is on main.
 
 ## Later
 
