@@ -13,7 +13,7 @@ const RETAINED_ROWS: usize = 64;
 #[derive(Default)]
 struct RowCache {
     recent: BTreeMap<usize, WeakEntity<MessageView>>,
-    pinned: BTreeMap<usize, WeakEntity<MessageView>>,
+    pinned: BTreeMap<usize, Vec<Subscription>>,
 }
 
 impl RowCache {
@@ -31,18 +31,6 @@ impl RowCache {
         this.recent.insert(index, row.downgrade());
         this.pinned.remove(&index);
 
-        // Reconsider pins when entering a new row. Selection endpoints are
-        // owned by the window and must keep their original entity IDs.
-        this.pinned.retain(|&key, candidate| {
-            let Some(candidate) = candidate.upgrade() else {
-                return false;
-            };
-            if candidate.read(cx).retain_offscreen(cx) {
-                return true;
-            }
-            defer_evict(cache, history, key, candidate, cx);
-            false
-        });
         while this.recent.len() > RETAINED_ROWS {
             let extremes = [this.recent.first_key_value(), this.recent.last_key_value()];
             let Some((&victim, _)) = extremes
@@ -56,11 +44,7 @@ impl RowCache {
             if let Some(candidate) = this.recent.remove(&victim)
                 && let Some(row) = candidate.upgrade()
             {
-                if row.read(cx).retain_offscreen(cx) {
-                    this.pinned.insert(victim, candidate);
-                } else {
-                    defer_evict(cache, history, victim, row, cx);
-                }
+                defer_evict(cache, history, victim, row, cx);
             }
         }
     }
@@ -80,9 +64,43 @@ fn defer_evict(
         if cache.recent.contains_key(&index) {
             return;
         }
+        let Some(history) = history.upgrade() else {
+            return;
+        };
+        if history.read(cx).rows.get(index).and_then(Row::mounted) != Some(&row) {
+            return;
+        }
         if row.read(cx).retain_offscreen(cx) {
-            cache.pinned.insert(index, row.downgrade());
-        } else if let Some(history) = history.upgrade() {
+            cache.pinned.entry(index).or_insert_with(|| {
+                let history = history.downgrade();
+                let weak_row = row.downgrade();
+                let release = move |cx: &mut App| {
+                    if let Some(history) = history.upgrade()
+                        && let Some(row) = weak_row.upgrade()
+                        && !row.read(cx).retain_offscreen(cx)
+                    {
+                        history.update(cx, |history, cx| {
+                            let mut cache = history.row_cache.borrow_mut();
+                            if cache.pinned.remove(&index).is_none() {
+                                return;
+                            }
+                            drop(cache);
+                            history.evict(index, &row, cx);
+                        });
+                    }
+                };
+                let markdown = row.read(cx).selection_views(cx);
+                let mut subscriptions = vec![cx.observe(&row, {
+                    let release = release.clone();
+                    move |_, cx| release(cx)
+                })];
+                for view in markdown.into_iter().flatten() {
+                    let release = release.clone();
+                    subscriptions.push(cx.observe(&view, move |_, cx| release(cx)));
+                }
+                subscriptions
+            });
+        } else {
             history.update(cx, |history, cx| history.evict(index, &row, cx));
         }
     });
@@ -164,6 +182,13 @@ impl History {
             cx.notify();
         }
         index
+    }
+
+    pub(crate) fn split_off(&mut self, index: usize) -> Vec<Row> {
+        let mut cache = self.row_cache.borrow_mut();
+        cache.recent.split_off(&index);
+        cache.pinned.split_off(&index);
+        self.rows.split_off(index)
     }
 
     pub(crate) fn disable_editing(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -295,5 +320,74 @@ impl Render for History {
                         ),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RETAINED_ROWS, RowCache};
+    use crate::{Message, MessageId, Role};
+    use gpui_kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    fn ended_pins_evict_without_entering_another_row(cx: &mut TestAppContext) {
+        let (_, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        let rows = cx.update(|cx| {
+            let mut rows = Vec::new();
+            for index in 0..(RETAINED_ROWS * 8) {
+                let row = history.update(cx, |history, cx| {
+                    let index = history.push(
+                        Message::new(MessageId(index as u64), Role::Assistant, "message"),
+                        false,
+                        cx,
+                    );
+                    history.materialize(index, cx).expect("new history row")
+                });
+                row.update(cx, |row, cx| {
+                    if index == 0 {
+                        let text = cx.new(|cx| {
+                            gpui_kit::component::text::TextViewState::markdown("message", cx)
+                        });
+                        text.update(cx, |text, cx| text.select_all(cx));
+                        row.markdown = Some(text);
+                    } else {
+                        row.streaming = true;
+                    }
+                });
+                let cache = history.read(cx).row_cache.clone();
+                RowCache::use_row(&cache, &history, index, &row, cx);
+                rows.push(row);
+            }
+            rows
+        });
+        cx.update(|cx| {
+            assert_eq!(
+                history.read(cx).row_cache.borrow().pinned.len(),
+                rows.len() - RETAINED_ROWS
+            );
+            for row in rows {
+                if let Some(text) = row.read(cx).markdown.clone() {
+                    text.update(cx, |text, cx| text.clear_selection(cx));
+                } else {
+                    row.update(cx, |row, cx| {
+                        row.streaming = false;
+                        cx.notify();
+                    });
+                }
+            }
+        });
+        cx.update(|cx| {
+            let history = history.read(cx);
+            assert!(history.row_cache.borrow().pinned.is_empty());
+            assert_eq!(
+                history
+                    .rows
+                    .iter()
+                    .filter(|row| row.mounted().is_some())
+                    .count(),
+                RETAINED_ROWS
+            );
+        });
     }
 }

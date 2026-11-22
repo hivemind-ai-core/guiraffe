@@ -150,6 +150,22 @@ impl ToastQueue {
 mod tests {
     use super::*;
     #[test]
+    fn backlog_tracks_pending_requests_through_churn() {
+        let mut queue = ToastQueue::new(1);
+        queue.push(Toast::new(ToastId(0), "visible"));
+        for id in 1..=1024 {
+            queue.push(Toast::new(ToastId(id), "pending"));
+            queue.push(Toast::new(ToastId(id), "replacement"));
+        }
+        assert_eq!(queue.queued().len(), 1024);
+        for id in 1..=1024 {
+            queue.remove(ToastId(id));
+        }
+        assert!(queue.queued().is_empty());
+        assert_eq!(queue.visible().len(), 1);
+    }
+
+    #[test]
     fn fifo_and_fresh_clock() {
         let mut q = ToastQueue::new(1);
         q.push(Toast::new(ToastId(1), "a"));

@@ -6,7 +6,9 @@ use std::{
     sync::Arc,
 };
 
-use gpui_kit::{App, ElementId, Entity, IntoElement, RenderOnce, Subscription, Window};
+use gpui_kit::{
+    App, AppContext as _, Context, ElementId, Entity, IntoElement, RenderOnce, Subscription, Window,
+};
 use guiraffe_core::{
     widget_catalog::{EventHandler, WidgetNode, WidgetRegistration, WidgetRegistry},
     widget_value::Value as Data,
@@ -59,6 +61,7 @@ struct DocumentRows {
 struct DocumentRow {
     label: String,
     children: Vec<NodeId>,
+    parent: Option<NodeId>,
     unloaded: bool,
     icon: Option<String>,
     badge: Option<String>,
@@ -94,6 +97,7 @@ impl DocumentRows {
             let row = DocumentRow {
                 label: label.to_owned(),
                 children: Vec::new(),
+                parent: parents.last().copied(),
                 unloaded: field(value, "unloaded").as_bool().unwrap_or_default(),
                 icon: field(value, "icon").as_str().map(str::to_owned),
                 badge: field(value, "badge").as_str().map(str::to_owned),
@@ -309,6 +313,7 @@ impl<const P: bool> DocumentTree<P> {
 struct TreeDocumentState<const P: bool> {
     rows: Data,
     source: Rc<DocumentRows>,
+    absent_parents: BTreeMap<NodeId, NodeId>,
     node: Entity<TreeView<P>>,
     inspector: InspectorOptions,
     handlers: [Option<EventHandler>; 6],
@@ -357,14 +362,190 @@ fn property_value(value: &Value) -> Data {
     }
 }
 
+fn replace_rows<const P: bool>(
+    tree: &mut TreeView<P>,
+    previous: &DocumentRows,
+    source: Rc<DocumentRows>,
+    absent_parents: &mut BTreeMap<NodeId, NodeId>,
+    cx: &mut Context<TreeView<P>>,
+) {
+    let mut next = BTreeMap::new();
+    let mut path = Vec::new();
+    for id in previous.nodes.keys().chain(absent_parents.keys()).copied() {
+        if source.nodes.contains_key(&id) {
+            continue;
+        }
+        if tree.model.expanded(id) || tree.model.selected(id) {
+            path.clear();
+            let mut child = id;
+            let keep = loop {
+                if let Some(row) = source.nodes.get(&child) {
+                    break row.unloaded;
+                }
+                if next.contains_key(&child) {
+                    break true;
+                }
+                let parent = previous
+                    .nodes
+                    .get(&child)
+                    .and_then(|row| row.parent)
+                    .or_else(|| absent_parents.get(&child).copied());
+                let Some(parent) = parent else {
+                    break false;
+                };
+                path.push((child, parent));
+                child = parent;
+            };
+            if keep {
+                next.extend(path.iter().copied());
+                continue;
+            }
+        }
+        tree.forget_removed([id]);
+    }
+    *absent_parents = next;
+    tree.replace_source(source, cx);
+}
+
+#[cfg(test)]
+#[gpui_kit::test]
+fn document_tree_and_property_grid_release_replaced_rows(cx: &mut gpui_kit::TestAppContext) {
+    fn churn<const P: bool>(cx: &mut App) {
+        let mut previous = Rc::new(DocumentRows::default());
+        let tree = cx.new(|cx| TreeView::<P>::new(previous.clone(), cx));
+        let mut absent_parents = BTreeMap::new();
+        for id in 1..=1024 {
+            let source = Rc::new(DocumentRows {
+                roots: vec![id],
+                nodes: BTreeMap::from([(
+                    id,
+                    DocumentRow {
+                        label: "row".into(),
+                        children: vec![],
+                        parent: None,
+                        unloaded: true,
+                        icon: None,
+                        badge: None,
+                        checked: None,
+                        height: None,
+                        property: None,
+                    },
+                )]),
+            });
+            tree.update(cx, |tree, cx| {
+                replace_rows(tree, &previous, source.clone(), &mut absent_parents, cx);
+                tree.model.set_expanded(id, true, source.as_ref());
+                tree.model.select(id, true);
+            });
+            previous = source;
+        }
+        let model = &tree.read(cx).model;
+        for id in 1..1024 {
+            assert!(!model.selected(id));
+            assert!(!model.expanded(id));
+        }
+        assert!(model.selected(1024));
+        assert!(model.expanded(1024));
+    }
+    cx.update(|cx| {
+        churn::<false>(cx);
+        churn::<true>(cx);
+    });
+}
+
+#[cfg(test)]
+#[gpui_kit::test]
+fn document_rows_keep_only_state_vouched_for_by_unloaded_ancestors(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    fn snapshot(rows: &[(NodeId, Option<NodeId>, bool)]) -> Rc<DocumentRows> {
+        let mut source = DocumentRows::default();
+        for &(id, parent, unloaded) in rows {
+            source.nodes.insert(
+                id,
+                DocumentRow {
+                    label: "row".into(),
+                    children: vec![],
+                    parent,
+                    unloaded,
+                    icon: None,
+                    badge: None,
+                    checked: None,
+                    height: None,
+                    property: None,
+                },
+            );
+            if let Some(parent) = parent {
+                source
+                    .nodes
+                    .get_mut(&parent)
+                    .expect("parent precedes child")
+                    .children
+                    .push(id);
+            } else {
+                source.roots.push(id);
+            }
+        }
+        Rc::new(source)
+    }
+
+    cx.update(|cx| {
+        let mut previous = snapshot(&[]);
+        let mut links = BTreeMap::new();
+        let tree = cx.new(|cx| TreeView::<false>::new(previous.clone(), cx));
+        for leaf in 3..1027 {
+            let complete = [
+                (1, None, false),
+                (2, Some(1), false),
+                (leaf, Some(2), false),
+            ];
+            let root_unloaded = [(1, None, true)];
+            let child_unloaded = [(1, None, false), (2, Some(1), true)];
+            let leaf_removed = [(1, None, false), (2, Some(1), false)];
+            for (step, (rows, expected_links, keep)) in [
+                (&complete[..], 0, true),
+                (&root_unloaded[..], 2, true),
+                (&child_unloaded[..], 1, true),
+                (&complete[..], 0, true),
+                (&child_unloaded[..], 1, true),
+                (
+                    if leaf % 2 == 0 {
+                        &leaf_removed[..]
+                    } else {
+                        &[]
+                    },
+                    0,
+                    false,
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let source = snapshot(rows);
+                tree.update(cx, |tree, cx| {
+                    replace_rows(tree, &previous, source.clone(), &mut links, cx);
+                    if step == 0 {
+                        tree.model.select(leaf, true);
+                        tree.model.set_expanded(leaf, true, source.as_ref());
+                    }
+                    assert_eq!(tree.model.selected(leaf), keep);
+                    assert_eq!(tree.model.expanded(leaf), keep);
+                    assert_eq!(links.len(), expected_links);
+                });
+                previous = source;
+            }
+        }
+        let model = &tree.read(cx).model;
+        assert!((3..1027).all(|id| !model.selected(id) && !model.expanded(id)));
+    });
+}
+
 fn make_tree<const P: bool>(
     source: Rc<DocumentRows>,
     options: &InspectorOptions,
     window: &mut Window,
     cx: &mut gpui_kit::Context<TreeDocumentState<P>>,
 ) -> (Entity<TreeView<P>>, Subscription) {
-    use gpui_kit::AppContext as _;
-
     let node = cx.new(|cx| {
         let mut tree = TreeView::new(source.clone(), cx).row_heights(
             source
@@ -404,6 +585,7 @@ impl<const P: bool> RenderOnce for DocumentTree<P> {
             TreeDocumentState {
                 rows: self.rows.clone(),
                 source,
+                absent_parents: BTreeMap::new(),
                 node,
                 inspector: self.inspector.clone(),
                 handlers: std::array::from_fn(|_| None),
@@ -412,19 +594,27 @@ impl<const P: bool> RenderOnce for DocumentTree<P> {
         });
         state.update(cx, |state, cx| {
             let rows_changed = state.rows != self.rows;
-            if rows_changed {
+            let previous = rows_changed.then(|| {
                 state.rows = self.rows;
-                state.source = Rc::new(DocumentRows::parse(&state.rows));
-            }
+                let source = Rc::new(DocumentRows::parse(&state.rows));
+                std::mem::replace(&mut state.source, source)
+            });
             if state.inspector != self.inspector {
                 state.inspector = self.inspector;
+                state.absent_parents.clear();
                 (state.node, state.subscription) =
                     make_tree(state.source.clone(), &state.inspector, window, cx);
             }
             state.handlers = self.handlers;
             state.node.update(cx, |tree, cx| {
-                if rows_changed {
-                    tree.replace_source(state.source.clone(), cx);
+                if let Some(previous) = previous {
+                    replace_rows(
+                        tree,
+                        &previous,
+                        state.source.clone(),
+                        &mut state.absent_parents,
+                        cx,
+                    );
                     tree.set_row_heights(
                         state
                             .source
@@ -459,4 +649,45 @@ impl<const P: bool> RenderOnce for DocumentTree<P> {
             state.node.clone()
         })
     }
+}
+
+#[cfg(test)]
+#[gpui_kit::test]
+fn replacing_rows_moves_the_cursor_and_keeps_running_motion(cx: &mut gpui_kit::TestAppContext) {
+    let rows = |id: NodeId| {
+        let mut source = DocumentRows::default();
+        source.roots.push(id);
+        source.nodes.insert(
+            id,
+            DocumentRow {
+                label: "row".into(),
+                children: vec![],
+                parent: None,
+                unloaded: false,
+                icon: None,
+                badge: None,
+                checked: None,
+                height: None,
+                property: None,
+            },
+        );
+        Rc::new(source)
+    };
+    cx.update(|cx| {
+        let first = rows(1);
+        let tree = cx.new(|cx| TreeView::<false>::new(first.clone(), cx));
+        tree.update(cx, |tree, cx| {
+            tree.model.select(1, false);
+            let prefs = guiraffe_motion::MotionPrefs::default();
+            let now = std::time::Instant::now();
+            tree.collapse_motion.enabled = Some(true);
+            tree.collapse_motion.toggled(1, 50., now, &prefs);
+            replace_rows(tree, &first, rows(2), &mut BTreeMap::new(), cx);
+            assert_eq!(tree.model.cursor(), Some(2), "cursor left the tree");
+            assert!(
+                tree.collapse_motion.sample(now, &prefs).is_some(),
+                "replacing rows cancelled a running collapse"
+            );
+        });
+    });
 }

@@ -8,7 +8,13 @@ Reasoning Markdown parses on demand when open.
 
 Streaming rows, rows with an open menu, and rows participating in a
 selection retain their entities until the interaction ends. The selection
-exception can grow during a drag across history. Kit independently keeps
+exception can grow with the rows participating in a drag across history.
+Each offscreen pin observes its row and existing selectable text views.
+Ending a stream, closing its menu, or clearing the selection releases the
+pin when the row has no remaining active interaction. Re-entering the row
+transfers it to the ordinary cache, and history truncation drops the pins
+for removed rows. `ended_pins_evict_without_entering_another_row` checks
+release after an eight-cache traversal. Kit independently keeps
 up to 4,096 shaped layouts per UI thread, eight fence parsers per thread
 with at most 64 KiB of cached source per parser, and 128 compiled Tree-sitter
 query entries process-wide.
