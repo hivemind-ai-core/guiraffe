@@ -3418,6 +3418,7 @@ dependencies = [
  "guiraffe-mermaid",
  "guiraffe-motion",
  "guiraffe-overlays",
+ "guiraffe-sheet",
  "guiraffe-timeline",
  "guiraffe-tree",
  "guiraffe-ui",
@@ -3729,6 +3730,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-sheet"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-datagrid",
+ "im",
+ "lru",
+ "proptest",
+]
+
+[[package]]
 name = "guiraffe-showcase"
 version = "0.1.0"
 dependencies = [
@@ -3751,6 +3764,7 @@ dependencies = [
  "guiraffe-markdown",
  "guiraffe-mermaid",
  "guiraffe-overlays",
+ "guiraffe-sheet",
  "guiraffe-test",
  "guiraffe-timeline",
  "guiraffe-tray",

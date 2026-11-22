@@ -38,6 +38,7 @@ guiraffe-charts = { path = "crates/charts" }
 guiraffe-flamegraph = { path = "crates/flamegraph" }
 guiraffe-tree = { path = "crates/tree" }
 guiraffe-datagrid = { path = "crates/datagrid" }
+guiraffe-sheet = { path = "crates/sheet" }
 guiraffe-devtools = { path = "crates/devtools" }
 guiraffe-dnd = { path = "crates/dnd" }
 gpui-kit = { version = "=0.9.1", features = ["component", "assets"] }
