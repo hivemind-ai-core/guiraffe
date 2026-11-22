@@ -128,6 +128,17 @@ impl<T: Send + Sync + 'static> ChartSource for Stream<T> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rolling_window_bounds_chunks_under_append_churn() {
+        let mut stream = super::Stream::default();
+        for value in 0..4096 {
+            stream.append(vec![value]);
+            stream.retain_last(16);
+        }
+        assert_eq!(stream.chunks.len(), 16);
+        assert_eq!(stream.start, 4080);
+    }
+
     use super::*;
 
     proptest::proptest! {

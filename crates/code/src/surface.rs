@@ -2179,18 +2179,18 @@ mod review_tests {
         let (view, vcx) = cx.add_window_view(|_, cx| {
             let code = CodeHandle::new(1, Arc::new(CodeDocument::new("x\n".repeat(10_000))), cx);
             code.set_annotations(
-                Arc::from([
-                    Annotation {
+                (0..128)
+                    .map(|index| Annotation {
+                        id: 42 + index as u64,
                         kind: AnnotationKind::Bubble,
+                        range: SourceRange::new(
+                            Position::new(index * 64, 0),
+                            Position::new(index * 64, 1),
+                        ),
                         ..annotation()
-                    },
-                    Annotation {
-                        id: 43,
-                        kind: AnnotationKind::Bubble,
-                        range: SourceRange::new(Position::new(5_000, 0), Position::new(5_000, 1)),
-                        ..annotation()
-                    },
-                ]),
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
                 cx,
             );
             Fixture(code)
@@ -2201,21 +2201,17 @@ mod review_tests {
         vcx.update(|window, cx| window.render_frame(cx));
         assert!(code.shared.bubbles.borrow().contains_key(&42));
 
-        vcx.update(|window, cx| {
-            code.scroll_to_line(5_000, cx);
-            window.render_frame(cx);
-        });
-        vcx.run_until_parked();
-        vcx.update(|window, cx| window.render_frame(cx));
-        assert_eq!(
-            code.shared
-                .bubbles
-                .borrow()
-                .keys()
-                .copied()
-                .collect::<Vec<_>>(),
-            [43]
-        );
+        for index in 1..128 {
+            vcx.update(|window, cx| {
+                code.scroll_to_line(index * 64, cx);
+                window.render_frame(cx);
+            });
+            vcx.run_until_parked();
+            vcx.update(|window, cx| window.render_frame(cx));
+            let bubbles = code.shared.bubbles.borrow();
+            assert_eq!(bubbles.len(), 1);
+            assert!(bubbles.contains_key(&(42 + index as u64)));
+        }
     }
 
     #[gpui_kit::test]

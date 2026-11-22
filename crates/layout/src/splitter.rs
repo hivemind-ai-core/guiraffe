@@ -302,6 +302,11 @@ impl MemoryPersist {
         Self::default()
     }
 
+    /// Forget a saved setting when its key is permanently retired.
+    pub fn remove(&self, key: &str) -> Option<String> {
+        self.values.borrow_mut().remove(key)
+    }
+
     /// The keys the store holds.
     pub fn keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = self.values.borrow().keys().cloned().collect();
@@ -793,4 +798,18 @@ mod tests {
         let store = LayoutStore::new(Box::new(Own));
         assert_eq!(store.persist().load("sidebar").as_deref(), Some("own"));
     }
+}
+
+#[cfg(test)]
+#[test]
+fn retired_keys_release_saved_values_under_churn() {
+    let store = MemoryPersist::new();
+    store.save("sidebar", "200");
+    for id in 0..1024 {
+        let key = format!("temporary-{id}");
+        store.save(&key, "100");
+        assert_eq!(store.remove(&key).as_deref(), Some("100"));
+    }
+    assert_eq!(store.values.borrow().len(), 1);
+    assert_eq!(store.load("sidebar").as_deref(), Some("200"));
 }

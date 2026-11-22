@@ -18,3 +18,12 @@ Make PropertyGrid feel like a mature inspector (VS/Blender/Unity/Figma-style). O
 - Keep it within budgets (1M nodes / 100k expanded: mount ≤200 ms, p99 ≤8 ms), a11y roles/labels,
   goldens for each option in both themes/backends, showcase knobs for every option.
 - TreeList gets the shared pieces: alternating rows, row heights, indent guides, sticky headers.
+
+## DataUi tree rows and unloaded branches
+
+The TreeList and PropertyGrid `nodes` prop replaces the document rows. An
+omitted ID is deleted unless its nearest surviving ancestor is marked
+`unloaded`. The adapter preserves expansion and selection for such IDs,
+using only the parent links needed to reconnect them. When the ancestor
+reloads, omitted descendants lose their state unless a nearer ancestor is
+still unloaded. Deleting the ancestor releases the state it protected.

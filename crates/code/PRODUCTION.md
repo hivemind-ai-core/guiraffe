@@ -205,8 +205,9 @@ indexing and summarization with source allocation outside the measured region.
 The review bubble cache holds only Markdown entities with a placed card in
 the current viewport. A card occupies three line heights, so the cache
 holds at most `floor(viewport_height / (3 × line_height))` entries. Hiding
-the analysis margin clears the cache. The GPUI regression test scrolls to
-a different part of the same document and checks that the old card is gone.
+the analysis margin clears the cache. The GPUI regression test
+`bubble_cache_evicts_cards_when_they_leave_the_viewport` traverses 128
+separated annotations and checks that only the placed entity remains.
 
 ## Layered annotations
 

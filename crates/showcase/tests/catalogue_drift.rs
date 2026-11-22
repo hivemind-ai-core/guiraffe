@@ -143,6 +143,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Requires a native Modal factory. Documents open previously registered factories by context ID.",
     ),
     (
+        "overlays::OverlayHost::remove_context",
+        "Host-side inverse of registering a native context builder.",
+    ),
+    (
         "overlays::OverlayHost::stack",
         "Read-only query of the entire native overlay stack.",
     ),
@@ -657,6 +661,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "timeline::CurveView::release",
         "Finishes the native pointer gesture.",
+    ),
+    (
+        "tree::TreeView::forget_removed",
+        "The data owner reports permanent deletion. DataUi reconciles removals when it replaces document rows.",
     ),
     (
         "tree::TreeView::expand_loaded",

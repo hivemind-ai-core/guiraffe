@@ -119,6 +119,15 @@ impl MessageView {
             layout,
         }
     }
+    pub(crate) fn selection_views(&self, cx: &App) -> [Option<Entity<TextViewState>>; 2] {
+        [
+            self.markdown.clone(),
+            self.reasoning
+                .as_ref()
+                .and_then(|reasoning| reasoning.read(cx).markdown.clone()),
+        ]
+    }
+
     pub(crate) fn retain_offscreen(&self, cx: &App) -> bool {
         self.streaming
             || self

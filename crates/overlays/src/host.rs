@@ -427,6 +427,15 @@ impl OverlayHost {
         });
         Ok(())
     }
+    /// Remove a named builder. Already open overlays keep their own lifetime.
+    pub fn remove_context(
+        window: &mut Window,
+        cx: &mut App,
+        name: &str,
+    ) -> Result<bool, OverlayError> {
+        Ok(Self::entity(window, cx)?.update(cx, |host, _| host.contexts.remove(name).is_some()))
+    }
+
     pub fn open_context(
         window: &mut Window,
         cx: &mut App,
@@ -955,6 +964,25 @@ mod review_tests {
         );
         drop(subscription);
     }
+    #[gpui_kit::test]
+    fn removed_contexts_release_builders_under_churn(cx: &mut TestAppContext) {
+        cx.update(init);
+        let handle = crate::gpui_tests::open(cx);
+        cx.update_window(handle.into(), |_, window, cx| {
+            let builder: ContextBuilder = Rc::new(|dialog, _, _| dialog);
+            OverlayHost::register_context(window, cx, "keep", builder.clone()).unwrap();
+            for id in 0..1024 {
+                let name = format!("temporary-{id}");
+                OverlayHost::register_context(window, cx, &name, builder.clone()).unwrap();
+                assert!(OverlayHost::remove_context(window, cx, &name).unwrap());
+            }
+            let host = OverlayHost::entity(window, cx).unwrap();
+            assert_eq!(host.read(cx).contexts.len(), 1);
+            assert_eq!(Rc::strong_count(&builder), 2);
+        })
+        .unwrap();
+    }
+
     #[gpui_kit::test]
     fn review_12_window_close_breaks_context_root_cycle(cx: &mut TestAppContext) {
         cx.update(init);

@@ -13,27 +13,11 @@ Method: scanned every `struct` field whose type is a collection or interior-muta
 definition and at every insert / remove / `retain` / `clear` / `pop_front` site. "Bound" is the argument
 that storage cannot grow unless user data grows.
 
-Legend: **bounded** = hard cap or strictly viewport/scene-scoped; **doc-scoped** = grows with the user's
-data and leaves with it; **UNBOUNDED** = flagged for review.
+Legend: **bounded** = hard cap or strictly viewport/scene-scoped; **doc-scoped** =
+grows with caller data and leaves with it. Registrations and active interactions
+follow their owning lifetimes.
 
-## Summary of UNBOUNDED caches
-
-Every cache below has **no cap that holds it to a viewport, a scene, or a fixed size**. Ordered by risk.
-
-| crate | cache (file) | why unbounded | suggested bound |
-|---|---|---|---|
-| tree | `TreeModel.expanded` / `.selected` (`model.rs`) | `HashSet<NodeId>`; ids are only removed by a user collapse/deselect, never when the node disappears from the source, so a long session with churn grows it monotonically | prune on `refresh` against the new snapshot (the id index already knows which ids exist), or cap and drop least-recently-used ids beyond a documented limit (e.g. 100k, matching the scale target) |
-| chat | `RowCache.pinned` (`history.rs`) | rows stay mounted while any of them has an open text selection; `RowCache::use_row` only re-checks pinned rows when a *different* row is entered, so a selection spanning history keeps every intermediate row mounted | bound pins to the current selection span and release them when the selection ends; failing that, cap pins (e.g. 256 rows) and document that a wider selection degrades to cold rows |
-| code | `Shared.bubbles` (`surface.rs`) | one `Entity<MarkdownState>` per distinct bubble annotation ever scrolled into view; cleared only when annotations or the source change | evict bubbles outside the current viewport + overscan on each publish, or cap to the visible placements (the paint path already computes `BubblePlacement`s) |
-| overlays | `ToastQueue.queued` (`toast.rs`) | `visible` is capped by `limit`, `queued` accepts every push | drop the oldest queued toast beyond a fixed backlog (e.g. 64), or coalesce identical messages |
-| overlays | `OverlayHost.contexts` (`host.rs`) | `HashMap<String, ContextBuilder>` append-only per registered name | bounded by app registrations in practice; add a `remove_context` for hosts that register dynamically |
-| devtools | `Shared.stores` (`view.rs`) | `Vec<Rc<dyn InspectStore>>`, `push` only, no removal API | add `remove_store`/weak store handles, or cap to a small fixed count |
-| layout | `MemoryPersist.values` (`splitter.rs`) | one entry per persist key in an app-lifetime store; nothing evicts stale keys | bounded by app keys in practice; a documented key prefix/clear API is enough |
-| charts | `Stream.chunks` (`data.rs`) | grows with every `append` until the caller invokes `retain_last` — by design (the rolling window is caller policy) | document that a streaming chart must call `retain_last`; optionally assert a maximum chunk count in debug builds |
-
-No other cache in the workspace grows without a bound: everything else is capped (entry/byte limits,
-scene- or viewport-scoped) or is document data that leaves with the document. The per-crate sections below
-name each one and its eviction rule.
+The eight previously flagged entries are covered in the per-crate sections.
 
 ## charts
 
@@ -45,7 +29,7 @@ name each one and its eviction rule.
 | `PlotState.hidden: BTreeSet<SeriesId>` (`view.rs`) | hidden-series set | doc-scoped (series count) | user toggles | `categorical_facets_keep_secondary_domain_and_visibility` |
 | `Run.levels: Vec<Vec<usize>>` (`model.rs`) | LOD pyramid | **bounded**: halts at ≤ 16 384 samples, each level ÷8 (`scene.rs`), so ≤ len/7 extra indices | rebuilt with the run | `assert!(!model.runs[0].levels.is_empty())` (`scene.rs`) |
 | `Run.line_breaks: Vec<usize>` (`model.rs`) | break indices | doc-scoped | rebuilt | `nan_splits_a_line_into_two_paths` |
-| `Stream.chunks` (`data.rs`) | append chunks | **UNBOUNDED** unless `retain_last` is used | `retain_last` drains expired chunks (`data.rs`) | `rolling_window_preserves_snapshot_and_datum_keys`, `appends_preserve_snapshot_and_borrow_existing_rows` |
+| `Stream.chunks` (`data.rs`) | caller-owned chart samples | one chunk per nonempty append; at most `n` chunks after `retain_last(n)`, with up to one partial boundary chunk | trim fully expired chunks; old snapshots release on drop | `rolling_window_bounds_chunks_under_append_churn` |
 | `Panel.draws` / `.ticks: [Vec<Tick>; 3]` (`scene.rs`) | per-scene primitives and axis ticks | scene-scoped | discarded with the scene | `left_margin_grows_for_long_axis_title` |
 
 ## chat
@@ -53,7 +37,7 @@ name each one and its eviction rule.
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
 | `RowCache.recent` (`chat/src/history.rs`, `struct RowCache`) | mounted message rows whose Markdown state is live | **bounded**: `RETAINED_ROWS = 64` | `RowCache::use_row` evicts the row farthest from the current index; `History::evict` demotes it to `Row::Cold` | `traversing_history_evicts_distant_text_and_restores_rows` |
-| `RowCache.pinned` (`chat/src/history.rs`) | rows that must stay mounted (open selection / disclosures) | grows only with pinned rows; unpinned entries are demoted on the next `use_row` | `retain` + `defer_evict` in `RowCache::use_row` | same test; `crates/chat/PRODUCTION.md` documents the exception |
+| `RowCache.pinned` (`history.rs`) | active interaction state | offscreen rows with a live stream, menu, or selection | row and text notifications release pins; re-entry and truncation remove entries | `ended_pins_evict_without_entering_another_row` |
 | `Row::Cold` / `Row::Mounted` (`chat/src/history.rs`) | per-message storage: cold rows keep data only, mounted rows add `Entity<MessageView>` | **bounded**: cold rows are O(data) per message by design; mounted rows ≤ 64 + pins | `History::evict` on eviction | `long_variable_history_virtualizes_and_jump_restores_tail` |
 | `ChatState.messages: HashMap<MessageId, usize>` (`chat/src/lib.rs`) | message id → history index | doc-scoped, one `usize` per message | entry removed on edit-truncation | `conversations_are_isolated_and_ids_are_unique` |
 | `History.rows: Vec<Row>` (`chat/src/history.rs`) | virtualised row list | doc-scoped (message count) | retained | `long_variable_history_virtualizes_and_jump_restores_tail` |
@@ -70,7 +54,7 @@ name each one and its eviction rule.
 | `paint::ShapeCache.gutter_label` (`paint.rs`) | reused gutter text buffer | one line | `mem::take` + reuse | `crates/code/PRODUCTION.md` allocation note |
 | `Geometry.shaped` (`surface.rs`) | shaped lines for the current layout pass | viewport-scoped | cleared at layout start | same allocator gate |
 | `Shared.hints` / `Shared.annotation_ids` (`surface.rs`) | derived display lines / annotation id map | doc-scoped (`PreparedAnalysis`) | replaced on publish | `annotation_updates_preserve_source_and_plain_hover_does_not_shape` (`tests/interaction.rs`) |
-| `Shared.bubbles` (`surface.rs`) | markdown entity per bubble annotation | **bounded by the annotation set, not the viewport**: filled as bubbles scroll into view | cleared when annotations or source change | `annotation_updates_preserve_source_and_plain_hover_does_not_shape` |
+| `Shared.bubbles` (`surface.rs`) | Markdown entities for placed cards | **bounded** by viewport height divided by three line heights | retain placed cards only; clear on source or annotation change | `bubble_cache_evicts_cards_when_they_leave_the_viewport` |
 | `Shared.dependents` (`surface.rs`) | weak refs to trace overlays | attached viewers | `retain` on notify | none |
 | `Decorations.layers` / `.styles` / `.style_ids` / `.paint_order` (`decorations.rs`) | interned decoration styles and per-layer records | doc-scoped: one style per distinct style value, plus the caller's layers | `Decorations` replaced wholesale on publish | `crates/code/PRODUCTION.md`; decoration tests in `decorations.rs` |
 | `DecorationLayer.index: Arc<DecorationIndex>` (`decorations.rs`) | compact interval index (`records`, `nodes`, `by_start`, `by_end`, `diagnostics`, `changes`) | doc-scoped, capacity-checked against `u32` (`DecorationError::Capacity`); built once per layer, shared by `Arc`, queries borrow with no scratch | rebuilt when the layer's records change | `decorations.rs` index tests |
@@ -99,7 +83,7 @@ name each one and its eviction rule.
 | `History.entries` (`state.rs`) | event snapshots (Arc-shared) | **bounded**: caller-supplied `capacity` (`inspect_store(.., capacity, ..)`) | oldest dropped by `Recorder` | `state.rs` (capacity = 2) |
 | `state::StoreAdapter.cache: Option<(RowKey, Rc<Vec<EventRow>>)>` (`state.rs`) | last built row page | **bounded**: one | keyed by `(seq, len, offset, limit)` | none |
 | `Shared.views: BTreeMap<SharedString, ViewInfo>` (`view.rs`) | instrumented view registry | **bounded**: template ids | `untrack` (`view.rs`) | `closed_tools_skip_tracking_and_opening_registers_views` |
-| `Shared.stores: Vec<Rc<dyn InspectStore>>` (`view.rs`) | connected stores | **UNBOUNDED** (append-only) | none | none |
+| `Shared.stores` (`view.rs`) | store registrations | active caller registrations | `Devtools::remove_store` disconnects an adapter | `disconnected_stores_release_adapters_under_churn` |
 
 ## dnd
 
@@ -150,7 +134,7 @@ name each one and its eviction rule.
 
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
-| `splitter::MemoryPersist.values: HashMap<String, String>` (`splitter.rs`) | persisted splitter sizes | **UNBOUNDED** (one entry per persist key, app-lifetime store) | none | `store.save/load` doc test (`splitter.rs`) |
+| `splitter::MemoryPersist.values` (`splitter.rs`) | caller-owned splitter settings | one value per saved key | overwritten by save, forgotten by `remove`, or released with store | `retired_keys_release_saved_values_under_churn` |
 | `splitter::SplitterState.reported: RefCell<Vec<Pixels>>` (`splitter.rs`) | last reported pane sizes | pane count | overwritten | reported-dedup assertions (`splitter.rs`) |
 
 ## markdown
@@ -177,10 +161,10 @@ name each one and its eviction rule.
 | type / field | caches | bound | eviction | test |
 |---|---|---|---|---|
 | `host::OverlayHost.dialogs/dialog_order/confirms/focus_chain` (`host.rs`) | open managed dialogs | **bounded**: number of open overlays | removed on close/dismiss (`host.rs`) | dialog tests |
-| `host::OverlayHost.contexts: HashMap<String, ContextBuilder>` (`host.rs`) | registered overlay builders | **UNBOUNDED** (per name) | replaced on re-register; cleared on window close (`host.rs`) | none |
+| `host::OverlayHost.contexts` (`host.rs`) | named builder registrations | one per registered window/name pair | replaced by registration, released by `remove_context` or window close | `removed_contexts_release_builders_under_churn` |
 | `host::OverlayHost.cards: HashMap<ToastId, ToastCard>` + `owned_notes` (`host.rs`) | toast cards | **bounded**: `retain` against the live notes each sync (`host.rs`) | `retain` | toast tests |
 | `toast::ToastQueue.visible` (`toast.rs`) | visible toasts | **bounded**: `limit` (default 5) | `promote`/`advance` | `fifo_and_fresh_clock`, `set_limit` tests |
-| `toast::ToastQueue.queued` (`toast.rs`) | backlog | **UNBOUNDED** | only by visible/remove | `update_visible_and_queued` (does not test the bound) |
+| `toast::ToastQueue.queued` (`toast.rs`) | caller-requested backlog | one entry per pending unique toast ID outside the visible limit | FIFO promotion, explicit removal or clear | `backlog_tracks_pending_requests_through_churn` |
 | `search::SearchIndex` (`search.rs`) | normalised command text + reusable DP buffers + last result | **bounded**: entry count, `scores` pre-sized, one cached query | rebuilt via `new`; result cache replaced per query | `unicode_and_rejection`, `contiguous_preferred`, `ranking_keywords_disabled_and_limit`, `review_9_best_alignment_can_skip_an_earlier_match` |
 | `spotlight::Spotlight.matches` | last match list | `limit` (50) | replaced | none |
 | `stack::OverlayStack.entries` | open overlay stack | **bounded**: open overlays | `retain` on dismiss | dismissal tests |
@@ -225,7 +209,7 @@ name each one and its eviction rule.
 |---|---|---|---|---|
 | `TreeModel.rows: Rows` (`model.rs`), `Rows` (`rows.rs`) — `blocks` / `free` arena, `IdIndex.pages` (`rows.rs`), `wide_siblings` | implicit-treap row blocks with a per-id rank index | **bounded**: visible rows | rebuilt on `refresh`; edits splice incrementally instead of rebuilding the index | `cross_block_splices_preserve_ranks_positions_and_order` (`rows.rs`) |
 | `TreeModel.snapshot: OnceLock<Vec<Row>>` (`model.rs`) | materialised contiguous row copy | **bounded**: visible rows, only after a structural edit | `take()` on `refresh` (`model.rs`) | none |
-| `TreeModel.expanded` / `.selected: HashSet<NodeId>` (`model.rs`) | expansion and selection by id | **UNBOUNDED**: ids are not pruned when a node disappears from the source | only by user action | `keyboard_expand_scroll_and_validation`, `hidden_and_unchanged_expansion_do_not_notify` |
+| `TreeModel.expanded` / `.selected` (`model.rs`) | user state by ID | expanded or selected IDs whose removal the owner has yet to report | collapse/deselect or batch `forget_removed`; custom sources must report permanent deletion to reclaim IDs; DataUi preserves absent state only beneath an unloaded ancestor | `deleted_ids_release_state_under_churn`, `refresh_preserves_state_when_nodes_temporarily_disappear`, `document_tree_and_property_grid_release_replaced_rows`, `document_rows_keep_only_state_vouched_for_by_unloaded_ancestors` |
 | `TreeModel.pending` (`model.rs`) | ids awaiting an async child load | requested loads | `retain` on refresh (`model.rs`) | `keyboard_expand_scroll_and_validation` |
 
 ## ui / core / commands / windows / test
@@ -253,11 +237,9 @@ name each one and its eviction rule.
 
 - Every crate with a `PRODUCTION.md` (charts, chat, code, datagrid, flamegraph, flow, markdown, mermaid,
   timeline, tree) states per-item overhead claims under §3; the **bounded** rows here match those claims.
-  The flagged rows are not mentioned there yet.
 - `flow::MeshCache.entries` and `flamegraph::FlameLayout` are not item-capped because the scene/document
   *is* the bound, but both are either byte-capped (flow: 8192 meshes / 16 MiB) or structurally shared, so
   neither can drift. That is the property spec/23 §3 asks for.
-- Nothing in this inventory changed code; it is a document-only pass.
 
 ## Link to the PERF-0.2 diagnoses
 
