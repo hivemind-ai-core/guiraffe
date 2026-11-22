@@ -809,6 +809,49 @@ mod tests {
     }
 
     #[test]
+    fn style_churn_releases_payloads_without_reusing_keys() {
+        let mut decorations = store(Arc::new(CodeDocument::new("one")));
+        let first = 1;
+        let second = 2;
+        for index in 0..10_000 {
+            let style = DecorationStyle::Review {
+                markdown: format!("revision {index}").into(),
+            };
+            let id = decorations.intern_style(style.clone()).unwrap();
+            let input = DecorationInput {
+                style: id,
+                ..mark(1, 0, 1)
+            };
+            decorations
+                .update_layer(first, Default::default(), &[], [input.clone()])
+                .unwrap();
+            decorations
+                .update_layer(second, Default::default(), &[], [input])
+                .unwrap();
+            decorations.remove_layer(first);
+            assert_eq!(decorations.style(id), Some(&style));
+            decorations.remove_layer(second);
+            assert!(decorations.style(id).is_none());
+            assert_eq!(decorations.style_ids.len(), 1);
+            assert_eq!(decorations.styles.len(), 1);
+            assert!(decorations.intern_style(style).unwrap() > id);
+            let next = id + 1;
+            decorations
+                .update_layer(
+                    first,
+                    Default::default(),
+                    &[],
+                    [DecorationInput {
+                        style: next,
+                        ..mark(1, 0, 1)
+                    }],
+                )
+                .unwrap();
+            decorations.remove_layer(first);
+        }
+    }
+
+    #[test]
     fn gutter_overview_only_places_gutter_marks_at_their_source_line_and_lane() {
         let mut decorations = store(Arc::new(CodeDocument::new("first\nsecond\nthird\nlast")));
         let bookmark = decorations
