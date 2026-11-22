@@ -22,6 +22,7 @@ pub mod kit;
 pub mod layout;
 pub mod markdown;
 pub mod mermaid;
+pub mod motion;
 pub mod overlays;
 pub mod sheet;
 pub mod timeline;

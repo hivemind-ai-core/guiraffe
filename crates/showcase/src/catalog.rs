@@ -91,6 +91,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::recipes::entries());
     v.extend(crate::demos::composed_charts::entries());
     v.extend(crate::demos::flame_tree::entries());
+    v.extend(crate::demos::motion::entries());
     v
 }
 

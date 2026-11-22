@@ -3647,6 +3647,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "guiraffe-motion",
  "guiraffe-test",
  "image",
  "serde",
@@ -3763,6 +3764,7 @@ dependencies = [
  "guiraffe-layout",
  "guiraffe-markdown",
  "guiraffe-mermaid",
+ "guiraffe-motion",
  "guiraffe-overlays",
  "guiraffe-sheet",
  "guiraffe-test",
@@ -3831,6 +3833,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-layout",
+ "guiraffe-motion",
  "guiraffe-test",
  "proptest",
 ]

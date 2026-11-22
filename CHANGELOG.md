@@ -14,7 +14,9 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
   primaries in standard and high contrast, Kit (GPUI Controls) theme bridge, shared control
   behaviour (`Press`: hover/pressed/disabled, no focus on click, opt-in tab stops, AccessKit
   roles), non-layout focus ring, focus release on view swap.
-- **motion:** springs/tweens, presence, reduce-motion aware.
+- **motion:** springs/tweens, presence, reduce-motion aware; opt-in layout animation
+  (`AnimatedSize`, `AnimatedList` FLIP, `KeyedPresence`, `Reveal`; `MotionPrefs::layout`; spec/29),
+  used by `Stack::animate_layout` and TreeList/PropertyGrid group expand/collapse.
 - **state:** re-frame-style store: pure handlers, effects/coeffects, interceptors, lens undo,
   change-only selections, debounce.
 - **router:** typed routes (`routes!`), guards, history.

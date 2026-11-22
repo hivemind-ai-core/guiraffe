@@ -134,6 +134,9 @@ pub struct MotionPrefs {
     /// Slow-motion factor for tuning (devtools): 10.0 plays ten times slower.
     pub time_scale: f32,
     pub tokens: MotionTokens,
+    /// Opt-in layout animation (spec/29): containers that support it interpolate size and
+    /// position changes instead of jumping. Off by default.
+    pub layout: LayoutMotion,
 }
 
 impl Default for MotionPrefs {
@@ -142,7 +145,35 @@ impl Default for MotionPrefs {
             reduced: false,
             time_scale: 1.0,
             tokens: MotionTokens::default(),
+            layout: LayoutMotion::default(),
         }
+    }
+}
+
+/// App-wide default for layout animation (spec/29). Containers override it per instance
+/// with `.enabled(bool)` / `.timing(Timing)`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayoutMotion {
+    /// Whether layout changes animate by default. Off unless the app opts in.
+    pub enabled: bool,
+    /// How sizes and positions move. A spring, so retargeting keeps velocity.
+    pub timing: Timing,
+}
+
+impl Default for LayoutMotion {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timing: Timing::Spring(Spring::SNAPPY),
+        }
+    }
+}
+
+impl MotionPrefs {
+    /// Whether a container with override `enabled` animates layout under these preferences.
+    /// Reduced motion always wins: it makes every container a plain pass-through.
+    pub fn layout_enabled(&self, enabled: Option<bool>) -> bool {
+        !self.reduced && enabled.unwrap_or(self.layout.enabled)
     }
 }
 
