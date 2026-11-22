@@ -16,13 +16,14 @@ pub enum Source {
 
 /// Crates the GUIraffe workspace patches from `vendor/` (root `[patch.crates-io]`). Generated
 /// apps repeat the patch table with paths into the same checkout.
-const VENDORED: [&str; 6] = [
+const VENDORED: [&str; 7] = [
     "gpui-fast",
     "gpui-fast-linux",
     "gpui-pre",
     "gpui-base",
     "gpui-component",
     "mermaid-rs-renderer",
+    "taffy",
 ];
 
 /// Valid Cargo package name: ASCII letters, digits, `-`, `_`; starts with a letter.
