@@ -280,6 +280,26 @@ impl OverlayHost {
         sender: Option<ConfirmSender>,
         build: impl Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
     ) -> Result<OverlayId, OverlayError> {
+        Self::open_layer(
+            window,
+            cx,
+            policy,
+            kind,
+            sender,
+            guiraffe_motion::TransitionKind::Fade,
+            build,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn open_layer(
+        window: &mut Window,
+        cx: &mut App,
+        policy: Policy,
+        kind: OverlayKind,
+        sender: Option<ConfirmSender>,
+        transition: guiraffe_motion::TransitionKind,
+        build: impl Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
+    ) -> Result<OverlayId, OverlayError> {
         let host = Self::entity(window, cx)?;
         let id = host.update(cx, |host, cx| {
             let id = host.stack.push(kind, policy);
@@ -296,7 +316,7 @@ impl OverlayHost {
                 .overlay_closable(policy.outside)
         });
         let weak = host.downgrade();
-        let dialog = cx.new(|cx| ManagedModal::new(id, weak, builder, window, cx));
+        let dialog = cx.new(|cx| ManagedModal::new(id, weak, builder, transition, window, cx));
         let focus = dialog.read(cx).focus.clone();
         host.update(cx, |host, cx| {
             host.focus_chain.insert(id, (focus, previous));

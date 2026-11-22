@@ -2,6 +2,13 @@
 
 Rich, beautiful and FAST desktop UI for Rust, built on GPUI Kit + GPUI Controls (gpui-component), heavily inspired by Mantine.
 
+## New to GUIraffe?
+
+- [Getting started](docs/getting-started.md): prerequisites, creating an app, and six runnable
+  examples (hello window, counter, form validation, data grid, theming, router and store).
+- [GUIraffe for React and Electron developers](docs/from-react-electron.md): how React concepts
+  map to GUIraffe, the rendering model, and the measured comparison with Electron.
+
 ## Build a small desktop tool
 
 Start with the [GUIraffe quickstart](docs/ui-macro.md#start-a-small-desktop-tool) for a runnable

@@ -1,7 +1,7 @@
 use crate::{
     catalog::Entry,
     events::EventLog,
-    knobs::{Knob, playground_with},
+    knobs::{Knob, playground_with_update},
 };
 use gpui_kit::{
     AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Task,
@@ -139,7 +139,7 @@ struct Grammar {
 }
 
 fn grammar(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Weekly requests by acquisition channel",
         &[
             Knob::new("Mark", &["Area", "Bars", "Line", "Bubbles"]),
@@ -164,7 +164,7 @@ fn grammar(window: &mut Window, cx: &mut App) -> AnyView {
                 settings: Cell::new(settings),
             }
         },
-        |demo, values, _, cx| {
+        |demo, values, cx| {
             let settings = UsageOptions {
                 mark: values.index(0),
                 arrangement: values.index(1),
@@ -172,11 +172,10 @@ fn grammar(window: &mut Window, cx: &mut App) -> AnyView {
             };
             if demo.settings.replace(settings) != settings {
                 let model = usage(settings).prepare();
-                let chart = demo.chart.clone();
-                cx.defer(move |cx| {
-                    chart.update(cx, |view, cx| view.replace(model, cx));
-                });
+                demo.chart.update(cx, |view, cx| view.replace(model, cx));
             }
+        },
+        |demo, _, _, _| {
             div()
                 .flex()
                 .flex_col()

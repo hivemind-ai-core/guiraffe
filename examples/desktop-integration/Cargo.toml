@@ -1,0 +1,21 @@
+[package]
+name = "desktop-integration"
+description = "Manual test bed for system notifications, notification windows and the system tray"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-commands.workspace = true
+guiraffe-overlays = { workspace = true, features = ["desktop"] }
+guiraffe-windows.workspace = true
+guiraffe-tray = { workspace = true, features = ["native"] }
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]

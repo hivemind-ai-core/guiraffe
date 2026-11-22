@@ -1059,9 +1059,9 @@ pub(crate) struct Frame {
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    pub(crate) debug_bounds: FxHashMap<Arc<str>, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    pub(crate) debug_bounds_records: Vec<(Arc<str>, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1097,7 +1097,7 @@ pub(crate) struct PaintIndex {
 
 impl Frame {
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
+    pub(crate) fn record_debug_bounds(&mut self, selector: Arc<str>, bounds: Bounds<Pixels>) {
         self.debug_bounds.insert(selector.clone(), bounds);
         self.debug_bounds_records.push((selector, bounds));
     }
@@ -1223,7 +1223,12 @@ impl Frame {
             }
         }
 
-        self.scene.finish();
+        if !crate::fast::rounded_clip_scene::reuse_full_replay(
+            &mut self.scene,
+            &mut prev_frame.scene,
+        ) {
+            self.scene.finish();
+        }
     }
 }
 
@@ -1233,6 +1238,9 @@ enum InputModality {
     Keyboard,
     Touch,
 }
+
+#[cfg(any(test, feature = "test-support"))]
+type TestFrameObserver = Box<dyn Fn(&Window)>;
 
 /// Holds the state for a specific window.
 pub struct Window {
@@ -1276,6 +1284,8 @@ pub struct Window {
     focused_text_input: Option<FocusId>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
+    #[cfg(any(test, feature = "test-support"))]
+    test_frame_observer: Option<TestFrameObserver>,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
@@ -2405,6 +2415,8 @@ impl Window {
             last_text_input_configuration: None,
             focused_text_input: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            #[cfg(any(test, feature = "test-support"))]
+            test_frame_observer: None,
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
@@ -3131,6 +3143,12 @@ impl Window {
         &self.rendered_frame.scene
     }
 
+    /// Observe each completed draw after the scene swap, including retained frames.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn observe_test_frames(&mut self, observe: impl Fn(&Window) + 'static) {
+        self.test_frame_observer = Some(Box::new(observe));
+    }
+
     /// Returns the path count in the most recently rendered scene.
     #[cfg(any(test, feature = "test-support"))]
     pub fn painted_path_count(&self) -> usize {
@@ -3789,6 +3807,11 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(observe) = &self.test_frame_observer {
+            observe(self);
+        }
+
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
@@ -4410,10 +4433,18 @@ impl Window {
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
-            range.start.scene_index..range.end.scene_index,
-            &self.rendered_frame.scene,
-        );
+        let scene = &mut self.next_frame.scene;
+        let previous = &self.rendered_frame.scene;
+        let operations = range.start.scene_index..range.end.scene_index;
+        let full_replay = previous.fast_rounded_clip.compiled
+            && operations.start == 0
+            && operations.end == previous.len()
+            && scene.len() == 0
+            && scene.layers.frames.is_empty();
+        scene.replay(operations, previous);
+        if full_replay {
+            scene.fast_rounded_clip.replayed_full_frame = true;
+        }
     }
 
     /// Push a text style onto the stack, and call a function with that style active.

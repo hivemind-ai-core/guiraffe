@@ -819,3 +819,46 @@ fn open_spotlight_follows_registry_changes(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(count.get(), 1, "a command added after opening is listed");
 }
+#[gpui_kit::test]
+fn spotlight_actions_carry_group_and_shortcut_chips_and_recents_persist(cx: &mut TestAppContext) {
+    let (handle, commands) = open(cx, "Editor");
+    let count = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        commands.register(
+            counted("save", "Save", count.clone())
+                .category("File")
+                .keybinding(Keybinding::parse("Control+S").expect("binding")),
+            cx,
+        )
+    })
+    .expect("register");
+    cx.update(|cx| {
+        let actions = commands.spotlight_actions(&ContextStack::default(), cx);
+        let save = actions.first().expect("action");
+        assert_eq!(save.group.as_deref(), Some("File"));
+        let chips = save.shortcut.as_ref().expect("shortcut").chords()[0].clone();
+        assert_eq!(chips.last().map(|k| k.as_ref()), Some("S"));
+        assert!(
+            chips.len() >= 2,
+            "modifier and key are separate chips: {chips:?}"
+        );
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press("ctrl-shift-p", cx);
+        window.input("save", cx);
+        window.press("enter", cx);
+    })
+    .expect("run from palette");
+    cx.run_until_parked();
+    assert_eq!(count.get(), 1);
+    cx.update(|cx| {
+        let recents = commands.entity().read(cx).spotlight_recents().to_vec();
+        assert_eq!(recents, [gpui_kit::SharedString::from("save")]);
+    });
+    // The next palette lists it under Recent.
+    cx.update_window(handle.into(), |_, window, cx| {
+        let palette = commands.open_spotlight(window, cx).expect("reopen");
+        assert_eq!(palette.read(cx).recent_ids().len(), 1);
+    })
+    .expect("reopen");
+}

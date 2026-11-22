@@ -885,21 +885,18 @@ fn paint_gutter_mark(
     theme: &GuiraffeTheme,
     window: &mut Window,
 ) {
-    let (name, width, height, radius) = match mark {
-        GutterMark::Breakpoint => (ColorName::Red, 8., line_height * 0.5, 4.),
-        GutterMark::Bookmark => (ColorName::Blue, 8., line_height * 0.5, 1.),
-        GutterMark::Error => (ColorName::Red, 4., line_height * 0.5, 1.),
-        GutterMark::Added | GutterMark::Covered => (ColorName::Green, 4., line_height, 0.),
-        GutterMark::Modified => (ColorName::Blue, 4., line_height, 0.),
-        GutterMark::Deleted => (ColorName::Red, 8., px(2.), 0.),
-        GutterMark::Uncovered => (ColorName::Red, 4., line_height, 0.),
-        GutterMark::PartiallyCovered => (ColorName::Yellow, 4., line_height, 0.),
+    let (width, height, radius) = match mark {
+        GutterMark::Breakpoint => (8., line_height * 0.5, 4.),
+        GutterMark::Bookmark => (8., line_height * 0.5, 1.),
+        GutterMark::Error => (4., line_height * 0.5, 1.),
+        GutterMark::Deleted => (8., px(2.), 0.),
+        _ => (4., line_height, 0.),
     };
     let origin = origin + point(px(1.), (line_height - height) * 0.5);
     window.paint_quad(
         fill(
             Bounds::new(origin, size(px(width), height)),
-            color(name, theme),
+            color(mark.color(), theme),
         )
         .corner_radii(px(radius)),
     );
@@ -1004,7 +1001,8 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
         );
         // A file that fits at >= 2px a line is drawn as line strokes, like a miniature;
         // larger files use the bounded density summary.
-        let (y, h) = match minimap_line_height(total, height) {
+        let line_step = minimap_line_height(total, height);
+        let (y, h) = match line_step {
             Some(step) => {
                 for line in 0..total {
                     let text = doc.document.line(line).unwrap_or_default();
@@ -1043,36 +1041,6 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
                 (y, ((last - first + 1) as f32 / t * height).max(2.))
             }
         };
-        if let Some(decorations) = shared.decorations.borrow().as_ref() {
-            for (lane, (_, layer)) in decorations.layers().take(8).enumerate() {
-                let mut first = 0;
-                let x = origin.x + px((lane % 4) as f32 * 2.);
-                let ink = color(
-                    [
-                        ColorName::Red,
-                        ColorName::Blue,
-                        ColorName::Green,
-                        ColorName::Orange,
-                    ][lane % 4],
-                    theme,
-                )
-                .opacity(if layer.is_stale() { 0.3 } else { 0.7 });
-                for bins in layer.overview().chunk_by(|a, b| a == b) {
-                    if bins[0] {
-                        let top = height * first as f32 / 256.;
-                        let bottom = height * (first + bins.len()) as f32 / 256.;
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                point(x, origin.y + px(top)),
-                                size(px(2.), px((bottom - top).max(1.))),
-                            ),
-                            ink,
-                        ));
-                    }
-                    first += bins.len();
-                }
-            }
-        }
         let h = h.min((height - y).max(0.));
         let blue = color(ColorName::Blue, theme);
         window.paint_quad(
@@ -1083,6 +1051,40 @@ pub(crate) fn paint_overlay(shared: &Rc<Shared>, window: &mut Window, cx: &mut A
             .border_widths(px(1.))
             .border_color(blue.opacity(0.45)),
         );
+        if let Some(decorations) = shared.decorations.borrow().as_ref() {
+            use crate::decorations::OVERVIEW_BINS;
+
+            let position = |bin: usize| match line_step {
+                Some(step) => {
+                    ((bin as u128 * total as u128).div_ceil(OVERVIEW_BINS as u128) as f32) * step
+                }
+                None => bin as f32 * height / OVERVIEW_BINS as f32,
+            };
+            for (_, layer) in decorations.layers() {
+                let Some(overview) = layer.gutter_overview() else {
+                    continue;
+                };
+                for lane in 0..4 {
+                    let x = origin.x + px(lane as f32 * 2.);
+                    let mut first = 0;
+                    for bins in overview.chunk_by(|a, b| a[lane] == b[lane]) {
+                        if let Some(mark) = bins[0][lane] {
+                            let top = position(first);
+                            let bottom = position(first + bins.len());
+                            let ink = color(mark.color(), theme);
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    point(x, origin.y + px(top)),
+                                    size(px(2.), px((bottom - top).max(1.))),
+                                ),
+                                ink,
+                            ));
+                        }
+                        first += bins.len();
+                    }
+                }
+            }
+        }
     }
 }
 // At less than one pixel per bin the strokes overlap and each contributes opacity.

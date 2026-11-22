@@ -4,7 +4,7 @@
 //! million-line document, and the viewer inside Markdown.
 use super::{column, example};
 use crate::catalog::Entry;
-use crate::knobs::{Knob, KnobValues, Preview, playground_with};
+use crate::knobs::{Knob, KnobValues, Preview, playground_with_update};
 use gpui_kit::component::Disableable;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::text::{MarkdownExtensions, TextView, TextViewState};
@@ -20,7 +20,7 @@ use guiraffe_code::{
 };
 use guiraffe_components::Text;
 use guiraffe_core::{ColorName, GuiraffeTheme, Size};
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
+use std::{collections::BTreeMap, rc::Rc, sync::Arc};
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -333,11 +333,10 @@ const LANGS: &[&str] = &["rust", "javascript", "json"];
 
 struct ViewerState {
     handles: Vec<CodeHandle>,
-    applied: RefCell<Option<KnobValues>>,
 }
 
 fn viewer(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "CodeViewer",
         &[
             Knob::new("Language", LANGS),
@@ -355,60 +354,60 @@ fn viewer(window: &mut Window, cx: &mut App) -> AnyView {
                 handle(102, JS, "javascript", cx),
                 handle(103, JSON, "json", cx),
             ],
-            applied: RefCell::new(None),
         },
+        apply_viewer,
         render_viewer,
         window,
         cx,
     )
 }
 
+fn apply_viewer(state: &ViewerState, v: &KnobValues, cx: &mut App) {
+    for (i, code) in state.handles.iter().enumerate() {
+        code.set_options(
+            CodeOptions {
+                minimap: v.on(1),
+                line_numbers: v.on(2),
+                margin_chars: if v.on(5) { 26 } else { 0 },
+                ..Default::default()
+            },
+            cx,
+        );
+        let all = if i == 0 {
+            rust_annotations()
+        } else {
+            js_annotations()
+        };
+        let kept: Vec<_> = if i == 2 {
+            Vec::new()
+        } else {
+            all.into_iter()
+                .filter(|a| match a.kind {
+                    AnnotationKind::InlineHint => v.on(3),
+                    AnnotationKind::Lens => v.on(4),
+                    AnnotationKind::Bubble => v.on(5),
+                    _ => true,
+                })
+                .collect()
+        };
+        code.set_annotations(Arc::from(kept), cx);
+        let lines = code.document().line_count();
+        code.set_gutters(if v.on(6) { vec![blame(lines)] } else { vec![] }, cx);
+        let traces = if i == 0 && v.on(7) {
+            rust_traces(101)
+        } else {
+            vec![]
+        };
+        code.set_traces(Arc::from(traces), cx);
+    }
+}
+
 fn render_viewer(
     state: &ViewerState,
     v: &KnobValues,
     _: &mut Window,
-    cx: &mut Context<Preview<ViewerState>>,
+    _: &mut Context<Preview<ViewerState>>,
 ) -> AnyElement {
-    if state.applied.borrow().as_ref() != Some(v) {
-        *state.applied.borrow_mut() = Some(v.clone());
-        for (i, code) in state.handles.iter().enumerate() {
-            code.set_options(
-                CodeOptions {
-                    minimap: v.on(1),
-                    line_numbers: v.on(2),
-                    margin_chars: if v.on(5) { 26 } else { 0 },
-                    ..Default::default()
-                },
-                cx,
-            );
-            let all = if i == 0 {
-                rust_annotations()
-            } else {
-                js_annotations()
-            };
-            let kept: Vec<_> = if i == 2 {
-                Vec::new()
-            } else {
-                all.into_iter()
-                    .filter(|a| match a.kind {
-                        AnnotationKind::InlineHint => v.on(3),
-                        AnnotationKind::Lens => v.on(4),
-                        AnnotationKind::Bubble => v.on(5),
-                        _ => true,
-                    })
-                    .collect()
-            };
-            code.set_annotations(Arc::from(kept), cx);
-            let lines = code.document().line_count();
-            code.set_gutters(if v.on(6) { vec![blame(lines)] } else { vec![] }, cx);
-            let traces = if i == 0 && v.on(7) {
-                rust_traces(101)
-            } else {
-                vec![]
-            };
-            code.set_traces(Arc::from(traces), cx);
-        }
-    }
     let code = state
         .handles
         .get(v.index(0))
@@ -583,11 +582,10 @@ mod tests {
 
 struct RichAnnotationsDemo {
     code: CodeHandle,
-    applied: RefCell<Option<KnobValues>>,
 }
 
 fn rich_annotations(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "checkout.rs",
         &[
             Knob::toggle("Errors").default(1),
@@ -652,53 +650,51 @@ fn rich_annotations(window: &mut Window, cx: &mut App) -> AnyView {
                 })),
                 cx,
             );
-            RichAnnotationsDemo {
-                code,
-                applied: RefCell::new(None),
-            }
+            RichAnnotationsDemo { code }
         },
+        apply_rich_annotations,
         render_rich_annotations,
         window,
         cx,
     )
 }
 
-fn render_rich_annotations(
-    state: &RichAnnotationsDemo,
-    values: &KnobValues,
-    _: &mut Window,
-    cx: &mut Context<Preview<RichAnnotationsDemo>>,
-) -> AnyElement {
-    if state.applied.borrow().as_ref() != Some(values) {
-        *state.applied.borrow_mut() = Some(values.clone());
-        state.code.set_options(
-            CodeOptions {
-                size: Some(Size::Xs),
-                minimap: values.on(6),
-                margin_chars: if values.on(0) || values.on(3) || values.on(5) {
-                    16
-                } else {
-                    0
-                },
-                ..Default::default()
+fn apply_rich_annotations(state: &RichAnnotationsDemo, values: &KnobValues, cx: &mut App) {
+    state.code.set_options(
+        CodeOptions {
+            size: Some(Size::Xs),
+            minimap: values.on(6),
+            margin_chars: if values.on(0) || values.on(3) || values.on(5) {
+                16
+            } else {
+                0
             },
+            ..Default::default()
+        },
+        cx,
+    );
+    if let Ok(decorations) = checkout_decorations(state.code.document(), values) {
+        state.code.set_analysis(
+            decorations.prepare_analysis(
+                Vec::new(),
+                vec![Fold {
+                    start: 47,
+                    end: 51,
+                    collapsed: false,
+                }],
+            ),
             cx,
         );
-        if let Ok(decorations) = checkout_decorations(state.code.document(), values) {
-            state.code.set_analysis(
-                decorations.prepare_analysis(
-                    Vec::new(),
-                    vec![Fold {
-                        start: 47,
-                        end: 51,
-                        collapsed: false,
-                    }],
-                ),
-                cx,
-            );
-            state.code.set_decorations(Some(Arc::new(decorations)), cx);
-        }
+        state.code.set_decorations(Some(Arc::new(decorations)), cx);
     }
+}
+
+fn render_rich_annotations(
+    state: &RichAnnotationsDemo,
+    _: &KnobValues,
+    _: &mut Window,
+    _: &mut Context<Preview<RichAnnotationsDemo>>,
+) -> AnyElement {
     div()
         .h(px(510.))
         .child(CodeViewer::new(&state.code))
@@ -737,8 +733,8 @@ fn checkout_decorations(
                     end_bias: AnchorBias::Right,
                 }],
             )?;
-            id += 1;
         }
+        id += 1;
         Ok::<(), guiraffe_code::DecorationError>(())
     };
     let token = |line, needle| span(CHECKOUT, line, needle, 0);

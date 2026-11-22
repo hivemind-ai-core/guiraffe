@@ -532,7 +532,7 @@ impl CodeHandle {
     }
     /// Move precomputed buffers onto the UI thread. False means source was replaced while
     /// the analysis was running; no state is changed in that case.
-    pub fn set_analysis(&self, prepared: PreparedAnalysis, cx: &mut App) -> bool {
+    pub fn set_analysis(&self, mut prepared: PreparedAnalysis, cx: &mut App) -> bool {
         if let Some(pending) = self.shared.presentation.borrow_mut().as_mut() {
             if !Arc::ptr_eq(prepared.document.source(), &pending.source) {
                 return false;
@@ -544,6 +544,48 @@ impl CodeHandle {
             return false;
         }
         let mut blocks = self.shared.block_layout.borrow_mut();
+        let previous_annotations = self.shared.annotations.borrow();
+        let previous_ids = self.shared.annotation_ids.borrow();
+        let same_payload = |old_id: &u64, new_id: &u64| {
+            let old = previous_ids
+                .get(old_id)
+                .and_then(|&i| previous_annotations.get(i));
+            let new = prepared
+                .ids
+                .get(new_id)
+                .and_then(|&i| prepared.annotations.get(i));
+            matches!((old, new), (Some(old), Some(new)) if old.payload == new.payload)
+        };
+        let previous_blocks: BTreeMap<_, _> =
+            blocks.keys.iter().map(|(id, key)| (*key, *id)).collect();
+        let mut reused_rows = false;
+        // An unrelated decoration update must not jump back to estimated widget heights.
+        // The next layout still measures the widgets at their current width.
+        for (id, rows) in &mut prepared.block_rows {
+            if let Some(key) = prepared.block_keys.get(id)
+                && let Some(old_id) = previous_blocks.get(key)
+                && same_payload(old_id, id)
+                && let Some(previous) = blocks.rows.get(old_id)
+                && rows != previous
+            {
+                *rows = *previous;
+                reused_rows = true;
+            }
+        }
+        if reused_rows {
+            prepared.rows = RowMap::with_blocks(
+                prepared.document.line_count(),
+                &prepared.folds,
+                &prepared.annotations,
+                &prepared.block_rows,
+            );
+        }
+        self.shared
+            .bubbles
+            .borrow_mut()
+            .retain(|id, _| same_payload(id, id));
+        drop(previous_ids);
+        drop(previous_annotations);
         let text_changed = blocks.rows != prepared.block_rows
             || blocks.keys != prepared.block_keys
             || *self.shared.text_annotations.borrow() != prepared.text
@@ -566,7 +608,6 @@ impl CodeHandle {
         *self.shared.hints.borrow_mut() = prepared.hints;
         *self.shared.annotation_ids.borrow_mut() = prepared.ids;
         *self.shared.annotations.borrow_mut() = prepared.annotations;
-        self.shared.bubbles.borrow_mut().clear();
         if text_changed {
             self.shared
                 .text_epoch
@@ -1253,28 +1294,39 @@ fn measure_block(
 }
 
 impl Render for OverlayLayer {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mut stats = self.shared.stats.get();
         stats.overlay_renders += 1;
         self.shared.stats.set(stats);
-        let s = GuiraffeTheme::global(cx).surfaces();
         let shared = self.shared.clone();
-        let g = self.shared.geometry.borrow();
+        // The preceding text layer publishes this frame's geometry in prepaint.
+        gpui_kit::container_query(move |_, window, cx| Self::content(&shared, window, cx))
+            .absolute()
+            .top_0()
+            .left_0()
+    }
+}
+
+impl OverlayLayer {
+    fn content(shared: &Rc<Shared>, window: &mut Window, cx: &mut App) -> gpui_kit::Div {
+        let s = GuiraffeTheme::global(cx).surfaces();
+        let paint_shared = shared.clone();
+        let g = shared.geometry.borrow();
         let h = g.bounds.size.height.as_f32();
         let lh = g.line_height;
         let margin = g.margin;
         let width = g.bounds.size.width.as_f32();
         let mini = g.mini;
         drop(g);
-        let annotations = self.shared.annotations.borrow();
-        let rows = self.shared.rows.borrow();
-        let viewport = self.shared.viewport.get();
+        let annotations = shared.annotations.borrow();
+        let rows = shared.rows.borrow();
+        let viewport = shared.viewport.get();
         let mut requests = Vec::new();
-        if margin > 0. && self.shared.has_bubbles.get() {
+        if margin > 0. && shared.has_bubbles.get() {
             let visible = viewport.visible(rows.len(), lh, h);
             let mut hits = Vec::new();
-            let doc = self.shared.highlighted.borrow();
-            let index = self.shared.index.borrow();
+            let doc = shared.highlighted.borrow();
+            let index = shared.index.borrow();
             for row in visible {
                 if let Some(Row::Source(line)) = rows.row(row)
                     && let Some(range) = doc.document.line_range(line)
@@ -1297,44 +1349,38 @@ impl Render for OverlayLayer {
         requests.sort_by_key(|(id, _, _)| *id);
         requests.dedup_by_key(|(id, _, _)| *id);
         let placements = place_bubbles(&requests, h, lh * 0.25);
-        self.shared
+        shared
             .bubbles
             .borrow_mut()
             .retain(|id, _| placements.iter().any(|placement| placement.id == *id));
-        let mut stats = self.shared.stats.get();
+        let mut stats = shared.stats.get();
         stats.visible_bubbles = placements.len();
-        self.shared.stats.set(stats);
-        let mut root = div()
+        shared.stats.set(stats);
+        let mut root = div().size_full().text_color(s.text.to_hsla()).child(
+            canvas(
+                |_, _, _| (),
+                move |_, _, window, cx| crate::paint::paint_overlay(&paint_shared, window, cx),
+            )
             .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .text_color(s.text.to_hsla())
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |_, _, window, cx| crate::paint::paint_overlay(&shared, window, cx),
-                )
-                .absolute()
-                .size_full(),
-            );
+            .size_full(),
+        );
         if window.is_a11y_active() {
             root = root.child(accessible_lines(
-                &self.shared.highlighted.borrow().document,
+                &shared.highlighted.borrow().document,
                 &rows,
                 viewport,
                 lh,
                 h,
-                self.shared.selection.get(),
-                self.shared.decorations.borrow().as_deref(),
+                shared.selection.get(),
+                shared.decorations.borrow().as_deref(),
             ));
         }
-        if self.shared.stats.get().last_truncated_rows > 0 {
+        if shared.stats.get().last_truncated_rows > 0 {
             root = root.child(
                 div()
                     .absolute()
                     .bottom_0()
-                    .left(px(self.shared.geometry.borrow().gutter))
+                    .left(px(shared.geometry.borrow().gutter))
                     .bg(s.body.to_hsla())
                     .text_color(s.dimmed.to_hsla())
                     .text_size(px(Size::Xs.font_size()))
@@ -1343,18 +1389,17 @@ impl Render for OverlayLayer {
         }
         if margin > 0. {
             for p in placements {
-                if !self.shared.bubbles.borrow().contains_key(&p.id)
-                    && let Some(a) = self
-                        .shared
+                if !shared.bubbles.borrow().contains_key(&p.id)
+                    && let Some(a) = shared
                         .annotation_ids
                         .borrow()
                         .get(&p.id)
                         .and_then(|i| annotations.get(*i))
                 {
                     let md = cx.new(|cx| MarkdownState::new(a.payload.to_string(), cx));
-                    self.shared.bubbles.borrow_mut().insert(p.id, md);
+                    shared.bubbles.borrow_mut().insert(p.id, md);
                 }
-                if let Some(md) = self.shared.bubbles.borrow().get(&p.id) {
+                if let Some(md) = shared.bubbles.borrow().get(&p.id) {
                     root = root.child(
                         div()
                             .absolute()
@@ -1369,15 +1414,14 @@ impl Render for OverlayLayer {
                             .border_1()
                             .border_color(s.border.to_hsla())
                             .child(
-                                MarkdownView::new(format!("code-detail-{}", self.shared.id))
-                                    .state(md),
+                                MarkdownView::new(format!("code-detail-{}", shared.id)).state(md),
                             ),
                     );
                 }
             }
         }
-        if let Some((line, at)) = inline_blame_anchor(&self.shared)
-            && let Some(decorations) = self.shared.decorations.borrow().as_ref()
+        if let Some((line, at)) = inline_blame_anchor(shared)
+            && let Some(decorations) = shared.decorations.borrow().as_ref()
             && let Some(bytes) = decorations.document().line_range(line)
         {
             let mut blame = None;
@@ -1389,7 +1433,7 @@ impl Render for OverlayLayer {
                 });
             }
             if let Some(commit) = blame {
-                let origin = self.shared.geometry.borrow().bounds.origin;
+                let origin = shared.geometry.borrow().bounds.origin;
                 let x = (at.x - origin.x + px(lh * 0.5)).as_f32();
                 let available = width - margin - mini - x;
                 if available > lh * 4. {
@@ -1412,8 +1456,7 @@ impl Render for OverlayLayer {
                 }
             }
         }
-        let hover_row = self
-            .shared
+        let hover_row = shared
             .hover
             .get()
             .and_then(|position| rows.source_row(position.line))
@@ -1447,8 +1490,8 @@ impl Render for OverlayLayer {
                     .border_color(s.border.to_hsla())
                     .p(px(Size::Sm.spacing()))
             };
-            let decorations = self.shared.decorations.borrow();
-            let detail = self.shared.hover_decoration.get().and_then(|(layer, id)| {
+            let decorations = shared.decorations.borrow();
+            let detail = shared.hover_decoration.get().and_then(|(layer, id)| {
                 let decorations = decorations.as_ref()?;
                 let record = decorations.layer(layer)?.get(id)?;
                 match decorations.style(record.style)? {
@@ -1461,28 +1504,30 @@ impl Render for OverlayLayer {
                 }
             });
             if margin > 8.
-                && let Some(md) = self.shared.review_hover.borrow().as_ref()
+                && let Some(md) = shared.review_hover.borrow().as_ref()
             {
-                root =
-                    root.child(card().h(px(card_height)).child(
-                        MarkdownView::new(format!("code-review-{}", self.shared.id)).state(md),
-                    ));
+                root = root.child(
+                    card()
+                        .h(px(card_height))
+                        .child(MarkdownView::new(format!("code-review-{}", shared.id)).state(md)),
+                );
             } else if margin > 8.
                 && let Some(detail) = detail
             {
                 root = root.child(card().child(detail));
-            } else if let Some(md) = self.shared.hover_markdown.borrow().as_ref() {
-                root =
-                    root.child(card().h(px(card_height)).child(
-                        MarkdownView::new(format!("code-detail-{}", self.shared.id)).state(md),
-                    ));
+            } else if let Some(md) = shared.hover_markdown.borrow().as_ref() {
+                root = root.child(
+                    card()
+                        .h(px(card_height))
+                        .child(MarkdownView::new(format!("code-detail-{}", shared.id)).state(md)),
+                );
             }
         }
         let mut visible_widgets = Vec::new();
-        let left = self.shared.geometry.borrow().gutter;
+        let left = shared.geometry.borrow().gutter;
         let widget_width = (width - left - margin - mini).max(0.);
-        if lh > 0. && !self.shared.block_layout.borrow().keys.is_empty() {
-            let mut layout = self.shared.block_layout.borrow_mut();
+        if lh > 0. && !shared.block_layout.borrow().keys.is_empty() {
+            let mut layout = shared.block_layout.borrow_mut();
             let size = Some((widget_width.to_bits(), lh.to_bits()));
             if layout.size != size {
                 layout.size = size;
@@ -1523,7 +1568,7 @@ impl Render for OverlayLayer {
         drop(rows);
         drop(annotations);
         if !visible_widgets.is_empty() {
-            let renderer = self.shared.block_renderer.borrow().clone();
+            let renderer = shared.block_renderer.borrow().clone();
             for (id, y, generation, needs_measure, widget) in visible_widgets {
                 let key = (widget.layer, widget.decoration);
                 let content = if let Some(renderer) = &renderer {
@@ -1545,7 +1590,7 @@ impl Render for OverlayLayer {
                     .w(px(widget_width))
                     .child(content);
                 if needs_measure {
-                    let shared = self.shared.clone();
+                    let shared = shared.clone();
                     block = block.child(
                         canvas(
                             move |bounds, _, cx| {
@@ -1557,11 +1602,13 @@ impl Render for OverlayLayer {
                         .size_full(),
                     );
                 }
-                let hover = self.shared.clone();
-                let click = self.shared.clone();
+                let hover = shared.clone();
+                let click = shared.clone();
                 root = root.child(
                     block
-                        .id(("code-block", id as usize))
+                        .id(ElementId::Name(
+                            format!("code-block-{}-{}", key.0, key.1).into(),
+                        ))
                         .on_hover(move |is_hovered, _, cx| {
                             let action = if *is_hovered {
                                 DecorationAction::Hover
@@ -1576,7 +1623,7 @@ impl Render for OverlayLayer {
                 );
             }
         }
-        root.children(self.shared.menu.element())
+        root.children(shared.menu.element())
     }
 }
 /// Read-only viewer embeddable anywhere, including a host's Markdown custom-fence factory.

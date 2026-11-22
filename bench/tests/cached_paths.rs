@@ -1,6 +1,6 @@
 use gpui_kit::{
     App, AppContext, Context, Entity, IntoElement, Path, Render, StyleRefinement, Styled,
-    TestAppContext, Window, canvas, point, px, rgb,
+    TestAppContext, VisualTestContext, Window, canvas, point, px, rgb,
 };
 use guiraffe_bench::allocator::{CountingAllocator, Counts, count_allocations};
 use std::{cell::Cell, rc::Rc};
@@ -86,6 +86,44 @@ fn cached_paths_repaint_without_allocating(cx: &mut TestAppContext) {
         );
         assert_eq!(counts, Counts::default());
     });
+}
+
+#[gpui_kit::test]
+fn kit_root_replays_until_child_notification_or_refresh(cx: &mut TestAppContext) {
+    let paints = Rc::new(Cell::new(0));
+    let (handle, child) = cx
+        .update(|cx| {
+            gpui_kit::base::init(cx);
+            gpui_kit::open_window(Default::default(), cx, |_, cx| {
+                cx.new(|_| Paths(paints.clone()))
+            })
+        })
+        .expect("open Kit window");
+    let mut window = VisualTestContext::from_window(handle, cx);
+    window.run_until_parked();
+
+    window.update(|window, cx| {
+        for _ in 0..8 {
+            draw_cached_paths_frame(window, cx);
+        }
+        assert_eq!(window.painted_path_count(), PATH_COUNT);
+        let before = paints.get();
+        assert!(before > 0);
+        draw_cached_paths_frame(window, cx);
+        assert_eq!(paints.get(), before);
+    });
+
+    let before = paints.get();
+    window.update(|_, cx| cx.notify(child.entity_id()));
+    window.update(draw_cached_paths_frame);
+    assert!(paints.get() > before, "child notification did not repaint");
+
+    let before = paints.get();
+    window.update(|window, cx| {
+        window.refresh();
+        draw_cached_paths_frame(window, cx);
+    });
+    assert!(paints.get() > before, "refresh did not repaint");
 }
 
 #[test]

@@ -10,17 +10,17 @@ use gpui_kit::{
     ScrollDelta, Styled, TestAppContext, Window, WindowHandle, WindowOptions, div, point, px,
 };
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     future::Future,
     pin::Pin,
     rc::Rc,
     task::{Context as TaskContext, Poll, Waker},
 };
-struct Plain {
+pub(crate) struct Plain {
     focus: FocusHandle,
     opener: Option<FocusHandle>,
     scrolls: Rc<Cell<usize>>,
-    renders: Rc<Cell<usize>>,
+    pub(crate) renders: Rc<Cell<usize>>,
 }
 impl Render for Plain {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -45,7 +45,9 @@ impl Render for Plain {
             )
     }
 }
-fn open_with_content(cx: &mut TestAppContext) -> (WindowHandle<Root>, gpui_kit::Entity<Plain>) {
+pub(crate) fn open_with_content(
+    cx: &mut TestAppContext,
+) -> (WindowHandle<Root>, gpui_kit::Entity<Plain>) {
     cx.update(|cx| {
         let mut content = None;
         let handle = cx
@@ -274,42 +276,6 @@ fn toast_hover_and_update_by_id(cx: &mut TestAppContext) {
         assert_eq!(host.read(cx).toasts().visible()[0].id, ToastId(2));
     })
     .expect("window");
-}
-#[gpui_kit::test]
-fn spotlight_typing_keyboard_and_click(cx: &mut TestAppContext) {
-    cx.update(init);
-    let handle = open(cx);
-    let selected = Rc::new(RefCell::new(Vec::new()));
-    let output = selected.clone();
-    cx.update_window(handle.into(), |_, window, cx| {
-        window.render_frame(cx);
-        let before = window.focused(cx);
-        let palette = cx.new(|cx| {
-            Spotlight::new(
-                vec![
-                    search::Command::new("open", "Open"),
-                    search::Command::new("close", "Close"),
-                ],
-                window,
-                cx,
-                move |id, _, _| output.borrow_mut().push(id.to_owned()),
-            )
-        });
-        Spotlight::open(&palette, window, cx).expect("palette");
-        window.render_frame(cx);
-        window.input("cl", cx);
-        window.render_frame(cx);
-        window.press("enter", cx);
-        assert_eq!(window.focused(cx), before);
-
-        Spotlight::open(&palette, window, cx).expect("reopen palette");
-        window.render_frame(cx);
-        window.press("escape", cx);
-        assert_eq!(window.focused(cx), before);
-    })
-    .expect("window");
-    cx.run_until_parked();
-    assert_eq!(*selected.borrow(), ["close"]);
 }
 #[gpui_kit::test]
 fn modal_blocks_background_wheel(cx: &mut TestAppContext) {
@@ -643,41 +609,6 @@ fn disabling_escape_keeps_pointer_close_available(cx: &mut TestAppContext) {
     })
     .expect("closed");
 }
-#[gpui_kit::test]
-fn spotlight_arrows_and_pointer_select_commands(cx: &mut TestAppContext) {
-    cx.update(init);
-    let handle = open(cx);
-    let output = Rc::new(RefCell::new(Vec::new()));
-    for keyboard in [true, false] {
-        let output = output.clone();
-        cx.update_window(handle.into(), |_, window, cx| {
-            let palette = cx.new(|cx| {
-                Spotlight::new(
-                    vec![
-                        search::Command::new("one", "One"),
-                        search::Command::new("two", "Two"),
-                    ],
-                    window,
-                    cx,
-                    move |id, _, _| output.borrow_mut().push(id.to_owned()),
-                )
-            });
-            let id = Spotlight::open(&palette, window, cx).expect("open");
-            assert_eq!(Spotlight::open(&palette, window, cx), Ok(id));
-            window.render_frame(cx);
-            if keyboard {
-                window.press("down", cx);
-                window.press("enter", cx);
-            } else {
-                window.click(("command", 1_usize), cx);
-            }
-        })
-        .expect("window");
-        cx.run_until_parked();
-    }
-    assert_eq!(*output.borrow(), ["two", "two"]);
-}
-
 struct AffixDemo {
     position: toast::ToastPosition,
 }
@@ -873,43 +804,6 @@ fn review_4_stacked_confirm_resolves_its_own_id(cx: &mut TestAppContext) {
         poll(&mut second),
         Poll::Ready(true),
         "a sibling confirm must never be accepted"
-    );
-}
-#[gpui_kit::test]
-fn review_10_spotlight_prepares_text_once_and_does_not_search_on_submit(cx: &mut TestAppContext) {
-    cx.update(init);
-    let handle = open(cx);
-    cx.update_window(handle.into(), |_, window, cx| {
-        let palette = cx.new(|cx| {
-            Spotlight::new(
-                vec![
-                    search::Command::new("open", "Open"),
-                    search::Command::new("close", "Close"),
-                ],
-                window,
-                cx,
-                |_, _, _| {},
-            )
-        });
-        Spotlight::open(&palette, window, cx).expect("open");
-        window.render_frame(cx);
-    })
-    .expect("window");
-    let normalized = search::normalizations();
-    cx.update_window(handle.into(), |_, window, cx| window.input("cl", cx))
-        .expect("query");
-    assert_eq!(
-        search::normalizations(),
-        normalized,
-        "labels must be prepared before typing"
-    );
-    let searches = search::evaluations();
-    cx.update_window(handle.into(), |_, window, cx| window.press("enter", cx))
-        .expect("submit");
-    assert_eq!(
-        search::evaluations(),
-        searches,
-        "submit must use the cached query result"
     );
 }
 struct PositionedTooltip;
@@ -1204,48 +1098,6 @@ fn review_5_removing_modal_rechains_focused_child_handles(cx: &mut TestAppContex
             window.focused(cx),
             original,
             "restoration must skip child focus handles inside removed layers"
-        );
-    })
-    .expect("window");
-}
-
-/// spec/00 §12: spotlight rows are a ListBox of options with the active one selected;
-/// rows are not tab stops; scrims come from the theme token.
-#[gpui_kit::test]
-fn spotlight_rows_expose_listbox_semantics(cx: &mut TestAppContext) {
-    use gpui_kit::test::TestQueryExt;
-    cx.update(init);
-    let handle = open(cx);
-    cx.update_window(handle.into(), |_, window, cx| {
-        let palette = cx.new(|cx| {
-            Spotlight::new(
-                vec![
-                    search::Command::new("one", "One"),
-                    search::Command::new("two", "Two"),
-                ],
-                window,
-                cx,
-                |_, _, _| {},
-            )
-        });
-        Spotlight::open(&palette, window, cx).expect("open");
-        window.render_frame(cx);
-        let rows = window.find_all_by_role(gpui_kit::Role::ListBoxOption);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(window.find(("spotlight-row", 0_usize)).label(), Some("One"));
-        assert_eq!(window.find(("spotlight-row", 1_usize)).label(), Some("Two"));
-        assert_eq!(
-            window.find(("spotlight-row", 0_usize)).selected(),
-            Some(true)
-        );
-        window.press("down", cx);
-        assert_eq!(
-            window.find(("spotlight-row", 0_usize)).selected(),
-            Some(false)
-        );
-        assert_eq!(
-            window.find(("spotlight-row", 1_usize)).selected(),
-            Some(true)
         );
     })
     .expect("window");

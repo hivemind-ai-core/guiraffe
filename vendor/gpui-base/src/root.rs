@@ -173,6 +173,8 @@ impl Root {
     }
 
     pub fn new(view: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        #[cfg(not(feature = "gpui-fast"))]
+        window.retain_root_view(cx.entity_id());
         #[cfg(all(target_os = "macos", not(test)))]
         crate::install_window_hit_test_forwarder(window);
         let factories = cx

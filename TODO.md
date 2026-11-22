@@ -13,7 +13,7 @@ batches; nothing goes to main without the user.
 - [ ] **Spotlight redesign** (Claude subagent, `feat-spotlight`).
 - [ ] **Desktop notifications + system tray** (Claude subagent, `feat-notify-tray`; Linux tested,
       macOS/Windows untested).
-- [ ] **DnD polish** (Claude subagent, `feat-dnd-polish`): Kanban columns are the drop zones
+- [x] **DnD polish** (merged; follow-ups: theme drag-preview token, ActionIcon toggled state + tooltip): Kanban columns are the drop zones
       (whole column body, insertion line, column highlight); IDE layout icon toggles.
 - [ ] **StyleContext lost on isolated re-render under gpui-fast** (Claude subagent,
       `fix-stylecontext-fast`): controls can drop out of Tab order after a click; fix in core.
@@ -23,6 +23,8 @@ batches; nothing goes to main without the user.
       ui/windows/motion/commands/devtools/state/router/icons.
 
 ## Ready to integrate
+- [ ] DataUi catalogue coverage (`49dbc28`): 87 widget kinds, 549 props, 103 events; drift guard
+      maps 740/919 APIs with 179 documented Rust-only exceptions; gate passed on both backends.
 - [ ] Flow document memory (`bd882ba`, gating): 36/46 MiB delta vs 68 MiB limit. Public API
       change (`Name`, `Handles`) → CHANGELOG.
 - [ ] Date/time pickers (`961a46e`): Date/DateRange/Time/DateTime/DateTimeRange pickers.
@@ -52,6 +54,10 @@ batches; nothing goes to main without the user.
 - [ ] gpui-fast quirks: picker popover open/close re-renders the host once; host picks up popover
       reads after a forced frame.
 
+- [ ] DnD: dim/ghost the source card while it is being dragged (currently stays full-opacity in its column).
+
+- [ ] Remove the date pickers' "keep last non-default StyleContext" workaround (crates/inputs/src/dates/picker.rs) once fix-stylecontext-fast (b8ec14e) is merged.
+
 ## Release readiness
 - [ ] CHANGELOG 0.2; KNOWN_ISSUES.md current; API docs coverage.
 - [ ] Packaging notes: apps must copy the vendored `[patch.crates-io]` entries (vendor/README.md);
@@ -76,6 +82,10 @@ batches; nothing goes to main without the user.
 - [ ] Animate everything. An option to animate all layout changes, eg when something is added to a list,
       or a state is toggled, that causes the size to change (eg collapsing a property list group) it
       should (optionally) animate by lerping between the old and new size.
+- [ ] PropertyGrid options (user 2026-11-21): (a) `focus_row(bool)` — when disabled, a row is never
+      focused/highlighted, even while its value is being edited; (b) reset affordance configurable
+      (`reset_button(bool)` / per-property) — today "Reset" always shows when value ≠ default
+      (crates/tree/src/view.rs:1412). Bundle with the PropertyGrid editing items below.
 - [ ] The property tree component visual bugs: when editing text in the showcase text value, the textboxes
       bottom border spills below the rows space. Additionally, the input should default to a single line
       input where pressing enter saves it (save button, tick/x icons should be optional settings).
@@ -83,8 +93,19 @@ batches; nothing goes to main without the user.
       Multiline text should make the row expand to multiple lines, look at other GUI property lists for
       inspiration (godot, unity, blender, etc).
 
+## 0.3 (plans/ROADMAP-0.3.md, decided 2026-11-21)
+- [ ] **Core state model + control protocol** (spec/30): stable control ids, typed snapshots and
+      actions, one action bus for pointer/keyboard/shortcut/Spotlight/ribbon/DataUi/MCP/scripts;
+      zero cost at render time (allocation + scaling gates from day one).
+- [ ] **Store-first `ui!`** (spec/31): `<=`/`<=>` bindings, `on_x => Event`, `store!`,
+      `#[component(stateful)]`; the canonical structured path. The builder API stays for standalone UIs.
+- [ ] **Command ribbon** (spec/32): port of ../gui/research/cmd onto guiraffe-commands + the bus.
+- [ ] **Multi-window docking**: pop-out panels, cross-window drag, layout restore across monitors/DPI.
+- [ ] spec/30 phase 1 starts by extending the Catalogue 1.2 descriptors (feat-catalog-coverage,
+      `49dbc28`) with optional actions and snapshot sections.
+
 ## Later / out of scope for now
-- macOS/Windows CI and testing; crates.io publishing; multi-window docking (0.3).
+- macOS/Windows CI and testing; crates.io publishing.
 - windows: tear-off panels, parent/child + modal windows, examples/multi.rs; X11 2 px restore
   offset compensation.
 - Tooling DX: templates for `guiraffe new`, `guiraffe dev` hot relaunch, docs site from showcase.

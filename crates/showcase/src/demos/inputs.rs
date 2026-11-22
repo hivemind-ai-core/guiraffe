@@ -10,7 +10,7 @@ use guiraffe_inputs::*;
 use super::{column, example};
 use crate::catalog::{Entry, stateless};
 use crate::events::EventLog;
-use crate::knobs::{Applied, Knob, playground_with};
+use crate::knobs::{Knob, playground_with, playground_with_update};
 
 pub fn entries() -> Vec<Entry> {
     vec![
@@ -63,7 +63,7 @@ fn widget_and_log(widget: impl IntoElement, log: &Entity<EventLog>, width: f32) 
 }
 
 fn chips(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live ChipGroup",
         &[
             Knob::color(),
@@ -100,18 +100,18 @@ fn chips(window: &mut Window, cx: &mut App) -> AnyView {
                 },
                 cx,
             );
-            (multi, single, log, Applied::default())
+            (multi, single, log)
         },
-        |(multi, single, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let (color, disabled, focusable) =
-                    (v.color(0).unwrap_or(ColorName::Blue), v.on(1), v.on(2));
-                multi.update(cx, |c, cx| {
-                    c.set_color(color, cx);
-                    c.set_disabled(disabled, cx);
-                    c.set_focusable(Some(focusable), cx);
-                });
-            }
+        |(multi, _, _), v, cx| {
+            let (color, disabled, focusable) =
+                (v.color(0).unwrap_or(ColorName::Blue), v.on(1), v.on(2));
+            multi.update(cx, |c, cx| {
+                c.set_color(color, cx);
+                c.set_disabled(disabled, cx);
+                c.set_focusable(Some(focusable), cx);
+            });
+        },
+        |(multi, single, log), _, _, _| {
             column([
                 widget_and_log(
                     div()
@@ -180,7 +180,7 @@ fn tags(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn range(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live RangeSlider (step $10; drag or arrow keys)",
         &[
             Knob::toggle("Disabled"),
@@ -199,18 +199,16 @@ fn range(window: &mut Window, cx: &mut App) -> AnyView {
                 },
                 cx,
             );
-            (slider, log, Applied::default())
+            (slider, log)
         },
-        |(slider, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let (disabled, focusable) = (v.on(0), v.on(1));
-                slider.update(cx, |s, cx| {
-                    s.set_disabled(disabled, cx);
-                    s.set_focusable(Some(focusable), cx);
-                });
-            }
-            widget_and_log(slider.clone(), log, 420.)
+        |(slider, _), v, cx| {
+            let (disabled, focusable) = (v.on(0), v.on(1));
+            slider.update(cx, |s, cx| {
+                s.set_disabled(disabled, cx);
+                s.set_focusable(Some(focusable), cx);
+            });
         },
+        |(slider, log), _, _, _| widget_and_log(slider.clone(), log, 420.),
         window,
         cx,
     )
@@ -239,7 +237,7 @@ fn strength(_: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn dropzone(window: &mut Window, cx: &mut App) -> AnyView {
-    playground_with(
+    playground_with_update(
         "Live Dropzone (accepts image/* and .pdf)",
         &[
             Knob::toggle("Disabled"),
@@ -268,18 +266,16 @@ fn dropzone(window: &mut Window, cx: &mut App) -> AnyView {
                 },
                 cx,
             );
-            (zone, log, Applied::default())
+            (zone, log)
         },
-        |(zone, log, applied), v, _, cx| {
-            if applied.changed(v) {
-                let (disabled, focusable) = (v.on(0), v.on(1));
-                zone.update(cx, |z, cx| {
-                    z.set_disabled(disabled, cx);
-                    z.set_focusable(Some(focusable), cx);
-                });
-            }
-            widget_and_log(zone.clone(), log, 420.)
+        |(zone, _), v, cx| {
+            let (disabled, focusable) = (v.on(0), v.on(1));
+            zone.update(cx, |z, cx| {
+                z.set_disabled(disabled, cx);
+                z.set_focusable(Some(focusable), cx);
+            });
         },
+        |(zone, log), _, _, _| widget_and_log(zone.clone(), log, 420.),
         window,
         cx,
     )

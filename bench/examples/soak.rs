@@ -1,4 +1,18 @@
 //! Headless CPU interaction timing. Samples include GPUI event dispatch and render/paint.
+#[cfg(any(all(test, target_os = "linux"), feature = "warm-repaint-probe"))]
+#[path = "mounted/warm_repaint.rs"]
+mod warm_repaint;
+
+#[cfg(not(any(all(test, target_os = "linux"), feature = "warm-repaint-probe")))]
+mod warm_repaint {
+    pub fn enabled() -> bool {
+        false
+    }
+
+    pub fn measure(_: &mut gpui_kit::Window, _: &mut gpui_kit::App) -> super::Result<()> {
+        Err("rebuild with --features warm-repaint-probe".into())
+    }
+}
 use gpui_kit::{
     AppContext, Bounds, MouseButton, ScrollDelta, ScrollEvent, ScrollSource, TestAppContext,
     TestDispatcher, TouchPhase, VisualTestContext, WindowBounds, WindowOptions, point, px,
@@ -11,6 +25,40 @@ use guiraffe_flow::{
 };
 use guiraffe_timeline::{Channel, DopeSheet, TimeFormat};
 use std::time::{Duration, Instant};
+
+fn open_soak_window<V: gpui_kit::Render>(
+    options: WindowOptions,
+    cx: &mut gpui_kit::App,
+    build: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> gpui_kit::Entity<V>,
+) -> anyhow::Result<(gpui_kit::AnyWindowHandle, gpui_kit::Entity<V>)> {
+    use gpui_kit::{
+        AnyView, AppContext, Context, IntoElement, Render, StyleRefinement, Styled, Window,
+    };
+
+    struct ReplayHost(AnyView);
+    impl Render for ReplayHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+        }
+    }
+
+    if !warm_repaint::enabled() {
+        return gpui_kit::open_window(options, cx, build);
+    }
+
+    let mut view = None;
+    let (window, _) = gpui_kit::open_window(options, cx, |window, cx| {
+        let child = build(window, cx);
+        view = Some(child.clone());
+        cx.new(|_| ReplayHost(child.into()))
+    })?;
+    Ok((
+        window,
+        view.ok_or_else(|| anyhow::anyhow!("missing soak view"))?,
+    ))
+}
 
 fn memory_kib() -> Result<[u64; 2]> {
     let rollup = std::fs::read_to_string("/proc/self/smaps_rollup")?;
@@ -36,6 +84,10 @@ fn finish_replay_frame(window: &mut VisualTestContext) {
 
 /// `SOAK_SCALE=n` divides every dataset size by `n` (profiling under callgrind).
 fn scaled(size: usize) -> usize {
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(items) = warm_repaint::test_items() {
+        return items;
+    }
     if let Ok(size) = std::env::var("SOAK_ITEMS") {
         return size.parse::<usize>().expect("validated limits size").max(1);
     }
@@ -80,7 +132,7 @@ fn flow(
     let mut cx = TestAppContext::build(TestDispatcher::new(0), Some("flow_stress"));
     let (window, view) = cx.update(|cx| {
         guiraffe_core::init(cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+        open_soak_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| {
                 Flow::new(graph, cx)
                     .expect("validated stress graph")
@@ -100,6 +152,9 @@ fn flow(
         "background_ready_us={}",
         mount_started.elapsed().as_micros()
     );
+    if warm_repaint::enabled() {
+        return window.update(&mut cx, |_, window, cx| warm_repaint::measure(window, cx))?;
+    }
     let warm_replay = std::env::var_os("SOAK_FLOW_WARM_REPLAY").is_some();
     let mut frame = |i: usize| {
         let i = if warm_replay { i % 32 } else { i };
@@ -216,7 +271,7 @@ fn charts(
             window_bounds: Some(WindowBounds::Windowed(Bounds::maximized(None, cx))),
             ..Default::default()
         };
-        gpui_kit::open_window(options, cx, |_, cx| {
+        open_soak_window(options, cx, |_, cx| {
             let (mark, count) = if scatter {
                 (Mark::Point, scaled(1_000_000) as u32)
             } else {
@@ -254,6 +309,9 @@ fn charts(
             "full_chart_scene_us={}",
             mount_started.elapsed().as_micros()
         );
+    }
+    if warm_repaint::enabled() {
+        return window.update(warm_repaint::measure);
     }
     let stream_started = Instant::now();
     let initial = retained as u32;
@@ -319,7 +377,25 @@ fn main() -> Result<()> {
         .first()
         .map(String::as_str)
         .ok_or("usage: soak <mixed|grid|code|empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
-    let short = args.iter().any(|arg| arg == "--short");
+    if std::env::var_os("SOAK_WARM_REPAINT").is_some() {
+        if !warm_repaint::enabled() {
+            return Err("warm repaint requires --features warm-repaint-probe".into());
+        }
+        if !matches!(
+            component,
+            "grid" | "flow" | "chart-line" | "chart-scatter" | "gantt" | "markdown" | "mermaid"
+        ) {
+            return Err(format!("no warm repaint fixture for {component}").into());
+        }
+    }
+    run_component(
+        component,
+        args.iter().any(|arg| arg == "--short"),
+        args.iter().any(|arg| arg == "--no-minimap"),
+    )
+}
+
+fn run_component(component: &str, short: bool, no_minimap: bool) -> Result<()> {
     let mount_started = Instant::now();
     let mut result = Ok(());
     match component {
@@ -331,11 +407,9 @@ fn main() -> Result<()> {
             result = sample(frame, mount, short);
         })?,
         "empty" => mounted::empty(|frame| result = sample(frame, mount_started.elapsed(), short))?,
-        "flow" => flow(
-            args.iter().any(|arg| arg == "--no-minimap"),
-            mount_started,
-            |frame, mount| result = sample(frame, mount, short),
-        )?,
+        "flow" => flow(no_minimap, mount_started, |frame, mount| {
+            result = sample(frame, mount, short)
+        })?,
         "timeline" => timeline(|frame| result = sample(frame, mount_started.elapsed(), short)),
         "chart-line" => charts(false, false, |frame, mount| {
             result = sample(frame, mount, short)
@@ -549,7 +623,7 @@ fn limit_report(mount: Duration, mut times: Vec<u128>) -> Result<()> {
 /// Mounted spec/23 scale probes: each mounts the real component over a large
 /// deterministic dataset and performs one realistic interaction per frame.
 mod mounted {
-    use super::{Instant, Result, finish_replay_frame, scaled};
+    use super::{Instant, Result, finish_replay_frame, open_soak_window, scaled};
     pub mod mixed;
     use gpui_kit::{
         App, AppContext, Bounds, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
@@ -858,7 +932,7 @@ mod mounted {
                 ))),
                 ..Default::default()
             };
-            gpui_kit::open_window(options, cx, build)
+            open_soak_window(options, cx, build)
         })?;
         Ok((VisualTestContext::from_window(handle, &cx), view))
     }
@@ -945,6 +1019,9 @@ mod mounted {
             GanttView::new(tasks, TimeFormat::Seconds, cx)
         })?;
         let root = require(&mut window, "gantt")?;
+        if super::warm_repaint::enabled() {
+            return window.update(super::warm_repaint::measure);
+        }
         let body = root.origin + point(root.size.width * 0.6, px(RULER_H + 120.));
         run(&mut |i| {
             let d = 30. * sign(i, 64);
@@ -1469,6 +1546,9 @@ mod mounted {
         window.update(|window, cx| window.render_frame(cx));
         window.run_until_parked();
         println!("background_ready_us={}", started.elapsed().as_micros());
+        if super::warm_repaint::enabled() {
+            return window.update(super::warm_repaint::measure);
+        }
 
         let center = point(px(640.), px(400.));
         run(
@@ -1523,7 +1603,7 @@ mod mounted {
             .with_windowing(WindowingRequest::Headless)
             .run(move |cx| {
                 guiraffe_core::init(cx);
-                let window = gpui_kit::open_window(
+                let window = open_soak_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                             point(px(0.), px(0.)),
@@ -1588,6 +1668,13 @@ mod mounted {
                                     }
                                 })
                             })??;
+                            if ready_size.is_some() && super::warm_repaint::enabled() {
+                                break cx.update(|cx| {
+                                    window.update(cx, |_, window, cx| {
+                                        super::warm_repaint::measure(window, cx)
+                                    })
+                                })?;
+                            }
                             if let Some(size) = ready_size {
                                 match raster_size.replace(size) {
                                     None => {
@@ -1837,11 +1924,8 @@ mod mounted {
             markdown, mount,
         };
         use gpui_kit::{AppContext as _, test::TestWindowExt as _};
-        use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
+        use guiraffe_bench::allocator::count_allocations;
         use std::{process::Command, time::Instant};
-
-        #[global_allocator]
-        static ALLOCATOR: CountingAllocator = CountingAllocator;
 
         const SCENARIO: &str = "GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO";
 
@@ -2019,5 +2103,40 @@ mod mounted {
             assert_eq!(chat_small, chat_large);
             Ok(())
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod warm_repaint_tests {
+    use super::{Result, warm_repaint::test_fixture};
+
+    #[test]
+    fn markdown_replays_within_budget() -> Result<()> {
+        test_fixture("markdown", 1_000, 0)
+    }
+
+    #[test]
+    fn datagrid_replays_within_budget() -> Result<()> {
+        test_fixture("grid", 1_000, 0)
+    }
+
+    #[test]
+    fn gantt_replays_within_budget() -> Result<()> {
+        test_fixture("gantt", 1_000, 0)
+    }
+
+    #[test]
+    fn flow_replays_within_budget() -> Result<()> {
+        test_fixture("flow", 1_000, 0)
+    }
+
+    #[test]
+    fn charts_replay_within_budget() -> Result<()> {
+        test_fixture("chart-scatter", 1_000, 0)
+    }
+
+    #[test]
+    fn mermaid_replays_within_budget() -> Result<()> {
+        test_fixture("mermaid", 200, 0)
     }
 }

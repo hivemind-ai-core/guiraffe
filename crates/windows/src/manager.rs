@@ -8,7 +8,7 @@
 
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     rc::Rc,
     time::Duration,
@@ -121,6 +121,8 @@ pub struct WindowManager {
     /// Open order, for deterministic iteration.
     order: Vec<WindowId>,
     bus: HashMap<TypeId, Vec<BusSub>>,
+    /// Unmanaged helper windows (notification surfaces) that never block the quit policy.
+    auxiliary: HashSet<WindowId>,
     next_id: u64,
     save_task: Option<Task<()>>,
     last_save_error: Option<String>,
@@ -147,9 +149,9 @@ impl WindowManager {
             async {}
         });
         // Re-init keeps open windows and subscriptions registered.
-        let (entries, order, bus, next_id) = if cx.has_global::<Self>() {
+        let (entries, order, bus, auxiliary, next_id) = if cx.has_global::<Self>() {
             let old = cx.remove_global::<Self>();
-            (old.entries, old.order, old.bus, old.next_id)
+            (old.entries, old.order, old.bus, old.auxiliary, old.next_id)
         } else {
             Default::default()
         };
@@ -161,6 +163,7 @@ impl WindowManager {
             entries,
             order,
             bus,
+            auxiliary,
             next_id,
             save_task: None,
             last_save_error: None,
@@ -404,10 +407,35 @@ impl WindowManager {
             subs.retain(|s| s.window != wid);
         }
         m.bus.retain(|_, v| !v.is_empty());
-        let quit = m.config.quit_policy == QuitPolicy::WhenLastWindowCloses && m.entries.is_empty();
-        if quit && cx.windows().iter().all(|w| w.window_id() == wid) {
+        m.auxiliary.remove(&wid);
+        let policy = m.config.quit_policy;
+        let managed_left = !m.entries.is_empty();
+        let auxiliary = m.auxiliary.clone();
+        let open: Vec<WindowId> = cx.windows().iter().map(|w| w.window_id()).collect();
+        if should_quit(policy, managed_left, &open, wid, &auxiliary) {
             cx.quit();
         }
+    }
+
+    /// Mark an unmanaged helper window (a notification surface, a tray popup) so it never keeps
+    /// the app alive under [`QuitPolicy::WhenLastWindowCloses`].
+    /// Without an installed manager there is no quit policy to protect, so this is a no-op.
+    pub fn mark_auxiliary(handle: AnyWindowHandle, cx: &mut App) {
+        if cx.has_global::<Self>() {
+            cx.global_mut::<Self>().auxiliary.insert(handle.window_id());
+        }
+    }
+
+    /// Change the quit policy at runtime (e.g. when a tray icon appears or goes away).
+    pub fn set_quit_policy(policy: QuitPolicy, cx: &mut App) {
+        Self::ensure(cx);
+        cx.global_mut::<Self>().config.quit_policy = policy;
+    }
+
+    pub fn quit_policy(cx: &App) -> QuitPolicy {
+        cx.try_global::<Self>()
+            .map(|m| m.config.quit_policy)
+            .unwrap_or_default()
     }
 
     /// Register a guard consulted when the user asks to close `window`.
@@ -553,4 +581,19 @@ impl WindowManager {
             })
             .unwrap_or(false)
     }
+}
+
+/// The quit decision when `closing` closes: quit when the policy asks for it, no managed window
+/// is left, and every other open window is auxiliary (notification surfaces never keep the app
+/// alive).
+pub(crate) fn should_quit(
+    policy: QuitPolicy,
+    managed_left: bool,
+    open: &[WindowId],
+    closing: WindowId,
+    auxiliary: &HashSet<WindowId>,
+) -> bool {
+    policy == QuitPolicy::WhenLastWindowCloses
+        && !managed_left
+        && open.iter().all(|w| *w == closing || auxiliary.contains(w))
 }

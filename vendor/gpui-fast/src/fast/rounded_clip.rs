@@ -145,6 +145,7 @@ pub(crate) struct SceneClips {
     pub(crate) scopes: Vec<Scope>,
     active: Vec<usize>,
     pub(crate) compiled: bool,
+    pub(crate) replayed_full_frame: bool,
 }
 
 impl SceneClips {
@@ -170,6 +171,7 @@ pub(crate) fn clear(scene: &mut Scene) {
     scene.fast_rounded_clip.scopes.clear();
     scene.fast_rounded_clip.active.clear();
     scene.fast_rounded_clip.compiled = false;
+    scene.fast_rounded_clip.replayed_full_frame = false;
 }
 
 /// The continuation paints descendants; the element's own border and drop
@@ -335,6 +337,31 @@ mod tests {
         let mut style = style(24.);
         style.overflow.x = Overflow::Visible;
         assert!(Shape::for_style(&style, bounds, px(16.), 1.).is_none());
+    }
+
+    #[test]
+    fn complete_replay_keeps_compiled_groups_until_the_paint_stream_changes() {
+        use crate::fast::rounded_clip_scene::reuse_full_replay;
+
+        let mut previous = Scene::default();
+        record(&mut previous, ClipOperation::Begin(shape()));
+        previous.insert_primitive(quad());
+        record(&mut previous, ClipOperation::End);
+        previous.finish();
+        let content = previous.layers.frames[0].content.clone();
+
+        let mut next = Scene::default();
+        next.replay(0..previous.len(), &previous);
+        next.fast_rounded_clip.replayed_full_frame = true;
+        next.insert_primitive(quad());
+        assert!(!reuse_full_replay(&mut next, &mut previous));
+
+        next.clear();
+        next.replay(0..previous.len(), &previous);
+        next.fast_rounded_clip.replayed_full_frame = true;
+        assert!(reuse_full_replay(&mut next, &mut previous));
+        assert!(next.fast_rounded_clip.compiled);
+        assert!(next.layers.frames[0].content.ptr_eq(&content));
     }
 
     #[test]

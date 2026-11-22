@@ -11,6 +11,7 @@ workspace = true
 default = []
 gpui-fast = ["gpui-kit/gpui-fast"]
 instruction-counts = ["dep:iai-callgrind"]
+warm-repaint-probe = []
 
 [dependencies]
 guiraffe-code.workspace = true
@@ -42,6 +43,7 @@ nix = { version = "0.31", features = ["signal", "process"] }
 iai-callgrind = { version = "=0.16.1", optional = true }
 
 [dev-dependencies]
+backtrace = "0.3"
 guiraffe-flow.workspace = true
 guiraffe-chat.workspace = true
 guiraffe-markdown.workspace = true

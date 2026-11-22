@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/*", "bench", "examples/ui-macro-demo"]
-exclude = ["vendor/gpui-base", "vendor/gpui-component", "vendor/gpui-fast-linux", "vendor/mermaid-rs-renderer"]
+members = ["crates/*", "bench", "examples/ui-macro-demo", "examples/getting-started", "examples/desktop-integration"]
+exclude = ["vendor/gpui-base", "vendor/gpui-component", "vendor/gpui-fast-linux", "vendor/mermaid-rs-renderer", "vendor/taffy"]
 resolver = "3"
 
 [workspace.package]
@@ -19,6 +19,7 @@ guiraffe-layout = { path = "crates/layout" }
 guiraffe-components = { path = "crates/components" }
 guiraffe-overlays = { path = "crates/overlays" }
 guiraffe-windows = { path = "crates/windows" }
+guiraffe-tray = { path = "crates/tray" }
 guiraffe-markdown = { path = "crates/markdown" }
 guiraffe-mermaid = { path = "crates/mermaid" }
 guiraffe-flow-core = { path = "crates/flow-core" }
@@ -40,8 +41,7 @@ guiraffe-datagrid = { path = "crates/datagrid" }
 guiraffe-devtools = { path = "crates/devtools" }
 guiraffe-dnd = { path = "crates/dnd" }
 guiraffe-calendar = { path = "crates/calendar" }
-chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = { version = "0.10", features = ["serde"] }
+chrono-tz = "0.10"
 gpui-kit = { version = "=0.9.1", features = ["component", "assets"] }
 # The same pin as gpui-kit: the test support of the framework (the element and
 # text registries the inspect API reads) lives here.
@@ -49,6 +49,7 @@ gpui-base = { version = "=0.9.1", features = ["test-support"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+chrono = "0.4.38"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -70,3 +71,4 @@ gpui-pre = { path = "vendor/gpui-pre" }
 gpui-base = { path = "vendor/gpui-base" }
 gpui-component = { path = "vendor/gpui-component" }
 mermaid-rs-renderer = { path = "vendor/mermaid-rs-renderer" }
+taffy = { path = "vendor/taffy" }

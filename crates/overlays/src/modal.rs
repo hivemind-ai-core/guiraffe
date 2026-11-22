@@ -31,6 +31,8 @@ pub struct Modal {
     overlay: bool,
     close_button: bool,
     width: gpui_kit::Pixels,
+    top: Option<gpui_kit::Pixels>,
+    label: Option<gpui_kit::SharedString>,
     on_ok: Decision,
     on_cancel: Decision,
     on_close: Closed,
@@ -54,6 +56,8 @@ impl Modal {
             overlay: true,
             close_button: true,
             width: px(Size::Xs.container_width()),
+            top: None,
+            label: None,
             on_ok: Rc::new(|_, _, _| true),
             on_cancel: Rc::new(|_, _, _| true),
             on_close: Rc::new(|_, _, _| {}),
@@ -96,6 +100,17 @@ impl Modal {
     }
     pub fn w(self, width: impl Into<gpui_kit::Pixels>) -> Self {
         self.width(width)
+    }
+    /// Anchor the surface this far below the top of the window instead of centering it
+    /// (command bars sit in the upper third so results grow downward).
+    pub fn offset_top(mut self, top: impl Into<gpui_kit::Pixels>) -> Self {
+        self.top = Some(top.into());
+        self
+    }
+    /// Accessible name of the dialog (a visible title is preferred when there is one).
+    pub fn accessibility_label(mut self, label: impl Into<gpui_kit::SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
     }
     pub fn on_ok(
         mut self,
@@ -143,12 +158,13 @@ impl ManagedModal {
         id: OverlayId,
         host: gpui_kit::WeakEntity<OverlayHost>,
         build: Builder,
+        kind: TransitionKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        let transition = Transition::themed(TransitionKind::Fade, &MotionPrefs::global(cx).tokens);
+        let transition = Transition::themed(kind, &MotionPrefs::global(cx).tokens);
         let mut presence = Presence::new(false, transition.enter, transition.exit);
         set_presence(&mut presence, true, cx);
         Self {
@@ -240,6 +256,10 @@ impl Render for ManagedModal {
             .focus_handle(self.focus.clone())
             .close_on_escape(modal.keyboard && topmost && !self.closing)
             .close_on_backdrop_press(modal.outside && !self.closing)
+            .when_some(modal.top, |dialog, top| dialog.items_start().pt(top))
+            .when_some(modal.label.clone(), |dialog, label| {
+                dialog.accessibility_label(label)
+            })
             .when(modal.overlay, |dialog| {
                 dialog.backdrop(
                     div()

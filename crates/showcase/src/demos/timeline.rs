@@ -18,6 +18,20 @@ pub fn entries() -> Vec<Entry> {
     vec![
         Entry {
             krate: "timeline",
+            name: "Event timeline · Git history",
+            summary: "Follow a release from branch to merge, with tags and multiple events at the same position.",
+            covers: &["EventTimeline", "EventTimelineState"],
+            demo: git_history,
+        },
+        Entry {
+            krate: "timeline",
+            name: "Event timeline · Concurrent processes",
+            summary: "Trace parallel workers and the process that joins their results.",
+            covers: &["EventTimeline"],
+            demo: concurrent_processes,
+        },
+        Entry {
+            krate: "timeline",
             name: "Gantt chart",
             summary: "Critical-path scheduling; drag a bar to reschedule and dependents follow. Wheel pans, Ctrl+wheel zooms.",
             covers: &["GanttView"],
@@ -591,6 +605,176 @@ fn bars(_: &mut Window, cx: &mut App) -> AnyView {
         "32 bars · bipolar · 16 steps · drag to draw",
         220.,
         log,
+        cx,
+    )
+}
+
+struct EventHistory(Entity<EventTimelineState>, Entity<EventTimelineState>);
+
+impl Render for EventHistory {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        column([
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(Text::new("Vertical").size(Size::Sm).dimmed(true))
+                .child(div().h(px(275.)).child(EventTimeline::new(&self.0)))
+                .into_any_element(),
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(Text::new("Horizontal").size(Size::Sm).dimmed(true))
+                .child(div().h(px(158.)).child(EventTimeline::new(&self.1)))
+                .into_any_element(),
+        ])
+    }
+}
+
+type HistoryRow = (
+    u64,
+    i64,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+);
+
+fn history(
+    labels: [&str; 3],
+    rows: &[HistoryRow],
+    endpoints: &[(u64, u64, LinkKind)],
+    cx: &mut App,
+) -> AnyView {
+    let colors = [ColorName::Blue, ColorName::Teal, ColorName::Grape];
+    let make_model = || {
+        let tracks = labels
+            .into_iter()
+            .zip(colors)
+            .enumerate()
+            .map(|(id, (label, color))| EventTrack {
+                id: id as u64,
+                label: label.into(),
+                color: Some(color),
+            })
+            .collect();
+        let events = rows
+            .iter()
+            .enumerate()
+            .map(
+                |(id, &(track, position, label, content, tags))| TimelineEvent {
+                    id: id as u64,
+                    track,
+                    position,
+                    label: label.into(),
+                    content: Some(content.into()),
+                    tags: tags.iter().map(|tag| (*tag).into()).collect(),
+                    color: (label == "Publish").then_some(ColorName::Green),
+                },
+            )
+            .collect();
+        let links = endpoints
+            .iter()
+            .map(|&(source, destination, kind)| EventLink {
+                source,
+                destination,
+                kind,
+                color: (kind == LinkKind::Merge && destination == 5).then_some(ColorName::Violet),
+            })
+            .collect();
+        EventModel::new(tracks, events, links)
+    };
+    let (Ok(vertical), Ok(horizontal)) = (make_model(), make_model()) else {
+        return cx.new(|_| InvalidHistory).into();
+    };
+    let vertical = cx.new(|cx| {
+        EventTimelineState::new(vertical, cx)
+            .size(Size::Sm)
+            .focusable(true)
+    });
+    let horizontal = cx.new(|cx| {
+        EventTimelineState::new(horizontal, cx)
+            .orientation(EventOrientation::Horizontal)
+            .size(Size::Xs)
+            .focusable(true)
+            .item_content(|item, _, _| {
+                div()
+                    .truncate()
+                    .child(
+                        Text::new(item.content.as_deref().unwrap_or_default().to_owned())
+                            .size(Size::Xs)
+                            .dimmed(true),
+                    )
+                    .into_any_element()
+            })
+    });
+    cx.new(|_| EventHistory(vertical, horizontal)).into()
+}
+
+struct InvalidHistory;
+
+impl Render for InvalidHistory {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child("Invalid event history")
+    }
+}
+
+fn git_history(_: &mut Window, cx: &mut App) -> AnyView {
+    history(
+        ["main", "release/0.2", "fix/focus"],
+        &[
+            (0, 0, "Prepare release", "f312cad · Update changelog", &[]),
+            (1, 0, "Cut release", "6bd829e · Release branch", &["0.2"]),
+            (1, 0, "Pin dependencies", "fa401c1 · Refresh lockfile", &[]),
+            (
+                2,
+                1,
+                "Preserve focus",
+                "d119b3f · Restore keyboard focus",
+                &[],
+            ),
+            (
+                1,
+                2,
+                "Merge focus fix",
+                "3d81cf4 · Verify both backends",
+                &[],
+            ),
+            (0, 3, "Publish", "1b4f2f0 · Release GUIraffe", &["v0.2.0"]),
+        ],
+        &[
+            (0, 1, LinkKind::Branch),
+            (2, 3, LinkKind::Branch),
+            (3, 4, LinkKind::Merge),
+            (4, 5, LinkKind::Merge),
+        ],
+        cx,
+    )
+}
+
+fn concurrent_processes(_: &mut Window, cx: &mut App) -> AnyView {
+    history(
+        ["Coordinator", "API worker", "UI worker"],
+        &[
+            (
+                0,
+                0,
+                "Dispatch workers",
+                "Run 47 · Two independent jobs",
+                &[],
+            ),
+            (1, 1, "Run contract tests", "68 requests checked", &[]),
+            (1, 1, "Upload trace", "Saved request timings", &[]),
+            (2, 1, "Run visual tests", "Light and dark snapshots", &[]),
+            (2, 2, "Upload captures", "Four references checked", &[]),
+            (0, 3, "Join results", "All checks passed", &["Passed"]),
+        ],
+        &[
+            (0, 1, LinkKind::Branch),
+            (0, 3, LinkKind::Branch),
+            (2, 5, LinkKind::Merge),
+            (4, 5, LinkKind::Merge),
+        ],
         cx,
     )
 }
