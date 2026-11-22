@@ -85,14 +85,14 @@ jobs:
           git worktree add --detach /tmp/guiraffe-base "$BASE_SHA"
           if test -f /tmp/guiraffe-base/bench/benches/instructions.rs; then
             cd /tmp/guiraffe-base
-            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-baseline=pr-base
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-baseline=pr_base
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::The base predates the benchmarks: instruction counts are not compared."
           fi
       - name: Instruction gate (2 percent)
         if: steps.base.outputs.ready == 'true'
-        run: cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --baseline=pr-base --save-summary=json
+        run: cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --baseline=pr_base --save-summary=json
       - name: Instruction counts without a base
         if: steps.base.outputs.ready != 'true'
         run: cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-summary=json
