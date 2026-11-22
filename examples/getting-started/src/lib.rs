@@ -41,7 +41,7 @@ mod tests {
     #[test]
     fn doc_snippets_match_the_examples() {
         let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
-        for doc in ["getting-started.md", "from-react-electron.md"] {
+        for doc in ["getting-started.md", "guides/from-react-electron.md"] {
             let text = std::fs::read_to_string(docs.join(doc))
                 .unwrap_or_else(|e| panic!("reading {doc}: {e}"));
             let blocks = rust_blocks(&text);
