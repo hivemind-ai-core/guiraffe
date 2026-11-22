@@ -42,6 +42,9 @@ nix = { version = "0.31", features = ["signal", "process"] }
 iai-callgrind = { version = "=0.16.1", optional = true }
 
 [dev-dependencies]
+guiraffe-state.workspace = true
+guiraffe-test = { workspace = true, features = ["render"] }
+nix = { version = "0.31", features = ["time"] }
 backtrace = "0.3"
 guiraffe-flow.workspace = true
 guiraffe-chat.workspace = true

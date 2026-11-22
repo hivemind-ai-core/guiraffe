@@ -3419,6 +3419,8 @@ dependencies = [
  "guiraffe-motion",
  "guiraffe-overlays",
  "guiraffe-sheet",
+ "guiraffe-state",
+ "guiraffe-test",
  "guiraffe-timeline",
  "guiraffe-tree",
  "guiraffe-ui",

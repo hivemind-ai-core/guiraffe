@@ -19,7 +19,9 @@ use std::{
 
 use gpui_kit::{App, AppContext, Context, Entity, Subscription, WeakEntity};
 
-use crate::engine::{Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor};
+use crate::engine::{
+    Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, UndoEvent,
+};
 
 type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
 type ErrorHandler = Rc<dyn Fn(&EngineError, &mut App)>;
@@ -209,6 +211,19 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         self.schedule(cx);
     }
 
+    /// Process a typed event immediately when idle, without boxing it.
+    ///
+    /// When the store already has a scheduled batch or is processing effects,
+    /// the event enters that batch in FIFO order.
+    pub fn dispatch_now(&self, event: impl Event<S>, cx: &mut App) {
+        if self.scheduled.get() || self.processing.get() || self.inner.read(cx).engine.has_pending()
+        {
+            self.dispatch(event, cx);
+        } else {
+            self.flush_with_first(Some(event), cx);
+        }
+    }
+
     fn schedule(&self, cx: &mut App) {
         if self.scheduled.get() || self.processing.get() {
             return; // the pending or running flush will pick it up
@@ -225,6 +240,10 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     /// Process everything queued now. Reentrant calls (from effect handlers or renders during
     /// the flush) are folded into the running flush.
     pub fn flush(&self, cx: &mut App) {
+        self.flush_with_first::<UndoEvent>(None, cx);
+    }
+
+    fn flush_with_first<E: Event<S>>(&self, mut first: Option<E>, cx: &mut App) {
         if self.processing.get() {
             return;
         }
@@ -238,7 +257,9 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
                 let cofx = i.cofx.clone();
                 let mut cofx = cofx.borrow_mut();
                 cofx.now = Some(cx.background_executor().now());
-                let out = i.engine.process_with_budget(&cofx, &mut budget);
+                let out = i
+                    .engine
+                    .process_with_first(first.take(), &cofx, &mut budget);
                 i.stats.events_processed += out.processed as u64;
                 (out, i.engine.state().clone())
             });
