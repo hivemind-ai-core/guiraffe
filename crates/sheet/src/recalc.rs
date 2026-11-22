@@ -537,7 +537,7 @@ mod tests {
             entered,
             release: Arc::new(Mutex::new(wait_for_release)),
         });
-        let mut worker = Recalculator::new(1, 1, engine)?;
+        let mut worker = Recalculator::new(1, 2, engine)?;
         let pos = CellPos::default();
         let first = worker.submit(vec![(pos, Arc::from("=WAIT"))]);
         assert!(first.is_some());
@@ -545,17 +545,19 @@ mod tests {
             wait_for_enter.recv_timeout(timeout)?,
             thread::current().id()
         );
+        let independent = CellPos::new(0, 1);
+        worker.submit(vec![(independent, Arc::from("7"))]);
         let payload: Arc<str> = Arc::from("=99");
         for _ in 0..10_000 {
             worker.submit(vec![(pos, payload.clone())]);
         }
-        let latest = worker.submit(vec![(pos, Arc::from("=100"))]);
+        let latest = worker.submit(vec![(pos, Arc::from("=B1+100"))]);
         assert_eq!(Arc::strong_count(&payload), 1);
 
         release.send(())?;
         let result = worker.recv_timeout(timeout)?;
         assert_eq!(Some(result.revision), latest);
-        assert_eq!(result.value(pos), Some(Ok(100.)));
+        assert_eq!(result.value(pos), Some(Ok(107.)));
         Ok(())
     }
 
