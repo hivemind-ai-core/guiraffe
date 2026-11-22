@@ -168,6 +168,75 @@ an idle Store without an interceptor. Re-run the equal-write portion
 with `COMPOSED_EQUAL_ONLY=1`. The after measurements ran on the same
 busy host at a one-minute load of roughly 15–20.
 
+## Follow-up on mount and ordinary queued writes
+
+Run the same affected rows with `COMPOSED_FOLLOWUP=1` on the two release
+commands above. This mode measures mounts at all three sizes and queued
+label and equal writes at 3,000 rows, for both inline and cached views. The
+equal event uses `Store::dispatch` and the existing `Fx::update` handler.
+Both runs use four warm-ups and 31 samples. The baseline uses Store code
+from `dd02483` with this measurement mode. The updated runs use `af88b72`.
+
+The liveness regression in `9f3203b` failed with 499,500 checks at 1,000
+registrations and 49,995,000 at 10,000. With `9d9658e`, neither size
+requires a liveness probe during registration. A selection owns its
+slot, and the Store tracks weak entries in registration order. Dropping
+the last owner triggers a sweep once dead entries reach half the
+registry. Each sweep removes at least half the entries, so total
+cleanup work is linear in the number of drops. The test also checks
+exact statistics and bounded entries after dropping all but three
+selections, then dropping the remainder.
+
+The baseline already skips debug formatting when no interceptor is
+installed. `af88b72` also eliminates the temporary allocation for the
+new `Arc<State>`. The handler works on a tentative state and publishes a
+new snapshot only on change. The warmed equal write still owns a boxed
+event in the heterogeneous FIFO and a boxed GPUI defer callback per
+scheduled flush. `Fx::update` exposes arbitrary mutable access, so the
+engine must retain the original for equality and clone the state before
+calling the mutator. In this fixture the clone allocates the row vector
+once. Initial queue growth can add another allocation. The existing
+allocation test warms the FIFO and checks that the equal event runs
+without selection or render activity.
+
+All timings are provisional. The one-minute host load at each run's
+start and finish was as follows. The differing loads and baseline spreads
+limit cross-backend and label-timing comparisons. Label allocation counts
+and selection/render activity matched before and after. Each equal write
+evaluated zero selectors and rendered zero views.
+
+| Backend | Before load (start → finish) | After load (start → finish) |
+| --- | ---: | ---: |
+| upstream | 3.42 → 13.14 | 6.72 → 4.02 |
+| gpui-fast | 13.14 → 7.22 | 4.02 → 9.77 |
+
+| Backend | Variant | Rows | Operation | Before CPU median / p99 (ms) | After CPU median / p99 (ms) | Median allocations before → after |
+| --- | --- | ---: | --- | ---: | ---: | ---: |
+| upstream | inline | 1,000 | mount | 110.381312 / 117.765812 | 89.231639 / 117.938438 | 228,624 → 228,625 |
+| upstream | inline | 3,000 | mount | 441.498026 / 467.832747 | 270.657110 / 289.066305 | 683,654 → 683,655 |
+| upstream | inline | 3,000 | label | 315.802910 / 347.431460 | 282.842635 / 313.199053 | 411,171 → 411,171 |
+| upstream | inline | 3,000 | equal | 0.011080 / 0.019747 | 0.010179 / 0.016802 | 4 → 3 |
+| upstream | inline | 10,000 | mount | 2846.826700 / 4705.746848 | 925.950614 / 993.993659 | 2,276,266 → 2,276,267 |
+| upstream | cached | 1,000 | mount | 105.561336 / 110.331571 | 86.231587 / 97.113937 | 226,621 → 226,622 |
+| upstream | cached | 3,000 | mount | 427.512598 / 437.149746 | 263.567604 / 307.064521 | 677,690 → 677,691 |
+| upstream | cached | 3,000 | label | 22.587179 / 27.750425 | 18.771860 / 23.479339 | 3,302 → 3,302 |
+| upstream | cached | 3,000 | equal | 0.010350 / 0.010640 | 0.009798 / 0.011021 | 4 → 3 |
+| upstream | cached | 10,000 | mount | 2896.798294 / 18143.046321 | 929.379920 / 1022.636893 | 2,256,315 → 2,256,316 |
+| gpui-fast | inline | 1,000 | mount | 165.354610 / 212.904643 | 83.156167 / 88.446145 | 263,991 → 263,992 |
+| gpui-fast | inline | 3,000 | mount | 708.700741 / 819.998276 | 268.324397 / 326.903134 | 789,040 → 789,041 |
+| gpui-fast | inline | 3,000 | label | 329.716746 / 446.261791 | 186.751791 / 195.147570 | 258,225 → 258,225 |
+| gpui-fast | inline | 3,000 | equal | 0.014618 / 0.027622 | 0.010119 / 0.023644 | 4 → 3 |
+| gpui-fast | inline | 10,000 | mount | 9543.386381 / 10507.689819 | 1052.717474 / 1187.336559 | 2,626,721 → 2,626,722 |
+| gpui-fast | cached | 1,000 | mount | 263.249295 / 296.006914 | 86.756641 / 91.886312 | 282,062 → 282,063 |
+| gpui-fast | cached | 3,000 | mount | 842.849092 / 992.403798 | 326.780459 / 349.541352 | 843,151 → 843,152 |
+| gpui-fast | cached | 3,000 | label | 38.937235 / 46.840186 | 29.050950 / 31.138256 | 12,362 → 12,362 |
+| gpui-fast | cached | 3,000 | equal | 0.014477 / 0.019146 | 0.011111 / 0.012283 | 4 → 3 |
+| gpui-fast | cached | 10,000 | mount | 2845.803139 / 7554.170949 | 1476.501846 / 1929.616687 | 2,806,849 → 2,806,850 |
+
+`scripts/gate.sh` passed both backend test suites, including the composed
+allocation test, plus per-crate doctests, Clippy and formatting. No golden
+images changed. The foreman owns the final quiet run.
+
 ## Profiling
 
 Build each release executable with
