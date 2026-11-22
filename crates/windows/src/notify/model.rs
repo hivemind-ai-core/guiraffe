@@ -190,6 +190,12 @@ impl StackModel {
     pub fn queued(&self) -> impl Iterator<Item = &Card> {
         self.queued.iter()
     }
+    pub(super) fn drain_queued(&mut self) -> impl Iterator<Item = WindowNotificationId> + use<> {
+        std::mem::take(&mut self.queued)
+            .into_iter()
+            .map(|card| card.id)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.visible.is_empty() && self.queued.is_empty()
     }
@@ -255,7 +261,11 @@ impl StackModel {
         }
         let before = self.queued.len();
         self.queued.retain(|c| c.id != id);
-        self.queued.len() != before
+        let removed = self.queued.len() != before;
+        if removed && self.queued.capacity() > self.queued.len().saturating_mul(4).max(32) {
+            self.queued.shrink_to(self.queued.len().saturating_mul(2));
+        }
+        removed
     }
 
     /// Drop a leaving card and promote queued ones (their timers start at `now`). Returns the

@@ -761,15 +761,18 @@ impl NotificationWindows {
     /// Dismiss every card, queued ones included.
     pub fn clear(&self, cx: &mut App) {
         self.stack.update(cx, |s, cx| {
-            let ids: Vec<_> = s
-                .model
-                .queued()
-                .map(|c| c.id)
-                .chain(s.model.visible().iter().map(|c| c.id))
-                .collect();
+            for id in s.model.drain_queued() {
+                s.emit(
+                    id,
+                    WindowNotificationEventKind::Dismissed(DismissReason::App),
+                    cx,
+                );
+            }
+            let ids: Vec<_> = s.model.visible().iter().map(|card| card.id).collect();
             for id in ids {
                 s.leave(id, DismissReason::App, cx);
             }
+            s.handlers.shrink_to_fit();
         });
     }
     pub fn subscribe(

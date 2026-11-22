@@ -52,6 +52,52 @@ fn reduced(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn overflow_notifications_release_callbacks_and_payloads_on_dismiss_and_clear(
+    cx: &mut TestAppContext,
+) {
+    reduced(cx);
+    let (service, _, _sub) = setup(
+        cx,
+        NotificationWindowsConfig {
+            stack: StackConfig {
+                max_visible: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    let capture = Rc::new("callback payload".repeat(128));
+    let (first, retained) = cx.update(|cx| {
+        service.show(WindowNotification::new("visible").timeout(None), cx);
+        let mut first = None;
+        for index in 0..1_000 {
+            let payload = capture.clone();
+            let id = service.show_with(
+                WindowNotification::new(format!("queued {index}")).body("body".repeat(128)),
+                move |_, _| {
+                    assert!(!payload.is_empty());
+                },
+                cx,
+            );
+            first.get_or_insert(id);
+        }
+        (
+            first.unwrap(),
+            service.entity().read(cx).model().queued().count(),
+        )
+    });
+    assert_eq!(retained, 1_000);
+    assert_eq!(Rc::strong_count(&capture), 1_001);
+    cx.update(|cx| assert!(service.dismiss(first, cx)));
+    cx.run_until_parked();
+    assert_eq!(Rc::strong_count(&capture), 1_000);
+    cx.update(|cx| service.clear(cx));
+    cx.run_until_parked();
+    assert_eq!(Rc::strong_count(&capture), 1);
+    assert!(cx.update(|cx| service.entity().read(cx).model().is_empty()));
+}
+
+#[gpui_kit::test]
 fn show_opens_a_surface_sized_to_the_stack(cx: &mut TestAppContext) {
     let (service, log, _sub) = setup(cx, Default::default());
     assert!(cx.update(|cx| service.entity().read(cx).window()).is_none());
