@@ -53,11 +53,20 @@ includes retained element payloads or the renderer's other storage.
 | Upstream | 10,000 | Both, each | 1,032,192 | 1,310,720 | 524,288 | 1,146,880 | 1,179,648 |
 | Upstream | 100,000 | Rendered | 7,956,288 | 20,971,520 | 4,194,304 | 9,175,040 | 9,437,184 |
 | Upstream | 100,000 | Next | 8,257,536 | 20,971,520 | 4,194,304 | 9,175,040 | 9,437,184 |
+| Fast | 10,000 | Rendered | 1,032,192 | 1,310,720 | 524,288 | 8,960 | 9,216 |
+| Fast | 10,000 | Next | 1,032,192 | 1,310,720 | 524,288 | 0 | 0 |
+| Fast | 100,000 | Rendered | 7,959,528 | 20,971,520 | 4,194,304 | 8,960 | 9,216 |
+| Fast | 100,000 | Next | 8,257,536 | 20,971,520 | 4,194,304 | 0 | 0 |
+
+At the 100,000-row peak, Fast built the query index during Tab traversal.
+After two 100-row frames, its rendered frame held a new index for 100 targets
+and its next frame held no index. State maps, access logs and insertion history
+retained capacity on both backends.
 
 ### Proposed idle trim for frame storage
 
-Arm one cancellable maintenance job for five seconds after both alternating
-frames report live entries at or below one quarter of capacity for a candidate
+Schedule a single cancellable maintenance job to run five seconds after both
+alternating frames report live entries at or below one quarter of capacity for a candidate
 buffer. Recheck at execution and shrink each qualifying
 buffer toward twice its live high-water over that interval, subject to a small
 floor. An intervening larger frame cancels that job. If the window stays idle it
