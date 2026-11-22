@@ -4,10 +4,12 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
     },
     thread,
 };
+
+use arc_swap::ArcSwapOption;
 
 use crate::{CellPos, Formula, FormulaEngine, FormulaError, FormulaValues, Reference};
 
@@ -17,6 +19,7 @@ type Values = im::OrdMap<CellPos, Value>;
 type Compiled = Result<Box<dyn Formula>, FormulaError>;
 
 /// Immutable formula values from a completed revision.
+#[derive(Clone)]
 pub struct Calculation {
     pub revision: u64,
     values: Values,
@@ -33,69 +36,131 @@ impl Calculation {
 /// Submit only input changes, in edit order. Each new batch cancels superseded calculation
 /// and the next publication covers every pending change. Dropping the session cancels it.
 pub struct Recalculator {
-    input: Sender<(u64, Vec<Input>)>,
-    output: Receiver<Calculation>,
+    input: SyncSender<()>,
+    pending: Arc<ArcSwapOption<Pending>>,
+    output: Receiver<()>,
+    published: Arc<ArcSwapOption<Calculation>>,
     revision: Arc<AtomicU64>,
+}
+
+struct Pending {
+    revision: u64,
+    changes: im::OrdMap<CellPos, Arc<str>>,
 }
 
 impl Recalculator {
     pub fn new(rows: usize, cols: usize, engine: Arc<dyn FormulaEngine>) -> std::io::Result<Self> {
-        let (input, incoming) = mpsc::channel::<(u64, Vec<Input>)>();
-        let (outgoing, output) = mpsc::channel();
+        // Channels carry wakeups only. Each slot owns the latest data independently of
+        // whether a wakeup is already queued.
+        let (input, incoming) = mpsc::sync_channel(1);
+        let (outgoing, output) = mpsc::sync_channel(1);
+        let pending = Arc::new(ArcSwapOption::<Pending>::empty());
+        let published = Arc::new(ArcSwapOption::empty());
         let revision = Arc::new(AtomicU64::new(0));
         let latest = revision.clone();
+        let work = pending.clone();
+        let results = published.clone();
         thread::Builder::new()
             .name("sheet-recalc".into())
             .spawn(move || {
                 let mut graph = Graph::new(rows, cols);
-                while let Ok((mut version, changes)) = incoming.recv() {
+                while incoming.recv().is_ok() {
                     if latest.load(Ordering::Acquire) == u64::MAX {
                         return;
                     }
-                    graph.update(changes, engine.as_ref());
-                    for (pending, changes) in incoming.try_iter() {
-                        version = pending;
-                        graph.update(changes, engine.as_ref());
-                    }
+                    let Some(batch) = work.swap(None) else {
+                        continue;
+                    };
+                    let version = batch.revision;
+                    graph.update(
+                        batch.changes.iter().map(|(&pos, text)| (pos, text.clone())),
+                        engine.as_ref(),
+                    );
+                    drop(batch);
                     if graph
                         .calculate(|| latest.load(Ordering::Acquire) != version)
                         .is_some()
-                        && outgoing
-                            .send(Calculation {
-                                revision: version,
-                                values: graph.values.clone(),
-                            })
-                            .is_err()
+                        && latest.load(Ordering::Acquire) == version
                     {
-                        return;
+                        results.store(Some(Arc::new(Calculation {
+                            revision: version,
+                            values: graph.values.clone(),
+                        })));
+                        if outgoing.try_send(()) == Err(TrySendError::Disconnected(())) {
+                            return;
+                        }
                     }
                 }
             })?;
         Ok(Self {
             input,
+            pending,
             output,
+            published,
             revision,
         })
     }
 
     pub fn submit(&mut self, changes: Vec<Input>) -> Option<u64> {
-        let version = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
-        self.input.send((version, changes)).ok()?;
-        Some(version)
+        let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
+        // Retry only if the worker took the previous slot concurrently. The persistent
+        // map shares unchanged branches, so repeatedly editing one cell stays cheap.
+        self.pending.rcu(|current| {
+            let mut merged = current
+                .as_ref()
+                .map_or_else(im::OrdMap::new, |batch| batch.changes.clone());
+            merged.extend(changes.iter().cloned());
+            Some(Arc::new(Pending {
+                revision,
+                changes: merged,
+            }))
+        });
+        match self.input.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(())) => Some(revision),
+            Err(TrySendError::Disconnected(())) => None,
+        }
     }
 
     pub fn try_recv(&self) -> Option<Calculation> {
-        self.output.try_recv().ok()
+        let _ = self.output.try_recv();
+        self.take_publication()
     }
 
     pub fn recv(&self) -> Option<Calculation> {
-        self.output.recv().ok()
+        loop {
+            if let Some(result) = self.try_recv() {
+                return Some(result);
+            }
+            self.output.recv().ok()?;
+        }
+    }
+
+    fn take_publication(&self) -> Option<Calculation> {
+        let result = self.published.swap(None)?;
+        Some(Arc::unwrap_or_clone(result))
+    }
+
+    #[cfg(test)]
+    fn recv_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<Calculation, mpsc::RecvTimeoutError> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if let Some(result) = self.try_recv() {
+                return Ok(result);
+            }
+            self.output
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))?;
+        }
     }
 }
 
 impl Drop for Recalculator {
     fn drop(&mut self) {
         self.revision.store(u64::MAX, Ordering::Release);
+        self.pending.store(None);
+        self.published.store(None);
     }
 }
 
@@ -124,7 +189,7 @@ impl Graph {
         }
     }
 
-    fn update(&mut self, changes: Vec<Input>, engine: &dyn FormulaEngine) {
+    fn update(&mut self, changes: impl IntoIterator<Item = Input>, engine: &dyn FormulaEngine) {
         for (pos, text) in changes {
             if let Some(Ok(previous)) = self.formulas.remove(&pos) {
                 for r in previous.references().iter().filter(|r| r.first == r.last) {
@@ -339,6 +404,7 @@ mod tests {
     use super::*;
     use crate::{BuiltinEngine, a1};
     use proptest::prelude::*;
+    use std::sync::mpsc::Sender;
 
     proptest! {
         #[test]
@@ -487,9 +553,31 @@ mod tests {
         assert_eq!(Arc::strong_count(&payload), 1);
 
         release.send(())?;
-        let result = worker.output.recv_timeout(timeout)?;
+        let result = worker.recv_timeout(timeout)?;
         assert_eq!(Some(result.revision), latest);
         assert_eq!(result.value(pos), Some(Ok(100.)));
+        Ok(())
+    }
+
+    #[test]
+    fn unread_calculation_churn_retains_latest_publication_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::time::Duration;
+        let mut worker = Recalculator::new(1, 2, Arc::new(BuiltinEngine))?;
+        let input = CellPos::default();
+        let formula = CellPos::new(0, 1);
+        worker.submit(vec![(formula, Arc::from("=A1+1"))]);
+        worker.output.recv_timeout(Duration::from_secs(5))?;
+        let mut latest = None;
+        for value in 1..=1_000 {
+            latest = worker.submit(vec![(input, Arc::from(value.to_string()))]);
+            // Read only the wakeup, leaving the publication slot unconsumed.
+            worker.output.recv_timeout(Duration::from_secs(5))?;
+        }
+        let result = worker.try_recv().ok_or("latest result is missing")?;
+        assert_eq!(Some(result.revision), latest);
+        assert_eq!(result.value(formula), Some(Ok(1_001.)));
+        assert!(worker.try_recv().is_none());
         Ok(())
     }
 
@@ -502,10 +590,7 @@ mod tests {
         let initial = worker.submit(entries);
         let latest = worker.submit(vec![(CellPos::default(), Arc::from("7"))]);
         assert_ne!(initial, latest);
-        while let Ok(result) = worker
-            .output
-            .recv_timeout(std::time::Duration::from_secs(10))
-        {
+        while let Ok(result) = worker.recv_timeout(std::time::Duration::from_secs(10)) {
             if Some(result.revision) == latest {
                 assert!(result.value(CellPos::new(100_000, 0)) == Some(Ok(100_007.)));
                 return Ok(());

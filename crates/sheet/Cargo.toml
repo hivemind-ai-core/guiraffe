@@ -8,6 +8,7 @@ license.workspace = true
 gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-datagrid/gpui-fast"]
 
 [dependencies]
+arc-swap = "1"
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-datagrid.workspace = true
