@@ -281,11 +281,12 @@ the cached CodeViewer subtree.
 
 ## Decoration and trace lifetimes
 
-After its first use, a decoration style remains interned while any layer still
-references it. Removing the final reference releases both map entries. IDs increase
-monotonically within the decoration set and a retired ID resolves to no style.
-Interned styles awaiting their first layer remain available to the caller for the
-owner's lifetime. See `style_churn_releases_payloads_without_reusing_keys`.
+An interned style keeps its key until the owner calls `release_unused_styles`, so a key
+saved at start-up survives a layer becoming empty. That call releases every style no layer
+uses. Released keys resolve to no style and are never reused. This is owner lifetime, not a
+hard bound: an owner that interns per-revision styles (review or blame text) and never calls
+it keeps them until the set is dropped. See `style_churn_releases_payloads_without_reusing_keys`
+and `a_saved_style_key_survives_its_layer_becoming_empty`.
 
 Trace registration sweeps weak records when their count reaches at least twice
 the population after the prior sweep, with a minimum threshold of 32. A

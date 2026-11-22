@@ -24,6 +24,18 @@ impl RowCache {
         row: &Entity<MessageView>,
         cx: &mut App,
     ) {
+        Self::admit(cache, history, index, index, row, cx);
+    }
+
+    /// Admit a row, evicting the rows farthest from `anchor` (where the user is reading).
+    fn admit(
+        cache: &Rc<RefCell<Self>>,
+        history: &Entity<History>,
+        index: usize,
+        anchor: usize,
+        row: &Entity<MessageView>,
+        cx: &mut App,
+    ) {
         let mut this = cache.borrow_mut();
         if this.recent.get(&index).is_some_and(|entry| entry == row) {
             return;
@@ -32,12 +44,12 @@ impl RowCache {
         this.pinned.remove(&index);
 
         while this.recent.len() > RETAINED_ROWS {
-            let extremes = [this.recent.first_key_value(), this.recent.last_key_value()];
-            let Some((&victim, _)) = extremes
+            let others = || this.recent.keys().copied().filter(|&key| key != index);
+            let Some(victim) = others()
+                .next()
                 .into_iter()
-                .flatten()
-                .filter(|(key, _)| **key != index)
-                .max_by_key(|(key, _)| key.abs_diff(index))
+                .chain(others().next_back())
+                .max_by_key(|key| key.abs_diff(anchor))
             else {
                 break;
             };
@@ -204,9 +216,22 @@ impl History {
         }
     }
 
+    /// Materialize a row from outside list rendering (a reply starting, a host lookup). Eviction
+    /// anchors on the scroll position, so the rows being read stay mounted.
     pub(crate) fn materialize(
         &mut self,
         index: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<MessageView>> {
+        let anchor = self.list.logical_scroll_top().item_ix;
+        self.materialize_near(index, anchor, cx)
+    }
+
+    /// The list holds its state borrowed while rendering, so its callback passes the anchor.
+    fn materialize_near(
+        &mut self,
+        index: usize,
+        anchor: usize,
         cx: &mut Context<Self>,
     ) -> Option<Entity<MessageView>> {
         let row = self.rows.get_mut(index)?;
@@ -238,7 +263,7 @@ impl History {
         *row = Row::Mounted(view.clone());
         // Replies can materialize without entering the virtual list. Give those
         // rows the same eviction path as rows materialized during rendering.
-        RowCache::use_row(&self.row_cache, &cx.entity(), index, &view, cx);
+        RowCache::admit(&self.row_cache, &cx.entity(), index, anchor, &view, cx);
         Some(view)
     }
 
@@ -296,7 +321,11 @@ impl Render for History {
                         .get(index)
                         .and_then(Row::mounted)
                         .cloned()
-                        .or_else(|| owner.update(cx, |history, cx| history.materialize(index, cx)));
+                        .or_else(|| {
+                            owner.update(cx, |history, cx| {
+                                history.materialize_near(index, index, cx)
+                            })
+                        });
                     let Some(row) = row else {
                         return div().into_any_element();
                     };
@@ -481,6 +510,46 @@ mod tests {
         ] {
             probe_selection_retention(cx, probe);
         }
+    }
+
+    #[gpui_kit::test]
+    fn an_offscreen_reply_does_not_evict_the_row_being_read(cx: &mut TestAppContext) {
+        let (_, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                for index in 0..256 {
+                    history.push(
+                        Message::new(MessageId(index as u64), Role::Assistant, "row"),
+                        false,
+                        cx,
+                    );
+                }
+                history.sync_list();
+                history.list.pause_following_tail();
+                history.sticky.user_scroll(false);
+                history.list.scroll_to(ListOffset {
+                    item_ix: 0,
+                    offset_in_item: px(0.),
+                });
+                for index in 0..RETAINED_ROWS {
+                    history.materialize(index, cx).expect("history row");
+                }
+            });
+        });
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                history.materialize(255, cx).expect("reply row");
+            });
+        });
+        cx.update(|cx| {
+            let history = history.read(cx);
+            assert!(
+                history.rows[0].mounted().is_some(),
+                "evicted the row being read"
+            );
+            assert!(history.rows[RETAINED_ROWS - 1].mounted().is_none());
+        });
     }
 
     #[gpui_kit::test]
