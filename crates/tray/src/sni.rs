@@ -231,6 +231,7 @@ impl TrayBackend for SniBackend {
         cx: &mut App,
     ) -> Task<Result<(), TrayError>> {
         let shared = self.shared.clone();
+        let flush_executor = cx.background_executor().clone();
         cx.background_executor().spawn(async move {
             let tray = SniTray { state, events };
             let handle = tray.spawn().await.map_err(|e| match e {
@@ -244,9 +245,9 @@ impl TrayBackend for SniBackend {
                 state.handle = Some(handle);
                 state.reserve_flush()
             };
-            // Apply anything that changed while connecting.
+            // The flush has its own owner even if the connection task is dropped.
             if flush_pending {
-                flush(shared).await;
+                flush_executor.spawn(flush(shared)).detach();
             }
             Ok(())
         })
