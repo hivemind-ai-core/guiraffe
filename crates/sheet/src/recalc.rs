@@ -45,7 +45,10 @@ pub struct Recalculator {
 
 struct Pending {
     revision: u64,
-    changes: im::OrdMap<CellPos, Arc<str>>,
+    // Move the first batch into the slot as-is. Later submits only index their own
+    // edits, and the worker skips replaced base inputs when applying the mailbox.
+    base: Arc<Vec<Input>>,
+    overlay: im::OrdMap<CellPos, Arc<str>>,
 }
 
 impl Recalculator {
@@ -73,7 +76,12 @@ impl Recalculator {
                     };
                     let version = batch.revision;
                     graph.update(
-                        batch.changes.iter().map(|(&pos, text)| (pos, text.clone())),
+                        batch
+                            .base
+                            .iter()
+                            .filter(|(pos, _)| !batch.overlay.contains_key(pos))
+                            .cloned()
+                            .chain(batch.overlay.iter().map(|(&pos, text)| (pos, text.clone()))),
                         engine.as_ref(),
                     );
                     drop(batch);
@@ -103,16 +111,22 @@ impl Recalculator {
 
     pub fn submit(&mut self, changes: Vec<Input>) -> Option<u64> {
         let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
-        // Retry only if the worker took the previous slot concurrently. The persistent
-        // map shares unchanged branches, so repeatedly editing one cell stays cheap.
+        let submitted = Arc::new(changes);
+        // Retry only if the worker took the previous slot concurrently. The initial
+        // submission moves its Vec; later ones copy only changed map branches.
         self.pending.rcu(|current| {
-            let mut merged = current
-                .as_ref()
-                .map_or_else(im::OrdMap::new, |batch| batch.changes.clone());
-            merged.extend(changes.iter().cloned());
+            let (base, overlay) = match current {
+                Some(batch) => {
+                    let mut overlay = batch.overlay.clone();
+                    overlay.extend(submitted.iter().cloned());
+                    (batch.base.clone(), overlay)
+                }
+                None => (submitted.clone(), im::OrdMap::new()),
+            };
             Some(Arc::new(Pending {
                 revision,
-                changes: merged,
+                base,
+                overlay,
             }))
         });
         match self.input.try_send(()) {
