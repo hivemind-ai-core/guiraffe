@@ -351,9 +351,12 @@ fn toolbar(frame: &Frame<'_>, cx: &mut App) -> impl IntoElement {
         .gap(px(Size::Sm.spacing()))
         .child(navigation)
         .child(
+            // Natural width: in a narrow host the controls wrap to the next
+            // row rather than cutting the date or year out of the heading.
             div()
-                .flex_1()
-                .min_w_0()
+                .flex_grow(1.)
+                .flex_shrink_0()
+                .max_w_full()
                 .whitespace_nowrap()
                 .overflow_hidden()
                 .text_ellipsis()
