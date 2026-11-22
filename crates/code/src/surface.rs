@@ -2385,20 +2385,24 @@ mod review_tests {
 }
 
 #[cfg(test)]
-#[test]
-fn dead_trace_registration_churn_is_pruned_without_scanning_every_push() {
-    let mut dependents = Dependents::default();
-    let checks = Cell::new(0);
-    for index in 0..10_000 {
-        dependents.push(index < 100, |alive| {
-            checks.set(checks.get() + 1);
-            *alive
-        });
-        assert!(dependents.entries.len() <= 200);
+mod dependent_tests {
+    use super::{Cell, Dependents};
+
+    #[test]
+    fn dead_trace_registration_churn_is_pruned_without_scanning_every_push() {
+        let mut dependents = Dependents::default();
+        let checks = Cell::new(0);
+        for index in 0..10_000 {
+            dependents.push(index < 100, |alive| {
+                checks.set(checks.get() + 1);
+                *alive
+            });
+            assert!(dependents.entries.len() <= 200);
+        }
+        assert_eq!(
+            dependents.entries.iter().filter(|&&alive| alive).count(),
+            100
+        );
+        assert!(checks.get() <= 20_000);
     }
-    assert_eq!(
-        dependents.entries.iter().filter(|&&alive| alive).count(),
-        100
-    );
-    assert!(checks.get() <= 20_000);
 }
