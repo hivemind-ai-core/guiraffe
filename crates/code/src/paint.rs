@@ -439,8 +439,12 @@ pub(crate) fn prepare(
                     .map(|fold| if fold.collapsed { "+" } else { "−" })
                     .unwrap_or(" ");
                 label.clear();
+                let mut indent = 0;
                 if options.line_numbers {
-                    let _ = write!(label, "{:>digits$} {marker}", line + 1);
+                    // Right-align by position. Padding with spaces would paint one glyph for each
+                    // digit of the line count on every row, so a frame would grow with the file.
+                    indent = digits.saturating_sub((line + 1).ilog10() as usize + 1);
+                    let _ = write!(label, "{} {marker}", line + 1);
                 } else {
                     label.push_str(marker);
                 }
@@ -509,7 +513,7 @@ pub(crate) fn prepare(
                 );
                 rows.push(PaintedRow {
                     shape: label_shape,
-                    origin: point(bounds.origin.x, y),
+                    origin: point(bounds.origin.x + px(indent as f32 * cell), y),
                     gutter: true,
                 });
             }
