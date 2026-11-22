@@ -3129,6 +3129,26 @@ impl Window {
         &self.rendered_frame.scene
     }
 
+    /// Capacity in bytes for the element-state map, access log, tab history,
+    /// tab index, and tab order of each alternating frame. Hash maps report
+    /// usable entries times entry size, excluding control bytes and slack.
+    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
+    pub fn test_frame_storage_capacity_bytes(&self) -> [[usize; 5]; 2] {
+        [&self.rendered_frame, &self.next_frame].map(|frame| {
+            let [tab_history, tab_index, tab_order] = frame.tab_stops.test_capacity_bytes();
+            [
+                frame.element_states.capacity()
+                    * std::mem::size_of::<((GlobalElementId, TypeId), ElementStateBox)>(),
+                frame.accessed_element_states.capacity()
+                    * std::mem::size_of::<(GlobalElementId, TypeId)>(),
+                tab_history,
+                tab_index,
+                tab_order,
+            ]
+        })
+    }
+
     /// Observe each completed draw after the scene swap, including retained frames.
     #[cfg(any(test, feature = "test-support"))]
     pub fn observe_test_frames(&mut self, observe: impl Fn(&Window) + 'static) {
