@@ -23,6 +23,8 @@ jobs:
           echo 'Server=https://archive.archlinux.org/repos/2026/11/21/$repo/os/$arch' > /etc/pacman.d/mirrorlist
           pacman -Syyuu --noconfirm --needed base-devel git python clang cmake alsa-lib openssl libxcb libx11 libxkbcommon libxkbcommon-x11 wayland vulkan-icd-loader vulkan-swrast mesa fontconfig freetype2 libgit2 adwaita-fonts cantarell-fonts gsfonts noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-bitstream-vera ttf-dejavu ttf-fira-code ttf-liberation ttf-opensans
       - uses: actions/checkout@v4
+      # The container runs as root and the checkout belongs to the runner's user. Tests run git.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy
@@ -54,6 +56,8 @@ jobs:
           echo 'Server=https://archive.archlinux.org/repos/2026/11/21/$repo/os/$arch' > /etc/pacman.d/mirrorlist
           pacman -Syyuu --noconfirm --needed base-devel git python clang cmake alsa-lib openssl libxcb libx11 libxkbcommon libxkbcommon-x11 wayland vulkan-icd-loader vulkan-swrast mesa fontconfig freetype2 libgit2 adwaita-fonts cantarell-fonts gsfonts noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-bitstream-vera ttf-dejavu ttf-fira-code ttf-liberation ttf-opensans
       - uses: actions/checkout@v4
+      # The container runs as root and the checkout belongs to the runner's user. Tests run git.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       # The scaffold test resolves a new app offline, for every platform in the lockfile.
@@ -102,7 +106,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$IAI_CALLGRIND_HOME"
-          cargo bench --locked -p guiraffe-bench --features instruction-counts --bench production_frames -- --save-summary=json
+          log="$RUNNER_TEMP/frame-scale.log"
+          if ! cargo bench --locked -p guiraffe-bench --features instruction-counts --bench production_frames -- --save-summary=json > "$log" 2>&1; then
+            cat "$log"
+            tail -n 25 "$log" | cut -c1-280 | python3 -c 'import sys; print("::error title=Frame scaling benchmark::" + sys.stdin.read().replace("%", "%25").replace("\n", "%0A"))'
+            exit 1
+          fi
+          cat "$log"
           python3 - <<'PY'
           import json
           import os
@@ -120,9 +130,11 @@ jobs:
           for component in ("datagrid", "code"):
               small = instructions(f"{component}_frame_100k")
               large = instructions(f"{component}_frame_10m")
-              print(f"{component} instructions: 100k={small}, 10M={large}")
+              counts = f"{component} instructions: 100k={small}, 10M={large}"
+              print(f"::notice title=Frame scaling::{counts}")
               if small <= 0 or large <= 0 or large * 100 > small * 102:
-                  raise SystemExit(f"{component}: invalid instruction counts or growth exceeds 2%")
+                  print(f"::error title=Frame scaling::{counts}. Growth exceeds 2% or counts are invalid")
+                  raise SystemExit(1)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
