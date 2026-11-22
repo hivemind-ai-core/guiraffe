@@ -14,7 +14,8 @@ a mixed UTF-8 document and confirm equal suffix work after short and long
 prefixes.
 
 The scrollable viewer seeds Kit's list with 28 px per block. The list
-updates heights after measuring visible blocks and overscan. It stores one
+updates heights after measuring visible blocks and 512 px of overscan on
+each side. It stores one
 height per block. Growth rebuilds the height index and preserves the
 logical top item. Kit retains up to 4,096 shaped layouts per UI thread
 across all text views. The scrollable view caches paragraph decorations,
@@ -122,3 +123,15 @@ The Fast release run still exceeded the 67,686 KiB RSS budget by
 6,338 KiB and crossed the drift threshold. Its 64-frame development
 RSS gate passed at 64,908 KiB above empty. The final mounted warm probe
 matched at 1,444 allocations upstream and 93 on Fast at both sizes.
+
+| Retained Markdown state | Bound | Eviction |
+|---|---|---|
+| Settled text-only top-level paragraph runs | One compact descriptor per parsed run. On 64-bit targets, a source-backed run with a whole-run emphasis mark occupies at most 48 bytes and needs no separate mark or source-map allocation. Transformed runs and overlapping or rich marks keep their exact payloads. | Replaced with the parsed document. An append shares the unchanged prefix. |
+| Selection state | One shared selection state per paragraph. Only images and custom inline objects own selection state for the preceding run. | Replaced with the owning block. |
+| Materialized cold paragraphs, paragraph decorations, table metrics and fence highlights | 256 top-level blocks per estimated-height view. Individual blocks can be large. | Evicts the cached block farthest from the block being laid out. Logical selection survives eviction. |
+| Shaped text layouts | 4,096 entries per UI thread across all Kit text views. | Prunes older entries in batches and sweeps dropped owners. |
+| Resource images | The host’s GPUI image cache policy, with the app asset cache as fallback. | Managed by GPUI or the host’s image provider. |
+| Mermaid rasters | 16 entries and 64 MiB per [Mermaid engine](../mermaid/PRODUCTION.md). | Evicts the oldest engine cache entry. |
+
+See the [mounted heap diagnosis](../../plans/PERF-MARKDOWN-MEMORY.md)
+for retained costs by backend.

@@ -12,6 +12,7 @@ workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-layout.workspace = true
+guiraffe-motion.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

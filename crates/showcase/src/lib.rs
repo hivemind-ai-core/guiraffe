@@ -43,6 +43,7 @@ pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_timeline::init(cx);
     guiraffe_datagrid::init(cx);
     guiraffe_calendar::init(cx);
+    guiraffe_sheet::init(cx);
     // Chart overlays live in a window-root layer so hover never re-renders the host.
     guiraffe_charts::init(cx);
     guiraffe_flamegraph::init(cx);

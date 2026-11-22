@@ -3,7 +3,8 @@
 use crate::gpui::IntoElement;
 
 use gpui_kit::{
-    AnyElement, App, ParentElement as _, RenderOnce, StyleRefinement, Styled as _, Window, div, px,
+    AnyElement, App, ElementId, ParentElement as _, RenderOnce, StyleRefinement, Styled as _,
+    Window, div, px,
 };
 
 use crate::align::{Align, Justify};
@@ -25,6 +26,7 @@ pub struct Stack {
     grow: bool,
     children: Vec<AnyElement>,
     style: StyleRefinement,
+    animate: Option<(ElementId, Option<bool>)>,
 }
 
 impl Default for Stack {
@@ -43,7 +45,21 @@ impl Stack {
             grow: false,
             children: Vec::new(),
             style: StyleRefinement::default(),
+            animate: None,
         }
+    }
+
+    /// Animate the stack's height when its children change (spec/29), following
+    /// `guiraffe_motion::MotionPrefs::layout`. The stack then fills its parent's width.
+    /// `id` keys the animation state; keep it stable.
+    pub fn animate_layout(self, id: impl Into<ElementId>) -> Self {
+        self.animate_layout_with(id, None)
+    }
+
+    /// Like [`Self::animate_layout`] with a per-container override (`Some(false)` disables).
+    pub fn animate_layout_with(mut self, id: impl Into<ElementId>, enabled: Option<bool>) -> Self {
+        self.animate = Some((id.into(), enabled));
+        self
     }
 
     /// The space between children.
@@ -111,7 +127,12 @@ impl RenderOnce for Stack {
         for child in self.children {
             element = element.child(child);
         }
-        element
+        match self.animate {
+            Some((id, enabled)) => guiraffe_motion::AnimatedSize::new(id, element)
+                .enabled_opt(enabled)
+                .into_any_element(),
+            None => element.into_any_element(),
+        }
     }
 }
 

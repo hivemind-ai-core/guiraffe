@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 pub use crate::widget_spec::{EventSpec, FORMAT_VERSION, PropSpec, Schema, WidgetSpec};
 
-pub const VERSION: &str = "1.2.0";
+pub const VERSION: &str = "1.4.0";
 
 use crate::widget_spec;
 
@@ -38,6 +38,8 @@ mod markdown;
 mod mermaid;
 #[path = "../../overlays/src/widget_specs.rs"]
 mod overlays;
+#[path = "../../sheet/src/widget_specs.rs"]
+mod sheet;
 #[path = "../../timeline/src/widget_specs.rs"]
 mod timeline;
 #[path = "../../tree/src/widget_specs.rs"]
@@ -61,6 +63,7 @@ pub fn all_widgets() -> impl Iterator<Item = &'static WidgetSpec> {
         .chain(markdown::WIDGETS)
         .chain(mermaid::WIDGETS)
         .chain(overlays::WIDGETS)
+        .chain(sheet::WIDGETS)
         .chain(tree::WIDGETS)
         .chain(timeline::WIDGETS)
         .copied()
@@ -110,7 +113,8 @@ widgets! {
          "gap-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
          "align": "string" = "\"stretch\"", ALIGN, None, false;
          "justify": "string" = "\"start\"", JUSTIFY, None, false;
-         "grow": "boolean" = "false", &[] as &[&str], None, false], [];
+         "grow": "boolean" = "false", &[] as &[&str], None, false;
+         "animate-layout": "string" = "\"off\"", &["off", "auto", "on"] as &[&str], None, false], [];
     GROUP: "group", "layout", "Horizontal group that wraps by default.", true, "stateless", "group", ["density.space"],
         ["gap": "string" = "\"sm\"", SIZE, None, false;
          "gap-px": "number" = "null", &[] as &[&str], Some((0.0, f32::MAX as f64)), false;
@@ -298,7 +302,9 @@ widgets! {
          "disabled": "boolean" = "false", &[] as &[&str], None, false;
          "loading": "boolean" = "false", &[] as &[&str], None, false;
          "focusable": "boolean" = "null", &[] as &[&str], None, false;
-         "label": "string" = "null", &[] as &[&str], None, false], ["click": "null"];
+         "label": "string" = "null", &[] as &[&str], None, false;
+         "toggled": "boolean" = "null", &[] as &[&str], None, false;
+         "tooltip": "string" = "null", &[] as &[&str], None, false], ["click": "null"];
     CLOSE_BUTTON: "close-button", "components", "Native close action with the standard close icon.", false, "stateless", "button",
         ["control_size", "variant.foreground", "variant.background"],
         ["size": "string" = "\"sm\"", SIZE, None, false;

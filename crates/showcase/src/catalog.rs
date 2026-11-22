@@ -24,6 +24,11 @@ pub struct Entry {
 pub const INTERNAL: &[(&str, &str, &str)] = &[
     ("layout", "Col", "child of Grid; shown in the Grid entry"),
     (
+        "sheet",
+        "SheetState",
+        "state entity mounted by Sheet in the Spreadsheet entry",
+    ),
+    (
         "components",
         "CardSection",
         "child of Card; shown in the Card entry",
@@ -79,6 +84,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::flow::entries());
     v.extend(crate::demos::timeline::entries());
     v.extend(crate::demos::datagrid::entries());
+    v.extend(crate::demos::sheet::entries());
     v.extend(crate::demos::dnd::entries());
     v.extend(crate::demos::ui::entries());
     v.extend(crate::demos::kit::entries());
@@ -86,6 +92,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::recipes::entries());
     v.extend(crate::demos::composed_charts::entries());
     v.extend(crate::demos::flame_tree::entries());
+    v.extend(crate::demos::motion::entries());
     v
 }
 

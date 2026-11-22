@@ -1,0 +1,22 @@
+[package]
+name = "guiraffe-sheet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-datagrid/gpui-fast"]
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-datagrid.workspace = true
+im = "15.1"
+lru = { version = "0.12.5", default-features = false }
+
+[dev-dependencies]
+proptest = "1"
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

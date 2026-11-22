@@ -85,6 +85,8 @@ pub static PROPERTY_GRID: WidgetSpec = WidgetSpec {
             accepted: &["hidden", "icons", "labels"],
             ..prop("edit-buttons", "string", "\"hidden\"")
         },
+        // Group expand/collapse animation (spec/29); null follows MotionPrefs::layout.
+        prop("animate-layout", "boolean", "null"),
     ],
     accepts_children: false,
     events: &[

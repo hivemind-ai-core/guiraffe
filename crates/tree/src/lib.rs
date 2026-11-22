@@ -5,6 +5,7 @@
 //! ```ignore
 //! ui! { div { {cx.new(|cx| PropertyGrid::new(source.clone(), cx).split_ratio(0.55))} } }
 //! ```
+mod collapse_motion;
 mod geometry;
 mod model;
 mod property;

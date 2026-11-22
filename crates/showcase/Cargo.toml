@@ -21,6 +21,7 @@ guiraffe-layout.workspace = true
 guiraffe-icons.workspace = true
 guiraffe-timeline.workspace = true
 guiraffe-datagrid.workspace = true
+guiraffe-sheet.workspace = true
 guiraffe-dnd.workspace = true
 guiraffe-chat.workspace = true
 guiraffe-flow.workspace = true
@@ -28,6 +29,7 @@ guiraffe-inputs.workspace = true
 chrono.workspace = true
 guiraffe-markdown = { workspace = true, features = ["mermaid", "syntect"] }
 guiraffe-mermaid.workspace = true
+guiraffe-motion.workspace = true
 guiraffe-overlays = { workspace = true, features = ["desktop"] }
 guiraffe-windows.workspace = true
 guiraffe-tray = { workspace = true, features = ["native"] }

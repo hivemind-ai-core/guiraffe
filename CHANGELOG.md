@@ -14,7 +14,9 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
   primaries in standard and high contrast, Kit (GPUI Controls) theme bridge, shared control
   behaviour (`Press`: hover/pressed/disabled, no focus on click, opt-in tab stops, AccessKit
   roles), non-layout focus ring, focus release on view swap.
-- **motion:** springs/tweens, presence, reduce-motion aware.
+- **motion:** springs/tweens, presence, reduce-motion aware; opt-in layout animation
+  (`AnimatedSize`, `AnimatedList` FLIP, `KeyedPresence`, `Reveal`; `MotionPrefs::layout`; spec/29),
+  used by `Stack::animate_layout` and TreeList/PropertyGrid group expand/collapse.
 - **state:** re-frame-style store: pure handlers, effects/coeffects, interceptors, lens undo,
   change-only selections, debounce.
 - **router:** typed routes (`routes!`), guards, history.
@@ -56,6 +58,9 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
   reorderable columns; multi-column sort and filters off the UI thread; row/cell/range
   selection that follows rows through sorting; keyboard navigation; inline editing with
   validation; TSV copy; AccessKit grid roles.
+- **sheet:** sparse virtualized spreadsheet (A1 formulas recalculated off the UI thread, fill
+  handle, TSV clipboard, undo, resizable rows/columns, frozen panes, read-only); `SheetEvent::Edited`
+  for user edits; DataUi `sheet` kind (cells, extents, read-only, frozen panes, `edit` event).
 - **timeline (overhaul):** composable plot surface layers (ruler, gridlines, marks, playhead,
   selection, markers, stripes, bands); lock state separate from lock styling; Blender-style
   dope sheet (hierarchy, summaries, toggles, key types, hold bars, box selection, keyboard);
@@ -101,4 +106,6 @@ See KNOWN_ISSUES.md. Notably: gpui-fast pinned to 0.1.15; no OS high-contrast/fo
 signal yet; Kit has four size steps; Kit charts lack legends.
 
 Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select states.
-Catalogue 1.2.0 snapshot `34501c917297fb65` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper, event-timeline and calendar kinds, and PropertyGrid editing options).
+Catalogue 1.2.0 snapshot `9cfca66b723596b0` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper and event-timeline kinds, and PropertyGrid editing options).
+Catalogue 1.3.0 snapshot `f02fd1904da6e29f` adds the `sheet` kind, PropertyGrid and Stack `animate-layout`, and ActionIcon `toggled` and `tooltip`.
+Catalogue 1.4.0 snapshot `32f852d2b157035f` adds the `calendar` kind.

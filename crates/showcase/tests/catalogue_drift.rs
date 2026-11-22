@@ -93,6 +93,7 @@ fn kind(surface: &str) -> Option<&'static str> {
             "property-grid"
         }
         "tree::TreeList" => "tree-list",
+        "sheet::Sheet" | "sheet::SheetState" => "sheet",
         "timeline::TracksView" => "tracks-view",
         "timeline::GanttView" => "gantt",
         "timeline::DopeSheet" => "dope-sheet",
@@ -1003,6 +1004,14 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Native pointer gesture layer mounted by the flow canvas.",
     ),
     (
+        "sheet::SheetState::with_engine",
+        "A Rust FormulaEngine trait object replaces the built-in engine. Documents use the built-in formulas.",
+    ),
+    (
+        "sheet::SheetState::model",
+        "Read-only model query for native callers. Documents receive changed cells through edit.",
+    ),
+    (
         "dnd::DockDragOverlay",
         "Native drag surface mounted by a managed dock.",
     ),
@@ -1303,6 +1312,9 @@ fn covered(surface: &str) -> bool {
                 ("inputs::Picker", "with_props" | "update_props") => "label".into(),
                 ("overlays::SpotlightState", "recent_ids") => "recents".into(),
                 ("tree::TreeView", "row_style" | "set_row_style") => "density".into(),
+                ("sheet::SheetState", "freeze" | "frozen") => "frozen-rows".into(),
+                ("sheet::SheetState", "edit") => "cells".into(),
+                ("layout::Stack", "animate_layout_with") => "animate-layout".into(),
                 ("tree::TreeView", "row_heights" | "set_row_heights" | "replace_source") => {
                     "nodes".into()
                 }

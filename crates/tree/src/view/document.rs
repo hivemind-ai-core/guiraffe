@@ -246,6 +246,8 @@ struct EditOptions {
     focus_row: bool,
     reset_button: bool,
     edit_buttons: EditButtons,
+    /// Group expand/collapse animation; `None` follows `MotionPrefs::layout`.
+    animate_layout: Option<bool>,
 }
 
 #[derive(IntoElement)]
@@ -297,6 +299,7 @@ impl<const P: bool> DocumentTree<P> {
                     Some("labels") => EditButtons::Labels,
                     _ => EditButtons::Hidden,
                 },
+                animate_layout: node.prop(15).as_bool(),
             },
             handlers: std::array::from_fn(|index| node.handler(index)),
         }
@@ -441,6 +444,9 @@ impl<const P: bool> RenderOnce for DocumentTree<P> {
                 tree.set_focus_row(self.editing.focus_row, cx);
                 tree.set_reset_button(self.editing.reset_button, cx);
                 tree.set_edit_buttons(self.editing.edit_buttons, cx);
+                if tree.collapse_motion.enabled != self.editing.animate_layout {
+                    tree.set_animate_layout(self.editing.animate_layout);
+                }
                 if let Some(expanded) = &self.expanded {
                     for id in state.source.nodes.keys().copied() {
                         let open = expanded.contains(&id);

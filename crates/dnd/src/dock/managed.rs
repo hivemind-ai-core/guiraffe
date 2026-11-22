@@ -13,7 +13,6 @@ use gpui_kit::{
         InsertTarget, NodeId, PaneNode, PaneRef, PanelHandle, PanelId, TabGroupContext,
         TabGroupRenderer,
     },
-    component::tooltip::Tooltip,
     div, point, px, size,
 };
 use guiraffe_components::ActionIcon;
@@ -918,42 +917,35 @@ impl TabGroupRenderer for Renderer {
         }
         if center_controls && let Some(area) = area {
             let active = area.read(cx);
+            // Toggle buttons (pressed = dock open) with a tooltip; a click never takes focus
+            // from the editor (spec/00 §12.3), but they stay in the Tab order.
             let controls = [
-                (DockPlacement::Left, "left", IconName::PanelLeft),
-                (DockPlacement::Bottom, "bottom", IconName::PanelBottom),
-                (DockPlacement::Right, "right", IconName::PanelRight),
+                (DockPlacement::Left, IconName::PanelLeft, "Left panel"),
+                (DockPlacement::Bottom, IconName::PanelBottom, "Bottom panel"),
+                (DockPlacement::Right, IconName::PanelRight, "Right panel"),
             ]
             .into_iter()
-            .filter(|(side, ..)| active.has_dock(*side) && active.is_dock_collapsible(*side))
-            .map(|(side, name, icon)| {
+            .filter(|(side, _, _)| active.has_dock(*side) && active.is_dock_collapsible(*side))
+            .map(|(side, icon, label)| {
                 let area = area.downgrade();
                 let open = active.is_dock_open(side);
-                let label: SharedString = if open {
-                    format!("Hide {name} panel")
-                } else {
-                    format!("Show {name} panel")
-                }
-                .into();
-                let tip = label.clone();
-                // Pressed (open) toggles are filled in the primary tint; closed ones are
-                // quiet. The accessible name and tooltip state the action as well.
-                let button = ActionIcon::new(("dock-toggle", side as usize), icon)
+                // The name stays put; the pressed state says whether the dock is open and the
+                // tooltip (also the accessible description) states the action.
+                ActionIcon::new(("dock-toggle", side as usize), icon)
                     .size(Size::Sm)
-                    .variant(if open {
-                        Variant::Light
-                    } else {
-                        Variant::Subtle
-                    })
+                    .variant(Variant::Subtle)
                     .when(!open, |button| button.color(ColorName::Gray))
                     .label(label)
+                    .tooltip(if open {
+                        format!("Hide {}", label.to_lowercase())
+                    } else {
+                        format!("Show {}", label.to_lowercase())
+                    })
+                    .toggled(open)
                     .focusable(true)
                     .on_click(move |_, window, cx| {
                         let _ = area.update(cx, |area, cx| area.toggle_dock(side, window, cx));
-                    });
-                div()
-                    .id(("dock-toggle-tip", side as usize))
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    .child(button)
+                    })
             });
             let controls = div()
                 .flex()
@@ -1225,6 +1217,62 @@ mod tests {
                 tree.find_panel_node(root.panels[0]),
                 tree.find_panel_node(root.panels[1])
             );
+        });
+    }
+
+    /// The center group's dock toggles are ActionIcon toggle buttons: pressed while the dock
+    /// is open, named and described for assistive technology, and a click flips the dock
+    /// without taking focus from the panel the user is working in (spec/00 §12).
+    #[gpui_kit::test]
+    fn dock_toggles_are_pressed_buttons_that_keep_focus(cx: &mut TestAppContext) {
+        cx.update(guiraffe_components::init);
+        let (root, window) = cx.add_window_view(|window, cx| {
+            let root = fixture(window, cx, Rc::default());
+            let side = cx.new(|cx| TestPanel(cx.focus_handle(), "Delta"));
+            root.area.update(cx, |area, cx| {
+                area.set_dock(
+                    DockPlacement::Left,
+                    DockLayout::tabs().panel_view(panel_handle(side), cx),
+                    window,
+                    cx,
+                );
+            });
+            root
+        });
+        let toggle = ("dock-toggle", DockPlacement::Left as usize);
+        let editor = window.update(|window, cx| {
+            window.render_frame(cx);
+            let left = window.find(toggle);
+            assert_eq!(left.role(), Some(Role::Button));
+            assert_eq!(left.label(), Some("Left panel"));
+            assert_eq!(left.description(), Some("Hide left panel"));
+            assert_eq!(left.checked(), Some(true), "open dock = pressed");
+            assert!(
+                window
+                    .try_find(("dock-toggle", DockPlacement::Right as usize))
+                    .is_none(),
+                "no toggle for a dock that does not exist"
+            );
+            let editor = cx.focus_handle();
+            window.focus(&editor, cx);
+            editor
+        });
+        let center = window.update(|window, _| window.find(toggle).bounds().center());
+        window.simulate_click(center, Default::default());
+        window.run_until_parked();
+        window.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(editor.is_focused(window), "toggle click stole focus");
+            assert!(
+                !root
+                    .read(cx)
+                    .area
+                    .read(cx)
+                    .is_dock_open(DockPlacement::Left)
+            );
+            let left = window.find(toggle);
+            assert_eq!(left.checked(), Some(false));
+            assert_eq!(left.description(), Some("Show left panel"));
         });
     }
 

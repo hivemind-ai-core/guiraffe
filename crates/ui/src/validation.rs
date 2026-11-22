@@ -590,6 +590,10 @@ impl Validation<'_> {
                                 .is_some_and(|title| !title.trim().is_empty())
                     })
                 }),
+                "sheet-cells" => got.as_array().is_some_and(|cells| {
+                    let schema = crate::widget_spec::sheet_cell_schema();
+                    cells.iter().all(|cell| matches_data_schema(cell, &schema))
+                }),
                 "step-items" => got.as_array().is_some_and(|steps| {
                     let schema = crate::widget_spec::step_item_schema();
                     steps.iter().all(|step| matches_data_schema(step, &schema))

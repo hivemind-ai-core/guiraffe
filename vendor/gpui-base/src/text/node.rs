@@ -131,6 +131,7 @@ pub struct ColdParagraph(Arc<ColdParagraphData>);
 struct ColdParagraphData {
     span: Option<Span>,
     source: SharedString,
+    source_base: usize,
     runs: Box<[ColdInline]>,
     selection: Arc<Mutex<InlineState>>,
     cached: Mutex<Option<Arc<Paragraph>>>,
@@ -139,21 +140,82 @@ struct ColdParagraphData {
 #[derive(PartialEq)]
 struct ColdInline {
     text: ColdText,
-    marks: Vec<(Range<usize>, TextMark)>,
-    source_segments: Box<[SourceSegment]>,
+    marks: ColdMarks,
+}
+
+/// A whole-run emphasis mark needs neither a byte range nor a heap allocation.
+/// Rich and overlapping marks keep their exact order and ranges.
+#[derive(PartialEq)]
+enum ColdMarks {
+    None,
+    Whole(Emphasis),
+    Ranges(Box<[(Range<usize>, TextMark)]>),
+}
+
+#[derive(PartialEq)]
+struct Emphasis {
+    bold: bool,
+    italic: bool,
+    strikethrough: bool,
+    underline: bool,
+    code: bool,
+}
+
+impl ColdMarks {
+    fn new(marks: Vec<(Range<usize>, TextMark)>, len: usize) -> Self {
+        match marks.as_slice() {
+            [] => Self::None,
+            [(range, mark)]
+                if *range == (0..len) && mark.highlight.is_none() && mark.link.is_none() =>
+            {
+                Self::Whole(Emphasis {
+                    bold: mark.bold,
+                    italic: mark.italic,
+                    strikethrough: mark.strikethrough,
+                    underline: mark.underline,
+                    code: mark.code,
+                })
+            }
+            _ => Self::Ranges(marks.into_boxed_slice()),
+        }
+    }
+
+    fn materialize(&self, len: usize) -> Vec<(Range<usize>, TextMark)> {
+        match self {
+            Self::None => Vec::new(),
+            Self::Whole(emphasis) => vec![(
+                0..len,
+                TextMark {
+                    bold: emphasis.bold,
+                    italic: emphasis.italic,
+                    strikethrough: emphasis.strikethrough,
+                    underline: emphasis.underline,
+                    code: emphasis.code,
+                    ..Default::default()
+                },
+            )],
+            Self::Ranges(ranges) => ranges.to_vec(),
+        }
+    }
 }
 
 #[derive(PartialEq)]
 enum ColdText {
     Source(Range<usize>),
-    Transformed(SharedString),
+    Transformed(Box<TransformedRun>),
+}
+
+#[derive(PartialEq)]
+struct TransformedRun {
+    text: SharedString,
+    source_segments: Box<[SourceSegment]>,
 }
 
 impl ColdText {
     fn as_str<'a>(&'a self, source: &'a str) -> &'a str {
         match self {
             Self::Source(range) => &source[range.clone()],
-            Self::Transformed(text) => text,
+            Self::Transformed(run) => &run.text,
         }
     }
 }
@@ -171,6 +233,7 @@ impl PartialEq for ColdParagraph {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
             || (self.0.span == other.0.span
+                && self.0.source_base == other.0.source_base
                 && self.0.runs == other.0.runs
                 && self.0.runs.iter().all(|run| match &run.text {
                     ColdText::Source(range) => {
@@ -201,16 +264,21 @@ impl ColdParagraph {
                 }
                 .map(|(start, end)| start..end)
                 .filter(|range| source.get(range.clone()) == Some(inline.text.as_ref()));
-                ColdInline {
-                    text: source_slice.map_or(ColdText::Transformed(inline.text), ColdText::Source),
-                    marks: inline.marks,
-                    source_segments: inline.source_segments,
-                }
+                let marks = ColdMarks::new(inline.marks, inline.text.len());
+                let text = match source_slice {
+                    Some(range) => ColdText::Source(range),
+                    None => ColdText::Transformed(Box::new(TransformedRun {
+                        text: inline.text,
+                        source_segments: inline.source_segments,
+                    })),
+                };
+                ColdInline { text, marks }
             })
             .collect();
         Self(Arc::new(ColdParagraphData {
             span,
             source: source.clone(),
+            source_base: base,
             runs,
             selection,
             cached: Mutex::new(None),
@@ -228,12 +296,22 @@ impl ColdParagraph {
             .runs
             .iter()
             .map(|run| {
-                let text = match &run.text {
-                    ColdText::Source(range) => self.0.source[range.clone()].to_string().into(),
-                    ColdText::Transformed(text) => text.clone(),
+                let (text, source_segments): (SharedString, Box<[SourceSegment]>) = match &run.text
+                {
+                    ColdText::Source(range) => (
+                        self.0.source[range.clone()].into(),
+                        Box::from([SourceSegment {
+                            rendered: 0..range.len(),
+                            source: (self.0.source_base + range.start)
+                                ..(self.0.source_base + range.end),
+                            linear: true,
+                        }]),
+                    ),
+                    ColdText::Transformed(run) => (run.text.clone(), run.source_segments.clone()),
                 };
-                let mut inline = InlineNode::new(text).marks(run.marks.clone());
-                inline.source_segments = run.source_segments.clone();
+                let marks = run.marks.materialize(text.len());
+                let mut inline = InlineNode::new(text).marks(marks);
+                inline.source_segments = source_segments;
                 inline
             })
             .collect();
@@ -1309,13 +1387,15 @@ pub struct InlineNode {
     // Most runs are text. Keep object payloads out of their inline footprint.
     pub(crate) image: Option<Box<ImageNode>>,
     pub(crate) custom: Option<Arc<MarkdownNode>>,
-    custom_selection: Arc<Mutex<bool>>,
+    custom_selection: Option<Arc<Mutex<bool>>>,
     /// The text styles, each tuple contains the range of the text and the style.
     pub(crate) marks: Vec<(Range<usize>, TextMark)>,
     /// Rendered UTF-8 byte spans paired with their exact Markdown source spans.
     pub(crate) source_segments: Box<[SourceSegment]>,
 
-    pub(super) state: Arc<Mutex<InlineState>>,
+    // Only inline objects own the selection of the run preceding them.
+    // Plain text uses the containing paragraph's selection.
+    pub(super) state: Option<Arc<Mutex<InlineState>>>,
 }
 
 impl PartialEq for InlineNode {
@@ -1798,10 +1878,10 @@ impl InlineNode {
             text: text.into(),
             image: None,
             custom: None,
-            custom_selection: Arc::default(),
+            custom_selection: None,
             marks: vec![],
             source_segments: Box::default(),
-            state: Arc::new(Mutex::new(InlineState::default())),
+            state: None,
         }
     }
 
@@ -1809,6 +1889,8 @@ impl InlineNode {
     pub fn custom(node: MarkdownNode) -> Self {
         let mut this = Self::new(node.as_text().to_string());
         this.custom = Some(Arc::new(node));
+        this.state = Some(Arc::default());
+        this.custom_selection = Some(Arc::default());
         this
     }
 
@@ -1816,6 +1898,7 @@ impl InlineNode {
     pub fn image(image: ImageNode) -> Self {
         let mut this = Self::new("");
         this.image = Some(Box::new(image));
+        this.state = Some(Arc::default());
         this
     }
 
@@ -2008,14 +2091,16 @@ impl Paragraph {
         let mut text = String::new();
 
         for c in self.children.iter() {
-            let Ok(state) = c.state.lock() else {
+            let Some(Ok(state)) = c.state.as_ref().map(|state| state.lock()) else {
                 continue;
             };
             if let Some(selection) = &state.selection {
                 text.push_str(&state.text[selection.start..selection.end]);
             }
             if let Some(custom) = &c.custom
-                && c.custom_selection.lock().is_ok_and(|selected| *selected)
+                && c.custom_selection
+                    .as_ref()
+                    .is_some_and(|selection| selection.lock().is_ok_and(|selected| *selected))
             {
                 text.push_str(custom.as_text());
             }
@@ -2092,14 +2177,14 @@ impl Paragraph {
         };
 
         for child in self.children.iter() {
-            if child.custom.is_some() {
-                let (run_range, run_selection) = include_run(&child.state, &run);
+            if let (Some(custom_selection), Some(state)) = (&child.custom_selection, &child.state) {
+                let (run_range, run_selection) = include_run(state, &run);
                 if run_selection.emitted && run_selection.at_start {
                     merge_images(&mut selected, &mut pending_images);
                 }
                 selected.merge(run_range);
 
-                match child.custom_selection.lock() {
+                match custom_selection.lock() {
                     Ok(value) if *value => {
                         if run.is_empty() || (run_selection.emitted && run_selection.at_end) {
                             merge_images(&mut selected, &mut pending_images);
@@ -2125,9 +2210,9 @@ impl Paragraph {
                 offset = 0;
                 continue;
             }
-            if let Some(image) = &child.image {
+            if let (Some(image), Some(state)) = (&child.image, &child.state) {
                 let run_before = !run.is_empty();
-                let (run_range, run_selection) = include_run(&child.state, &run);
+                let (run_range, run_selection) = include_run(state, &run);
                 if run_selection.emitted && run_selection.at_start {
                     merge_images(&mut selected, &mut pending_images);
                 }
@@ -2200,12 +2285,9 @@ impl Paragraph {
         let mut enters_image = true;
 
         for child in self.children.iter() {
-            if child.custom.is_some() {
-                let selected = emit_run(&child.state, &run, &mut pending_images, &mut source);
-                let object_selected = child
-                    .custom_selection
-                    .lock()
-                    .is_ok_and(|selected| *selected);
+            if let (Some(custom_selection), Some(state)) = (&child.custom_selection, &child.state) {
+                let selected = emit_run(state, &run, &mut pending_images, &mut source);
+                let object_selected = custom_selection.lock().is_ok_and(|selected| *selected);
                 if object_selected {
                     if run.is_empty() || (selected.emitted && selected.at_end) {
                         source.push_images(&pending_images);
@@ -2218,7 +2300,7 @@ impl Paragraph {
                 offset = 0;
                 continue;
             }
-            let Some(image) = &child.image else {
+            let (Some(image), Some(state)) = (&child.image, &child.state) else {
                 run.push((offset, child));
                 offset += child.text.len();
                 continue;
@@ -2226,7 +2308,7 @@ impl Paragraph {
 
             // The run before an image is stored in that image's own state.
             let run_before = !run.is_empty();
-            let selected = emit_run(&child.state, &run, &mut pending_images, &mut source);
+            let selected = emit_run(state, &run, &mut pending_images, &mut source);
             if run_before {
                 enters_image = selected.emitted && selected.at_end;
             }
@@ -2262,8 +2344,12 @@ impl Paragraph {
     /// Mirrors the [`selected_text`](Self::selected_text) traversal.
     pub(super) fn has_selection(&self) -> bool {
         self.children.iter().any(|c| {
-            c.state.lock().is_ok_and(|state| state.selection.is_some())
-                || c.custom_selection.lock().is_ok_and(|selected| *selected)
+            c.state
+                .as_ref()
+                .is_some_and(|state| state.lock().is_ok_and(|state| state.selection.is_some()))
+                || c.custom_selection
+                    .as_ref()
+                    .is_some_and(|selection| selection.lock().is_ok_and(|selected| *selected))
         }) || self
             .state
             .lock()
@@ -2272,10 +2358,12 @@ impl Paragraph {
 
     pub(super) fn clear_selection(&self) {
         for c in self.children.iter() {
-            if let Ok(mut selected) = c.custom_selection.lock() {
+            if let Some(Ok(mut selected)) =
+                c.custom_selection.as_ref().map(|selected| selected.lock())
+            {
                 *selected = false;
             }
-            if let Ok(mut state) = c.state.lock() {
+            if let Some(Ok(mut state)) = c.state.as_ref().map(|state| state.lock()) {
                 state.selection = None;
             }
         }
@@ -3286,14 +3374,14 @@ impl Paragraph {
             let text_len = inline_node.text.len();
             text.push_str(&inline_node.text);
 
-            if let Some(image) = &inline_node.image {
+            if let (Some(image), Some(object_state)) = (&inline_node.image, &inline_node.state) {
                 if text.len() > 0 {
-                    if let Ok(mut state) = inline_node.state.lock() {
+                    if let Ok(mut state) = object_state.lock() {
                         state.set_text(text.clone().into());
                     }
                     child_nodes.push(
                         Inline::new(
-                            inline_node.state.clone(),
+                            object_state.clone(),
                             links.clone(),
                             fade_highlights(
                                 highlights.clone(),
@@ -3473,8 +3561,12 @@ impl Paragraph {
         let mut consumed = 0;
 
         for inline_node in self.children.iter() {
-            if let Some(node) = &inline_node.custom {
-                if let Ok(mut state) = inline_node.state.lock() {
+            if let (Some(node), Some(object_state), Some(selected)) = (
+                &inline_node.custom,
+                &inline_node.state,
+                &inline_node.custom_selection,
+            ) {
+                if let Ok(mut state) = object_state.lock() {
                     state.set_text(text.clone().into());
                 }
                 if !text.is_empty() {
@@ -3484,7 +3576,7 @@ impl Paragraph {
                     let item_reveal = node_cx.reveal_at(leaf_key, consumed, consumed + text.len());
                     consumed += text.len();
                     items.push(InlineFlowItem::Text {
-                        state: inline_node.state.clone(),
+                        state: object_state.clone(),
                         text: std::mem::take(&mut text).into(),
                         links: std::mem::take(&mut links),
                         highlights: fade_highlights(std::mem::take(&mut highlights), &item_fades),
@@ -3517,7 +3609,7 @@ impl Paragraph {
                     renderer: Arc::new(move |context, window, cx| {
                         extensions.render_inline(&rendered_node, context, window, cx)
                     }),
-                    selected: inline_node.custom_selection.clone(),
+                    selected: selected.clone(),
                     style: object_style,
                     link: object_link,
                 });
@@ -3528,13 +3620,13 @@ impl Paragraph {
             let text_len = inline_node.text.len();
             text.push_str(&inline_node.text);
 
-            if let Some(image) = &inline_node.image {
+            if let (Some(image), Some(object_state)) = (&inline_node.image, &inline_node.state) {
                 if !text.is_empty() {
-                    if let Ok(mut state) = inline_node.state.lock() {
+                    if let Ok(mut state) = object_state.lock() {
                         state.set_text(text.clone().into());
                     }
                     items.push(InlineFlowItem::Text {
-                        state: inline_node.state.clone(),
+                        state: object_state.clone(),
                         text: text.clone().into(),
                         links: links.clone(),
                         highlights: fade_highlights(
@@ -5013,6 +5105,32 @@ mod tests {
         assert!(bytes <= 104, "inline run occupies {bytes} bytes");
     }
 
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn cold_source_mapped_prose_keeps_at_most_forty_eight_bytes_per_run() {
+        let source: SharedString = "plain bold".into();
+        let marked = InlineNode::new("bold")
+            .marks(vec![(0..4, TextMark::default().bold())])
+            .source_segments(vec![SourceSegment {
+                rendered: 0..4,
+                source: 106..110,
+                linear: true,
+            }]);
+        assert!(marked.state.is_none());
+        assert!(marked.custom_selection.is_none());
+        let mut paragraph = Paragraph::default();
+        paragraph.push(marked.clone());
+        let cold = ColdParagraph::new(paragraph, &source, 100);
+        let [run] = cold.0.runs.as_ref() else {
+            panic!("expected one retained inline run");
+        };
+        // Both variants must have no heap payload beyond the descriptor itself.
+        assert!(matches!(&run.text, ColdText::Source(range) if *range == (6..10)));
+        assert!(matches!(run.marks, ColdMarks::Whole(_)));
+        assert!(std::mem::size_of::<ColdInline>() <= 48);
+        assert_eq!(cold.materialize(false).children(), &[marked]);
+    }
+
     #[test]
     fn paragraph_clones_share_runs_until_the_next_edit() {
         let paragraph = Paragraph::new("stable prefix".to_owned());
@@ -5419,11 +5537,11 @@ mod tests {
                     .marks(vec![(0..1, object_mark)]);
             let after = InlineNode::new(" after").marks(vec![(0..6, italic)]);
             {
-                let mut state = formula.state.lock().unwrap();
+                let mut state = formula.state.as_ref().unwrap().lock().unwrap();
                 state.text = "before ".into();
                 state.selection = Some((2..7).into());
             }
-            *formula.custom_selection.lock().unwrap() = true;
+            *formula.custom_selection.as_ref().unwrap().lock().unwrap() = true;
             let paragraph = Paragraph {
                 children: Arc::new(vec![before, formula, after]),
                 ..Default::default()
@@ -5442,8 +5560,8 @@ mod tests {
         let first =
             InlineNode::custom(MarkdownNode::new("math", ()).text("甲²").markdown("$甲^2$"));
         let second = InlineNode::custom(MarkdownNode::new("math", ()).text("b").markdown("$b$"));
-        *first.custom_selection.lock().unwrap() = true;
-        *second.custom_selection.lock().unwrap() = true;
+        *first.custom_selection.as_ref().unwrap().lock().unwrap() = true;
+        *second.custom_selection.as_ref().unwrap().lock().unwrap() = true;
         let paragraph = Paragraph {
             children: Arc::new(vec![first, second]),
             ..Default::default()
@@ -5465,11 +5583,11 @@ mod tests {
                 .marks(vec![(0..3, TextMark::default().bold())]);
         let after = InlineNode::new(" English");
         {
-            let mut preceding = formula.state.lock().unwrap();
+            let mut preceding = formula.state.as_ref().unwrap().lock().unwrap();
             preceding.text = "中文 ".into();
             preceding.selection = Some((3..7).into());
         }
-        *formula.custom_selection.lock().unwrap() = true;
+        *formula.custom_selection.as_ref().unwrap().lock().unwrap() = true;
         let paragraph = Paragraph {
             children: Arc::new(vec![before, formula, after]),
             ..Default::default()
@@ -6360,7 +6478,7 @@ mod tests {
     #[test]
     fn source_across_styles_keeps_the_source_of_an_inline_object() {
         let formula = InlineNode::custom(MarkdownNode::new("math", ()).text("x").markdown("$x$"));
-        *formula.custom_selection.lock().unwrap() = true;
+        *formula.custom_selection.as_ref().unwrap().lock().unwrap() = true;
         let paragraph = Paragraph {
             children: Arc::new(vec![formula]),
             ..Default::default()

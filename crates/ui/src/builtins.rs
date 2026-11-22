@@ -197,6 +197,12 @@ fn configure_action_icon(
     if let Some(focusable) = n.prop(n.prop_index("focusable")).as_bool() {
         icon = icon.focusable(focusable);
     }
+    if let Some(toggled) = n.prop(n.prop_index("toggled")).as_bool() {
+        icon = icon.toggled(toggled);
+    }
+    if let Some(tooltip) = n.prop(n.prop_index("tooltip")).as_str() {
+        icon = icon.tooltip(tooltip.to_owned());
+    }
     if let Some(handler) = n.handler(n.event_index("click")) {
         icon = icon.on_click(move |_, window, cx| handler(crate::Value::Null, window, cx));
     }
@@ -208,13 +214,25 @@ pub fn register(r: &mut Registry) {
     r.register(
         STACK.0.id,
         widget(&STACK.1, |n, kids, _, _| {
-            Stack::new()
+            let stack = Stack::new()
                 .gap_px(flow_gap(n))
                 .align(flow_align(n, Align::Stretch))
                 .justify(flow_justify(n))
                 .grow(n.bool(n.prop_index("grow")))
-                .children(kids)
-                .into_any_element()
+                .children(kids);
+            // spec/29: "auto" follows MotionPrefs::layout, "on" forces it (reduced motion wins).
+            let enabled = match n.prop(n.prop_index("animate-layout")).as_str() {
+                Some("auto") => Some(None),
+                Some("on") => Some(Some(true)),
+                _ => None,
+            };
+            match enabled {
+                Some(enabled) => {
+                    let id = guiraffe_core::widget_catalog::WidgetNode::state_id(n);
+                    stack.animate_layout_with(id, enabled).into_any_element()
+                }
+                None => stack.into_any_element(),
+            }
         }),
     );
     r.register(

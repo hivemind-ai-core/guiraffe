@@ -14,6 +14,18 @@ pub enum Source {
     Path(PathBuf),
 }
 
+/// Crates the GUIraffe workspace patches from `vendor/` (root `[patch.crates-io]`). Generated
+/// apps repeat the patch table with paths into the same checkout.
+const VENDORED: [&str; 7] = [
+    "gpui-fast",
+    "gpui-fast-linux",
+    "gpui-pre",
+    "gpui-base",
+    "gpui-component",
+    "mermaid-rs-renderer",
+    "taffy",
+];
+
 /// Valid Cargo package name: ASCII letters, digits, `-`, `_`; starts with a letter.
 pub fn validate_name(name: &str) -> Result<()> {
     let ok = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -44,6 +56,14 @@ pub fn render(template: &str, name: &str, source: &Source) -> Result<String> {
         let path = path.to_str().context("checkout path must be UTF-8")?;
         // JSON string escaping is also valid for TOML basic strings.
         rendered = rendered.replace(&format!("{{{{{krate}}}}}"), &serde_json::to_string(path)?);
+    }
+    for vendored in VENDORED {
+        let path = path.join("vendor").join(vendored);
+        let path = path.to_str().context("checkout path must be UTF-8")?;
+        rendered = rendered.replace(
+            &format!("{{{{vendor:{vendored}}}}}"),
+            &serde_json::to_string(path)?,
+        );
     }
     Ok(rendered)
 }
@@ -136,6 +156,94 @@ mod tests {
             new_app(tmp.path(), "hello", &src).is_err(),
             "never overwrites"
         );
+    }
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    fn checkout() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// The generated `[patch.crates-io]` table matches the workspace's, entry for entry, with
+    /// paths into the checkout's `vendor/`.
+    #[test]
+    fn generated_patch_table_matches_the_workspace() -> Result<()> {
+        let checkout = checkout();
+        let root: toml::Value =
+            toml::from_str(&std::fs::read_to_string(checkout.join("Cargo.toml"))?)?;
+        let cargo = render(CARGO, "demo", &Source::Path(checkout.clone()))?;
+        assert!(!cargo.contains("{{"), "placeholders filled: {cargo}");
+        let app: toml::Value = toml::from_str(&cargo)?;
+        let want = root["patch"]["crates-io"]
+            .as_table()
+            .context("root patch table")?;
+        let got = app["patch"]["crates-io"]
+            .as_table()
+            .context("app patch table")?;
+        let mut want_keys: Vec<_> = want.keys().collect();
+        let mut got_keys: Vec<_> = got.keys().collect();
+        want_keys.sort();
+        got_keys.sort();
+        assert_eq!(
+            want_keys, got_keys,
+            "template patch list drifted from root Cargo.toml"
+        );
+        for (name, entry) in want {
+            let rel = entry["path"].as_str().context("root patch path")?;
+            let expected = checkout.join(rel);
+            assert!(expected.join("Cargo.toml").is_file(), "{name}");
+            assert_eq!(got[name]["path"].as_str(), expected.to_str(), "{name}");
+        }
+        Ok(())
+    }
+
+    /// A scaffolded app resolves (offline, from the copied lock file) and Cargo picks the
+    /// vendored sources for every patched crate in its graph.
+    #[test]
+    fn scaffolded_app_resolves_the_vendored_crates() -> Result<()> {
+        let checkout = checkout();
+        let tmp = tempfile::tempdir()?;
+        let dir = new_app(tmp.path(), "patched", &Source::Path(checkout.clone()))?;
+        let out = std::process::Command::new(env!("CARGO"))
+            .args(["metadata", "--format-version", "1", "--offline"])
+            .current_dir(&dir)
+            .output()?;
+        assert!(
+            out.status.success(),
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let meta: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+        let packages = meta["packages"].as_array().context("packages")?;
+        let vendor = checkout.join("vendor");
+        // Every vendored crate in the app's graph comes from vendor/, not crates.io.
+        let mut seen = Vec::new();
+        for pkg in packages {
+            let name = pkg["name"].as_str().unwrap_or_default();
+            if !VENDORED.contains(&name) {
+                continue;
+            }
+            let manifest = PathBuf::from(pkg["manifest_path"].as_str().unwrap_or_default());
+            assert!(
+                manifest.starts_with(&vendor) && pkg["source"].is_null(),
+                "{name} resolved to {}",
+                manifest.display()
+            );
+            seen.push(name.to_owned());
+        }
+        for required in ["gpui-fast", "gpui-base", "gpui-component"] {
+            assert!(
+                seen.iter().any(|s| s == required),
+                "{required} not in graph: {seen:?}"
+            );
+        }
+        Ok(())
     }
 }
 

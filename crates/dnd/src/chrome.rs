@@ -28,8 +28,9 @@ pub(crate) fn radius(theme: &GuiraffeTheme) -> Pixels {
     px(theme.default_radius.radius())
 }
 
-/// The lifted item following the pointer: an elevated card (theme `Md` shadow) on the raised
-/// surface, outlined in the primary color.
+/// The lifted item following the pointer: an elevated card (theme `Md` shadow) painted with
+/// the translucent `drag_preview` token, so what lies beneath stays visible while moving and
+/// the primary outline marks the ghost as "being moved" (not translucency alone).
 pub(crate) struct Preview {
     pub(crate) label: SharedString,
     pub(crate) position: Point<Pixels>,
@@ -39,7 +40,7 @@ pub(crate) struct Preview {
 impl Render for Preview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx);
-        let surfaces = theme.surfaces();
+        let ghost = theme.drag_preview();
         let offset = self.position - self.origin.get();
         div()
             .absolute()
@@ -49,9 +50,9 @@ impl Render for Preview {
             .py_2()
             .rounded(radius(theme))
             .border_1()
-            .border_color(theme.primary_color().to_hsla())
-            .bg(surfaces.raised.to_hsla())
-            .text_color(surfaces.text.to_hsla())
+            .border_color(ghost.border.to_hsla())
+            .bg(ghost.background.to_hsla())
+            .text_color(ghost.foreground.to_hsla())
             .shadow(shadows(theme, Size::Md))
             .child(self.label.clone())
     }

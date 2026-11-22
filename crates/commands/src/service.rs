@@ -46,6 +46,8 @@ pub(crate) enum MenuRow {
     Heading(gpui_kit::SharedString),
     Item {
         id: CommandId,
+        /// The button's element id, built once per row instead of per frame.
+        element_id: gpui_kit::SharedString,
         title: gpui_kit::SharedString,
         hint: gpui_kit::SharedString,
         enabled: bool,
@@ -112,6 +114,7 @@ impl RegistryState {
                 }));
             }
             let row = MenuRow::Item {
+                element_id: command.id.as_str().to_owned().into(),
                 id: command.id.clone(),
                 title: command.title.clone().into(),
                 hint: command

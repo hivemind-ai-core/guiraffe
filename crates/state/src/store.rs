@@ -10,16 +10,18 @@
 //! - Effect handlers receive `&Store`; capture [`WeakStore`] (never `Store`) inside them.
 
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     cell::{Cell, RefCell},
     collections::HashMap,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
 use gpui_kit::{App, AppContext, Context, Entity, Subscription, WeakEntity};
 
-use crate::engine::{Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor};
+use crate::engine::{
+    Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, UndoEvent,
+};
 
 type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
 type ErrorHandler = Rc<dyn Fn(&EngineError, &mut App)>;
@@ -30,12 +32,47 @@ trait Slot<S> {
     fn alive(&self) -> bool;
 }
 
+struct Slots<S> {
+    entries: Vec<Weak<dyn Slot<S>>>,
+    live: usize,
+}
+
+// The selection owns this slot. The Store holds weak entries in registration order.
+struct RegisteredSlot<S, T> {
+    slot: T,
+    slots: Weak<RefCell<Slots<S>>>,
+}
+
+impl<S, T: Slot<S>> Slot<S> for RegisteredSlot<S, T> {
+    fn refresh(&self, state: &S, cx: &mut App) {
+        self.slot.refresh(state, cx);
+    }
+
+    fn alive(&self) -> bool {
+        self.slot.alive()
+    }
+}
+
+impl<S, T> Drop for RegisteredSlot<S, T> {
+    fn drop(&mut self) {
+        if let Some(slots) = self.slots.upgrade() {
+            let mut slots = slots.borrow_mut();
+            slots.live -= 1;
+            // Each sweep removes at least half the entries, so its cost can be
+            // charged to the removed slots. Weak entries never own selectors.
+            if slots.entries.len() >= 2 * slots.live {
+                slots.entries.retain(|slot| slot.strong_count() != 0);
+            }
+        }
+    }
+}
+
 struct Inner<S: Clone + PartialEq + 'static> {
     engine: Engine<S>,
     cofx: Rc<RefCell<Coeffects>>,
     effects: HashMap<TypeId, EffectHandler<S>>,
     on_error: Option<ErrorHandler>,
-    slots: Vec<Rc<dyn Slot<S>>>,
+    slots: Rc<RefCell<Slots<S>>>,
     debounce: HashMap<&'static str, u64>,
     next_timer: u64,
     stats: StoreStats,
@@ -112,7 +149,10 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
             cofx: Rc::new(RefCell::new(Coeffects::default())),
             effects: HashMap::new(),
             on_error: None,
-            slots: Vec::new(),
+            slots: Rc::new(RefCell::new(Slots {
+                entries: Vec::new(),
+                live: 0,
+            })),
             debounce: HashMap::new(),
             next_timer: 0,
             stats: StoreStats::default(),
@@ -209,6 +249,19 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         self.schedule(cx);
     }
 
+    /// Process a typed event immediately when idle, without boxing it.
+    ///
+    /// When the store already has a scheduled batch or is processing effects,
+    /// the event enters that batch in FIFO order.
+    pub fn dispatch_now(&self, event: impl Event<S>, cx: &mut App) {
+        if self.scheduled.get() || self.processing.get() || self.inner.read(cx).engine.has_pending()
+        {
+            self.dispatch(event, cx);
+        } else {
+            self.flush_with_first(Some(event), cx);
+        }
+    }
+
     fn schedule(&self, cx: &mut App) {
         if self.scheduled.get() || self.processing.get() {
             return; // the pending or running flush will pick it up
@@ -225,6 +278,10 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     /// Process everything queued now. Reentrant calls (from effect handlers or renders during
     /// the flush) are folded into the running flush.
     pub fn flush(&self, cx: &mut App) {
+        self.flush_with_first::<UndoEvent>(None, cx);
+    }
+
+    fn flush_with_first<E: Event<S>>(&self, mut first: Option<E>, cx: &mut App) {
         if self.processing.get() {
             return;
         }
@@ -238,16 +295,17 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
                 let cofx = i.cofx.clone();
                 let mut cofx = cofx.borrow_mut();
                 cofx.now = Some(cx.background_executor().now());
-                let out = i.engine.process_with_budget(&cofx, &mut budget);
+                let out = i
+                    .engine
+                    .process_with_first(first.take(), &cofx, &mut budget);
                 i.stats.events_processed += out.processed as u64;
                 (out, i.engine.state().clone())
             });
             if outcome.changed {
-                let slots: Vec<Rc<dyn Slot<S>>> = self.inner.read(cx).slots.clone();
-                for slot in &slots {
+                let slots = self.inner.read(cx).slots.borrow().entries.clone();
+                for slot in slots.into_iter().filter_map(|slot| slot.upgrade()) {
                     slot.refresh(&state, cx);
                 }
-                self.prune(cx);
             }
             if outcome.error.is_some() {
                 error = outcome.error;
@@ -268,10 +326,6 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         if let (Some(e), Some(h)) = (error, handler) {
             h(&e, cx);
         }
-    }
-
-    fn prune(&self, cx: &mut App) {
-        self.inner.update(cx, |i, _| i.slots.retain(|s| s.alive()));
     }
 
     fn run_effect(&self, effect: Effect, cx: &mut App) {
@@ -333,7 +387,14 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     pub fn stats(&self, cx: &App) -> StoreStats {
         let i = self.inner.read(cx);
         StoreStats {
-            selections: i.slots.iter().filter(|s| s.alive()).count(),
+            selections: i
+                .slots
+                .borrow()
+                .entries
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter(|s| s.alive())
+                .count(),
             ..i.stats.clone()
         }
     }
@@ -348,15 +409,18 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     ) -> Selected<T> {
         let value = f(&self.state(cx));
         let entity = cx.new(|_| SelectionCell { value });
-        let slot: Rc<dyn Slot<S>> = Rc::new(SelectSlot {
-            entity: entity.downgrade(),
-            select: Box::new(f),
-        });
-        self.register(slot, cx);
+        let slot = self.register(
+            SelectSlot {
+                entity: entity.downgrade(),
+                select: Box::new(f),
+            },
+            cx,
+        );
         let observation = cx.observe(&entity, |_, _, cx| cx.notify());
         Selected {
             entity,
             _observation: observation,
+            _slot: slot,
         }
     }
 
@@ -375,26 +439,34 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         let first_input = input(&self.state(cx));
         let value = compute(&first_input);
         let entity = cx.new(|_| SelectionCell { value });
-        let slot: Rc<dyn Slot<S>> = Rc::new(MemoSlot {
-            entity: entity.downgrade(),
-            last_input: RefCell::new(first_input),
-            input: Box::new(input),
-            compute: Box::new(compute),
-        });
-        self.register(slot, cx);
+        let slot = self.register(
+            MemoSlot {
+                entity: entity.downgrade(),
+                last_input: RefCell::new(first_input),
+                input: Box::new(input),
+                compute: Box::new(compute),
+            },
+            cx,
+        );
         let observation = cx.observe(&entity, |_, _, cx| cx.notify());
         Selected {
             entity,
             _observation: observation,
+            _slot: slot,
         }
     }
 
-    fn register(&self, slot: Rc<dyn Slot<S>>, cx: &mut App) {
-        self.inner.update(cx, |i, _| {
-            // Prune here too, so selections created repeatedly (e.g. in render) can't pile up.
-            i.slots.retain(|s| s.alive());
-            i.slots.push(slot);
+    fn register(&self, slot: impl Slot<S> + 'static, cx: &mut App) -> Rc<dyn Any> {
+        let slots = &self.inner.read(cx).slots;
+        let registered = Rc::new(RegisteredSlot {
+            slot,
+            slots: Rc::downgrade(slots),
         });
+        let erased: Rc<dyn Slot<S>> = registered.clone();
+        let mut slots = slots.borrow_mut();
+        slots.entries.push(Rc::downgrade(&erased));
+        slots.live += 1;
+        registered
     }
 }
 
@@ -456,11 +528,70 @@ impl<S, I: PartialEq, T: PartialEq + 'static> Slot<S> for MemoSlot<S, I, T> {
 pub struct Selected<T: 'static> {
     entity: Entity<SelectionCell<T>>,
     _observation: Subscription,
+    _slot: Rc<dyn Any>,
 }
 
 impl<T: 'static> Selected<T> {
     /// The value as of the last flush.
     pub fn get<'a>(&self, cx: &'a App) -> &'a T {
         &self.entity.read(cx).value
+    }
+}
+
+#[cfg(test)]
+mod registration_tests {
+    use super::*;
+    use gpui_kit::TestAppContext;
+
+    struct CountedSlot(Rc<Cell<usize>>);
+
+    impl Slot<()> for CountedSlot {
+        fn refresh(&self, _: &(), _: &mut App) {}
+
+        fn alive(&self) -> bool {
+            self.0.set(self.0.get() + 1);
+            true
+        }
+    }
+
+    #[gpui_kit::test]
+    fn registering_live_selections_has_linear_liveness_work(cx: &mut TestAppContext) {
+        let checks = |cx: &mut App, count| {
+            let store = Store::new((), cx);
+            let checks = Rc::new(Cell::new(0));
+            let mut live: Vec<_> = (0..count)
+                .map(|_| store.register(CountedSlot(checks.clone()), cx))
+                .collect();
+            let registration_checks = checks.get();
+            assert_eq!(store.stats(cx).selections, count);
+            live.truncate(3);
+            assert_eq!(store.stats(cx).selections, 3);
+            assert!(store.inner.read(cx).slots.borrow().entries.len() < 6);
+            live.clear();
+            assert!(store.inner.read(cx).slots.borrow().entries.is_empty());
+            registration_checks
+        };
+        let small = cx.update(|cx| checks(cx, 1_000));
+        let large = cx.update(|cx| checks(cx, 10_000));
+        assert!(large <= 2 * 10_000, "1k: {small}, 10k: {large}");
+    }
+
+    #[gpui_kit::test]
+    fn registration_and_single_drops_do_not_sweep(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = Store::new((), cx);
+            let checks = Rc::new(Cell::new(0));
+            let mut live: Vec<_> = (0..10)
+                .map(|_| store.register(CountedSlot(checks.clone()), cx))
+                .collect();
+
+            // Any per-operation sweep, however it tests liveness, would remove this dead entry.
+            live.pop();
+            let entries = store.inner.read(cx).slots.borrow().entries.len();
+            assert_eq!(entries, 10, "dropping one selection swept the registry");
+            live.push(store.register(CountedSlot(checks.clone()), cx));
+            let entries = store.inner.read(cx).slots.borrow().entries.len();
+            assert_eq!(entries, 11, "registering swept the registry");
+        });
     }
 }

@@ -1,3 +1,4 @@
+use crate::collapse_motion::CollapseMotion;
 use crate::geometry::RowGeometry;
 use crate::search::{SearchScan, match_range};
 use crate::{
@@ -232,6 +233,8 @@ pub struct TreeView<const PROPERTIES: bool> {
     focus_row: bool,
     reset_button: bool,
     edit_buttons: EditButtons,
+    /// Opt-in collapse/expand animation (spec/29); see `collapse_motion.rs`.
+    collapse_motion: CollapseMotion,
 }
 
 struct Filter {
@@ -364,6 +367,22 @@ impl<const P: bool> TreeView<P> {
             focus_row: true,
             reset_button: true,
             edit_buttons: EditButtons::Hidden,
+            collapse_motion: CollapseMotion::default(),
+        }
+    }
+
+    /// Animate group expand/collapse (spec/29). `None` (the default) follows
+    /// `guiraffe_motion::MotionPrefs::layout`; reduced motion always makes it instant.
+    pub fn animate_layout(mut self, enabled: Option<bool>) -> Self {
+        self.collapse_motion.enabled = enabled;
+        self
+    }
+
+    /// Runtime form of [`Self::animate_layout`].
+    pub fn set_animate_layout(&mut self, enabled: Option<bool>) {
+        self.collapse_motion.enabled = enabled;
+        if enabled == Some(false) {
+            self.collapse_motion.reset();
         }
     }
 
@@ -705,11 +724,22 @@ impl<const P: bool> TreeView<P> {
             .row_index(id)
             .filter(|_| self.model.expanded(id) != open)
             .map(|rank| (rank < self.window().end, self.model.cursor()));
+        // Collapse motion: rows after the group move by the change in total height.
+        let motion_anchor = previously_visible
+            .filter(|_| self.filter.is_none())
+            .and_then(|_| self.display_rank(id))
+            .map(|rank| (rank + 1, self.row_top(self.row_count())));
         if let Some(id) = self.model.set_expanded(id, open, self.source.as_ref()) {
             cx.emit(TreeEvent::LoadChildren(id));
         }
         if let Some((in_viewport, cursor)) = previously_visible {
             self.rebuild_geometry();
+            if let Some((anchor, before)) = motion_anchor {
+                let delta = self.row_top(self.row_count()) - before;
+                let prefs = guiraffe_motion::MotionPrefs::global(cx);
+                let now = cx.background_executor().now();
+                self.collapse_motion.toggled(anchor, delta, now, &prefs);
+            }
             self.restart_filter(cx);
             let scroll = self.scroll;
             self.clamp_scroll();
@@ -1713,6 +1743,27 @@ impl<const P: bool> Render for TreeView<P> {
         let range = self.window();
         let row_height = self.row_style.density.height();
         let offset = self.row_top(range.start) - self.scroll;
+        // Collapse motion (spec/29): rows from the anchor on are painted shifted; while they
+        // are drawn higher than laid out, render enough extra rows to fill the viewport.
+        let shift = if self.filter.is_some() {
+            self.collapse_motion.reset();
+            None
+        } else {
+            let prefs = guiraffe_motion::MotionPrefs::global(cx);
+            self.collapse_motion
+                .sample(cx.background_executor().now(), &prefs)
+        };
+        let range = match shift {
+            Some(shift) if shift.offset < 0. => {
+                let extra = (f64::from(-shift.offset) / row_height).ceil() as usize;
+                range.start..(range.end + extra).min(self.row_count())
+            }
+            _ => range,
+        };
+        if shift.is_some_and(|shift| shift.moving) {
+            let entity = cx.entity_id();
+            window.on_next_frame(move |_, cx| cx.notify(entity));
+        }
         let surfaces = theme.surfaces();
         let border = surfaces.border.to_hsla();
         let alternate = surfaces.track.to_hsla();
@@ -1755,6 +1806,7 @@ impl<const P: bool> Render for TreeView<P> {
             .flatten();
         let hover_background = colours.hover.background.to_hsla();
         let selection_background = colours.selected.background.to_hsla();
+        let range_start = range.start;
         let rows = range.filter_map(|index| {
             let (row, siblings) = self.model.row_and_siblings(self.model_rank(index)?)?;
             let id = row.id;
@@ -2031,13 +2083,34 @@ impl<const P: bool> Render for TreeView<P> {
                     cx.propagate();
                 }
             }))
-            .child(
-                div()
+            .child(match shift {
+                None => div()
                     .absolute()
                     .w_full()
                     .top(px(offset as f32))
                     .children(rows),
-            )
+                Some(shift) => {
+                    let mut rows = rows;
+                    let before: Vec<_> = rows
+                        .by_ref()
+                        .take(shift.anchor.saturating_sub(range_start))
+                        .collect();
+                    div()
+                        .absolute()
+                        .w_full()
+                        .top(px(offset as f32))
+                        .children(before)
+                        .child(
+                            div().w_full().overflow_hidden().child(
+                                div()
+                                    .relative()
+                                    .w_full()
+                                    .top(px(shift.offset))
+                                    .children(rows),
+                            ),
+                        )
+                }
+            })
             .children(sticky.map(|(parent, depth, top)| {
                 div()
                     .absolute()
@@ -3060,6 +3133,67 @@ mod tests {
             events.borrow().last(),
             Some(&TreeEvent::Edited(0, Value::Text("Kept".into())))
         );
+    }
+
+    /// Collapse motion (spec/29) composes with the editing options: an open editor and its
+    /// buttons keep working while rows below an expanding group slide, rows are never
+    /// highlighted with focus_row(false), and everything settles at the laid-out position.
+    #[gpui_kit::test]
+    fn collapse_motion_composes_with_editing_options(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestQueryExt;
+        let (view, window, events) = open_fields(cx, Fields::new(), |grid| {
+            grid.animate_layout(Some(true))
+                .focus_row(false)
+                .reset_button(false)
+                .edit_buttons(EditButtons::Icons)
+        });
+        let top = |window: &mut gpui_kit::VisualTestContext, label: &str| {
+            window.update(|window, _| f32::from(window.find_by_label(label).bounds().origin.y))
+        };
+        let frame = |window: &mut gpui_kit::VisualTestContext| {
+            window
+                .executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            window.update(|window, cx| window.simulate_next_frame(cx));
+            window.run_until_parked();
+        };
+        let size_before = top(window, "Size");
+        click_label(window, "Alpha");
+        assert_eq!(editing(&view, window), Some(0));
+        type_text(&view, window, "Moving");
+        view.update(window, |view, cx| view.set_expanded(2, true, cx));
+        window.run_until_parked();
+        frame(window);
+        // Mid-flight: the rows below the group start where they were and the editor stays open.
+        let size_mid = top(window, "Size");
+        assert!(
+            size_mid < size_before + 32.,
+            "Size jumped to its final row: {size_before} -> {size_mid}"
+        );
+        assert_eq!(editing(&view, window), Some(0));
+        view.read_with(window, |view, _| {
+            assert!((0..6).all(|id| !view.highlighted(id)), "focus_row(false)");
+        });
+        click_label(window, "Apply");
+        assert_eq!(editing(&view, window), None);
+        assert_eq!(
+            events.borrow().last(),
+            Some(&TreeEvent::Edited(0, Value::Text("Moving".into())))
+        );
+        for _ in 0..40 {
+            frame(window);
+        }
+        let inner = top(window, "Inner");
+        let size_after = top(window, "Size");
+        assert!(inner > top(window, "Group"), "child below its group");
+        assert!(size_after > inner, "Size settles below the new row");
+        assert!(
+            window.update(|window, _| window.try_find_by_label("Reset").is_none()),
+            "reset_button(false) still hides Reset after the animation"
+        );
+        // Rows that moved stay editable at their settled position.
+        click_label(window, "3");
+        assert_eq!(editing(&view, window), Some(4));
     }
 
     #[gpui_kit::test]
