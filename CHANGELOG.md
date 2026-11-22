@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+- New: Sheet, Calendar (year/month/week/day), multi-track event timeline, date and time pickers,
+  redesigned Spotlight, desktop notifications and system tray, opt-in layout animation,
+  `ui!` macro, and DataUi catalogue coverage for the built-in widgets.
+- Performance and memory work across every component. The budgets that are still open are listed
+  in KNOWN_ISSUES.md.
+- `scripts/leak-check.py`: short Valgrind leak check over every soak scenario.
+- Apps must copy the vendored `[patch.crates-io]` table (vendor/README.md).
+
 ## 0.1.0 (unreleased)
 
 First release of GUIraffe 🦒: a Mantine-inspired framework and component library for rich,

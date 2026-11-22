@@ -4,16 +4,15 @@ Living task list (foreman-maintained; updated 2026-11-21). Plans: plans/ROADMAP-
 A–F), plans/PERF-0.2.md, specs in spec/. Branches merge into release/0.2 via foreman integration
 batches; nothing goes to main without the user.
 
-## In progress (0.2 is frozen for the final bench: no new work, user 2026-11-22)
-- [ ] Batch 22: cache-audit fixes (`perf-cache-audit`) and calendar views (`feat-calendar`, spec/27).
-
-## Performance goal — remaining (plans/PERF-0.2.md)
-- [ ] Final quiet window (all agents paused): re-measure all scenarios on both backends; 30-minute
-      mixed soak (≤2 % drift); stress-limits sweep (plans/PERF-LIMITS.md); both-sided matched-metric Electron
-      comparison; commit a new full bench baseline.
-- [ ] Confirm Chat and Markdown memory in the quiet window (provisional results are within budget).
-- [ ] PRODUCTION.md performance rows ✅ for every component, linked to checks; merge the cache
-      inventory into them.
+## Performance (work stopped by user decision 2026-11-22; numbers in KNOWN_ISSUES.md)
+- [ ] Review the overnight bench, long soak and long heap profile, then commit the baseline and the
+      PRODUCTION.md rows it supports.
+- [ ] FlameGraph, Tracks and dope sheet mid-size hot spots; Mermaid mount at 64 nodes.
+- [ ] Sheet memory; CodeViewer load peak; zero-allocation gates for the remaining components.
+- [ ] RSS drift: attribute the part that is not allocator fragmentation.
+- [ ] Parked branches: `integrate-b23` (bench harness, compare lock), `fix-b22-failures` (Markdown
+      replacement, unreviewed, small real gain).
+- [ ] Miri finding in `sized-chunks` (via `im`): confirm, consider `imbl`.
 
 ## 0.2 small follow-ups
 - [ ] Design Chat selection across virtualized history using logical message IDs and text

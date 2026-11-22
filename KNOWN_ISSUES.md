@@ -1,5 +1,43 @@
 # Known issues
 
+## 0.2 performance: open at release
+
+0.2 does not meet every budget in spec/23 and plans/PERF-0.2.md. The work was stopped here by user
+decision (2026-11-22). Timings below are from release builds on a machine that was not fully idle,
+so they are provisional.
+
+| Issue | Measured | Budget | Notes |
+|---|---|---|---|
+| FlameGraph at mid sizes | p99 14.6 ms at 65k frames, 39 ms at 131k, 96 ms at 262k (upstream); about 18 ms at 262k on gpui-fast | p99 8 ms | 10M frames is fine (1.1 ms): level of detail hides it |
+| Tracks at mid sizes | p99 26 ms at 6.4k clips, 53 ms at 12.8k (upstream); 17 and 32 ms on gpui-fast | p99 8 ms | 100k clips is fine (3 ms) |
+| Dope sheet in the mixed soak | frames up to 10.5 ms, in 63 of 180 windows (gpui-fast) | p99 8 ms | session-wide p99 not recorded |
+| Mermaid mount at 64 nodes | 278-281 ms | 200 ms | 500 nodes mounts in 62 ms |
+| Sheet memory, 100k formulas | 119-123 MiB over an empty window | about 68 MiB | |
+| CodeViewer, 10M lines | 379 MiB peak over empty, 192 MiB steady | 302 MiB | peak may include the copy made while loading the source |
+| Chat, 100k messages | one 22 ms frame while warming up (gpui-fast) | 16 ms | p99 3.7 ms |
+| Process RSS over a 30-minute mixed soak | +5.8 % upstream, +5.7 % gpui-fast | 2 % | no leak found, see below |
+| Unchanged repaint allocations | DataUi 132, `ui!` 42, command menu 735, devtools 615, router/state/motion 6-18 | 0 | zero is gated only for some components |
+| Electron comparison, bench baseline | not measured for 0.2 | | the comparison needs the lock fix on `integrate-b23` |
+
+**RSS growth: no leak found.** `scripts/leak-check.py` (Valgrind, about 6 minutes for both backends)
+runs all 22 soak scenarios: no lost memory grows with the frame count and there are no invalid
+reads, writes or frees. The live heap of the mixed soak over 9,600 frames changes by +0.1 % upstream
+and +0.2 % gpui-fast. Replaying 150,000 frames, RSS from 20 % of the run to the end grows 4.3 % /
+2.1 % with default glibc malloc and 2.2 % / 1.9 % with one arena and fixed trim thresholds, so
+upstream about half the growth is allocator fragmentation. The remainder (under 2 MiB) is not
+attributed, and a leak too slow to show in 9,600 frames is not ruled out.
+
+**Markdown replacement is probably not a stall.** The mixed soak logs 70-73 ms frames when it
+replaces a 172 KB document, but it runs background parsing on the timed thread. With real worker
+threads the same replacement peaked at 4.7 ms on the main thread (one run, machine under load).
+
+**Miri.** GPUI itself cannot run under Miri. `guiraffe-flow-core` tests report undefined behaviour
+under Stacked Borrows inside `sized-chunks` 0.6.5 (via `im` 15.1, which gpui-base and guiraffe-core
+use). The Tree Borrows run timed out, so whether it is exploitable or only an aliasing-model
+violation is unknown.
+
+## Other issues
+
 1. ~~SVG icons are blank in offscreen visual snapshots.~~ **Retracted**: this was a GUIraffe bug, not a renderer
    limitation. `Snapshotter` passed an empty asset source, and the foreman's earlier fix had silently failed to apply
    and was never verified. A worker found it while reviewing its own snapshots. The fix is in, and `icon_probe` now runs as a regression test.
