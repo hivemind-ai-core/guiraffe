@@ -291,3 +291,5 @@ Trace registration sweeps weak records when their count reaches at least twice
 the population after the prior sweep, with a minimum threshold of 32. A
 notification also prunes dead entries and updates the threshold. Live observers
 remain owner data. See `dead_trace_registration_churn_is_pruned_without_scanning_every_push`.
+
+Map and weak-list backing capacity can reflect a historical peak after entries drop.

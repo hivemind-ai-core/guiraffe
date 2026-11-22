@@ -6,7 +6,8 @@ Ingress coalesces scroll deltas by axis between ordered events. Each uninterrupt
 burst uses at most one slot per axis. Accumulation preserves the total within
 range and clamps to the public delta type at delivery. Activations, menu events,
 and host transitions remain ordered and lossless. That FIFO is pending user
-input and can grow while the UI is unable to drain it. Removal or receiver
+input and can grow while the UI is unable to drain it. The queue allocation can
+reflect a historical backlog until teardown. Removal or receiver
 teardown releases the backlog and closes ingress. See
 `scroll_churn_coalesces_and_activation_order_survives_until_teardown`.
 
