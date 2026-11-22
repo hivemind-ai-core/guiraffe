@@ -31,8 +31,8 @@ jobs:
       - run: cargo fetch --locked
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
-      - run: cargo test -p guiraffe-gallery --locked --features devtools --test devtools
+      - run: bash .github/scripts/test.sh --no-fail-fast --workspace --locked
+      - run: bash .github/scripts/test.sh --no-fail-fast -p guiraffe-gallery --locked --features devtools --test devtools
   deny:
     runs-on: ubuntu-24.04
     steps:
@@ -59,7 +59,7 @@ jobs:
       # The scaffold test resolves a new app offline, for every platform in the lockfile.
       - run: cargo fetch --locked
       - run: cargo build --workspace --locked --features guiraffe-bench/gpui-fast
-      - run: cargo test --workspace --locked --features guiraffe-bench/gpui-fast
+      - run: bash .github/scripts/test.sh --no-fail-fast --workspace --locked --features guiraffe-bench/gpui-fast
   instructions:
     runs-on: ubuntu-24.04
     steps:
