@@ -485,3 +485,36 @@ impl<T: 'static> Selected<T> {
         &self.entity.read(cx).value
     }
 }
+
+#[cfg(test)]
+mod registration_tests {
+    use super::*;
+    use gpui_kit::TestAppContext;
+
+    struct CountedSlot(Rc<Cell<usize>>);
+
+    impl Slot<()> for CountedSlot {
+        fn refresh(&self, _: &(), _: &mut App) {}
+
+        fn alive(&self) -> bool {
+            self.0.set(self.0.get() + 1);
+            true
+        }
+    }
+
+    #[gpui_kit::test]
+    fn registering_live_selections_has_linear_liveness_work(cx: &mut TestAppContext) {
+        let checks = |cx: &mut App, count| {
+            let store = Store::new((), cx);
+            let checks = Rc::new(Cell::new(0));
+            let slot = Rc::new(CountedSlot(checks.clone()));
+            for _ in 0..count {
+                store.register(slot.clone(), cx);
+            }
+            checks.get()
+        };
+        let small = cx.update(|cx| checks(cx, 1_000));
+        let large = cx.update(|cx| checks(cx, 10_000));
+        assert!(large <= 2 * 10_000, "1k: {small}, 10k: {large}");
+    }
+}
