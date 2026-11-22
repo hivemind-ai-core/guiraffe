@@ -30,7 +30,7 @@ proportion to what changed.
 |---|---|---|
 | 1 | Review 0.2's bench, long soak and heap profile; commit a baseline | Nothing can regress visibly without one |
 | 2 | Make CI pass from a clean clone, including the size sweep and leak check | Every later gate depends on it |
-| 3 | Resolve the Miri finding in `sized-chunks` (via `im`); evaluate `imbl` | Possible unsoundness under core state types |
+| 3 | **Replace `im` with `imbl` everywhere**, including vendored gpui-base, then rerun Miri and drop the two `im` advisory exceptions. `im` must not be used | `im` is unmaintained, with no commit in over four years, and has an unsoundness advisory and a Miri finding in `sized-chunks`. `imbl` is its maintained, nearly drop-in successor. One catch: flow-core's bulk loader assumes `im`'s 64-entry nodes, and `imbl` has 16-entry leaves |
 | 4 | Fix FlameGraph, Tracks and dope sheet at mid sizes, and Mermaid's 64-node mount | They break the central performance claim |
 | 5 | Fix Sheet memory and CodeViewer's load peak; attribute the remaining RSS growth | Known budget failures |
 | 6 | Prototype reactive sinks and dirty-path replay on the 3,000-row benchmark | The biggest unknown. **Go/no-go before the binding syntax is frozen** |
@@ -66,7 +66,7 @@ proportion to what changed.
 
 ### Added for 0.3
 
-The dogfood tool, the go/no-go on reactivity, the size-sweep gate, the soundness check, working
+The dogfood tool, the go/no-go on reactivity, the size-sweep gate, replacing `im`, working
 CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 ### Moved to 0.4

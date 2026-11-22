@@ -17,6 +17,7 @@ The workspace pins 0.1.15. `guiraffe new` copies the lockfile, and `guiraffe doc
 Under Miri's Stacked Borrows model, `guiraffe-flow-core` tests report undefined behavior inside
 `sized-chunks` 0.6.5, reached through `im` 15.1, which gpui-base and guiraffe-core use. A Tree
 Borrows run timed out, so it is unknown whether this is more than an aliasing-model violation.
+`im` is unmaintained and will be replaced by `imbl` in 0.3 ([roadmap](ROADMAP.md) item 3).
 
 ## Dependency advisories
 
