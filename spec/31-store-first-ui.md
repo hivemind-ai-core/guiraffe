@@ -75,9 +75,13 @@ Rules:
   the user's token, with a note listing the store's fields.
 - Reads expand to a projection that returns a reference; no clone unless the prop takes an owned
   value, and then exactly one clone at change time, not per render.
-- Bound regions compile to fine-grained boundaries: a reactive text or `if <=` becomes a tiny
-  cached view keyed by call site that subscribes to its slice, so a store change re-renders the
-  smallest region that read it, not the whole `ui!` tree.
+- Bound regions compile to fine-grained **reactive sinks** (plans/ROADMAP-0.3.md §E): a store
+  change updates the smallest region that read it, not the whole `ui!` tree. A sink is
+  *not* a full view (entity + `Render` + subscription + stored copy + guard per label, the cost
+  "A Critique of GPUI" measures); it is a lightweight, framework-managed binding that patches a
+  retained element (text, style, visibility, list range) and re-runs only its own closure. Falling
+  back to a generated cached view is allowed only where the sink design can't express it, and
+  must be measured.
 - Everything still expands to normal builder calls plus `guiraffe-state` calls; `cargo expand`
   output is readable and documented.
 - Without `store(…)`, `ui!` behaves exactly as v1 (spec/24): mechanical, zero extra code.
