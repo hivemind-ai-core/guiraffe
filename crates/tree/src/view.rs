@@ -730,7 +730,6 @@ impl<const P: bool> TreeView<P> {
 
     pub fn replace_source(&mut self, source: Rc<dyn TreeData>, cx: &mut Context<Self>) {
         self.expand_task = None;
-        self.collapse_motion.reset();
         self.source = source;
         self.model.refresh(self.source.as_ref());
         if self.edit.as_ref().is_some_and(|edit| {

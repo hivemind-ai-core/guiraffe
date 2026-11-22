@@ -650,3 +650,44 @@ impl<const P: bool> RenderOnce for DocumentTree<P> {
         })
     }
 }
+
+#[cfg(test)]
+#[gpui_kit::test]
+fn replacing_rows_moves_the_cursor_and_keeps_running_motion(cx: &mut gpui_kit::TestAppContext) {
+    let rows = |id: NodeId| {
+        let mut source = DocumentRows::default();
+        source.roots.push(id);
+        source.nodes.insert(
+            id,
+            DocumentRow {
+                label: "row".into(),
+                children: vec![],
+                parent: None,
+                unloaded: false,
+                icon: None,
+                badge: None,
+                checked: None,
+                height: None,
+                property: None,
+            },
+        );
+        Rc::new(source)
+    };
+    cx.update(|cx| {
+        let first = rows(1);
+        let tree = cx.new(|cx| TreeView::<false>::new(first.clone(), cx));
+        tree.update(cx, |tree, cx| {
+            tree.model.select(1, false);
+            let prefs = guiraffe_motion::MotionPrefs::default();
+            let now = std::time::Instant::now();
+            tree.collapse_motion.enabled = Some(true);
+            tree.collapse_motion.toggled(1, 50., now, &prefs);
+            replace_rows(tree, &first, rows(2), &mut BTreeMap::new(), cx);
+            assert_eq!(tree.model.cursor(), Some(2), "cursor left the tree");
+            assert!(
+                tree.collapse_motion.sample(now, &prefs).is_some(),
+                "replacing rows cancelled a running collapse"
+            );
+        });
+    });
+}

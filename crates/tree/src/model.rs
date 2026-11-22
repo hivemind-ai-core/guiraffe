@@ -69,14 +69,12 @@ impl TreeModel {
 
     /// Forget interaction state for permanently deleted IDs before refreshing
     /// from the replacement source. Include every deleted descendant explicitly.
+    /// The following refresh moves a cursor on a deleted row to the first row.
     pub fn forget_removed(&mut self, ids: impl IntoIterator<Item = NodeId>) {
         for id in ids {
             self.expanded.remove(&id);
             self.selected.remove(&id);
             self.pending.remove(&id);
-            if self.cursor == Some(id) {
-                self.cursor = None;
-            }
         }
     }
 
@@ -341,6 +339,7 @@ mod tests {
             model.select(id, true);
             model.set_expanded(id, true, &source);
             model.forget_removed([id]);
+            model.refresh(&Forest(vec![]));
         }
         assert!(model.expanded.is_empty());
         assert!(model.selected.is_empty());
