@@ -39,6 +39,20 @@ Mounted allocation measurements and validation limits are recorded in the
 [warm repaint audit](bench/measurements/warm-repaint.md).
 
 
+### Frame storage retention probe
+
+`alternating_frames_retain_peak_storage` draws two frames at each workload
+size, then measures both frame buffers at 100 keyed focusable elements.
+Vectors report capacity bytes. Map figures are usable entry capacity times
+entry size and exclude hash-table control bytes and slack. Neither figure
+includes retained element payloads or the renderer's other storage.
+
+| Backend | Prior peak | Frame | Element-state map | Access log | Tab history | Tab lookup | Tab order |
+|---|---:|---|---:|---:|---:|---:|---:|
+| Upstream | 10,000 | Both, each | 1,032,192 | 1,310,720 | 524,288 | 1,146,880 | 1,179,648 |
+| Upstream | 100,000 | Rendered | 7,956,288 | 20,971,520 | 4,194,304 | 9,175,040 | 9,437,184 |
+| Upstream | 100,000 | Next | 8,257,536 | 20,971,520 | 4,194,304 | 9,175,040 | 9,437,184 |
+
 ### Proposed idle trim for frame storage
 
 Arm one cancellable maintenance job after both alternating frames have reported
