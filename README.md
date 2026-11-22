@@ -56,7 +56,7 @@ Check it, don't take our word for it:
 
 ## How to use it
 
-You need Rust 1.90 or newer and the [Linux packages](docs/getting-started.md#prerequisites).
+You need Rust 1.97 or newer and the [Linux packages](docs/getting-started.md#prerequisites).
 
 ```sh
 git clone https://github.com/hivemind-ai-core/anteater guiraffe

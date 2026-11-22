@@ -28,7 +28,7 @@ alongside this guide.
 
 ## Prerequisites
 
-- **Rust 1.90 or newer** (the workspace's `rust-version`). Install it with
+- **Rust 1.97 or newer** (the workspace's `rust-version`). Install it with
   [rustup](https://rustup.rs), or run `rustup update stable`.
 - **A GPU with a Vulkan driver.** GPUI renders on the GPU. Install your driver's Vulkan
   loader, for example `libvulkan1 mesa-vulkan-drivers` on Debian or Ubuntu.

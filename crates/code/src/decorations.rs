@@ -243,11 +243,9 @@ impl Decorations {
         }
         // Clones can build different successor snapshots. Share the allocator so
         // a key retired in one successor cannot alias new data in another.
-        // `try_update`, the new name, needs a newer Rust than our minimum (1.90).
-        #[allow(deprecated)]
         let id = self
             .next_style
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 (next <= u64::from(u32::MAX)).then_some(next + 1)
             })
             .map_err(|_| DecorationError::Capacity)? as u32;
