@@ -99,6 +99,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "timeline::BarCurveView" => "bar-curve",
         "timeline::CurveView" => "curve-editor",
         "timeline::EventTimeline" | "timeline::EventTimelineState" => "event-timeline",
+        "calendar::Calendar" | "calendar::CalendarProps" | "calendar::CalendarState" => "calendar",
         _ => return None,
     })
 }
@@ -248,6 +249,14 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "inputs::Picker::props",
         "Read-only access to the applied native props.",
+    ),
+    (
+        "calendar::Calendar::event_block_renderer",
+        "Takes a native element closure. Documents show each item's title, time, color and icon.",
+    ),
+    (
+        "calendar::Calendar::month_chip_renderer",
+        "Takes a native element closure. Documents show each item's title, time, color and icon.",
     ),
     (
         "timeline::EventTimelineState::item_content",
@@ -1079,6 +1088,14 @@ fn covered(surface: &str) -> bool {
             ("datagrid::GridEvents", "ColumnReordered") => "column-reorder",
             ("datagrid::GridEvents", "CellsChanged") => "cells-change",
             ("datagrid::GridEvents", "CellsRejected") => "cells-reject",
+            ("calendar::CalendarState", "Announcement") => "announce",
+            ("calendar::CalendarState", "DateSelected") => "date-select",
+            ("calendar::CalendarState", "EditRequested") => "edit-request",
+            ("calendar::CalendarState", "ItemSelected") => "item-select",
+            ("calendar::CalendarState", "Navigated") => "navigate",
+            ("calendar::CalendarState", "OverflowRequested") => "overflow",
+            ("calendar::CalendarState", "SourceVisibilityChanged") => "source-visibility",
+            ("calendar::CalendarState", "ViewChanged") => "view-change",
             (_, "Changed") => "change",
             (_, "Error") => "error",
             (_, "Edited") => "edit",
@@ -1279,6 +1296,7 @@ fn covered(surface: &str) -> bool {
                 ("tree::TreeView", "inspector_controls") => "searchable".into(),
                 ("overlays::SpotlightState", "group") => "actions".into(),
                 ("timeline::EventTimelineState", "replace") => "events".into(),
+                ("calendar::Calendar", "props") => "show-toolbar".into(),
                 ("inputs::Picker", "apply_preset") => "presets".into(),
                 ("inputs::Picker", "clear") => "value".into(),
                 ("inputs::Picker", "is_open") => "open".into(),

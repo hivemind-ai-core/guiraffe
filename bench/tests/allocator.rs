@@ -105,8 +105,8 @@ fn warm_repaints_allocate_a_bounded_amount() -> anyhow::Result<()> {
             "warm-layout" => 250,
             "warm-overlays" => 100,
             // A week of 41 events: toolbar, all-day lane, virtualized hours,
-            // overlap lanes, business hours and the now-line (7,324 today).
-            "warm-calendar" => 8_000,
+            // overlap lanes, business hours and the now-line (2,892 today).
+            "warm-calendar" => 3_200,
             _ => 4_000,
         };
         assert!(

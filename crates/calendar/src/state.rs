@@ -150,6 +150,8 @@ pub struct CalendarState {
     /// The minute timer. Armed after a paint that shows the now-line, cleared by
     /// every tick, so a hidden or unmounted calendar stops waking up.
     pub(crate) now_task: Option<Task<()>>,
+    /// Mounted hour grids; the timer is dropped when the last leaves the frame.
+    pub(crate) mounted_grids: usize,
     /// Accessible labels reused across repaints; cleared when they could change.
     pub(crate) labels: LabelCache,
 }
@@ -277,8 +279,13 @@ impl CalendarState {
         let locale = CalendarLocale::default();
         let view_switcher = guiraffe_components::SegmentedControl::new(locale.labels.views, cx);
         view_switcher.update(cx, |switcher, cx| switcher.select(1, cx));
-        cx.subscribe(&view_switcher, |state, _, event, cx| {
+        cx.subscribe(&view_switcher, |state, switcher, event, cx| {
             let guiraffe_components::SegmentedEvent::Changed(index) = event;
+            // `select` also emits for programmatic changes. An event overtaken by
+            // a later selection is stale; replaying it would ping-pong forever.
+            if switcher.read(cx).selected() != *index {
+                return;
+            }
             let view = match index {
                 0 => CalendarViewKind::Year,
                 1 => CalendarViewKind::Month,
@@ -327,6 +334,7 @@ impl CalendarState {
             viewport_minutes: DEFAULT_VIEWPORT_MINUTES,
             clock,
             now_task: None,
+            mounted_grids: 0,
             labels: LabelCache::default(),
         };
         state.reconcile_now_timer(cx);
@@ -420,7 +428,17 @@ impl CalendarState {
         if self.view == view {
             return;
         }
+        self.show_view(view, cx);
+        cx.emit(CalendarEvent::ViewChanged(view));
+    }
+
+    /// Host-driven view change: like [`Self::set_view`], without a `ViewChanged` event.
+    pub fn show_view(&mut self, view: CalendarViewKind, cx: &mut Context<Self>) {
+        if self.view == view {
+            return;
+        }
         self.cancel(cx);
+        self.now = self.current_time();
         self.view = view;
         let selected = match view {
             CalendarViewKind::Year => 0,
@@ -431,7 +449,6 @@ impl CalendarState {
         self.view_switcher
             .update(cx, |switcher, cx| switcher.select(selected, cx));
         self.overflow = None;
-        cx.emit(CalendarEvent::ViewChanged(view));
         cx.notify();
         self.reconcile_now_timer(cx);
     }
@@ -457,6 +474,7 @@ impl CalendarState {
     }
 
     pub fn today(&mut self, cx: &mut Context<Self>) {
+        self.now = self.current_time();
         let today = self.zone.local(self.now).date_naive();
         self.anchor = today;
         self.selected_date = today;
@@ -469,6 +487,23 @@ impl CalendarState {
             date: today,
             view: self.view,
         });
+        cx.notify();
+        self.reconcile_now_timer(cx);
+    }
+
+    /// Host-driven navigation: show `date` (and select it) without emitting
+    /// user events. Cancels any edit preview and closes overflow.
+    pub fn set_date(&mut self, date: NaiveDate, cx: &mut Context<Self>) {
+        if self.anchor == date && self.selected_date == date {
+            return;
+        }
+        self.drag = None;
+        self.keyboard = None;
+        self.pointer_origin_y = None;
+        self.overflow = None;
+        self.anchor = date;
+        self.selected_date = date;
+        self.cursor.date = date;
         cx.notify();
         self.reconcile_now_timer(cx);
     }
@@ -1171,6 +1206,28 @@ impl CalendarState {
         }
     }
 
+    /// The instant to display: the clock in live mode (the cached `now` goes
+    /// stale whenever no timer runs), otherwise the injected value.
+    pub(crate) fn current_time(&self) -> DateTime<Utc> {
+        if self.live_now {
+            (self.clock)()
+        } else {
+            self.now
+        }
+    }
+
+    pub(crate) fn grid_mounted(&mut self) {
+        self.mounted_grids += 1;
+    }
+
+    /// The hour grid was omitted from a frame (hidden, unmounted, other view).
+    pub(crate) fn grid_unmounted(&mut self) {
+        self.mounted_grids = self.mounted_grids.saturating_sub(1);
+        if self.mounted_grids == 0 {
+            self.now_task = None;
+        }
+    }
+
     fn now_line_visible(&self) -> bool {
         if !self.show_now || !matches!(self.view, CalendarViewKind::Week | CalendarViewKind::Day) {
             return false;
@@ -1213,7 +1270,11 @@ impl CalendarState {
         scroll != self.scroll_minutes
             || viewport != self.viewport_minutes
             || (self.now_task.is_some() && !on_screen)
-            || (on_screen && self.now_task.is_none() && self.wants_now_timer())
+            || (on_screen
+                && self.now_task.is_none()
+                && self.live_now
+                && (self.wants_now_timer()
+                    || self.current_time().timestamp() / 60 != self.now.timestamp() / 60))
     }
 
     /// Record the painted scroll position and viewport, then arm or stop the

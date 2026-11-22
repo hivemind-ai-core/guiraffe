@@ -10,9 +10,11 @@ use chrono_tz::Tz;
 use guiraffe_core::ColorName;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventId(pub u64);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SourceId(pub u64);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +37,7 @@ impl CalendarSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ItemTime {
     Timed {
         start: DateTime<Utc>,
@@ -195,7 +198,7 @@ impl CalendarZone {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CalendarModel {
     items: Arc<[Arc<CalendarItem>]>,
     sources: Arc<[CalendarSource]>,
@@ -533,6 +536,69 @@ mod tests {
     }
 
     proptest::proptest! {
+        #[test]
+        fn random_operations_match_a_naive_reference_model(
+            operations in proptest::collection::vec(
+                (0u8..4, 0u64..12, 0i64..40, 1i64..5, proptest::bool::ANY),
+                1..50,
+            ),
+        ) {
+            let base = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap_or(NaiveDate::MIN);
+            let mut naive = std::collections::BTreeMap::<u64, (i64, i64, u64)>::new();
+            let mut hidden = std::collections::BTreeSet::<u64>::new();
+            let mut model = CalendarModel::new([], [source(1), source(2)])
+                .map_err(|error| proptest::test_runner::TestCaseError::fail(error.to_string()))?;
+            for (kind, id, day, days, second) in operations {
+                let source_id = if second { 2 } else { 1 };
+                match kind {
+                    0 | 1 => {
+                        naive.insert(id, (day, days, source_id));
+                    }
+                    2 => {
+                        naive.remove(&id);
+                    }
+                    _ => {
+                        let visible = hidden.remove(&source_id);
+                        if !visible {
+                            hidden.insert(source_id);
+                        }
+                        model.set_source_visible(SourceId(source_id), visible);
+                    }
+                }
+                let mut items = Vec::new();
+                for (&id, &(day, days, source_id)) in &naive {
+                    let item = CalendarItem::all_day(
+                        EventId(id),
+                        SourceId(source_id),
+                        "item",
+                        base + Duration::days(day),
+                        base + Duration::days(day + days),
+                    )
+                    .map_err(|error| proptest::test_runner::TestCaseError::fail(error.to_string()))?;
+                    items.push(Arc::new(item));
+                }
+                model
+                    .set_items(items)
+                    .map_err(|error| proptest::test_runner::TestCaseError::fail(error.to_string()))?;
+                let index = model.index(CalendarZone::Utc);
+                for day in 0..45 {
+                    let expected: Vec<EventId> = naive
+                        .iter()
+                        .filter(|(_, (start, days, source_id))| {
+                            *start <= day && day < start + days && !hidden.contains(source_id)
+                        })
+                        .map(|(id, _)| EventId(*id))
+                        .collect();
+                    let got: Vec<EventId> = index
+                        .day(base + Duration::days(day))
+                        .iter()
+                        .map(|item| item.id)
+                        .collect();
+                    proptest::prop_assert_eq!(got, expected);
+                }
+            }
+        }
+
         #[test]
         fn arbitrary_valid_events_never_leave_empty_bucket(day in 0i32..20_000) {
             let Some(date) = DateTime::<Utc>::UNIX_EPOCH.date_naive().checked_add_signed(Duration::days(i64::from(day))) else { return Ok(()); };

@@ -82,3 +82,26 @@ gpui-fast assertion for expansion and scrolling.
 - **Overflow focus.** The `+N more` list is operated with the calendar's roving keyboard
   cursor (Enter opens it, Up/Down choose, Enter selects, Escape closes). Focus stays on the
   calendar grid instead of moving into the list.
+
+### Calendar gaps against spec/27 (guiraffe-calendar)
+
+- **Performance margin is thin.** On an 8-core/16-thread laptop the Month/Week 8 ms p99 gate
+  passed in a run at load 4 and failed (about 9-11 ms) as other builds raised the load, although
+  the probe's quiet-window rule (load <= CPU count) accepts both. Year misses its 8 ms target
+  (p99 about 12-16 ms); it is outside the Month/Week gate.
+- **Warm repaints are bounded, not zero.** Model lookup and hour-scroll arithmetic allocate
+  nothing. A forced rebuild allocates in GPUI per element; see the budgets in `tests/alloc.rs`.
+  An unchanged calendar in a cached view is not rebuilt.
+- **Density** changes only the toolbar gap, not row or chip targets.
+- **Tab stops.** Event chips, timed blocks and `+N more` are reached with the roving cursor;
+  they are not separate Tab stops when `focusable` is set.
+- **Resize handles** of timed events appear only on the selected event (select, then drag).
+- **Edge auto-scroll** steps once per pointer move; a pointer held still at the edge does not
+  keep scrolling. Pointer-capture loss and theme changes do not cancel a drag.
+- **DST fold.** The two occurrences of a repeated local hour share wall-clock rows and are
+  shown side by side in lanes, not as two chronological rows.
+- **Month capacity** comes from the fixed cell height, not from measured host height.
+- **Multi-day all-day items** repeat a chip per day without continuation cues.
+- **Localization.** View-switcher labels are fixed at construction; `set_locale` does not
+  relabel them.
+- **Agenda/schedule view** is a follow-up, outside spec/27.

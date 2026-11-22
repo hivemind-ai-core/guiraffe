@@ -100,6 +100,8 @@ impl PropSpec {
             | "timeline-events"
             | "event-links"
             | "picker-presets"
+            | "calendar-items"
+            | "calendar-sources"
             | "menu-commands"
             | "step-items"
             | "splitter-sizes"
@@ -162,6 +164,8 @@ impl PropSpec {
             "event-links" => schema["items"] = event_link_schema(),
             "picker-presets" => schema["items"] = picker_preset_schema(),
             "picker-value" => schema = picker_value_schema(),
+            "calendar-items" => schema["items"] = calendar_item_schema(),
+            "calendar-sources" => schema["items"] = calendar_source_schema(),
             "menu-commands" => schema["items"] = menu_command_schema(),
             "step-items" => schema["items"] = step_item_schema(),
             "splitter-sizes" => schema["items"] = splitter_size_schema(),
@@ -275,6 +279,7 @@ impl EventSpec {
                     "zoom":{"type":"number","minimum":0.02,"maximum":4}
                 }
             }),
+            "iso-date" => json!({"type":"string","pattern":ISO_DATE}),
             "iso-time" => json!({"type":"string","pattern":ISO_TIME}),
             "chat-submit" => json!({
                 "type":"object","required":["id","text","attachments"],"additionalProperties":false,
@@ -287,6 +292,14 @@ impl EventSpec {
             "tree-reorder" => tree_event_schema("before", json!({"type":"integer","minimum":0})),
             "tree-edit" => tree_event_schema("value", tree_value_schema()),
             "selection" => json!({"type":["string","null"]}),
+            "calendar-change" => calendar_change_schema(),
+            "calendar-source-visibility" => json!({
+                "type":"object","required":["source","visible"],"additionalProperties":false,
+                "properties":{
+                    "source":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+                    "visible":{"type":"boolean"}
+                }
+            }),
             "nullable-integer" => json!({"type":["integer","null"],"minimum":0}),
             "integer-array" => json!({"type":"array","items":{"type":"integer","minimum":0}}),
             "code-decoration-action" => json!({
@@ -1197,6 +1210,45 @@ pub fn timeline_event_schema() -> Value {
             "position":{"type":"integer","minimum":-((1_i64<<53)-1),"maximum":(1_i64<<53)-1},
             "label":{"type":"string"},"content":{"type":"string"},
             "tags":{"type":"array","items":{"type":"string"}},"color":color_name_schema()
+        }
+    })
+}
+
+/// One calendar event. `start`/`end` are RFC 3339 instants, or ISO dates with an
+/// exclusive end when `allDay` is true.
+pub fn calendar_item_schema() -> Value {
+    let id = json!({"type":"integer","minimum":0,"maximum":(1_u64<<53)-1});
+    json!({
+        "type":"object","additionalProperties":false,"required":["id","source","title","start","end"],
+        "properties":{
+            "id":id,"source":id,"title":{"type":"string"},
+            "start":{"type":"string"},"end":{"type":"string"},"allDay":{"type":"boolean"},
+            "color":color_name_schema(),"locked":{"type":"boolean"},"icon":{"type":"string"}
+        }
+    })
+}
+
+/// A named, colored and toggleable calendar.
+pub fn calendar_source_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["id","name"],
+        "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+            "name":{"type":"string"},"color":color_name_schema(),"visible":{"type":"boolean"}
+        }
+    })
+}
+
+/// A proposed calendar edit; the host applies it. `item` is null for a new event.
+fn calendar_change_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,
+        "required":["kind","item","source","allDay","start","end"],
+        "properties":{
+            "kind":{"type":"string","enum":["create","move","resize"]},
+            "item":{"type":["integer","null"],"minimum":0,"maximum":(1_u64<<53)-1},
+            "source":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
+            "allDay":{"type":"boolean"},"start":{"type":"string"},"end":{"type":"string"}
         }
     })
 }

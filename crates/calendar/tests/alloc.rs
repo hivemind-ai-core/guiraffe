@@ -181,10 +181,10 @@ fn warm_repaints_are_stable_and_bounded(cx: &mut TestAppContext) {
         // unchanged calendar in a cached view is not rebuilt at all; see
         // `cached_calendar_is_not_rebuilt_by_unrelated_repaints`.
         let budget = match view {
-            CalendarViewKind::Year => 18_000,
-            CalendarViewKind::Month => 10_000,
-            CalendarViewKind::Week => 18_000,
-            CalendarViewKind::Day => 6_500,
+            CalendarViewKind::Year => 15_100, // 13,705 measured
+            CalendarViewKind::Month => 9_600, // 8,708 measured
+            CalendarViewKind::Week => 7_700,  // 6,969 measured
+            CalendarViewKind::Day => 3_100,   // 2,803 measured
         };
         assert!(
             first <= budget,
@@ -275,5 +275,15 @@ fn cached_calendar_is_not_rebuilt_by_unrelated_repaints(cx: &mut TestAppContext)
         renders.get(),
         settled,
         "sibling repaints must reuse the cached calendar"
+    );
+    // The other half: reuse must not mean never updating.
+    vcx.update(|_, cx| {
+        let state = shell.read(cx).calendar.read(cx).state.clone();
+        state.update(cx, |state, cx| state.navigate(1, cx));
+    });
+    vcx.run_until_parked();
+    assert!(
+        renders.get() > settled,
+        "a cached calendar must repaint when its state changes"
     );
 }

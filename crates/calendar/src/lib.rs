@@ -19,10 +19,13 @@
 //! ```
 
 pub mod calendar;
+mod document;
 pub mod edit;
 pub mod model;
 mod state;
 mod view;
+use guiraffe_core::widget_spec;
+mod widget_specs;
 
 pub use state::{
     CalendarChange, CalendarCursor, CalendarEvent, CalendarState, ChangeKind, DragMode, DragPreview,
@@ -49,6 +52,7 @@ pub use model::{
 pub fn init(cx: &mut gpui_kit::App) {
     guiraffe_components::init(cx);
     state::register_keys(cx);
+    document::register(cx);
 }
 
 #[cfg(test)]

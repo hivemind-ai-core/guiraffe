@@ -26,5 +26,5 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
 gpui-fast = ["gpui-kit/gpui-fast"]
-# Serde support for the chrono-backed data types (`ItemTime`, ids, sources).
+# Serde support for `ItemTime`, the ids, `CalendarViewKind` and `TimeFormat`.
 serde = ["chrono/serde", "chrono-tz/serde"]

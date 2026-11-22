@@ -125,6 +125,7 @@ struct Frame<'a> {
 
 impl RenderOnce for Calendar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        bind_to_view(&self.state, window, cx);
         let state = self.state.read(cx);
         let view = state.view;
         let overflow = state.overflow;
@@ -170,14 +171,13 @@ impl RenderOnce for Calendar {
                 .space(Size::Sm)))
             .bg(surfaces.body.to_hsla())
             .text_color(surfaces.text.to_hsla());
-        root = bind_actions(root, &self.state).on_mouse_up(MouseButton::Left, {
-            let state = self.state.clone();
-            move |_, _, cx| {
-                state.update(cx, |state, cx| {
-                    state.commit_drag(cx);
-                })
-            }
-        });
+        root = bind_actions(root, &self.state)
+            // Pointer activation never captures focus; release is committed by
+            // `pointer_capture`, which leaves keyboard edit sessions alone.
+            .capture_any_mouse_down(|_, window, _| window.prevent_default());
+        if matches!(view, CalendarViewKind::Week | CalendarViewKind::Day) {
+            track_mount(&self.state, window, cx);
+        }
         if self.props.show_toolbar {
             root = root.child(toolbar(&frame, cx));
         }
@@ -200,6 +200,57 @@ impl RenderOnce for Calendar {
             .map(|root| guiraffe_core::focus_ring(root, ring_on, px(Size::Md.radius()), ring_color))
             .map(|root| StyledExt::refine_style(root, &self.style))
     }
+}
+
+/// Repaints the hosting view when the state changes. `CalendarState` is not a
+/// view, so without this a calendar inside a cached host would never update.
+struct ViewBinding;
+
+fn bind_to_view(state: &Entity<CalendarState>, window: &mut Window, cx: &mut App) {
+    let view = window.current_view();
+    let key = ElementId::NamedInteger("calendar-binding".into(), state.entity_id().as_u64());
+    window.use_keyed_state(key, cx, |_, cx| {
+        cx.observe(state, move |_: &mut ViewBinding, _, cx| {
+            gpui_kit::App::notify(cx, view)
+        })
+        .detach();
+        ViewBinding
+    });
+}
+
+/// Element state of the hour grid. The frame drops it as soon as a frame omits
+/// the grid (cached reuse keeps it), which is when the now timer must stop.
+struct GridMount {
+    state: gpui_kit::WeakEntity<CalendarState>,
+    cx: gpui_kit::AsyncApp,
+}
+
+impl Drop for GridMount {
+    fn drop(&mut self) {
+        let state = self.state.clone();
+        self.cx
+            .spawn(async move |cx| {
+                // An error means the calendar is gone, and its timer with it.
+                let _ = state.update(cx, |state, _| state.grid_unmounted());
+            })
+            .detach();
+    }
+}
+
+fn track_mount(state: &Entity<CalendarState>, window: &mut Window, cx: &mut App) {
+    let key = ElementId::NamedInteger("calendar-grid-mount".into(), state.entity_id().as_u64());
+    window.with_global_id(key, |id, window| {
+        window.with_element_state(id, |mount: Option<GridMount>, _| {
+            let mount = mount.unwrap_or_else(|| {
+                state.update(cx, |state, _| state.grid_mounted());
+                GridMount {
+                    state: state.downgrade(),
+                    cx: cx.to_async(),
+                }
+            });
+            ((), mount)
+        })
+    });
 }
 
 fn heading(state: &CalendarState) -> String {
@@ -326,14 +377,16 @@ fn toolbar(frame: &Frame<'_>, cx: &mut App) -> impl IntoElement {
             .toggled(visible)
             .tab_stop(frame.tab)
             .bg(colors.background.to_hsla())
-            .text_color(colors.foreground.to_hsla())
+            .text_color(if visible {
+                colors.foreground.to_hsla()
+            } else {
+                GuiraffeTheme::global(cx).surfaces().dimmed.to_hsla()
+            })
             .on_click(move |_, _, cx| {
                 entity.update(cx, |state, cx| state.set_source_visible(id, !visible, cx))
             });
         if visible {
             button = button.icon(IconName::Check);
-        } else {
-            button = button.opacity(0.7);
         }
         bar = bar.child(button);
     }
@@ -358,8 +411,18 @@ fn navigation_button(
         .on_click(move |_, _, cx| state.update(cx, |state, cx| state.navigate(delta, cx)))
 }
 
-fn event_at_position(event: &MouseMoveEvent, origin_minute: i32, origin_y: f32) -> i32 {
-    let y: f32 = event.position.y.into();
+/// Window `y` in hour-grid content coordinates, which survive scrolling mid-drag.
+fn content_y(state: &CalendarState, y: gpui_kit::Pixels) -> f32 {
+    (y - state.scroll.bounds().origin.y - state.scroll.offset().y).into()
+}
+
+fn event_at_position(
+    state: &CalendarState,
+    event: &MouseMoveEvent,
+    origin_minute: i32,
+    origin_y: f32,
+) -> i32 {
+    let y = content_y(state, event.position.y);
     origin_minute + (((y - origin_y) / default_hour_height()) * 60.0).round() as i32
 }
 
@@ -400,10 +463,10 @@ fn timed_view(
     let (scroll_minutes, viewport_minutes) = scroll_window(current);
     let (first_minute, last_minute) = visible_hour_range(scroll_minutes, viewport_minutes, 1);
     let hours = (first_minute / 60) as u32..=((last_minute.max(1) - 1) / 60).clamp(0, 23) as u32;
-    let now = current.show_now.then(|| zone.local(current.now));
+    let now = current.show_now.then(|| zone.local(current.current_time()));
     let now_date = now.map(|time| time.date_naive());
     let now_minute = now.map(|time| (time.hour() * 60 + time.minute()) as i32);
-    let today = zone.local(current.now).date_naive();
+    let today = zone.local(current.current_time()).date_naive();
     let show_business = current.show_business_hours;
     let format = current.time_format();
     let theme = GuiraffeTheme::global(cx);
@@ -495,51 +558,64 @@ fn timed_view(
             [(0, 0), (0, 0)]
         };
         let (grid_first, grid_last) = (first_minute, last_minute);
+        // Bit per visible hour that a DST jump removes on this date.
+        let skipped_hours = hours.clone().fold(0_u32, |mask, hour| {
+            let missing = date
+                .and_hms_opt(hour, 0, 0)
+                .is_none_or(|local| zone.single_from_local(local).is_none());
+            if missing { mask | (1 << hour) } else { mask }
+        });
         day = day
             .child(
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, _| {
-                        let per_minute = hour_height / 60.0;
-                        for (start, end) in shading {
-                            let (start, end) = (start.max(grid_first), end.min(grid_last));
-                            if start < end {
-                                window.paint_quad(gpui_kit::fill(
-                                    gpui_kit::Bounds::new(
-                                        gpui_kit::point(
-                                            bounds.left(),
-                                            bounds.top() + px(start as f32 * per_minute),
+                        // One layer: the scene orders the whole grid once
+                        // instead of once per line.
+                        window.paint_layer(bounds, |window| {
+                            let per_minute = hour_height / 60.0;
+                            for (start, end) in shading {
+                                let (start, end) = (start.max(grid_first), end.min(grid_last));
+                                if start < end {
+                                    window.paint_quad(gpui_kit::fill(
+                                        gpui_kit::Bounds::new(
+                                            gpui_kit::point(
+                                                bounds.left(),
+                                                bounds.top() + px(start as f32 * per_minute),
+                                            ),
+                                            gpui_kit::size(
+                                                bounds.size.width,
+                                                px((end - start) as f32 * per_minute),
+                                            ),
                                         ),
-                                        gpui_kit::size(
-                                            bounds.size.width,
-                                            px((end - start) as f32 * per_minute),
-                                        ),
-                                    ),
-                                    shade,
-                                ));
+                                        shade,
+                                    ));
+                                }
                             }
-                        }
-                        let mut minute = (grid_first / 30) * 30;
-                        while minute <= grid_last {
-                            if minute > 0 {
-                                let color = if minute % 60 == 0 {
-                                    grid_color
-                                } else {
-                                    grid_color.opacity(0.5)
-                                };
-                                window.paint_quad(gpui_kit::fill(
-                                    gpui_kit::Bounds::new(
-                                        gpui_kit::point(
-                                            bounds.left(),
-                                            bounds.top() + px(minute as f32 * per_minute),
+                            let mut minute = (grid_first / 30) * 30;
+                            while minute <= grid_last {
+                                let skipped =
+                                    minute < 1_440 && skipped_hours & (1 << (minute / 60)) != 0;
+                                if minute > 0 && !skipped {
+                                    let color = if minute % 60 == 0 {
+                                        grid_color
+                                    } else {
+                                        grid_color.opacity(0.5)
+                                    };
+                                    window.paint_quad(gpui_kit::fill(
+                                        gpui_kit::Bounds::new(
+                                            gpui_kit::point(
+                                                bounds.left(),
+                                                bounds.top() + px(minute as f32 * per_minute),
+                                            ),
+                                            gpui_kit::size(bounds.size.width, px(1.)),
                                         ),
-                                        gpui_kit::size(bounds.size.width, px(1.)),
-                                    ),
-                                    color,
-                                ));
+                                        color,
+                                    ));
+                                }
+                                minute += 30;
                             }
-                            minute += 30;
-                        }
+                        });
                     },
                 )
                 .absolute()
@@ -554,7 +630,7 @@ fn timed_view(
                     state.update(cx, |state, cx| {
                         let minute = minute_at(state, event.position.y.into());
                         state.cursor = CalendarCursor { date, minute };
-                        state.pointer_origin_y = Some(event.position.y.into());
+                        state.pointer_origin_y = Some(content_y(state, event.position.y));
                         state.begin_create(date, minute, cx);
                     });
                 }
@@ -571,8 +647,10 @@ fn timed_view(
                     {
                         return;
                     }
-                    let origin_y = current.pointer_origin_y.unwrap_or(event.position.y.into());
-                    let minute = event_at_position(event, drag.origin_minute, origin_y);
+                    let origin_y = current
+                        .pointer_origin_y
+                        .unwrap_or(content_y(current, event.position.y));
+                    let minute = event_at_position(current, event, drag.origin_minute, origin_y);
                     state.update(cx, |state, cx| {
                         state.update_timed_drag(date, minute.clamp(-1_440, 2_880), cx)
                     });
@@ -975,7 +1053,7 @@ fn event_block(
                     window.prevent_default();
                     cx.stop_propagation();
                     state.update(cx, |state, cx| {
-                        state.pointer_origin_y = Some(event.position.y.into());
+                        state.pointer_origin_y = Some(content_y(state, event.position.y));
                         state.begin_item_drag(id, DragMode::Move, date, origin_minute, cx);
                     });
                 }
@@ -1170,6 +1248,26 @@ fn paint_sync(state: &Entity<CalendarState>) -> AnyElement {
     .into_any_element()
 }
 
+/// Scroll target when a travelling drag is within the edge zone of the hour
+/// viewport. One fifteen-minute step per pointer move.
+fn edge_scroll(state: &CalendarState, event: &MouseMoveEvent) -> Option<i32> {
+    let edge = px(Size::Md.spacing());
+    let bounds = state.scroll.bounds();
+    let origin = state.pointer_origin_y?;
+    if (content_y(state, event.position.y) - origin).abs() < Size::Xs.spacing() {
+        // A press near the edge is not yet a drag.
+        return None;
+    }
+    let (scroll, _) = scroll_window(state);
+    if event.position.y < bounds.top() + edge {
+        Some(scroll - 15)
+    } else if event.position.y > bounds.bottom() - edge {
+        Some(scroll + 15)
+    } else {
+        None
+    }
+}
+
 fn pointer_capture(state: &Entity<CalendarState>) -> AnyElement {
     let movement = state.clone();
     let release = state.clone();
@@ -1189,8 +1287,14 @@ fn pointer_capture(state: &Entity<CalendarState>) -> AnyElement {
                 }
                 let origin_minute = drag.origin_minute;
                 let date = drag.origin_date;
-                let origin_y = current.pointer_origin_y.unwrap_or(event.position.y.into());
-                let minute = event_at_position(event, origin_minute, origin_y);
+                if let Some(target) = edge_scroll(current, event) {
+                    movement.update(cx, |state, cx| state.set_scroll_minutes(target, cx));
+                }
+                let current = movement.read(cx);
+                let origin_y = current
+                    .pointer_origin_y
+                    .unwrap_or(content_y(current, event.position.y));
+                let minute = event_at_position(current, event, origin_minute, origin_y);
                 movement.update(cx, |state, cx| state.update_timed_drag(date, minute, cx));
             });
             window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
@@ -1239,7 +1343,7 @@ fn resize_handle(
                 window.prevent_default();
                 cx.stop_propagation();
                 down.update(cx, |state, cx| {
-                    state.pointer_origin_y = Some(event.position.y.into());
+                    state.pointer_origin_y = Some(content_y(state, event.position.y));
                     state.begin_item_drag(id, DragMode::Resize(edge), date, origin_minute, cx);
                 });
             },
@@ -1249,8 +1353,10 @@ fn resize_handle(
             if current.drag.is_none() {
                 return;
             }
-            let origin_y = current.pointer_origin_y.unwrap_or(event.position.y.into());
-            let minute = event_at_position(event, origin_minute, origin_y);
+            let origin_y = current
+                .pointer_origin_y
+                .unwrap_or(content_y(current, event.position.y));
+            let minute = event_at_position(current, event, origin_minute, origin_y);
             movement.update(cx, |state, cx| state.update_timed_drag(date, minute, cx));
         })
         .into_any_element()
@@ -1326,14 +1432,13 @@ fn default_item_content(content: &ItemContent<'_>) -> AnyElement {
     });
     let body = div()
         .size_full()
-        .flex()
-        .overflow_hidden()
         .text_size(px(Size::Xs.font_size()))
         .line_height(px(Size::Xs.font_size() * 1.3));
     let body = if content.compact {
-        body.flex_row().items_start().gap(px(4.))
+        body.flex().items_start().gap(px(4.))
     } else {
-        body.flex_col()
+        // Two stacked lines need no flex pass.
+        body
     };
     body.child(title).children(time).into_any_element()
 }
@@ -1361,7 +1466,7 @@ fn year_view(frame: &Frame<'_>, cx: &mut App) -> AnyElement {
     let index = current.index.clone();
     let locale = &current.locale;
     let first_weekday = current.first_weekday();
-    let today = current.zone.local(current.now).date_naive();
+    let today = current.zone.local(current.current_time()).date_naive();
     let selected = current.selected_date;
     let cursor = current.cursor.date;
     let iso = current.show_iso_weeks;
@@ -1556,7 +1661,7 @@ fn month_view(frame: &Frame<'_>, renderer: Option<&ItemRenderer>, cx: &mut App) 
     let current = state.read(cx);
     let index = current.index.clone();
     let first_weekday = current.first_weekday();
-    let today = current.zone.local(current.now).date_naive();
+    let today = current.zone.local(current.current_time()).date_naive();
     let selected = current.selected_date;
     let cursor = current.cursor.date;
     let iso = current.show_iso_weeks;
@@ -1954,10 +2059,7 @@ fn overflow_overlay(frame: &Frame<'_>, date: NaiveDate, cx: &App) -> AnyElement 
                         state.set_overflow(None, cx);
                         state.select_item(id, cx);
                     });
-                    let focus = entity.read(cx).focus.clone();
-                    if entity.read(cx).focusable != Some(false) {
-                        window.focus(&focus, cx);
-                    }
+                    restore_focus(&entity, window, cx);
                 })
                 .into_any_element()
         })
@@ -2012,13 +2114,20 @@ fn overflow_overlay(frame: &Frame<'_>, date: NaiveDate, cx: &App) -> AnyElement 
                         .tab_stop(frame.tab)
                         .on_click(move |_, window, cx| {
                             close.update(cx, |state, cx| state.set_overflow(None, cx));
-                            let focus = close.read(cx).focus.clone();
-                            window.focus(&focus, cx);
+                            restore_focus(&close, window, cx);
                         }),
                 ),
         )
         .children(items)
         .into_any_element()
+}
+
+/// Closing overflow returns focus to the grid only if the calendar already had it.
+fn restore_focus(state: &Entity<CalendarState>, window: &mut Window, cx: &mut App) {
+    let focus = state.read(cx).focus.clone();
+    if focus.contains_focused(window, cx) {
+        window.focus(&focus, cx);
+    }
 }
 
 fn item_color(state: &CalendarState, item: &CalendarItem) -> ColorName {
@@ -2038,7 +2147,18 @@ fn bind_actions<E: InteractiveElement>(root: E, state: &Entity<CalendarState>) -
         run: fn(&mut CalendarState, &mut gpui_kit::Context<CalendarState>),
     ) -> E {
         let state = state.clone();
-        root.on_action(move |_: &A, _, cx| state.update(cx, run))
+        root.on_action(move |_: &A, window, cx| {
+            let current = state.read(cx);
+            // A focused toolbar/overflow control keeps its own keys; Escape still cancels.
+            let escape = std::any::TypeId::of::<A>() == std::any::TypeId::of::<CalendarCancel>();
+            if current.focus.is_focused(window)
+                || (escape && (current.drag.is_some() || current.overflow.is_some()))
+            {
+                state.update(cx, run);
+            } else {
+                cx.propagate();
+            }
+        })
     }
     let root = on::<CalendarToday, _>(root, state, |s, cx| s.cursor_to_today(cx));
     let root = on::<CalendarLeft, _>(root, state, |s, cx| s.arrow(-1, 0, false, cx));

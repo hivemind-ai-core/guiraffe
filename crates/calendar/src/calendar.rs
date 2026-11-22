@@ -3,6 +3,7 @@ use chrono::{
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CalendarViewKind {
     Year,
     #[default]
@@ -12,6 +13,7 @@ pub enum CalendarViewKind {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TimeFormat {
     #[default]
     Locale,

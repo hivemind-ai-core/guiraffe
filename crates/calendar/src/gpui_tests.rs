@@ -391,7 +391,7 @@ fn now_line_timer_runs_only_while_painted_and_visible(cx: &mut TestAppContext) {
     assert_eq!(vcx.update(|_, cx| state.read(cx).now()), instant(11, 31));
     assert!(active(vcx), "a visible calendar keeps ticking");
 
-    // Hidden: at most the pending tick fires, then the timer stays idle.
+    // Hidden: the timer is dropped with the first frame that omits the calendar.
     vcx.update(|_, cx| {
         toggle.update(cx, |toggle, cx| {
             toggle.shown = false;
@@ -399,6 +399,10 @@ fn now_line_timer_runs_only_while_painted_and_visible(cx: &mut TestAppContext) {
         })
     });
     vcx.run_until_parked();
+    assert!(
+        !active(vcx),
+        "hiding must stop the timer without waiting for a tick"
+    );
     CLOCK.with(|clock| clock.set(instant(11, 32).timestamp()));
     vcx.executor()
         .advance_clock(std::time::Duration::from_secs(61));
@@ -768,4 +772,265 @@ fn custom_renderer_and_overflow_run_through_real_month_view(cx: &mut TestAppCont
     });
     custom_vcx.run_until_parked();
     custom_vcx.update(|_, cx| assert_eq!(host.read(cx).state.read(cx).overflow(), Some(date())));
+}
+
+#[gpui_kit::test]
+fn two_view_changes_in_one_update_settle_on_the_last(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Month);
+    vcx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            state.set_view(CalendarViewKind::Week, cx);
+            state.set_view(CalendarViewKind::Day, cx);
+        })
+    });
+    vcx.run_until_parked();
+    vcx.update(|_, cx| assert_eq!(state.read(cx).view(), CalendarViewKind::Day));
+}
+
+#[gpui_kit::test]
+fn pointer_activation_does_not_capture_focus(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Month);
+    let cell = vcx
+        .debug_bounds("calendar-month-cell-2026-11-10")
+        .unwrap_or_else(|| panic!("month cell"));
+    vcx.simulate_click(cell.center(), Default::default());
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        assert!(
+            !state.read(cx).focus.is_focused(window),
+            "a click must not capture focus by default"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn enter_on_a_focused_toolbar_button_presses_the_button(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Month);
+    vcx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            state.set_focusable(Some(true), cx);
+            state.navigate(1, cx);
+        })
+    });
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        let focus = state.read(cx).focus.clone();
+        window.focus(&focus, cx);
+    });
+    vcx.run_until_parked();
+    // Grid, Previous, Today.
+    for _ in 0..2 {
+        vcx.update(|window, cx| window.focus_next(cx));
+        vcx.run_until_parked();
+    }
+    vcx.simulate_keystrokes("enter");
+    vcx.simulate_event(gpui_kit::KeyUpEvent {
+        keystroke: gpui_kit::Keystroke::parse("enter").unwrap_or_else(|error| panic!("{error}")),
+    });
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        assert_eq!(
+            state.read(cx).anchor(),
+            date(),
+            "Today must run; the grid's Enter binding must not swallow it"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_click_does_not_commit_a_keyboard_edit(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Month);
+    vcx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            state.pick_up(cx);
+        })
+    });
+    vcx.run_until_parked();
+    let cell = vcx
+        .debug_bounds("calendar-month-cell-2026-11-10")
+        .unwrap_or_else(|| panic!("month cell"));
+    vcx.simulate_click(cell.center(), Default::default());
+    vcx.run_until_parked();
+    vcx.update(|_, cx| assert!(state.read(cx).keyboard_editing()));
+}
+
+#[gpui_kit::test]
+fn pointer_at_the_viewport_edge_scrolls_and_keeps_the_time_under_it(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Week);
+    let viewport = vcx.update(|_, cx| state.read(cx).scroll.bounds());
+    let column = vcx
+        .debug_bounds("calendar-day-2026-11-21")
+        .unwrap_or_else(|| panic!("day column"));
+    let x = column.center().x;
+    let start = gpui_kit::point(x, viewport.top() + gpui_kit::px(40.));
+    let edge = gpui_kit::point(x, viewport.bottom() - gpui_kit::px(3.));
+    let left = Some(gpui_kit::MouseButton::Left);
+    vcx.simulate_mouse_down(start, gpui_kit::MouseButton::Left, Default::default());
+    for nudge in 0..4 {
+        let y = gpui_kit::px(nudge as f32 * 0.5);
+        vcx.simulate_mouse_move(
+            edge - gpui_kit::point(gpui_kit::px(0.), y),
+            left,
+            Default::default(),
+        );
+        vcx.run_until_parked();
+    }
+    vcx.update(|_, cx| {
+        let state = state.read(cx);
+        let scrolled: f32 = (-state.scroll.offset().y).into();
+        assert!(
+            scrolled > 480.,
+            "the bottom edge must scroll down: {scrolled}"
+        );
+        let Some(ItemTime::Timed { end, .. }) = state.drag().map(|drag| drag.proposed.clone())
+        else {
+            panic!("create preview")
+        };
+        let travel: f32 = (edge.y - start.y).into();
+        let expected = 8. * 60. + 30. + 60. + travel + (scrolled - 480.);
+        let proposed = crate::minute_of_day(CalendarZone::Utc.local(end)) as f32;
+        assert!(
+            (proposed - expected).abs() <= 32.,
+            "the preview follows the content under the pointer: {proposed} vs {expected}"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn live_clock_never_serves_a_stale_today(cx: &mut TestAppContext) {
+    CLOCK.with(|clock| clock.set(instant(11, 30).timestamp()));
+    let (state, _, vcx) = open(cx, CalendarViewKind::Month);
+    vcx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            state.set_clock(test_clock, cx);
+            state.set_live_now(true, cx);
+        })
+    });
+    vcx.run_until_parked();
+    // Month runs no timer; two days pass.
+    let later = instant(11, 30) + chrono::Duration::days(2);
+    CLOCK.with(|clock| clock.set(later.timestamp()));
+    vcx.update(|_, cx| state.update(cx, |state, cx| state.today(cx)));
+    vcx.update(|_, cx| {
+        assert_eq!(
+            state.read(cx).anchor(),
+            later.date_naive(),
+            "Today must read the clock"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn scrolling_to_the_current_hour_refreshes_a_stale_now_line(cx: &mut TestAppContext) {
+    CLOCK.with(|clock| clock.set(instant(2, 0).timestamp()));
+    let (state, _, vcx) = open(cx, CalendarViewKind::Week);
+    vcx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            state.set_clock(test_clock, cx);
+            state.set_live_now(true, cx);
+        })
+    });
+    vcx.run_until_parked();
+    // The line at 02:00 is out of view, so no timer runs. Nine hours pass.
+    CLOCK.with(|clock| clock.set(instant(11, 0).timestamp()));
+    vcx.update(|_, cx| state.update(cx, |state, cx| state.set_scroll_minutes(600, cx)));
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        let state = state.read(cx);
+        assert_eq!(state.now(), instant(11, 0));
+        assert!(state.now_timer_active());
+    });
+}
+
+struct Clipped {
+    state: Entity<CalendarState>,
+    offscreen: bool,
+}
+
+impl Render for Clipped {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui_kit::div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .child(
+                gpui_kit::div()
+                    .absolute()
+                    .top(gpui_kit::px(if self.offscreen { 5_000. } else { 0. }))
+                    .w_full()
+                    .h(gpui_kit::px(400.))
+                    .child(Calendar::new(&self.state)),
+            )
+    }
+}
+
+#[gpui_kit::test]
+fn now_timer_stops_when_clipped_offscreen(cx: &mut TestAppContext) {
+    CLOCK.with(|clock| clock.set(instant(11, 30).timestamp()));
+    cx.update(init);
+    let model = fixture();
+    let (clipped, vcx) = cx.add_window_view(|_, cx| {
+        let state = cx.new(|cx| {
+            let mut state = CalendarState::new(model, date(), CalendarZone::Utc, cx);
+            state.set_clock(test_clock, cx);
+            state.view = CalendarViewKind::Week;
+            state.set_scroll_minutes(600, cx);
+            state
+        });
+        Clipped {
+            state,
+            offscreen: false,
+        }
+    });
+    vcx.run_until_parked();
+    let state = vcx.update(|_, cx| clipped.read(cx).state.clone());
+    assert!(vcx.update(|_, cx| state.read(cx).now_timer_active()));
+    vcx.update(|_, cx| {
+        clipped.update(cx, |clipped, cx| {
+            clipped.offscreen = true;
+            cx.notify();
+        })
+    });
+    vcx.run_until_parked();
+    assert!(!vcx.update(|_, cx| state.read(cx).now_timer_active()));
+}
+
+#[gpui_kit::test]
+fn zero_size_viewport_recovers(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Week);
+    vcx.simulate_resize(gpui_kit::size(gpui_kit::px(0.), gpui_kit::px(0.)));
+    vcx.run_until_parked();
+    vcx.simulate_resize(gpui_kit::size(gpui_kit::px(1_000.), gpui_kit::px(700.)));
+    vcx.run_until_parked();
+    assert!(vcx.debug_bounds("calendar-day-2026-11-21").is_some());
+    vcx.update(|_, cx| assert!(state.read(cx).viewport_minutes > 0));
+}
+
+#[gpui_kit::test]
+fn drag_movement_does_not_rerender_siblings(cx: &mut TestAppContext) {
+    let (state, sibling, vcx) = open(cx, CalendarViewKind::Week);
+    let before = sibling.get();
+    vcx.update(|_, cx| {
+        state.update(cx, |state, cx| {
+            state.begin_item_drag(EventId(2), DragMode::Move, date(), 540, cx)
+        })
+    });
+    for minute in [555, 570, 585, 600] {
+        vcx.update(|_, cx| {
+            state.update(cx, |state, cx| state.update_timed_drag(date(), minute, cx))
+        });
+        vcx.run_until_parked();
+    }
+    assert_eq!(sibling.get(), before);
+}
+
+#[gpui_kit::test]
+fn state_changes_repaint_inside_a_cached_host(cx: &mut TestAppContext) {
+    let (state, _, vcx) = open(cx, CalendarViewKind::Month);
+    vcx.update(|_, cx| state.update(cx, |state, cx| state.navigate(1, cx)));
+    vcx.run_until_parked();
+    assert!(
+        vcx.debug_bounds("calendar-month-cell-2026-12-31").is_some(),
+        "December must be painted after navigating"
+    );
 }

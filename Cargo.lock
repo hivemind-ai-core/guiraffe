@@ -3858,6 +3858,7 @@ name = "guiraffe-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "guiraffe-calendar",
  "guiraffe-charts",
  "guiraffe-chat",
  "guiraffe-code",
