@@ -273,7 +273,7 @@ mod inbox_tests {
             assert!(sink.send(scroll(false, 2)));
             assert!(sink.send(scroll(true, -1)));
         }
-        assert_eq!(sink.inbox.lock().unwrap().queue.len(), 2);
+        assert_eq!(sink.inbox.lock().expect("tray inbox lock").queue.len(), 2);
         assert!(sink.send(BackendEvent::Activate));
         assert!(sink.send(scroll(false, 5)));
         assert!(sink.send(BackendEvent::SecondaryActivate));
@@ -288,7 +288,10 @@ mod inbox_tests {
             assert!(sink.send(BackendEvent::MenuItem(TrayItemId::Custom("queued".into()))));
         }
         drop(receiver);
-        assert_eq!(sink.inbox.lock().unwrap().queue.capacity(), 0);
+        assert_eq!(
+            sink.inbox.lock().expect("tray inbox lock").queue.capacity(),
+            0
+        );
         assert!(!sink.send(BackendEvent::Activate));
     }
 }

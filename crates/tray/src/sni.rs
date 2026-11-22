@@ -297,22 +297,30 @@ mod tests {
             attention: false,
             menu: Vec::new(),
         };
-        let mut shared = Shared::<()>::default();
-        shared.pending = Some(snapshot("connecting".into()));
+        let mut shared = Shared::<()> {
+            pending: Some(snapshot("connecting".into())),
+            ..Default::default()
+        };
         assert!(!shared.reserve_flush());
         shared.handle = Some(());
         assert!(shared.reserve_flush());
-        let (_, in_flight) = shared.next_update().unwrap();
+        let (_, in_flight) = shared.next_update().expect("staged snapshot");
         for index in 0..10_000 {
             shared.pending = Some(snapshot(index.to_string()));
             assert!(!shared.reserve_flush());
         }
         assert_eq!(in_flight.title, "connecting");
-        assert_eq!(shared.next_update().unwrap().1.title, "9999");
+        assert_eq!(
+            shared.next_update().expect("staged snapshot").1.title,
+            "9999"
+        );
         assert!(shared.next_update().is_none());
         shared.pending = Some(snapshot("after idle".into()));
         assert!(shared.reserve_flush());
-        assert_eq!(shared.next_update().unwrap().1.title, "after idle");
+        assert_eq!(
+            shared.next_update().expect("staged snapshot").1.title,
+            "after idle"
+        );
     }
 
     #[test]
