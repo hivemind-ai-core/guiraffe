@@ -4,8 +4,8 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, ElementId, IntoElement, ParentElement,
-    RenderOnce, SharedString, StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*,
-    px, svg,
+    RenderOnce, SharedString, StyleRefinement, Styled, TestSupportExt, Window, div, prelude::*, px,
+    svg,
 };
 use guiraffe_core::{
     A11yDisabledExt, ColorName, GuiraffeTheme, Press, PressableExt, Size, Variant, keyed_focus,

@@ -31,6 +31,7 @@ guiraffe-inputs.workspace = true
 guiraffe-markdown.workspace = true
 guiraffe-mermaid.workspace = true
 guiraffe-overlays.workspace = true
+guiraffe-sheet.workspace = true
 guiraffe-tree.workspace = true
 guiraffe-timeline.workspace = true
 guiraffe-test = { workspace = true, features = ["render"] }

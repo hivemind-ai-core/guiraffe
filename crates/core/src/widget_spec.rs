@@ -108,7 +108,8 @@ impl PropSpec {
             | "card-section-borders"
             | "overlay-toasts"
             | "native-popup-items"
-            | "dial-actions" => "array",
+            | "dial-actions"
+            | "sheet-cells" => "array",
             ty => ty,
         };
         let mut schema = match self.type_name {
@@ -164,6 +165,7 @@ impl PropSpec {
             "picker-value" => schema = picker_value_schema(),
             "menu-commands" => schema["items"] = menu_command_schema(),
             "step-items" => schema["items"] = step_item_schema(),
+            "sheet-cells" => schema["items"] = sheet_cell_schema(),
             "splitter-sizes" => schema["items"] = splitter_size_schema(),
             "app-shell-slots" => schema["items"] = shell_slot_schema(),
             "grid-placements" => schema["items"] = grid_placement_schema(),
@@ -286,6 +288,10 @@ impl EventSpec {
             "tree-check" => tree_event_schema("checked", json!({"type":"boolean"})),
             "tree-reorder" => tree_event_schema("before", json!({"type":"integer","minimum":0})),
             "tree-edit" => tree_event_schema("value", tree_value_schema()),
+            "sheet-edit" => json!({"type":"array","items":{
+                "type":"object","additionalProperties":false,"required":["cell","text"],
+                "properties":{"cell":{"type":"string","pattern":SHEET_CELL},"text":{"type":"string"}}
+            }}),
             "selection" => json!({"type":["string","null"]}),
             "nullable-integer" => json!({"type":["integer","null"],"minimum":0}),
             "integer-array" => json!({"type":"array","items":{"type":"integer","minimum":0}}),
@@ -1247,4 +1253,22 @@ pub fn step_item_schema() -> Value {
 
 pub fn splitter_size_schema() -> Value {
     json!({"type":["number","null"],"minimum":0,"maximum":f32::MAX})
+}
+
+/// An A1 cell address (column letters, 1-based row).
+const SHEET_CELL: &str = "^[A-Za-z]{1,7}[1-9][0-9]{0,9}$";
+
+/// One populated spreadsheet cell: its A1 address, raw input (a leading `=` is a formula)
+/// and optional display format.
+pub fn sheet_cell_schema() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["cell","text"],
+        "properties":{
+            "cell":{"type":"string","pattern":SHEET_CELL},
+            "text":{"type":"string"},
+            "format":{"type":"string","enum":["general","number","date","text"]},
+            "decimals":{"type":"integer","minimum":0,"maximum":15},
+            "align":{"type":"string","enum":["left","center","right"]}
+        }
+    })
 }

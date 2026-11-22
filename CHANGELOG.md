@@ -53,6 +53,9 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
   reorderable columns; multi-column sort and filters off the UI thread; row/cell/range
   selection that follows rows through sorting; keyboard navigation; inline editing with
   validation; TSV copy; AccessKit grid roles.
+- **sheet:** sparse virtualized spreadsheet (A1 formulas recalculated off the UI thread, fill
+  handle, TSV clipboard, undo, resizable rows/columns, frozen panes, read-only); `SheetEvent::Edited`
+  for user edits; DataUi `sheet` kind (cells, extents, read-only, frozen panes, `edit` event).
 - **timeline (overhaul):** composable plot surface layers (ruler, gridlines, marks, playhead,
   selection, markers, stripes, bands); lock state separate from lock styling; Blender-style
   dope sheet (hierarchy, summaries, toggles, key types, hold bars, box selection, keyboard);
@@ -99,3 +102,4 @@ signal yet; Kit has four size steps; Kit charts lack legends.
 
 Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select states.
 Catalogue 1.2.0 snapshot `3e45bad122ad7078` adds crate-owned views and controls, plus more properties and events on existing components.
+Catalogue 1.3.0 snapshot `f02fd1904da6e29f` adds the `sheet` kind, PropertyGrid and Stack `animate-layout`, and ActionIcon `toggled` and `tooltip`.

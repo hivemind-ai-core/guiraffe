@@ -107,3 +107,62 @@ fn whole_range_clipboard_paste_is_one_edit(cx: &mut TestAppContext) {
     window.simulate_keystrokes("ctrl-z");
     window.update(|_, cx| assert_eq!(sheet.read(cx).model().cells().count(), 0));
 }
+
+#[gpui_kit::test]
+fn user_edits_emit_events_and_builders_configure_state(cx: &mut TestAppContext) {
+    use guiraffe_sheet::SheetEvent;
+    use std::{cell::RefCell, rc::Rc};
+
+    cx.update(guiraffe_core::init);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let sink = events.clone();
+    let (sheet, window) = cx.add_window_view(|_, cx| {
+        SheetState::new(SheetModel::new(100, 10), cx)
+            .frozen_rows(2)
+            .frozen_cols(500)
+    });
+    window.update(|_, cx| {
+        assert_eq!(
+            sheet.read(cx).frozen(),
+            (2, 10),
+            "columns clamp to the sheet"
+        );
+        cx.subscribe(&sheet, move |_, event: &SheetEvent, _| {
+            sink.borrow_mut().push(event.clone())
+        })
+        .detach();
+        sheet.update(cx, |s, cx| {
+            s.edit([(CellPos::new(0, 0), Cell::new("1"))], cx)
+        });
+    });
+    assert!(
+        events.borrow().is_empty(),
+        "programmatic edits are not echoed"
+    );
+    window.simulate_resize(size(px(800.), px(600.)));
+    window.run_until_parked();
+    window.simulate_click(point(px(85.), px(40.)), Modifiers::default());
+    window.simulate_keystrokes("7 enter");
+    window.run_until_parked();
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[SheetEvent::Edited(vec![CellPos::new(0, 0)])]
+    );
+
+    let (read_only, window) =
+        cx.add_window_view(|_, cx| SheetState::new(SheetModel::new(10, 10), cx).read_only(true));
+    window.simulate_resize(size(px(800.), px(600.)));
+    window.run_until_parked();
+    window.simulate_click(point(px(85.), px(40.)), Modifiers::default());
+    window.simulate_keystrokes("7 enter");
+    window.update(|_, cx| {
+        assert!(read_only.read(cx).model().read_only);
+        assert!(
+            read_only
+                .read(cx)
+                .model()
+                .cell(CellPos::new(0, 0))
+                .is_none()
+        );
+    });
+}

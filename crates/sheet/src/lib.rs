@@ -26,4 +26,18 @@ pub use model::{Alignment, Cell, CellFormat, NumberFormat, SheetModel};
 mod axis;
 pub use axis::Axis;
 mod view;
-pub use view::{CONTEXT, Sheet, SheetCommand, SheetState, init};
+pub use view::{CONTEXT, Sheet, SheetCommand, SheetEvent, SheetState};
+mod document;
+
+use guiraffe_core::widget_spec;
+mod widget_specs;
+
+/// Install the Sheet keybindings and register the `sheet` kind for document authoring.
+/// Applications can replace the bindings in the [`CONTEXT`] key context.
+pub fn init(cx: &mut gpui_kit::App) {
+    if !cx.has_global::<guiraffe_core::GuiraffeTheme>() {
+        guiraffe_core::init(cx);
+    }
+    view::bind_keys(cx);
+    document::register(cx);
+}

@@ -510,6 +510,7 @@ fn init_document_widgets(cx: &mut TestAppContext) {
     cx.update(guiraffe_markdown::init);
     cx.update(guiraffe_mermaid::init);
     cx.update(guiraffe_overlays::init);
+    cx.update(guiraffe_sheet::init);
     cx.update(guiraffe_tree::init);
     cx.update(guiraffe_timeline::init);
 }
@@ -2718,4 +2719,97 @@ fn every_catalogue_property_validates_and_mounts_a_literal(cx: &mut TestAppConte
         });
         cx.run_until_parked();
     }
+}
+
+#[gpui_kit::test]
+fn sheet_document_applies_options_and_reports_user_edits(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    #[derive(Default)]
+    struct SheetLogic(
+        Option<EventId>,
+        std::rc::Rc<std::cell::RefCell<Option<Value>>>,
+    );
+    impl Logic for SheetLogic {
+        fn bind(&mut self, names: &Names, _: &mut PatchBuf) {
+            self.0 = names.event("sheet-edited");
+        }
+        fn on_event(&mut self, event: EventId, payload: &Value, _: &mut PatchBuf) {
+            if self.0 == Some(event) {
+                self.1.replace(Some(payload.clone()));
+            }
+        }
+    }
+
+    cx.update(guiraffe_sheet::init);
+    let doc = Document::new(
+        Node::new("sheet")
+            .prop("rows", 50)
+            .prop("cols", 8)
+            .prop(
+                "cells",
+                serde_json::json!([
+                    {"cell": "A1", "text": "2"},
+                    {"cell": "B1", "text": "=A1*3", "format": "number", "decimals": 1, "align": "right"}
+                ]),
+            )
+            .prop("read-only", false)
+            .prop("frozen-rows", 1)
+            .prop("frozen-cols", 1)
+            .prop("height", 240)
+            .on("edit", "sheet-edited"),
+    );
+    let issues = validation::Validation::default().check(&doc);
+    assert!(issues.is_empty(), "{issues:?}");
+    let bad = Document::new(Node::new("sheet").prop("cells", serde_json::json!([{"text": "x"}])));
+    assert!(!validation::Validation::default().check(&bad).is_empty());
+    let payload = std::rc::Rc::default();
+    let (_, window) = cx.add_window_view(|_, cx| {
+        let registry = Arc::new(Registry::for_app(cx));
+        let ui = DataUi::new(
+            &doc,
+            registry,
+            SheetLogic(None, std::rc::Rc::clone(&payload)),
+            cx,
+        )
+        .expect("compile sheet");
+        Shell { ui }
+    });
+    window.run_until_parked();
+    let origin = window.update(|window, cx| {
+        window.render_frame(cx);
+        window.find("sheet").bounds().origin
+    });
+    // Past the row-number gutter and the header: cell A1.
+    window.simulate_click(
+        origin + gpui_kit::point(px(90.), px(40.)),
+        Default::default(),
+    );
+    window.simulate_keystrokes("9 enter");
+    window.run_until_parked();
+    let expected = Value::List(
+        vec![Value::Record(Arc::new(
+            [("cell".into(), "A1".into()), ("text".into(), "9".into())].into(),
+        ))]
+        .into(),
+    );
+    assert_eq!(*payload.borrow(), Some(expected));
+}
+
+#[test]
+fn ui_macro_accepts_sheet_builders() {
+    use gpui_kit::{App, AppContext as _};
+    use guiraffe_sheet::{Sheet, SheetModel, SheetState};
+
+    fn example(cx: &mut App) -> impl IntoElement {
+        let state = cx.new(|cx| {
+            ui! {
+                SheetState(SheetModel::new(100, 10), cx) {
+                    read_only: true; frozen_rows: 1; frozen_cols: 2
+                }
+            }
+        });
+        ui! { div { Sheet(&state) } }
+    }
+    let _ = example;
 }

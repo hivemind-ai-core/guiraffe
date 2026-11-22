@@ -68,8 +68,8 @@ pub enum SheetCommand {
     SelectRow,
 }
 
-/// Install the Sheet keybindings. Applications can replace them in the same context.
-pub fn init(cx: &mut App) {
+/// Install the Sheet keybindings once. Applications can replace them in the same context.
+pub(crate) fn bind_keys(cx: &mut App) {
     struct Bound;
     impl gpui_kit::Global for Bound {}
     if cx.has_global::<Bound>() {
@@ -169,6 +169,14 @@ enum Drag {
     },
 }
 
+/// Emitted by [`SheetState`] after a user gesture (typing, paste, cut, clear, fill, undo,
+/// redo) changed cells. Programmatic [`SheetState::edit`] calls are not echoed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SheetEvent {
+    /// The cells whose input changed, in no particular order.
+    Edited(Vec<CellPos>),
+}
+
 pub struct SheetState {
     model: SheetModel,
     rows: Axis,
@@ -202,7 +210,7 @@ impl SheetState {
         engine: Arc<dyn FormulaEngine>,
         cx: &mut Context<Self>,
     ) -> Self {
-        init(cx);
+        bind_keys(cx);
         let (rows, cols) = model.dimensions();
         let (mut recalc, startup_error) = match Recalculator::new(rows, cols, engine) {
             Ok(recalc) => (Some(recalc), None),
@@ -257,6 +265,29 @@ impl SheetState {
         &self.model
     }
 
+    /// Builder form of [`Self::set_read_only`]: the user can select and copy but not edit.
+    pub fn read_only(mut self, value: bool) -> Self {
+        self.model.read_only = value;
+        self
+    }
+
+    /// Builder form of [`Self::freeze`] for the rows: keep the first `rows` rows in view.
+    pub fn frozen_rows(mut self, rows: usize) -> Self {
+        self.frozen.row = rows.min(self.model.dimensions().0);
+        self
+    }
+
+    /// Builder form of [`Self::freeze`] for the columns: keep the first `cols` columns in view.
+    pub fn frozen_cols(mut self, cols: usize) -> Self {
+        self.frozen.col = cols.min(self.model.dimensions().1);
+        self
+    }
+
+    /// The frozen (always visible) leading rows and columns.
+    pub fn frozen(&self) -> (usize, usize) {
+        (self.frozen.row, self.frozen.col)
+    }
+
     pub fn set_read_only(&mut self, value: bool, cx: &mut Context<Self>) {
         self.model.read_only = value;
         if value {
@@ -278,10 +309,20 @@ impl SheetState {
         cx: &mut Context<Self>,
     ) {
         let changed = self.model.edit(changes);
-        self.submit(changed, cx);
+        self.apply(changed, cx);
     }
 
+    /// Apply a user gesture's changes and report them with [`SheetEvent::Edited`].
     fn submit(&mut self, changed: Vec<CellPos>, cx: &mut Context<Self>) {
+        if changed.is_empty() {
+            return;
+        }
+        let event = SheetEvent::Edited(changed.clone());
+        self.apply(changed, cx);
+        cx.emit(event);
+    }
+
+    fn apply(&mut self, changed: Vec<CellPos>, cx: &mut Context<Self>) {
         if changed.is_empty() {
             return;
         }
@@ -462,7 +503,8 @@ impl SheetState {
                 let value = input.read(cx).value();
                 let mut cell = self.model.cell(pos).cloned().unwrap_or_default();
                 cell.text = Arc::from(value.as_str());
-                self.edit([(pos, cell)], cx);
+                let changed = self.model.edit([(pos, cell)]);
+                self.submit(changed, cx);
                 let (rows, cols) = self.model.dimensions();
                 if let Some(next) = advance.apply(pos, rows, cols) {
                     self.model.select(next, false);
@@ -693,6 +735,8 @@ impl SheetState {
         cx.notify();
     }
 }
+
+impl gpui_kit::EventEmitter<SheetEvent> for SheetState {}
 
 impl Focusable for SheetState {
     fn focus_handle(&self, _: &App) -> FocusHandle {

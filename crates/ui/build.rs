@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../markdown/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../mermaid/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../overlays/src/widget_specs.rs");
+    println!("cargo:rerun-if-changed=../sheet/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../tree/src/widget_specs.rs");
     println!("cargo:rerun-if-changed=../timeline/src/widget_specs.rs");
     let output =
