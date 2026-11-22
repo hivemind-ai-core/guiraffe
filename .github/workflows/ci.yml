@@ -45,21 +45,31 @@ jobs:
       - name: Linux dependencies and Callgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind build-essential pkg-config clang cmake libasound2-dev libssl-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgit2-dev
       - run: cargo install iai-callgrind-runner --version 0.16.1 --locked
-      - name: Establish PR base instruction counts
-        if: github.event_name == 'pull_request'
+      - name: Establish base instruction counts
+        id: base
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # A pull request compares with its base, a push with the commit it replaced.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         shell: bash
         run: |
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "::warning::No base commit (new branch or rewritten history): instruction counts are not compared."
+            exit 0
+          fi
           git worktree add --detach /tmp/guiraffe-base "$BASE_SHA"
           if test -f /tmp/guiraffe-base/bench/benches/instructions.rs; then
             cd /tmp/guiraffe-base
             CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-baseline=pr-base
+            echo "ready=true" >> "$GITHUB_OUTPUT"
           else
-            echo 'Instruction baseline unavailable: base predates benchmark infrastructure; first run establishes it.'
+            echo "::warning::The base predates the benchmarks: instruction counts are not compared."
           fi
       - name: Instruction gate (2 percent)
+        if: steps.base.outputs.ready == 'true'
         run: cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --baseline=pr-base --save-summary=json
+      - name: Instruction counts without a base
+        if: steps.base.outputs.ready != 'true'
+        run: cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-summary=json
       - name: Mounted frame instruction scaling
         env:
           IAI_CALLGRIND_HOME: ${{ github.workspace }}/target/iai/frame-scale

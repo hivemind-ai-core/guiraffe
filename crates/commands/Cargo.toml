@@ -18,7 +18,7 @@ thiserror = "2"
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { path = "../test", features = ["render", "snapshot"] }
+guiraffe-test = { workspace = true, features = ["render", "snapshot"] }
 
 [features]
 gpui-fast = ["gpui-kit/gpui-fast"]

@@ -44,7 +44,7 @@ proc-macro2 = "1"
 syn = { version = "2", features = ["full"] }
 jsonschema = { version = "0.58", default-features = false }
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { path = "../test", features = ["snapshot", "render", "layout"] }
+guiraffe-test = { workspace = true, features = ["snapshot", "render", "layout"] }
 
 [features]
 gpui-fast = ["gpui-kit/gpui-fast"]

@@ -20,7 +20,7 @@ schemars = "1"
 [dev-dependencies]
 anyhow.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { path = "../test", features = ["snapshot", "render", "layout", "inspect"] }
+guiraffe-test = { workspace = true, features = ["snapshot", "render", "layout", "inspect"] }
 proptest = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 

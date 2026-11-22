@@ -3,6 +3,14 @@ all-features = true
 
 [advisories]
 yanked = "deny"
+# Advisories with no fixed release, excepted one by one (KNOWN_ISSUES.md, Dependency advisories).
+# Anything else still fails. Remove an entry with the dependency it names.
+ignore = [
+  { id = "RUSTSEC-2023-0126", reason = "im: unsound, no fixed release; replacement is ROADMAP item 3" },
+  { id = "RUSTSEC-2026-0248", reason = "im: unmaintained; replacement is ROADMAP item 3" },
+  { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, no known vulnerability in this notice" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz: unmaintained, no known vulnerability in this notice" },
+]
 
 [licenses]
 confidence-threshold = 0.8

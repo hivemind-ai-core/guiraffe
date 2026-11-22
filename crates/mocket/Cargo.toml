@@ -19,6 +19,6 @@ path = "src/main.rs"
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { path = "../test", features = ["snapshot"] }
+guiraffe-test = { workspace = true, features = ["snapshot"] }
 guiraffe-components.workspace = true
 guiraffe-core.workspace = true

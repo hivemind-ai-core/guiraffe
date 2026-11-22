@@ -22,7 +22,7 @@ serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
+guiraffe-test = { workspace = true, features = ["snapshot", "render"] }
 
 [[test]]
 name = "panels"

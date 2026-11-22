@@ -21,7 +21,7 @@ schemars = "1"
 [dev-dependencies]
 proptest = "1"
 gpui-kit = { workspace = true, features = ["test-support", "syntect"] }
-guiraffe-test = { path = "../test", features = ["snapshot", "render"] }
+guiraffe-test = { workspace = true, features = ["snapshot", "render"] }
 
 [features]
 gpui-fast = ["gpui-kit/gpui-fast"]
