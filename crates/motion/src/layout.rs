@@ -519,6 +519,21 @@ mod tests {
     }
 
     #[test]
+    fn presence_churn_releases_settled_exit_capacity() {
+        let prefs = MotionPrefs::default();
+        let start = Instant::now();
+        let transition = Transition::new(TransitionKind::Fade, lin(100));
+        let mut presence = KeyedPresence::new(0..10_000, transition);
+        assert!(presence.sync(&[0], start, &prefs));
+        assert_eq!(presence.len(), 10_000);
+        assert!(!presence.frame(at(start, 200), &prefs));
+        assert_eq!(presence.len(), 1);
+        assert!(presence.entries.capacity() <= 64);
+        assert!(!presence.frame(at(start, 300), &prefs));
+        assert!(presence.entries.capacity() <= 64);
+    }
+
+    #[test]
     fn keyed_presence_enter_exit_in_place_and_readd() {
         let p = MotionPrefs::default();
         let t0 = Instant::now();
