@@ -101,4 +101,4 @@ See KNOWN_ISSUES.md. Notably: gpui-fast pinned to 0.1.15; no OS high-contrast/fo
 signal yet; Kit has four size steps; Kit charts lack legends.
 
 Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select states.
-Catalogue 1.2.0 snapshot `9cfca66b723596b0` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper and event-timeline kinds, and PropertyGrid editing options).
+Catalogue 1.2.0 snapshot `34501c917297fb65` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper, event-timeline and calendar kinds, and PropertyGrid editing options).

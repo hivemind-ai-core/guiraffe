@@ -287,3 +287,70 @@ fn cached_calendar_is_not_rebuilt_by_unrelated_repaints(cx: &mut TestAppContext)
         "a cached calendar must repaint when its state changes"
     );
 }
+
+struct ReplayHost(gpui_kit::AnyView);
+
+impl Render for ReplayHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::Styled as _;
+        self.0
+            .clone()
+            .cached(gpui_kit::StyleRefinement::default().size_full())
+    }
+}
+
+/// spec/23: an unchanged repaint allocates nothing. Same definition as the bench
+/// mounted replay gate: viewport-sized cached view, nothing invalidated, eight
+/// consecutive draws after warm-up.
+#[gpui_kit::test]
+fn unchanged_repaints_allocate_nothing(cx: &mut TestAppContext) {
+    cx.update(guiraffe_calendar::init);
+    for view in [
+        CalendarViewKind::Year,
+        CalendarViewKind::Month,
+        CalendarViewKind::Week,
+        CalendarViewKind::Day,
+    ] {
+        let mut mounted = None;
+        let window = cx.update(|cx| {
+            let opened = gpui_kit::open_window(Default::default(), cx, |_, cx| {
+                let state = cx.new(|cx| CalendarState::new(model(), date(), CalendarZone::Utc, cx));
+                mounted = Some(state.clone());
+                state.update(cx, |state, cx| {
+                    state.set_now(instant(21, 11), cx);
+                    state.set_view(view, cx);
+                });
+                let host = cx.new(|_| Host { state });
+                cx.new(|_| ReplayHost(host.into()))
+            });
+            opened
+                .unwrap_or_else(|error| panic!("open {view:?}: {error}"))
+                .0
+        });
+        cx.run_until_parked();
+        let mut draw = || {
+            let counted = window.update(cx, |_, window, cx| {
+                gpui_kit::base::test_support::begin_frame(window);
+                let before = allocations();
+                window.draw(cx).clear(cx);
+                allocations() - before
+            });
+            counted.unwrap_or_else(|error| panic!("draw {view:?}: {error}"))
+        };
+        for _ in 0..8 {
+            draw();
+        }
+        let frames: [u64; 8] = std::array::from_fn(|_| draw());
+        eprintln!("calendar {view:?} unchanged repaint: {frames:?} allocations");
+        assert_eq!(frames, [0; 8], "{view:?} allocated on an unchanged repaint");
+        // Positive control: zero because it was replayed, not because it is dead.
+        let state = mounted.unwrap_or_else(|| panic!("{view:?} was not mounted"));
+        let before = allocations();
+        cx.update(|cx| state.update(cx, |state, cx| state.navigate(1, cx)));
+        cx.run_until_parked();
+        assert!(
+            allocations() - before > 1_000,
+            "{view:?}: a changed calendar must rebuild and paint"
+        );
+    }
+}

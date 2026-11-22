@@ -3,7 +3,7 @@ use std::{rc::Rc, sync::Arc};
 use chrono::{Datelike, NaiveDate, Timelike};
 use gpui_kit::{
     AnyElement, App, ElementId, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, RenderOnce, Role, SharedString,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Role, SharedString,
     StatefulInteractiveElement, StyleRefinement, Styled, TestSupportExt, Window,
     base::StyledExt,
     canvas,
@@ -64,7 +64,9 @@ impl Default for CalendarProps {
     }
 }
 
-#[derive(IntoElement)]
+/// The calendar control. It is a reactive view keyed by its state, so a state
+/// change repaints it (also inside cached hosts) in the same frame. As with any
+/// view, one state cannot be shown twice as siblings under the same parent.
 pub struct Calendar {
     state: Entity<CalendarState>,
     props: CalendarProps,
@@ -123,9 +125,20 @@ struct Frame<'a> {
     ring: Hsla,
 }
 
-impl RenderOnce for Calendar {
+impl IntoElement for Calendar {
+    type Element = gpui_kit::ViewElement<Self>;
+
+    fn into_element(self) -> Self::Element {
+        gpui_kit::ViewElement::new(self)
+    }
+}
+
+impl gpui_kit::View for Calendar {
+    fn entity_id(&self) -> Option<gpui_kit::EntityId> {
+        Some(self.state.entity_id())
+    }
+
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        bind_to_view(&self.state, window, cx);
         let state = self.state.read(cx);
         let view = state.view;
         let overflow = state.overflow;
@@ -200,22 +213,6 @@ impl RenderOnce for Calendar {
             .map(|root| guiraffe_core::focus_ring(root, ring_on, px(Size::Md.radius()), ring_color))
             .map(|root| StyledExt::refine_style(root, &self.style))
     }
-}
-
-/// Repaints the hosting view when the state changes. `CalendarState` is not a
-/// view, so without this a calendar inside a cached host would never update.
-struct ViewBinding;
-
-fn bind_to_view(state: &Entity<CalendarState>, window: &mut Window, cx: &mut App) {
-    let view = window.current_view();
-    let key = ElementId::NamedInteger("calendar-binding".into(), state.entity_id().as_u64());
-    window.use_keyed_state(key, cx, |_, cx| {
-        cx.observe(state, move |_: &mut ViewBinding, _, cx| {
-            gpui_kit::App::notify(cx, view)
-        })
-        .detach();
-        ViewBinding
-    });
 }
 
 /// Element state of the hour grid. The frame drops it as soon as a frame omits
@@ -721,7 +718,6 @@ fn timed_view(
                     .w_full()
                     .top(px(start as f32 / 60.0))
                     .h(px(((end - start) as f32 / 60.0).max(15.0)))
-                    .overflow_hidden()
                     .px(px(Size::Xs.spacing() / 2.0))
                     .rounded(px(Size::Sm.radius()))
                     .border_2()
@@ -732,7 +728,12 @@ fn timed_view(
                     .text_size(px(Size::Xs.font_size()))
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .child(format!("{label} · {time}")),
+                    .child(
+                        div()
+                            .size_full()
+                            .overflow_hidden()
+                            .child(format!("{label} · {time}")),
+                    ),
             );
         }
         if hidden_events > 0 {
@@ -997,6 +998,13 @@ fn event_block(
     };
     let content = renderer
         .and_then(|renderer| renderer(&content))
+        .map(|custom| {
+            div()
+                .size_full()
+                .overflow_hidden()
+                .child(custom)
+                .into_any_element()
+        })
         .unwrap_or_else(|| default_item_content(&content));
     let light = resolved_color(color, Variant::Light, cx);
     let filled = resolved_color(color, Variant::Filled, cx);
@@ -1017,7 +1025,8 @@ fn event_block(
         ))
         .w(relative(1.0 / position.lanes.max(1) as f32))
         .h(px(height))
-        .overflow_hidden()
+        // Rounded but not clipped: content clips itself rectangularly. A rounded
+        // overflow clip per item makes gpui-fast rebuild the scene each frame.
         .rounded(radius)
         .when(continues_before, |block| block.rounded_t(px(0.)))
         .when(continues_after, |block| block.rounded_b(px(0.)))
@@ -1169,7 +1178,6 @@ fn all_day_preview(label: &'static str, cx: &App) -> AnyElement {
         .px(px(Size::Xs.spacing() / 2.0))
         .flex()
         .items_center()
-        .overflow_hidden()
         .whitespace_nowrap()
         .rounded(px(Size::Sm.radius()))
         .border_2()
@@ -1178,7 +1186,7 @@ fn all_day_preview(label: &'static str, cx: &App) -> AnyElement {
         .bg(preview.background.to_hsla())
         .text_color(preview.foreground.to_hsla())
         .text_size(px(Size::Xs.font_size()))
-        .child(label)
+        .child(div().min_w_0().overflow_hidden().child(label))
         .into_any_element()
 }
 
@@ -1432,6 +1440,7 @@ fn default_item_content(content: &ItemContent<'_>) -> AnyElement {
     });
     let body = div()
         .size_full()
+        .overflow_hidden()
         .text_size(px(Size::Xs.font_size()))
         .line_height(px(Size::Xs.font_size() * 1.3));
     let body = if content.compact {
@@ -1956,7 +1965,6 @@ fn month_chip(
         .px(px(4.))
         .flex()
         .items_center()
-        .overflow_hidden()
         .rounded(px(Size::Sm.radius()))
         .text_size(px(Size::Xs.font_size()))
         .when(!timed, |chip| {
@@ -1980,7 +1988,13 @@ fn month_chip(
             }
         })
         .on_click(move |_, _, cx| entity.update(cx, |state, cx| state.select_item(id, cx)));
-    let mut wrapper = div().relative().w_full().min_w_0().child(chip);
+    // The unrounded wrapper does the clipping; see `event_block`.
+    let mut wrapper = div()
+        .relative()
+        .w_full()
+        .min_w_0()
+        .overflow_hidden()
+        .child(chip);
     if editable && !timed {
         wrapper = wrapper
             .child(day_resize_handle(state, id, ResizeEdge::Start, date))

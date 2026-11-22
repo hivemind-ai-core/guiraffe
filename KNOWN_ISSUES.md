@@ -89,9 +89,10 @@ gpui-fast assertion for expansion and scrolling.
   passed in a run at load 4 and failed (about 9-11 ms) as other builds raised the load, although
   the probe's quiet-window rule (load <= CPU count) accepts both. Year misses its 8 ms target
   (p99 about 12-16 ms); it is outside the Month/Week gate.
-- **Warm repaints are bounded, not zero.** Model lookup and hour-scroll arithmetic allocate
-  nothing. A forced rebuild allocates in GPUI per element; see the budgets in `tests/alloc.rs`.
-  An unchanged calendar in a cached view is not rebuilt.
+- **Changed frames are bounded, not zero.** An unchanged calendar in a cached view repaints
+  with zero allocations on both backends. A changed frame rebuilds every element of the view
+  (about 13,000 allocations for a full Month, mostly GPUI layout, listeners and element state);
+  it is not yet split into cached cells. See the budgets in `tests/alloc.rs`.
 - **Density** changes only the toolbar gap, not row or chip targets.
 - **Tab stops.** Event chips, timed blocks and `+N more` are reached with the roving cursor;
   they are not separate Tab stops when `focusable` is set.
@@ -105,3 +106,12 @@ gpui-fast assertion for expansion and scrolling.
 - **Localization.** View-switcher labels are fixed at construction; `set_locale` does not
   relabel them.
 - **Agenda/schedule view** is a follow-up, outside spec/27.
+
+### gpui-fast rebuilds the scene for every rounded overflow clip
+
+When any element both clips (both axes) and has rounded corners,
+`fast::rounded_clip_scene::compile` copies the frame into new zero-capacity scenes on every
+changed draw. The calendar's month chips made that about 10 MB per measured frame, and an extra
+glyph could move it across a capacity doubling. The calendar now clips rectangularly inside
+rounded shapes. Other controls that use `rounded` with `overflow_hidden` still pay this cost;
+reusing the buffers would be a fix in the vendored backend.
