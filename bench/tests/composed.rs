@@ -335,8 +335,17 @@ fn cached_label_updates_and_selector_scaling() {
         assert_eq!(probe.selectors.get(), visits);
         assert!(probe.rows.iter().zip(&before).all(|(r, &b)| r.get() == b));
 
-        // The unguarded event also leaves every render untouched.
-        window.update(|_, cx| store.dispatch(Change::Label(label), cx));
+        // Warm the pending-event queue before measuring steady-state dispatch.
+        window.update(|_, cx| store.dispatch(Change::Label(label.clone()), cx));
+        let (_, counts) = count_allocations(|| {
+            window.update(|_, cx| store.dispatch(Change::Label(label), cx));
+        })
+        .expect("allocation scope");
+        assert!(counts.allocations <= 3, "queued equal write: {counts:?}");
+        assert_eq!(
+            window.update(|_, cx| store.stats(cx).events_processed),
+            processed + 3,
+        );
         assert_eq!(probe.root.get(), root_before);
         assert_eq!(probe.selectors.get(), visits);
         assert!(probe.rows.iter().zip(&before).all(|(r, &b)| r.get() == b));
@@ -374,6 +383,7 @@ fn composed_measurements() {
     let mut app = app();
     let profile = std::env::var_os("COMPOSED_PROFILE").is_some();
     let equal_only = !profile && std::env::var_os("COMPOSED_EQUAL_ONLY").is_some();
+    let followup = std::env::var_os("COMPOSED_FOLLOWUP").is_some();
     let samples = if profile { 10 } else { 31 };
     println!(
         "variant,n,operation,median_cpu_ns,p99_cpu_ns,median_allocs,root_renders,row_renders,selector_calls,fast_views_reused"
@@ -387,7 +397,10 @@ fn composed_measurements() {
             let (page, mut window) = fixture(&mut app, cached, probe.clone());
             let store = window.update(|_, cx| page.read(cx).store.clone());
             for operation in ["label", "key", "hover", "equal", "filter"] {
-                if profile && operation != "label" || equal_only && operation != "equal" {
+                if profile && operation != "label"
+                    || equal_only && operation != "equal"
+                    || followup && (n != 3_000 || !matches!(operation, "label" | "equal"))
+                {
                     continue;
                 }
                 let mut time = Vec::with_capacity(samples);
@@ -411,6 +424,9 @@ fn composed_measurements() {
                         let start = cpu_ns();
                         match operation {
                             "label" => label_edit(&mut window, &store, label),
+                            "equal" if followup => {
+                                window.update(|_, cx| store.dispatch(Change::Label(label), cx));
+                            }
                             "equal" => {
                                 window.update(|_, cx| store.dispatch_now(WriteLabel(label), cx))
                             }

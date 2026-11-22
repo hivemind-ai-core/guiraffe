@@ -128,7 +128,7 @@ impl Coeffects {
 /// The handler's window onto the world.
 pub struct Fx<'a, S> {
     state: &'a mut Arc<S>,
-    changed: bool,
+    candidate: Option<S>,
     effects: &'a mut Vec<Effect>,
     queue: &'a mut VecDeque<Queued<S>>,
     cofx: &'a Coeffects,
@@ -137,19 +137,17 @@ pub struct Fx<'a, S> {
 impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
     /// Current state.
     pub fn state(&self) -> &S {
-        self.state
+        self.candidate.as_ref().unwrap_or(self.state)
     }
 
-    /// Mutate the state (clone-on-write: shared snapshots, e.g. undo history, are untouched).
+    /// Mutate a working copy of the state, leaving shared snapshots untouched.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut S) -> R) -> R {
-        self.changed = true;
-        f(Arc::make_mut(self.state))
+        f(self.candidate.get_or_insert_with(|| (**self.state).clone()))
     }
 
     /// Replace the whole state.
     pub fn set(&mut self, state: S) {
-        *self.state = Arc::new(state);
-        self.changed = true;
+        self.candidate = Some(state);
     }
 
     /// Write a projected field without cloning the state when the value is equal.
@@ -207,6 +205,16 @@ impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
 
     pub fn cofx<T: 'static>(&self) -> Option<&T> {
         self.cofx.get()
+    }
+}
+
+impl<S> Drop for Fx<'_, S> {
+    fn drop(&mut self) {
+        // Publish on unwind as well, matching mutation of the engine's working
+        // state before a handler or its comparison panicked.
+        if let Some(candidate) = self.candidate.take() {
+            *self.state = Arc::new(candidate);
+        }
     }
 }
 
@@ -485,18 +493,21 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
         } else {
             let mut fx = Fx {
                 state: &mut self.state,
-                changed: false,
+                candidate: None,
                 effects,
                 queue: &mut self.queue,
                 cofx,
             };
             handle(&mut fx);
-            let moved = fx.changed && !Arc::ptr_eq(&before, &self.state);
-            let changed = moved && (!compare || *before != *self.state);
-            if moved && !changed {
-                // Keep the original allocation so pointer-equality fast paths stay valid.
-                self.state = before.clone();
+            let changed = fx
+                .candidate
+                .as_ref()
+                .is_some_and(|candidate| !compare || *before != *candidate);
+            if !changed {
+                // An equal write keeps the original snapshot and needs no new Arc.
+                fx.candidate = None;
             }
+            drop(fx);
             if changed
                 && undoable
                 && let Some(u) = self.undo.as_mut()
