@@ -15,4 +15,6 @@ Dismissal reduces substantially oversized queue storage. Clearing toasts drops t
 overflow buffer, and window teardown releases the queue. The visible limit does
 not cap pending app data. `overflow_toasts_survive_admission_and_release_on_dismiss_or_clear`
 checks that 2,000 pending toasts survive admission and that dismissal and clear
-reclaim their storage. Context registry capacity can reflect peak registrations.
+reclaim their storage.
+`window_close_releases_toasts_even_when_host_handle_survives` covers teardown.
+Context registry capacity can reflect peak registrations.

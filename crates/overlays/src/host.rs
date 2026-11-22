@@ -111,6 +111,7 @@ impl OverlayHost {
                     host.focus_chain.clear();
                     host.confirms.clear();
                     host.cards.clear();
+                    host.toasts.clear();
                     host.timer = None;
                 });
             }
