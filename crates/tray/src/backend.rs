@@ -1,7 +1,10 @@
 //! The seam between [`Tray`](crate::Tray) and the platform tray.
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
-use futures::channel::mpsc::UnboundedSender;
+use futures::{StreamExt as _, channel::mpsc};
 use gpui_kit::{App, Task};
 
 use crate::{
@@ -47,12 +50,124 @@ pub enum BackendEvent {
 
 /// Where backends send [`BackendEvent`]s; `Send`, usable from any thread.
 #[derive(Clone)]
-pub struct EventSink(pub(crate) UnboundedSender<BackendEvent>);
+pub struct EventSink {
+    inbox: Arc<Mutex<Inbox>>,
+}
+
+enum PendingEvent {
+    Scroll { delta: i64, horizontal: bool },
+    Ordered(BackendEvent),
+}
+
+struct Inbox {
+    queue: VecDeque<PendingEvent>,
+    wake: mpsc::Sender<()>,
+    closed: bool,
+}
+
+pub(crate) struct EventReceiver {
+    inbox: Arc<Mutex<Inbox>>,
+    wake: mpsc::Receiver<()>,
+}
+
+impl Inbox {
+    fn close(&mut self) {
+        self.closed = true;
+        self.queue = VecDeque::new();
+        self.wake.close_channel();
+    }
+}
 
 impl EventSink {
-    /// Returns false once the tray is gone.
+    pub(crate) fn channel() -> (Self, EventReceiver) {
+        let (wake, receiver) = mpsc::channel(0);
+        let inbox = Arc::new(Mutex::new(Inbox {
+            queue: VecDeque::new(),
+            wake,
+            closed: false,
+        }));
+        (
+            Self {
+                inbox: inbox.clone(),
+            },
+            EventReceiver {
+                inbox,
+                wake: receiver,
+            },
+        )
+    }
+
+    pub(crate) fn close(&self) {
+        self.inbox
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .close();
+    }
+
+    /// Returns false once the tray is gone. Adjacent scroll bursts coalesce by axis.
     pub fn send(&self, event: BackendEvent) -> bool {
-        self.0.unbounded_send(event).is_ok()
+        let mut inbox = self.inbox.lock().unwrap_or_else(|error| error.into_inner());
+        if inbox.closed {
+            return false;
+        }
+        let needs_wake = inbox.queue.is_empty();
+        let pending = match event {
+            BackendEvent::Scroll { delta, horizontal } => {
+                for pending in inbox.queue.iter_mut().rev() {
+                    match pending {
+                        PendingEvent::Scroll {
+                            delta: total,
+                            horizontal: axis,
+                        } if *axis == horizontal => {
+                            *total = total.saturating_add(i64::from(delta));
+                            return true;
+                        }
+                        PendingEvent::Scroll { .. } => {}
+                        PendingEvent::Ordered(_) => break,
+                    }
+                }
+                PendingEvent::Scroll {
+                    delta: i64::from(delta),
+                    horizontal,
+                }
+            }
+            ordered => PendingEvent::Ordered(ordered),
+        };
+        inbox.queue.push_back(pending);
+        if needs_wake {
+            let _ = inbox.wake.try_send(());
+        }
+        true
+    }
+}
+
+impl EventReceiver {
+    pub(crate) fn try_recv(&self) -> Option<BackendEvent> {
+        let mut inbox = self.inbox.lock().unwrap_or_else(|error| error.into_inner());
+        let event = inbox.queue.pop_front()?;
+        Some(match event {
+            PendingEvent::Ordered(event) => event,
+            PendingEvent::Scroll { delta, horizontal } => BackendEvent::Scroll {
+                delta: delta.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+                horizontal,
+            },
+        })
+    }
+
+    pub(crate) async fn recv(&mut self) -> Option<BackendEvent> {
+        loop {
+            if let Some(event) = self.try_recv() {
+                return Some(event);
+            }
+            self.wake.next().await?;
+        }
+    }
+}
+
+impl Drop for EventReceiver {
+    fn drop(&mut self) {
+        let mut inbox = self.inbox.lock().unwrap_or_else(|error| error.into_inner());
+        inbox.close();
     }
 }
 
@@ -143,5 +258,40 @@ impl TrayBackend for MockTray {
         let mut s = self.lock();
         s.shut_down = true;
         s.sink = None;
+    }
+}
+
+#[cfg(test)]
+mod inbox_tests {
+    use super::*;
+
+    #[test]
+    fn scroll_churn_coalesces_and_activation_order_survives_until_teardown() {
+        let (sink, receiver) = EventSink::channel();
+        let scroll = |horizontal, delta| BackendEvent::Scroll { horizontal, delta };
+        for _ in 0..100_000 {
+            assert!(sink.send(scroll(false, 2)));
+            assert!(sink.send(scroll(true, -1)));
+        }
+        assert_eq!(sink.inbox.lock().expect("tray inbox lock").queue.len(), 2);
+        assert!(sink.send(BackendEvent::Activate));
+        assert!(sink.send(scroll(false, 5)));
+        assert!(sink.send(BackendEvent::SecondaryActivate));
+        assert_eq!(receiver.try_recv(), Some(scroll(false, 200_000)));
+        assert_eq!(receiver.try_recv(), Some(scroll(true, -100_000)));
+        assert_eq!(receiver.try_recv(), Some(BackendEvent::Activate));
+        assert_eq!(receiver.try_recv(), Some(scroll(false, 5)));
+        assert_eq!(receiver.try_recv(), Some(BackendEvent::SecondaryActivate));
+        assert!(receiver.try_recv().is_none());
+
+        for _ in 0..1_000 {
+            assert!(sink.send(BackendEvent::MenuItem(TrayItemId::Custom("queued".into()))));
+        }
+        drop(receiver);
+        assert_eq!(
+            sink.inbox.lock().expect("tray inbox lock").queue.capacity(),
+            0
+        );
+        assert!(!sink.send(BackendEvent::Activate));
     }
 }

@@ -21,6 +21,10 @@ Catalogue 1.0.0 snapshot `3b5ae0c8b27d9e56` introduces descriptors and a schema 
   change-only selections, debounce.
 - **router:** typed routes (`routes!`), guards, history.
 - **windows:** multi-window manager (keys, open modes, persistence).
+  `WindowManager::forget_saved_layout` explicitly removes one saved record.
+  Covered by `forgotten_window_layouts_do_not_return_after_reload`.
+- **code decorations:** `Decorations::release_unused_styles` frees styles no layer uses; saved style
+  keys stay valid until it is called.
 - **overlays:** modals, confirm, toasts, desktop notifications, popovers, floating tooltips,
   Spotlight, LoadingOverlay, Affix.
 - **ui:** UI-as-data host (`DataUi`) with granular re-rendering, keyed repeats with stable

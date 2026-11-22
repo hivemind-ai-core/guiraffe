@@ -16,6 +16,8 @@ batches; nothing goes to main without the user.
       inventory into them.
 
 ## 0.2 small follow-ups
+- [ ] Design Chat selection across virtualized history using logical message IDs and text
+      offsets. Preserve rendered Markdown copy behavior when selected rows are offscreen.
 - [ ] Kit gaps (report upstream): dark slider track contrast; dim checkbox label in dark; Calendar
       notifies on every render; day cells lack date/a11y hooks; calendar nav ignores min/max; no
       calendar keyboard nav; Button doesn't announce selected state; five stock gpui-fast Kit test

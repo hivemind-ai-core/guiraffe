@@ -761,15 +761,18 @@ impl NotificationWindows {
     /// Dismiss every card, queued ones included.
     pub fn clear(&self, cx: &mut App) {
         self.stack.update(cx, |s, cx| {
-            let ids: Vec<_> = s
-                .model
-                .queued()
-                .map(|c| c.id)
-                .chain(s.model.visible().iter().map(|c| c.id))
-                .collect();
+            for id in s.model.drain_queued() {
+                s.emit(
+                    id,
+                    WindowNotificationEventKind::Dismissed(DismissReason::App),
+                    cx,
+                );
+            }
+            let ids: Vec<_> = s.model.visible().iter().map(|card| card.id).collect();
             for id in ids {
                 s.leave(id, DismissReason::App, cx);
             }
+            s.handlers.shrink_to_fit();
         });
     }
     pub fn subscribe(
@@ -778,5 +781,51 @@ impl NotificationWindows {
         f: impl Fn(&WindowNotificationEvent, &mut App) + 'static,
     ) -> Subscription {
         cx.subscribe(&self.stack, move |_, e, cx| f(e, cx))
+    }
+}
+
+#[cfg(test)]
+mod teardown_tests {
+    use super::*;
+    use gpui_kit::TestAppContext;
+
+    #[gpui_kit::test]
+    fn notification_owner_teardown_releases_queued_handlers(cx: &mut TestAppContext) {
+        let payload = Rc::new("captured action".repeat(128));
+        let service = cx.update(|cx| {
+            gpui_kit::component::init(cx);
+            let service = init(
+                NotificationWindowsConfig {
+                    stack: StackConfig {
+                        max_visible: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                cx,
+            );
+            service.show(WindowNotification::new("visible").timeout(None), cx);
+            for _ in 0..512 {
+                let payload = payload.clone();
+                service.show_with(
+                    WindowNotification::new("queued payload"),
+                    move |_, _| assert!(!payload.is_empty()),
+                    cx,
+                );
+            }
+            service
+        });
+        assert_eq!(Rc::strong_count(&payload), 513);
+        let weak_stack = service.stack.downgrade();
+        cx.update(|cx| {
+            if let Some(surface) = service.stack.read(cx).window() {
+                close_window(surface, cx);
+            }
+            cx.remove_global::<Installed>();
+            drop(service);
+        });
+        cx.run_until_parked();
+        assert!(weak_stack.upgrade().is_none());
+        assert_eq!(Rc::strong_count(&payload), 1);
     }
 }

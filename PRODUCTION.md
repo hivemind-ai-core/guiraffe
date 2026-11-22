@@ -28,7 +28,7 @@ The chart tests cover irregular ID and style preservation, storage capacity, ind
 
 | Storage | Bound and invalidation |
 |---|---|
-| Tab-stop order | Two frame-local order buffers per window. Each retains capacity for its historical peak of focus registrations. Clearing a frame drops its entries. Group paths store up to six entries inline. |
+| Tab-stop order, element states and access logs | **OPEN high-water capacity.** Each alternating frame retains historical capacity in the state map, access log, and tab insertion history. Upstream also retains the tab lookup and order buffers. Fast drops its lazy tab index on frame clear. See the ignored `alternating_frames_retain_peak_storage` probe in [frame_capacity.rs](bench/tests/frame_capacity.rs). |
 | Taffy layout scratch | Up to 768 KiB per layout tree, plus buffer headers. Three pools each retain up to sixteen buffers of at most 16 KiB. Returning a buffer clears its contents. |
 | Upstream stable scene sort | Up to 65,536 sort entries per scene, or 1 MiB on 64-bit systems. The two window scenes reuse their own scratch. A larger primitive batch uses the standard stable sort for that frame. |
 | Upstream Kit root | One cache record per window root for the preceding viewport render. View invalidation, refresh, and changes to the viewport or render context rebuild the record. An active accessibility tree uses live root prepaint. |
@@ -37,3 +37,40 @@ The chart tests cover irregular ID and style preservation, storage capacity, ind
 
 Mounted allocation measurements and validation limits are recorded in the
 [warm repaint audit](bench/measurements/warm-repaint.md).
+
+
+### Frame storage retention probe
+
+`alternating_frames_retain_peak_storage` draws two frames with Tab traversal at each workload
+size in the dev test profile, then measures both frame buffers at 100 keyed
+focusable elements.
+Vectors report capacity bytes. Map figures are usable entry capacity times
+entry size and exclude hash-table control bytes and slack. Neither figure
+includes retained element payloads or the renderer's other storage.
+
+| Backend | Prior peak | Frame | Element-state map | Access log | Tab history | Tab lookup | Tab order |
+|---|---:|---|---:|---:|---:|---:|---:|
+| Upstream | 10,000 | Both, each | 1,032,192 | 1,310,720 | 524,288 | 1,146,880 | 1,179,648 |
+| Upstream | 100,000 | Rendered | 7,956,288 | 20,971,520 | 4,194,304 | 9,175,040 | 9,437,184 |
+| Upstream | 100,000 | Next | 8,257,536 | 20,971,520 | 4,194,304 | 9,175,040 | 9,437,184 |
+| Fast | 10,000 | Rendered | 1,032,192 | 1,310,720 | 524,288 | 8,960 | 9,216 |
+| Fast | 10,000 | Next | 1,032,192 | 1,310,720 | 524,288 | 0 | 0 |
+| Fast | 100,000 | Rendered | 7,959,528 | 20,971,520 | 4,194,304 | 8,960 | 9,216 |
+| Fast | 100,000 | Next | 8,257,536 | 20,971,520 | 4,194,304 | 0 | 0 |
+
+At the 100,000-row peak, Fast built the query index during Tab traversal.
+After two 100-row frames, its rendered frame held a new index for 100 targets
+and its next frame held no index. State maps, access logs and insertion history
+retained capacity on both backends.
+
+### Proposed idle trim for frame storage
+
+Schedule a single cancellable maintenance job to run five seconds after both
+alternating frames report live entries at or below one quarter of capacity for a candidate
+buffer. Recheck at execution and shrink each qualifying
+buffer toward twice its live high-water over that interval, subject to a small
+floor. An intervening larger frame cancels that job. If the window stays idle it
+performs no recurring work. Trim in the maintenance callback outside draw, with
+unchanged-frame allocation and deallocation gates on both backends. Until a
+trim runs, each buffer can retain its full historical peak. The current
+implementation retains the peak indefinitely.

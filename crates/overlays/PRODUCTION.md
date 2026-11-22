@@ -11,4 +11,10 @@ A window holds one context builder per registered name. Re-registering replaces 
 builder, `OverlayHost::remove_context` releases it, and closing the window clears the
 registry. Covered by `removed_contexts_release_builders_under_churn`.
 
-Queue and map capacity can reflect peak backlog and registration counts.
+Dismissal reduces substantially oversized queue storage. Clearing toasts drops the
+overflow buffer, and window teardown releases the queue. The visible limit does
+not cap pending app data. `overflow_toasts_survive_admission_and_release_on_dismiss_or_clear`
+checks that 2,000 pending toasts survive admission and that dismissal and clear
+reclaim their storage.
+`window_close_releases_toasts_even_when_host_handle_survives` covers teardown.
+Context registry capacity can reflect peak registrations.

@@ -288,6 +288,42 @@ fn layout_persists_and_restores(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn forgotten_window_layouts_do_not_return_after_reload(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("layout.json");
+    let cfg = || WindowConfig {
+        layout_path: Some(path.clone()),
+        ..Default::default()
+    };
+    init(cx, cfg());
+    let keep = WindowKey::kind("keep");
+    open(&keep, OpenMode::Reuse, cx);
+    let gone: Vec<_> = (0..32)
+        .map(|name| WindowKey::instance("editor", name.to_string()))
+        .collect();
+    for key in &gone {
+        let handle = open(key, OpenMode::Reuse, cx);
+        cx.update(WindowManager::flush);
+        assert!(cx.update(|cx| WindowManager::request_close(handle.into(), cx)));
+        cx.run_until_parked();
+    }
+    cx.update(|cx| {
+        for key in &gone {
+            assert!(WindowManager::saved(key, cx).is_some());
+            assert!(WindowManager::forget_saved_layout(key, cx));
+            assert!(!WindowManager::forget_saved_layout(key, cx));
+        }
+    });
+    init(cx, cfg());
+    cx.update(|cx| {
+        assert!(WindowManager::saved(&keep, cx).is_some());
+        for key in &gone {
+            assert!(WindowManager::saved(key, cx).is_none());
+        }
+    });
+}
+
+#[gpui_kit::test]
 fn debounced_save_happens_without_flush(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().expect("tmp");
     let path = dir.path().join("layout.json");

@@ -6,7 +6,10 @@ use guiraffe_core::ColorName;
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 /// Stable identifier scoped to a document layer.
@@ -201,7 +204,8 @@ impl std::error::Error for DecorationError {}
 pub struct Decorations {
     document: Arc<CodeDocument>,
     layers: BTreeMap<DecorationLayerId, DecorationLayer>,
-    styles: Vec<DecorationStyle>,
+    styles: HashMap<u32, DecorationStyle>,
+    next_style: Arc<AtomicU64>,
     style_ids: HashMap<DecorationStyle, u32>,
     paint_order: Vec<DecorationLayerId>,
     has_blame: bool,
@@ -214,7 +218,8 @@ impl Decorations {
         Ok(Self {
             document,
             layers: BTreeMap::new(),
-            styles: Vec::new(),
+            styles: HashMap::new(),
+            next_style: Arc::default(),
             style_ids: HashMap::new(),
             paint_order: Vec::new(),
             has_blame: false,
@@ -230,12 +235,20 @@ impl Decorations {
         self.layers.get(&id)
     }
 
-    /// Intern a style and return the stable document-local key used by batch inputs.
+    /// Intern a style and return its document-local key. The key stays valid, even while no
+    /// layer uses it, until [`Self::release_unused_styles`]. Released keys are never reused.
     pub fn intern_style(&mut self, style: DecorationStyle) -> Result<u32, DecorationError> {
         if let Some(&id) = self.style_ids.get(&style) {
             return Ok(id);
         }
-        let id = u32::try_from(self.styles.len()).map_err(|_| DecorationError::Capacity)?;
+        // Clones can build different successor snapshots. Share the allocator so
+        // a key retired in one successor cannot alias new data in another.
+        let id = self
+            .next_style
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                (next <= u64::from(u32::MAX)).then_some(next + 1)
+            })
+            .map_err(|_| DecorationError::Capacity)? as u32;
         match &style {
             DecorationStyle::Blame(_) => self.has_blame = true,
             DecorationStyle::Gutter { lane, .. } => {
@@ -243,13 +256,13 @@ impl Decorations {
             }
             _ => {}
         }
-        self.styles.push(style.clone());
+        self.styles.insert(id, style.clone());
         self.style_ids.insert(style, id);
         Ok(id)
     }
 
     pub fn style(&self, id: u32) -> Option<&DecorationStyle> {
-        self.styles.get(id as usize)
+        self.styles.get(&id)
     }
 
     pub(crate) fn has_blame(&self) -> bool {
@@ -275,6 +288,32 @@ impl Decorations {
     pub fn remove_layer(&mut self, id: DecorationLayerId) {
         self.layers.remove(&id);
         self.update_paint_order();
+    }
+
+    /// Release every style that no layer uses and return how many were released. Call this
+    /// after replacing layers whose styles change per revision (review or blame text). Their
+    /// keys become invalid, so intern again before reusing one of those styles.
+    pub fn release_unused_styles(&mut self) -> usize {
+        let used: std::collections::HashSet<u32> = self
+            .layers
+            .values()
+            .flat_map(|layer| layer.records().iter().map(|record| record.style))
+            .collect();
+        let before = self.styles.len();
+        self.styles.retain(|id, _| used.contains(id));
+        self.style_ids.retain(|_, id| used.contains(id));
+        self.has_blame = false;
+        self.gutter_lanes = 0;
+        for style in self.styles.values() {
+            match style {
+                DecorationStyle::Blame(_) => self.has_blame = true,
+                DecorationStyle::Gutter { lane, .. } => {
+                    self.gutter_lanes = self.gutter_lanes.max((*lane).min(3) + 1);
+                }
+                _ => {}
+            }
+        }
+        before - self.styles.len()
     }
 
     pub fn mark_stale(&mut self, id: DecorationLayerId) {
@@ -522,7 +561,7 @@ impl DecorationLayer {
         mut records: Vec<Decoration>,
         options: DecorationLayerOptions,
         stale: bool,
-        styles: &[DecorationStyle],
+        styles: &HashMap<u32, DecorationStyle>,
         document: &CodeDocument,
     ) -> Result<Self, DecorationError> {
         let count = u32::try_from(records.len()).map_err(|_| DecorationError::Capacity)?;
@@ -544,7 +583,7 @@ impl DecorationLayer {
         indices.sort_unstable_by_key(|&i| data.records[i as usize].start);
         for &index in &indices {
             let record = data.records[index as usize];
-            match styles.get(record.style as usize) {
+            match styles.get(&record.style) {
                 Some(DecorationStyle::Blame(_)) => data.has_blame = true,
                 Some(DecorationStyle::Inline { .. } | DecorationStyle::Block { .. }) => {
                     data.has_widgets = true
@@ -566,8 +605,7 @@ impl DecorationLayer {
         };
         for record in &data.records {
             let first = bin(record.start);
-            if let Some(DecorationStyle::Gutter { lane, mark }) = styles.get(record.style as usize)
-            {
+            if let Some(DecorationStyle::Gutter { lane, mark }) = styles.get(&record.style) {
                 let overview = data
                     .gutter_overview
                     .get_or_insert_with(|| Box::new([[None; 4]; OVERVIEW_BINS]));
@@ -806,6 +844,88 @@ mod tests {
             start_bias: AnchorBias::Left,
             end_bias: AnchorBias::Right,
         }
+    }
+
+    #[test]
+    fn a_saved_style_key_survives_its_layer_becoming_empty() {
+        let mut decorations = store(Arc::new(CodeDocument::new("one")));
+        let style = DecorationStyle::Review {
+            markdown: "error".into(),
+        };
+        let saved = decorations.intern_style(style).expect("new style");
+        let input = DecorationInput {
+            style: saved,
+            ..mark(1, 0, 1)
+        };
+        // Errors appear, drop to zero, then return, using the key interned at start-up.
+        decorations
+            .update_layer(1, Default::default(), &[], [input])
+            .expect("errors appear");
+        decorations
+            .update_layer(1, Default::default(), &[input.id], [])
+            .expect("errors clear");
+        decorations
+            .update_layer(1, Default::default(), &[], [input])
+            .expect("errors return under the saved key");
+    }
+
+    #[test]
+    fn style_churn_releases_payloads_without_reusing_keys() {
+        let mut decorations = store(Arc::new(CodeDocument::new("one")));
+        let first = 1;
+        let second = 2;
+        let mut parallel = decorations.clone();
+        for index in 0..10_000 {
+            let style = DecorationStyle::Review {
+                markdown: format!("revision {index}").into(),
+            };
+            let id = decorations.intern_style(style.clone()).expect("new style");
+            let input = DecorationInput {
+                style: id,
+                ..mark(1, 0, 1)
+            };
+            decorations
+                .update_layer(first, Default::default(), &[], [input])
+                .expect("valid style and layer fixture");
+            decorations
+                .update_layer(second, Default::default(), &[], [input])
+                .expect("valid style and layer fixture");
+            decorations.remove_layer(first);
+            assert_eq!(decorations.style(id), Some(&style));
+            decorations.remove_layer(second);
+            assert_eq!(
+                decorations.style(id),
+                Some(&style),
+                "removal alone keeps the key"
+            );
+            decorations.release_unused_styles();
+            assert!(decorations.style(id).is_none());
+            assert_eq!(decorations.style_ids.len(), 0);
+            assert_eq!(decorations.styles.len(), 0);
+            assert!(decorations.intern_style(style).expect("re-interned style") > id);
+            let next = id + 1;
+            decorations
+                .update_layer(
+                    first,
+                    Default::default(),
+                    &[],
+                    [DecorationInput {
+                        style: next,
+                        ..mark(1, 0, 1)
+                    }],
+                )
+                .expect("valid style and layer fixture");
+            decorations.remove_layer(first);
+            decorations.release_unused_styles();
+        }
+        let first_original_key = 1;
+        let sibling_key = parallel
+            .intern_style(DecorationStyle::Review {
+                markdown: "sibling".into(),
+            })
+            .expect("valid style and layer fixture");
+        assert_ne!(sibling_key, first_original_key);
+        assert!(parallel.style(first_original_key).is_none());
     }
 
     #[test]

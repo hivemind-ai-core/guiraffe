@@ -3738,9 +3738,11 @@ dependencies = [
 name = "guiraffe-sheet"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-datagrid",
+ "guiraffe-test",
  "im",
  "lru",
  "proptest",

@@ -29,3 +29,20 @@ against a 77,033 KiB budget. GPUI Fast measured a 56,344 KiB delta. The same-har
 119 ms and measured 3.2–3.9 ms p99, with a 58,556 KiB process peak delta
 over the empty window. Peak RSS during a selection spanning history and
 warm repaint allocations remain open.
+
+Reply creation admits materialized views to the same cache even when no frame
+renders between streams. A chat has a single active producer. The test
+`superseded_offscreen_replies_respect_the_row_cache` exercises 1,000 consecutive
+reply starts and checks ordinary residency and ended stream pins. The ignored `selection_retention_across_one_hundred_thousand_rows` probe scrolls
+100,000 rows in eight-row steps with a held drag, a completed drag, and
+keyboard Select All on a focused Markdown message.
+
+| Backend | Selection | Peak mounted | Peak pinned | First selection loss |
+|---|---|---:|---:|---:|
+| Upstream | Held drag, completed drag, Select All | 64 each | 0 each | Row index 8 |
+| Fast | Held drag, completed drag, Select All | 64 each | 0 each | Row index 8 |
+
+Each case ended at row index 99,999 with 64 mounted rows and the selection
+clear. Kit's current projection clears the selection when its rendered
+endpoint leaves the window. [Known issues](../../KNOWN_ISSUES.md#selecting-text-across-chat-history)
+documents the user-visible limitation.

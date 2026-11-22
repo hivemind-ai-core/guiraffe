@@ -17,10 +17,10 @@ use std::{
     sync::Arc,
 };
 
-use gpui_kit::{App, AppContext, Context, Entity, Subscription, WeakEntity};
+use gpui_kit::{App, AppContext, Context, Entity, Subscription, Task, WeakEntity};
 
 use crate::engine::{
-    Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, UndoEvent,
+    Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, Queued, UndoEvent,
 };
 
 type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
@@ -73,7 +73,7 @@ struct Inner<S: Clone + PartialEq + 'static> {
     effects: HashMap<TypeId, EffectHandler<S>>,
     on_error: Option<ErrorHandler>,
     slots: Rc<RefCell<Slots<S>>>,
-    debounce: HashMap<&'static str, u64>,
+    debounce: HashMap<&'static str, (u64, Queued<S>, Task<()>)>,
     next_timer: u64,
     stats: StoreStats,
 }
@@ -351,37 +351,54 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     fn schedule_later(&self, later: DispatchLater<S>, cx: &mut App) {
         let delay = later.delay;
         let key = later.key;
-        let ticket = self.inner.update(cx, |i, _| {
-            i.next_timer += 1;
-            if let Some(k) = key {
-                i.debounce.insert(k, i.next_timer);
-            }
-            i.next_timer
-        });
         let queued = later.into_queued();
         let weak = self.downgrade();
         let timer = cx.background_executor().timer(delay);
-        cx.spawn(async move |cx| {
-            timer.await;
-            cx.update(|cx| {
-                let Some(store) = weak.upgrade() else { return };
-                let current = store.inner.update(cx, |i, _| match key {
-                    Some(k) if i.debounce.get(k) != Some(&ticket) => false,
-                    Some(k) => {
-                        i.debounce.remove(k);
-                        true
-                    }
-                    None => true,
-                });
-                if current {
-                    store
-                        .inner
-                        .update(cx, |i, _| i.engine.dispatch_queued(queued));
-                    store.schedule(cx);
-                }
+        if let Some(key) = key {
+            let ticket = self.inner.update(cx, |inner, _| {
+                inner.next_timer += 1;
+                inner.next_timer
             });
-        })
-        .detach();
+            let task = cx.spawn(async move |cx| {
+                timer.await;
+                cx.update(|cx| {
+                    let Some(store) = weak.upgrade() else { return };
+                    let dispatched = store.inner.update(cx, |inner, _| {
+                        if inner
+                            .debounce
+                            .get(key)
+                            .is_none_or(|entry| entry.0 != ticket)
+                        {
+                            return false;
+                        }
+                        if let Some((_, action, task)) = inner.debounce.remove(key) {
+                            task.detach();
+                            inner.engine.dispatch_queued(action);
+                        }
+                        true
+                    });
+                    if dispatched {
+                        store.schedule(cx);
+                    }
+                });
+            });
+            self.inner.update(cx, |inner, _| {
+                inner.debounce.insert(key, (ticket, queued, task));
+            });
+        } else {
+            cx.spawn(async move |cx| {
+                timer.await;
+                cx.update(|cx| {
+                    if let Some(store) = weak.upgrade() {
+                        store
+                            .inner
+                            .update(cx, |inner, _| inner.engine.dispatch_queued(queued));
+                        store.schedule(cx);
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     pub fn stats(&self, cx: &App) -> StoreStats {

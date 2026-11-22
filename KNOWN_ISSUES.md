@@ -15,6 +15,11 @@
 
 - **Native GPUI drag refreshes the entire window on pointer movement.** Both pinned backends bypass cached views during that refresh. A `SortableBoard` uses window-level pointer tracking with a separate `drag_overlay()` for in-window moves. The native `DragSource::attach` adapter and opt-in `new_native_dock` use GPUI’s native drag path. Use `new_dock` with its separately mounted gesture overlay for in-window docking.
 
+### Selecting text across Chat history
+
+A drag selection in Chat clears when one end scrolls out of the rendered rows.
+This prevents selecting and copying text across virtualized history in one drag.
+
 ### Upstream GPUI invalidates TreeList and PropertyGrid ancestors
 
 On GPUI Pre 0.3.12, keyboard expansion and wheel scrolling update the tree

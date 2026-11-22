@@ -321,6 +321,7 @@ impl<K: Clone + Eq + Hash> KeyedPresence<K> {
     /// Sample every entry at `now`, dropping finished exits. Returns whether any entry is
     /// still animating (the caller needs another frame).
     pub fn frame(&mut self, now: Instant, prefs: &MotionPrefs) -> bool {
+        let before = self.entries.len();
         let mut animating = false;
         self.entries
             .retain_mut(|e| match e.presence.frame(now, prefs) {
@@ -334,6 +335,10 @@ impl<K: Clone + Eq + Hash> KeyedPresence<K> {
                     true
                 }
             });
+        let remaining = self.entries.len();
+        if remaining < before && self.entries.capacity() > remaining.saturating_mul(4).max(64) {
+            self.entries.shrink_to(remaining.saturating_mul(2).max(64));
+        }
         animating
     }
 
@@ -516,6 +521,21 @@ mod tests {
 
     fn keys(k: &KeyedPresence<&'static str>) -> Vec<(&'static str, f32)> {
         k.iter().map(|(k, v)| (*k, v)).collect()
+    }
+
+    #[test]
+    fn presence_churn_releases_settled_exit_capacity() {
+        let prefs = MotionPrefs::default();
+        let start = Instant::now();
+        let transition = Transition::new(TransitionKind::Fade, lin(100));
+        let mut presence = KeyedPresence::new(0..10_000, transition);
+        assert!(presence.sync(&[0], start, &prefs));
+        assert_eq!(presence.len(), 10_000);
+        assert!(!presence.frame(at(start, 200), &prefs));
+        assert_eq!(presence.len(), 1);
+        assert!(presence.entries.capacity() <= 64);
+        assert!(!presence.frame(at(start, 300), &prefs));
+        assert!(presence.entries.capacity() <= 64);
     }
 
     #[test]

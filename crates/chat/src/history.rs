@@ -24,6 +24,18 @@ impl RowCache {
         row: &Entity<MessageView>,
         cx: &mut App,
     ) {
+        Self::admit(cache, history, index, index, row, cx);
+    }
+
+    /// Admit a row, evicting the rows farthest from `anchor` (where the user is reading).
+    fn admit(
+        cache: &Rc<RefCell<Self>>,
+        history: &Entity<History>,
+        index: usize,
+        anchor: usize,
+        row: &Entity<MessageView>,
+        cx: &mut App,
+    ) {
         let mut this = cache.borrow_mut();
         if this.recent.get(&index).is_some_and(|entry| entry == row) {
             return;
@@ -32,12 +44,12 @@ impl RowCache {
         this.pinned.remove(&index);
 
         while this.recent.len() > RETAINED_ROWS {
-            let extremes = [this.recent.first_key_value(), this.recent.last_key_value()];
-            let Some((&victim, _)) = extremes
+            let others = || this.recent.keys().copied().filter(|&key| key != index);
+            let Some(victim) = others()
+                .next()
                 .into_iter()
-                .flatten()
-                .filter(|(key, _)| **key != index)
-                .max_by_key(|(key, _)| key.abs_diff(index))
+                .chain(others().next_back())
+                .max_by_key(|key| key.abs_diff(anchor))
             else {
                 break;
             };
@@ -204,9 +216,22 @@ impl History {
         }
     }
 
+    /// Materialize a row from outside list rendering (a reply starting, a host lookup). Eviction
+    /// anchors on the scroll position, so the rows being read stay mounted.
     pub(crate) fn materialize(
         &mut self,
         index: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<MessageView>> {
+        let anchor = self.list.logical_scroll_top().item_ix;
+        self.materialize_near(index, anchor, cx)
+    }
+
+    /// The list holds its state borrowed while rendering, so its callback passes the anchor.
+    fn materialize_near(
+        &mut self,
+        index: usize,
+        anchor: usize,
         cx: &mut Context<Self>,
     ) -> Option<Entity<MessageView>> {
         let row = self.rows.get_mut(index)?;
@@ -236,6 +261,9 @@ impl History {
             view
         });
         *row = Row::Mounted(view.clone());
+        // Replies can materialize without entering the virtual list. Give those
+        // rows the same eviction path as rows materialized during rendering.
+        RowCache::admit(&self.row_cache, &cx.entity(), index, anchor, &view, cx);
         Some(view)
     }
 
@@ -293,7 +321,11 @@ impl Render for History {
                         .get(index)
                         .and_then(Row::mounted)
                         .cloned()
-                        .or_else(|| owner.update(cx, |history, cx| history.materialize(index, cx)));
+                        .or_else(|| {
+                            owner.update(cx, |history, cx| {
+                                history.materialize_near(index, index, cx)
+                            })
+                        });
                     let Some(row) = row else {
                         return div().into_any_element();
                     };
@@ -325,9 +357,226 @@ impl Render for History {
 
 #[cfg(test)]
 mod tests {
-    use super::{RETAINED_ROWS, RowCache};
+    use super::{History, RETAINED_ROWS, RowCache};
     use crate::{Message, MessageId, Role};
-    use gpui_kit::{AppContext, TestAppContext};
+    use gpui_kit::{
+        AppContext, Entity, ListOffset, Modifiers, MouseButton, Pixels, Point, TestAppContext,
+        VisualTestContext, base::TextSelection, point, px,
+    };
+
+    const HISTORY_SCALE: usize = 100_000;
+
+    #[derive(Clone, Copy, Debug)]
+    enum SelectionProbe {
+        HeldDrag,
+        CompletedDrag,
+        SelectAll,
+    }
+
+    fn draw_probe_frame(visual: &mut VisualTestContext) {
+        visual.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        visual.run_until_parked();
+    }
+
+    fn scroll_probe_to(visual: &mut VisualTestContext, history: &Entity<History>, index: usize) {
+        visual.update(|_, cx| {
+            history.update(cx, |history, cx| {
+                history.list.scroll_to(ListOffset {
+                    item_ix: index,
+                    offset_in_item: px(0.),
+                });
+                cx.notify();
+            });
+        });
+        draw_probe_frame(visual);
+    }
+
+    fn start_probe_selection(
+        visual: &mut VisualTestContext,
+        history: &Entity<History>,
+        probe: SelectionProbe,
+    ) -> Point<Pixels> {
+        let (start, end) = visual.update(|_, cx| {
+            let history = history.read(cx);
+            let text_bounds = |index: usize| {
+                let row = history.rows[index]
+                    .mounted()
+                    .expect("visible history row")
+                    .read(cx);
+                row.markdown
+                    .as_ref()
+                    .expect("rendered Markdown")
+                    .read(cx)
+                    .bounds()
+            };
+            (
+                text_bounds(0).origin + point(px(3.), px(5.)),
+                text_bounds(2).origin + point(px(35.), px(5.)),
+            )
+        });
+        assert!(start.y < end.y);
+        let modifiers = Modifiers::none();
+        visual.simulate_mouse_move(start, None, modifiers);
+        visual.simulate_mouse_down(start, MouseButton::Left, modifiers);
+        if matches!(probe, SelectionProbe::SelectAll) {
+            visual.simulate_mouse_up(start, MouseButton::Left, modifiers);
+            if cfg!(target_os = "macos") {
+                visual.simulate_keystrokes("cmd-a");
+            } else {
+                visual.simulate_keystrokes("ctrl-a");
+            }
+        } else {
+            visual.simulate_mouse_move(end, MouseButton::Left, modifiers);
+            if matches!(probe, SelectionProbe::CompletedDrag) {
+                visual.simulate_mouse_up(end, MouseButton::Left, modifiers);
+            }
+        }
+        draw_probe_frame(visual);
+        assert!(
+            visual.update(TextSelection::has_selection),
+            "{probe:?} did not select text"
+        );
+        end
+    }
+
+    fn probe_selection_retention(cx: &mut TestAppContext, probe: SelectionProbe) {
+        let (window, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                for index in 0..HISTORY_SCALE {
+                    history.push(
+                        Message::new(
+                            MessageId(index as u64),
+                            Role::Assistant,
+                            "selectable history row",
+                        ),
+                        false,
+                        cx,
+                    );
+                }
+                history.sync_list();
+                history.list.pause_following_tail();
+                history.sticky.user_scroll(false);
+                cx.notify();
+            });
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        scroll_probe_to(&mut visual, &history, 0);
+        let end = start_probe_selection(&mut visual, &history, probe);
+        let mut peak_pins = 0;
+        let mut peak_mounted = 0;
+        let mut first_selection_loss = None;
+        for index in (0..HISTORY_SCALE).step_by(8).chain([HISTORY_SCALE - 1]) {
+            if index > 0 {
+                scroll_probe_to(&mut visual, &history, index);
+                if matches!(probe, SelectionProbe::HeldDrag) {
+                    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+                }
+            }
+            visual.update(|window, cx| {
+                let cache = history.read(cx).row_cache.borrow();
+                peak_pins = peak_pins.max(cache.pinned.len());
+                peak_mounted = peak_mounted.max(cache.pinned.len() + cache.recent.len());
+                drop(cache);
+                if !TextSelection::has_selection(window, cx) {
+                    first_selection_loss.get_or_insert(index);
+                }
+            });
+        }
+        if matches!(probe, SelectionProbe::HeldDrag) {
+            visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        }
+        visual.update(|window, cx| {
+            let selected = TextSelection::has_selection(window, cx);
+            let history = history.read(cx);
+            let mounted = history.rows.iter().filter(|row| row.mounted().is_some()).count();
+            println!("{probe:?}: rows={}, mounted={mounted}, peak_mounted={peak_mounted}, peak_pins={peak_pins}, first_selection_loss={first_selection_loss:?}, selection_at_end={selected}", history.rows.len());
+            assert_eq!(history.rows.len(), HISTORY_SCALE);
+            window.remove_window();
+        });
+    }
+
+    #[gpui_kit::test]
+    #[ignore = "100k-row selection retention probe, run with --ignored --nocapture"]
+    fn selection_retention_across_one_hundred_thousand_rows(cx: &mut TestAppContext) {
+        for probe in [
+            SelectionProbe::HeldDrag,
+            SelectionProbe::CompletedDrag,
+            SelectionProbe::SelectAll,
+        ] {
+            probe_selection_retention(cx, probe);
+        }
+    }
+
+    #[gpui_kit::test]
+    fn an_offscreen_reply_does_not_evict_the_row_being_read(cx: &mut TestAppContext) {
+        let (_, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                for index in 0..256 {
+                    history.push(
+                        Message::new(MessageId(index as u64), Role::Assistant, "row"),
+                        false,
+                        cx,
+                    );
+                }
+                history.sync_list();
+                history.list.pause_following_tail();
+                history.sticky.user_scroll(false);
+                history.list.scroll_to(ListOffset {
+                    item_ix: 0,
+                    offset_in_item: px(0.),
+                });
+                for index in 0..RETAINED_ROWS {
+                    history.materialize(index, cx).expect("history row");
+                }
+            });
+        });
+        cx.update(|cx| {
+            history.update(cx, |history, cx| {
+                history.materialize(255, cx).expect("reply row");
+            });
+        });
+        cx.update(|cx| {
+            let history = history.read(cx);
+            assert!(
+                history.rows[0].mounted().is_some(),
+                "evicted the row being read"
+            );
+            assert!(history.rows[RETAINED_ROWS - 1].mounted().is_none());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn superseded_offscreen_replies_respect_the_row_cache(cx: &mut TestAppContext) {
+        let (_, chat) = crate::gpui_tests::open(cx);
+        let history = cx.update(|cx| chat.read(cx).history.clone());
+        cx.update(|cx| {
+            for _ in 0..1_000 {
+                chat.update(cx, |chat, cx| {
+                    chat.begin_reply(cx);
+                });
+            }
+        });
+        cx.update(|cx| {
+            let history = history.read(cx);
+            assert_eq!(history.rows.len(), 1_000);
+            assert_eq!(
+                history
+                    .rows
+                    .iter()
+                    .filter(|row| row.mounted().is_some())
+                    .count(),
+                RETAINED_ROWS
+            );
+            assert_eq!(history.row_cache.borrow().pinned.len(), 0);
+        });
+    }
 
     #[gpui_kit::test]
     fn ended_pins_evict_without_entering_another_row(cx: &mut TestAppContext) {

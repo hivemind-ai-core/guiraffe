@@ -568,6 +568,23 @@ impl WindowManager {
             .cloned()
     }
 
+    /// Remove a saved layout and write the remaining layouts to disk when configured.
+    /// An open window can record its bounds again during a subsequent save.
+    /// Persistence failures are reported through the same state as [Self::flush].
+    pub fn forget_saved_layout(key: &WindowKey, cx: &mut App) -> bool {
+        if cx.try_global::<Self>().is_none() {
+            return false;
+        }
+        let manager = cx.global_mut::<Self>();
+        if manager.layout.windows.remove(&key.storage_key()).is_none() {
+            return false;
+        }
+        if let Some(store) = &manager.store {
+            manager.last_save_error = store.save(&manager.layout).err().map(|e| e.to_string());
+        }
+        true
+    }
+
     /// Ask a window to close, honoring guards. Returns false if vetoed or not found.
     pub fn request_close(handle: AnyWindowHandle, cx: &mut App) -> bool {
         let wid = handle.window_id();

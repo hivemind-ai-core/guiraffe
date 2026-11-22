@@ -111,6 +111,7 @@ impl OverlayHost {
                     host.focus_chain.clear();
                     host.confirms.clear();
                     host.cards.clear();
+                    host.toasts.clear();
                     host.timer = None;
                 });
             }
@@ -986,6 +987,33 @@ mod review_tests {
             assert_eq!(Rc::strong_count(&builder), 2);
         })
         .expect("test window");
+    }
+
+    #[gpui_kit::test]
+    fn window_close_releases_toasts_even_when_host_handle_survives(cx: &mut TestAppContext) {
+        cx.update(init);
+        let handle = crate::gpui_tests::open(cx);
+        let host = cx
+            .update_window(handle.into(), |_, window, cx| {
+                let host = OverlayHost::entity(window, cx).expect("host");
+                host.update(cx, |host, _| {
+                    host.toasts.set_limit(0);
+                    for id in 0..1_000 {
+                        host.toasts
+                            .push(Toast::new(ToastId(id), "queued payload".repeat(128)));
+                    }
+                    assert_eq!(host.toasts.queued().len(), 1_000);
+                });
+                window.remove_window();
+                host
+            })
+            .expect("close");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let host = host.read(cx);
+            assert!(host.toasts.visible().is_empty());
+            assert_eq!(host.toasts.queued().capacity(), 0);
+        });
     }
 
     #[gpui_kit::test]

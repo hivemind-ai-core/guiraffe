@@ -52,7 +52,9 @@ viewer displays. Intern repeated `DecorationStyle` values by calling
 within each layer and ranges use UTF-8 source coordinates. Layer options
 control z-order and permit merging identical visible marks. Use `apply_edit`
 to shift anchored ranges to a replacement revision, then refresh stale
-analysis layers with a new batch.
+analysis layers with a new batch. Style keys stay valid until you call
+`release_unused_styles`, which you should do after replacing layers whose
+styles change per revision, such as review or blame text.
 
 Publish the finished snapshot with `CodeHandle::set_decorations`. The call
 rejects an obsolete document revision. For display text, lens rows and

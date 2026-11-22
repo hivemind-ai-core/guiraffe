@@ -1,7 +1,6 @@
 //! The tray service: state, typed events, command routing.
 use std::{rc::Rc, time::Instant};
 
-use futures::{StreamExt as _, channel::mpsc};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, Subscription, Task,
 };
@@ -99,6 +98,7 @@ pub struct TrayService {
     pub(crate) hidden: bool,
     _connect: Option<Task<()>>,
     _events: Option<Task<()>>,
+    event_sink: Option<EventSink>,
 }
 
 impl EventEmitter<TrayEvent> for TrayService {}
@@ -232,16 +232,18 @@ impl Tray {
                 hidden: false,
                 _connect: None,
                 _events: None,
+                event_sink: None,
             }
         });
         entity.update(cx, |tray, cx| {
             if tray.status != TrayStatus::Connecting {
                 return;
             }
-            let (tx, mut rx) = mpsc::unbounded();
-            let connect = tray.backend.connect(tray.state.clone(), EventSink(tx), cx);
+            let (tx, mut rx) = EventSink::channel();
+            tray.event_sink = Some(tx.clone());
+            let connect = tray.backend.connect(tray.state.clone(), tx, cx);
             tray._events = Some(cx.spawn(async move |this, cx| {
-                while let Some(raw) = rx.next().await {
+                while let Some(raw) = rx.recv().await {
                     if this.update(cx, |tray, cx| tray.handle(raw, cx)).is_err() {
                         break;
                     }
@@ -261,6 +263,9 @@ impl Tray {
                             cx.emit(TrayEvent::Ready);
                         }
                         Err(e) => {
+                            if let Some(sink) = tray.event_sink.take() {
+                                sink.close();
+                            }
                             tray.status = TrayStatus::Failed(e.clone());
                             cx.emit(TrayEvent::Error(e));
                         }
@@ -343,6 +348,9 @@ impl Tray {
                 tray.backend.shutdown(cx);
             }
             tray.status = TrayStatus::Removed;
+            if let Some(sink) = tray.event_sink.take() {
+                sink.close();
+            }
             tray._events = None;
             tray._connect = None;
             cx.notify();

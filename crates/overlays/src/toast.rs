@@ -102,6 +102,9 @@ impl ToastQueue {
         self.visible.retain(|t| t.id != id);
         self.queued.retain(|t| t.id != id);
         self.promote();
+        if self.queued.capacity() > self.queued.len().saturating_mul(4).max(32) {
+            self.queued.shrink_to(self.queued.len().saturating_mul(2));
+        }
     }
     pub fn pause(&mut self, id: ToastId, paused: bool) {
         if let Some(t) = self.visible.iter_mut().find(|t| t.id == id) {
@@ -122,7 +125,7 @@ impl ToastQueue {
     }
     pub fn clear(&mut self) {
         self.visible.clear();
-        self.queued.clear();
+        self.queued = VecDeque::new();
     }
     /// Advance the currently visible set only. Promotion happens after this tick.
     pub fn advance(&mut self, delta: Duration) {
@@ -149,6 +152,28 @@ impl ToastQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn overflow_toasts_survive_admission_and_release_on_dismiss_or_clear() {
+        let mut queue = ToastQueue::new(0);
+        for id in 0..2_000 {
+            queue.push(Toast::new(ToastId(id), "queued".repeat(128)));
+        }
+        assert_eq!(queue.queued().len(), 2_000);
+        for id in 0..1_999 {
+            queue.remove(ToastId(id));
+        }
+        assert_eq!(
+            queue.queued().front().map(|toast| toast.id),
+            Some(ToastId(1_999))
+        );
+        assert!(queue.queued().capacity() <= 32);
+        for id in 2_000..4_000 {
+            queue.push(Toast::new(ToastId(id), "queued".repeat(128)));
+        }
+        queue.clear();
+        assert_eq!(queue.queued().capacity(), 0);
+    }
+
     #[test]
     fn backlog_tracks_pending_requests_through_churn() {
         let mut queue = ToastQueue::new(1);
