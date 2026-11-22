@@ -1975,10 +1975,23 @@ mod mounted {
         }
 
         fn assert_rss_budget(test: &str, scenario: &str, raw_bytes: usize) {
-            let baseline = mounted_peak(test, "empty");
-            let loaded = mounted_peak(test, scenario);
+            // Peak RSS of one child process varies by up to ~3 MB between runs, which is more than
+            // the headroom some scenarios have. Alternate empty/loaded children and take the median
+            // delta so the gate measures the component, not allocator and page-fault noise.
+            const RUNS: usize = 5;
+            let mut samples: Vec<(u64, u64)> = (0..RUNS)
+                .map(|_| {
+                    let baseline = mounted_peak(test, "empty");
+                    let loaded = mounted_peak(test, scenario);
+                    (loaded.saturating_sub(baseline), baseline)
+                })
+                .collect();
+            samples.sort_unstable();
+            let (delta, baseline) = samples[RUNS / 2];
+            let loaded = baseline + delta;
             let budget = (raw_bytes + raw_bytes / 4).div_ceil(1024) as u64 + 64 * 1024;
-            let delta = loaded.saturating_sub(baseline);
+            let deltas: Vec<u64> = samples.iter().map(|sample| sample.0).collect();
+            println!("{test}: deltas {deltas:?} KiB (median of {RUNS})");
             println!(
                 "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
             );
