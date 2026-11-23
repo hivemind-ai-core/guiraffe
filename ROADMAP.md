@@ -49,7 +49,7 @@ proportion to what changed.
 
 | # | Item | Notes |
 |---|---|---|
-| 12 | Keymap, Spotlight, DataUi, MCP, scripts and replay on the bus | Replaces simulated clicks |
+| 12 | Keymap, Spotlight, DataUi, MCP, scripts and replay on the bus. Toast actions too | Replaces simulated clicks. In-app toasts have no action button today, so Undo has to live elsewhere; a toast action is a bus action |
 | 13 | Command ribbon | [Design](docs/design/command-ribbon.md). The one new component, and the bus's first real client |
 | 14 | Multi-window docking | Pop out, dock back, restore layout. Control ids survive the move. Spike cross-window drag early |
 | 15 | The dogfood tool | Start with item 9, so it shapes the API |
@@ -62,7 +62,7 @@ proportion to what changed.
 | 17 | Compile-only CI for macOS and Windows | No hardware needed. Makes platform claims checkable |
 | 18 | Startup study | Phase breakdown, floor against an empty GPUI window, cheap wins |
 | 19 | Trim GPUI's per-frame high-water buffers | Accepted 0.2 exception. Falls out of item 8 |
-| 20 | Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext workaround | Many are probably fixed already |
+| 20 | Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext workaround, make Kit's skeleton respect reduced motion | Many are probably fixed already. The skeleton is a small accessibility fix in vendored GPUI Kit |
 
 ### Added for 0.3
 
@@ -96,6 +96,10 @@ Candidates, in likely order:
    in a layer. System compositor layers for video and animation.
 4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io.
 5. **Architecture:** a conformance suite for UI documents and one virtualized data-source interface.
-6. The items moved from 0.3 above.
+6. **Styling API:** custom palettes and surfaces (apps derive some roles themselves today), any
+   color for `Text` rather than palette colors only, and a type scale beyond 20px. For charts,
+   dashed and neutral comparison series and tick formatters, so a "last year" series can be
+   styled as a comparison, and axes get labels instead of sparse defaults.
+7. The items moved from 0.3 above.
 
 Mobile is out of scope until the desktop platforms are supported.
