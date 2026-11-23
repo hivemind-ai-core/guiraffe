@@ -35,7 +35,7 @@ pub(crate) struct Entry<T: Clone> {
     pub position: Position,
 }
 pub(crate) struct KeyedList<T: Clone> {
-    pub rows: im::Vector<Entry<T>>,
+    pub rows: imbl::Vector<Entry<T>>,
     keys: HashSet<Key>,
     path: Box<[SharedString]>,
     positions: Positions,
@@ -44,7 +44,7 @@ pub(crate) struct KeyedList<T: Clone> {
 impl<T: Clone> KeyedList<T> {
     pub fn new(path: Box<[SharedString]>) -> Self {
         Self {
-            rows: im::Vector::new(),
+            rows: imbl::Vector::new(),
             keys: HashSet::new(),
             path,
             positions: Positions::default(),
@@ -64,7 +64,7 @@ impl<T: Clone> KeyedList<T> {
         }
         let replace = range.len() == values.len();
         let suffix = if replace {
-            im::Vector::new()
+            imbl::Vector::new()
         } else {
             self.rows.split_off(range.end)
         };

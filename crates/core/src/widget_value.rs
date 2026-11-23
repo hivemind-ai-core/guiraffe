@@ -13,7 +13,7 @@ pub enum Value {
     Str(SharedString),
     List(Arc<[Value]>),
     /// Persistent list storage used after a splice (shares unaffected tree nodes).
-    Sequence(im::Vector<Value>),
+    Sequence(imbl::Vector<Value>),
     /// Record fields for item-relative bindings.
     Record(Arc<std::collections::BTreeMap<SharedString, Value>>),
 }

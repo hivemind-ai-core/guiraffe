@@ -15,7 +15,7 @@ use crate::{CellPos, Formula, FormulaEngine, FormulaError, FormulaValues, Refere
 
 type Input = (CellPos, Arc<str>);
 type Value = Result<f64, FormulaError>;
-type Values = im::OrdMap<CellPos, Value>;
+type Values = imbl::OrdMap<CellPos, Value>;
 type Compiled = Result<Box<dyn Formula>, FormulaError>;
 
 /// Immutable formula values from a completed revision.
@@ -48,7 +48,7 @@ struct Pending {
     // Move the first batch into the slot as-is. Later submits only index their own
     // edits, and the worker skips replaced base inputs when applying the mailbox.
     base: Arc<Vec<Input>>,
-    overlay: im::OrdMap<CellPos, Arc<str>>,
+    overlay: imbl::OrdMap<CellPos, Arc<str>>,
 }
 
 impl Recalculator {
@@ -121,7 +121,7 @@ impl Recalculator {
                     overlay.extend(submitted.iter().cloned());
                     (batch.base.clone(), overlay)
                 }
-                None => (submitted.clone(), im::OrdMap::new()),
+                None => (submitted.clone(), imbl::OrdMap::new()),
             };
             Some(Arc::new(Pending {
                 revision,

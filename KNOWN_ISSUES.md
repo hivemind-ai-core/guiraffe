@@ -22,12 +22,8 @@ Borrows run timed out, so it is unknown whether this is more than an aliasing-mo
 
 ## Dependency advisories
 
-`cargo deny` excepts four advisories that have no fixed release. Any other advisory fails CI.
+`cargo deny` excepts two advisories that have no fixed release. Any other advisory fails CI.
 
-- [RUSTSEC-2023-0126](https://rustsec.org/advisories/RUSTSEC-2023-0126): `im` 15.1 is unsound in
-  ordered-set insertion. GUIraffe depends on `im`, including its ordered maps. Replacing it is
-  [roadmap](ROADMAP.md) item 3.
-- [RUSTSEC-2026-0248](https://rustsec.org/advisories/RUSTSEC-2026-0248): `im` is unmaintained.
 - [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543) and
   [RUSTSEC-2026-0555](https://rustsec.org/advisories/RUSTSEC-2026-0555): `chrono` and `chrono-tz`,
   used by the calendar and date inputs, are unmaintained.

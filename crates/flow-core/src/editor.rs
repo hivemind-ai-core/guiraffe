@@ -29,14 +29,14 @@ impl PreparedLayout {
 }
 
 fn changed_keys<V: Clone + PartialEq>(
-    before: &im::OrdMap<u64, V>,
-    after: &im::OrdMap<u64, V>,
+    before: &imbl::OrdMap<u64, V>,
+    after: &imbl::OrdMap<u64, V>,
 ) -> BTreeSet<u64> {
     before
         .diff(after)
         .map(|d| match d {
-            im::ordmap::DiffItem::Add(k, _) | im::ordmap::DiffItem::Remove(k, _) => *k,
-            im::ordmap::DiffItem::Update { new: (k, _), .. } => *k,
+            imbl::ordmap::DiffItem::Add(k, _) | imbl::ordmap::DiffItem::Remove(k, _) => *k,
+            imbl::ordmap::DiffItem::Update { new: (k, _), .. } => *k,
         })
         .collect()
 }
@@ -288,7 +288,7 @@ impl Editor {
         };
         next.extend(
             ids.iter()
-                .filter(|id| self.graph().nodes.contains_key(id))
+                .filter(|id| self.graph().nodes.contains_key(*id))
                 .copied(),
         );
         if *self.selected != next {

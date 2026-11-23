@@ -35,7 +35,7 @@ pub(in crate::text) fn parse_with_cancel(
     let source_text: SharedString = source.into();
     let source_base = cx.offset;
     let defer_paragraphs = defer_paragraphs && source.len() > 32 * 1024;
-    let mut blocks = im::Vector::new();
+    let mut blocks = imbl::Vector::new();
     let mut last = None;
     visit_ast_sections(source, &options, &cancelled, |mut root| {
         observe_section(&root);

@@ -5437,7 +5437,7 @@ mod tests {
         };
         let document = crate::text::document::ParsedDocument {
             source: source.into(),
-            blocks: Arc::new(im::vector![block.clone()]),
+            blocks: Arc::new(imbl::vector![block.clone()]),
         };
         assert!(!block.has_selection());
         state.set_selection(Some(BlockSelection::Full));
@@ -5477,7 +5477,7 @@ mod tests {
         let after = CodeBlock::from_code("after", None::<SharedString>);
         after.set_selection(0..5);
         let document = crate::text::document::ParsedDocument {
-            blocks: Arc::new(im::vector![block, BlockNode::CodeBlock(after)]),
+            blocks: Arc::new(imbl::vector![block, BlockNode::CodeBlock(after)]),
             ..Default::default()
         };
         assert!(
@@ -7012,7 +7012,7 @@ mod tests {
 
         let document = ParsedDocument {
             source: source.into(),
-            blocks: Arc::new(im::vector![
+            blocks: Arc::new(imbl::vector![
                 BlockNode::Paragraph(selected_paragraph("start")),
                 BlockNode::List {
                     ordered: true,
@@ -7057,7 +7057,7 @@ mod tests {
 
         let document = ParsedDocument {
             source: source.into(),
-            blocks: Arc::new(im::vector![
+            blocks: Arc::new(imbl::vector![
                 BlockNode::Paragraph(selected_paragraph("before")),
                 BlockNode::Paragraph(image),
                 BlockNode::Paragraph(selected_paragraph("after")),
@@ -7077,7 +7077,7 @@ mod tests {
         // it, is not enclosed and is dropped.
         let document = ParsedDocument {
             source: String::new().into(),
-            blocks: Arc::new(im::vector![
+            blocks: Arc::new(imbl::vector![
                 BlockNode::Paragraph(selected_paragraph("before")),
                 BlockNode::Paragraph(image_paragraph("alt", "u")),
             ]),
@@ -7146,7 +7146,7 @@ mod tests {
         // copied Markdown re-renders with the same structure.
         let document = ParsedDocument {
             source: String::new().into(),
-            blocks: Arc::new(im::vector![
+            blocks: Arc::new(imbl::vector![
                 BlockNode::Heading {
                     level: 1,
                     children: selected_paragraph("Title"),
