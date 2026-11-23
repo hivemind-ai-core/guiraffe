@@ -18,10 +18,27 @@ jobs:
       GUIRAFFE_SNAPSHOT_RENDERER: lavapipe
       CARGO_INCREMENTAL: 0
     steps:
+      # The dated archive is slow and rate-limited: keep the packages between runs, let slow
+      # downloads finish, and retry. Change the key together with the snapshot date.
+      - uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: arch-packages-2026-11-21-v1
       - name: Pinned system packages and fonts
+        shell: bash
         run: |
           echo 'Server=https://archive.archlinux.org/repos/2026/11/21/$repo/os/$arch' > /etc/pacman.d/mirrorlist
-          pacman -Syyuu --noconfirm --needed base-devel git python clang cmake alsa-lib openssl libxcb libx11 libxkbcommon libxkbcommon-x11 wayland vulkan-icd-loader vulkan-swrast mesa fontconfig freetype2 libgit2 adwaita-fonts cantarell-fonts gsfonts noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-bitstream-vera ttf-dejavu ttf-fira-code ttf-liberation ttf-opensans
+          for attempt in 1 2 3 4; do
+            if pacman -Syyuu --noconfirm --needed --disable-download-timeout base-devel git python clang cmake alsa-lib openssl libxcb libx11 libxkbcommon libxkbcommon-x11 wayland vulkan-icd-loader vulkan-swrast mesa fontconfig freetype2 libgit2 adwaita-fonts cantarell-fonts gsfonts noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-bitstream-vera ttf-dejavu ttf-fira-code ttf-liberation ttf-opensans > /tmp/pacman.log 2>&1; then
+              tail -n 2 /tmp/pacman.log
+              exit 0
+            fi
+            echo "::warning title=Package install::attempt $attempt failed: $(tail -n 3 /tmp/pacman.log | tr '\n' ' ')"
+            sleep $((attempt * 30))
+          done
+          cat /tmp/pacman.log
+          echo "::error title=Package install::$(tail -n 20 /tmp/pacman.log | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"
+          exit 1
       - uses: actions/checkout@v4
       # The container runs as root and the checkout belongs to the runner's user. Tests run git.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -51,10 +68,27 @@ jobs:
       GUIRAFFE_SNAPSHOT_RENDERER: lavapipe
       CARGO_INCREMENTAL: 0
     steps:
+      # The dated archive is slow and rate-limited: keep the packages between runs, let slow
+      # downloads finish, and retry. Change the key together with the snapshot date.
+      - uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: arch-packages-2026-11-21-v1
       - name: Pinned system packages and fonts
+        shell: bash
         run: |
           echo 'Server=https://archive.archlinux.org/repos/2026/11/21/$repo/os/$arch' > /etc/pacman.d/mirrorlist
-          pacman -Syyuu --noconfirm --needed base-devel git python clang cmake alsa-lib openssl libxcb libx11 libxkbcommon libxkbcommon-x11 wayland vulkan-icd-loader vulkan-swrast mesa fontconfig freetype2 libgit2 adwaita-fonts cantarell-fonts gsfonts noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-bitstream-vera ttf-dejavu ttf-fira-code ttf-liberation ttf-opensans
+          for attempt in 1 2 3 4; do
+            if pacman -Syyuu --noconfirm --needed --disable-download-timeout base-devel git python clang cmake alsa-lib openssl libxcb libx11 libxkbcommon libxkbcommon-x11 wayland vulkan-icd-loader vulkan-swrast mesa fontconfig freetype2 libgit2 adwaita-fonts cantarell-fonts gsfonts noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-bitstream-vera ttf-dejavu ttf-fira-code ttf-liberation ttf-opensans > /tmp/pacman.log 2>&1; then
+              tail -n 2 /tmp/pacman.log
+              exit 0
+            fi
+            echo "::warning title=Package install::attempt $attempt failed: $(tail -n 3 /tmp/pacman.log | tr '\n' ' ')"
+            sleep $((attempt * 30))
+          done
+          cat /tmp/pacman.log
+          echo "::error title=Package install::$(tail -n 20 /tmp/pacman.log | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"
+          exit 1
       - uses: actions/checkout@v4
       # The container runs as root and the checkout belongs to the runner's user. Tests run git.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
