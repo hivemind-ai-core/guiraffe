@@ -93,8 +93,17 @@ Candidates, in likely order:
 2. **Accessibility:** an incremental tree fed by the control registry, its measured cost, and
    screen-reader passes.
 3. **Rendering:** gradients, blend modes, filters, masks; decide between patching GPUI and Vello
-   in a layer. System compositor layers for video and animation.
-4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io.
+   in a layer. System compositor layers for video and animation. **GPU surfaces in the UI**: an
+   element that shows a wgpu texture from the app (a 3D viewport, a custom GPU view), clipped and
+   layered like any other, on the renderer's own device so frames stay in order. The renderer
+   already reserves a surface pipeline that draws nothing today. Pulsar's WGPUI
+   (`wgpu_surface`) shows the approach; we patch our GPUI rather than adopt that fork.
+   gpui-fast's `ExternalGpu` composition layer is the alternative for video.
+4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io. Decide
+   whether macOS and Windows draw with the wgpu renderer that Linux and the web use (wgpu runs on
+   Metal and Direct3D 12) instead of GPUI's native Metal and Direct3D 11 renderers. One renderer
+   would carry gpui-fast's renderer work and GPU surfaces everywhere; measure startup, frame
+   time, memory and binary size against the native ones first.
 5. **Architecture:** a conformance suite for UI documents and one virtualized data-source interface.
 6. **Styling API:** custom palettes and surfaces (apps derive some roles themselves today), any
    color for `Text` rather than palette colors only, and a type scale beyond 20px. For charts,
