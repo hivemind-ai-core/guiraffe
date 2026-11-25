@@ -2,7 +2,7 @@
 use super::{DockArea, DockPlacement, Panel, panel_handle};
 use gpui_kit::{
     AnyWindowHandle, App, Entity, SharedString, Subscription, Window, WindowOptions,
-    component::dock::{InsertTarget, NodeId, PaneRef, PanelId},
+    component::dock::{InsertTarget, NodeId, PaneRef, PaneTree, PanelId},
 };
 use guiraffe_layout::LayoutStore;
 use guiraffe_windows::{OpenMode, WindowKey, WindowManager};
@@ -34,18 +34,27 @@ struct ReturnSlot {
 }
 
 impl ReturnSlot {
-    fn locate(area: &DockArea, panel: PanelId) -> Option<Self> {
-        REGIONS.into_iter().find_map(|(region, _)| {
-            let tree = area.layout(region)?;
-            let node = tree.find_panel_node(panel)?;
-            let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
-                return None;
-            };
-            let index = panels.iter().position(|id| *id == panel)?;
-            Some(Self {
-                region,
-                tab: Some((node, index)),
-            })
+    fn locate(tree: &PaneTree, region: DockPlacement, panel: PanelId) -> Option<Self> {
+        let node = tree.find_panel_node(panel)?;
+        let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
+            return None;
+        };
+        let index = panels.iter().position(|id| *id == panel)?;
+        Some(Self {
+            region,
+            tab: Some((node, index)),
+        })
+    }
+
+    fn target(self, tree: &PaneTree) -> Option<InsertTarget> {
+        let (node, index) = self.tab?;
+        let PaneRef::Tabs { .. } = tree.find_node(node)?.kind() else {
+            return None;
+        };
+        Some(InsertTarget::Tabs {
+            node,
+            ix: Some(index),
+            activate: true,
         })
     }
 }
@@ -88,7 +97,9 @@ impl<P: Panel> DockablePanel<P> {
     /// Open the panel in a new window and remember its home region.
     pub fn pop_out(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<bool> {
         let id = PanelId::from(self.panel.entity_id());
-        let Some(slot) = ReturnSlot::locate(self.area.read(cx), id) else {
+        let Some(slot) = REGIONS.into_iter().find_map(|(region, _)| {
+            ReturnSlot::locate(self.area.read(cx).layout(region)?, region, id)
+        }) else {
             return Ok(false);
         };
         self.open(slot, window, cx)
@@ -187,22 +198,8 @@ fn attach<P: Panel>(
 ) {
     area.update(cx, |area, cx| {
         area.add_panel_view(panel_handle(panel.clone()), slot.region, None, window, cx);
-        if let Some((node, index)) = slot.tab
-            && area
-                .layout(slot.region)
-                .and_then(|tree| tree.find_node(node))
-                .is_some_and(|node| matches!(node.kind(), PaneRef::Tabs { .. }))
-        {
-            area.move_panel(
-                PanelId::from(panel.entity_id()),
-                InsertTarget::Tabs {
-                    node,
-                    ix: Some(index),
-                    activate: true,
-                },
-                window,
-                cx,
-            );
+        if let Some(target) = area.layout(slot.region).and_then(|tree| slot.target(tree)) {
+            area.move_panel(PanelId::from(panel.entity_id()), target, window, cx);
         }
     });
 }
@@ -210,6 +207,31 @@ fn attach<P: Panel>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn returns_to_saved_tab_and_falls_back_when_group_is_removed() {
+        use gpui_kit::{base::Placement, component::dock::RootKind};
+        let mut tree = PaneTree::new(RootKind::Any);
+        let first = PanelId::from_u64(1);
+        let second = PanelId::from_u64(2);
+        tree.split(tree.root().id(), first, Placement::Right, None);
+        let group = tree.find_panel_node(first).unwrap();
+        tree.insert_panel(
+            second,
+            InsertTarget::Tabs {
+                node: group,
+                ix: None,
+                activate: true,
+            },
+        );
+        let slot = ReturnSlot::locate(&tree, DockPlacement::Right, first).unwrap();
+        tree.remove_panel(first);
+        tree.insert_panel(first, slot.target(&tree).unwrap());
+        assert_eq!(tree.panels().collect::<Vec<_>>(), [first, second]);
+        tree.remove_panel(first);
+        tree.remove_panel(second);
+        assert!(slot.target(&tree).is_none());
+    }
+
     #[test]
     fn restore_only_recognizes_detached_regions() {
         for (region, key) in REGIONS {
