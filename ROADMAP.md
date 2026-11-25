@@ -117,7 +117,7 @@ How the 0.3 design changes the requests:
 | # | Item | Notes |
 |---|---|---|
 | 1 | `DopeSheet` authoring: insert and remove keys, value channels with segment interpolation (Constant, Linear, Bezier, eases), toggle channels, `ChannelCurve::value_at`, expand a row into a `CurveView` lane | The dope sheet and `CurveView` bind the same store slice. Actions: `InsertKey`, `RemoveKeys`, `SetKeyValue`, `SetSegmentInterp`, `BendSegment`, `ToggleSpan`. `value_at` is pure, matches the drawn segment, and is usable off the UI thread. Includes a keyboard-only flow |
-| 2 | `TracksView`: per-track height and resizing, a clip painter, a themed selection style, move vs trim, end trim past the content | Heights and selection are store state. Actions: `ResizeTrack`, `MoveClip`, `TrimClip`, `Select`. Row layout becomes a prefix sum; hit testing uses binary search. The clip painter only paints, from a snapshot of the clip. 60 fps with 64 tracks × 200 clips |
+| 2 | `TracksView`: per-track height and resizing, a clip painter, a themed selection style, move vs trim, end trim past the content, and a header column that can be hidden or replaced (`HeaderMode`) | Heights and selection are store state. Actions: `ResizeTrack`, `MoveClip`, `TrimClip`, `Select`. Row layout becomes a prefix sum; hit testing uses binary search. The clip painter only paints, from a snapshot of the clip. 60 fps with 64 tracks × 200 clips |
 | 3 | Playhead, follow mode and view range as store state; in-place track updates | Replaces `set_playhead`/`set_view`/`update_tracks`: the host writes the store, and the view diffs |
 | 4 | `Meter`: peak, RMS, peak hold, clip latch, dB zones from theme tokens, gain reduction, stereo, LUFS slot | Level is a sink. Clip reset is an action. Zero allocation per frame |
 | 5 | `Knob` and a `NumberField` with units, scrub, typed entry and log mapping | One value-mapping trait shared with `Slider`. Standard `SetValue`/`Increment`/`Decrement` actions, so every parameter is bindable to shortcuts and the ribbon |
@@ -125,6 +125,7 @@ How the 0.3 design changes the requests:
 | 7 | Time ruler with a loop range, locators and `TimeFormat::Musical` | The loop range and locators are store state with `SetRange`/`MoveLocator` actions. Shared by the piano roll and the arrangement |
 | 8 | `ScopeLayer` and `SpectrumLayer` presets for `PlotSurface` | Sample buffers come in through sinks. Min/max per pixel column; log-frequency and dB axes |
 | 9 | `Canvas` helper: local coordinates, hover, drag gestures, cursor, virtual accessible items | Virtual items register control ids and snapshots, so custom editors are drivable and accessible |
+| 10 | GUIraffe `Tabs`: themed, keyboard-navigable, optional icons, badges and closable tabs | Replaces Kit's `TabBar` in Passage's editor pane. Tab switching is a `Select` action on the bus |
 
 Requests: `../daw/docs/guiraffe-requests/`. Items 2 and 3 change `TracksView`, which the 0.3
 performance work also touches, so they start after it merges. If a 0.3 API turns out unable to
