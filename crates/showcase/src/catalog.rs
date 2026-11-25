@@ -105,6 +105,7 @@ pub fn entries() -> Vec<Entry> {
     v.extend(crate::demos::dates::entries());
     v.extend(crate::demos::overlays::entries());
     v.extend(crate::demos::commands::entries());
+    v.extend(crate::demos::ribbon::entries());
     v.extend(crate::demos::desktop::entries());
     v.extend(crate::demos::code::entries());
     v.extend(crate::demos::markdown::entries());

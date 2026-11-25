@@ -25,6 +25,7 @@ pub mod markdown;
 pub mod mermaid;
 pub mod motion;
 pub mod overlays;
+pub mod ribbon;
 pub mod sheet;
 pub mod timeline;
 pub mod ui;

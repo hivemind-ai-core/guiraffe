@@ -9,18 +9,27 @@ pub enum InvocationSource {
     Keyboard,
     Menu,
     Spotlight,
+    Ribbon,
     Programmatic,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Payload {
     pub id: CommandId,
     pub source: InvocationSource,
+    /// Validated arguments, one per declared parameter (empty for parameterless commands).
+    pub args: std::collections::BTreeMap<String, String>,
+}
+impl Payload {
+    pub fn arg(&self, id: &str) -> Option<&str> {
+        self.args.get(id).map(String::as_str)
+    }
 }
 impl From<InvocationSource> for Source {
     fn from(source: InvocationSource) -> Self {
         match source {
             InvocationSource::Keyboard => Source::Shortcut,
             InvocationSource::Spotlight => Source::Spotlight,
+            InvocationSource::Ribbon => Source::Ribbon,
             InvocationSource::Menu => Source::Pointer,
             InvocationSource::Programmatic => Source::Host,
         }
@@ -515,6 +524,30 @@ impl Commands {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), Error> {
+        self.execute_with(
+            id,
+            Default::default(),
+            &crate::Choices::default(),
+            contexts,
+            source,
+            window,
+            cx,
+        )
+    }
+    /// As [`Self::execute`] with arguments, revalidated against the command's parameters and
+    /// `choices` immediately before the handler runs. A command with parameters cannot run
+    /// without complete, valid arguments from any entry point.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_with(
+        &self,
+        id: &CommandId,
+        args: std::collections::BTreeMap<String, String>,
+        choices: &crate::Choices,
+        contexts: &ContextStack,
+        source: InvocationSource,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), Error> {
         // Release the registry borrow before calling user code. A handler may
         // register/unregister commands or invoke another command reentrantly.
         let handler = {
@@ -532,12 +565,15 @@ impl Commands {
             if !command.when.matches(contexts) {
                 return Err(Error::Inactive(id.to_string()));
             }
+            crate::params::validate(command, &args, choices)
+                .map_err(|reason| Error::InvalidArguments(format!("{id}: {reason}")))?;
             command.run.clone()
         };
         handler.invoke(
             &Payload {
                 id: id.clone(),
                 source,
+                args,
             },
             window,
             cx,
@@ -703,7 +739,7 @@ impl Commands {
         Ok(palette)
     }
 }
-fn native_contexts(window: &Window) -> ContextStack {
+pub(crate) fn native_contexts(window: &Window) -> ContextStack {
     let mut result = ContextStack::default();
     for context in window.context_stack() {
         let mut frame = crate::WhenContext::default();

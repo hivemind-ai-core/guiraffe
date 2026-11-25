@@ -1,13 +1,20 @@
 //! Document adapters for native command routing and menus.
 
-use gpui_kit::{App, ElementId, IntoElement, ParentElement, RenderOnce, WeakEntity, Window, div};
+use gpui_kit::{
+    App, ElementId, IntoElement, ParentElement, RenderOnce, Styled, WeakEntity, Window, div,
+};
 use guiraffe_core::{
     widget_catalog::{EventHandler, WidgetRegistration, WidgetRegistry},
     widget_value::Value,
 };
 
 use crate::{
-    Command, CommandId, CommandScope, Commands, Keybinding, Menu, When, registry, widget_specs,
+    Command, CommandId, CommandScope, Commands, Keybinding, Menu, When, registry,
+    ribbon::{
+        CommandRibbon, RibbonButton, RibbonLayout, RibbonMenu, RibbonModel, RibbonProps,
+        RibbonState,
+    },
+    widget_specs,
 };
 
 pub(crate) fn register(cx: &mut App) {
@@ -40,8 +47,85 @@ pub(crate) fn register(cx: &mut App) {
                     .into_any_element()
                 },
             },
+            WidgetRegistration {
+                spec: widget_specs::WIDGETS[2],
+                schema: guiraffe_core::widget_schema!(widget_specs::WIDGETS[2]),
+                render: |node, _, _, _| {
+                    let count = |index| {
+                        node.prop(index)
+                            .as_f64()
+                            .filter(|v| v.is_finite() && *v >= 1.)
+                            .map(|v| v as usize)
+                    };
+                    let defaults = RibbonProps::default();
+                    DocumentRibbon {
+                        key: node.state_id(),
+                        props: RibbonProps {
+                            rows_per_column: count(0).unwrap_or(defaults.rows_per_column),
+                            show_icons: node.prop(1).as_bool().unwrap_or(true),
+                            show_shortcuts: node.prop(2).as_bool().unwrap_or(true),
+                            max_columns: count(3).unwrap_or(defaults.max_columns),
+                            row_height: node.prop(4).as_f64().map(|v| v as f32),
+                        },
+                        open: node.prop(5).as_bool().unwrap_or(false),
+                        label: node
+                            .prop(7)
+                            .as_str()
+                            .unwrap_or("Commands")
+                            .to_owned()
+                            .into(),
+                    }
+                    .into_any_element()
+                },
+            },
         ],
     );
+}
+
+/// DataUi mount of the ribbon: the application's default registry with an empty layout
+/// (documents cannot describe ribbon layouts yet; see KNOWN_ISSUES.md), the status-bar
+/// button and the bar while open.
+#[derive(IntoElement)]
+struct DocumentRibbon {
+    key: ElementId,
+    props: RibbonProps,
+    open: bool,
+    label: gpui_kit::SharedString,
+}
+
+impl RenderOnce for DocumentRibbon {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Ok(commands) = registry(cx) else {
+            return div().into_any_element();
+        };
+        let model = {
+            let empty = RibbonLayout::new("root").menu(RibbonMenu::new("root", "Commands"));
+            let catalog = commands.entity().read(cx).catalog();
+            RibbonModel::build(&empty, catalog, &Default::default())
+        };
+        let Ok(model) = model else {
+            return div().into_any_element();
+        };
+        let props = self.props;
+        let ribbon = window.use_keyed_state(self.key, cx, |window, cx| {
+            RibbonState::new(&commands, std::rc::Rc::new(model), window, cx)
+        });
+        let open = self.open;
+        ribbon.update(cx, |state, cx| {
+            state.set_props(props, cx);
+            if open && !state.is_open() {
+                state.open(window, cx);
+            } else if !open && state.is_open() {
+                state.close(window, cx);
+            }
+        });
+        crate::ribbon::ribbon_scope(&ribbon)
+            .flex()
+            .flex_col()
+            .children(CommandRibbon::when_open(&ribbon, cx))
+            .child(RibbonButton::new(&ribbon).label(self.label))
+            .into_any_element()
+    }
 }
 
 #[derive(IntoElement)]

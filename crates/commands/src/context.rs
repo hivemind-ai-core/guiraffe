@@ -76,6 +76,10 @@ impl ContextStack {
     pub fn contains(&self, key: &str) -> bool {
         self.frames.iter().any(|frame| frame.contains(key))
     }
+    /// The value of `key` in the deepest frame that sets it.
+    pub fn value(&self, key: &str) -> Option<&str> {
+        self.frames.iter().rev().find_map(|frame| frame.get(key))
+    }
     pub fn frames(&self) -> &[Context] {
         &self.frames
     }

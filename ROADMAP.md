@@ -50,7 +50,7 @@ proportion to what changed.
 | # | Item | Notes |
 |---|---|---|
 | 12 | Keymap, Spotlight, DataUi, MCP, scripts and replay on the bus. Toast actions too | Replaces simulated clicks. In-app toasts have no action button today, so Undo has to live elsewhere; a toast action is a bus action |
-| 13 | Command ribbon | [Design](docs/design/command-ribbon.md). The one new component, and the bus's first real client |
+| 13 | Command ribbon | [Design](docs/design/command-ribbon.md). The one new component, and the bus's first real client. Core landed in `guiraffe-commands::ribbon`; open parts in KNOWN_ISSUES |
 | 14 | Multi-window docking | Pop out, dock back, restore layout. Control ids survive the move. Spike cross-window drag early |
 | 15 | The dogfood tool | Start with item 9, so it shapes the API |
 
