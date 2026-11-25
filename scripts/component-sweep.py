@@ -1,47 +1,70 @@
 #!/usr/bin/env python3
-"""Gate mounted component timings using a release-built guiraffe-bench soak executable."""
+"""Gate release-built guiraffe-bench soak executables against the mounted timing budgets."""
 import argparse
 import os
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("soak", type=Path)
-args = parser.parse_args()
-sizes = {
+SIZES = {
     "flamegraph": (32_768, 65_536, 131_072, 262_144, 524_288, 10_000_000),
-    "tracks": (32, 64, 128, 256, 1024),
-    "timeline": (16, 64, 128, 256, 1024),
+    "tracks": (32, 64, 128, 256, 1_000),
+    "timeline": (16, 64, 128, 256, 1_000),
     "mermaid": (16, 32, 64, 128, 500),
 }
-failed = False
-for component, counts in sizes.items():
-    for count in counts:
-        env = dict(os.environ, SOAK_LIMIT_PROBE=component, SOAK_ITEMS=str(count))
-        for key in ("SOAK_FRAMES", "SOAK_SCALE", "SOAK_FLOW_WARM_REPLAY"):
-            env.pop(key, None)
-        result = subprocess.run(
-            [args.soak.resolve(), component], env=env, timeout=60,
-            stdout=subprocess.PIPE, text=True, check=True,
-        )
-        record, = (line for line in result.stdout.splitlines() if line.startswith("LIMIT "))
-        mount, p99, _rss = map(int, record.split()[1:])
-        passed = 0 < mount <= 200_000 and 0 < p99 <= 8_000
-        print(f"{component} {count}: mount={mount}us p99={p99}us "
-              f"{'PASS' if passed else 'FAIL'}", flush=True)
-        failed |= not passed
-# The original dope-sheet regression includes tab activation and concurrent
-# chart ingestion. Exercise complete mixed cycles at the mounted fixture size.
-mixed_env = dict(os.environ, SOAK_FRAMES="384")
-for key in ("SOAK_LIMIT_PROBE", "SOAK_ITEMS", "SOAK_SCALE", "SOAK_FLOW_WARM_REPLAY"):
-    mixed_env.pop(key, None)
-mixed = subprocess.run(
-    [args.soak.resolve(), "mixed"], env=mixed_env, timeout=120,
-    stdout=subprocess.PIPE, text=True, check=True,
-)
-record, = (line for line in mixed.stdout.splitlines() if line.startswith("component=timeline "))
-metrics = dict(field.split("=", 1) for field in record.split())
-passed = int(metrics["frames"]) > 0 and int(metrics["max_us"]) <= 8_000
-print(f"mixed {record} {'PASS' if passed else 'FAIL'}", flush=True)
-sys.exit(int(failed or not passed))
+
+
+def replay(binary, component, settings, timeout):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SOAK_")}
+    env.update(settings)
+    result = subprocess.run(
+        [binary, component], env=env, timeout=timeout, capture_output=True, text=True,
+    )
+    if result.returncode:
+        raise ValueError(f"soak exit {result.returncode}\n{result.stdout}{result.stderr}")
+    return result.stdout.splitlines()
+
+
+def check(binary, component, count):
+    settings = dict(SOAK_LIMIT_PROBE=component, SOAK_ITEMS=str(count), SOAK_FRAME_CPU="1")
+    lines = replay(binary, component, settings, timeout=60)
+    record, = (line for line in lines if line.startswith("LIMIT "))
+    mount, p99, _rss = map(int, record.split()[1:])
+    cpu = next((line for line in lines if line.startswith("frame_thread_cpu_p99_us=")), "")
+    return 0 < mount <= 200_000 and 0 < p99 <= 8_000, f"mount={mount}us p99={p99}us {cpu}".strip()
+
+
+def check_mixed(binary):
+    # Include tab activation and chart ingestion from the original mixed soak.
+    lines = replay(binary, "mixed", {"SOAK_FRAMES": "384"}, timeout=120)
+    record, = (line for line in lines if line.startswith("component=timeline "))
+    metrics = dict(field.split("=", 1) for field in record.split())
+    return int(metrics["frames"]) > 0 and int(metrics["max_us"]) <= 8_000, record
+
+
+def report(label, operation, *args):
+    try:
+        passed, details = operation(*args)
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+        passed, details = False, str(error)
+    print(f"{label}: {details} {'PASS' if passed else 'FAIL'}", flush=True)
+    return passed
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("soak", type=Path, nargs="+", help="one executable per backend")
+    args = parser.parse_args()
+    passed = True
+    for binary in args.soak:
+        binary = binary.resolve()
+        print(binary, flush=True)
+        for component, counts in SIZES.items():
+            for count in counts:
+                passed &= report(f"{component} {count}", check, binary, component, count)
+        passed &= report("mixed", check_mixed, binary)
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
