@@ -33,6 +33,21 @@ intended change to such an image, regenerate it in that image with
 `GUIRAFFE_SNAPSHOT_RENDERER=lavapipe GUIRAFFE_UPDATE_SNAPSHOTS=1`, which writes only those files.
 A failed CI test run lists the failing tests and differences as annotations on the run.
 
+## Mounted size sweep
+
+Build the probes and run the same sweep as the CI job from the checkout root.
+
+```sh
+cargo build --release --locked -p guiraffe-bench --example soak --example limits
+python3 -I .github/scripts/size-sweep.py
+```
+
+The sweep starts at 16 items, doubles the size, and includes the full fixture size.
+Each report in `target/size-sweep/` records mount time, frame p99, and peak memory above an
+empty window. The job log records the host load for each probe. Probe errors and unexpected
+budget misses fail the job. The exceptions in the script match a component, size, and metric
+from the [known performance issues](../KNOWN_ISSUES.md#performance).
+
 ## Leaks
 
 ```sh

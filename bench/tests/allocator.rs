@@ -841,5 +841,24 @@ fn registered_protocol_dispatch_and_repaint() -> anyhow::Result<()> {
     registered.dispatch(|call| call())?;
     let (_, counts) = registered.dispatch(|call| count_allocations(call))??;
     assert_eq!(counts.allocations, 0);
+    registered.dispatch_batch(|call| call())?;
+    let (_, batch) = registered.dispatch_batch(|call| count_allocations(call))??;
+    assert_eq!(batch.allocations, 0, "a batch of eight dispatches inline");
+    Ok(())
+}
+
+#[test]
+fn adopted_controls_cost_the_same_bound_or_unbound() -> anyhow::Result<()> {
+    use guiraffe_bench::protocol::Controls;
+    let mut unbound = Controls::new(false)?;
+    let mut bound = Controls::new(true)?;
+    assert_eq!((unbound.registered()?, bound.registered()?), (0, 1000));
+    let (plain, baseline) = count_allocations(|| unbound.draw())?;
+    plain?;
+    let (frame, registered) = count_allocations(|| bound.draw())?;
+    frame?;
+    eprintln!("adopted controls: unbound {baseline:?}, bound {registered:?}");
+    assert_eq!(registered.allocations, baseline.allocations);
+    assert_eq!(registered.bytes, baseline.bytes);
     Ok(())
 }

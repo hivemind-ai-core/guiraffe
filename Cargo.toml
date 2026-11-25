@@ -10,6 +10,7 @@ license = "MIT"
 rust-version = "1.97"
 
 [workspace.dependencies]
+smallvec = "1.16"
 guiraffe-test = { path = "crates/test", version = "0.1.0" }
 guiraffe-code = { path = "crates/code", version = "0.1.0" }
 guiraffe-chat = { path = "crates/chat", version = "0.1.0" }

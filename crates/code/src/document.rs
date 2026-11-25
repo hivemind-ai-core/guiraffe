@@ -72,6 +72,21 @@ pub fn content_hash(bytes: &[u8]) -> u64 {
     })
 }
 impl CodeDocument {
+    /// Read exactly `len` UTF-8 bytes into the final shared allocation.
+    /// Leaves subsequent bytes in the reader untouched.
+    #[allow(unsafe_code)]
+    pub fn read_exact(mut reader: impl std::io::Read, len: usize) -> std::io::Result<Self> {
+        // SAFETY: zero initializes every u8 to a valid value.
+        let mut bytes = unsafe { Arc::<[u8]>::new_zeroed_slice(len).assume_init() };
+        reader.read_exact(Arc::make_mut(&mut bytes))?;
+        std::str::from_utf8(&bytes)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        // SAFETY: str has the same layout and metadata as [u8], all bytes were
+        // validated above, and into_raw transfers exactly one strong reference.
+        let source = unsafe { Arc::from_raw(Arc::into_raw(bytes) as *const str) };
+        Ok(Self::new(source))
+    }
+
     pub fn new(source: impl Into<Arc<str>>) -> Self {
         let mut document = Self {
             source: source.into(),
@@ -261,6 +276,26 @@ impl CodeDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn read_exact_validates_the_prefix_and_preserves_remaining_bytes() {
+        let mut input = "a\n界!".as_bytes();
+        let document = CodeDocument::read_exact(&mut input, 5).expect("complete valid prefix");
+        assert_eq!(document.line(1), Some("界"));
+        assert_eq!(input, b"!");
+        assert_eq!(
+            CodeDocument::read_exact(&b"a"[..], 2)
+                .expect_err("reject invalid input")
+                .kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+        assert_eq!(
+            CodeDocument::read_exact(&[0xff][..], 1)
+                .expect_err("reject invalid input")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
     #[test]
     fn index_build_stops_after_supersession_during_line_scan() {
         let source: Arc<str> = "a\n".repeat(600).into();

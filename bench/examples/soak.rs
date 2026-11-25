@@ -587,20 +587,36 @@ fn limit_sample(
     mount: Duration,
     stream: bool,
 ) -> Result<()> {
+    use nix::time::{ClockId, clock_gettime};
+
+    let cpu_clock = std::env::var_os("SOAK_FRAME_CPU").map(|_| ClockId::CLOCK_THREAD_CPUTIME_ID);
+    let mut cpu_times = Vec::new();
     let mut times = Vec::with_capacity(120);
     // Limits can stop after a mount failure. Baseline sweeps need the frame data at every size.
     if mount <= Duration::from_millis(200) || std::env::var_os("SOAK_BASELINE_SWEEP").is_some() {
         for index in 0..128 {
+            let cpu_start = cpu_clock.map(clock_gettime).transpose()?;
             let start = Instant::now();
             frame(index)?;
             let elapsed = start.elapsed();
             if index >= 8 {
                 times.push(elapsed.as_micros());
+                if let (Some(clock), Some(start)) = (cpu_clock, cpu_start) {
+                    let delta = clock_gettime(clock)? - start;
+                    cpu_times.push(Duration::from(delta).as_micros());
+                }
             }
             if stream {
                 std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
             }
         }
+    }
+    if !cpu_times.is_empty() {
+        cpu_times.sort_unstable();
+        println!(
+            "frame_thread_cpu_p99_us={}",
+            cpu_times[(cpu_times.len() * 99).div_ceil(100) - 1]
+        );
     }
     limit_report(mount, times)
 }
@@ -669,8 +685,41 @@ mod mounted {
             let model = SheetModel::from_cells(1_000_000, 1000, cells);
             cx.new(|cx| SheetState::new(model, cx))
         })?;
+        #[cfg(test)]
+        if std::env::var("GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO").as_deref() == Ok("sheet") {
+            for seed in [0, 1] {
+                if seed != 0 {
+                    window.update(|_, cx| {
+                        sheet.update(cx, |state, cx| {
+                            state.edit([(CellPos::default(), Cell::new(seed.to_string()))], cx);
+                        })
+                    });
+                }
+                let deadline = Instant::now() + Duration::from_secs(120);
+                while window.update(|_, cx| {
+                    sheet
+                        .read(cx)
+                        .calculation()
+                        .and_then(|c| c.value(CellPos::new(count, 0)))
+                        != Some(Ok((count + seed) as f64))
+                }) {
+                    if Instant::now() >= deadline {
+                        return Err("formula chain did not finish".into());
+                    }
+                    settle(&mut window);
+                    std::thread::sleep(Duration::from_millis(8));
+                }
+            }
+        }
         let at = point(px(380.), px(310.));
         let elapsed = mount_started.elapsed();
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            // Two coordinates and the UTF-8 formula text in each input record.
+            let raw = (1..=count.min(999_999))
+                .map(|row| std::mem::size_of::<CellPos>() + row.ilog10() as usize + 5)
+                .sum();
+            raw_bytes(raw);
+        }
         run(
             &mut |frame| {
                 if frame.is_multiple_of(16) {
@@ -1996,6 +2045,11 @@ mod mounted {
             if let Ok(scenario) = std::env::var(SCENARIO) {
                 match scenario.as_str() {
                     "empty" => empty(|_| {}).expect("mount baseline"),
+                    "sheet" => {
+                        super::sheet(Instant::now(), |_, _| {}).expect("calculate 100k formulas")
+                    }
+                    "code" => super::mixed::run_data("code", Instant::now(), |_, _| {})
+                        .expect("load 10M lines"),
                     "chat" => chat(|_| {}).expect("mount 100k chat history"),
                     "markdown" => markdown(Instant::now(), |frame, _| {
                         for index in 0..64 {
@@ -2042,6 +2096,24 @@ mod mounted {
                 delta <= budget,
                 "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
             );
+        }
+
+        #[test]
+        fn sheet_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget("mounted::tests::sheet_rss_budget", "sheet", 100_000 * 32);
+            }
+        }
+
+        #[test]
+        fn code_load_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget(
+                    "mounted::tests::code_load_rss_budget",
+                    "code",
+                    10_000_000 * 20 - 1,
+                );
+            }
         }
 
         #[test]

@@ -444,6 +444,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Read-only node render counter for instrumentation.",
     ),
     (
+        "ui::DataUi::register",
+        "Rust host registration on the action bus; document events become control actions.",
+    ),
+    (
         "ui::DataUi::set_document",
         "Rust hot-reload operation that swaps the document mounted by an existing host.",
     ),
@@ -1020,6 +1024,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Read-only model query for native callers. Documents receive changed cells through edit.",
     ),
     (
+        "sheet::SheetState::calculation",
+        "Read-only query for the finished background calculation, for native callers. Documents receive changed cells through edit.",
+    ),
+    (
         "dnd::DockDragOverlay",
         "Native drag surface mounted by a managed dock.",
     ),
@@ -1029,7 +1037,28 @@ const IMPERATIVE: &[(&str, &str)] = &[
     ),
 ];
 
+/// Native protocol control entities (`guiraffe_components::controls`). Documents reach
+/// them through `ui!` lowering (item 9) and the action bus, not through their own kinds.
+const PROTOCOL_CONTROLS: &[&str] = &[
+    "components::ButtonControl",
+    "components::CheckboxControl",
+    "components::SwitchControl",
+    "components::SliderControl",
+    "components::TextInputControl",
+    "components::SelectControl",
+    "components::TabsControl",
+    "components::MenuControl",
+];
+
 fn covered(surface: &str) -> bool {
+    if PROTOCOL_CONTROLS.iter().any(|control| {
+        surface == *control
+            || surface
+                .strip_prefix(control)
+                .is_some_and(|rest| rest.starts_with("::"))
+    }) {
+        return true;
+    }
     if IMPERATIVE
         .iter()
         .any(|(api, reason)| *api == surface && !reason.is_empty())

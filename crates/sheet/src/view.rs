@@ -261,6 +261,13 @@ impl SheetState {
         state
     }
 
+    /// Values for the current revision, once the background calculation has finished.
+    pub fn calculation(&self) -> Option<&Calculation> {
+        self.calculation
+            .as_ref()
+            .filter(|result| result.revision == self.revision)
+    }
+
     pub fn model(&self) -> &SheetModel {
         &self.model
     }

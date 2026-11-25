@@ -98,7 +98,36 @@ jobs:
       - run: cargo fetch --locked
       - run: cargo build --workspace --locked --features guiraffe-bench/gpui-fast
       - run: bash .github/scripts/test.sh --no-fail-fast --workspace --locked --features guiraffe-bench/gpui-fast
+  size-and-leaks:
+    runs-on: ubuntu-24.04
+    env:
+      TMPDIR: ${{ github.workspace }}/target/tmp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux dependencies and Valgrind
+        run: |
+          mkdir -p "$TMPDIR"
+          sudo apt-get update
+          sudo apt-get install -y valgrind build-essential pkg-config clang cmake libasound2-dev libssl-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgit2-dev
+      - id: build_probes
+        run: cargo build --release --locked -p guiraffe-bench --example soak --example limits
+      - name: Sweep mounted fixture sizes
+        run: python3 -I .github/scripts/size-sweep.py
+      - name: Check for leaks
+        if: "!cancelled() && steps.build_probes.outcome == 'success'"
+        run: scripts/leak-check.py --soak target/release/examples/soak --out target/leak --jobs 2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: size-and-leaks
+          path: |
+            target/size-sweep
+            target/leak
   instructions:
+    env:
+      IAI_CALLGRIND_HOME: ${{ github.workspace }}/target/iai
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -120,10 +149,11 @@ jobs:
             echo "::warning::No base commit (new branch or rewritten history): instruction counts are not compared."
             exit 0
           fi
-          git worktree add --detach /tmp/guiraffe-base "$BASE_SHA"
-          if test -f /tmp/guiraffe-base/bench/benches/instructions.rs; then
-            cd /tmp/guiraffe-base
-            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-baseline=pr_base
+          git worktree add --detach "$RUNNER_TEMP/guiraffe-base" "$BASE_SHA"
+          if test -f "$RUNNER_TEMP/guiraffe-base"/bench/benches/instructions.rs; then
+            cd "$RUNNER_TEMP/guiraffe-base"
+            cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-baseline=pr_base
+            cargo clean
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::The base predates the benchmarks: instruction counts are not compared."

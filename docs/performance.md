@@ -40,7 +40,8 @@ The machine was not idle (load 1.1 to 1.9), so treat these as indicative.
 - **Middle sizes are slower than the largest**, because level of detail only helps at the top:
   flame graphs reach 96 ms p99 at 262k frames upstream, and Tracks 53 ms at 12.8k clips.
 - **Memory:** Sheet with 100k formulas uses about 120 MiB, and CodeViewer peaks at 379 MiB while
-  loading 10M lines.
+  loading 10M lines in 0.2. Both 0.3 mounted regression gates now pass on both backends
+  ([measurements](#sheet-and-codeviewer-load-memory)).
 - **Soak:** process memory grows about 6 % over 30 minutes. The leak check finds no leak.
 - **Allocation:** zero on an unchanged repaint is gated for some components only. DataUi, `ui!`,
   the command menu and devtools still allocate (42 to 735 per repaint).
@@ -115,3 +116,76 @@ cached row and historically visited one selector per row. The synchronous
 equal field write allocates zero times. As a timing reference, the busy-host
 release run at `ab30919` measured cached label-edit p99s of 13.92, 46.37
 and 147.41 ms upstream, and 14.22, 50.03 and 158.50 ms on gpui-fast.
+
+### Sheet and CodeViewer load memory
+
+On Linux, the Sheet and CodeViewer RSS tests run the full-size mounted fixture and an empty
+window in separate processes. They compare the median of five peak RSS differences with
+the raw-data budget. Sheet waits for the last cell of its 100,000-formula chain to publish,
+changes the first input, and verifies the new last value. CodeViewer streams 199,999,999
+UTF-8 bytes into its shared source and builds the 10-million-line index.
+
+The Cargo test profile measured the following peak differences in KiB above the empty
+window. Each value is the median of five fresh loaded/baseline process pairs.
+
+| Fixture | Upstream | gpui-fast | Budget |
+|---|---:|---:|---:|
+| Sheet, 100,000 formulas, initial and edited calculation | 59,224 | 59,988 | 69,443 |
+| CodeViewer, 10 million lines | 197,144 | 197,044 | 309,677 |
+
+An optimized, renderer-free probe of the same CodeDocument source measured 392,988 KiB
+peak process RSS when converting the generated String into an Arc, and 197,744 KiB when
+reading into the final allocation. Both runs checked the line count. Another process kept
+the 100,000-formula SheetModel and the first published result live during a second full
+recalculation. Peak RSS fell from 105,784 KiB at 34c59679 to 59,172 KiB. The model stores
+single occupancy intervals inline. The calculation worker stores reverse edges in one
+ordered set, compiles cell/constant expressions in one allocation, and publishes values
+from its working snapshot. These process peaks include model construction and exclude
+the mounted window.
+
+### Mixed-soak RSS attribution
+
+On 2026-11-25, two concurrent upstream headless mixed soaks at 7a38af63 ran for
+30 minutes in the Cargo development profile on a busy Linux host. Both ran the normal
+full-size fixture. One used glibc defaults and the other used `MALLOC_ARENA_MAX=1`
+and `MALLOC_TRIM_THRESHOLD_=0`. At each ten-second sample an external process summed
+RSS by mapping from `/proc/PID/smaps`. An in-process sampler thread returned glibc
+`mallinfo2()` to the observer. The first sample was the warmed baseline.
+
+| Change at peak process RSS, KiB | Default malloc | Single trimmed arena |
+|---|---:|---:|
+| Process RSS | +4,604 | +3,084 |
+| Resident pages in the process heap mapping | +4,600 | +2,932 |
+| Arena size | +4,532 | +2,956 |
+| Free bytes within arenas | +4,777 | +1,856 |
+| In-use bytes within arenas | −245 | +1,100 |
+| Separately mmap-allocated bytes | 0 | +584 |
+
+The default allocator retained additional space after objects were freed. In the trimmed
+run, free arena space accounted for 63% of the additional arena size at peak. The
+remaining arena growth held in-use allocations. The fixture had accepted 31 additional
+chat messages and 60,240 additional bytes of chat stream payload by that sample.
+Allocator byte counts describe allocation state, whereas the mapping counts measure
+resident pages. These samples cannot assign every in-use allocation to a widget.
+
+At the trimmed run's final sample the arena still held 2,381 KiB more free space and
+511 KiB more in-use space than at baseline. Process RSS had fallen by 11,332 KiB as
+13,864 KiB of executable pages left the resident set. Both diagnostic runs crossed
+the warmed RSS limit and returned failure. The development-profile runs quantify the
+source of growth on this host. The earlier release measurements for both backends
+remain in the 0.2 table.
+
+### Controlled component sweep
+
+The release worktree retains the upstream and fast soak executables in
+`target/sweep-bin/`. Once the host is quiet, run both size sweeps from that worktree
+with one command.
+
+```sh
+python3 scripts/component-sweep.py target/sweep-bin/soak-up target/sweep-bin/soak-fast
+```
+
+The sweep checks mount time and interaction p99 for FlameGraph, Tracks, the dope sheet
+and Mermaid, followed by the maximum dope-sheet frame time across four mixed replay
+cycles. It exits nonzero if either backend misses any budget. For a fresh checkout,
+follow the [build instructions](../bench/README.md#mounted-component-size-sweep).

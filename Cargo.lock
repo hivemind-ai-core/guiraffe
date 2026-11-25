@@ -3564,6 +3564,7 @@ dependencies = [
  "gpui-kit",
  "imbl",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]
@@ -3609,6 +3610,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "image",
  "proptest",
 ]
 
