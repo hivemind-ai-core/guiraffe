@@ -8,7 +8,7 @@
 mod managed;
 mod multi_window;
 pub use managed::DockDragOverlay;
-pub use multi_window::DockablePanel;
+pub use multi_window::{DockAction, DockControl, DockablePanel};
 
 use gpui_kit::{App, Entity, SharedString, Subscription, Window};
 use guiraffe_layout::LayoutStore;

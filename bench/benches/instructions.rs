@@ -60,7 +60,7 @@ fn registered_controls() -> guiraffe_bench::protocol::Fixture {
 }
 
 // One registered toggle dispatched through the window bus, excluding path lookup.
-// The bench profile measured 2,079 Ir on x86-64 at the 0.3 phase 1 core. The
+// The bench profile measured 2,111 Ir on x86-64 at the 0.3 phase 1 core. The
 // hard ceiling applies even before a base revision contains this suite.
 #[library_benchmark(setup = registered_controls, config = LibraryBenchmarkConfig::default().tool(
     Callgrind::default().hard_limits([(EventKind::Ir, 3_000)]).soft_limits([(EventKind::Ir, 2.0)])

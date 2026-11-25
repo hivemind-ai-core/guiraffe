@@ -20,7 +20,8 @@ use std::{
 use gpui_kit::{App, AppContext, Context, Entity, Subscription, Task, WeakEntity};
 
 use crate::engine::{
-    Coeffects, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, Queued, UndoEvent,
+    Coeffects, DirtyKeys, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, Queued,
+    UndoEvent,
 };
 
 type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
@@ -33,14 +34,27 @@ trait Slot<S> {
 }
 
 struct Slots<S> {
-    entries: Vec<Weak<dyn Slot<S>>>,
+    entries: Rc<Vec<Weak<dyn Slot<S>>>>,
     live: usize,
+}
+
+type SlotGroup<S> = Rc<RefCell<Slots<S>>>;
+type GroupMap<S> = HashMap<u64, SlotGroup<S>>;
+
+impl<S> Default for Slots<S> {
+    fn default() -> Self {
+        Self {
+            entries: Rc::default(),
+            live: 0,
+        }
+    }
 }
 
 // The selection owns this slot. The Store holds weak entries in registration order.
 struct RegisteredSlot<S, T> {
     slot: T,
     slots: Weak<RefCell<Slots<S>>>,
+    keyed: Option<(u64, Weak<RefCell<GroupMap<S>>>)>,
 }
 
 impl<S, T: Slot<S>> Slot<S> for RegisteredSlot<S, T> {
@@ -61,7 +75,13 @@ impl<S, T> Drop for RegisteredSlot<S, T> {
             // Each sweep removes at least half the entries, so its cost can be
             // charged to the removed slots. Weak entries never own selectors.
             if slots.entries.len() >= 2 * slots.live {
-                slots.entries.retain(|slot| slot.strong_count() != 0);
+                Rc::make_mut(&mut slots.entries).retain(|slot| slot.strong_count() != 0);
+            }
+            if slots.live == 0
+                && let Some((key, groups)) = &self.keyed
+                && let Some(groups) = groups.upgrade()
+            {
+                groups.borrow_mut().remove(key);
             }
         }
     }
@@ -72,7 +92,8 @@ struct Inner<S: Clone + PartialEq + 'static> {
     cofx: Rc<RefCell<Coeffects>>,
     effects: HashMap<TypeId, EffectHandler<S>>,
     on_error: Option<ErrorHandler>,
-    slots: Rc<RefCell<Slots<S>>>,
+    slots: SlotGroup<S>,
+    keyed: Rc<RefCell<GroupMap<S>>>,
     debounce: HashMap<&'static str, (u64, Queued<S>, Task<()>)>,
     next_timer: u64,
     stats: StoreStats,
@@ -149,10 +170,8 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
             cofx: Rc::new(RefCell::new(Coeffects::default())),
             effects: HashMap::new(),
             on_error: None,
-            slots: Rc::new(RefCell::new(Slots {
-                entries: Vec::new(),
-                live: 0,
-            })),
+            slots: Rc::default(),
+            keyed: Rc::default(),
             debounce: HashMap::new(),
             next_timer: 0,
             stats: StoreStats::default(),
@@ -291,20 +310,35 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         let mut budget = self.inner.read(cx).engine.cascade_limit;
         let mut error = None;
         loop {
+            let mut dirty = DirtyKeys::default();
             let (outcome, state) = self.inner.update(cx, |i, cx| {
                 let cofx = i.cofx.clone();
                 let mut cofx = cofx.borrow_mut();
                 cofx.now = Some(cx.background_executor().now());
                 let out = i
                     .engine
-                    .process_with_first(first.take(), &cofx, &mut budget);
+                    .process_with_first(first.take(), &cofx, &mut budget, &mut dirty);
                 i.stats.events_processed += out.processed as u64;
                 (out, i.engine.state().clone())
             });
             if outcome.changed {
-                let slots = self.inner.read(cx).slots.borrow().entries.clone();
-                for slot in slots.into_iter().filter_map(|slot| slot.upgrade()) {
-                    slot.refresh(&state, cx);
+                let inner = self.inner.read(cx);
+                let generic = inner.slots.clone();
+                let keyed = inner.keyed.clone();
+                Self::refresh_group(&generic, &state, cx);
+                if dirty.all {
+                    // Callbacks may add or remove subscriptions during a refresh.
+                    let groups: Vec<_> = keyed.borrow().values().cloned().collect();
+                    for group in groups {
+                        Self::refresh_group(&group, &state, cx);
+                    }
+                } else {
+                    for key in dirty.iter() {
+                        let group = keyed.borrow().get(&key).cloned();
+                        if let Some(group) = group {
+                            Self::refresh_group(&group, &state, cx);
+                        }
+                    }
                 }
             }
             if outcome.error.is_some() {
@@ -325,6 +359,13 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         });
         if let (Some(e), Some(h)) = (error, handler) {
             h(&e, cx);
+        }
+    }
+
+    fn refresh_group(group: &SlotGroup<S>, state: &S, cx: &mut App) {
+        let slots = group.borrow().entries.clone();
+        for slot in slots.iter().filter_map(Weak::upgrade) {
+            slot.refresh(state, cx);
         }
     }
 
@@ -411,7 +452,12 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
                 .iter()
                 .filter_map(Weak::upgrade)
                 .filter(|s| s.alive())
-                .count(),
+                .count()
+                + i.keyed
+                    .borrow()
+                    .values()
+                    .map(|g| g.borrow().live)
+                    .sum::<usize>(),
             ..i.stats.clone()
         }
     }
@@ -424,9 +470,30 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         cx: &mut Context<V>,
         f: impl Fn(&S) -> T + 'static,
     ) -> Selected<T> {
+        self.select_in(None, cx, f)
+    }
+
+    /// Provisional selection refreshed by writes to `key` and by unkeyed writes.
+    /// Every dependency of `f` must be written under this key or without a key.
+    pub fn select_key<V: 'static, T: Clone + PartialEq + 'static>(
+        &self,
+        key: u64,
+        cx: &mut Context<V>,
+        f: impl Fn(&S) -> T + 'static,
+    ) -> Selected<T> {
+        self.select_in(Some(key), cx, f)
+    }
+
+    fn select_in<V: 'static, T: Clone + PartialEq + 'static>(
+        &self,
+        key: Option<u64>,
+        cx: &mut Context<V>,
+        f: impl Fn(&S) -> T + 'static,
+    ) -> Selected<T> {
         let value = f(&self.state(cx));
         let entity = cx.new(|_| SelectionCell { value });
-        let slot = self.register(
+        let slot = self.register_in(
+            key,
             SelectSlot {
                 entity: entity.downgrade(),
                 select: Box::new(f),
@@ -474,14 +541,28 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     }
 
     fn register(&self, slot: impl Slot<S> + 'static, cx: &mut App) -> Rc<dyn Any> {
-        let slots = &self.inner.read(cx).slots;
+        self.register_in(None, slot, cx)
+    }
+
+    fn register_in(
+        &self,
+        key: Option<u64>,
+        slot: impl Slot<S> + 'static,
+        cx: &mut App,
+    ) -> Rc<dyn Any> {
+        let inner = self.inner.read(cx);
+        let slots = match key {
+            Some(key) => inner.keyed.borrow_mut().entry(key).or_default().clone(),
+            None => inner.slots.clone(),
+        };
         let registered = Rc::new(RegisteredSlot {
             slot,
-            slots: Rc::downgrade(slots),
+            slots: Rc::downgrade(&slots),
+            keyed: key.map(|key| (key, Rc::downgrade(&inner.keyed))),
         });
         let erased: Rc<dyn Slot<S>> = registered.clone();
         let mut slots = slots.borrow_mut();
-        slots.entries.push(Rc::downgrade(&erased));
+        Rc::make_mut(&mut slots.entries).push(Rc::downgrade(&erased));
         slots.live += 1;
         registered
     }
@@ -492,12 +573,12 @@ struct SelectionCell<T> {
 }
 
 fn set_cell<T: PartialEq + 'static>(entity: &Entity<SelectionCell<T>>, value: T, cx: &mut App) {
-    entity.update(cx, |cell, cx| {
-        if cell.value != value {
+    if entity.read(cx).value != value {
+        entity.update(cx, |cell, cx| {
             cell.value = value;
             cx.notify();
-        }
-    });
+        });
+    }
 }
 
 struct SelectSlot<S, T: 'static> {

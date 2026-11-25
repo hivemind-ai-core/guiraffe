@@ -9,7 +9,7 @@
 
 use std::{
     any::{Any, TypeId},
-    collections::{HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, VecDeque},
     fmt,
     sync::Arc,
     time::{Duration, Instant},
@@ -125,10 +125,38 @@ impl Coeffects {
     }
 }
 
+/// Keys name independent projections within one store. A write without a key
+/// conservatively refreshes every registered projection.
+#[derive(Default)]
+pub(crate) struct DirtyKeys {
+    pub(crate) all: bool,
+    pub(crate) first: Option<u64>,
+    rest: BTreeSet<u64>,
+}
+
+impl DirtyKeys {
+    fn insert(&mut self, key: u64) {
+        match self.first {
+            None => self.first = Some(key),
+            Some(first) if first != key => {
+                self.rest.insert(key);
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = u64> + '_ {
+        self.first.into_iter().chain(self.rest.iter().copied())
+    }
+}
+
 /// The handler's window onto the world.
 pub struct Fx<'a, S> {
     state: &'a mut Arc<S>,
     candidate: Option<S>,
+    dirty: &'a mut DirtyKeys,
+    direct: bool,
+    changed_in_place: bool,
     effects: &'a mut Vec<Effect>,
     queue: &'a mut VecDeque<Queued<S>>,
     cofx: &'a Coeffects,
@@ -142,11 +170,13 @@ impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
 
     /// Mutate a working copy of the state, leaving shared snapshots untouched.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut S) -> R) -> R {
+        self.dirty.all = true;
         f(self.candidate.get_or_insert_with(|| (**self.state).clone()))
     }
 
     /// Replace the whole state.
     pub fn set(&mut self, state: S) {
+        self.dirty.all = true;
         self.candidate = Some(state);
     }
 
@@ -160,6 +190,29 @@ impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
     ) {
         if *read(self.state()) != value {
             self.update(|state| write(state, value));
+        }
+    }
+
+    /// Provisional keyed field write. Readers registered for this key must depend
+    /// only on fields that publish under it. Ordinary selections observe all writes.
+    /// The projections must select the same field. Structural edits should use
+    /// `update` so that keyed readers are refreshed after reordering.
+    pub fn set_keyed_field<T: PartialEq>(
+        &mut self,
+        key: u64,
+        value: T,
+        read: impl FnOnce(&S) -> &T,
+        field: impl FnOnce(&mut S) -> &mut T,
+    ) {
+        if *read(self.state()) == value {
+            return;
+        }
+        self.dirty.insert(key);
+        if self.direct && self.candidate.is_none() {
+            *field(Arc::make_mut(self.state)) = value;
+            self.changed_in_place = true;
+        } else {
+            *field(self.candidate.get_or_insert_with(|| (**self.state).clone())) = value;
         }
     }
 
@@ -414,7 +467,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
     /// through effects and back are caught too). When the budget runs out the remaining queue
     /// **and this batch's effects** are dropped and an error is reported, instead of hanging.
     pub fn process_with_budget(&mut self, cofx: &Coeffects, budget: &mut usize) -> Outcome {
-        self.process_with_first::<UndoEvent>(None, cofx, budget)
+        self.process_with_first::<UndoEvent>(None, cofx, budget, &mut DirtyKeys::default())
     }
 
     pub(crate) fn process_with_first<E: Event<S>>(
@@ -422,6 +475,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
         mut first: Option<E>,
         cofx: &Coeffects,
         budget: &mut usize,
+        dirty: &mut DirtyKeys,
     ) -> Outcome {
         let mut effects = Vec::new();
         let mut processed = 0;
@@ -445,6 +499,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                     event.undoable(),
                     event.compare_state(),
                     description,
+                    dirty,
                     &mut effects,
                     cofx,
                     |fx| event.handle(fx),
@@ -456,6 +511,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                     event.undoable(),
                     event.compare_state(),
                     description,
+                    dirty,
                     &mut effects,
                     cofx,
                     |fx| event.handle(fx),
@@ -480,29 +536,42 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
         undoable: bool,
         compare: bool,
         description: Option<String>,
+        dirty: &mut DirtyKeys,
         effects: &mut Vec<Effect>,
         cofx: &Coeffects,
         handle: impl FnOnce(&mut Fx<'_, S>),
     ) -> bool {
         self.seq += 1;
-        let before = self.state.clone();
+        // Keep an old snapshot only when undo or an interceptor observes it;
+        // holding one would make a keyed write copy the whole state. Shared
+        // snapshots are still protected by `Arc::make_mut`.
+        let before = ((undoable && self.undo.is_some()) || description.is_some())
+            .then(|| self.state.clone());
         let changed = if ty == TypeId::of::<UndoEvent>() {
+            dirty.all = true;
             self.undo()
         } else if ty == TypeId::of::<RedoEvent>() {
+            dirty.all = true;
             self.redo()
         } else {
             let mut fx = Fx {
                 state: &mut self.state,
                 candidate: None,
+                direct: before.is_none(),
+                changed_in_place: false,
+                dirty,
                 effects,
                 queue: &mut self.queue,
                 cofx,
             };
             handle(&mut fx);
-            let changed = fx
-                .candidate
-                .as_ref()
-                .is_some_and(|candidate| !compare || *before != *candidate);
+            // Without an in-place write the state is still the old one, so a
+            // candidate is compared with it.
+            let changed = fx.changed_in_place
+                || fx
+                    .candidate
+                    .as_ref()
+                    .is_some_and(|candidate| !compare || **fx.state != *candidate);
             if !changed {
                 // An equal write keeps the original snapshot and needs no new Arc.
                 fx.candidate = None;
@@ -510,9 +579,9 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
             drop(fx);
             if changed
                 && undoable
-                && let Some(u) = self.undo.as_mut()
+                && let (Some(u), Some(before)) = (self.undo.as_mut(), before.as_ref())
             {
-                u.past.push_back((u.capture)(&before));
+                u.past.push_back((u.capture)(before));
                 while u.past.len() > u.limit {
                     u.past.pop_front();
                 }
@@ -520,7 +589,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
             }
             changed
         };
-        if let Some(description) = description {
+        if let (Some(description), Some(before)) = (description, before) {
             let record = EventRecord {
                 seq: self.seq,
                 description,

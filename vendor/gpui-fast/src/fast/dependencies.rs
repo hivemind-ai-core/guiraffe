@@ -1301,8 +1301,11 @@ impl RenderDependencies {
     pub(crate) fn union(&self, other: &Self) -> Self {
         let offset_reads = self.offset_reads.union(&other.offset_reads);
         if other.entities.is_empty() && other.globals.is_empty() && other.states.is_empty() {
+            // Nothing more was read, but what was written while `other` was
+            // recorded is still the subtree's own.
             return Self {
                 offset_reads,
+                writes: self.writes.union(&other.writes),
                 ..self.clone()
             };
         }
