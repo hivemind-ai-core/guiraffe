@@ -19,6 +19,7 @@ guiraffe-layout = { path = "crates/layout", version = "0.1.0" }
 guiraffe-components = { path = "crates/components", version = "0.1.0" }
 guiraffe-overlays = { path = "crates/overlays", version = "0.1.0" }
 guiraffe-windows = { path = "crates/windows", version = "0.1.0" }
+guiraffe-goldens = { path = "crates/goldens", version = "0.1.0" }
 guiraffe-tray = { path = "crates/tray", version = "0.1.0" }
 guiraffe-markdown = { path = "crates/markdown", version = "0.1.0" }
 guiraffe-mermaid = { path = "crates/mermaid", version = "0.1.0" }

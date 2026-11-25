@@ -3656,6 +3656,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-goldens"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "guiraffe-commands",
+ "guiraffe-core",
+ "guiraffe-dnd",
+ "guiraffe-layout",
+ "guiraffe-overlays",
+ "guiraffe-state",
+ "guiraffe-test",
+ "guiraffe-windows",
+ "image",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
 name = "guiraffe-icons"
 version = "0.1.0"
 dependencies = [

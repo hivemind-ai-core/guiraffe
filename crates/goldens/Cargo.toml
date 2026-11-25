@@ -1,0 +1,35 @@
+[package]
+name = "guiraffe-goldens"
+description = "Review changed snapshot goldens after a gate: before, after, diff heat map, verdicts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+guiraffe-core.workspace = true
+guiraffe-state.workspace = true
+guiraffe-commands.workspace = true
+guiraffe-dnd.workspace = true
+guiraffe-overlays.workspace = true
+guiraffe-layout.workspace = true
+guiraffe-windows.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+smallvec = "1"
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+guiraffe-test = { workspace = true, features = ["snapshot", "inspect"] }
+serde_json.workspace = true
+
+[features]
+gpui-fast = ["gpui-kit/gpui-fast"]
+
+[[bin]]
+name = "guiraffe-goldens"
+path = "src/main.rs"
