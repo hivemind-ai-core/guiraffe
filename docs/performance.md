@@ -94,3 +94,35 @@ single occupancy intervals inline. The calculation worker stores reverse edges i
 ordered set, compiles cell/constant expressions in one allocation, and publishes values
 from its working snapshot. These process peaks include model construction and exclude
 the mounted window.
+
+### Mixed-soak RSS attribution
+
+On 2026-11-25, two concurrent upstream headless mixed soaks at 7a38af63 ran for
+30 minutes in the Cargo development profile on a busy Linux host. Both ran the normal
+full-size fixture. One used glibc defaults and the other used `MALLOC_ARENA_MAX=1`
+and `MALLOC_TRIM_THRESHOLD_=0`. At each ten-second sample an external process summed
+RSS by mapping from `/proc/PID/smaps`. An in-process sampler thread returned glibc
+`mallinfo2()` to the observer. The first sample was the warmed baseline.
+
+| Change at peak process RSS, KiB | Default malloc | Single trimmed arena |
+|---|---:|---:|
+| Process RSS | +4,604 | +3,084 |
+| Resident pages in the process heap mapping | +4,600 | +2,932 |
+| Arena size | +4,532 | +2,956 |
+| Free bytes within arenas | +4,777 | +1,856 |
+| In-use bytes within arenas | −245 | +1,100 |
+| Separately mmap-allocated bytes | 0 | +584 |
+
+The default allocator retained additional space after objects were freed. In the trimmed
+run, free arena space accounted for 63% of the additional arena size at peak. The
+remaining arena growth held in-use allocations. The fixture had accepted 31 additional
+chat messages and 60,240 additional bytes of chat stream payload by that sample.
+Allocator byte counts describe allocation state, whereas the mapping counts measure
+resident pages. These samples cannot assign every in-use allocation to a widget.
+
+At the trimmed run's final sample the arena still held 2,381 KiB more free space and
+511 KiB more in-use space than at baseline. Process RSS had fallen by 11,332 KiB as
+13,864 KiB of executable pages left the resident set. Both diagnostic runs crossed
+the warmed RSS limit and returned failure. The development-profile runs quantify the
+source of growth on this host. The earlier release measurements for both backends
+remain in the 0.2 table.
