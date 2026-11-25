@@ -33,10 +33,14 @@ pub mod context;
 mod error;
 pub mod keybinding;
 pub mod model;
+pub mod params;
+pub mod ribbon;
 pub use context::{Context as WhenContext, ContextStack, When};
 pub use error::Error;
 pub use keybinding::{Keybinding, Platform};
 pub use model::{Bindings, Command, CommandId, Conflict, PrefixConflict, Registry};
+pub use params::{Choice, Choices, Draft, Param, ParamKind};
+pub use ribbon::{CommandRibbon, RibbonButton, RibbonScope, RibbonState};
 
 mod menu;
 mod service;
