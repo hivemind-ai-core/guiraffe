@@ -76,3 +76,18 @@ bench/electron/run.sh                              # needs an idle machine with 
 
 Add `--features gpui-kit/gpui-fast` to the build for the other backend.
 See [bench](../bench/README.md) for suites, baselines and regression comparison.
+
+### Controlled component sweep
+
+The release worktree retains the upstream and fast soak executables in
+`target/sweep-bin/`. Once the host is quiet, run both size sweeps from that worktree
+with one command.
+
+```sh
+python3 scripts/component-sweep.py target/sweep-bin/soak-up target/sweep-bin/soak-fast
+```
+
+The sweep checks mount time and interaction p99 for FlameGraph, Tracks, the dope sheet
+and Mermaid, followed by the maximum dope-sheet frame time across four mixed replay
+cycles. It exits nonzero if either backend misses any budget. For a fresh checkout,
+follow the [build instructions](../bench/README.md#mounted-component-size-sweep).
