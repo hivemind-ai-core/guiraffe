@@ -1,17 +1,24 @@
 //! Hierarchical, frame-snapped dope sheet with viewport-culling and explicit selection.
+#[path = "dope_sheet_button.rs"]
+mod button;
+#[path = "dope_sheet_strip.rs"]
+mod strip;
 use crate::plot::append_diamond;
 use crate::{
     Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, Icon, Sizable, Size, Theme, tooltip::Tooltip};
+use gpui_kit::component::{ActiveTheme, Theme, tooltip::Tooltip};
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, Styled,
     TestSupportExt, Window, canvas, div, prelude::*, px,
 };
 use guiraffe_core::{A11yDisabledExt, ColorName, GuiraffeTheme, StateKind, Variant};
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 pub const ROW_H: f32 = 28.;
 pub const NAME_W: f32 = 230.;
 pub const KEY_GRAB: f64 = 7.;
@@ -38,6 +45,7 @@ enum Gesture {
 }
 pub struct DopeSheet {
     model: DopeModel,
+    strip: Rc<RefCell<strip::DiamondStrip>>,
     surface: PlotSurface,
     format: TimeFormat,
     drag: Option<Gesture>,
@@ -49,7 +57,10 @@ pub struct DopeSheet {
     focus: FocusHandle,
     playhead: f64,
     lock_style: LockStyle,
-    headers: Vec<(ChannelHeader, Entity<ChannelHeader>)>,
+    header_column: Option<Entity<HeaderColumn>>,
+    header_offset: f64,
+    first_header_row: usize,
+    headers: Vec<ChannelHeader>,
 }
 impl EventEmitter<DopeEvent> for DopeSheet {}
 impl Focusable for DopeSheet {
@@ -65,6 +76,13 @@ impl DopeSheet {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| Self {
+            strip: {
+                let strip = Rc::new(RefCell::new(strip::DiamondStrip::default()));
+                let owned = strip.clone();
+                cx.on_release(move |_, cx| owned.borrow_mut().release(cx))
+                    .detach();
+                strip
+            },
             model: DopeModel::new(channels),
             surface: PlotSurface::timeline(Axis::new(0., length.max(1e-3), 800.), format),
             format,
@@ -77,6 +95,9 @@ impl DopeSheet {
             focus: cx.focus_handle(),
             playhead: 0.,
             lock_style: LockStyle::Badge,
+            header_column: None,
+            header_offset: 0.,
+            first_header_row: 0,
             headers: Vec::new(),
         })
     }
@@ -150,6 +171,12 @@ impl DopeSheet {
         self.press_with(row, x, false)
     }
     pub fn press_with(&mut self, row: usize, x: f64, add: bool) -> bool {
+        self.press_key(row, x, add).is_some()
+    }
+
+    // On a hit, report whether the selection needs repainting. Starting a
+    // drag on an already selected key changes only the pending gesture.
+    fn press_key(&mut self, row: usize, x: f64, add: bool) -> Option<bool> {
         let channel = self.model.rows().get(row).map(|r| r.channel).unwrap_or(row);
         let nearest = self
             .model
@@ -176,7 +203,8 @@ impl DopeSheet {
                 .min_by(|a, b| a.1.total_cmp(&b.1))
             });
         if let Some((t, _)) = nearest {
-            if add || !self.model.selected.contains(&(channel, t.to_bits())) {
+            let changed = add || !self.model.selected.contains(&(channel, t.to_bits()));
+            if changed {
                 if self.model.channels[channel].group {
                     self.model.select_summary(channel, t, add);
                 } else {
@@ -186,9 +214,9 @@ impl DopeSheet {
             self.drag = (self.editable && self.model.editable(channel)).then_some(Gesture::Keys {
                 last: self.surface.axis.t(x),
             });
-            true
+            Some(changed)
         } else {
-            false
+            None
         }
     }
     pub fn drag_to(&mut self, x: f64, cx: &mut Context<Self>) {
@@ -325,43 +353,65 @@ impl ChannelHeader {
             .opacity(if theme.mode.is_dark() { 0.5 } else { 1. });
         let hover_foreground = theme.accent_foreground;
         let active = theme.tokens.button_active;
-        div()
+        let radius = theme.radius;
+        let inner = div()
             .debug_selector(move || format!("{id}-{channel}"))
-            .child(
-                div()
-                    .id((id, channel))
-                    .role(Role::Button)
-                    .aria_description(label)
-                    .aria_selected(selected)
-                    .size_5()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_center()
-                    .rounded(theme.radius)
-                    .text_color(foreground)
-                    .when(selected, |el| el.bg(theme.tokens.secondary_active))
-                    .when(!disabled && !selected, |el| {
-                        el.hover(move |style| style.bg(hover).text_color(hover_foreground))
-                            .active(move |style| style.bg(active))
+            .id((id, channel))
+            .role(Role::Button)
+            .aria_description(label)
+            .aria_selected(selected)
+            .size_5()
+            .flex_shrink_0()
+            .when(selected, |el| {
+                el.bg(theme.tokens.secondary_active).rounded(radius)
+            })
+            .when(!disabled && !selected, |el| {
+                el.hover(move |style| style.bg(hover).rounded(radius))
+                    .active(move |style| style.bg(active).rounded(radius))
+            })
+            .when(!disabled, |el| {
+                el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .on_click(move |_, _, cx| {
+                        if let Some(owner) = owner.upgrade() {
+                            owner.update(cx, |view, cx| view.toggle(channel, kind, cx));
+                        }
                     })
-                    .when(!disabled, |el| {
-                        el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                            .on_click(move |_, _, cx| {
-                                if let Some(owner) = owner.upgrade() {
-                                    owner.update(cx, |view, cx| view.toggle(channel, kind, cx));
-                                }
-                            })
-                    })
-                    .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
-                    .child(Icon::new(icon).with_size(Size::XSmall))
-                    .a11y_disabled(disabled),
-            )
+            })
+            .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+            .a11y_disabled(disabled);
+        button::ChannelButton {
+            inner,
+            icon: icon.path(),
+            foreground,
+            hover_foreground: (!disabled && !selected).then_some(hover_foreground),
+        }
     }
 }
 
-impl Render for ChannelHeader {
+struct HeaderColumn {
+    rows: Vec<ChannelHeader>,
+    top: f32,
+}
+
+impl Render for HeaderColumn {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .children(self.rows.iter().enumerate().map(|(index, header)| {
+                header
+                    .element(cx)
+                    .absolute()
+                    .top(px(self.top + index as f32 * ROW_H))
+                    .w(px(NAME_W))
+                    .h(px(ROW_H))
+            }))
+    }
+}
+
+impl ChannelHeader {
+    fn element(&self, cx: &App) -> gpui_kit::Div {
         let theme = GuiraffeTheme::global(cx);
         let control_theme = cx.theme();
         div()
@@ -398,7 +448,10 @@ fn key_indices(
         let next = index + 1;
         // Preserve the source sequence for picking and editing. Only the
         // rendered marks skip diamonds that overlap at this zoom.
-        let next = if let Some(spacing) = spacing {
+        let next = if let Some(spacing) = spacing
+            && next < end
+            && times[next] < times[index] + spacing
+        {
             next + times[next..end].partition_point(|&t| t < times[index] + spacing)
         } else {
             next
@@ -407,6 +460,7 @@ fn key_indices(
     })
 }
 
+#[derive(Clone, Copy)]
 struct KeyMark {
     x: f64,
     y: f64,
@@ -418,19 +472,19 @@ struct KeyMark {
     locked: bool,
 }
 
-fn viewport_keys(
+fn viewport_rows(
     model: &DopeModel,
     axis: Axis,
     height: f64,
     offset: f64,
-) -> impl Iterator<Item = KeyMark> + Clone + '_ {
+) -> impl Iterator<Item = KeyRow<'_>> + Clone + '_ {
     let start = ((offset / f64::from(ROW_H)).floor() as usize).min(model.rows().len());
     let end = (((offset + height) / f64::from(ROW_H)).ceil() as usize).min(model.rows().len());
     model.rows()[start..end]
         .iter()
         .enumerate()
         .filter(|(_, row)| model.channels[row.channel].visible)
-        .flat_map(move |(row_index, row)| {
+        .map(move |(row_index, row)| {
             let channel = row.channel;
             let c = &model.channels[channel];
             let times = if row.summary {
@@ -445,48 +499,114 @@ fn viewport_keys(
                 .range((channel, 0)..=(channel, u64::MAX))
                 .next()
                 .is_some();
-            let compact = !row.summary
-                && c.decor.is_none()
-                && !has_selection
-                && end.saturating_sub(first) > (axis.width / 4.) as usize;
+            // Check spacing where the keys actually fall. A tight cluster can
+            // cover a few pixels even when most of the viewport is empty.
+            let compact = !row.summary && c.decor.is_none() && !has_selection;
             let locked = !model.editable(channel);
             let y = (start + row_index) as f64 * f64::from(ROW_H) - offset;
-            key_indices(times, first, end, compact.then_some(4. * axis.scale)).map(move |index| {
-                let time = times[index];
-                let x = axis.x(time);
-                let selected = if compact {
-                    false
-                } else if row.summary {
-                    model.summary_selected(channel, time)
-                } else {
-                    model.selected.contains(&(channel, time.to_bits()))
-                };
-                let (shape, hold) = if compact {
-                    (KeyShape::Diamond, None)
-                } else {
-                    model.key_display(channel, row.summary, index)
-                };
-                KeyMark {
-                    x,
-                    y,
-                    selected,
-                    shape,
-                    hold: hold.map(|t| axis.x(t)),
-                    muted: c.muted,
-                    summary: row.summary,
-                    locked,
-                }
-            })
+            KeyRow {
+                model,
+                channel,
+                axis,
+                times: &times[first..end],
+                first,
+                summary: row.summary,
+                compact,
+                locked,
+                muted: c.muted,
+                y,
+            }
         })
 }
 
+#[derive(Clone, Copy)]
+struct KeyRow<'a> {
+    model: &'a DopeModel,
+    channel: usize,
+    axis: Axis,
+    times: &'a [f64],
+    first: usize,
+    summary: bool,
+    compact: bool,
+    locked: bool,
+    muted: bool,
+    y: f64,
+}
+
+impl<'a> KeyRow<'a> {
+    fn indices(self) -> impl Iterator<Item = usize> + Clone + 'a {
+        key_indices(
+            self.times,
+            0,
+            self.times.len(),
+            self.compact.then_some(4. * self.axis.scale),
+        )
+    }
+
+    fn marks(self) -> impl Iterator<Item = KeyMark> + Clone + 'a {
+        self.indices().map(move |index| {
+            let time = self.times[index];
+            let selected = if self.compact {
+                false
+            } else if self.summary {
+                self.model.summary_selected(self.channel, time)
+            } else {
+                self.model
+                    .selected
+                    .contains(&(self.channel, time.to_bits()))
+            };
+            let (shape, hold) = if self.compact {
+                (KeyShape::Diamond, None)
+            } else {
+                self.model
+                    .key_display(self.channel, self.summary, self.first + index)
+            };
+            KeyMark {
+                x: self.axis.x(time),
+                y: self.y,
+                selected,
+                shape,
+                hold: hold.map(|t| self.axis.x(t)),
+                muted: self.muted,
+                summary: self.summary,
+                locked: self.locked,
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+fn viewport_keys(
+    model: &DopeModel,
+    axis: Axis,
+    height: f64,
+    offset: f64,
+) -> impl Iterator<Item = KeyMark> + '_ {
+    viewport_rows(model, axis, height, offset).flat_map(KeyRow::marks)
+}
+
 impl Render for DopeSheet {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = cx.entity();
+        gpui_kit::container_query(move |size, window, cx| {
+            editor.update(cx, |editor, cx| editor.render_at_size(size, window, cx))
+        })
+    }
+}
+
+impl DopeSheet {
+    fn render_at_size(
+        &mut self,
+        size: gpui_kit::Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let theme = GuiraffeTheme::global(cx).clone();
         let s = theme.surfaces();
-        let b = self.body.get();
-        let w = f64::from(f32::from(b.size.width));
-        let h = f64::from(f32::from(b.size.height)).max(1.);
+        // The outer layout fixes the rail and ruler dimensions. Use the actual
+        // allocation on the first frame, including inside a split or tab.
+        let w = f64::from((f32::from(size.width) - NAME_W).max(0.));
+        let h = f64::from((f32::from(size.height) - RULER_H).max(1.));
         if w > 0. {
             self.surface.axis.set_width(w);
             if let Some((a, b)) = self.pending_fit.take() {
@@ -505,12 +625,26 @@ impl Render for DopeSheet {
             .get(start..end.min(self.model.rows().len()))
             .unwrap_or(&[]);
         let owner = cx.weak_entity();
+        // Retain names and control state for channels still visible after scrolling.
+        // Header equality below also handles edits and changes in the row tree.
+        let mut headers_changed =
+            self.header_offset != self.offset || rows.len() != self.headers.len();
+        self.header_offset = self.offset;
+        let shift = start
+            .abs_diff(self.first_header_row)
+            .min(self.headers.len());
+        if start > self.first_header_row {
+            self.headers.rotate_left(shift);
+        } else {
+            self.headers.rotate_right(shift);
+        }
+        self.first_header_row = start;
         for (index, row) in rows.iter().enumerate() {
             let c = &self.model.channels[row.channel];
             let current = self.headers.get_mut(index);
             let name = current
                 .as_ref()
-                .map(|(old, _)| &old.name)
+                .map(|old| &old.name)
                 .filter(|name| name.as_str() == c.name.as_str())
                 .cloned()
                 .unwrap_or_else(|| c.name.clone().into());
@@ -527,14 +661,38 @@ impl Render for DopeSheet {
                 owner: owner.clone(),
             };
             if let Some(entry) = current {
-                if entry.0 != header {
-                    *entry = (header.clone(), cx.new(|_| header));
+                if *entry != header {
+                    headers_changed = true;
+                    *entry = header;
                 }
             } else {
-                self.headers.push((header.clone(), cx.new(|_| header)));
+                self.headers.push(header);
             }
         }
         self.headers.truncate(rows.len());
+        let top = (start as f64 * f64::from(ROW_H) - self.offset) as f32;
+        let header_rows = || self.headers.iter().cloned();
+        let column = match &self.header_column {
+            Some(column) => {
+                if headers_changed {
+                    column.update(cx, |column, cx| {
+                        column.rows.clear();
+                        column.rows.extend(header_rows());
+                        column.top = top;
+                        cx.notify();
+                    });
+                }
+                column.clone()
+            }
+            None => {
+                let column = cx.new(|_| HeaderColumn {
+                    rows: header_rows().collect(),
+                    top,
+                });
+                self.header_column = Some(column.clone());
+                column
+            }
+        };
         let mut background = self.surface.clone();
         background.insert_layer(
             0,
@@ -553,10 +711,8 @@ impl Render for DopeSheet {
                 end: (end.0, f64::from(end.1)),
             });
         }
-        let offset = self.offset;
         let key_owner = cx.weak_entity();
         let body = self.body.clone();
-        let owner = cx.entity_id();
         let key_selected = theme
             .state(StateKind::Selected, Variant::Filled, None)
             .background
@@ -650,23 +806,12 @@ impl Render for DopeSheet {
                     .min_h_0()
                     .overflow_hidden()
                     .child(
-                        div()
-                            .relative()
-                            .w(px(NAME_W))
-                            .flex_none()
-                            .overflow_hidden()
-                            .children(self.headers.iter().enumerate().map(
-                                |(index, (_, entity))| {
-                                    let y = (start + index) as f64 * f64::from(ROW_H) - offset;
-                                    entity.clone().cached(
-                                        gpui_kit::StyleRefinement::default()
-                                            .absolute()
-                                            .top(px(y as f32))
-                                            .w(px(NAME_W))
-                                            .h(px(ROW_H)),
-                                    )
-                                },
-                            )),
+                        column.cached(
+                            gpui_kit::StyleRefinement::default()
+                                .w(px(NAME_W))
+                                .flex_none()
+                                .h_full(),
+                        ),
                     )
                     .child(
                         div()
@@ -677,6 +822,13 @@ impl Render for DopeSheet {
                             .flex_1()
                             .overflow_hidden()
                             .cursor(gpui_kit::CursorStyle::Crosshair)
+                            // The plot owns its drag feedback. Suppress GPUI's generic
+                            // pressed state before bubbling would refresh the whole window.
+                            .capture_any_mouse_down(|event, window, _| {
+                                if event.button == MouseButton::Left {
+                                    window.prevent_default();
+                                }
+                            })
                             .on_scroll(cx.listener(|this, e: &gpui_kit::ScrollEvent, _, cx| {
                                 let d = e.delta.pixel_delta(px(16.));
                                 let (x, _) = this.local(e.position);
@@ -713,22 +865,29 @@ impl Render for DopeSheet {
                                     let row = ((f64::from(y) + this.offset) / f64::from(ROW_H))
                                         .max(0.)
                                         as usize;
-                                    if !this.press_with(row, x, e.modifiers.shift) {
-                                        if !e.modifiers.shift {
-                                            this.model.selected.clear();
-                                        }
-                                        this.drag = Some(Gesture::Box {
-                                            start: (
-                                                this.surface.axis.t(x),
-                                                f64::from(y) + this.offset,
-                                            ),
-                                            end: (x, y),
-                                            add: e.modifiers.shift,
-                                            base: this.model.selected.clone(),
+                                    let repaint = this
+                                        .press_key(row, x, e.modifiers.shift)
+                                        .unwrap_or_else(|| {
+                                            let cleared = !e.modifiers.shift
+                                                && !this.model.selected.is_empty();
+                                            if !e.modifiers.shift {
+                                                this.model.selected.clear();
+                                            }
+                                            this.drag = Some(Gesture::Box {
+                                                start: (
+                                                    this.surface.axis.t(x),
+                                                    f64::from(y) + this.offset,
+                                                ),
+                                                end: (x, y),
+                                                add: e.modifiers.shift,
+                                                base: this.model.selected.clone(),
+                                            });
+                                            cleared
                                         });
-                                    }
                                     cx.emit(DopeEvent::SelectionChanged);
-                                    cx.notify();
+                                    if repaint {
+                                        cx.notify();
+                                    }
                                 }),
                             )
                             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
@@ -765,15 +924,18 @@ impl Render for DopeSheet {
                             }))
                             .on_mouse_up(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _, _| this.release()),
+                                cx.listener(|this, _, _, cx| {
+                                    let marquee = matches!(this.drag, Some(Gesture::Box { .. }));
+                                    this.release();
+                                    if marquee {
+                                        cx.notify();
+                                    }
+                                }),
                             )
                             .child(
-                                canvas(
-                                    move |b, _, cx| crate::measure::record(&body, b, cx, owner),
-                                    |_, _, _, _| {},
-                                )
-                                .absolute()
-                                .size_full(),
+                                canvas(move |b, _, _| body.set(b), |_, _, _, _| {})
+                                    .absolute()
+                                    .size_full(),
                             )
                             .child(background.element(
                                 theme.clone(),
@@ -781,158 +943,191 @@ impl Render for DopeSheet {
                                 f64::from(ROW_H),
                                 self.offset,
                             ))
-                            .child(
-                                canvas(
-                                    |_, _, _| (),
-                                    move |b, _, window, cx| {
-                                        let Some(owner) = key_owner.upgrade() else {
-                                            return;
-                                        };
-                                        let sheet = owner.read(cx);
-                                        let height = f64::from(f32::from(b.size.height)).max(1.);
-                                        let keys = viewport_keys(
-                                            &sheet.model,
-                                            sheet.surface.axis,
-                                            height,
-                                            sheet.offset,
-                                        );
-                                        // Keep sparse scenes on the original raster path.
-                                        let batch_diamonds = keys.clone().nth(512).is_some();
-                                        let at = |x: f64, y: f64| {
-                                            gpui_kit::point(
-                                                b.origin.x + px(x as f32),
-                                                b.origin.y + px(y as f32),
-                                            )
-                                        };
-                                        let mut diamonds: Option<(
-                                            gpui_kit::Hsla,
-                                            gpui_kit::Path<Pixels>,
-                                        )> = None;
-                                        keys.for_each(
-                                            |KeyMark {
-                                                 x,
-                                                 y,
-                                                 selected,
-                                                 shape,
-                                                 hold,
-                                                 muted,
-                                                 summary,
-                                                 locked,
-                                             }| {
-                                                let ink = if selected {
-                                                    key_selected
-                                                } else if muted
-                                                    || (locked && lock_style == LockStyle::Dimmed)
-                                                {
-                                                    key_muted
-                                                } else {
-                                                    key_normal
-                                                };
-                                                let cy = y + f64::from(ROW_H) / 2.;
-                                                let radius =
-                                                    if selected || summary { 6. } else { 4. };
-                                                if batch_diamonds
-                                                    && shape == KeyShape::Diamond
-                                                    && hold.is_none()
-                                                    && !(locked && lock_style == LockStyle::Hatched)
-                                                {
-                                                    if diamonds
-                                                        .as_ref()
-                                                        .is_some_and(|(color, _)| *color != ink)
-                                                        && let Some((color, mesh)) = diamonds.take()
-                                                    {
-                                                        window.paint_path(mesh, color);
-                                                    }
-                                                    let (_, mesh) =
-                                                        diamonds.get_or_insert_with(|| {
-                                                            (ink, gpui_kit::Path::new(at(x, cy)))
-                                                        });
-                                                    append_diamond(
-                                                        mesh,
-                                                        [
-                                                            at(x, cy - radius),
-                                                            at(x + radius, cy),
-                                                            at(x, cy + radius),
-                                                            at(x - radius, cy),
-                                                        ],
-                                                    );
-                                                    return;
-                                                }
-                                                if let Some((color, mesh)) = diamonds.take() {
-                                                    window.paint_path(mesh, color);
-                                                }
-                                                if let Some(end) = hold {
-                                                    let mut path =
-                                                        gpui_kit::PathBuilder::stroke(px(3.));
-                                                    path.move_to(at(x, cy));
-                                                    path.line_to(at(end, cy));
-                                                    if let Ok(path) = path.build() {
-                                                        window.paint_path(path, ink);
-                                                    }
-                                                }
-                                                let mut path = gpui_kit::PathBuilder::fill();
-                                                if shape == KeyShape::Diamond {
-                                                    for (i, (dx, dy)) in [
-                                                        (0., -radius),
-                                                        (radius, 0.),
-                                                        (0., radius),
-                                                        (-radius, 0.),
-                                                    ]
-                                                    .iter()
-                                                    .enumerate()
-                                                    {
-                                                        if i == 0 {
-                                                            path.move_to(at(x + dx, cy + dy));
-                                                        } else {
-                                                            path.line_to(at(x + dx, cy + dy));
-                                                        }
-                                                    }
-                                                } else {
-                                                    let sides = if shape == KeyShape::Circle {
-                                                        16
-                                                    } else {
-                                                        4
-                                                    };
-                                                    for i in 0..sides {
-                                                        let angle = (i as f64 + 0.5)
-                                                            * std::f64::consts::TAU
-                                                            / sides as f64;
-                                                        let p = at(
-                                                            x + radius * angle.cos(),
-                                                            cy + radius * angle.sin(),
-                                                        );
-                                                        if i == 0 {
-                                                            path.move_to(p)
-                                                        } else {
-                                                            path.line_to(p)
-                                                        }
-                                                    }
-                                                }
-                                                path.close();
-                                                if locked && lock_style == LockStyle::Hatched {
-                                                    path.move_to(at(x - radius, cy + radius));
-                                                    path.line_to(at(x + radius, cy - radius));
-                                                }
-
-                                                if let Ok(path) = path.build() {
-                                                    window.paint_path(path, ink);
-                                                }
-                                            },
-                                        );
-                                        if let Some((color, mesh)) = diamonds {
-                                            window.paint_path(mesh, color);
-                                        }
-                                    },
-                                )
-                                .absolute()
-                                .size_full(),
-                            )
+                            .child(key_canvas(
+                                key_owner,
+                                key_selected,
+                                key_muted,
+                                key_normal,
+                                lock_style,
+                            ))
                             .child(foreground.element(theme, false, f64::from(ROW_H), self.offset)),
                     ),
             );
-        guiraffe_core::focus_ring(root, focus_visible, px(0.), ring)
+        guiraffe_core::focus_ring(root, focus_visible, px(0.), ring).into_any_element()
     }
 }
+fn key_canvas(
+    key_owner: gpui_kit::WeakEntity<DopeSheet>,
+    key_selected: gpui_kit::Hsla,
+    key_muted: gpui_kit::Hsla,
+    key_normal: gpui_kit::Hsla,
+    lock_style: LockStyle,
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |b, _, window, cx| {
+            let Some(owner) = key_owner.upgrade() else {
+                return;
+            };
+            let sheet = owner.read(cx);
+            let height = f64::from(f32::from(b.size.height)).max(1.);
+            let rows = viewport_rows(&sheet.model, sheet.surface.axis, height, sheet.offset);
+            // Sparse scenes keep their original rasterization. Count
+            // only up to the crossover before traversing for paint.
+            let batch_diamonds = rows.clone().flat_map(KeyRow::marks).nth(32).is_some();
+            let at = |x: f64, y: f64| {
+                gpui_kit::point(b.origin.x + px(x as f32), b.origin.y + px(y as f32))
+            };
+            let mut diamonds: Option<(gpui_kit::Hsla, gpui_kit::Path<Pixels>)> = None;
+            let paint_mark = |mark: KeyMark,
+                              diamonds: &mut Option<(gpui_kit::Hsla, gpui_kit::Path<Pixels>)>,
+                              window: &mut Window| {
+                let KeyMark {
+                    x,
+                    y,
+                    selected,
+                    shape,
+                    hold,
+                    muted,
+                    summary,
+                    locked,
+                    ..
+                } = mark;
+                let ink = if selected {
+                    key_selected
+                } else if muted || (locked && lock_style == LockStyle::Dimmed) {
+                    key_muted
+                } else {
+                    key_normal
+                };
+                let cy = y + f64::from(ROW_H) / 2.;
+                let radius = if selected || summary { 6. } else { 4. };
+                if batch_diamonds
+                    && shape == KeyShape::Diamond
+                    && hold.is_none()
+                    && !(locked && lock_style == LockStyle::Hatched)
+                {
+                    if diamonds.as_ref().is_some_and(|(color, _)| *color != ink)
+                        && let Some((color, mesh)) = diamonds.take()
+                    {
+                        window.paint_path(mesh, color);
+                    }
+                    let (_, mesh) =
+                        diamonds.get_or_insert_with(|| (ink, gpui_kit::Path::new(at(x, cy))));
+                    append_diamond(
+                        mesh,
+                        [
+                            at(x, cy - radius),
+                            at(x + radius, cy),
+                            at(x, cy + radius),
+                            at(x - radius, cy),
+                        ],
+                    );
+                    return;
+                }
+                if let Some((color, mesh)) = diamonds.take() {
+                    window.paint_path(mesh, color);
+                }
+                if let Some(end) = hold {
+                    let mut path = gpui_kit::PathBuilder::stroke(px(3.));
+                    path.move_to(at(x, cy));
+                    path.line_to(at(end, cy));
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, ink);
+                    }
+                }
+                let mut path = gpui_kit::PathBuilder::fill();
+                if shape == KeyShape::Diamond {
+                    for (i, (dx, dy)) in [(0., -radius), (radius, 0.), (0., radius), (-radius, 0.)]
+                        .iter()
+                        .enumerate()
+                    {
+                        if i == 0 {
+                            path.move_to(at(x + dx, cy + dy));
+                        } else {
+                            path.line_to(at(x + dx, cy + dy));
+                        }
+                    }
+                } else {
+                    let sides = if shape == KeyShape::Circle { 16 } else { 4 };
+                    for i in 0..sides {
+                        let angle = (i as f64 + 0.5) * std::f64::consts::TAU / sides as f64;
+                        let p = at(x + radius * angle.cos(), cy + radius * angle.sin());
+                        if i == 0 {
+                            path.move_to(p)
+                        } else {
+                            path.line_to(p)
+                        }
+                    }
+                }
+                path.close();
+                if locked && lock_style == LockStyle::Hatched {
+                    path.move_to(at(x - radius, cy + radius));
+                    path.line_to(at(x + radius, cy - radius));
+                }
+
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, ink);
+                }
+            };
+            let strip = sheet.strip.clone();
+            let scale = window.scale_factor();
+            let left = f32::from(b.left());
+            let origin = (left * scale).floor();
+            let mut centers = Vec::new();
+            let mut previous = None;
+            let mut can_replace = true;
+            for row in rows {
+                if row.compact
+                    && row.times.len() >= 64
+                    && !(row.locked && lock_style == LockStyle::Hatched)
+                {
+                    // Bound comparisons by the viewport, even for a lane
+                    // with millions of keys at subpixel spacing.
+                    let same = row.times.len() <= 4096 && previous == Some(row.times);
+                    if !same {
+                        previous = Some(row.times);
+                        centers.clear();
+                        centers
+                            .extend(row.indices().map(|i| {
+                                (left + row.axis.x(row.times[i]) as f32) * scale - origin
+                            }));
+                    }
+                    if centers.len() >= 64 {
+                        let ink = if row.muted || (row.locked && lock_style == LockStyle::Dimmed) {
+                            key_muted
+                        } else {
+                            key_normal
+                        };
+                        let cy = f32::from(b.top()) + row.y as f32 + ROW_H / 2.;
+                        if let Some((color, mesh)) = diamonds.take() {
+                            window.paint_path(mesh, color);
+                        }
+                        if strip
+                            .borrow_mut()
+                            .paint(&centers, b, cy, ink, can_replace, window)
+                        {
+                            can_replace = false;
+                            continue;
+                        }
+                    }
+                }
+                for mark in row.marks() {
+                    paint_mark(mark, &mut diamonds, window);
+                }
+            }
+            if let Some((color, mesh)) = diamonds {
+                window.paint_path(mesh, color);
+            }
+            if let Some(old) = strip.borrow_mut().retired.take() {
+                cx.drop_image(old, Some(window));
+            }
+        },
+    )
+    .absolute()
+    .size_full()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -979,6 +1174,15 @@ mod tests {
                 [-0.5 * row_height, 0.5 * row_height, 1.5 * row_height]
             );
         }
+    }
+
+    #[test]
+    fn a_cluster_in_an_otherwise_sparse_lane_retains_isolated_keys() {
+        let model = DopeModel::new(vec![Channel::new("lane", vec![1., 2., 3., 5., 80.])]);
+        let marks: Vec<_> = viewport_keys(&model, Axis::new(0., 100., 100.), f64::from(ROW_H), 0.)
+            .map(|mark| mark.x)
+            .collect();
+        assert_eq!(marks, [1., 5., 80.]);
     }
 
     #[test]

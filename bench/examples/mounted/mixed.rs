@@ -15,6 +15,7 @@ use guiraffe_overlays::{
     toast::{Toast, ToastId},
 };
 use guiraffe_timeline::{Channel, DopeSheet, GanttView, TimeFormat};
+use nix::time::{ClockId, clock_gettime};
 
 #[derive(Clone)]
 enum Data {
@@ -172,6 +173,13 @@ impl Render for Tabs {
     }
 }
 
+// Callgrind toggles collection at this symbol so fixture construction and
+// preceding tab activations stay outside the instruction budget.
+#[inline(never)]
+fn profile_cold_timeline(frame: &mut dyn FnMut() -> Result<()>) -> Result<()> {
+    std::hint::black_box(frame)()
+}
+
 pub fn run(short: bool) -> Result<()> {
     let flow_nodes = scaled(5_000);
     let graph = flow_graph(flow_nodes as u64)?;
@@ -272,6 +280,9 @@ pub fn run(short: bool) -> Result<()> {
 
     let mut input = 0usize;
     let mut next = RATE;
+    // The instruction replay needs identical chart work at every run. Start four
+    // 120 Hz ticks into the ingestion interval so cold activation includes a batch.
+    let fixed_ticks = std::env::var_os("SOAK_FIXED_STREAM_TICKS").is_some();
     let mut markdown_chunks = 0usize;
     let mut reply = None;
     let mut tokens = 0usize;
@@ -281,6 +292,8 @@ pub fn run(short: bool) -> Result<()> {
     let mut failed = false;
     let clock = Instant::now();
     let mut times = std::array::from_fn::<_, 12, _>(|_| Vec::with_capacity(1_200));
+    let cpu_clock = std::env::var_os("SOAK_FRAME_CPU").map(|_| ClockId::CLOCK_THREAD_CPUTIME_ID);
+    let mut cpu_max = [0; 12];
     let profile_frames = std::env::var("SOAK_FRAMES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok());
@@ -297,145 +310,163 @@ pub fn run(short: bool) -> Result<()> {
     } {
         let deadline = clock + Duration::from_secs(10 * (sample + 1));
         while profile_frames.map_or_else(|| Instant::now() < deadline, |limit| input < limit) {
+            let cpu_start = cpu_clock.map(clock_gettime).transpose()?;
             let started = Instant::now();
             let active = PHASES[(input / STEPS_PER_PHASE) % PHASES.len()].0;
             let cycle = input / (STEPS_PER_PHASE * PHASES.len());
             let step = cycle * STEPS_PER_PHASE + input % STEPS_PER_PHASE;
-            window.update(|w, cx| -> Result<()> {
-                // Test apps draw dirty windows when they flush effects, but
-                // have no platform frame loop to deliver animation callbacks.
-                w.simulate_next_frame(cx);
-                if input.is_multiple_of(STEPS_PER_PHASE) {
-                    tabs.update(cx, |tabs, cx| {
-                        tabs.active = active;
-                        cx.notify();
-                    });
-                }
-                let due = RATE + (clock.elapsed().as_secs_f64() * f64::from(RATE)) as u32;
-                if due - next >= 500 {
-                    stream.append((next..due).collect());
-                    stream.retain_last(RATE as usize);
-                    next = due;
-                    chart.update(cx, |chart, cx| {
-                        chart.replace_spec(streaming_spec(stream.clone()), cx)
-                    });
-                }
-                match active {
-                    Phase::Grid => grid.step(rows, step, cx),
-                    Phase::Flow => flow.update(cx, |flow, cx| {
-                        flow.set_viewport(
-                            Viewport {
-                                pan: FlowPoint::new(
-                                    -((step % flow_nodes.min(41)) as f32) * 120.,
-                                    -((step % flow_nodes.div_ceil(100).min(23)) as f32) * 120.,
-                                ),
-                                zoom: if step % 16 < 8 { 1. } else { 1.25 },
-                            },
-                            cx,
-                        )
-                    })?,
-                    Phase::Markdown if step.is_multiple_of(2) => {
-                        markdown.update(cx, |markdown, cx| {
-                            if markdown_chunks == 256 {
-                                markdown.set_source(markdown_seed.clone(), cx);
-                                markdown_chunks = 0;
-                            }
-                            markdown.append(
-                                if markdown_chunks % 16 == 15 {
-                                    "\n\n"
-                                } else {
-                                    "token "
+            let mut frame = || -> Result<()> {
+                window.update(|w, cx| -> Result<()> {
+                    // Test apps draw dirty windows when they flush effects, but
+                    // have no platform frame loop to deliver animation callbacks.
+                    w.simulate_next_frame(cx);
+                    if input.is_multiple_of(STEPS_PER_PHASE) {
+                        tabs.update(cx, |tabs, cx| {
+                            tabs.active = active;
+                            cx.notify();
+                        });
+                    }
+                    let due = RATE
+                        + if fixed_ticks {
+                            (((input as u64 + 4) * u64::from(RATE)) / 120) as u32
+                        } else {
+                            (clock.elapsed().as_secs_f64() * f64::from(RATE)) as u32
+                        };
+                    if due - next >= 500 {
+                        stream.append((next..due).collect());
+                        stream.retain_last(RATE as usize);
+                        next = due;
+                        chart.update(cx, |chart, cx| {
+                            chart.replace_spec(streaming_spec(stream.clone()), cx)
+                        });
+                    }
+                    match active {
+                        Phase::Grid => grid.step(rows, step, cx),
+                        Phase::Flow => flow.update(cx, |flow, cx| {
+                            flow.set_viewport(
+                                Viewport {
+                                    pan: FlowPoint::new(
+                                        -((step % flow_nodes.min(41)) as f32) * 120.,
+                                        -((step % flow_nodes.div_ceil(100).min(23)) as f32) * 120.,
+                                    ),
+                                    zoom: if step % 16 < 8 { 1. } else { 1.25 },
                                 },
                                 cx,
-                            );
-                            markdown_chunks += 1;
-                        })
-                    }
-                    Phase::Chat => {
-                        let producer = reply.get_or_insert_with(|| {
-                            chat.update(cx, |chat, cx| chat.begin_reply(cx).1)
-                        });
-                        if producer.push("streamed token ".into()).is_ok() {
-                            tokens += 1;
-                            chat_stream_bytes += "streamed token ".len();
+                            )
+                        })?,
+                        Phase::Markdown if step.is_multiple_of(2) => {
+                            markdown.update(cx, |markdown, cx| {
+                                if markdown_chunks == 256 {
+                                    markdown.set_source(markdown_seed.clone(), cx);
+                                    markdown_chunks = 0;
+                                }
+                                markdown.append(
+                                    if markdown_chunks % 16 == 15 {
+                                        "\n\n"
+                                    } else {
+                                        "token "
+                                    },
+                                    cx,
+                                );
+                                markdown_chunks += 1;
+                            })
                         }
-                        // A conversation grows by design. Report its logical payload with RSS.
-                        if tokens == 128 {
-                            reply = None;
-                            tokens = 0;
+                        Phase::Chat => {
+                            let producer = reply.get_or_insert_with(|| {
+                                chat.update(cx, |chat, cx| chat.begin_reply(cx).1)
+                            });
+                            if producer.push("streamed token ".into()).is_ok() {
+                                tokens += 1;
+                                chat_stream_bytes += "streamed token ".len();
+                            }
+                            // A conversation grows by design. Report its logical payload with RSS.
+                            if tokens == 128 {
+                                reply = None;
+                                tokens = 0;
+                            }
                         }
-                    }
-                    Phase::Tree if step.is_multiple_of(4) => tree.update(cx, |tree, cx| {
-                        tree.set_expanded(1, step % 8 == 4, cx);
-                    }),
-                    Phase::PropertyGrid if step.is_multiple_of(4) => {
-                        property.update(cx, |property, cx| {
-                            property.set_expanded(1, step % 8 == 4, cx);
-                        })
-                    }
-                    Phase::Code => code.step(rows, step, cx),
-                    Phase::Overlays if step.is_multiple_of(2) => {
-                        if let Some(id) = overlay.take() {
-                            OverlayHost::close(w, cx, id)?;
-                            OverlayHost::dismiss_toast(w, cx, ToastId(1))?;
-                        } else {
-                            overlay = Some(OverlayHost::open(
-                                w,
-                                cx,
-                                Policy::default(),
-                                |dialog, _, _| dialog.child("Mixed soak"),
-                            )?);
-                            OverlayHost::notify(
-                                w,
-                                cx,
-                                Toast::new(ToastId(1), "Background work completed"),
-                            )?;
+                        Phase::Tree if step.is_multiple_of(4) => tree.update(cx, |tree, cx| {
+                            tree.set_expanded(1, step % 8 == 4, cx);
+                        }),
+                        Phase::PropertyGrid if step.is_multiple_of(4) => {
+                            property.update(cx, |property, cx| {
+                                property.set_expanded(1, step % 8 == 4, cx);
+                            })
                         }
+                        Phase::Code => code.step(rows, step, cx),
+                        Phase::Overlays if step.is_multiple_of(2) => {
+                            if let Some(id) = overlay.take() {
+                                OverlayHost::close(w, cx, id)?;
+                                OverlayHost::dismiss_toast(w, cx, ToastId(1))?;
+                            } else {
+                                overlay = Some(OverlayHost::open(
+                                    w,
+                                    cx,
+                                    Policy::default(),
+                                    |dialog, _, _| dialog.child("Mixed soak"),
+                                )?);
+                                OverlayHost::notify(
+                                    w,
+                                    cx,
+                                    Toast::new(ToastId(1), "Background work completed"),
+                                )?;
+                            }
+                        }
+                        Phase::Theme if step.is_multiple_of(4) => guiraffe_core::set_scheme(
+                            if step.is_multiple_of(8) {
+                                guiraffe_core::Scheme::Dark
+                            } else {
+                                guiraffe_core::Scheme::Light
+                            },
+                            cx,
+                        ),
+                        _ => {}
                     }
-                    Phase::Theme if step.is_multiple_of(4) => guiraffe_core::set_scheme(
-                        if step.is_multiple_of(8) {
-                            guiraffe_core::Scheme::Dark
-                        } else {
-                            guiraffe_core::Scheme::Light
-                        },
-                        cx,
-                    ),
-                    _ => {}
+                    Ok(())
+                })?;
+                if matches!(
+                    active,
+                    Phase::Chart
+                        | Phase::Flow
+                        | Phase::Gantt
+                        | Phase::Timeline
+                        | Phase::Markdown
+                        | Phase::Chat
+                        | Phase::Tree
+                        | Phase::PropertyGrid
+                ) {
+                    let id = match active {
+                        Phase::Chart => Some("chart-canvas"),
+                        Phase::Gantt => Some("gantt"),
+                        Phase::Timeline => Some("dope-body"),
+                        Phase::Chat => Some("chat-history"),
+                        _ => None,
+                    };
+                    let at = match id {
+                        Some(id) => require(&mut window, id)?.center(),
+                        None => point(px(500.), px(180.)),
+                    };
+                    match step % 4 {
+                        0 => hover(&mut window, at),
+                        1 => window.simulate_click(at, Modifiers::default()),
+                        _ => wheel(&mut window, at, 0., 32. * sign(step, 8), false),
+                    }
                 }
+                settle(&mut window);
                 Ok(())
-            })?;
-            if matches!(
-                active,
-                Phase::Chart
-                    | Phase::Flow
-                    | Phase::Gantt
-                    | Phase::Timeline
-                    | Phase::Markdown
-                    | Phase::Chat
-                    | Phase::Tree
-                    | Phase::PropertyGrid
-            ) {
-                let id = match active {
-                    Phase::Chart => Some("chart-canvas"),
-                    Phase::Gantt => Some("gantt"),
-                    Phase::Timeline => Some("dope-body"),
-                    Phase::Chat => Some("chat-history"),
-                    _ => None,
-                };
-                let at = match id {
-                    Some(id) => require(&mut window, id)?.center(),
-                    None => point(px(500.), px(180.)),
-                };
-                match step % 4 {
-                    0 => hover(&mut window, at),
-                    1 => window.simulate_click(at, Modifiers::default()),
-                    _ => wheel(&mut window, at, 0., 32. * sign(step, 8), false),
-                }
+            };
+            if matches!(active, Phase::Timeline) && step == 0 {
+                profile_cold_timeline(&mut frame)?;
+            } else {
+                frame()?;
             }
-            settle(&mut window);
             let elapsed = started.elapsed();
             failed |= elapsed > Duration::from_millis(50);
             times[active as usize].push(elapsed.as_micros());
+            if let (Some(clock), Some(start)) = (cpu_clock, cpu_start) {
+                let cost = Duration::from(clock_gettime(clock)? - start).as_micros();
+                cpu_max[active as usize] = cpu_max[active as usize].max(cost);
+            }
             input += 1;
             if profile_frames.is_none() {
                 std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
@@ -475,7 +506,7 @@ pub fn run(short: bool) -> Result<()> {
             branches * 10 + 1,
             groups * 10 + 1
         );
-        for ((_, name), times) in PHASES.into_iter().zip(&mut times) {
+        for ((phase, name), times) in PHASES.into_iter().zip(&mut times) {
             if times.is_empty() {
                 println!("component={name} frames=0");
                 continue;
@@ -490,6 +521,13 @@ pub fn run(short: bool) -> Result<()> {
                 p(99),
                 p(100)
             );
+            if cpu_clock.is_some() {
+                println!(
+                    "cpu_component={name} thread_cpu_max_us={}",
+                    cpu_max[phase as usize]
+                );
+                cpu_max[phase as usize] = 0;
+            }
             times.clear();
         }
     }
