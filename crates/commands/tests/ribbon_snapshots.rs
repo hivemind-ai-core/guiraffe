@@ -104,7 +104,7 @@ fn ribbon_in_both_schemes() {
         let slot = Rc::new(std::cell::RefCell::new(None));
         let out = slot.clone();
         let window = cx
-            .open_window(size(px(1200.), px(360.)), move |_, cx| {
+            .open_window(size(px(1200.), px(360.)), move |window, cx| {
                 let commands = Commands::new(cx);
                 let mut contexts = ContextStack::default();
                 contexts.push(WhenContext::new("Editor").expect("context"));
@@ -142,7 +142,7 @@ fn ribbon_in_both_schemes() {
                             .expect("model"),
                     )
                 };
-                let ribbon = cx.new(|cx| RibbonState::new(&commands, model, cx));
+                let ribbon = cx.new(|cx| RibbonState::new(&commands, model, window, cx));
                 *out.borrow_mut() = Some(ribbon.clone());
                 cx.new(|_| Scene { ribbon })
             })

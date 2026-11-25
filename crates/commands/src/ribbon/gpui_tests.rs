@@ -163,7 +163,7 @@ fn open(cx: &mut TestAppContext, host_context: &str) -> Opened {
                     ..Default::default()
                 },
                 move |window, cx| {
-                    let ribbon = cx.new(|cx| RibbonState::new(&service, model, cx));
+                    let ribbon = cx.new(|cx| RibbonState::new(&service, model, window, cx));
                     let focus = cx.focus_handle();
                     focus.focus(window, cx);
                     *out.borrow_mut() = Some((ribbon.clone(), focus.clone()));
@@ -508,6 +508,7 @@ impl Observe for Bold {
 }
 impl Drive for Bold {
     type Action = ();
+    type Output = ();
     fn decode(action: &protocol::Action) -> Result<(), ActionError> {
         (action.name == protocol::names::TOGGLE)
             .then_some(())
@@ -526,6 +527,8 @@ impl Interceptor for Sources {
         _: protocol::ControlId,
         _: &protocol::Action,
         source: protocol::Source,
+        _: &Window,
+        _: &App,
     ) -> Result<(), ActionError> {
         self.0.borrow_mut().push(source);
         Ok(())
@@ -535,7 +538,9 @@ impl Interceptor for Sources {
         _: protocol::ControlId,
         _: &protocol::Action,
         _: protocol::Source,
-        _: &Result<(), ActionError>,
+        _: &Result<protocol::Outcome, ActionError>,
+        _: &Window,
+        _: &App,
     ) {
     }
 }

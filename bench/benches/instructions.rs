@@ -72,4 +72,45 @@ fn registered_dispatch(
     fixture
 }
 library_benchmark_group!(name = protocol; benchmarks = registered_dispatch);
-main!(config = LibraryBenchmarkConfig::default().tool(Callgrind::default().soft_limits([(EventKind::Ir, 2.0)])); library_benchmark_groups = workloads, protocol);
+
+fn ribbon_fixture() -> guiraffe_bench::ribbon::RibbonFixture {
+    guiraffe_bench::ribbon::RibbonFixture::new().expect("build 2k-command ribbon")
+}
+
+// 2,000 commands in 200 categories (command-ribbon.md §5). Hard ceilings sit about 1.5x over
+// the counts measured on 2026-11-25; the 2% soft limit tracks regressions against a baseline.
+#[library_benchmark(setup = ribbon_fixture, config = LibraryBenchmarkConfig::default().tool(
+    Callgrind::default().hard_limits([(EventKind::Ir, RIBBON_OPEN_IR)]).soft_limits([(EventKind::Ir, 2.0)])
+))]
+fn ribbon_open(
+    fixture: guiraffe_bench::ribbon::RibbonFixture,
+) -> guiraffe_bench::ribbon::RibbonFixture {
+    // Returned, so dropping 2,000 commands is not measured.
+    std::hint::black_box(fixture.open());
+    fixture
+}
+#[library_benchmark(setup = ribbon_fixture, config = LibraryBenchmarkConfig::default().tool(
+    Callgrind::default().hard_limits([(EventKind::Ir, RIBBON_NAVIGATE_IR)]).soft_limits([(EventKind::Ir, 2.0)])
+))]
+fn ribbon_navigate(
+    fixture: guiraffe_bench::ribbon::RibbonFixture,
+) -> guiraffe_bench::ribbon::RibbonFixture {
+    // Returned, so dropping 2,000 commands is not measured.
+    std::hint::black_box(fixture.navigate().expect("navigate"));
+    fixture
+}
+#[library_benchmark(setup = ribbon_fixture, config = LibraryBenchmarkConfig::default().tool(
+    Callgrind::default().hard_limits([(EventKind::Ir, RIBBON_FILTER_IR)]).soft_limits([(EventKind::Ir, 2.0)])
+))]
+fn ribbon_filter(
+    fixture: guiraffe_bench::ribbon::RibbonFixture,
+) -> guiraffe_bench::ribbon::RibbonFixture {
+    // Returned, so dropping 2,000 commands is not measured.
+    std::hint::black_box(fixture.filter().expect("filter"));
+    fixture
+}
+const RIBBON_OPEN_IR: u64 = 36_000; // measured 24,423
+const RIBBON_NAVIGATE_IR: u64 = 68_000; // measured 45,119
+const RIBBON_FILTER_IR: u64 = 64_000; // measured 42,079
+library_benchmark_group!(name = ribbon; benchmarks = ribbon_open, ribbon_navigate, ribbon_filter);
+main!(config = LibraryBenchmarkConfig::default().tool(Callgrind::default().soft_limits([(EventKind::Ir, 2.0)])); library_benchmark_groups = workloads, protocol, ribbon);

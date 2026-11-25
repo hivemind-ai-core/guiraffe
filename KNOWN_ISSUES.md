@@ -29,14 +29,10 @@ isolation, and the full sheet and UI runs did not finish.
 
 Implemented in `guiraffe-commands::ribbon` (ROADMAP 0.3 #13). Not yet done:
 
-- A closed ribbon still costs a constant 5 allocations per repaint: the leader's action and
-  key-up listeners on `RibbonScope` (key-up suppresses an auto-repeating leader). It builds no rows
-  or projections; `tests/ribbon_alloc.rs` gates the constant.
 - Placement (top/bottom) and open/close animation props from the design are not implemented; the
   host places `CommandRibbon` in its layout.
 - `ui!`'s `ribbon: "format/b"` and DataUi mounting are not wired. `control_menus` builds entries
   from a window's action bus registrations instead.
-- The 2k-command, 200-category budget is checked by a unit test, not yet by `guiraffe-bench`.
 - Shortcut and chord overrides persist through `ribbon::OverrideFile`; there is no keybinding
   editor page yet.
 - Spotlight cannot prompt for parameters, so commands with parameters run only from the ribbon

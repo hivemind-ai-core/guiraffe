@@ -191,7 +191,7 @@ fn ribbon(window: &mut Window, cx: &mut App) -> AnyView {
     };
     cx.new(|cx| {
         let ribbon = cx.new(|cx| {
-            let mut state = RibbonState::new(&commands, model, cx);
+            let mut state = RibbonState::new(&commands, model, window, cx);
             state.set_choices(
                 "symbols",
                 vec![

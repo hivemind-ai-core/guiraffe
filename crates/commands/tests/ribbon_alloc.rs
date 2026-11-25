@@ -1,6 +1,6 @@
-//! Near-zero cost when closed: a window with a closed ribbon repaints with the allocations of
-//! the same window with an empty placeholder plus the leader's two scope listeners
-//! (`CLOSED_OVERHEAD`, constant: no rows, no projection, no growth; see KNOWN_ISSUES.md). An open, unchanged ribbon
+//! Zero cost when closed: a window with a closed ribbon repaints with exactly the allocations
+//! of the same window with an empty placeholder (the leader is a once-per-window keystroke
+//! interceptor, not a per-frame listener). An open, unchanged ribbon
 //! stays within budget and does not grow.
 use gpui_kit::{
     AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled,
@@ -22,8 +22,6 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 /// 3 categories x 6 rows open (18 Kit buttons); measured 2 120 upstream on 2026-11-25.
 const OPEN_BUDGET: u64 = 2_500;
-/// The leader action and key-up listeners (boxed closures and their listener lists).
-const CLOSED_OVERHEAD: u64 = 5;
 
 fn noop(_: &Payload, _: &mut Window, _: &mut gpui_kit::App) {}
 
@@ -114,7 +112,7 @@ fn mount(
                     let focus = cx.focus_handle();
                     focus.focus(window, cx);
                     let ribbon =
-                        with_ribbon.then(|| cx.new(|cx| RibbonState::new(&commands, model, cx)));
+                        with_ribbon.then(|| cx.new(|cx| RibbonState::new(&commands, model, window, cx)));
                     *out.borrow_mut() = ribbon.clone();
                     let host = cx.new(|_| Host { ribbon });
                     guiraffe_overlays::root(host, window, cx)
@@ -155,9 +153,8 @@ fn a_closed_ribbon_costs_nothing_per_frame(cx: &mut TestAppContext) {
     eprintln!("ribbon closed repaint: baseline {base:?}, with ribbon {with:?}");
     let base_min = base.iter().copied().min().unwrap_or(0);
     let with_min = with.iter().copied().min().unwrap_or(0);
-    let with_max = with.iter().copied().max().unwrap_or(0);
     assert!(
-        with_max <= base_min + CLOSED_OVERHEAD && with_min == with_max,
+        with == base && with_min == base_min,
         "a closed ribbon allocates per frame: {with:?} vs placeholder {base:?}"
     );
 }

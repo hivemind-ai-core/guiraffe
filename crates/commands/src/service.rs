@@ -182,8 +182,7 @@ pub fn init(cx: &mut App) -> Vec<guiraffe_core::keys::InvalidBinding> {
     });
     crate::document::register(cx);
     let palette = keys::binding(PALETTE_SHORTCUT, ShowCommands, Some("GrCommand"), cx);
-    let leader = crate::ribbon::leader_binding(crate::ribbon::RIBBON_LEADER, cx);
-    keys::bind_keys(vec![palette, leader], cx)
+    keys::bind_keys(vec![palette], cx)
 }
 pub fn registry(cx: &App) -> Result<Commands, Error> {
     cx.try_global::<Configuration>()

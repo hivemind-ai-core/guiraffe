@@ -31,10 +31,9 @@ pub use model::{
     RibbonModel, RibbonTarget, Section, Step,
 };
 pub use overrides::{Loaded, MAX_OVERRIDE_BYTES, OverrideFile, Overrides};
-pub(crate) use view::leader_binding;
 pub use view::{
     CommandRibbon, RIBBON_CONTEXT, RIBBON_LEADER, RibbonButton, RibbonEvent, RibbonProps,
-    RibbonScope, RibbonState, ToggleRibbon, bind_leader,
+    RibbonScope, RibbonState,
 };
 
 /// Ribbon entries for every payload-free shared action of the controls registered on this

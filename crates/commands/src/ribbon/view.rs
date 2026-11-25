@@ -25,28 +25,12 @@ use guiraffe_core::{
 };
 use std::rc::Rc;
 
-gpui_kit::actions!(guiraffe_commands, [ToggleRibbon]);
-
-/// The default leader: Ctrl+Space on every platform.
+/// The default leader: Ctrl+Space on every platform. See [`RibbonState::set_leader`].
 pub const RIBBON_LEADER: &str = "ctrl-space";
-/// Key context of [`RibbonScope`]; the leader is bound in it.
+/// Key context of [`RibbonScope`]: the leader works while focus is inside it.
 pub const RIBBON_CONTEXT: &str = "GrRibbon";
-
-pub(crate) fn leader_binding(
-    keys: &str,
-    cx: &App,
-) -> Result<gpui_kit::KeyBinding, guiraffe_core::keys::InvalidBinding> {
-    guiraffe_core::keys::binding(keys, ToggleRibbon, Some(RIBBON_CONTEXT), cx)
-}
-
-/// Bind an additional leader (for example `"alt-space"`). The default stays bound;
-/// applications that want only theirs can rebind the GPUI keymap as usual.
-pub fn bind_leader(keys: &str, cx: &mut App) -> Result<(), crate::Error> {
-    let binding =
-        leader_binding(keys, cx).map_err(|e| crate::Error::NativeBinding(e.to_string()))?;
-    cx.bind_keys([binding]);
-    Ok(())
-}
+/// Leader events closer together than this, with no key-up seen in between, are auto-repeat.
+const LEADER_REPEAT: std::time::Duration = std::time::Duration::from_millis(600);
 
 /// Ribbon props: data, so they serialize for DataUi and `ui!`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -149,8 +133,14 @@ pub struct RibbonState {
     message: Option<SharedString>,
     focus: FocusHandle,
     restore: Option<FocusHandle>,
-    /// Set by the leader, cleared on key-up: an auto-repeating leader never toggles twice.
+    /// The leader keystroke, matched by this window's keystroke interceptor.
+    leader: gpui_kit::Keystroke,
+    /// Set by the leader; cleared by a key-up in the open bar or by any other keystroke.
+    /// With `last_leader`, an auto-repeating leader never toggles twice.
     leader_down: bool,
+    last_leader: Option<std::time::Instant>,
+    window: gpui_kit::WindowId,
+    _leader: Subscription,
     /// Parsed once: building a key context per frame would allocate.
     scope_context: gpui_kit::KeyContext,
     bar_context: gpui_kit::KeyContext,
@@ -166,7 +156,43 @@ impl Focusable for RibbonState {
 
 impl RibbonState {
     /// Create the ribbon of one window over `commands` and a compiled `model`.
-    pub fn new(commands: &Commands, model: Rc<RibbonModel>, cx: &mut Context<Self>) -> Self {
+    ///
+    /// The leader is handled by one keystroke interceptor registered here for `window`, not by
+    /// per-frame listeners, so a closed ribbon adds no work to any frame.
+    pub fn new(
+        commands: &Commands,
+        model: Rc<RibbonModel>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let window_id = window.window_handle().window_id();
+        let weak = cx.weak_entity();
+        let leader = cx.intercept_keystrokes(move |event, window, cx| {
+            if window.window_handle().window_id() != window_id {
+                return;
+            }
+            let Some(ribbon) = weak.upgrade() else {
+                return;
+            };
+            let state = ribbon.read(cx);
+            let is_leader = event.keystroke.modifiers == state.leader.modifiers
+                && event.keystroke.key == state.leader.key;
+            if !is_leader {
+                if state.leader_down {
+                    ribbon.update(cx, |state, _| state.leader_down = false);
+                }
+                return;
+            }
+            if !event
+                .context_stack
+                .iter()
+                .any(|context| context.contains(RIBBON_CONTEXT))
+            {
+                return;
+            }
+            ribbon.update(cx, |state, cx| state.leader_pressed(window, cx));
+            cx.stop_propagation();
+        });
         // The registry changing (enable, rebind, host contexts) reprojects an open ribbon only.
         let registry = cx.observe(commands.entity(), |this: &mut Self, _, cx| {
             if this.open {
@@ -188,7 +214,11 @@ impl RibbonState {
             message: None,
             focus: cx.focus_handle(),
             restore: None,
+            leader: default_leader(cx),
             leader_down: false,
+            last_leader: None,
+            window: window_id,
+            _leader: leader,
             scope_context: gpui_kit::KeyContext::parse(RIBBON_CONTEXT).unwrap_or_default(),
             bar_context: gpui_kit::KeyContext::parse("GrRibbonBar").unwrap_or_default(),
             _registry: registry,
@@ -331,9 +361,27 @@ impl RibbonState {
         }
     }
 
-    /// The leader action: toggles, except for auto-repeat while the leader is held.
-    fn leader(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.leader_down {
+    /// Change the leader (for example `"alt-space"`; `secondary-` resolves per OS).
+    pub fn set_leader(&mut self, keys: &str, cx: &App) -> Result<(), crate::Error> {
+        self.leader = gpui_kit::Keystroke::parse_with_os(keys, cx.platform_info().os)
+            .map_err(|e| crate::Error::InvalidBinding(e.to_string()))?;
+        Ok(())
+    }
+
+    /// The window this ribbon belongs to.
+    pub fn window_id(&self) -> gpui_kit::WindowId {
+        self.window
+    }
+
+    /// The leader: toggles, except for auto-repeat while the leader is held.
+    fn leader_pressed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = std::time::Instant::now();
+        let repeat = self.leader_down
+            && self
+                .last_leader
+                .is_some_and(|last| now.duration_since(last) < LEADER_REPEAT);
+        self.last_leader = Some(now);
+        if repeat {
             return;
         }
         self.leader_down = true;
@@ -442,6 +490,7 @@ impl RibbonState {
                         };
                         ActionBus::dispatch(id, &action, Source::Ribbon, window, cx)
                     })
+                    .map(|_| ())
                     .map_err(|e| format!("{e:?}"));
                 cx.emit(RibbonEvent::Ran {
                     step: Step::Action { control, action },
@@ -618,8 +667,7 @@ impl RibbonState {
     }
 }
 
-/// Wraps a window's content: binds the leader in [`RIBBON_CONTEXT`] and suppresses its
-/// auto-repeat. Place [`CommandRibbon`] and [`RibbonButton`] inside it.
+/// Wraps a window's content: the leader works while focus is inside it ([`RIBBON_CONTEXT`]). Place [`CommandRibbon`] and [`RibbonButton`] inside it.
 #[derive(IntoElement)]
 pub struct RibbonScope {
     state: Entity<RibbonState>,
@@ -647,21 +695,9 @@ impl Styled for RibbonScope {
 }
 impl RenderOnce for RibbonScope {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Only a cached key context: no listeners, so the scope costs nothing per frame.
         let key_context = self.state.read(cx).scope_context.clone();
-        let toggle = self.state.clone();
-        let release = self.state;
-        let mut element = div()
-            .key_context(key_context)
-            .children(self.children)
-            .on_action(move |_: &ToggleRibbon, window, cx| {
-                toggle.update(cx, |state, cx| state.leader(window, cx));
-            })
-            .capture_key_up(move |_, _, cx| {
-                // Plain read first: only a held leader needs the write.
-                if release.read(cx).leader_down {
-                    release.update(cx, |state, _| state.leader_down = false);
-                }
-            });
+        let mut element = div().key_context(key_context).children(self.children);
         element.style().refine(&self.style);
         element
     }
@@ -708,6 +744,7 @@ impl RenderOnce for CommandRibbon {
         let column_width = height * 11.;
         let key_handler = self.state.clone();
         let escape_handler = self.state.clone();
+        let up_handler = self.state.clone();
         let mut bar = div()
             .id("command-ribbon")
             .track_focus(&state.focus)
@@ -728,6 +765,11 @@ impl RenderOnce for CommandRibbon {
                 if event.keystroke.key == "escape" && escape_handler.read(cx).prompt.is_some() {
                     escape_handler.update(cx, |state, cx| state.escape(window, cx));
                     cx.stop_propagation();
+                }
+            })
+            .on_key_up(move |_, _, cx| {
+                if up_handler.read(cx).leader_down {
+                    up_handler.update(cx, |state, _| state.leader_down = false);
                 }
             })
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
@@ -1066,6 +1108,10 @@ impl RenderOnce for RibbonButton {
             .toggled(open)
             .on_click(move |_, window, cx| state.update(cx, |s, cx| s.toggle(window, cx)))
     }
+}
+
+fn default_leader(cx: &App) -> gpui_kit::Keystroke {
+    gpui_kit::Keystroke::parse_with_os(RIBBON_LEADER, cx.platform_info().os).unwrap_or_default()
 }
 
 impl Render for RibbonState {
