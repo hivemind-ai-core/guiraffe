@@ -179,3 +179,16 @@ the calling thread and allocation counts include benchmark marker overhead.
 Phase medians are computed independently. The fixed-width buffer allocation
 assertion passed at both sizes. Unbound controls receive no prototype code
 because the binding table lives entirely in the benchmark.
+
+| Upstream, release profile | Total median CPU | Through Store flush | After flush | Median allocations |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 cached rows | 12.44 ms | 0.26 ms | 12.17 ms | 1,303 |
+| 3,000 cached rows | 42.07 ms | 1.20 ms | 40.93 ms | 3,303 |
+
+**No-go on freezing the binding syntax or claiming the 0.5 ms budget.**
+At 3,000 rows the complete frame costs 84 times the budget. The roughly 41 ms
+after the flush is the upper bound on what a draw-side change could save in
+this run. Actual savings require a backend implementation and measurement.
+Even eliminating that entire phase leaves 1.20 ms before the marker. The
+release harness measured 5.7 and 6.1 ns/edit for the buffer-only sweep with
+zero allocations on the checked write. This host was shared during measurement.
