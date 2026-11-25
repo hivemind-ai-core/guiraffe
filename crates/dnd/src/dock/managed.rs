@@ -1097,6 +1097,25 @@ mod tests {
                 .persist()
                 .load(commands.key())
                 .unwrap();
+            let child_key = guiraffe_windows::WindowKey::instance("dock-panel", "test/panel");
+            let child = guiraffe_windows::WindowManager::find(&child_key, cx).unwrap();
+            let veto = Rc::new(Cell::new(true));
+            let guard = veto.clone();
+            child
+                .update(cx, |view, window, cx| {
+                    assert_eq!(PanelId::from(view.entity_id()), id);
+                    guiraffe_windows::WindowManager::add_close_guard(window, cx, move |_, _| {
+                        if guard.get() {
+                            guiraffe_windows::CloseDecision::Veto
+                        } else {
+                            guiraffe_windows::CloseDecision::Allow
+                        }
+                    });
+                })
+                .unwrap();
+            assert!(!commands.dock_back(window, cx).unwrap());
+            assert!(area.read(cx).panel(id).is_none());
+            veto.set(false);
             assert!(commands.dock_back(window, cx).unwrap());
             assert!(
                 area.read(cx)
