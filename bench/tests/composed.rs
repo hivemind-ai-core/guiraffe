@@ -557,3 +557,51 @@ fn print_sample(
         percentile(&mut allocations, 50)
     );
 }
+
+/// Headless CPU, from dispatch through completion of the enclosing window update.
+/// The deferred marker runs after the Store's queued flush and before drawing.
+#[test]
+#[ignore = "run explicitly with --ignored --nocapture"]
+fn composed_label_phase_sweep() {
+    let mut app = app();
+    for n in [1000, 3000] {
+        let probe = Probe::new(n);
+        let (page, mut window) = fixture(&mut app, true, probe.clone());
+        let store = window.update(|_, cx| page.read(cx).store.clone());
+        let mut totals = Vec::new();
+        let mut flushes = Vec::new();
+        let mut frames = Vec::new();
+        let mut allocations = Vec::new();
+        for i in 0..35 {
+            let mark = Rc::new(Cell::new(0));
+            let marker = mark.clone();
+            let before = probe.rows[EDITED].get();
+            let label = if i % 2 == 0 { "Row 00004" } else { "Row 00003" }.into();
+            let ((start, end), counts) = count_allocations(|| {
+                let start = cpu_ns();
+                window.update(|_, cx| {
+                    store.dispatch(Change::Label(label), cx);
+                    cx.defer(move |_| marker.set(cpu_ns()));
+                });
+                (start, cpu_ns())
+            })
+            .expect("count complete frame");
+            assert_eq!(probe.rows[EDITED].get(), before + 1);
+            assert!((start..=end).contains(&mark.get()));
+            if i >= 4 {
+                flushes.push(mark.get() - start);
+                frames.push(end - mark.get());
+                totals.push(end - start);
+                allocations.push(counts.allocations);
+            }
+        }
+        println!(
+            "rows={n} median_ns total={} through_flush={} after_flush={} allocs={}",
+            percentile(&mut totals, 50),
+            percentile(&mut flushes, 50),
+            percentile(&mut frames, 50),
+            percentile(&mut allocations, 50)
+        );
+        close(window);
+    }
+}

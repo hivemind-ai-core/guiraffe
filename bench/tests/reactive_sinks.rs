@@ -1,6 +1,10 @@
 //! Fixed-metric ASCII label prototype. Each retained row owns a display-list
 //! slice with stable coordinates. A binding records the slice at mount time.
+use guiraffe_bench::allocator::{CountingAllocator, Counts, count_allocations};
 use std::hint::black_box;
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 #[derive(Clone, Copy)]
 struct Binding {
@@ -55,7 +59,7 @@ fn sweep(rows: usize) {
     let mut scene = Scene::mount(rows);
     for i in 0..1_000_000 {
         let key = i % rows;
-        let label = if (i / rows) % 2 == 0 {
+        let label = if (i / rows).is_multiple_of(2) {
             *b"modified"
         } else {
             *b"original"
@@ -68,11 +72,8 @@ fn sweep(rows: usize) {
 
 #[test]
 fn fixed_label_dirty_replay() -> anyhow::Result<()> {
-    use guiraffe_bench::allocator::{CountingAllocator, Counts, count_allocations};
     use nix::sys::time::TimeValLike;
     use nix::time::{ClockId, clock_gettime};
-    #[global_allocator]
-    static ALLOCATOR: CountingAllocator = CountingAllocator;
     for rows in [1000, 3000] {
         let mut scene = Scene::mount(rows);
         let (_, allocations) = count_allocations(|| scene.write(rows / 2, *b"modified"))?;
