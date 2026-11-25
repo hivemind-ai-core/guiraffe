@@ -10,10 +10,10 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("soak", type=Path)
 args = parser.parse_args()
 sizes = {
-    "flamegraph": (32_768, 65_536, 131_072, 262_144, 524_288),
+    "flamegraph": (32_768, 65_536, 131_072, 262_144, 524_288, 10_000_000),
     "tracks": (32, 64, 128, 256, 1024),
     "timeline": (16, 64, 128, 256, 1024),
-    "mermaid": (16, 32, 64, 128),
+    "mermaid": (16, 32, 64, 128, 500),
 }
 failed = False
 for component, counts in sizes.items():
@@ -31,4 +31,17 @@ for component, counts in sizes.items():
         print(f"{component} {count}: mount={mount}us p99={p99}us "
               f"{'PASS' if passed else 'FAIL'}", flush=True)
         failed |= not passed
-sys.exit(int(failed))
+# The original dope-sheet regression includes tab activation and concurrent
+# chart ingestion. Exercise complete mixed cycles at the mounted fixture size.
+mixed_env = dict(os.environ, SOAK_FRAMES="384")
+for key in ("SOAK_LIMIT_PROBE", "SOAK_ITEMS", "SOAK_SCALE", "SOAK_FLOW_WARM_REPLAY"):
+    mixed_env.pop(key, None)
+mixed = subprocess.run(
+    [args.soak.resolve(), "mixed"], env=mixed_env, timeout=120,
+    stdout=subprocess.PIPE, text=True, check=True,
+)
+record, = (line for line in mixed.stdout.splitlines() if line.startswith("component=timeline "))
+metrics = dict(field.split("=", 1) for field in record.split())
+passed = int(metrics["frames"]) > 0 and int(metrics["max_us"]) <= 8_000
+print(f"mixed {record} {'PASS' if passed else 'FAIL'}", flush=True)
+sys.exit(int(failed or not passed))
