@@ -173,6 +173,15 @@ four complete mixed-soak cycles against 8 ms. The frame replay prints zero sampl
 mount already exceeds budget. UI-thread CPU p99 is diagnostic and excludes scheduler
 waits and work on other threads. The exit status follows the wall-clock budgets.
 
+Use the same executables to run the load-independent cold timeline instruction gate.
+It counts the first timeline tab switch, hover and settled draw in the mixed replay.
+The chart receives 500 new samples on that activation and retains 10,000 samples.
+Callgrind collects only inside the activation. A missing count fails the gate.
+
+```sh
+scripts/cold-timeline-instructions.sh target/sweep-{up,fast}/release/examples/soak
+```
+
 ### Mounted DataGrid and CodeViewer frames
 
 Run the dedicated instruction suite with Valgrind and

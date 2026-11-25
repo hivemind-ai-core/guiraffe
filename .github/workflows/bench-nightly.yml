@@ -40,6 +40,7 @@ jobs:
             cargo build --release --locked -p guiraffe-bench --example soak "${features[@]}"
             binaries+=("$CARGO_TARGET_DIR/release/examples/soak")
           done
+          scripts/cold-timeline-instructions.sh "${binaries[@]}"
           python3 scripts/component-sweep.py "${binaries[@]}"
       - uses: actions/cache/save@v4
         with:
