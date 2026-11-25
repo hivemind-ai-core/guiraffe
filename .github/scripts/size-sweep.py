@@ -1,4 +1,5 @@
 """Gate the mounted fixtures up to their production sizes (docs/performance.md)."""
+import os
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,8 @@ def main():
     for component, maximum in MAXIMUM.items():
         size = 16
         while True:
+            load = " ".join(f"{value:.2f}" for value in os.getloadavg())
+            print(f"{component} {size}: load averages {load}", flush=True)
             report = directory / f"{component}-{size}.md"
             subprocess.run(
                 ["target/release/examples/limits", component, "--start", str(size),
