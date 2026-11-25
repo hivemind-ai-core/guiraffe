@@ -1,3 +1,4 @@
+use crate::strips::{Projection, RowStrips};
 use crate::{FlameLayout, Frame, FrameClicked, FrameId, FrameSource, LayoutError, Search};
 use gpui_kit::{
     App, AppContext, Bounds, ContentMask, Context, DispatchPhase, Entity, EventEmitter,
@@ -98,9 +99,24 @@ impl Drop for PendingLayout {
     }
 }
 
+pub(super) fn palette_index(frame: Frame<'_>, scheme: ColourScheme) -> usize {
+    if scheme == ColourScheme::Heat {
+        return ((frame.self_value / frame.total) * 5.) as usize;
+    }
+    let mut hash = DefaultHasher::new();
+    if scheme == ColourScheme::Package {
+        frame.package
+    } else {
+        frame.label
+    }
+    .hash(&mut hash);
+    hash.finish() as usize % 6
+}
+
 /// Flame and icicle plot. Tab into the plot, use the arrows to move among
 /// frames, Enter or Space to activate a frame, and Home or Escape to reset.
 pub struct FlameGraph {
+    strips: Option<Rc<RefCell<RowStrips>>>,
     layout: Arc<FlameLayout>,
     domain: Range<f64>,
     focus: Option<FrameId>,
@@ -126,6 +142,7 @@ impl EventEmitter<FrameClicked> for FlameGraph {}
 impl FlameGraph {
     pub fn new(layout: Arc<FlameLayout>) -> Self {
         Self {
+            strips: None,
             domain: layout.domain(),
             layout,
             focus: None,
@@ -444,6 +461,18 @@ impl Render for FlameGraph {
                 tooltip
             })
             .clone();
+        let strips = self
+            .strips
+            .get_or_insert_with(|| {
+                let strips = Rc::<RefCell<RowStrips>>::default();
+                let owned = strips.clone();
+                cx.on_release(move |_, cx| {
+                    owned.borrow_mut().release(cx);
+                })
+                .detach();
+                strips
+            })
+            .clone();
         let keyboard_focus = self
             .keyboard_focus
             .get_or_insert_with(|| cx.focus_handle())
@@ -569,6 +598,20 @@ impl Render for FlameGraph {
                                 // Frame rectangles occupy disjoint rows and columns. GPUI can
                                 // order their quads together, then draw clipped labels above.
                                 window.paint_layer(bounds, |window| {
+                                    let mut strips = strips.borrow_mut();
+                                    strips.prepare(Projection {
+                                        layout: layout.clone(),
+                                        search: search.clone(),
+                                        domain: domain.clone(),
+                                        first_row,
+                                        scheme: colour,
+                                        width,
+                                        scale: window.scale_factor(),
+                                        origin_x: bounds.origin.x.into(),
+                                        colors: std::array::from_fn(|i| {
+                                            colors.get(i).copied().unwrap_or(highlight).background
+                                        }),
+                                    });
                                     for slot in
                                         0..slots.min(layout.rows().saturating_sub(first_row))
                                     {
@@ -578,6 +621,13 @@ impl Render for FlameGraph {
                                             }
                                             Orientation::Icicle => slot as f64 * ROW_HEIGHT,
                                         };
+                                        let row_rect = Bounds::new(
+                                            bounds.origin + point(px(0.), px(y as f32)),
+                                            size(bounds.size.width, px(ROW_HEIGHT as f32 - 1.)),
+                                        );
+                                        if strips.paint(slot, row_rect, window, cx) {
+                                            continue;
+                                        }
                                         layout.visit_paint_row(
                                             first_row + slot,
                                             domain.clone(),
@@ -586,22 +636,8 @@ impl Render for FlameGraph {
                                             |segment| {
                                                 let frame =
                                                     segment.id.and_then(|id| layout.frame(id));
-                                                let color = frame.map_or(0, |frame| match colour {
-                                                    ColourScheme::Heat => {
-                                                        ((frame.self_value / frame.total)
-                                                            * (colors.len() - 1) as f64)
-                                                            as usize
-                                                    }
-                                                    scheme => {
-                                                        let mut hash = DefaultHasher::new();
-                                                        if scheme == ColourScheme::Package {
-                                                            frame.package
-                                                        } else {
-                                                            frame.label
-                                                        }
-                                                        .hash(&mut hash);
-                                                        hash.finish() as usize % colors.len()
-                                                    }
+                                                let color = frame.map_or(0, |frame| {
+                                                    palette_index(frame, colour)
                                                 });
                                                 let rect = Bounds::new(
                                                     bounds.origin
