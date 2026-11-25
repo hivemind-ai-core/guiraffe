@@ -25,12 +25,7 @@ pub fn entries() -> Vec<Entry> {
         krate: "commands",
         name: "Command ribbon",
         summary: "A keyboard-first command bar above the status bar. Ctrl+Space opens it; type an entry's key to descend or run, Backspace goes up, Escape goes to the root and then closes. Categories follow the page and the selection; disabled commands explain why.",
-        covers: &[
-            "RibbonScope",
-            "CommandRibbon",
-            "RibbonButton",
-            "RibbonState",
-        ],
+        covers: &["CommandRibbon", "RibbonButton", "RibbonState"],
         demo: ribbon,
     }]
 }
