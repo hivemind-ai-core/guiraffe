@@ -905,3 +905,11 @@ fn disabled_undo_history_allocates_nothing_on_the_push_path() -> anyhow::Result<
     assert_eq!(counts.allocations, 0);
     Ok(())
 }
+
+#[test]
+fn control_host_setters_allocate_nothing() -> anyhow::Result<()> {
+    let mut writes = guiraffe_bench::protocol::HostWrites::new()?;
+    let (_, counts) = writes.write(|call| count_allocations(call))??;
+    assert_eq!(counts.allocations, 0, "host writes: {counts:?}");
+    Ok(())
+}

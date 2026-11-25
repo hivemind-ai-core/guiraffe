@@ -281,3 +281,105 @@ fn with_path<B>(
         (false, path) => name(builder, path),
     }
 }
+
+/// One control of each kind with a host setter, written as a Store watch would:
+/// inside an App update, without a window.
+pub struct HostWrites {
+    app: HeadlessAppContext,
+    window: WindowHandle<ControlHost>,
+    controls: HostControls,
+    flip: bool,
+}
+struct HostControls {
+    button: Entity<guiraffe_components::controls::ButtonControl>,
+    checkbox: Entity<guiraffe_components::controls::CheckboxControl>,
+    slider: Entity<guiraffe_components::controls::SliderControl>,
+    input: Entity<guiraffe_components::controls::TextInputControl>,
+    select: Entity<guiraffe_components::controls::SelectControl>,
+    tabs: Entity<guiraffe_components::controls::TabsControl>,
+}
+impl HostWrites {
+    pub fn new() -> anyhow::Result<Self> {
+        use guiraffe_components::controls::*;
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut app =
+            HeadlessAppContext::with_platform(text, Arc::new(gpui_kit::assets::Assets), || {
+                Ok(None)
+            });
+        app.update(guiraffe_components::init);
+        let mut controls = None;
+        let window = app.open_window(size(px(800.), px(600.)), |window, cx| {
+            let c = HostControls {
+                button: ButtonControl::new().path("host/button").build(window, cx),
+                checkbox: CheckboxControl::new()
+                    .path("host/checkbox")
+                    .build(window, cx),
+                slider: SliderControl::new().path("host/slider").build(window, cx),
+                input: TextInputControl::new().path("host/input").build(window, cx),
+                select: SelectControl::new()
+                    .options(["a", "b"])
+                    .path("host/select")
+                    .build(window, cx),
+                tabs: TabsControl::new()
+                    .tabs(["a", "b"])
+                    .path("host/tabs")
+                    .build(window, cx),
+            };
+            let views = vec![
+                c.button.clone().into(),
+                c.checkbox.clone().into(),
+                c.slider.clone().into(),
+                c.input.clone().into(),
+                c.select.clone().into(),
+                c.tabs.clone().into(),
+            ];
+            controls = Some(c);
+            cx.new(|_| ControlHost(views))
+        })?;
+        let controls = controls.ok_or_else(|| anyhow::anyhow!("controls were not built"))?;
+        let mut fixture = Self {
+            app,
+            window,
+            controls,
+            flip: false,
+        };
+        for _ in 0..4 {
+            fixture.write(|call| call())?;
+        }
+        Ok(fixture)
+    }
+    /// Run one round of host writes, every value changing, within `measure`.
+    pub fn write<R>(&mut self, measure: impl FnOnce(&mut dyn FnMut()) -> R) -> anyhow::Result<R> {
+        self.flip = !self.flip;
+        let on = self.flip;
+        let c = &self.controls;
+        // Inside one effect cycle, as in a Store flush; the setters get no window.
+        self.app.update_window(self.window.into(), |_, _, cx| {
+            measure(&mut || {
+                let label = if on { "On" } else { "Off" };
+                c.button.update(cx, |b, cx| {
+                    b.set_disabled(on, cx);
+                    b.set_label(label, cx);
+                });
+                c.checkbox.update(cx, |b, cx| {
+                    b.set_checked(on, cx);
+                    b.set_label(label, cx);
+                });
+                c.slider.update(cx, |s, cx| {
+                    s.set_value(if on { 30.0 } else { 70.0 }, cx);
+                    s.set_label(label, cx);
+                });
+                c.input.update(cx, |s, cx| {
+                    s.set_value(label, cx);
+                    s.set_placeholder(label, cx);
+                });
+                c.select.update(cx, |s, cx| {
+                    s.set_selected(Some(usize::from(on)), cx);
+                    s.set_label(label, cx);
+                });
+                c.tabs
+                    .update(cx, |s, cx| s.set_selected(usize::from(on), cx));
+            })
+        })
+    }
+}

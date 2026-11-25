@@ -262,8 +262,20 @@ Each control has the same constructor surface, which `ui!` can lower to:
 - `control → store`: subscribe to its typed event (`ButtonEvent`,
   `ToggleEvent`, `SliderControlEvent`, `TextInputEvent`, `SelectionEvent`,
   `MenuEvent`).
-- `store → control`: host setters (`set_checked`, `set_value`, `set_selected`)
-  write state without emitting, so a store write never echoes as a user action.
+- `store → control`: host setters (`set_checked`, `set_value`, `set_selected`,
+  `set_selected_value`) write state without emitting, so a store write never
+  echoes as a user action. They take only `&mut Context`, so a Store watch can
+  call them during its flush without a window. Kit state that needs a window
+  (slider, input, select) follows at the control's next render. Host writes
+  allocate nothing (`control_host_setters_allocate_nothing`).
+- One-way host setters: `set_disabled` and `set_label` on every control whose
+  kit widget takes them (the label is the accessible name on slider and select;
+  `set_placeholder` on the text input). Tabs and menu items are fixed at build.
+- `SelectControl<T>` selects typed values. `SelectControl::typed([(value,
+  label), ..])` binds a store enum directly. `set_selected_value(&T)` and the
+  `SelectedValue<T>` event carry the value; the index-based `SelectionEvent`
+  and `select` action stay. `SelectControl::new().options(labels)` is the
+  `SharedString` case.
 
 The control's own pointer and keyboard handlers build the erased action a bus
 client would send. A registered control dispatches it with `Source::Pointer`

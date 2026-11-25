@@ -362,9 +362,9 @@ fn select_confirm_and_bus_select_identically(cx: &mut TestAppContext) {
     });
     let hook = sources(vcx, None);
     let logs = [
-        record(vcx, &plain),
-        record(vcx, &physical),
-        record(vcx, &bus_side),
+        record::<_, SelectionEvent>(vcx, &plain),
+        record::<_, SelectionEvent>(vcx, &physical),
+        record::<_, SelectionEvent>(vcx, &bus_side),
     ];
     // The kit list's confirm, as a pointer click on an open dropdown emits it.
     for entity in [&plain, &physical] {
@@ -477,5 +477,175 @@ fn unbound_controls_register_nothing(cx: &mut TestAppContext) {
     assert_eq!(
         vcx.update(|window, cx| ActionBus::controls(window, cx).count()),
         0
+    );
+}
+
+#[gpui_kit::test]
+fn host_setters_need_no_window_and_never_emit(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let mut built = None;
+    let (_, vcx) = cx.add_window_view(|window, cx| {
+        let slider = SliderControl::new()
+            .range(0.0, 10.0)
+            .path("host/slider")
+            .build(window, cx);
+        let input = TextInputControl::new().path("host/input").build(window, cx);
+        let select = SelectControl::new()
+            .options(["a", "b"])
+            .path("host/select")
+            .build(window, cx);
+        let views: Vec<AnyView> = vec![
+            slider.clone().into(),
+            input.clone().into(),
+            select.clone().into(),
+        ];
+        built = Some((slider, input, select));
+        Host(views)
+    });
+    let (slider, input, select) = built.unwrap_or_else(|| unreachable!());
+    vcx.run_until_parked();
+    let slider_log = record(vcx, &slider);
+    let input_log = record::<_, TextInputEvent>(vcx, &input);
+    let select_log = record::<_, SelectionEvent>(vcx, &select);
+    // App-only context, as inside a Store watch: no window in reach.
+    vcx.update(|_, cx| {
+        let app: &mut App = cx;
+        slider.update(app, |c, cx| {
+            c.set_value(7.0, cx);
+            c.set_label("Volume", cx);
+            c.set_disabled(true, cx);
+        });
+        input.update(app, |c, cx| {
+            c.set_value("typed by host", cx);
+            c.set_placeholder("Name", cx);
+        });
+        select.update(app, |c, cx| c.set_selected(Some(1), cx));
+    });
+    vcx.run_until_parked();
+    vcx.update(|window, _| window.refresh());
+    vcx.run_until_parked();
+    let (kit_slider, kit_input, kit_select) = vcx.update(|_, cx| {
+        (
+            slider.read(cx).state().read(cx).value(),
+            input.read(cx).input().read(cx).value(),
+            select.read(cx).state().read(cx).selected_index(cx),
+        )
+    });
+    assert_eq!(
+        kit_slider,
+        gpui_kit::component::slider::SliderValue::Single(7.0)
+    );
+    assert_eq!(kit_input.as_ref(), "typed by host");
+    assert_eq!(kit_select, Some(gpui_kit::component::IndexPath::new(1)));
+    assert!(slider_log.borrow().is_empty());
+    assert!(input_log.borrow().is_empty());
+    assert!(select_log.borrow().is_empty());
+    let snap = snapshot(vcx, "host/slider");
+    assert_eq!(
+        snap.as_ref().and_then(|s| s.label.as_deref()),
+        Some("Volume")
+    );
+    assert_eq!(
+        bus(vcx, "host/slider", names::INCREMENT, Value::Null),
+        Err(ActionError::Disabled),
+        "a host-disabled control rejects bus input"
+    );
+    assert_eq!(
+        snapshot(vcx, "host/input").and_then(|s| s.label).as_deref(),
+        Some("Name")
+    );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Theme {
+    Light,
+    Dark,
+    System,
+}
+
+#[gpui_kit::test]
+fn typed_select_binds_values_by_pointer_and_bus(cx: &mut TestAppContext) {
+    let ((plain, physical, bus_side), vcx) = mount(cx, |path, window, cx| {
+        let b = SelectControl::typed([
+            (Theme::Light, "Light"),
+            (Theme::Dark, "Dark"),
+            (Theme::System, "System"),
+        ])
+        .selected_value(&Theme::Light);
+        match path {
+            Some(path) => b.path(path),
+            None => b,
+        }
+        .build(window, cx)
+    });
+    let hook = sources(vcx, None);
+    let logs = [
+        record::<_, SelectedValue<Theme>>(vcx, &plain),
+        record::<_, SelectedValue<Theme>>(vcx, &physical),
+        record::<_, SelectedValue<Theme>>(vcx, &bus_side),
+    ];
+    for entity in [&plain, &physical] {
+        let state = vcx.update(|_, cx| entity.read(cx).state().clone());
+        vcx.update(|_, cx| {
+            state.update(cx, |_, cx| {
+                cx.emit(SelectEvent::Confirm(Some("Dark".into())))
+            })
+        });
+        vcx.run_until_parked();
+    }
+    assert_eq!(
+        bus(vcx, "test/bus", names::SELECT, Value::Num(1.0)),
+        Ok(Outcome(Value::Str("Dark".into())))
+    );
+    for (log, entity) in logs.iter().zip([&plain, &physical, &bus_side]) {
+        assert_eq!(*log.borrow(), [SelectedValue(Theme::Dark)]);
+        assert_eq!(
+            vcx.update(|_, cx| entity.read(cx).selected_value().copied()),
+            Some(Theme::Dark)
+        );
+    }
+    assert_eq!(*hook.0.borrow(), [Source::Pointer, Source::Test]);
+    assert_eq!(snapshot(vcx, "test/physical"), snapshot(vcx, "test/bus"));
+    // A host write by value selects without emitting.
+    let found =
+        vcx.update(|_, cx| bus_side.update(cx, |c, cx| c.set_selected_value(&Theme::System, cx)));
+    assert!(found);
+    vcx.run_until_parked();
+    assert_eq!(logs[2].borrow().len(), 1);
+    assert_eq!(vcx.update(|_, cx| bus_side.read(cx).selected()), Some(2));
+}
+
+#[gpui_kit::test]
+fn one_way_disabled_blocks_pointer_and_bus(cx: &mut TestAppContext) {
+    let ((_, physical, bus_side), vcx) = mount(cx, |path, window, cx| {
+        let b = ButtonControl::new().label("Go");
+        match path {
+            Some(path) => b.path(path),
+            None => b,
+        }
+        .build(window, cx)
+    });
+    let logs = [record(vcx, &physical), record(vcx, &bus_side)];
+    vcx.update(|_, cx| {
+        for entity in [&physical, &bus_side] {
+            entity.update(cx, |c, cx| {
+                c.set_disabled(true, cx);
+                c.set_label("Stop", cx);
+            });
+        }
+    });
+    vcx.run_until_parked();
+    click(vcx, &physical, ButtonControl::element_id);
+    assert_eq!(
+        bus(vcx, "test/bus", names::ACTIVATE, Value::Null),
+        Err(ActionError::Disabled)
+    );
+    for log in &logs {
+        assert!(log.borrow().is_empty());
+    }
+    assert_eq!(snapshot(vcx, "test/physical"), snapshot(vcx, "test/bus"));
+    assert_eq!(
+        snapshot(vcx, "test/bus").and_then(|s| s.label).as_deref(),
+        Some("Stop")
     );
 }
