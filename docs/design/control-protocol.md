@@ -233,12 +233,21 @@ one target as a `Group`. Interceptors see `begin_group`, each action's
 `before`/`after`, then `end_group`. The batch stops at the first rejected
 action. It returns a `Batch`: the applied outcomes in order as `Outcomes`,
 a `SmallVec` that holds up to eight inline, and a `BatchError` with the index
-and error if it stopped early. `into_result` turns it into a `Result`. Store history (phase 4) maps one group to one undo step, so a
-drag-paint of N cells undoes at once. The store side exists: changes between
-`Store::begin_undo_group` and `Store::end_undo_group` record one step, which a
-bounded history (`HistoryLimits`: `max_steps`, optional `max_weight`) drops as a
-unit. Calling them from a bus interceptor's `begin_group`/`end_group` is the
-remaining wiring. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
+and error if it stopped early. `into_result` turns it into a `Result`. Store history maps one group to one undo step, so a
+drag-paint of N cells undoes at once. A single `dispatch` is its own step.
+
+How: `dispatch_batch` marks itself open in an app global (`ActionBus::open_batch`
+returns its serial), with no interceptor, so a single `dispatch` keeps the
+hook-free path. A `Store` with history checks the mark on each write. On the first
+write in a batch it processes earlier events outside the group and calls
+`Engine::begin_undo_group`. The next write or flush after the batch processes the
+batch's events, then ends the group. Only stores the batch writes to open a group.
+Nested batches share the outermost one's serial, so they are one step, and
+consecutive batches are separate steps. A rejected action stops the batch: the
+applied prefix is one step and undoes whole. Undo limits (`HistoryLimits`:
+`max_steps`, optional `max_weight`) drop a group as a unit. Outside a batch the
+check is a global lookup and a compare, with no allocation
+(`bench/tests/allocator.rs`). Dispatch has an allocation gate of zero
 (`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
 (`bench/benches/instructions.rs`; 2,121 measured with no interceptors), which excludes path lookup. A batch of
 eight allocates nothing and has a 8,000 instruction ceiling (6,407 measured).
