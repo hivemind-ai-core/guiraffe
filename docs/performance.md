@@ -76,3 +76,21 @@ bench/electron/run.sh                              # needs an idle machine with 
 
 Add `--features gpui-kit/gpui-fast` to the build for the other backend.
 See [bench](../bench/README.md) for suites, baselines and regression comparison.
+
+### Sheet and CodeViewer load memory
+
+On Linux, the Sheet and CodeViewer RSS tests run the full-size mounted fixture and an empty
+window in separate processes. They compare the median of five peak RSS differences with
+the raw-data budget. Sheet waits for the last cell of its 100,000-formula chain to publish,
+changes the first input, and verifies the new last value. CodeViewer streams 199,999,999
+UTF-8 bytes into its shared source and builds the 10-million-line index.
+
+An optimized, renderer-free probe of the same CodeDocument source measured 392,988 KiB
+peak process RSS when converting the generated String into an Arc, and 197,744 KiB when
+reading into the final allocation. Both runs checked the line count. Another process kept
+the 100,000-formula SheetModel and the first published result live during a second full
+recalculation. Peak RSS fell from 105,784 KiB at 34c59679 to 59,172 KiB. The model stores
+single occupancy intervals inline. The calculation worker stores reverse edges in one
+ordered set, compiles cell/constant expressions in one allocation, and publishes values
+from its working snapshot. These process peaks include model construction and exclude
+the mounted window.

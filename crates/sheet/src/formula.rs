@@ -100,21 +100,7 @@ impl Expr {
             Self::Binary(op, left, right) => {
                 let a = left.eval(values)?;
                 let b = right.eval(values)?;
-                match op {
-                    b'+' => a + b,
-                    b'-' => a - b,
-                    b'*' => a * b,
-                    b'/' if b == 0. => return Err(FormulaError::DivideByZero),
-                    b'/' => a / b,
-                    b'^' => a.powf(b),
-                    b'=' => f64::from(a == b),
-                    b'<' => f64::from(a < b),
-                    b'>' => f64::from(a > b),
-                    b'l' => f64::from(a <= b),
-                    b'g' => f64::from(a >= b),
-                    b'n' => f64::from(a != b),
-                    _ => return Err(FormulaError::Syntax),
-                }
+                return binary(*op, a, b);
             }
             Self::Call(Function::If, args) => {
                 let [condition, yes, no] = args.as_slice() else {
@@ -164,9 +150,31 @@ impl Expr {
     }
 }
 
+fn binary(op: u8, a: f64, b: f64) -> Result<f64, FormulaError> {
+    let result = match op {
+        b'+' => a + b,
+        b'-' => a - b,
+        b'*' => a * b,
+        b'/' if b == 0. => return Err(FormulaError::DivideByZero),
+        b'/' => a / b,
+        b'^' => a.powf(b),
+        b'=' => f64::from(a == b),
+        b'<' => f64::from(a < b),
+        b'>' => f64::from(a > b),
+        b'l' => f64::from(a <= b),
+        b'g' => f64::from(a >= b),
+        b'n' => f64::from(a != b),
+        _ => return Err(FormulaError::Syntax),
+    };
+    result
+        .is_finite()
+        .then_some(result)
+        .ok_or(FormulaError::Value)
+}
+
 struct Compiled {
     expr: Expr,
-    references: Vec<Reference>,
+    references: Box<[Reference]>,
 }
 
 impl Formula for Compiled {
@@ -176,6 +184,27 @@ impl Formula for Compiled {
 
     fn evaluate(&self, values: &dyn FormulaValues) -> Result<f64, FormulaError> {
         self.expr.eval(values)
+    }
+}
+
+// Store a cell/constant operation and its declared reference in one allocation.
+struct CellBinary {
+    reference: Reference,
+    op: u8,
+    number: f64,
+}
+
+impl Formula for CellBinary {
+    fn references(&self) -> &[Reference] {
+        std::slice::from_ref(&self.reference)
+    }
+
+    fn evaluate(&self, values: &dyn FormulaValues) -> Result<f64, FormulaError> {
+        let left = values.number(self.reference.first)?.unwrap_or_default();
+        if !left.is_finite() || !self.number.is_finite() {
+            return Err(FormulaError::Value);
+        }
+        binary(self.op, left, self.number)
     }
 }
 
@@ -197,9 +226,18 @@ impl FormulaEngine for BuiltinEngine {
         if parser.peek().is_some() {
             return Err(FormulaError::Syntax);
         }
+        if let Expr::Binary(op, left, right) = &expr
+            && let (Expr::Ref(pos), Expr::Number(number)) = (&**left, &**right)
+        {
+            return Ok(Box::new(CellBinary {
+                reference: Reference::new(*pos, *pos),
+                op: *op,
+                number: *number,
+            }));
+        }
         Ok(Box::new(Compiled {
             expr,
-            references: parser.references,
+            references: parser.references.into_boxed_slice(),
         }))
     }
 }
