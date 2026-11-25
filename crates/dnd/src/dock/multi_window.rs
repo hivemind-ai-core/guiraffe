@@ -131,6 +131,7 @@ impl<P: Panel> Observe for DockControl<P> {
 
 impl<P: Panel> Drive for DockControl<P> {
     type Action = DockAction;
+    type Output = ();
     fn decode(action: &Action) -> Result<DockAction, ActionError> {
         match action.name.as_ref() {
             names::OPEN => Ok(DockAction::PopOut),
