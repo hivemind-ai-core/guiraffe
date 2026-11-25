@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Profile just the first timeline tab activation in the mounted production replay.
 set -euo pipefail
-if (( $# == 0 )); then
-    echo "usage: $0 path/to/release/examples/soak [...]" >&2
+if (( $# != 2 )); then
+    echo "usage: $0 UPSTREAM_SOAK FAST_SOAK" >&2
     exit 2
 fi
 root=$(git rev-parse --show-toplevel)
 mkdir -p "$root/target"
 scratch=$(mktemp -d "$root/target/cold-timeline.XXXXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
-budget=28000000
+budgets=(17000000 24000000)
+binaries=("$@")
 failed=0
-for binary in "$@"; do
+for index in 0 1; do
+    binary=${binaries[index]}
+    budget=${budgets[index]}
     rm -f -- "$scratch/counts"
     env -u SOAK_ITEMS -u SOAK_LIMIT_PROBE -u SOAK_FRAME_CPU \
         SOAK_FRAMES=33 SOAK_SCALE=1 SOAK_FIXED_STREAM_TICKS=1 \

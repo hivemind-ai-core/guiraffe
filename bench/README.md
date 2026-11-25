@@ -176,7 +176,8 @@ waits and work on other threads. The exit status follows the wall-clock budgets.
 Use the same executables to run the load-independent cold timeline instruction gate.
 It counts the first timeline tab switch, hover and settled draw in the mixed replay.
 The chart receives 500 new samples on that activation and retains 10,000 samples.
-Callgrind collects only inside the activation. A missing count fails the gate.
+Callgrind collects only inside the activation. The budgets are 17 million instructions
+on upstream and 24 million on fast, in that argument order. A missing count fails the gate.
 
 ```sh
 scripts/cold-timeline-instructions.sh target/sweep-{up,fast}/release/examples/soak
