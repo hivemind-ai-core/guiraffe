@@ -10,6 +10,8 @@ use guiraffe_core::control::A11yDisabled;
 pub(super) struct ChannelButton {
     pub inner: A11yDisabled<Stateful<Div>>,
     pub icon: SharedString,
+    pub foreground: gpui_kit::Hsla,
+    pub hover_foreground: Option<gpui_kit::Hsla>,
 }
 
 impl IntoElement for ChannelButton {
@@ -65,6 +67,10 @@ impl Element for ChannelButton {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let color = self
+            .hover_foreground
+            .filter(|_| hitbox.as_ref().is_some_and(|h| h.is_hovered(window)))
+            .unwrap_or(self.foreground);
         self.inner.interactivity().paint(
             id,
             inspector,
@@ -80,7 +86,7 @@ impl Element for ChannelButton {
                     resolve_icon_path(self.icon.clone(), cx),
                     None,
                     Default::default(),
-                    window.text_style().color,
+                    color,
                     cx,
                 );
             },

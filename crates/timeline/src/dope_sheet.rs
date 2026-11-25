@@ -353,6 +353,7 @@ impl ChannelHeader {
             .opacity(if theme.mode.is_dark() { 0.5 } else { 1. });
         let hover_foreground = theme.accent_foreground;
         let active = theme.tokens.button_active;
+        let radius = theme.radius;
         let inner = div()
             .debug_selector(move || format!("{id}-{channel}"))
             .id((id, channel))
@@ -360,16 +361,13 @@ impl ChannelHeader {
             .aria_description(label)
             .aria_selected(selected)
             .size_5()
-            .flex()
             .flex_shrink_0()
-            .items_center()
-            .justify_center()
-            .rounded(theme.radius)
-            .text_color(foreground)
-            .when(selected, |el| el.bg(theme.tokens.secondary_active))
+            .when(selected, |el| {
+                el.bg(theme.tokens.secondary_active).rounded(radius)
+            })
             .when(!disabled && !selected, |el| {
-                el.hover(move |style| style.bg(hover).text_color(hover_foreground))
-                    .active(move |style| style.bg(active))
+                el.hover(move |style| style.bg(hover).rounded(radius))
+                    .active(move |style| style.bg(active).rounded(radius))
             })
             .when(!disabled, |el| {
                 el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
@@ -384,11 +382,12 @@ impl ChannelHeader {
         button::ChannelButton {
             inner,
             icon: icon.path(),
+            foreground,
+            hover_foreground: (!disabled && !selected).then_some(hover_foreground),
         }
     }
 }
 
-#[derive(Default)]
 struct HeaderColumn {
     rows: Vec<ChannelHeader>,
     top: f32,

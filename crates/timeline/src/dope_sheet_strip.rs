@@ -51,14 +51,12 @@ impl DiamondStrip {
             || self.width != width
             || self.phase != phase
         {
-            if !can_replace {
+            if !can_replace || self.retired.is_some() {
                 return false;
             }
             let mut pixels = vec![0; width * height * 4];
             let rgba = Rgba::from(color);
-            for &x in centers {
-                rasterize(&mut pixels, width, x, phase, radius, rgba);
-            }
+            rasterize(&mut pixels, width, centers, phase, radius, rgba);
             let Some(buffer) = image::RgbaImage::from_vec(width as u32, height as u32, pixels)
             else {
                 return false;
@@ -84,50 +82,66 @@ impl DiamondStrip {
     }
 }
 
-fn rasterize(pixels: &mut [u8], width: usize, x: f32, y: f32, radius: f32, color: Rgba) {
+fn rasterize(pixels: &mut [u8], width: usize, centers: &[f32], y: f32, radius: f32, color: Rgba) {
     let rgb = [color.b, color.g, color.r].map(|c| (c * 255. + 0.5) as u8);
     let opaque = [rgb[0], rgb[1], rgb[2], (color.a * 255. + 0.5) as u8];
-    for (row, line) in pixels.chunks_exact_mut(width * 4).enumerate() {
+    let stride = width * 4;
+    let height = pixels.len() / stride;
+    let symmetric = y * 2. == height as f32;
+    let lines = if symmetric {
+        height.div_ceil(2)
+    } else {
+        height
+    };
+    for (row, line) in pixels.chunks_exact_mut(stride).take(lines).enumerate() {
         let dy = (row as f32 + 0.5 - y).abs();
         let half = radius - dy;
-        let first = (x - half - 1.).floor().clamp(0., width as f32) as usize;
-        let end = (x + half + 1.).ceil().clamp(0., width as f32) as usize;
         let line = line.as_chunks_mut::<4>().0;
-        for (index, pixel) in line[first..end].iter_mut().enumerate() {
-            let dx = ((first + index) as f32 + 0.5 - x).abs();
-            let distance = half - dx;
-            if distance >= 1. {
-                *pixel = opaque;
-                continue;
-            }
-            if distance <= -1. {
-                continue;
-            }
-            // A 45-degree edge cuts a triangle off a unit pixel. At a tip
-            // two edges may cross that pixel, so integrate its short spans.
-            let coverage = if dx >= 0.5 && dy >= 0.5 {
-                let edge = 1. - distance.abs();
-                let triangle = 0.5 * edge * edge;
-                if distance < 0. {
-                    triangle
-                } else {
-                    1. - triangle
+        for &x in centers {
+            let first = (x - half - 1.).floor().clamp(0., width as f32) as usize;
+            let end = (x + half + 1.).ceil().clamp(0., width as f32) as usize;
+            for (index, pixel) in line[first..end].iter_mut().enumerate() {
+                let dx = ((first + index) as f32 + 0.5 - x).abs();
+                let distance = half - dx;
+                if distance >= 1. {
+                    *pixel = opaque;
+                    continue;
                 }
-            } else {
-                let col = (first + index) as f32;
-                [0.125, 0.375, 0.625, 0.875]
-                    .iter()
-                    .map(|sample| {
-                        let half = (radius - (row as f32 + sample - y).abs()).max(0.);
-                        ((x + half).min(col + 1.) - (x - half).max(col)).max(0.)
-                    })
-                    .sum::<f32>()
-                    * 0.25
-            };
-            let alpha = (coverage * 255. * color.a + 0.5) as u8;
-            if alpha > pixel[3] {
-                *pixel = [rgb[0], rgb[1], rgb[2], alpha];
+                if distance <= -1. {
+                    continue;
+                }
+                // A 45-degree edge cuts a triangle off a unit pixel. At a tip
+                // two edges may cross that pixel, so integrate its short spans.
+                let coverage = if dx >= 0.5 && dy >= 0.5 {
+                    let edge = 1. - distance.abs();
+                    let triangle = 0.5 * edge * edge;
+                    if distance < 0. {
+                        triangle
+                    } else {
+                        1. - triangle
+                    }
+                } else {
+                    let col = (first + index) as f32;
+                    [0.125, 0.375, 0.625, 0.875]
+                        .iter()
+                        .map(|sample| {
+                            let half = (radius - (row as f32 + sample - y).abs()).max(0.);
+                            ((x + half).min(col + 1.) - (x - half).max(col)).max(0.)
+                        })
+                        .sum::<f32>()
+                        * 0.25
+                };
+                let alpha = (coverage * 255. * color.a + 0.5) as u8;
+                if alpha > pixel[3] {
+                    *pixel = [rgb[0], rgb[1], rgb[2], alpha];
+                }
             }
+        }
+    }
+    if symmetric {
+        for row in lines..height {
+            let source = (height - row - 1) * stride;
+            pixels.copy_within(source..source + stride, row * stride);
         }
     }
 }
@@ -145,7 +159,7 @@ mod tests {
             a: 1.,
         };
         let mut pixels = vec![0; 12 * 8 * 4];
-        rasterize(&mut pixels, 12, 6., 4., 4., color);
+        rasterize(&mut pixels, 12, &[6.], 4., 4., color);
         let pixel = |x: usize, y: usize| &pixels[(y * 12 + x) * 4..(y * 12 + x + 1) * 4];
         assert_eq!(pixel(5, 4), [0, 128, 255, 255]);
         assert_eq!(pixel(0, 4), [0; 4]);
@@ -156,7 +170,7 @@ mod tests {
             }
         }
         let mut clipped = vec![0; 3 * 8 * 4];
-        rasterize(&mut clipped, 3, -0.25, 4., 4., color);
+        rasterize(&mut clipped, 3, &[-0.25], 4., 4., color);
         assert_eq!(clipped[(3 * 3) * 4 + 3], 255);
     }
 }
