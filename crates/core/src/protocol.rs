@@ -305,6 +305,7 @@ mod tests {
             }
         }
     }
+    impl gpui_kit::EventEmitter<bool> for Toggle {}
     impl Drive for Toggle {
         type Action = ();
         fn decode(action: &Action) -> Result<(), ActionError> {
@@ -318,17 +319,25 @@ mod tests {
             &mut self,
             _: (),
             _: &mut Window,
-            _: &mut Context<Self>,
+            cx: &mut Context<Self>,
         ) -> Result<(), ActionError> {
             self.0 = !self.0;
+            cx.emit(self.0);
             Ok(())
         }
     }
     #[gpui_kit::test]
     fn every_source_reaches_the_same_control(cx: &mut TestAppContext) {
         let (_, vcx) = cx.add_window_view(|_, _| Empty);
-        vcx.update(|window, cx| {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let entity = vcx.update(|_, cx| {
             let entity = cx.new(|_| Toggle(false));
+            let events = events.clone();
+            cx.subscribe(&entity, move |_, value, _| events.borrow_mut().push(*value))
+                .detach();
+            entity
+        });
+        vcx.update(|window, cx| {
             let id = ActionBus::register("settings/theme", &entity, "toggle", 1, window, cx);
             assert_eq!(ControlId::lookup("settings/theme", cx), Some(id));
             let action = Action {
@@ -355,11 +364,27 @@ mod tests {
                     Some(i % 2 == 0)
                 );
             }
+            let invalid = Action {
+                name: names::OPEN.into(),
+                payload: Value::Null,
+            };
+            assert_eq!(
+                ActionBus::dispatch(id, &invalid, Source::Mcp, window, cx),
+                Err(ActionError::Unsupported)
+            );
+            assert_eq!(
+                ActionBus::query(id, window, cx).unwrap().checked,
+                Some(true)
+            );
             ActionBus::unregister(id, window, cx);
             assert_eq!(
                 ActionBus::dispatch(id, &action, Source::Script, window, cx),
                 Err(ActionError::UnknownTarget)
             );
         });
+        assert_eq!(
+            *events.borrow(),
+            [true, false, true, false, true, false, true, false, true]
+        );
     }
 }
