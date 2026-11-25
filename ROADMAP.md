@@ -73,7 +73,7 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 | Item | Reason |
 |---|---|
-| Live drag of panels between windows, if the spike needs upstream GPUI work | Pop out and dock back deliver most of the value |
+| Live drag of panels between windows | Requires upstream typed drag transport. Source inspection found file-URI-only `start_external_drag` on both locked Linux backends. The Wayland pointer grab keeps release on the source surface |
 | Tear-off panels, parent/child and modal windows, X11 restore offset | Not needed for docking |
 | Devtools time travel | 0.3 ships the action log it needs |
 | Agent authoring: fixtures, recipes library, Mocket coverage overlay | The protocol supersedes the urgent part |
