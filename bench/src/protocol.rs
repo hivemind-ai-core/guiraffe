@@ -154,3 +154,130 @@ impl Fixture {
         })?
     }
 }
+
+/// 1,000 adopted control entities of every kind, bound to paths or unbound.
+pub struct Controls {
+    app: HeadlessAppContext,
+    window: WindowHandle<ControlHost>,
+}
+struct ControlHost(Vec<gpui_kit::AnyView>);
+impl Render for ControlHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().children(self.0.iter().cloned())
+    }
+}
+impl Controls {
+    pub fn new(bound: bool) -> anyhow::Result<Self> {
+        use guiraffe_components::controls::*;
+        let text = gpui_kit::platform::current_platform(true).text_system();
+        let mut app =
+            HeadlessAppContext::with_platform(text, Arc::new(gpui_kit::assets::Assets), || {
+                Ok(None)
+            });
+        app.update(guiraffe_components::init);
+        let window = app.open_window(size(px(800.), px(600.)), |window, cx| {
+            let views = (0..1000)
+                .map(|i| {
+                    let path = (bound, format!("page/{i}"));
+                    let view: gpui_kit::AnyView = match i % 8 {
+                        0 => with_path(
+                            ButtonControl::new().label("Go"),
+                            path,
+                            ButtonBuilder::path,
+                            ButtonBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        1 => with_path(
+                            CheckboxControl::new().label("On"),
+                            path,
+                            CheckboxBuilder::path,
+                            CheckboxBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        2 => with_path(
+                            SwitchControl::new(),
+                            path,
+                            SwitchBuilder::path,
+                            SwitchBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        3 => with_path(
+                            SliderControl::new(),
+                            path,
+                            SliderBuilder::path,
+                            SliderBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        4 => with_path(
+                            TextInputControl::new().value("x"),
+                            path,
+                            TextInputBuilder::path,
+                            TextInputBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        5 => with_path(
+                            SelectControl::new().options(["a", "b"]),
+                            path,
+                            SelectBuilder::path,
+                            SelectBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        6 => with_path(
+                            TabsControl::new().tabs(["a", "b"]),
+                            path,
+                            TabsBuilder::path,
+                            TabsBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        _ => with_path(
+                            MenuControl::new().item("a"),
+                            path,
+                            MenuBuilder::path,
+                            MenuBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                    };
+                    view
+                })
+                .collect();
+            cx.new(|_| ControlHost(views))
+        })?;
+        let mut controls = Self { app, window };
+        for _ in 0..4 {
+            controls.draw()?;
+        }
+        Ok(controls)
+    }
+    pub fn draw(&mut self) -> anyhow::Result<()> {
+        self.app
+            .update_window(self.window.into(), |_, w, cx| w.draw(cx).clear(cx))?;
+        Ok(())
+    }
+    pub fn registered(&mut self) -> anyhow::Result<usize> {
+        self.app.update_window(self.window.into(), |_, w, cx| {
+            ActionBus::controls(w, cx).count()
+        })
+    }
+}
+
+/// Bound controls get `path`; unbound ones the same text as an element id, so the
+/// two fixtures differ only by registration.
+fn with_path<B>(
+    builder: B,
+    path: (bool, String),
+    set: fn(B, String) -> B,
+    name: fn(B, String) -> B,
+) -> B {
+    match path {
+        (true, path) => set(builder, path),
+        (false, path) => name(builder, path),
+    }
+}
