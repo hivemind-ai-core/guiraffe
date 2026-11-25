@@ -1,6 +1,6 @@
 # Control protocol: addressable, observable, drivable controls
 
-Status: draft for 0.3, not implemented (see the [roadmap](../../ROADMAP.md)).
+Status: phase 1 has a provisional core implementation. Component adoption, binding and input-source integration follow in later phases (see the [roadmap](../../ROADMAP.md)).
 Read with store-first `ui!` (store-first `ui!`) and the command ribbon (command ribbon).
 
 ## 1. Goal
@@ -134,8 +134,9 @@ scaling tests that don't depend on machine load:
    render work to 0.2 (bench: 1k-control page, protocol on vs off ⇒ equal allocation counts,
    equal element count).
 2. **Zero cost at render when used.** Registration happens on entity creation, re-key or
-   unmount, never in `render`. An unchanged repaint of a page with 1k registered, bound controls
-   allocates nothing (the 0.2 warm-repaint gate, extended).
+   unmount, never in `render`. Phase 1 gates the protocol’s own cost at zero: an unchanged frame with 1k registered
+   controls must allocate exactly the same count and bytes as the identical unregistered frame.
+   The whole-frame zero-allocation target belongs to roadmap items 8 and 19.
 3. **No string work on hot paths.** Ids are interned integers; lookups are `O(1)` hash or
    index; display paths are built only for MCP/devtools/errors.
 4. **Precise invalidation.** A store change notifies only controls whose lens result changed
@@ -173,3 +174,24 @@ gets a CHANGELOG entry.
 - Catalogue: every control's actions and snapshot fields are listed with JSON schemas; a
   coverage test fails when a catalogue control lacks them.
 - Docs: protocol guide, "make your own control drivable" recipe, MCP examples.
+
+## Provisional Rust API
+
+The phase 1 API lives in `guiraffe_core::protocol`. Persist the inspect path
+for replay. A copyable integer `ControlId` is meaningful only in its owning
+app and does not persist across runs. Windows in one app share the path
+interner and resolve the same handle against their own registrations.
+Register at entity creation and unregister before changing the path.
+The registry observes entity release and window closure. To inspect a path
+without creating a registration, use `NodeId::control_id` in guiraffe-test.
+
+The provisional `Capabilities` flags advertise the ten shared actions.
+Keymaps, Spotlight and the ribbon can enumerate their wire names with
+`action_names()`. Bits 10–63 are reserved for future shared actions.
+Item 10 will supply descriptors for domain actions and generate payload
+schemas from the catalogue as controls adopt the protocol.
+
+`Source` and `ActionError` are non-exhaustive so later sources and rejection
+reasons are additive. Dispatch has an allocation gate of zero
+(`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
+(`bench/benches/instructions.rs`; 2,079 measured), which excludes path lookup.

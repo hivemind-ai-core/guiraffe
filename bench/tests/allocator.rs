@@ -825,3 +825,21 @@ fn unchanged_list_draw_allocations_are_independent_of_list_length(
     assert!(small.0 > 0, "the warm draw must lay out visible rows");
     assert_eq!(small, large, "list length changed warm viewport work");
 }
+
+#[test]
+fn registered_protocol_dispatch_and_repaint() -> anyhow::Result<()> {
+    use guiraffe_bench::protocol::Fixture;
+    let mut unused = Fixture::new(false)?;
+    let mut registered = Fixture::new(true)?;
+    let (plain, baseline) = count_allocations(|| unused.draw())?;
+    plain?;
+    let (frame, bound) = count_allocations(|| registered.draw())?;
+    frame?;
+    eprintln!("protocol repaint: unregistered {baseline:?}, registered {bound:?}");
+    assert_eq!(bound.allocations, baseline.allocations);
+    assert_eq!(bound.bytes, baseline.bytes);
+    registered.dispatch(|call| call())?;
+    let (_, counts) = registered.dispatch(|call| count_allocations(call))??;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}
