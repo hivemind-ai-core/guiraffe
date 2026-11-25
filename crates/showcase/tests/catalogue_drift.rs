@@ -388,6 +388,42 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Window host infrastructure that mounts diagnostic content around an application view.",
     ),
     (
+        "goldens::ComparePanel",
+        "Golden review tool (a dogfood application, not a document widget): detachable compare panel of the review window.",
+    ),
+    (
+        "goldens::ListPanel",
+        "Golden review tool (a dogfood application, not a document widget): golden list and verdict panel of the review window.",
+    ),
+    (
+        "goldens::ListPanel::reason_focus",
+        "Golden review tool (a dogfood application, not a document widget): focus handle of the reason field, for keyboard-only review.",
+    ),
+    (
+        "goldens::ReviewApp",
+        "Golden review tool (a dogfood application, not a document widget): root view of the review window.",
+    ),
+    (
+        "goldens::ReviewApp::commands",
+        "Golden review tool (a dogfood application, not a document widget): the window's command registry (shortcuts and Spotlight).",
+    ),
+    (
+        "goldens::ReviewApp::compare",
+        "Golden review tool (a dogfood application, not a document widget): the dockable compare panel's pop-out and dock-back commands.",
+    ),
+    (
+        "goldens::ReviewApp::list",
+        "Golden review tool (a dogfood application, not a document widget): the list panel entity.",
+    ),
+    (
+        "goldens::ReviewApp::new",
+        "Golden review tool (a dogfood application, not a document widget): constructs the review window over a review store.",
+    ),
+    (
+        "goldens::ReviewApp::store",
+        "Golden review tool (a dogfood application, not a document widget): the review store that holds all state.",
+    ),
+    (
         "markdown::MarkdownState::reveal_heading",
         "Host command that takes a parsed Heading returned by the Rust view state.",
     ),
