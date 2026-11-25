@@ -1,4 +1,8 @@
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
 use gpui_kit::{
     AnyView, App, AppContext, Context, Entity, Focusable, HeadlessAppContext, InteractiveElement,
@@ -41,6 +45,7 @@ struct State {
 #[derive(Debug)]
 enum Change {
     Label(SharedString),
+    RowLabel(usize, SharedString),
     Toggle(usize),
     Half(bool),
 }
@@ -49,6 +54,7 @@ impl Event<State> for Change {
     fn handle(self, fx: &mut Fx<'_, State>) {
         fx.update(|state| match self {
             Self::Label(label) => state.rows[EDITED].label = label,
+            Self::RowLabel(id, label) => state.rows[id].label = label,
             Self::Toggle(id) => state.rows[id].checked = !state.rows[id].checked,
             Self::Half(half) => state.half = half,
         });
@@ -133,6 +139,7 @@ struct RowView {
 }
 
 impl Render for RowView {
+    #[inline(never)]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.render.hit();
         row(self.id, self.data.get(cx), &self.store)
@@ -140,6 +147,7 @@ impl Render for RowView {
 }
 
 enum Rows {
+    Virtual(Rc<RefCell<HashMap<usize, Entity<RowView>>>>),
     Inline(Vec<Selected<Row>>),
     Cached(Vec<Entity<RowView>>),
 }
@@ -153,7 +161,13 @@ struct Page {
 }
 
 impl Page {
-    fn new(cached: bool, probe: Probe, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        cached: bool,
+        virtualized: bool,
+        probe: Probe,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let rows = (0..probe.rows.len())
             .map(|id| Row {
                 label: format!("Row {id:05}").into(),
@@ -163,7 +177,9 @@ impl Page {
             .collect();
         let store = Store::new(State { rows, half: false }, cx);
         let half = store.select(cx, |state| state.half);
-        let rows = if cached {
+        let rows = if virtualized {
+            Rows::Virtual(Rc::default())
+        } else if cached {
             Rows::Cached(
                 probe
                     .rows
@@ -207,6 +223,46 @@ impl Render for Page {
                 .child(Input::new(&self.input)),
         );
         match &self.rows {
+            Rows::Virtual(mounted) => {
+                let mounted = mounted.clone();
+                let probe = self.probe.clone();
+                let store = self.store.clone();
+                page.child(
+                    gpui_kit::uniform_list(
+                        "bound-rows",
+                        probe.rows.len().div_ceil(stride),
+                        move |range, _, cx| {
+                            let mut mounted = mounted.borrow_mut();
+                            // uniform_list may measure row zero separately.
+                            if range != (0..1) {
+                                let retained =
+                                    range.start.saturating_sub(2)..range.end.saturating_add(2);
+                                mounted.retain(|id, _| {
+                                    retained.contains(&(id / stride)) && id % stride == 0
+                                });
+                            }
+                            range
+                                .map(|position| {
+                                    let id = position * stride;
+                                    let entity = mounted.entry(id).or_insert_with(|| {
+                                        cx.new(|cx| RowView {
+                                            id,
+                                            data: select_row(&store, id, &probe, cx),
+                                            store: store.clone(),
+                                            render: probe.rows[id].clone(),
+                                        })
+                                    });
+                                    AnyView::from(entity.clone()).cached(
+                                        StyleRefinement::default().w(px(WIDTH)).h(px(ROW_HEIGHT)),
+                                    )
+                                })
+                                .collect()
+                        },
+                    )
+                    .h(px(768.))
+                    .w(px(WIDTH)),
+                )
+            }
             Rows::Inline(rows) => {
                 page.children(rows.iter().enumerate().step_by(stride).map(|(id, data)| {
                     self.probe.rows[id].hit();
@@ -249,7 +305,7 @@ fn app() -> HeadlessAppContext {
 fn mount(app: &mut HeadlessAppContext, cached: bool, probe: Probe) -> Mounted<'_> {
     let handle = app
         .open_window(size(px(WIDTH), px(800.)), |window, cx| {
-            cx.new(|cx| Page::new(cached, probe, window, cx))
+            cx.new(|cx| Page::new(cached, false, probe, window, cx))
         })
         .expect("mount benchmark window");
     app.run_until_parked();
@@ -563,45 +619,121 @@ fn print_sample(
 #[test]
 #[ignore = "run explicitly with --ignored --nocapture"]
 fn composed_label_phase_sweep() {
+    run_phase_sweep(false);
+}
+
+#[test]
+#[ignore = "release measurement with a 768-pixel scrolling viewport"]
+fn virtualized_label_phase_sweep() {
+    run_phase_sweep(true);
+}
+
+fn run_phase_sweep(virtualized: bool) {
     let mut app = app();
-    for n in [1000, 3000] {
-        let probe = Probe::new(n);
-        let (page, mut window) = fixture(&mut app, true, probe.clone());
-        let store = window.update(|_, cx| page.read(cx).store.clone());
-        let mut totals = Vec::new();
-        let mut flushes = Vec::new();
-        let mut frames = Vec::new();
-        let mut allocations = Vec::new();
-        for i in 0..35 {
-            let mark = Rc::new(Cell::new(0));
-            let marker = mark.clone();
-            let before = probe.rows[EDITED].get();
-            let label = if i % 2 == 0 { "Row 00004" } else { "Row 00003" }.into();
-            let ((start, end), counts) = count_allocations(|| {
-                let start = cpu_ns();
-                window.update(|_, cx| {
-                    store.dispatch(Change::Label(label), cx);
-                    cx.defer(move |_| marker.set(cpu_ns()));
-                });
-                (start, cpu_ns())
-            })
-            .expect("count complete frame");
-            assert_eq!(probe.rows[EDITED].get(), before + 1);
-            assert!((start..=end).contains(&mark.get()));
-            if i >= 4 {
-                flushes.push(mark.get() - start);
-                frames.push(end - mark.get());
-                totals.push(end - start);
-                allocations.push(counts.allocations);
-            }
+    for n in [1000, 3000, 10_000] {
+        if std::env::var("COMPOSED_PHASE_ROWS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .is_some_and(|rows| rows != n)
+        {
+            continue;
         }
-        println!(
-            "rows={n} median_ns total={} through_flush={} after_flush={} allocs={}",
-            percentile(&mut totals, 50),
-            percentile(&mut flushes, 50),
-            percentile(&mut frames, 50),
-            percentile(&mut allocations, 50)
-        );
+        let probe = Probe::new(n);
+        let all_visible = !virtualized && std::env::var_os("COMPOSED_ALL_VISIBLE").is_some();
+        let (page, mut window) = if virtualized || all_visible {
+            let height = if all_visible {
+                (n + 1) as f32 * ROW_HEIGHT
+            } else {
+                800.
+            };
+            let handle = app
+                .open_window(size(px(WIDTH), px(height)), |window, cx| {
+                    cx.new(|cx| Page::new(true, virtualized, probe.clone(), window, cx))
+                })
+                .expect("mount virtual list");
+            app.run_until_parked();
+            let mut window = Mounted {
+                app: &mut app,
+                handle,
+            };
+            let page = window.update(|window, cx| {
+                let page = window.root::<Page>().flatten().expect("virtual page");
+                window.focus(&page.read(cx).input.focus_handle(cx), cx);
+                page
+            });
+            (page, window)
+        } else {
+            fixture(&mut app, true, probe.clone())
+        };
+        let store = window.update(|_, cx| page.read(cx).store.clone());
+        let mounted_count = window.update(|_, cx| match &page.read(cx).rows {
+            Rows::Virtual(mounted) => mounted.borrow().len(),
+            Rows::Cached(rows) => rows.len(),
+            Rows::Inline(rows) => rows.len(),
+        });
+        if virtualized {
+            assert!(
+                (1..=30).contains(&mounted_count),
+                "viewport mounted {mounted_count} rows"
+            );
+        }
+        let edited_rows = [EDITED, n - 1];
+        for &edited in &edited_rows[..if virtualized { 2 } else { 1 }] {
+            let mut totals = Vec::new();
+            let mut flushes = Vec::new();
+            let mut frames = Vec::new();
+            let mut allocations = Vec::new();
+            let samples = std::env::var("COMPOSED_PHASE_SAMPLES")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(31)
+                .max(1);
+            for i in 0..samples + 4 {
+                let mark = Rc::new(Cell::new(0));
+                let marker = mark.clone();
+                let before = probe.rows[edited].get();
+                let label = if i % 2 == 0 { "Row 00004" } else { "Row 00003" }.into();
+                let ((start, end), counts) = count_allocations(|| {
+                    measured_label_frame(&mut window, &store, edited, label, marker)
+                })
+                .expect("count complete frame");
+                assert_eq!(
+                    probe.rows[edited].get(),
+                    before + usize::from(edited == EDITED)
+                );
+                assert!((start..=end).contains(&mark.get()));
+                if i >= 4 {
+                    flushes.push(mark.get() - start);
+                    frames.push(end - mark.get());
+                    totals.push(end - start);
+                    allocations.push(counts.allocations);
+                }
+            }
+            println!(
+                "rows={n} mounted={mounted_count} edited={edited} virtual={virtualized} all_visible={all_visible} median_ns total={} through_flush={} after_flush={} allocs={}",
+                percentile(&mut totals, 50),
+                percentile(&mut flushes, 50),
+                percentile(&mut frames, 50),
+                percentile(&mut allocations, 50)
+            );
+        }
         close(window);
     }
+}
+
+// Keep a stable symbol for Callgrind to isolate one changed label frame.
+#[inline(never)]
+fn measured_label_frame(
+    window: &mut Mounted<'_>,
+    store: &Store<State>,
+    edited: usize,
+    label: SharedString,
+    marker: Rc<Cell<u64>>,
+) -> (u64, u64) {
+    let start = cpu_ns();
+    window.update(|_, cx| {
+        store.dispatch(Change::RowLabel(edited, label), cx);
+        cx.defer(move |_| marker.set(cpu_ns()));
+    });
+    (start, cpu_ns())
 }
