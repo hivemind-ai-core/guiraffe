@@ -401,9 +401,6 @@ fn packed<V: Clone>(
     values: impl IntoIterator<Item = V>,
     key: impl Fn(&V) -> u64,
 ) -> Result<imbl::OrdMap<u64, V>, FlowError> {
-    // `imbl` 7 leaf width and the keys a split leaves in the left leaf.
-    const WIDTH: usize = 16;
-    const HALF: usize = WIDTH / 2;
     let mut values: Vec<V> = values.into_iter().collect();
     values.sort_unstable_by_key(&key);
     if values.windows(2).any(|pair| key(&pair[0]) == key(&pair[1])) {
@@ -411,14 +408,8 @@ fn packed<V: Clone>(
     }
     let mut slots: Vec<Option<V>> = values.into_iter().map(Some).collect();
     let mut map = imbl::OrdMap::new();
-    // Ascending splits start a leaf at every HALF-th first-pass key, and that key
-    // stays in the leaf, so HALF first-pass keys must cover WIDTH sorted positions.
-    let len = slots.len();
-    let sparse = (0..)
-        .map(|step: usize| step * WIDTH / HALF)
-        .take_while(|&position| position < len);
-    for position in sparse {
-        if let Some(value) = slots.get_mut(position).and_then(Option::take) {
+    for slot in slots.iter_mut().step_by(2) {
+        if let Some(value) = slot.take() {
             map.insert(key(&value), value);
         }
     }
@@ -587,7 +578,9 @@ mod storage_tests {
 
     #[test]
     fn packed_maps_match_sequential_insertion_for_any_order() {
-        for len in [0_u64, 1, 2, 31, 32, 33, 63, 64, 65, 66, 129, 2_113, 5_000] {
+        for len in [
+            0_u64, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 66, 129, 2_113, 5_000,
+        ] {
             // A deterministic permutation: 7919 is prime and larger than every length.
             let keys = (0..len).map(|i| (i * 7_919) % len.max(1));
             let map = packed(keys.map(|k| (k, k * 3)), |(k, _)| *k).expect("unique keys");

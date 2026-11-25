@@ -13,13 +13,6 @@
 gpui-fast 0.1.16 doesn't compile with gpui-kit 0.9.1, and a fresh dependency resolution picks it.
 The workspace pins 0.1.15. Apps copy the lockfile (`guiraffe new` does it), and `guiraffe doctor` checks the pin.
 
-## Soundness
-
-Under Miri's Stacked Borrows model, `guiraffe-flow-core` tests report undefined behavior inside
-`sized-chunks` 0.6.5, reached through `im` 15.1, which gpui-base and guiraffe-core use. A Tree
-Borrows run timed out, so it is unknown whether this is more than an aliasing-model violation.
-`im` is unmaintained and will be replaced by `imbl` in 0.3 ([roadmap](ROADMAP.md) item 3).
-
 ## Dependency advisories
 
 `cargo deny` excepts two advisories that have no fixed release. Any other advisory fails CI.
