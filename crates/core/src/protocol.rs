@@ -15,7 +15,7 @@ impl Global for Paths {}
 
 impl ControlId {
     /// Intern at registration or re-key time.
-    pub fn intern(path: &str, cx: &mut App) -> Self {
+    fn intern(path: &str, cx: &mut App) -> Self {
         let paths = cx.default_global::<Paths>();
         if let Some(id) = paths.ids.get(path) {
             return *id;
@@ -392,6 +392,50 @@ mod tests {
             Ok(())
         }
     }
+    #[gpui_kit::test]
+    fn windows_share_path_identity_and_resolve_their_own_targets(cx: &mut TestAppContext) {
+        let (_, first) = cx.add_window_view(|_, _| Empty);
+        let (first_id, _keep_first) = first.update(|window, cx| {
+            let entity = cx.new(|_| Toggle(true));
+            let id = ActionBus::register(
+                "panel/theme",
+                &entity,
+                "toggle",
+                Capabilities::TOGGLE,
+                window,
+                cx,
+            );
+            (id, entity)
+        });
+        let (_, second) = cx.add_window_view(|_, _| Empty);
+        second.update(|window, cx| {
+            assert_eq!(ControlId::lookup("panel/theme", cx), Some(first_id));
+            assert_eq!(
+                ActionBus::query(first_id, window, cx),
+                Err(ActionError::UnknownTarget)
+            );
+            let entity = cx.new(|_| Toggle(false));
+            let id = ActionBus::register(
+                "panel/theme",
+                &entity,
+                "toggle",
+                Capabilities::TOGGLE,
+                window,
+                cx,
+            );
+            assert_eq!(first_id, id);
+            assert_eq!(id.path(cx), Some("panel/theme"));
+            assert_eq!(
+                ActionBus::query(id, window, cx).map(|s| s.checked),
+                Ok(Some(false))
+            );
+            assert_eq!(
+                ActionBus::controls(window, cx).collect::<Vec<_>>(),
+                [(id, "toggle", Capabilities::TOGGLE)]
+            );
+        });
+    }
+
     #[gpui_kit::test]
     fn denied_dispatch_preserves_state_and_reports_outcome(cx: &mut TestAppContext) {
         struct Deny(std::cell::Cell<usize>);
