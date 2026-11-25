@@ -1075,6 +1075,7 @@ mod tests {
         let saved = host.update(|window, cx| {
             let area = root.read(cx).area.clone();
             let panel = cx.new(|cx| TestPanel(cx.focus_handle(), "Detached"));
+            let focus = panel.read(cx).0.clone();
             let id = PanelId::from(panel.entity_id());
             area.update(cx, |area, cx| {
                 area.add_panel_view(
@@ -1117,6 +1118,7 @@ mod tests {
             assert!(area.read(cx).panel(id).is_none());
             veto.set(false);
             assert!(commands.dock_back(window, cx).unwrap());
+            assert!(focus.is_focused(window));
             assert!(
                 area.read(cx)
                     .layout(DockPlacement::Right)

@@ -1,7 +1,7 @@
 //! Explicit window moves for application-owned panel instances.
 use super::{DockArea, DockPlacement, Panel, panel_handle};
 use gpui_kit::{
-    AnyWindowHandle, App, Entity, SharedString, Subscription, Window, WindowOptions,
+    AnyWindowHandle, App, Entity, Focusable, SharedString, Subscription, Window, WindowOptions,
     component::dock::{InsertTarget, NodeId, PaneRef, PaneTree, PanelId},
 };
 use guiraffe_layout::LayoutStore;
@@ -191,7 +191,12 @@ impl<P: Panel> DockablePanel<P> {
         }
         // The explicit command owns reattachment. The close observer handles native closes.
         self.detached.set(None);
-        if !WindowManager::request_close(child, cx) {
+        // A child the platform already destroyed cannot veto; reattach without closing it.
+        let alive = cx
+            .windows()
+            .iter()
+            .any(|w| w.window_id() == child.window_id());
+        if alive && !WindowManager::request_close(child, cx) {
             self.detached.set(Some((child, slot)));
             return Ok(false);
         }
@@ -217,6 +222,9 @@ fn attach<P: Panel>(
             area.move_panel(PanelId::from(panel.entity_id()), target, window, cx);
         }
     });
+    // Focus follows the panel home, so keyboard commands keep targeting it.
+    let focus = panel.focus_handle(cx);
+    window.focus(&focus, cx);
 }
 
 #[cfg(test)]
