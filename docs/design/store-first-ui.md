@@ -311,6 +311,29 @@ foreman and are provisional:
 - **Deferred:** `shortcut:`/`spotlight:`/`ribbon:` props, `bind!`, `#[derive(Event)]`,
   `command!`, expansion-size benchmarks and `trybuild` diagnostics for every row.
 
+### Measured: the composed label edit in the new syntax
+
+`bench/tests/bound.rs` builds the composed page from `store!` and `ui!`: a `KeyedList` of rows,
+`for (id, row) in <= rows` and a bound title. Release profile, gpui-fast, one row label edited
+through `store.set` per frame, from the write through the drawn frame. Median of 31 edits on a
+shared host (`bound_label_sweep`).
+
+| Mode | 1k rows | 3k rows | 10k rows |
+|---|---:|---:|---:|
+| virtualized (`row_height` set) | 0.140 ms, 195 allocs | 0.140 ms, 195 allocs | 0.140 ms, 195 allocs |
+| fully mounted (`mounted`) | 3.34 ms, 162 allocs | 10.8 ms, 167 allocs | 38.6 ms, 173 allocs |
+
+A virtualized edit is flat and within the 0.5 ms budget. A fully mounted edit still grows with
+the row count, for the per-primitive reasons in the sinks follow-up above. These gates run on
+both backends in every gate run:
+
+- the binding update itself (write, keyed flush, compare, notify) allocates nothing at 1k, 3k
+  and 10k rows;
+- the edited frame's allocations vary by at most 8 across those sizes, and on gpui-fast one
+  row renders per edit;
+- an insert at 10k rows allocates at most 64 times in its flush and repaints only the viewport;
+- an unbound `ui!` page with 1k controls allocates exactly what the builder page does.
+
 ### Passage (0.3.1) against the binding layer
 
 | Passage need | How the binding layer expresses it | Gap |
