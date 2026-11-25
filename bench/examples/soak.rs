@@ -588,8 +588,8 @@ fn limit_sample(
     stream: bool,
 ) -> Result<()> {
     let mut times = Vec::with_capacity(120);
-    // Once mount fails there is no reason to run this dataset through the replay.
-    if mount <= Duration::from_millis(200) {
+    // Limits can stop after a mount failure. Baseline sweeps need the frame data at every size.
+    if mount <= Duration::from_millis(200) || std::env::var_os("SOAK_BASELINE_SWEEP").is_some() {
         for index in 0..128 {
             let start = Instant::now();
             frame(index)?;

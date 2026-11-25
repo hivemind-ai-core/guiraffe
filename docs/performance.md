@@ -76,3 +76,42 @@ bench/electron/run.sh                              # needs an idle machine with 
 
 Add `--features gpui-kit/gpui-fast` to the build for the other backend.
 See [bench](../bench/README.md) for suites, baselines and regression comparison.
+
+## 0.3 comparison baseline
+
+The 0.2 measurements preserved at revision `34c5967` include the following
+middle-size peaks. Counts for Tracks include all 100 tracks. Times are p99
+milliseconds, rounded as in the original results.
+
+| Scenario | Items | Upstream | gpui-fast |
+|---|---:|---:|---:|
+| Flame graph | 65,536 | 14.6 | unreported |
+| Flame graph | 131,072 | 39 | unreported |
+| Flame graph | 262,144 | 96 | ~18 |
+| Flame graph | 10,000,000 | 1.12 | 0.88 |
+| Tracks | 6,400 | 26 | 17 |
+| Tracks | 12,800 | 53 | 32 |
+| Tracks | 100,000 | 3.03 | 2.54 |
+
+The historical 30-minute mixed soak grew process memory by 5.8% upstream
+and 5.7% on gpui-fast. The heap profile showed flat live heap over 9,600
+frames. Trimming a single malloc arena halved upstream growth. Less than
+2 MiB remained unexplained. Compare future runs on the same allocator
+settings and distinguish process growth from live heap.
+
+For a quick Linux replay on a busy host, build the release soak example
+and run `python3 bench/check-mounted-baseline.py target/release/examples/soak upstream`.
+Pass `fast` when using the gpui-fast build. Each size runs in a fresh
+process and reports peak RSS, mount time, p99 and the ratio to the
+[recorded values](../bench/baselines/mounted-0.2.csv). The replay uses
+the shorter limits probe at every size. The original largest-size
+measurements used two 10-second runs, so sampling and host load both
+affect these ratios. For timing comparisons on comparable hosts, supply
+`--max-ratio FACTOR` to fail above a chosen multiple of the reference.
+
+The default guiraffe-bench composed test gates load-independent work at
+1,000, 3,000 and 10,000 mounted rows. At each size an edit rendered one
+cached row and historically visited one selector per row. The synchronous
+equal field write allocates zero times. As a timing reference, the busy-host
+release run at `ab30919` measured cached label-edit p99s of 13.92, 46.37
+and 147.41 ms upstream, and 14.22, 50.03 and 158.50 ms on gpui-fast.
