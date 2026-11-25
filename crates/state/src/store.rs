@@ -238,6 +238,13 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     }
 
     /// The flushed state without reading the Store entity (no render dependency).
+    /// The flushed state, read without making the current view depend on the Store entity.
+    /// Use it when mounting a bound control inside a parent's render; views that should
+    /// re-render on change use selections or bindings instead.
+    pub fn state_untracked(&self, cx: &App) -> Arc<S> {
+        self.snapshot(cx)
+    }
+
     /// Released while a flush runs, so in-place writes find the state unshared.
     pub(crate) fn snapshot(&self, cx: &App) -> Arc<S> {
         match &*self.snapshot.borrow() {

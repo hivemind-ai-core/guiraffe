@@ -124,6 +124,28 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         self.set_from(lens, value, source, cx);
     }
 
+    /// Call `changed` with the new value whenever a flush changes what `lens` reads. Only
+    /// writes on the lens's path (and unkeyed writes) compare; an unchanged value calls
+    /// nothing and allocates nothing. Dropping the returned handle unsubscribes.
+    ///
+    /// This is how a bound control entity receives host writes: `changed` calls its
+    /// non-emitting setter, so the write never comes back as an edit.
+    pub fn watch<L>(&self, lens: L, changed: impl Fn(&L::Target, &mut App) + 'static, cx: &mut App) -> Watch
+    where
+        L: Lens<Root = S>,
+        L::Target: Clone + PartialEq,
+    {
+        let last = lens.get(&self.snapshot(cx)).cloned();
+        let slot: Rc<dyn Slot<S>> = Rc::new(WatchSlot {
+            lens,
+            last: std::cell::RefCell::new(last),
+            changed: Box::new(changed),
+        });
+        let mut chain = Vec::new();
+        lens.for_each_key(&mut |key| chain.push(key));
+        self.watch_chains(&[chain], slot, cx)
+    }
+
     /// Run `slot` after every flush that dirties one of `chains` (each a lens's
     /// [`Lens::for_each_key`] chain). Dropping the returned handle unregisters.
     pub(crate) fn watch_chains(
@@ -150,6 +172,35 @@ impl<S, T: Slot<S> + ?Sized> Slot<S> for Rc<T> {
     }
     fn alive(&self) -> bool {
         (**self).alive()
+    }
+}
+
+struct WatchSlot<L: Lens> {
+    lens: L,
+    last: std::cell::RefCell<Option<L::Target>>,
+    changed: Box<dyn Fn(&L::Target, &mut App)>,
+}
+
+impl<L: Lens> Slot<L::Root> for WatchSlot<L>
+where
+    L::Target: Clone + PartialEq,
+{
+    fn refresh(&self, state: &L::Root, cx: &mut App) {
+        let Some(value) = self.lens.get(state) else {
+            return;
+        };
+        {
+            let mut last = self.last.borrow_mut();
+            match &mut *last {
+                Some(old) if old == value => return,
+                Some(old) => old.clone_from(value),
+                None => *last = Some(value.clone()),
+            }
+        }
+        (self.changed)(value, cx);
+    }
+    fn alive(&self) -> bool {
+        true
     }
 }
 

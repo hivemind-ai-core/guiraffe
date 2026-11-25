@@ -311,3 +311,274 @@ pub fn field<'a>(value: &'a Value, name: &'static str) -> Option<&'a Value> {
         _ => None,
     }
 }
+
+// ---- Bound control entities (`guiraffe_components::controls`) ---------------------------
+
+use guiraffe_components::controls::{
+    CheckboxBuilder, CheckboxControl, SelectBuilder, SelectControl, SelectionEvent,
+    SliderBuilder, SliderControl, SliderControlEvent, SwitchBuilder, SwitchControl,
+    TextInputBuilder, TextInputControl, TextInputEvent, ToggleEvent,
+};
+
+/// The seam between `ui!` bindings and a protocol control entity: how to build it with an
+/// initial value, read an edit from its typed event, and apply a host write without emitting.
+pub trait ControlBinding: Render + gpui_kit::EventEmitter<Self::Event> + Sized + 'static {
+    type Value: Clone + PartialEq + Default + 'static;
+    type Event: 'static;
+    type Builder;
+    fn builder() -> Self::Builder;
+    fn build(
+        builder: Self::Builder,
+        value: &Self::Value,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui_kit::Entity<Self>;
+    fn edited(event: &Self::Event) -> Option<Self::Value>;
+    /// Apply a host write. Setters that need the window run on the next effect cycle.
+    fn host_set(
+        entity: &gpui_kit::Entity<Self>,
+        window: gpui_kit::AnyWindowHandle,
+        value: &Self::Value,
+        cx: &mut App,
+    );
+}
+
+macro_rules! toggle_binding {
+    ($control:ty, $builder:ty) => {
+        impl ControlBinding for $control {
+            type Value = bool;
+            type Event = ToggleEvent;
+            type Builder = $builder;
+            fn builder() -> $builder {
+                <$control>::new()
+            }
+            fn build(
+                builder: $builder,
+                value: &bool,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> gpui_kit::Entity<Self> {
+                builder.checked(*value).build(window, cx)
+            }
+            fn edited(event: &ToggleEvent) -> Option<bool> {
+                let ToggleEvent::Changed(checked) = event;
+                Some(*checked)
+            }
+            fn host_set(
+                entity: &gpui_kit::Entity<Self>,
+                _: gpui_kit::AnyWindowHandle,
+                value: &bool,
+                cx: &mut App,
+            ) {
+                let value = *value;
+                entity.update(cx, |control, cx| control.set_checked(value, cx));
+            }
+        }
+    };
+}
+toggle_binding!(CheckboxControl, CheckboxBuilder);
+toggle_binding!(SwitchControl, SwitchBuilder);
+
+fn later<C: 'static>(
+    entity: &gpui_kit::Entity<C>,
+    window: gpui_kit::AnyWindowHandle,
+    cx: &mut App,
+    set: impl FnOnce(&mut C, &mut Window, &mut Context<C>) + 'static,
+) {
+    let entity = entity.downgrade();
+    cx.defer(move |cx| {
+        let _ = window.update(cx, |_, window, cx| {
+            if let Some(entity) = entity.upgrade() {
+                entity.update(cx, |control, cx| set(control, window, cx));
+            }
+        });
+    });
+}
+
+impl ControlBinding for SliderControl {
+    type Value = f32;
+    type Event = SliderControlEvent;
+    type Builder = SliderBuilder;
+    fn builder() -> SliderBuilder {
+        SliderControl::new()
+    }
+    fn build(builder: SliderBuilder, value: &f32, window: &mut Window, cx: &mut App) -> gpui_kit::Entity<Self> {
+        builder.value(*value).build(window, cx)
+    }
+    fn edited(event: &SliderControlEvent) -> Option<f32> {
+        let SliderControlEvent::Changed(value) = event;
+        Some(*value)
+    }
+    fn host_set(entity: &gpui_kit::Entity<Self>, window: gpui_kit::AnyWindowHandle, value: &f32, cx: &mut App) {
+        let value = *value;
+        later(entity, window, cx, move |control, window, cx| control.set_value(value, window, cx));
+    }
+}
+
+impl ControlBinding for TextInputControl {
+    type Value = SharedString;
+    type Event = TextInputEvent;
+    type Builder = TextInputBuilder;
+    fn builder() -> TextInputBuilder {
+        TextInputControl::new()
+    }
+    fn build(
+        builder: TextInputBuilder,
+        value: &SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui_kit::Entity<Self> {
+        builder.value(value.clone()).build(window, cx)
+    }
+    fn edited(event: &TextInputEvent) -> Option<SharedString> {
+        let TextInputEvent::Changed(value) = event;
+        Some(value.clone())
+    }
+    fn host_set(
+        entity: &gpui_kit::Entity<Self>,
+        window: gpui_kit::AnyWindowHandle,
+        value: &SharedString,
+        cx: &mut App,
+    ) {
+        let value = value.clone();
+        later(entity, window, cx, move |control, window, cx| control.set_value(value, window, cx));
+    }
+}
+
+impl ControlBinding for SelectControl {
+    type Value = Option<usize>;
+    type Event = SelectionEvent;
+    type Builder = SelectBuilder;
+    fn builder() -> SelectBuilder {
+        SelectControl::new()
+    }
+    fn build(
+        builder: SelectBuilder,
+        value: &Option<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui_kit::Entity<Self> {
+        match value {
+            Some(index) => builder.selected(*index),
+            None => builder,
+        }
+        .build(window, cx)
+    }
+    fn edited(event: &SelectionEvent) -> Option<Option<usize>> {
+        let SelectionEvent::Selected(index) = event;
+        Some(Some(*index))
+    }
+    fn host_set(
+        entity: &gpui_kit::Entity<Self>,
+        window: gpui_kit::AnyWindowHandle,
+        value: &Option<usize>,
+        cx: &mut App,
+    ) {
+        let value = *value;
+        later(entity, window, cx, move |control, window, cx| control.set_selected(value, window, cx));
+    }
+}
+
+struct ControlSite<C> {
+    control: gpui_kit::Entity<C>,
+    _watch: guiraffe_state::Watch,
+    _edits: Option<gpui_kit::Subscription>,
+}
+
+/// A protocol control entity bound to a store lens (`SliderControl { value <=> volume }`).
+/// Built once per site; host writes go through the control's non-emitting setter and edits
+/// come back from its typed event as `Set` events tagged with their source.
+pub struct BoundControl<C: ControlBinding, S: Clone + PartialEq + 'static, L> {
+    id: ElementId,
+    store: Store<S>,
+    lens: L,
+    two_way: bool,
+    configure: Box<dyn FnOnce(C::Builder) -> C::Builder>,
+}
+
+pub fn bound_control<C, S, L>(
+    id: impl Into<ElementId>,
+    store: &Store<S>,
+    lens: L,
+    two_way: bool,
+    configure: impl FnOnce(C::Builder) -> C::Builder + 'static,
+) -> BoundControl<C, S, L>
+where
+    C: ControlBinding,
+    S: Clone + PartialEq + 'static,
+    L: Lens<Root = S, Target = C::Value>,
+    C::Value: std::fmt::Debug,
+{
+    BoundControl {
+        id: id.into(),
+        store: store.clone(),
+        lens,
+        two_way,
+        configure: Box::new(configure),
+    }
+}
+
+impl<C, S, L> IntoElement for BoundControl<C, S, L>
+where
+    C: ControlBinding,
+    S: Clone + PartialEq + 'static,
+    L: Lens<Root = S, Target = C::Value>,
+    C::Value: std::fmt::Debug,
+{
+    type Element = ViewElement<Self>;
+    fn into_element(self) -> Self::Element {
+        ViewElement::new(self)
+    }
+}
+
+impl<C, S, L> RenderOnce for BoundControl<C, S, L>
+where
+    C: ControlBinding,
+    S: Clone + PartialEq + 'static,
+    L: Lens<Root = S, Target = C::Value>,
+    C::Value: std::fmt::Debug,
+{
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Self {
+            id,
+            store,
+            lens,
+            two_way,
+            configure,
+        } = self;
+        let handle = window.window_handle();
+        let site = window.use_keyed_state(id, cx, move |window, cx| {
+            let initial = lens.get(&store.state_untracked(cx)).cloned();
+            let control = C::build(
+                configure(C::builder()),
+                &initial.unwrap_or_default(),
+                window,
+                cx,
+            );
+            let weak = control.downgrade();
+            let watch = store.watch(
+                lens,
+                move |value, cx| {
+                    if let Some(control) = weak.upgrade() {
+                        C::host_set(&control, handle, value, cx);
+                    }
+                },
+                cx,
+            );
+            let edits = two_way.then(|| {
+                let store = store.downgrade();
+                cx.subscribe(&control, move |_, _, event: &C::Event, cx| {
+                    if let (Some(value), Some(store)) = (C::edited(event), store.upgrade()) {
+                        store.set_from_control(lens, value, cx);
+                    }
+                })
+            });
+            ControlSite {
+                control,
+                _watch: watch,
+                _edits: edits,
+            }
+        });
+        AnyView::from(site.read(cx).control.clone())
+    }
+}

@@ -498,6 +498,69 @@ impl Parse for Node {
     }
 }
 
+/// A protocol control entity (`SliderControl`, `CheckboxControl`, …) with one binding lowers
+/// to `bound_control`: built once, host writes through its non-emitting setter, edits from its
+/// typed event. Everything else in the body configures its builder.
+fn control_binding(
+    path: &Path,
+    args: &Punctuated<Expr, Token![,]>,
+    items: &[Item],
+) -> Option<TokenStream> {
+    let name = path.segments.last()?.ident.to_string();
+    if !name.ends_with("Control") {
+        return None;
+    }
+    let binds: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Bind { lens, handler, prop } => Some((prop, lens, handler.is_some())),
+            _ => None,
+        })
+        .collect();
+    let [(prop, lens, two_way)] = binds.as_slice() else {
+        if binds.len() > 1 {
+            return Some(
+                Error::new_spanned(path, "a control entity binds one value").into_compile_error(),
+            );
+        }
+        return None;
+    };
+    if !args.is_empty() {
+        return Some(
+            Error::new_spanned(args, "a bound control entity takes its id from `.path(…)`")
+                .into_compile_error(),
+        );
+    }
+    let mut configure = Vec::new();
+    for item in items {
+        match item {
+            Item::Builder(call) => configure.push(call.clone()),
+            Item::Bind { .. } => {}
+            Item::Child(_) | Item::Handle(..) => {
+                return Some(
+                    Error::new_spanned(
+                        path,
+                        "a bound control entity takes builder props only; edits arrive through the binding",
+                    )
+                    .into_compile_error(),
+                );
+            }
+        }
+    }
+    let _ = prop;
+    let builder = Ident::new("__guiraffe_builder", Span::mixed_site());
+    let store = store_ident();
+    let id = site_id();
+    let lens = lens.expand();
+    Some(quote_spanned!(path.span()=> ::guiraffe_ui::__macro::bound_control::<#path, _, _>(
+        #id,
+        #store,
+        #lens,
+        #two_way,
+        move |#builder| #builder #(#configure)*,
+    )))
+}
+
 /// `count -= step` becomes `__guiraffe_fields.count -= step`.
 fn mutation(change: &Expr) -> TokenStream {
     let fields = Ident::new("__guiraffe_fields", Span::mixed_site());
@@ -903,6 +966,9 @@ impl Node {
                 } else {
                     quote!(#path(#args))
                 };
+                if let Some(tokens) = control_binding(&path, args, items) {
+                    return tokens;
+                }
                 let bound = Ident::new("__guiraffe_bound", Span::mixed_site());
                 let mut lenses = Vec::new();
                 let mut values = Vec::new();

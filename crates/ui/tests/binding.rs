@@ -431,3 +431,84 @@ impl guiraffe_state::Event<Pattern> for InsertStep {
         fx.list_insert(Pattern::steps, 0, self.0, Step { velocity: 0 });
     }
 }
+
+// ---- Protocol control entities ---------------------------------------------------------
+
+store! {
+    pub Prefs {
+        dark: bool = false,
+        volume: f32 = 0.5,
+    }
+}
+
+struct PrefsPage {
+    store: Store<Prefs>,
+}
+
+impl Render for PrefsPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let store = self.store.clone();
+        ui! {
+            div {
+                store(store) {
+                    guiraffe_components::controls::SwitchControl {
+                        checked <=> dark
+                        .path("prefs/dark")
+                        .label("Dark")
+                    }
+                    guiraffe_components::controls::SliderControl {
+                        value <=> volume
+                        .path("prefs/volume")
+                        .range(0., 1.)
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn control_entities_bind_through_their_events_and_host_setters(cx: &mut TestAppContext) {
+    let sources = Rc::new(RefCell::new(Vec::new()));
+    let store = cx.update(|cx| {
+        let store = Prefs::store(cx);
+        store.add_interceptor(PrefSources(sources.clone()), cx);
+        store
+    });
+    let (_, vcx) = cx.add_window_view({
+        let store = store.clone();
+        move |_, _| PrefsPage { store }
+    });
+    vcx.run_until_parked();
+    let toggle = Action {
+        name: names::TOGGLE.into(),
+        payload: Value::Null,
+    };
+    vcx.update(|window, cx| {
+        let dark = ControlId::lookup("prefs/dark", cx).expect("registered by .path");
+        assert!(ActionBus::dispatch(dark, &toggle, Source::Mcp, window, cx).is_ok());
+    });
+    vcx.run_until_parked();
+    vcx.update(|_, cx| assert!(store.state(cx).dark, "the bus edit reached the store"));
+    assert_eq!(*sources.borrow(), [Source::Mcp]);
+
+    // A host write reaches the control without echoing back as an edit.
+    vcx.update(|_, cx| store.set(Prefs::volume, 0.25, cx));
+    vcx.run_until_parked();
+    vcx.update(|window, cx| {
+        let volume = ControlId::lookup("prefs/volume", cx).expect("registered");
+        assert_eq!(
+            ActionBus::query(volume, window, cx).map(|s| s.value),
+            Ok(Some(Value::Num(0.25)))
+        );
+    });
+    assert_eq!(sources.borrow().len(), 2, "one host write, no echo");
+}
+
+struct PrefSources(Rc<RefCell<Vec<Source>>>);
+
+impl Interceptor<Prefs> for PrefSources {
+    fn after(&mut self, record: &EventRecord, _: &Arc<Prefs>, _: &Arc<Prefs>) {
+        self.0.borrow_mut().push(record.source);
+    }
+}
