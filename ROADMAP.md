@@ -172,6 +172,39 @@ Candidates, in likely order. Item 0 comes first, after 0.3.1 has landed what Pas
 
 Mobile is out of scope until the desktop platforms are supported.
 
+## 0.5: Compiled reactivity
+
+**Goal:** a typical store-and-`ui!` app costs, per change, only what that change touches, and
+beats the same app written for plain gpui-fast. In 0.3 the Store's share of a label edit is
+already small and flat (1-20 µs of about 250 µs). What remains is rendering, which only our own
+GPUI fork (0.4) can change.
+
+Passage, the DAW built on GUIraffe, is the real-world stress test: a complex UI with dense
+timelines, meters, step grids and many windows. Each item is measured on Passage as well as on
+the composed benchmarks, and against a plain gpui-fast version of the same workload (the
+store-vs-plain A/B bench added in 0.3).
+
+Candidates:
+
+1. **Fine-grained updates instead of re-rendering:** `ui!` knows at compile time which element
+   property reads which lens, so a write patches that element in place without running a render
+   function (Solid-style rather than React-style). Builds on the retained-element step from 0.3.
+2. **Change kinds known statically:** paint-only bindings (colour, value, progress) skip layout
+   and hit testing; only text and geometry bindings pay for shaping and layout.
+3. **Static subtrees from `ui!`:** subtrees with no bindings are built once and kept, with no
+   per-frame bookkeeping.
+4. **Keyed list deltas:** keyed store writes and `imbl` snapshots give inserts, removes and moves
+   directly, so list updates cost what changed, with no diffing.
+5. **Sinks that skip the view tree:** high-rate values (meters, playheads, scopes) write straight
+   into retained scene primitives.
+6. **Scheduling:** coalesce writes per frame, update visible items first, slow down high-rate
+   sources, and prepare snapshots (text shaping, layout inputs) off the UI thread.
+7. **Compiled dispatch:** `ui!` resolves binding routes once, so a direct binding costs close to
+   nothing instead of a bus lookup.
+
+Rules: the builder API and plain views keep gpui-fast's behaviour as the fallback, and every fast
+path is tested against a full redraw.
+
 ## After 0.4
 
 Deferred from 0.3 P3:
