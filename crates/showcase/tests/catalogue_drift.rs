@@ -1069,6 +1069,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Read-only model query for native callers. Documents receive changed cells through edit.",
     ),
     (
+        "sheet::SheetState::calculation",
+        "Read-only query for the finished background calculation, for native callers. Documents receive changed cells through edit.",
+    ),
+    (
         "dnd::DockDragOverlay",
         "Native drag surface mounted by a managed dock.",
     ),

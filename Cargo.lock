@@ -3595,10 +3595,12 @@ name = "guiraffe-dnd"
 version = "0.1.0"
 dependencies = [
  "accesskit",
+ "anyhow",
  "gpui-kit",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-layout",
+ "guiraffe-windows",
  "serde_json",
 ]
 

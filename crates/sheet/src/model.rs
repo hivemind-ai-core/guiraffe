@@ -65,12 +65,50 @@ impl Cell {
 type History = UndoLog<CellPos, Cell, ()>;
 const MAX_BATCH: usize = 100_000;
 
+// Most sparse lanes have only one occupied interval.
+enum Occupancy {
+    One(Range<usize>),
+    Many(RowSet),
+}
+
+impl Occupancy {
+    fn ranges(&self) -> &[Range<usize>] {
+        match self {
+            Self::One(range) => std::slice::from_ref(range),
+            Self::Many(set) => set.ranges(),
+        }
+    }
+
+    fn update(&mut self, at: usize, occupied: bool) {
+        if let Self::One(range) = self {
+            if occupied && at <= range.end && range.start <= at + 1 {
+                range.start = range.start.min(at);
+                range.end = range.end.max(at + 1);
+                return;
+            }
+            let mut set = RowSet::default();
+            set.insert(range.clone());
+            *self = Self::Many(set);
+        }
+        if let Self::Many(set) = self {
+            if occupied {
+                set.insert(at..at + 1);
+            } else {
+                set.remove(at);
+            }
+            if let [only] = set.ranges() {
+                *self = Self::One(only.clone());
+            }
+        }
+    }
+}
+
 pub struct SheetModel {
     rows: usize,
     cols: usize,
     cells: BTreeMap<CellPos, Cell>,
-    occupied_rows: HashMap<usize, RowSet>,
-    occupied_cols: HashMap<usize, RowSet>,
+    occupied_rows: HashMap<usize, Occupancy>,
+    occupied_cols: HashMap<usize, Occupancy>,
     history: History,
     pub selection: Selection,
     pub read_only: bool,
@@ -154,18 +192,18 @@ impl SheetModel {
     }
 
     fn update_occupancy(
-        lanes: &mut HashMap<usize, RowSet>,
+        lanes: &mut HashMap<usize, Occupancy>,
         lane: usize,
         at: usize,
         occupied: bool,
     ) {
-        if occupied {
-            lanes.entry(lane).or_default().insert(at..at + 1);
-        } else if let Some(range) = lanes.get_mut(&lane) {
-            range.remove(at);
-            if range.is_empty() {
+        if let Some(entry) = lanes.get_mut(&lane) {
+            entry.update(at, occupied);
+            if entry.ranges().is_empty() {
                 lanes.remove(&lane);
             }
+        } else if occupied {
+            lanes.insert(lane, Occupancy::One(at..at + 1));
         }
     }
 
@@ -265,7 +303,7 @@ impl SheetModel {
         if limit == 0 {
             return None;
         }
-        let ranges = lane.map_or(&[][..], RowSet::ranges);
+        let ranges = lane.map_or(&[][..], Occupancy::ranges);
         let first_after = ranges.partition_point(|range| range.end <= at);
         let containing = ranges.get(first_after).filter(|range| range.contains(&at));
         let edge = if backwards {

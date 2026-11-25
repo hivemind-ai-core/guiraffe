@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
@@ -184,9 +184,9 @@ struct Graph {
     numbers: BTreeMap<CellPos, f64>,
     formulas: BTreeMap<CellPos, Compiled>,
     values: Values,
-    reverse: HashMap<CellPos, HashSet<CellPos>>,
+    reverse: BTreeSet<(CellPos, CellPos)>,
     ranges: HashMap<CellPos, Vec<Reference>>,
-    dirty: HashSet<CellPos>,
+    dirty: BTreeSet<CellPos>,
 }
 
 impl Graph {
@@ -197,9 +197,9 @@ impl Graph {
             numbers: BTreeMap::new(),
             formulas: BTreeMap::new(),
             values: Values::new(),
-            reverse: HashMap::new(),
+            reverse: BTreeSet::new(),
             ranges: HashMap::new(),
-            dirty: HashSet::new(),
+            dirty: BTreeSet::new(),
         }
     }
 
@@ -207,12 +207,7 @@ impl Graph {
         for (pos, text) in changes {
             if let Some(Ok(previous)) = self.formulas.remove(&pos) {
                 for r in previous.references().iter().filter(|r| r.first == r.last) {
-                    if let Some(dependents) = self.reverse.get_mut(&r.first) {
-                        dependents.remove(&pos);
-                        if dependents.is_empty() {
-                            self.reverse.remove(&r.first);
-                        }
-                    }
+                    self.reverse.remove(&(r.first, pos));
                 }
             }
             self.ranges.remove(&pos);
@@ -230,7 +225,7 @@ impl Graph {
                 if let Ok(formula) = &formula {
                     for r in formula.references() {
                         if r.first == r.last {
-                            self.reverse.entry(r.first).or_default().insert(pos);
+                            self.reverse.insert((r.first, pos));
                         } else {
                             self.ranges.entry(pos).or_default().push(*r);
                         }
@@ -247,20 +242,44 @@ impl Graph {
     }
 
     fn dependents(&self, pos: CellPos) -> impl Iterator<Item = CellPos> + '_ {
-        let direct = self.reverse.get(&pos);
-        direct
-            .into_iter()
-            .flatten()
-            .copied()
+        self.reverse
+            .range((pos, CellPos::default())..=(pos, CellPos::new(usize::MAX, usize::MAX)))
+            .map(|&(_, dependent)| dependent)
             .chain(self.ranges.iter().filter_map(move |(&dependent, ranges)| {
-                (direct.is_none_or(|direct| !direct.contains(&dependent))
+                (!self.reverse.contains(&(pos, dependent))
                     && ranges.iter().any(|r| r.contains(pos)))
                 .then_some(dependent)
             }))
     }
 
+    fn evaluate(&self, formula: &Compiled, values: &Values, cancelled: &dyn Fn() -> bool) -> Value {
+        let reader = Reader {
+            graph: self,
+            values,
+            cancelled,
+        };
+        match formula {
+            Ok(formula) => engine_call(|| formula.evaluate(&reader)),
+            Err(error) => Err(*error),
+        }
+    }
+
     fn calculate(&mut self, cancelled: impl Fn() -> bool) -> Option<()> {
-        let mut dirty = self.dirty.clone();
+        let mut dirty = std::mem::take(&mut self.dirty);
+        let result = self.calculate_dirty(&mut dirty, cancelled);
+        if result.is_some() {
+            dirty.clear();
+        }
+        // On cancellation the next revision also covers every invalidated dependent.
+        self.dirty = dirty;
+        result
+    }
+
+    fn calculate_dirty(
+        &mut self,
+        dirty: &mut BTreeSet<CellPos>,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<()> {
         let mut queue: VecDeque<_> = dirty.iter().copied().collect();
         while let Some(pos) = queue.pop_front() {
             if cancelled() {
@@ -273,14 +292,41 @@ impl Graph {
             }
         }
 
+        // An address-ordered pass is already topological if every reference
+        // precedes its formula. Other sheets use the general cycle-aware traversal.
+        if dirty.iter().all(|pos| {
+            !cancelled()
+                && self.formulas.get(pos).is_none_or(|formula| {
+                    formula.as_ref().map_or(true, |formula| {
+                        formula.references().iter().all(|r| r.last < *pos)
+                    })
+                })
+        }) {
+            drop(queue);
+            let mut values = self.values.clone();
+            for &pos in dirty.iter() {
+                if cancelled() {
+                    return None;
+                }
+                if let Some(formula) = self.formulas.get(&pos) {
+                    let value = self.evaluate(formula, &values, &cancelled);
+                    values.insert(pos, value);
+                } else {
+                    values.remove(&pos);
+                }
+            }
+            self.values = values;
+            return Some(());
+        }
+
         let mut pending = HashMap::new();
-        let mut changes = HashMap::new();
-        for &pos in &dirty {
+        let mut values = self.values.clone();
+        for &pos in dirty.iter() {
             if cancelled() {
                 return None;
             }
             let Some(formula) = self.formulas.get(&pos) else {
-                changes.insert(pos, None);
+                values.remove(&pos);
                 continue;
             };
             let mut dependencies = HashSet::new();
@@ -306,16 +352,8 @@ impl Graph {
                 return None;
             }
             let formula = self.formulas.get(&pos)?;
-            let reader = Reader {
-                graph: self,
-                changes: &changes,
-                cancelled: &cancelled,
-            };
-            let value = match formula {
-                Ok(formula) => engine_call(|| formula.evaluate(&reader)),
-                Err(error) => Err(*error),
-            };
-            changes.insert(pos, Some(value));
+            let value = self.evaluate(formula, &values, &cancelled);
+            values.insert(pos, value);
             pending.remove(&pos);
             for successor in self.dependents(pos) {
                 if let Some(count) = pending.get_mut(&successor) {
@@ -329,23 +367,13 @@ impl Graph {
         if cancelled() {
             return None;
         }
-        let mut values = self.values.clone();
-        for (pos, value) in changes.into_iter().chain(
-            pending
-                .into_keys()
-                .map(|pos| (pos, Some(Err(FormulaError::Cycle)))),
-        ) {
+        for pos in pending.into_keys() {
             if cancelled() {
                 return None;
             }
-            if let Some(value) = value {
-                values.insert(pos, value);
-            } else {
-                values.remove(&pos);
-            }
+            values.insert(pos, Err(FormulaError::Cycle));
         }
         self.values = values;
-        self.dirty.clear();
         Some(())
     }
 }
@@ -356,7 +384,7 @@ fn engine_call<T>(evaluate: impl FnOnce() -> Result<T, FormulaError>) -> Result<
 
 struct Reader<'a> {
     graph: &'a Graph,
-    changes: &'a HashMap<CellPos, Option<Value>>,
+    values: &'a Values,
     cancelled: &'a dyn Fn() -> bool,
 }
 
@@ -368,11 +396,7 @@ impl FormulaValues for Reader<'_> {
         if pos.row >= self.graph.rows || pos.col >= self.graph.cols {
             return Err(FormulaError::Reference);
         }
-        let formula = self
-            .changes
-            .get(&pos)
-            .copied()
-            .unwrap_or_else(|| self.graph.values.get(&pos).copied());
+        let formula = self.values.get(&pos).copied();
         if let Some(value) = formula {
             value.map(Some)
         } else {

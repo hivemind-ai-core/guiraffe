@@ -1069,6 +1069,201 @@ mod tests {
         }
     }
 
+    #[gpui_kit::test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "gpui_kit::test bodies are tests; clippy does not see them as such"
+    )]
+    fn detached_panel_restores_and_docks_back_with_same_entity(cx: &mut TestAppContext) {
+        let (root, host) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
+        let saved = host.update(|window, cx| {
+            let area = root.read(cx).area.clone();
+            let panel = cx.new(|cx| TestPanel(cx.focus_handle(), "Detached"));
+            let focus = panel.read(cx).0.clone();
+            let id = PanelId::from(panel.entity_id());
+            area.update(cx, |area, cx| {
+                area.add_panel_view(
+                    panel_handle(panel.clone()),
+                    DockPlacement::Right,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            let commands =
+                crate::dock::DockablePanel::new("test/panel", area.clone(), panel, window, cx);
+            let before = cx.windows().len();
+            assert!(matches!(commands.pop_out(window, cx), Ok(true)));
+            assert_eq!(cx.windows().len(), before + 1);
+            assert!(area.read(cx).panel(id).is_none());
+            assert!(matches!(commands.pop_out(window, cx), Ok(false)));
+            let stored = cx
+                .global::<guiraffe_layout::LayoutStore>()
+                .persist()
+                .load(commands.key())
+                .unwrap();
+            let child_key = guiraffe_windows::WindowKey::instance("dock-panel", "test/panel");
+            let child = guiraffe_windows::WindowManager::find(&child_key, cx).unwrap();
+            let veto = Rc::new(Cell::new(true));
+            let guard = veto.clone();
+            child
+                .update(cx, |view, window, cx| {
+                    assert_eq!(PanelId::from(view.entity_id()), id);
+                    guiraffe_windows::WindowManager::add_close_guard(window, cx, move |_, _| {
+                        if guard.get() {
+                            guiraffe_windows::CloseDecision::Veto
+                        } else {
+                            guiraffe_windows::CloseDecision::Allow
+                        }
+                    });
+                })
+                .unwrap();
+            assert!(matches!(commands.dock_back(window, cx), Ok(false)));
+            assert!(area.read(cx).panel(id).is_none());
+            veto.set(false);
+            assert!(matches!(commands.dock_back(window, cx), Ok(true)));
+            assert!(focus.is_focused(window));
+            assert!(
+                area.read(cx)
+                    .layout(DockPlacement::Right)
+                    .unwrap()
+                    .find_panel_node(id)
+                    .is_some()
+            );
+            assert!(matches!(commands.restore(window, cx), Ok(false)));
+            stored
+        });
+
+        // Fresh dock, panel entity and control scope, as on relaunch.
+        let (root, host) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
+        host.update(|window, cx| {
+            let area = root.read(cx).area.clone();
+            let panel = cx.new(|cx| TestPanel(cx.focus_handle(), "Detached"));
+            let id = PanelId::from(panel.entity_id());
+            let commands =
+                crate::dock::DockablePanel::new("test/panel", area.clone(), panel, window, cx);
+            cx.global::<guiraffe_layout::LayoutStore>()
+                .persist()
+                .save(commands.key(), &saved);
+            assert!(matches!(commands.restore(window, cx), Ok(true)));
+            assert!(matches!(commands.dock_back(window, cx), Ok(true)));
+            assert!(
+                area.read(cx)
+                    .layout(DockPlacement::Right)
+                    .unwrap()
+                    .find_panel_node(id)
+                    .is_some()
+            );
+        });
+    }
+
+    #[gpui_kit::test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "gpui_kit::test bodies are tests; clippy does not see them as such"
+    )]
+    fn detached_window_drives_dock_back_and_drop_never_orphans(cx: &mut TestAppContext) {
+        use guiraffe_core::protocol::{Action, ActionBus, Source, names};
+        use guiraffe_windows::{WindowKey, WindowManager};
+        let (root, host) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
+        let area = host.update(|_, cx| root.read(cx).area.clone());
+        let panel = host.update(|_, cx| cx.new(|cx| TestPanel(cx.focus_handle(), "Detached")));
+        let id = PanelId::from(panel.entity_id());
+        let commands = host.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.add_panel_view(
+                    panel_handle(panel.clone()),
+                    DockPlacement::Right,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            crate::dock::DockablePanel::new("test/panel", area.clone(), panel.clone(), window, cx)
+        });
+        let control = commands.control_id().unwrap();
+        let action = |name: &str| Action {
+            name: name.to_owned().into(),
+            payload: guiraffe_core::widget_value::Value::Null,
+        };
+        let child_key = WindowKey::instance("dock-panel", "test/panel");
+        let docked = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.update(|_, cx| {
+                area.read(cx)
+                    .layout(DockPlacement::Right)
+                    .and_then(|tree| tree.find_panel_node(id))
+                    .is_some()
+            })
+        };
+
+        // Pop out through the bus in the home window; the control follows the panel.
+        host.update(|window, cx| {
+            ActionBus::dispatch(control, &action(names::OPEN), Source::Ribbon, window, cx).unwrap();
+        });
+        host.run_until_parked();
+        assert!(commands.is_detached());
+        let child = host
+            .update(|_, cx| WindowManager::find(&child_key, cx))
+            .unwrap();
+        host.update(|window, cx| assert!(ActionBus::describe(control, window, cx).is_none()));
+        child
+            .update(host, |_, window, cx| {
+                assert!(ActionBus::describe(control, window, cx).is_some());
+                // A button inside the detached window docks it back via the home window.
+                assert!(matches!(commands.dock_back(window, cx), Ok(true)));
+            })
+            .unwrap();
+        host.run_until_parked();
+        assert!(!commands.is_detached());
+        assert!(docked(host));
+        host.update(|window, cx| assert!(ActionBus::describe(control, window, cx).is_some()));
+
+        // Same again, driven by a bus action dispatched in the detached window.
+        host.update(|window, cx| assert!(matches!(commands.pop_out(window, cx), Ok(true))));
+        host.run_until_parked();
+        let child = host
+            .update(|_, cx| WindowManager::find(&child_key, cx))
+            .unwrap();
+        child
+            .update(host, |_, window, cx| {
+                ActionBus::dispatch(control, &action(names::CLOSE), Source::Shortcut, window, cx)
+                    .unwrap();
+            })
+            .unwrap();
+        host.run_until_parked();
+        assert!(!commands.is_detached());
+        assert!(docked(host));
+        assert!(
+            host.update(|_, cx| WindowManager::find(&child_key, cx))
+                .is_none()
+        );
+
+        // Dropping the controller while detached docks the panel back and closes the window.
+        host.update(|window, cx| assert!(matches!(commands.pop_out(window, cx), Ok(true))));
+        host.run_until_parked();
+        assert!(
+            host.update(|_, cx| WindowManager::find(&child_key, cx))
+                .is_some()
+        );
+        let windows = host.update(|_, cx| cx.windows().len());
+        drop(commands);
+        // Entity release runs on the next effect flush.
+        host.update(|_, _| {});
+        host.run_until_parked();
+        assert!(
+            host.update(|_, cx| WindowManager::find(&child_key, cx))
+                .is_none()
+        );
+        assert_eq!(host.update(|_, cx| cx.windows().len()), windows - 1);
+        assert!(docked(host));
+        let stored = host.update(|_, cx| {
+            cx.global::<guiraffe_layout::LayoutStore>()
+                .persist()
+                .load("test/panel")
+        });
+        assert_eq!(stored.as_deref(), Some("docked"));
+    }
+
     #[test]
     fn resolves_every_split_edge_and_the_center() {
         let bounds = Bounds::new(point(px(10.), px(20.)), size(px(200.), px(100.)));

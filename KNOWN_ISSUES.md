@@ -53,17 +53,18 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 | Dope sheet in the mixed soak | frames up to 10.5 ms on gpui-fast | 8 ms |
 | Calendar year view | p99 12-16 ms. Month and week can exceed 8 ms on a busy machine | 8 ms |
 | Mermaid mount at 64 nodes | 278-281 ms | 200 ms |
-| Sheet memory, 100k formulas | 119-123 MiB over an empty window | about 68 MiB |
-| CodeViewer loading 10M lines | 379 MiB peak, 192 MiB afterwards | 302 MiB |
+| Sheet memory, 100k formulas (fixed in 0.3) | 119-123 MiB over an empty window | about 68 MiB |
+| CodeViewer loading 10M lines (fixed in 0.3 for streaming loads) | 379 MiB peak, 192 MiB afterwards | 302 MiB |
 | Chat, 100k messages | one 22 ms frame while warming up on gpui-fast | 16 ms |
 | Process memory over a 30-minute soak | +5.8 % upstream, +5.7 % gpui-fast | 2 % |
 | Unchanged repaint allocations | DataUi 132, `ui!` 42, command menu 735, devtools 615, router, state and motion 6-18 | 0 |
 | Label edit among 3,000 live rows | 19-46 ms | work independent of row count |
 
-- **The memory growth is not a detected leak.** The leak check finds no growing lost memory, and
-  a flat live heap over 9,600 frames. With a single trimmed malloc arena upstream growth halves,
-  so about half is fragmentation. The rest, under 2 MiB, is unexplained, and a very slow leak is
-  not ruled out.
+- **Mixed-soak RSS growth is predominantly retained allocator space in the upstream
+  reproduction.** At peak, the default run gained 4,604 KiB RSS, including 4,600 KiB in
+  the process heap. Glibc reported 4,777 KiB more free space and 245 KiB less in-use
+  space in its arenas. A single trimmed arena still grew, with both free and in-use
+  space contributing. See the [30-minute measurements](docs/performance.md#mixed-soak-rss-attribution).
 - **Markdown replacement looks slow in the soak log (about 70 ms)** because the soak runs
   background parsing on the timed thread. With real threads one run peaked at 4.7 ms.
 - **GPUI frame buffers keep their peak size** until the window closes: 6-10 MB after 10,000 live

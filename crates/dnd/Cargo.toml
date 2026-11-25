@@ -9,10 +9,12 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
 gpui-kit.workspace = true
 guiraffe-components.workspace = true
 guiraffe-core.workspace = true
 guiraffe-layout.workspace = true
+guiraffe-windows.workspace = true
 serde_json.workspace = true
 accesskit = "0.24"
 [dev-dependencies]

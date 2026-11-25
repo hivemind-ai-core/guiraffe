@@ -12,6 +12,7 @@ use std::{
 const SCENARIOS: &[(&str, &str, u64)] = &[
     ("grid", "rows", 50 * 8),
     ("code", "lines", 20),
+    ("sheet", "formulas", 0),
     ("chart-line", "points", 16),
     ("chart-scatter", "points", 16),
     ("chart-stream", "retained points", 16),
