@@ -213,6 +213,10 @@ checks and recorders can read the store. They cannot mutate it during dispatch.
 one target as a `Group`. Interceptors see `begin_group`, each action's
 `before`/`after`, then `end_group`. The batch stops at the first rejected
 action. Store history (phase 4) maps one group to one undo step, so a
-drag-paint of N cells undoes at once. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
+drag-paint of N cells undoes at once. The store side exists: changes between
+`Store::begin_undo_group` and `Store::end_undo_group` record one step, which a
+bounded history (`HistoryLimits`: `max_steps`, optional `max_weight`) drops as a
+unit. Calling them from a bus interceptor's `begin_group`/`end_group` is the
+remaining wiring. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
 (`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
 (`bench/benches/instructions.rs`; 2,111 measured with no interceptors), which excludes path lookup.

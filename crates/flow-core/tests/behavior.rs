@@ -129,13 +129,13 @@ fn failed_edit_preserves_redo() {
 #[test]
 fn history_is_bounded_and_noops_are_free() {
     let mut e = Editor::new(graph()).expect("editor");
-    e.history_limit(1);
+    e.set_undo_limits(1);
     assert!(!e.edit(|_| Ok(())).expect("noop"));
     e.add_node(Node::new(4, "", Point::default())).expect("add");
     e.add_node(Node::new(5, "", Point::default())).expect("add");
     e.undo().expect("undo");
     assert!(!e.can_undo());
-    e.history_limit(0);
+    e.set_undo_limits(0);
     assert!(!e.can_redo());
 }
 #[test]
@@ -336,8 +336,32 @@ fn shrinking_history_limit_bounds_redo_as_well_as_undo() {
     for _ in 0..3 {
         e.undo().expect("undo");
     }
-    e.history_limit(1);
+    e.set_undo_limits(1);
     assert!(e.redo().expect("redo"));
     assert!(!e.can_redo());
     assert_eq!(e.graph().nodes.len(), 4);
+}
+#[test]
+fn weight_limit_drops_oldest_steps_and_keeps_an_oversized_newest_one() {
+    let mut e = Editor::new(graph()).expect("editor");
+    // Each snapshot weighs its node count.
+    e.set_undo_weigher(|g| g.nodes.len() as u64);
+    let base = e.graph().nodes.len() as u64;
+    e.set_undo_limits(HistoryLimits::steps(100).with_max_weight(2 * base + 3));
+    for id in 4..7 {
+        e.add_node(Node::new(id, "", Point::default()))
+            .expect("add");
+    }
+    // Snapshots weigh base, base + 1, base + 2: only the newest two fit.
+    assert_eq!(e.undo_depth(), (2, 2 * base + 3), "exactly at the cap");
+    e.set_undo_limits(HistoryLimits::steps(100).with_max_weight(1));
+    assert_eq!(
+        e.undo_depth().0,
+        1,
+        "the newest step survives a cap it exceeds"
+    );
+    assert!(e.undo().expect("undo"));
+    assert!(!e.can_undo());
+    assert_eq!(e.graph().nodes.len() as u64, base + 2);
+    assert_eq!(e.undo_limits().max_weight, Some(1));
 }

@@ -843,3 +843,46 @@ fn registered_protocol_dispatch_and_repaint() -> anyhow::Result<()> {
     assert_eq!(counts.allocations, 0);
     Ok(())
 }
+
+// Undo history
+
+#[derive(Clone, Default, PartialEq)]
+struct Counter(u64);
+
+#[derive(Debug)]
+struct Bump;
+impl guiraffe_state::Event<Counter> for Bump {
+    fn handle(self, fx: &mut guiraffe_state::Fx<'_, Counter>) {
+        // The in-place keyed write: no new state Arc, so only history could allocate.
+        let next = fx.state().0 + 1;
+        fx.set_keyed_field(1, next, |c| &c.0, |c| &mut c.0);
+    }
+}
+
+#[test]
+fn disabled_undo_history_allocates_nothing_on_the_push_path() -> anyhow::Result<()> {
+    use guiraffe_state::{BoundedHistory, Coeffects, Engine, HistoryLimits};
+    let cofx = Coeffects::default();
+    for limits in [None, Some(HistoryLimits::DISABLED)] {
+        let mut engine = Engine::new(Counter::default());
+        if let Some(limits) = limits {
+            engine.enable_undo(limits);
+        }
+        // Warm the queue, then time only processing (the event box is the dispatch's cost).
+        engine.dispatch(Bump);
+        engine.process(&cofx);
+        engine.dispatch(Bump);
+        let (_, counts) = count_allocations(|| {
+            engine.begin_undo_group();
+            let out = engine.process(&cofx);
+            engine.end_undo_group();
+            out.changed
+        })?;
+        assert_eq!(counts.allocations, 0, "{limits:?}: {counts:?}");
+        assert!(!engine.can_undo());
+    }
+    let mut history = BoundedHistory::new(HistoryLimits::DISABLED);
+    let (_, counts) = count_allocations(|| history.push(vec![0_u8; 0], 1))?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}

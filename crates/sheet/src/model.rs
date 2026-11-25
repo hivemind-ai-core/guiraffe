@@ -8,7 +8,7 @@ use guiraffe_datagrid::{
     Nav, Selection, SelectionMode,
     model::{
         clipboard,
-        undo::{Change, UndoLog},
+        undo::{Change, HistoryLimits, UndoLog},
     },
     selection::RowSet,
 };
@@ -226,6 +226,16 @@ impl SheetModel {
         let positions = changes.iter().map(|change| change.key).collect();
         self.history.push((), changes);
         positions
+    }
+
+    /// Bound the undo history by step count and, optionally, approximate bytes (see
+    /// [`HistoryLimits`]). The oldest steps go first; the default keeps 200 steps.
+    pub fn set_undo_limits(&mut self, limits: impl Into<HistoryLimits>) {
+        self.history.set_limits(limits);
+    }
+
+    pub fn undo_limits(&self) -> HistoryLimits {
+        self.history.limits()
     }
 
     pub fn undo(&mut self) -> Vec<CellPos> {

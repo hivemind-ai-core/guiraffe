@@ -23,6 +23,7 @@ use crate::engine::{
     Coeffects, DirtyKeys, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, Queued,
     UndoEvent,
 };
+use crate::history::HistoryLimits;
 
 type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
 type ErrorHandler = Rc<dyn Fn(&EngineError, &mut App)>;
@@ -197,21 +198,74 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         self.inner.read(cx).engine.state().clone()
     }
 
-    /// Whole-state undo (see [`Engine::enable_undo`] for the caveat).
-    pub fn enable_undo(&self, limit: usize, cx: &mut App) {
-        self.inner.update(cx, |i, _| i.engine.enable_undo(limit));
+    /// Whole-state undo within `limits` (see [`Engine::enable_undo`] for the caveat).
+    pub fn enable_undo(&self, limits: impl Into<HistoryLimits>, cx: &mut App) {
+        let limits = limits.into();
+        self.inner.update(cx, |i, _| i.engine.enable_undo(limits));
+    }
+
+    /// Whole-state undo with a per-step weight estimate (see [`Engine::enable_undo_weighed`]).
+    pub fn enable_undo_weighed(
+        &self,
+        limits: impl Into<HistoryLimits>,
+        weigh: impl Fn(&S) -> u64 + 'static,
+        cx: &mut App,
+    ) {
+        let limits = limits.into();
+        self.inner
+            .update(cx, |i, _| i.engine.enable_undo_weighed(limits, weigh));
     }
 
     /// Undo scoped to part of the state (see [`Engine::enable_undo_lens`]).
     pub fn enable_undo_lens<U: Clone + 'static>(
         &self,
-        limit: usize,
+        limits: impl Into<HistoryLimits>,
         get: impl Fn(&S) -> U + 'static,
         set: impl Fn(&mut S, U) + 'static,
         cx: &mut App,
     ) {
+        let limits = limits.into();
         self.inner
-            .update(cx, |i, _| i.engine.enable_undo_lens(limit, get, set));
+            .update(cx, |i, _| i.engine.enable_undo_lens(limits, get, set));
+    }
+
+    /// Scoped undo with a per-step weight estimate (see [`Engine::enable_undo_lens_weighed`]).
+    pub fn enable_undo_lens_weighed<U: Clone + 'static>(
+        &self,
+        limits: impl Into<HistoryLimits>,
+        get: impl Fn(&S) -> U + 'static,
+        set: impl Fn(&mut S, U) + 'static,
+        weigh: impl Fn(&U) -> u64 + 'static,
+        cx: &mut App,
+    ) {
+        let limits = limits.into();
+        self.inner.update(cx, |i, _| {
+            i.engine.enable_undo_lens_weighed(limits, get, set, weigh)
+        });
+    }
+
+    /// Change the history limits, keeping the steps that still fit.
+    pub fn set_undo_limits(&self, limits: impl Into<HistoryLimits>, cx: &mut App) {
+        let limits = limits.into();
+        self.inner
+            .update(cx, |i, _| i.engine.set_undo_limits(limits));
+    }
+
+    pub fn undo_limits(&self, cx: &App) -> HistoryLimits {
+        self.inner.read(cx).engine.undo_limits()
+    }
+
+    /// Start an undo group (see [`Engine::begin_undo_group`]). Events dispatched before the
+    /// matching [`Store::end_undo_group`] are flushed first, so they stay in this group.
+    pub fn begin_undo_group(&self, cx: &mut App) {
+        self.flush(cx);
+        self.inner.update(cx, |i, _| i.engine.begin_undo_group());
+    }
+
+    /// End the undo group, flushing its pending events into it first.
+    pub fn end_undo_group(&self, cx: &mut App) {
+        self.flush(cx);
+        self.inner.update(cx, |i, _| i.engine.end_undo_group());
     }
 
     pub fn can_undo(&self, cx: &App) -> bool {

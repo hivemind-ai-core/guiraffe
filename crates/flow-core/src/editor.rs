@@ -6,12 +6,103 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
+/// How much undo history to keep: a step count (0 disables history) and an optional weight
+/// (approximate bytes).
+///
+/// Mirrors `guiraffe_state::HistoryLimits` (same names) for this GPUI-free crate; every
+/// GUIraffe undo stack is configured the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HistoryLimits {
+    /// Most undo steps kept.
+    pub max_steps: usize,
+    /// Most total step weight kept, or no weight limit.
+    pub max_weight: Option<u64>,
+}
+
+impl HistoryLimits {
+    /// History disabled.
+    pub const DISABLED: Self = Self::steps(0);
+
+    /// Keep up to `max_steps` steps, with no weight limit.
+    pub const fn steps(max_steps: usize) -> Self {
+        Self {
+            max_steps,
+            max_weight: None,
+        }
+    }
+
+    /// Also cap the total weight of kept steps.
+    pub const fn with_max_weight(self, max_weight: u64) -> Self {
+        Self {
+            max_weight: Some(max_weight),
+            ..self
+        }
+    }
+}
+
+impl From<usize> for HistoryLimits {
+    fn from(max_steps: usize) -> Self {
+        Self::steps(max_steps)
+    }
+}
+
+/// Weighs a history snapshot once, when it is recorded.
+pub type GraphWeigher = fn(&Graph) -> u64;
+
+/// The default weight: one node and edge record per element. Snapshots share structure, so
+/// this over-counts unchanged parts; it is a cheap, monotonic proxy for document size.
+pub fn estimate_graph_weight(graph: &Graph) -> u64 {
+    (graph.nodes.len() * size_of::<Node>() + graph.edges.len() * size_of::<Edge>()) as u64
+}
+
+/// Weighted snapshots, newest at the back; trimming drops from the front (the oldest undo
+/// step, or the furthest redo step).
+#[derive(Clone, Default)]
+struct Snapshots {
+    entries: VecDeque<(Graph, u64)>,
+    weight: u64,
+}
+
+impl Snapshots {
+    fn push(&mut self, graph: Graph, weight: u64) {
+        self.entries.push_back((graph, weight));
+        self.weight = self.weight.saturating_add(weight);
+    }
+    fn pop(&mut self) -> Option<(Graph, u64)> {
+        let (g, w) = self.entries.pop_back()?;
+        self.weight -= w;
+        Some((g, w))
+    }
+    fn newest(&self) -> Option<&Graph> {
+        self.entries.back().map(|(g, _)| g)
+    }
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.weight = 0;
+    }
+    /// Drop the oldest entries over `limits`, keeping the newest one regardless of weight.
+    fn trim(&mut self, limits: HistoryLimits) {
+        if limits.max_steps == 0 {
+            return self.clear();
+        }
+        while self.entries.len() > 1
+            && (self.entries.len() > limits.max_steps
+                || limits.max_weight.is_some_and(|m| self.weight > m))
+        {
+            if let Some((_, w)) = self.entries.pop_front() {
+                self.weight -= w;
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Editor {
     scene: Arc<Scene>,
-    undo: VecDeque<Graph>,
-    redo: Vec<Graph>,
-    limit: usize,
+    undo: Snapshots,
+    redo: Snapshots,
+    limits: HistoryLimits,
+    weigh: GraphWeigher,
     selected: Arc<BTreeSet<NodeId>>,
     selected_edges: Arc<BTreeSet<EdgeId>>,
     elevated: Arc<BTreeSet<NodeId>>,
@@ -70,9 +161,10 @@ impl Editor {
             .max(graph.edges.keys().next_back().copied().unwrap_or(0));
         let mut editor = Self {
             scene: Arc::new(scene(graph)?),
-            undo: VecDeque::new(),
-            redo: Vec::new(),
-            limit: 100,
+            undo: Snapshots::default(),
+            redo: Snapshots::default(),
+            limits: HistoryLimits::steps(100),
+            weigh: estimate_graph_weight,
             selected: Arc::new(selected),
             selected_edges: Arc::new(BTreeSet::new()),
             elevated: Arc::new(BTreeSet::new()),
@@ -106,20 +198,38 @@ impl Editor {
     pub fn is_selected(&self, id: NodeId) -> bool {
         self.selected.contains(&id)
     }
-    pub fn history_limit(&mut self, limit: usize) {
-        self.limit = limit;
-        while self.undo.len() > limit {
-            self.undo.pop_front();
-        }
-        if self.redo.len() > limit {
-            self.redo.drain(..self.redo.len() - limit);
+    /// Bound undo (and redo) history by step count and, optionally, approximate bytes; the
+    /// oldest steps go first, the newest is kept even when heavier than the weight cap.
+    /// The default keeps 100 steps; 0 steps disables history.
+    pub fn set_undo_limits(&mut self, limits: impl Into<HistoryLimits>) {
+        self.limits = limits.into();
+        self.undo.trim(self.limits);
+        self.redo.trim(self.limits);
+    }
+    pub fn undo_limits(&self) -> HistoryLimits {
+        self.limits
+    }
+    /// Weigh snapshots with `weigh` instead of [`estimate_graph_weight`].
+    pub fn set_undo_weigher(&mut self, weigh: GraphWeigher) {
+        self.weigh = weigh;
+    }
+    /// Undo steps kept, and their total weight.
+    pub fn undo_depth(&self) -> (usize, u64) {
+        (self.undo.entries.len(), self.undo.weight)
+    }
+    fn record_undo(&mut self) {
+        if self.limits.max_steps > 0 {
+            let graph = self.graph().clone();
+            let weight = (self.weigh)(&graph);
+            self.undo.push(graph, weight);
+            self.undo.trim(self.limits);
         }
     }
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
+        !self.undo.entries.is_empty()
     }
     pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
+        !self.redo.entries.is_empty()
     }
     fn next_scene(&self, mut graph: Graph, validate: bool) -> Result<Option<Scene>, FlowError> {
         graph.edge_id_high_water = graph
@@ -171,12 +281,7 @@ impl Editor {
         })
     }
     fn install_scene(&mut self, scene: Arc<Scene>) {
-        if self.limit > 0 {
-            self.undo.push_back(self.graph().clone());
-            if self.undo.len() > self.limit {
-                self.undo.pop_front();
-            }
-        }
+        self.record_undo();
         self.scene = scene;
         self.redo.clear();
         self.prune_selection();
@@ -205,33 +310,30 @@ impl Editor {
         self.commit(next, true)
     }
     pub fn undo(&mut self) -> Result<bool, FlowError> {
-        let Some(graph) = self.undo.back() else {
+        let Some(graph) = self.undo.newest() else {
             return Ok(false);
         };
         let Some(scene) = self.next_scene(graph.clone(), false)? else {
             return Ok(false);
         };
-        self.undo.pop_back();
-        self.redo.push(self.graph().clone());
+        self.undo.pop();
+        let current = self.graph().clone();
+        let weight = (self.weigh)(&current);
+        self.redo.push(current, weight);
         self.scene = Arc::new(scene);
         self.prune_selection();
         self.refresh_order();
         Ok(true)
     }
     pub fn redo(&mut self) -> Result<bool, FlowError> {
-        let Some(graph) = self.redo.last() else {
+        let Some(graph) = self.redo.newest() else {
             return Ok(false);
         };
         let Some(scene) = self.next_scene(graph.clone(), false)? else {
             return Ok(false);
         };
         self.redo.pop();
-        if self.limit > 0 {
-            self.undo.push_back(self.graph().clone());
-            if self.undo.len() > self.limit {
-                self.undo.pop_front();
-            }
-        }
+        self.record_undo();
         self.scene = Arc::new(scene);
         self.prune_selection();
         self.refresh_order();
