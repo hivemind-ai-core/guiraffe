@@ -192,6 +192,23 @@ Item 10 will supply descriptors for domain actions and generate payload
 schemas from the catalogue as controls adopt the protocol.
 
 `Source` and `ActionError` are non-exhaustive so later sources and rejection
-reasons are additive. Dispatch has an allocation gate of zero
+reasons are additive. `Source::Host` tags application-initiated actions;
+plain store writes from the host (a playhead, a view range) never pass through
+the bus and so never return as user actions. `Devtools` and `Test` tag those
+clients.
+
+`Drive::apply` returns `Drive::Output: Into<Outcome>`. `Outcome` wraps an
+erased `Value`, empty by default and free to construct, so interceptors and
+recorders see typed results such as `KeyInserted { t }` without subscribing to
+entity events. Use `()` when an action has nothing to report.
+
+Interceptors receive `&Window` and `&App` in `before` and `after`, so permission
+checks and recorders can read the store. They cannot mutate it during dispatch.
+
+`ActionBus::dispatch_batch(id, actions, source, ..)` applies a run of actions to
+one target as a `Group`. Interceptors see `begin_group`, each action's
+`before`/`after`, then `end_group`. The batch stops at the first rejected
+action. Store history (phase 4) maps one group to one undo step, so a
+drag-paint of N cells undoes at once. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
 (`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
-(`bench/benches/instructions.rs`; 2,079 measured), which excludes path lookup.
+(`bench/benches/instructions.rs`; 2,111 measured with no interceptors), which excludes path lookup.
