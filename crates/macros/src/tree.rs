@@ -168,17 +168,18 @@ impl Parse for LensPath {
         })?;
         let mut steps = Vec::new();
         while input.peek(Token![.]) && !input.peek2(Token![.]) {
+            // `.method(…)` other than `by_key` ends the lens: it is the next builder call.
+            let fork = input.fork();
+            fork.parse::<Token![.]>()?;
+            let next: Ident = fork.parse()?;
+            if fork.peek(token::Paren) && next != "by_key" {
+                break;
+            }
             input.parse::<Token![.]>()?;
             let name: Ident = input.parse()?;
             if input.peek(token::Paren) {
                 let args;
                 parenthesized!(args in input);
-                if name != "by_key" {
-                    return Err(Error::new_spanned(
-                        name,
-                        "lens paths support fields and `.by_key(key)`",
-                    ));
-                }
                 steps.push(Step::ByKey(name, args.parse()?));
             } else {
                 steps.push(Step::Field(name));

@@ -127,6 +127,27 @@ no feedback filter. An equal write isn't a change: there is no undo step and not
 Without `store(…)`, `ui!` is exactly the 0.2 macro. An unbound control expands to the same
 builder calls and costs the same (gated in `guiraffe-bench`).
 
+### Protocol control entities
+
+The controls in `guiraffe_components::controls` (`SwitchControl`, `CheckboxControl`,
+`SliderControl`, `TextInputControl`, `SelectControl`) own their state and register on the bus.
+Bind one with a single binding. The rest of its body configures its builder:
+
+```rust
+ui! {
+    store(prefs) {
+        SwitchControl { checked <=> dark  .path("prefs/dark")  .label("Dark") }
+        SliderControl { value <=> volume  .path("prefs/volume")  .range(0., 1.) }
+    }
+}
+```
+
+The entity is built once with the lens's value. Edits arrive through its typed event and are
+written with `Set`. Host writes reach it through its non-emitting setter, so they never echo.
+Slider, text-input and select setters need the window today, so a host write reaches them one
+effect cycle later. A bus edit of a control entity is tagged `Pointer` until its events carry
+their source (both are being fixed in the components crate).
+
 ## Store-bound lists
 
 `for row in <= list { … }` binds a `KeyedList`. Each item gets its own retained row view, which
@@ -150,10 +171,10 @@ track heights from prefix sums, can drive the same row views.
 ```rust
 #[component(stateful)]
 fn Counter(#[state] count: u32, step: u32) -> impl IntoElement {
-    ui! { Button("inc") { label: "+"  on_click => count += step } Text { {count} } }
+    ui! { div { Button("inc") { label: "+"  on_click => count += step }  {count} } }
 }
 
-ui! { Counter("clicks", 1) {} }                              // owns its state
+ui! { Counter("clicks", 1) {} }                                  // owns its state
 ui! { store(app) { Counter("total", 5) { count <=> clicks } } } // state lives in the store
 ```
 
