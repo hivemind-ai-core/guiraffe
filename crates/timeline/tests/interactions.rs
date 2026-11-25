@@ -102,6 +102,10 @@ fn dope_at(
         b.top() + px(row as f32 * guiraffe_timeline::dope_sheet::ROW_H + 14.),
     )
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn dope_pointer_multiselect_moves_together_and_keeps_shell(cx: &mut TestAppContext) {
     let (view, _renders, vcx) = mount(cx, dope);
@@ -119,6 +123,10 @@ fn dope_pointer_multiselect_moves_together_and_keeps_shell(cx: &mut TestAppConte
     let y = vcx.update(|_, cx| view.read(cx).channels()[2].keys().to_vec());
     assert!((y[1] - 1.7).abs() < 1e-10);
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn dope_box_selection_channel_controls_and_global_lock(cx: &mut TestAppContext) {
     let (view, _, vcx) = mount(cx, dope);
@@ -160,6 +168,10 @@ fn dope_box_selection_channel_controls_and_global_lock(cx: &mut TestAppContext) 
         before
     );
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn dope_keyboard_is_opt_in_and_per_channel_locks_survive(cx: &mut TestAppContext) {
     let (view, _, vcx) = mount(cx, dope);
@@ -209,6 +221,10 @@ fn dope_keyboard_is_opt_in_and_per_channel_locks_survive(cx: &mut TestAppContext
     );
     assert!(vcx.update(|_, cx| view.read(cx).channels()[2].keys().is_empty()));
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn bar_sparse_pointer_path_draws_every_bar_and_lock_blocks(cx: &mut TestAppContext) {
     let (view, _, vcx) = mount(cx, |cx| BarCurveView::new(BarCurve::new(32, 0., 1.), cx));
@@ -252,6 +268,10 @@ fn curve_at(
     });
     point(b.left() + px(x as f32), b.top() + px(y as f32))
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn curve_key_and_tangent_pointer_edits_keep_shell(cx: &mut TestAppContext) {
     let (view, _renders, vcx) = mount(cx, curves);
@@ -343,6 +363,10 @@ fn editing_apis_invalidate_only_the_editor(cx: &mut TestAppContext) {
     }
 }
 
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn gantt_and_tracks_row_lock_buttons_toggle_admission(cx: &mut TestAppContext) {
     {
@@ -391,6 +415,10 @@ fn gantt_and_tracks_row_lock_buttons_toggle_admission(cx: &mut TestAppContext) {
     }
 }
 
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn dense_tracks_select_a_clip_by_canvas_position(cx: &mut TestAppContext) {
     for (count, target) in [(64, 27), (10_000, 4_321)] {
@@ -416,6 +444,10 @@ fn dense_tracks_select_a_clip_by_canvas_position(cx: &mut TestAppContext) {
     }
 }
 
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn gantt_virtual_rows_scroll_and_hit_test_content_coordinates(cx: &mut TestAppContext) {
     let (view, _, vcx) = mount(cx, |cx| {
@@ -448,6 +480,10 @@ fn gantt_virtual_rows_scroll_and_hit_test_content_coordinates(cx: &mut TestAppCo
     assert_eq!(vcx.update(|_, cx| view.read(cx).selected()), Some(9999));
 }
 
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn dope_virtual_rows_scroll_without_instantiating_offscreen_controls(cx: &mut TestAppContext) {
     let (_, _, vcx) = mount(cx, |cx| {
@@ -472,6 +508,10 @@ fn dope_virtual_rows_scroll_without_instantiating_offscreen_controls(cx: &mut Te
     assert!(vcx.debug_bounds("channel-lock-0").is_none());
     assert!(vcx.debug_bounds("channel-lock-9999").is_some());
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn additive_box_selection_can_shrink_without_leaving_trailing_keys(cx: &mut TestAppContext) {
     let (view, _, vcx) = mount(cx, dope);
@@ -498,6 +538,10 @@ fn additive_box_selection_can_shrink_without_leaving_trailing_keys(cx: &mut Test
     assert!(selected.contains(&(2, 1.3_f64.to_bits())));
 }
 
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn new_surfaces_have_roles_opt_in_focus_and_shared_ring(cx: &mut TestAppContext) {
     {
@@ -564,6 +608,10 @@ fn new_surfaces_have_roles_opt_in_focus_and_shared_ring(cx: &mut TestAppContext)
         assert_eq!(vcx.debug_bounds("bar-curve"), Some(before));
     }
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn dope_grab_offset_does_not_jump_on_first_move(cx: &mut TestAppContext) {
     let (view, _, vcx) = mount(cx, |cx| {
@@ -585,6 +633,10 @@ fn dope_grab_offset_does_not_jump_on_first_move(cx: &mut TestAppContext) {
     let time = vcx.update(|_, cx| view.read(cx).channels()[0].keys()[0]);
     assert!((time - 0.5 - scale).abs() < 1e-7);
 }
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug selector bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn box_anchor_stays_on_original_content_row_during_scroll(cx: &mut TestAppContext) {
     let (view, _, vcx) = mount(cx, |cx| {
