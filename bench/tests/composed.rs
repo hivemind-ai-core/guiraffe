@@ -679,6 +679,14 @@ fn run_phase_sweep(virtualized: bool) {
         }
         let edited_rows = [EDITED, n - 1];
         for &edited in &edited_rows[..if virtualized { 2 } else { 1 }] {
+            let location = if edited == EDITED {
+                "visible"
+            } else {
+                "offscreen"
+            };
+            if std::env::var("COMPOSED_PHASE_EDIT").is_ok_and(|wanted| wanted != location) {
+                continue;
+            }
             let mut totals = Vec::new();
             let mut flushes = Vec::new();
             let mut frames = Vec::new();
@@ -694,7 +702,11 @@ fn run_phase_sweep(virtualized: bool) {
                 let before = probe.rows[edited].get();
                 let label = if i % 2 == 0 { "Row 00004" } else { "Row 00003" }.into();
                 let ((start, end), counts) = count_allocations(|| {
-                    measured_label_frame(&mut window, &store, edited, label, marker)
+                    if i >= 4 {
+                        measured_label_frame(&mut window, &store, edited, label, marker)
+                    } else {
+                        label_frame(&mut window, &store, edited, label, marker)
+                    }
                 })
                 .expect("count complete frame");
                 assert_eq!(
@@ -724,6 +736,17 @@ fn run_phase_sweep(virtualized: bool) {
 // Keep a stable symbol for Callgrind to isolate one changed label frame.
 #[inline(never)]
 fn measured_label_frame(
+    window: &mut Mounted<'_>,
+    store: &Store<State>,
+    edited: usize,
+    label: SharedString,
+    marker: Rc<Cell<u64>>,
+) -> (u64, u64) {
+    label_frame(window, store, edited, label, marker)
+}
+
+#[inline(always)]
+fn label_frame(
     window: &mut Mounted<'_>,
     store: &Store<State>,
     edited: usize,
