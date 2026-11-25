@@ -67,9 +67,15 @@ pub use guiraffe_macros::component;
 /// ```
 pub use guiraffe_macros::ui;
 
+/// Declare a store: state, field lenses, `Set` events and listed events (provisional).
+pub use guiraffe_macros::store;
+
+/// Stores, lenses and binding, re-exported so `ui!` users need one dependency.
+pub use guiraffe_state as state;
+
 /// Declarative UI authoring imports.
 pub mod prelude {
-    pub use crate::{component, ui};
+    pub use crate::{component, store, ui};
 }
 
 #[doc(hidden)]

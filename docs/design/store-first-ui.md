@@ -1,6 +1,6 @@
 # Store-first `ui!`: the canonical structured path
 
-Status: draft for 0.3, not implemented (see the [roadmap](../../ROADMAP.md)). Builds on today's `ui!` (`ui!` v1) and the control protocol
+Status: implemented as provisional for 0.3 (see [Stores and binding](../guides/stores.md) and §9). The syntax freezes once the retained-scene work reports (ROADMAP item 8). Builds on today's `ui!` (`ui!` v1) and the control protocol
 (control protocol).
 
 ## 1. Position
@@ -274,3 +274,54 @@ the page is spliced, with at most 300 allocations per edit and growth of at most
 16 from 100 to 400 rows. The splice regression reproduces only in release
 builds; the debug test profile splices either way. `crates/state/tests/keyed.rs`
 covers keyed routing, equal writes, unkeyed writes, undo, batching and release.
+
+## 9. What 0.3 built, and how it differs from this draft
+
+The guide is [Stores and binding](../guides/stores.md). These decisions were made with the
+foreman and are provisional:
+
+- **Operators.** `<=` and `<=>`, as in §3. `<-` is rejected with a hint. Reactive text is
+  `{<= lens}`, because a bare `{name}` is already a Rust expression in `ui!` v1.
+- **Lenses** are `Copy` values (`guiraffe_state::Lens`). `store!` and `#[derive(Lens)]` generate a
+  `Field` const per field and a path type, so `ui!` can resolve `a.b.by_key(k).c` against the
+  store type. Every path prefix has a change key. A write marks its own key as a changed subtree
+  and its prefixes as changed exactly. Watchers register at their full path in a key tree in the
+  Store. The keyed `select_key`/`set_keyed_field` contract from the sinks work is the flat case of
+  this tree.
+- **Item identity is the key.** Collections are `KeyedList<K, T>` (persistent, `imbl`), and
+  item lenses are `by_key(k)`. Inserts, removes and moves (`Fx::list_insert`/`list_remove`/
+  `list_move`) notify the list's watchers and that item's, and nothing else. This is gated at
+  10k rows. There is no positional lens yet.
+- **Validation lives on the lens.** `where` clauses become `Lens::check`, so `Set` events,
+  bound edits, host writes and bus writes all clamp or reject the same way.
+- **Sources.** `Event::source()` (default `Host`) is recorded in `EventRecord::source` and
+  readable as `Fx::source()`. Bound edits use `ActionBus::current_source`, set around
+  `Drive::apply`, falling back to `Pointer` for direct gestures. App writes are `Host`.
+- **No sinks yet.** §3 asks for reactive sinks. Until the retained-scene backend exists, a
+  bound control is a small retained view with one Store watch: one compare per write on its
+  path, and one notify per frame. This is the "generated cached view" fallback, and it is
+  measured. A steady-state binding update allocates nothing, and a label edit is flat from 1k to
+  10k rows (`bench/tests/bound.rs`). On upstream GPUI the notified view's ancestors re-render.
+- **Lists** are virtualized by default with `uniform_list`. `mounted` opts into every row, and
+  `row_height` makes rows cached views. Row views (`RowViews`) are separate from the layout, so
+  a variable-height list can reuse them.
+- **Stateful components** take an id first, register on the bus at that id, and expose the
+  controlled pair `field(v)` / `on_field_change` per `#[state]` field. That is what `<=>`
+  binds to.
+- **Deferred:** `shortcut:`/`spotlight:`/`ribbon:` props, `bind!`, `#[derive(Event)]`,
+  `command!`, expansion-size benchmarks and `trybuild` diagnostics for every row.
+
+### Passage (0.3.1) against the binding layer
+
+| Passage need | How the binding layer expresses it | Gap |
+|---|---|---|
+| Keys, clips and step cells as store state | `KeyedList<Id, Clip>`, bound by key; a cell edit is a keyed write to one item | Cells in a 2-D grid need a `KeyedList` of rows or a composite key; no grid-shaped collection yet |
+| Insert/remove/move keys and clips | `Fx::list_insert/remove/move`: notify the list and the item only | Bulk structural edits (drag-move of many clips) mark each item; no range form |
+| Host writes that never echo | `store.set` is `Source::Host`; a bound control shows it and does not call back; equal writes are no-ops | — |
+| User edits tagged with their source | `Source` on every event; `ActionBus::current_source` during `Drive::apply` | Grouped bus batches (`dispatch_batch`) are not one undo step in the Store yet |
+| One undo step per drag-paint | A domain event that writes many cells is one step | Store history still snapshots the whole state (item 11 adds bounds); no "merge with previous" for scrubs |
+| Per-track heights, prefix-sum rows | `RowViews` are layout-independent | The default list is uniform-height; a prefix-sum list element is 0.3.1 work |
+| Meter levels and the playhead at frame rate | Bindable, at one compare per write | Through a store, each frame costs an event and a flush; hot values belong in sinks (item 8) |
+| Value mapping and formatters shared by Knob/NumberField/Slider | Lens targets are plain data; mapping stays in the control | Not a binding-layer concern |
+| Every control drivable without simulated clicks | Stateful components and bound controls go through the Store, and stateful components register on the bus | Built-in controls still need protocol adoption (item 10) |
+

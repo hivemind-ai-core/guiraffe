@@ -3822,7 +3822,10 @@ name = "guiraffe-state"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-macros",
  "guiraffe-test",
+ "imbl",
 ]
 
 [[package]]
@@ -3900,6 +3903,7 @@ dependencies = [
  "guiraffe-mermaid",
  "guiraffe-overlays",
  "guiraffe-sheet",
+ "guiraffe-state",
  "guiraffe-test",
  "guiraffe-timeline",
  "guiraffe-tree",
