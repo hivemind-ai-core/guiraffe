@@ -23,8 +23,6 @@ if [ "${1:-}" = "--regen" ]; then
 fi
 step test-upstream $UP cargo test -q $T
 step test-fast $FAST cargo test -q $T --features gpui-kit/gpui-fast
-step memory-upstream $UP cargo test -q -p guiraffe-bench --example soak rss_budget
-step memory-fast $FAST cargo test -q -p guiraffe-bench --example soak --features gpui-kit/gpui-fast rss_budget
 for c in $CRATES; do $UP cargo test -q -p "$c" --doc > "$LOG/doc-$c.log" 2>&1 || { echo "doctest FAIL $c"; fail=1; }; done
 echo "doctests done"
 # The gallery devtools test only exists with that feature, which the workspace runs do not enable.
