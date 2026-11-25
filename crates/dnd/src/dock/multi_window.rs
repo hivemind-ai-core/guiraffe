@@ -1,11 +1,15 @@
 //! Explicit window moves for application-owned panel instances.
 use super::{DockArea, DockPlacement, Panel, panel_handle};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Entity, SharedString, Window, WindowOptions,
+    AnyWindowHandle, App, Entity, SharedString, Subscription, Window, WindowOptions,
     component::dock::PanelId,
 };
 use guiraffe_layout::LayoutStore;
-use std::{cell::Cell, rc::Rc};
+use guiraffe_windows::{OpenMode, WindowKey, WindowManager};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 const REGIONS: [(DockPlacement, &str); 4] = [
     (DockPlacement::Center, "center"),
@@ -29,6 +33,7 @@ pub struct DockablePanel<P: Panel> {
     area: Entity<DockArea>,
     panel: Entity<P>,
     home: AnyWindowHandle,
+    close_subscription: RefCell<Option<Subscription>>,
     detached: Rc<Cell<Option<(AnyWindowHandle, DockPlacement)>>>,
 }
 
@@ -46,6 +51,7 @@ impl<P: Panel> DockablePanel<P> {
             panel,
             home: window.window_handle(),
             detached: Rc::default(),
+            close_subscription: RefCell::default(),
         }
     }
 
@@ -70,6 +76,7 @@ impl<P: Panel> DockablePanel<P> {
 
     /// After constructing the default panel, reopen its saved detached window, if any.
     /// Install a durable LayoutStore before constructing the dock for cross-launch restore.
+    /// Configure WindowManager with a layout path to also restore display and window bounds.
     pub fn restore(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<bool> {
         let region = cx
             .global::<LayoutStore>()
@@ -97,19 +104,32 @@ impl<P: Panel> DockablePanel<P> {
         let detached = self.detached.clone();
         let key = self.key.clone();
         let home = self.home;
-        let handle = cx.open_window(WindowOptions::default(), |window, cx| {
-            let content = panel.clone();
-            window.on_window_should_close(cx, move |_, cx| {
-                home.update(cx, |_, window, cx| {
-                    attach(&area, &panel, region, window, cx);
-                    detached.set(None);
-                    cx.global::<LayoutStore>().persist().save(&key, "docked");
-                })
-                .is_ok()
-                    || !cx.windows().contains(&home)
-            });
-            content
-        })?;
+        let window_key = WindowKey::instance("dock-panel", key.clone());
+        if WindowManager::find(&window_key, cx).is_some() {
+            return Ok(false);
+        }
+        let handle = WindowManager::open(
+            window_key,
+            OpenMode::New,
+            WindowOptions::default(),
+            |_, _| panel.clone(),
+            cx,
+        )?;
+        let child: AnyWindowHandle = handle.into();
+        let subscription = cx.on_window_closed(move |cx, id| {
+            if id == child.window_id() && detached.get().is_some_and(|(active, _)| active == child)
+            {
+                detached.set(None);
+                let (area, panel, key) = (area.clone(), panel.clone(), key.clone());
+                cx.defer(move |cx| {
+                    let _ = home.update(cx, |_, window, cx| {
+                        attach(&area, &panel, region, window, cx);
+                        cx.global::<LayoutStore>().persist().save(&key, "docked");
+                    });
+                });
+            }
+        });
+        self.close_subscription.replace(Some(subscription));
         self.area.update(cx, |area, cx| {
             area.remove_panel(self.panel.clone(), window, cx)
         });
@@ -128,9 +148,14 @@ impl<P: Panel> DockablePanel<P> {
         if window.window_handle() != self.home {
             return Ok(false);
         }
-        child.update(cx, |_, window, _| window.remove_window())?;
-        attach(&self.area, &self.panel, region, window, cx);
+        // The explicit command owns reattachment. The close observer handles native closes.
         self.detached.set(None);
+        if !WindowManager::request_close(child, cx) {
+            self.detached.set(Some((child, region)));
+            return Ok(false);
+        }
+        self.close_subscription.take();
+        attach(&self.area, &self.panel, region, window, cx);
         cx.global::<LayoutStore>()
             .persist()
             .save(&self.key, "docked");

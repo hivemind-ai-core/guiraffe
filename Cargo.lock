@@ -3598,6 +3598,7 @@ dependencies = [
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-layout",
+ "guiraffe-windows",
  "serde_json",
 ]
 
