@@ -1072,7 +1072,7 @@ mod tests {
     #[gpui_kit::test]
     fn detached_panel_restores_and_docks_back_with_same_entity(cx: &mut TestAppContext) {
         let (root, host) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
-        host.update(|window, cx| {
+        let saved = host.update(|window, cx| {
             let area = root.read(cx).area.clone();
             let panel = cx.new(|cx| TestPanel(cx.focus_handle(), "Detached"));
             let id = PanelId::from(panel.entity_id());
@@ -1092,6 +1092,11 @@ mod tests {
             assert_eq!(cx.windows().len(), before + 1);
             assert!(area.read(cx).panel(id).is_none());
             assert!(!commands.pop_out(window, cx).unwrap());
+            let stored = cx
+                .global::<guiraffe_layout::LayoutStore>()
+                .persist()
+                .load(commands.key())
+                .unwrap();
             assert!(commands.dock_back(window, cx).unwrap());
             assert!(
                 area.read(cx)
@@ -1101,11 +1106,29 @@ mod tests {
                     .is_some()
             );
             assert!(!commands.restore(window, cx).unwrap());
+            stored
+        });
+
+        // Fresh dock, panel entity and control scope, as on relaunch.
+        let (root, host) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
+        host.update(|window, cx| {
+            let area = root.read(cx).area.clone();
+            let panel = cx.new(|cx| TestPanel(cx.focus_handle(), "Detached"));
+            let id = PanelId::from(panel.entity_id());
+            let commands =
+                crate::dock::DockablePanel::new("test/panel", area.clone(), panel, window);
             cx.global::<guiraffe_layout::LayoutStore>()
                 .persist()
-                .save(commands.key(), "right");
+                .save(commands.key(), &saved);
             assert!(commands.restore(window, cx).unwrap());
             assert!(commands.dock_back(window, cx).unwrap());
+            assert!(
+                area.read(cx)
+                    .layout(DockPlacement::Right)
+                    .unwrap()
+                    .find_panel_node(id)
+                    .is_some()
+            );
         });
     }
 
