@@ -50,6 +50,7 @@ pub fn init(cx: &mut gpui_kit::App) {
 mod gpui_tests;
 pub mod keys;
 
+pub mod protocol;
 pub mod widget_catalog;
 pub mod widget_spec;
 pub mod widget_value;

@@ -54,4 +54,19 @@ macro_rules! register_instructions {
     };
 }
 guiraffe_bench::with_suites!(register_instructions);
-main!(config = LibraryBenchmarkConfig::default().tool(Callgrind::default().soft_limits([(EventKind::Ir, 2.0)])); library_benchmark_groups = workloads);
+
+fn registered_controls() -> guiraffe_bench::protocol::Fixture {
+    guiraffe_bench::protocol::Fixture::new(true).expect("mount protocol fixture")
+}
+
+#[library_benchmark(setup = registered_controls)]
+fn registered_dispatch(
+    mut fixture: guiraffe_bench::protocol::Fixture,
+) -> guiraffe_bench::protocol::Fixture {
+    fixture
+        .dispatch(|call| call())
+        .expect("dispatch protocol action");
+    fixture
+}
+library_benchmark_group!(name = protocol; benchmarks = registered_dispatch);
+main!(config = LibraryBenchmarkConfig::default().tool(Callgrind::default().soft_limits([(EventKind::Ir, 2.0)])); library_benchmark_groups = workloads, protocol);

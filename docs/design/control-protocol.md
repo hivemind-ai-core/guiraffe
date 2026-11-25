@@ -173,3 +173,13 @@ gets a CHANGELOG entry.
 - Catalogue: every control's actions and snapshot fields are listed with JSON schemas; a
   coverage test fails when a catalogue control lacks them.
 - Docs: protocol guide, "make your own control drivable" recipe, MCP examples.
+
+## Provisional Rust API
+
+The phase 1 API lives in `guiraffe_core::protocol`. Persist the inspect path
+for replay. A copyable integer `ControlId` is meaningful only in its owning
+app and does not persist across runs. Windows in one app share the path
+interner and resolve the same handle against their own registrations.
+Register at entity creation and unregister before changing the path.
+The registry observes entity release and window closure. To inspect a path
+without creating a registration, use `NodeId::control_id` in guiraffe-test.

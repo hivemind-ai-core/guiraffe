@@ -40,6 +40,16 @@ impl NodeId {
         &self.0
     }
 
+    /// Resolve a registered protocol path without interning it.
+    pub fn control_id(&self, cx: &App) -> Option<guiraffe_core::protocol::ControlId> {
+        guiraffe_core::protocol::ControlId::lookup(self.as_str(), cx)
+    }
+
+    /// Recover a durable inspect id from an app-local handle.
+    pub fn from_control_id(id: guiraffe_core::protocol::ControlId, cx: &App) -> Option<Self> {
+        id.path(cx).map(Self::new)
+    }
+
     /// The element id a node id names.
     pub fn element_id(&self) -> ElementId {
         ElementId::Name(self.0.clone().into())
