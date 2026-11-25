@@ -1,0 +1,437 @@
+//! Lenses: typed, `Copy` paths into a store's state, with a stable change key per path.
+//!
+//! Provisional (0.3): the shape freezes once the retained-scene work reports.
+//!
+//! A lens reads by reference and writes in place. Every lens has a *key*, a hash of its path
+//! from the state root, and a *chain*: the keys of each keyed prefix of the path, root first.
+//! A write through a lens marks its prefixes as changed (watchers registered exactly there
+//! re-check) and its own key as a changed subtree (watchers at or below it re-check). Anything
+//! else stays untouched, so a write costs work in proportion to what can have changed.
+//!
+//! ```
+//! use guiraffe_state::{Field, Lens};
+//! #[derive(Clone, PartialEq, Debug, Default)]
+//! struct Settings { font_size: f32 }
+//! const FONT_SIZE: Field<Settings, f32> =
+//!     Field::new("font_size", |s| &s.font_size, |s| &mut s.font_size);
+//! let mut s = Settings::default();
+//! if let Some(size) = FONT_SIZE.get_mut(&mut s) { *size = 16.0; }
+//! assert_eq!(FONT_SIZE.get(&s), Some(&16.0));
+//! ```
+
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    marker::PhantomData,
+};
+
+use crate::keyed::KeyedList;
+
+/// Fowler–Noll–Vo, usable in `const` items so generated field keys are compile-time constants.
+pub const fn key_of(name: &str) -> u64 {
+    let bytes = name.as_bytes();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+        i += 1;
+    }
+    // Zero is the root's key.
+    if hash == 0 { 1 } else { hash }
+}
+
+/// Combine a parent key with a child key. The root (0) is the identity.
+pub const fn mix(parent: u64, child: u64) -> u64 {
+    if parent == 0 {
+        return child;
+    }
+    let mixed = (parent.rotate_left(17) ^ child).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    if mixed == 0 { 1 } else { mixed }
+}
+
+/// Deterministic, allocation-free hashing of item keys.
+struct KeyHasher(u64);
+
+impl Hasher for KeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+}
+
+pub(crate) fn hash_item<K: Hash>(key: &K) -> u64 {
+    let mut hasher = KeyHasher(0xcbf2_9ce4_8422_2325);
+    key.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// A typed path from `Root` to a `Target`. Implementations are `Copy` and allocation-free.
+pub trait Lens: Copy + 'static {
+    type Root: 'static;
+    type Target: 'static;
+
+    fn get<'a>(&self, root: &'a Self::Root) -> Option<&'a Self::Target>;
+    fn get_mut<'a>(&self, root: &'a mut Self::Root) -> Option<&'a mut Self::Target>;
+
+    /// The change key of this path; 0 for the root.
+    fn key(&self) -> u64;
+
+    /// Keys of every keyed prefix of this path including itself, root first.
+    fn for_each_key(&self, f: &mut dyn FnMut(u64));
+
+    /// The field name, for devtools and event descriptions.
+    fn name(&self) -> &'static str;
+
+    /// Validate a value written through this lens: clamp it, or reject it with `None`.
+    /// `store!`'s `where` clauses generate this; every write path applies it.
+    fn check(&self, value: Self::Target) -> Option<Self::Target> {
+        Some(value)
+    }
+
+    /// Whether writes through this lens are recorded for undo (`#[no_undo]` turns it off).
+    fn undoable(&self) -> bool {
+        true
+    }
+
+    /// Continue the path into the target's own fields (`store!` / `#[derive(Lens)]` types).
+    fn path(self) -> <Self::Target as Lensed>::Path<Self>
+    where
+        Self::Target: Lensed,
+    {
+        <Self::Target as Lensed>::wrap(self)
+    }
+
+    /// Follow `next` from this lens's target.
+    fn then<N: Lens<Root = Self::Target>>(self, next: N) -> Compose<Self, N> {
+        Compose {
+            outer: self,
+            inner: next,
+        }
+    }
+}
+
+/// Types with generated field lenses. `Path<L>` exposes one method per field.
+pub trait Lensed: Sized + 'static {
+    type Path<L: Lens<Target = Self>>;
+    fn wrap<L: Lens<Target = Self>>(lens: L) -> Self::Path<L>;
+}
+
+/// The whole state.
+pub struct Identity<S>(PhantomData<fn() -> S>);
+
+impl<S> Identity<S> {
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<S> Default for Identity<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S> Clone for Identity<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S> Copy for Identity<S> {}
+
+impl<S: 'static> Lens for Identity<S> {
+    type Root = S;
+    type Target = S;
+    fn get<'a>(&self, root: &'a S) -> Option<&'a S> {
+        Some(root)
+    }
+    fn get_mut<'a>(&self, root: &'a mut S) -> Option<&'a mut S> {
+        Some(root)
+    }
+    fn key(&self) -> u64 {
+        0
+    }
+    fn for_each_key(&self, _: &mut dyn FnMut(u64)) {}
+    fn name(&self) -> &'static str {
+        "state"
+    }
+}
+
+/// One named field of `S`, as generated by `store!` and `#[derive(Lens)]`.
+pub struct Field<S, T> {
+    name: &'static str,
+    key: u64,
+    read: fn(&S) -> &T,
+    write: fn(&mut S) -> &mut T,
+    check: Option<fn(T) -> Option<T>>,
+    undoable: bool,
+    persist: bool,
+}
+
+impl<S, T> Field<S, T> {
+    /// A field lens keyed by its name. Field names must be unique within `S`.
+    pub const fn new(name: &'static str, read: fn(&S) -> &T, write: fn(&mut S) -> &mut T) -> Self {
+        Self {
+            name,
+            key: key_of(name),
+            read,
+            write,
+            check: None,
+            undoable: true,
+            persist: false,
+        }
+    }
+
+    /// Validate every write: return the value to store, or `None` to reject it.
+    pub const fn with_check(mut self, check: fn(T) -> Option<T>) -> Self {
+        self.check = Some(check);
+        self
+    }
+
+    /// Leave writes to this field out of undo history.
+    pub const fn no_undo(mut self) -> Self {
+        self.undoable = false;
+        self
+    }
+
+    /// Mark the field for persistence (metadata for persistence layers and devtools).
+    pub const fn persist(mut self) -> Self {
+        self.persist = true;
+        self
+    }
+
+    pub const fn is_persisted(&self) -> bool {
+        self.persist
+    }
+
+    pub const fn field_name(&self) -> &'static str {
+        self.name
+    }
+}
+
+/// Clamp into a range: the check `store!` generates for `where lo..=hi`.
+pub fn clamp<T: PartialOrd + Copy>(value: T, range: impl std::ops::RangeBounds<T>) -> T {
+    use std::ops::Bound;
+    let value = match range.start_bound() {
+        Bound::Included(lo) | Bound::Excluded(lo) if value < *lo => *lo,
+        _ => value,
+    };
+    match range.end_bound() {
+        Bound::Included(hi) | Bound::Excluded(hi) if value > *hi => *hi,
+        _ => value,
+    }
+}
+
+impl<S, T> Clone for Field<S, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S, T> Copy for Field<S, T> {}
+
+impl<S, T> fmt::Debug for Field<S, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name)
+    }
+}
+
+impl<S: 'static, T: 'static> Lens for Field<S, T> {
+    type Root = S;
+    type Target = T;
+    #[inline]
+    fn get<'a>(&self, root: &'a S) -> Option<&'a T> {
+        Some((self.read)(root))
+    }
+    #[inline]
+    fn get_mut<'a>(&self, root: &'a mut S) -> Option<&'a mut T> {
+        Some((self.write)(root))
+    }
+    fn key(&self) -> u64 {
+        self.key
+    }
+    fn for_each_key(&self, f: &mut dyn FnMut(u64)) {
+        f(self.key);
+    }
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn check(&self, value: T) -> Option<T> {
+        match self.check {
+            Some(check) => check(value),
+            None => Some(value),
+        }
+    }
+    fn undoable(&self) -> bool {
+        self.undoable
+    }
+}
+
+/// `outer` followed by `inner`.
+#[derive(Clone, Copy)]
+pub struct Compose<A, B> {
+    outer: A,
+    inner: B,
+}
+
+impl<A: Lens, B: Lens<Root = A::Target>> Lens for Compose<A, B> {
+    type Root = A::Root;
+    type Target = B::Target;
+    #[inline]
+    fn get<'a>(&self, root: &'a A::Root) -> Option<&'a B::Target> {
+        self.inner.get(self.outer.get(root)?)
+    }
+    #[inline]
+    fn get_mut<'a>(&self, root: &'a mut A::Root) -> Option<&'a mut B::Target> {
+        self.inner.get_mut(self.outer.get_mut(root)?)
+    }
+    fn key(&self) -> u64 {
+        let outer = self.outer.key();
+        let mut key = outer;
+        self.inner.for_each_key(&mut |k| key = mix(outer, k));
+        key
+    }
+    fn for_each_key(&self, f: &mut dyn FnMut(u64)) {
+        self.outer.for_each_key(f);
+        let outer = self.outer.key();
+        self.inner.for_each_key(&mut |k| f(mix(outer, k)));
+    }
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+    fn check(&self, value: B::Target) -> Option<B::Target> {
+        self.inner.check(value)
+    }
+    fn undoable(&self) -> bool {
+        self.outer.undoable() && self.inner.undoable()
+    }
+}
+
+/// The item with key `key` in a [`KeyedList`]. It follows the item through inserts, removes
+/// and moves, and reads `None` once the item is gone.
+pub struct ByKey<L, K> {
+    list: L,
+    key: K,
+}
+
+impl<L: Copy, K: Copy> Clone for ByKey<L, K> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<L: Copy, K: Copy> Copy for ByKey<L, K> {}
+
+impl<L, K, T> Lens for ByKey<L, K>
+where
+    L: Lens<Target = KeyedList<K, T>>,
+    K: Copy + Hash + Eq + 'static,
+    T: Clone + 'static,
+{
+    type Root = L::Root;
+    type Target = T;
+    #[inline]
+    fn get<'a>(&self, root: &'a L::Root) -> Option<&'a T> {
+        self.list.get(root)?.get(&self.key)
+    }
+    #[inline]
+    fn get_mut<'a>(&self, root: &'a mut L::Root) -> Option<&'a mut T> {
+        self.list.get_mut(root)?.get_mut(&self.key)
+    }
+    fn key(&self) -> u64 {
+        mix(self.list.key(), hash_item(&self.key))
+    }
+    fn for_each_key(&self, f: &mut dyn FnMut(u64)) {
+        self.list.for_each_key(f);
+        f(self.key());
+    }
+    fn name(&self) -> &'static str {
+        self.list.name()
+    }
+    fn undoable(&self) -> bool {
+        self.list.undoable()
+    }
+}
+
+impl<L, K> ByKey<L, K> {
+    /// The item's key in the list.
+    pub fn item_key(&self) -> &K {
+        &self.key
+    }
+    /// The list lens this item belongs to.
+    pub fn list(&self) -> &L {
+        &self.list
+    }
+}
+
+/// Lens methods for [`KeyedList`] targets.
+pub trait ListLens<K: Clone + Hash + Eq, T: Clone>: Lens<Target = KeyedList<K, T>> {
+    /// The item with this key. Stable across inserts, removes and moves.
+    fn by_key(self, key: K) -> ByKey<Self, K> {
+        ByKey { list: self, key }
+    }
+}
+
+impl<K: Clone + Hash + Eq, T: Clone, L: Lens<Target = KeyedList<K, T>>> ListLens<K, T> for L {}
+
+/// Call `f` with the keys a write through `lens` dirties: every proper prefix exactly, and the
+/// lens's own key as a subtree.
+pub(crate) fn write_keys<L: Lens>(lens: &L, mut f: impl FnMut(u64, bool)) {
+    let leaf = lens.key();
+    lens.for_each_key(&mut |key| f(key, key == leaf));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, PartialEq, Debug)]
+    struct Row {
+        label: &'static str,
+    }
+    #[derive(Clone, PartialEq, Debug)]
+    struct S {
+        rows: KeyedList<u32, Row>,
+        n: i32,
+    }
+    const ROWS: Field<S, KeyedList<u32, Row>> = Field::new("rows", |s| &s.rows, |s| &mut s.rows);
+    const N: Field<S, i32> = Field::new("n", |s| &s.n, |s| &mut s.n);
+    const LABEL: Field<Row, &'static str> = Field::new("label", |r| &r.label, |r| &mut r.label);
+
+    #[test]
+    fn keys_are_hierarchical_and_stable() {
+        let item = ROWS.by_key(7);
+        let label = item.then(LABEL);
+        let mut chain = Vec::new();
+        label.for_each_key(&mut |k| chain.push(k));
+        assert_eq!(chain, [ROWS.key(), item.key(), label.key()]);
+        assert_ne!(ROWS.by_key(8).key(), item.key());
+        assert_eq!(Identity::<S>::new().then(N).key(), N.key());
+        let mut written = Vec::new();
+        write_keys(&label, |k, subtree| written.push((k, subtree)));
+        assert_eq!(written.last(), Some(&(label.key(), true)));
+        assert!(written[..2].iter().all(|(_, subtree)| !subtree));
+    }
+
+    #[test]
+    fn item_lenses_follow_the_key() {
+        let mut s = S {
+            rows: [(1, Row { label: "a" }), (2, Row { label: "b" })]
+                .into_iter()
+                .collect(),
+            n: 0,
+        };
+        let b = ROWS.by_key(2).then(LABEL);
+        assert_eq!(b.get(&s), Some(&"b"));
+        s.rows.insert(0, 3, Row { label: "c" });
+        s.rows.move_to(&2, 0);
+        assert_eq!(b.get(&s), Some(&"b"));
+        *b.get_mut(&mut s).expect("live item") = "B";
+        assert_eq!(s.rows.get(&2).map(|r| r.label), Some("B"));
+        s.rows.remove(&2);
+        assert_eq!(b.get(&s), None);
+    }
+}

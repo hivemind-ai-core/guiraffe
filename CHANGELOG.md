@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+### Added
+
+- Store binding (provisional): `store!`, `#[derive(Lens)]`, lenses with per-path change keys,
+  `KeyedList`, and `ui!` bindings (`store(s) { … }`, `prop <= lens`, `prop <=> lens`,
+  `{<= lens}`, `if <= lens`, `for row in <= list`, `on_x => Event`). See
+  [Stores and binding](docs/guides/stores.md).
+- `#[component(stateful)]`: components with their own state, registered on the action bus.
+- `Event::source` and `EventRecord::source`; `ActionBus::current_source`.
+
+### Changed
+
+- `EventRecord` has a `source` field. Code that builds an `EventRecord` must set it.
+
 ## 0.2.0 (unreleased)
 
 ### Added

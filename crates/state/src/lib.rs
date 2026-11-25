@@ -9,19 +9,32 @@
 //! - **Interceptors** observe every event (logging, devtools, validation); undo/redo is built in.
 //! - **Selections** ([`Store::select`], [`Store::select_memo`]) notify a view only when its
 //!   selected value changes; expensive derivations recompute only when their input changes.
+//! - **Lenses and binding** (provisional): [`Lens`] paths with per-path change keys,
+//!   [`KeyedList`] for collections with stable item identity, and bound controls and lists
+//!   ([`bound`], [`bound_list`]) that `ui!` and `store!` generate. See docs/guides/stores.md.
 //!
 //! State must be `Clone + PartialEq`; use `Arc`/persistent collections inside it so cloning
 //! for undo is cheap and comparisons short-circuit.
 
+pub mod bind;
 pub mod engine;
 pub mod history;
+mod keyed;
+pub mod lens;
+pub mod list;
 mod store;
 
+pub use bind::{Bind, Bindings, Bound, BoundView, Lenses, Set, Sourced, Watch, bound, bound_at};
 pub use engine::{
     Coeffects, DispatchLater, Effect, Engine, EngineError, Event, EventRecord, Fx, Interceptor,
     Outcome, RedoEvent, UndoEvent,
 };
+pub use guiraffe_core::protocol::Source;
+pub use guiraffe_macros::{Lens, store};
 pub use history::{BoundedHistory, HistoryLimits};
+pub use keyed::KeyedList;
+pub use lens::{ByKey, Compose, Field, Identity, Lens, Lensed, ListLens};
+pub use list::{BoundList, ListMode, ListView, RowView, RowViews, bound_list};
 pub use store::{Selected, Store, StoreStats, WeakStore};
 
 /// Conventions §4: every crate has an idempotent `init`. The state crate keeps no globals

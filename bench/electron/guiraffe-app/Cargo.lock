@@ -3266,6 +3266,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "guiraffe-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "guiraffe-markdown"
 version = "0.1.0"
 dependencies = [
@@ -3305,6 +3314,8 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "guiraffe-macros",
+ "imbl",
 ]
 
 [[package]]

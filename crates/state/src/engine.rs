@@ -7,10 +7,15 @@
 //!
 //! Handlers are therefore pure functions of `(state, event, coeffects)`, testable without GPUI.
 
+use guiraffe_core::protocol::Source;
+
+use crate::keyed::KeyedList;
+use crate::lens::{Lens, write_keys};
+
 use crate::history::{BoundedHistory, HistoryLimits};
 use std::{
     any::{Any, TypeId},
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt,
     sync::Arc,
     time::{Duration, Instant},
@@ -44,9 +49,17 @@ pub trait Event<S>: fmt::Debug + 'static {
     fn compare_state(&self) -> bool {
         true
     }
+
+    /// Where the event came from. Bound controls tag their edits with the gesture or bus
+    /// source; app code defaults to [`Source::Host`]. Interceptors, undo and recording use it
+    /// to tell a user edit from a host write.
+    fn source(&self) -> Source {
+        Source::Host
+    }
 }
 
 trait ErasedEvent<S> {
+    fn source(&self) -> Source;
     fn handle(self: Box<Self>, fx: &mut Fx<'_, S>);
     fn undoable(&self) -> bool;
     fn compare_state(&self) -> bool;
@@ -57,6 +70,9 @@ trait ErasedEvent<S> {
 impl<S, E: Event<S>> ErasedEvent<S> for E {
     fn event_type(&self) -> TypeId {
         TypeId::of::<E>()
+    }
+    fn source(&self) -> Source {
+        Event::source(self)
     }
     fn handle(self: Box<Self>, fx: &mut Fx<'_, S>) {
         Event::handle(*self, fx)
@@ -128,26 +144,42 @@ impl Coeffects {
 
 /// Keys name independent projections within one store. A write without a key
 /// conservatively refreshes every registered projection.
+///
+/// Each entry is a key and whether its whole subtree changed (`true`) or only the
+/// projections registered exactly at it (`false`). Up to eight keys are stored inline, so a
+/// write through a lens of depth eight or less never allocates.
 #[derive(Default)]
 pub(crate) struct DirtyKeys {
     pub(crate) all: bool,
-    pub(crate) first: Option<u64>,
-    rest: BTreeSet<u64>,
+    inline: [(u64, bool); 8],
+    len: usize,
+    rest: BTreeMap<u64, bool>,
 }
 
 impl DirtyKeys {
-    fn insert(&mut self, key: u64) {
-        match self.first {
-            None => self.first = Some(key),
-            Some(first) if first != key => {
-                self.rest.insert(key);
-            }
-            _ => {}
+    /// Mark `key` and its whole subtree.
+    pub(crate) fn insert(&mut self, key: u64) {
+        self.mark(key, true);
+    }
+
+    pub(crate) fn mark(&mut self, key: u64, subtree: bool) {
+        if let Some(entry) = self.inline[..self.len].iter_mut().find(|(k, _)| *k == key) {
+            entry.1 |= subtree;
+            return;
+        }
+        if self.len < self.inline.len() {
+            self.inline[self.len] = (key, subtree);
+            self.len += 1;
+        } else {
+            *self.rest.entry(key).or_default() |= subtree;
         }
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = u64> + '_ {
-        self.first.into_iter().chain(self.rest.iter().copied())
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (u64, bool)> + '_ {
+        self.inline[..self.len]
+            .iter()
+            .copied()
+            .chain(self.rest.iter().map(|(k, s)| (*k, *s)))
     }
 }
 
@@ -161,6 +193,7 @@ pub struct Fx<'a, S> {
     effects: &'a mut Vec<Effect>,
     queue: &'a mut VecDeque<Queued<S>>,
     cofx: &'a Coeffects,
+    source: Source,
 }
 
 impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
@@ -215,6 +248,110 @@ impl<S: Clone + PartialEq + 'static> Fx<'_, S> {
         } else {
             *field(self.candidate.get_or_insert_with(|| (**self.state).clone())) = value;
         }
+    }
+
+    /// Write `value` through `lens` if it differs. The write marks only the lens's path, so
+    /// only watchers at or below it, and those registered exactly at its prefixes, re-check.
+    /// Returns whether the state changed. A lens that reads `None` (a removed item) is a no-op.
+    pub fn set_at<L: Lens<Root = S>>(&mut self, lens: L, value: L::Target) -> bool
+    where
+        L::Target: PartialEq,
+    {
+        let Some(value) = lens.check(value) else {
+            return false;
+        };
+        if lens
+            .get(self.state())
+            .is_none_or(|current| *current == value)
+        {
+            return false;
+        }
+        write_keys(&lens, |key, subtree| self.dirty.mark(key, subtree));
+        self.write_in_place(|state| {
+            if let Some(slot) = lens.get_mut(state) {
+                *slot = value;
+            }
+        });
+        true
+    }
+
+    /// Insert an item into a keyed list. Notifies the list's watchers and the item's own,
+    /// not the other items'. An existing key is replaced in place.
+    pub fn list_insert<L, K, T>(&mut self, list: L, index: usize, key: K, item: T)
+    where
+        L: Lens<Root = S, Target = KeyedList<K, T>>,
+        K: Copy + std::hash::Hash + Eq + 'static,
+        T: Clone + 'static,
+    {
+        self.structural(list, key, |list| list.insert(index, key, item));
+    }
+
+    /// Remove an item from a keyed list. Returns whether it existed.
+    pub fn list_remove<L, K, T>(&mut self, list: L, key: K) -> bool
+    where
+        L: Lens<Root = S, Target = KeyedList<K, T>>,
+        K: Copy + std::hash::Hash + Eq + 'static,
+        T: Clone + 'static,
+    {
+        if !list.get(self.state()).is_some_and(|l| l.contains(&key)) {
+            return false;
+        }
+        self.structural(list, key, |list| {
+            list.remove(&key);
+        });
+        true
+    }
+
+    /// Move an item within a keyed list. Returns whether it moved.
+    pub fn list_move<L, K, T>(&mut self, list: L, key: K, index: usize) -> bool
+    where
+        L: Lens<Root = S, Target = KeyedList<K, T>>,
+        K: Copy + std::hash::Hash + Eq + 'static,
+        T: Clone + 'static,
+    {
+        let Some(from) = list.get(self.state()).and_then(|l| l.index_of(&key)) else {
+            return false;
+        };
+        let len = list.get(self.state()).map_or(0, KeyedList::len);
+        if from == index.min(len.saturating_sub(1)) {
+            return false;
+        }
+        self.structural(list, key, |list| {
+            list.move_to(&key, index);
+        });
+        true
+    }
+
+    fn structural<L, K, T>(&mut self, list: L, key: K, edit: impl FnOnce(&mut KeyedList<K, T>))
+    where
+        L: Lens<Root = S, Target = KeyedList<K, T>>,
+        K: Copy + std::hash::Hash + Eq + 'static,
+        T: Clone + 'static,
+    {
+        // The list and its prefixes exactly (list views, whole-list readers), and the item's
+        // subtree. Other items' watchers are untouched.
+        list.for_each_key(&mut |k| self.dirty.mark(k, false));
+        let item = crate::lens::ListLens::by_key(list, key);
+        self.dirty.mark(item.key(), true);
+        self.write_in_place(|state| {
+            if let Some(list) = list.get_mut(state) {
+                edit(list);
+            }
+        });
+    }
+
+    fn write_in_place(&mut self, write: impl FnOnce(&mut S)) {
+        if self.direct && self.candidate.is_none() {
+            write(Arc::make_mut(self.state));
+            self.changed_in_place = true;
+        } else {
+            write(self.candidate.get_or_insert_with(|| (**self.state).clone()));
+        }
+    }
+
+    /// The source of the event being handled.
+    pub fn source(&self) -> Source {
+        self.source
     }
 
     /// Queue another event; it runs after the current one (and after earlier queued events).
@@ -283,6 +420,7 @@ pub struct EventRecord {
     pub seq: u64,
     pub description: String,
     pub changed: bool,
+    pub source: Source,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -577,6 +715,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                 let description = (!self.interceptors.is_empty()).then(|| format!("{event:?}"));
                 self.process_event(
                     TypeId::of::<E>(),
+                    Event::source(&event),
                     event.undoable(),
                     event.compare_state(),
                     description,
@@ -589,6 +728,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                 let description = (!self.interceptors.is_empty()).then(|| event.describe());
                 self.process_event(
                     event.event_type(),
+                    event.source(),
                     event.undoable(),
                     event.compare_state(),
                     description,
@@ -614,6 +754,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
     fn process_event(
         &mut self,
         ty: TypeId,
+        source: Source,
         undoable: bool,
         compare: bool,
         description: Option<String>,
@@ -644,6 +785,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                 effects,
                 queue: &mut self.queue,
                 cofx,
+                source,
             };
             handle(&mut fx);
             // Without an in-place write the state is still the old one, so a
@@ -676,6 +818,7 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                 seq: self.seq,
                 description,
                 changed,
+                source,
             };
             for i in &mut self.interceptors {
                 i.after(&record, &before, &self.state);

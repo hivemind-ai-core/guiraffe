@@ -12,7 +12,7 @@
 use std::{
     any::{Any, TypeId},
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -29,7 +29,7 @@ use guiraffe_core::protocol::ActionBus;
 type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
 type ErrorHandler = Rc<dyn Fn(&EngineError, &mut App)>;
 
-trait Slot<S> {
+pub(crate) trait Slot<S> {
     /// Recompute against `state`, notifying the backing entity if the value changed.
     fn refresh(&self, state: &S, cx: &mut App);
     fn alive(&self) -> bool;
@@ -41,7 +41,32 @@ struct Slots<S> {
 }
 
 type SlotGroup<S> = Rc<RefCell<Slots<S>>>;
-type GroupMap<S> = HashMap<u64, SlotGroup<S>>;
+/// A keyed group and its place in the key tree: a write that dirties a key's subtree
+/// refreshes its children's groups too.
+struct KeyNode<S> {
+    slots: SlotGroup<S>,
+    parent: Option<u64>,
+    children: HashSet<u64>,
+}
+
+type GroupMap<S> = HashMap<u64, KeyNode<S>>;
+
+/// Remove `key` and any ancestors left without selections or children.
+fn prune<S>(groups: &mut GroupMap<S>, mut key: u64) {
+    loop {
+        let Some(node) = groups.get(&key) else { return };
+        if node.slots.borrow().live > 0 || !node.children.is_empty() {
+            return;
+        }
+        let parent = node.parent;
+        groups.remove(&key);
+        let Some(parent) = parent else { return };
+        if let Some(node) = groups.get_mut(&parent) {
+            node.children.remove(&key);
+        }
+        key = parent;
+    }
+}
 
 impl<S> Default for Slots<S> {
     fn default() -> Self {
@@ -79,11 +104,13 @@ impl<S, T> Drop for RegisteredSlot<S, T> {
             if slots.entries.len() >= 2 * slots.live {
                 Rc::make_mut(&mut slots.entries).retain(|slot| slot.strong_count() != 0);
             }
-            if slots.live == 0
+            let empty = slots.live == 0;
+            drop(slots);
+            if empty
                 && let Some((key, groups)) = &self.keyed
                 && let Some(groups) = groups.upgrade()
             {
-                groups.borrow_mut().remove(key);
+                prune(&mut groups.borrow_mut(), *key);
             }
         }
     }
@@ -108,6 +135,12 @@ pub struct Store<S: Clone + PartialEq + 'static> {
     inner: Entity<Inner<S>>,
     scheduled: Rc<Cell<bool>>,
     processing: Rc<Cell<bool>>,
+    // The flushed state, readable without reading the entity, so that a parent mounting a
+    // bound control does not come to depend on every Store write (gpui-fast tracks reads).
+    snapshot: Rc<RefCell<Option<Arc<S>>>>,
+    // The entity's registries, shared so registering a watch never reads the entity.
+    slots: SlotGroup<S>,
+    keyed: Rc<RefCell<GroupMap<S>>>,
 }
 
 impl<S: Clone + PartialEq + 'static> Clone for Store<S> {
@@ -116,6 +149,9 @@ impl<S: Clone + PartialEq + 'static> Clone for Store<S> {
             inner: self.inner.clone(),
             scheduled: self.scheduled.clone(),
             processing: self.processing.clone(),
+            snapshot: self.snapshot.clone(),
+            slots: self.slots.clone(),
+            keyed: self.keyed.clone(),
         }
     }
 }
@@ -125,6 +161,10 @@ pub struct WeakStore<S: Clone + PartialEq + 'static> {
     inner: WeakEntity<Inner<S>>,
     scheduled: Rc<Cell<bool>>,
     processing: Rc<Cell<bool>>,
+    snapshot: Rc<RefCell<Option<Arc<S>>>>,
+    // The entity's registries, shared so registering a watch never reads the entity.
+    slots: SlotGroup<S>,
+    keyed: Rc<RefCell<GroupMap<S>>>,
 }
 
 impl<S: Clone + PartialEq + 'static> Clone for WeakStore<S> {
@@ -133,6 +173,9 @@ impl<S: Clone + PartialEq + 'static> Clone for WeakStore<S> {
             inner: self.inner.clone(),
             scheduled: self.scheduled.clone(),
             processing: self.processing.clone(),
+            snapshot: self.snapshot.clone(),
+            slots: self.slots.clone(),
+            keyed: self.keyed.clone(),
         }
     }
 }
@@ -143,6 +186,9 @@ impl<S: Clone + PartialEq + 'static> WeakStore<S> {
             inner: self.inner.upgrade()?,
             scheduled: self.scheduled.clone(),
             processing: self.processing.clone(),
+            snapshot: self.snapshot.clone(),
+            slots: self.slots.clone(),
+            keyed: self.keyed.clone(),
         })
     }
 }
@@ -169,13 +215,18 @@ impl Drop for FlagGuard {
 
 impl<S: Clone + PartialEq + 'static> Store<S> {
     pub fn new(state: S, cx: &mut App) -> Self {
+        let engine = Engine::new(state);
+        let snapshot = Rc::new(RefCell::new(Some(engine.state().clone())));
+        let slots: SlotGroup<S> = Rc::default();
+        let keyed: Rc<RefCell<GroupMap<S>>> = Rc::default();
+        let (shared_slots, shared_keyed) = (slots.clone(), keyed.clone());
         let inner = cx.new(|_| Inner {
-            engine: Engine::new(state),
+            engine,
             cofx: Rc::new(RefCell::new(Coeffects::default())),
             effects: HashMap::new(),
             on_error: None,
-            slots: Rc::default(),
-            keyed: Rc::default(),
+            slots: shared_slots,
+            keyed: shared_keyed,
             debounce: HashMap::new(),
             next_timer: 0,
             stats: StoreStats::default(),
@@ -185,6 +236,25 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
             inner,
             scheduled: Rc::new(Cell::new(false)),
             processing: Rc::new(Cell::new(false)),
+            snapshot,
+            slots,
+            keyed,
+        }
+    }
+
+    /// The flushed state without reading the Store entity (no render dependency).
+    /// The flushed state, read without making the current view depend on the Store entity.
+    /// Use it when mounting a bound control inside a parent's render; views that should
+    /// re-render on change use selections or bindings instead.
+    pub fn state_untracked(&self, cx: &App) -> Arc<S> {
+        self.snapshot(cx)
+    }
+
+    /// Released while a flush runs, so in-place writes find the state unshared.
+    pub(crate) fn snapshot(&self, cx: &App) -> Arc<S> {
+        match &*self.snapshot.borrow() {
+            Some(state) => state.clone(),
+            None => self.inner.read(cx).engine.state().clone(),
         }
     }
 
@@ -193,6 +263,9 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
             inner: self.inner.downgrade(),
             scheduled: self.scheduled.clone(),
             processing: self.processing.clone(),
+            snapshot: self.snapshot.clone(),
+            slots: self.slots.clone(),
+            keyed: self.keyed.clone(),
         }
     }
 
@@ -405,6 +478,8 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         self.processing.set(true);
         let _processing = FlagGuard(self.processing.clone());
         self.scheduled.set(false);
+        // Share the state with no snapshot while handlers write it in place.
+        self.snapshot.borrow_mut().take();
         let mut budget = self.inner.read(cx).engine.cascade_limit;
         let mut error = None;
         loop {
@@ -426,16 +501,17 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
                 Self::refresh_group(&generic, &state, cx);
                 if dirty.all {
                     // Callbacks may add or remove subscriptions during a refresh.
-                    let groups: Vec<_> = keyed.borrow().values().cloned().collect();
+                    let groups: Vec<_> = keyed
+                        .borrow()
+                        .values()
+                        .map(|node| node.slots.clone())
+                        .collect();
                     for group in groups {
                         Self::refresh_group(&group, &state, cx);
                     }
                 } else {
-                    for key in dirty.iter() {
-                        let group = keyed.borrow().get(&key).cloned();
-                        if let Some(group) = group {
-                            Self::refresh_group(&group, &state, cx);
-                        }
+                    for (key, subtree) in dirty.iter() {
+                        Self::refresh_key(&keyed, key, subtree, &state, cx);
                     }
                 }
             }
@@ -451,6 +527,7 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
             }
         }
         self.close_finished_batch(cx);
+        *self.snapshot.borrow_mut() = Some(self.inner.read(cx).engine.state().clone());
         let handler = self.inner.update(cx, |i, _| {
             i.stats.flushes += 1;
             i.stats.last_error = error.clone();
@@ -458,6 +535,27 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         });
         if let (Some(e), Some(h)) = (error, handler) {
             h(&e, cx);
+        }
+    }
+
+    fn refresh_key(
+        keyed: &Rc<RefCell<GroupMap<S>>>,
+        key: u64,
+        subtree: bool,
+        state: &S,
+        cx: &mut App,
+    ) {
+        let (group, children) = {
+            let groups = keyed.borrow();
+            let Some(node) = groups.get(&key) else { return };
+            // Only subtree writes with registered descendants collect (and allocate).
+            let children = (subtree && !node.children.is_empty())
+                .then(|| node.children.iter().copied().collect::<Vec<_>>());
+            (node.slots.clone(), children)
+        };
+        Self::refresh_group(&group, state, cx);
+        for child in children.into_iter().flatten() {
+            Self::refresh_key(keyed, child, true, state, cx);
         }
     }
 
@@ -555,7 +653,7 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
                 + i.keyed
                     .borrow()
                     .values()
-                    .map(|g| g.borrow().live)
+                    .map(|node| node.slots.borrow().live)
                     .sum::<usize>(),
             ..i.stats.clone()
         }
@@ -569,7 +667,7 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         cx: &mut Context<V>,
         f: impl Fn(&S) -> T + 'static,
     ) -> Selected<T> {
-        self.select_in(None, cx, f)
+        self.select_in(&[], cx, f)
     }
 
     /// Provisional selection refreshed by writes to `key` and by unkeyed writes.
@@ -580,19 +678,50 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         cx: &mut Context<V>,
         f: impl Fn(&S) -> T + 'static,
     ) -> Selected<T> {
-        self.select_in(Some(key), cx, f)
+        self.select_in(&[key], cx, f)
+    }
+
+    /// Select the value at `lens`, refreshed only by writes on its path (and unkeyed writes).
+    /// `None` while the lens reads nothing, such as a removed item.
+    pub fn select_lens<V: 'static, L>(
+        &self,
+        lens: L,
+        cx: &mut Context<V>,
+    ) -> Selected<Option<L::Target>>
+    where
+        L: crate::Lens<Root = S>,
+        L::Target: Clone + PartialEq,
+    {
+        self.select_at(lens, cx, move |state| lens.get(state).cloned())
+    }
+
+    /// Select `f(state)`, refreshed by writes on `lens`'s path and unkeyed writes. `f` may
+    /// depend only on state at or below `lens`.
+    pub fn select_at<V: 'static, L, T>(
+        &self,
+        lens: L,
+        cx: &mut Context<V>,
+        f: impl Fn(&S) -> T + 'static,
+    ) -> Selected<T>
+    where
+        L: crate::Lens<Root = S>,
+        T: Clone + PartialEq + 'static,
+    {
+        let mut chain = Vec::new();
+        lens.for_each_key(&mut |key| chain.push(key));
+        self.select_in(&chain, cx, f)
     }
 
     fn select_in<V: 'static, T: Clone + PartialEq + 'static>(
         &self,
-        key: Option<u64>,
+        chain: &[u64],
         cx: &mut Context<V>,
         f: impl Fn(&S) -> T + 'static,
     ) -> Selected<T> {
         let value = f(&self.state(cx));
         let entity = cx.new(|_| SelectionCell { value });
-        let slot = self.register_in(
-            key,
+        let slot = self.register_chain(
+            chain,
             SelectSlot {
                 entity: entity.downgrade(),
                 select: Box::new(f),
@@ -640,18 +769,45 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     }
 
     fn register(&self, slot: impl Slot<S> + 'static, cx: &mut App) -> Rc<dyn Any> {
-        self.register_in(None, slot, cx)
+        self.register_chain(&[], slot, cx)
     }
 
-    fn register_in(
+    /// Register under the last key of `chain`, linking each key to its parent in the key
+    /// tree. An empty chain registers an unkeyed selection, refreshed by every change.
+    pub(crate) fn register_chain(
         &self,
-        key: Option<u64>,
+        chain: &[u64],
         slot: impl Slot<S> + 'static,
         cx: &mut App,
     ) -> Rc<dyn Any> {
-        let inner = self.inner.read(cx);
+        let _ = &cx;
+        let inner = self;
+        let key = chain.last().copied();
         let slots = match key {
-            Some(key) => inner.keyed.borrow_mut().entry(key).or_default().clone(),
+            Some(key) => {
+                let mut groups = inner.keyed.borrow_mut();
+                let mut parent = None;
+                for &k in chain {
+                    let node = groups.entry(k).or_insert_with(|| KeyNode {
+                        slots: Rc::default(),
+                        parent,
+                        children: HashSet::new(),
+                    });
+                    if node.parent.is_none() {
+                        node.parent = parent;
+                    }
+                    if let Some(p) = parent
+                        && let Some(parent) = groups.get_mut(&p)
+                    {
+                        parent.children.insert(k);
+                    }
+                    parent = Some(k);
+                }
+                groups
+                    .get(&key)
+                    .map(|node| node.slots.clone())
+                    .unwrap_or_default()
+            }
             None => inner.slots.clone(),
         };
         let registered = Rc::new(RegisteredSlot {
