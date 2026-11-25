@@ -79,6 +79,28 @@ impl Action {
 }
 
 /// Reasons the bus or a control rejects an action. More variants may follow.
+/// Erased result of an applied action, such as `KeyInserted { t }`.
+/// Empty (`Value::Null`) by default, which costs no allocation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Outcome(pub Value);
+
+impl Outcome {
+    pub const EMPTY: Self = Self(Value::Null);
+    pub fn is_empty(&self) -> bool {
+        self.0 == Value::Null
+    }
+}
+impl From<()> for Outcome {
+    fn from((): ()) -> Self {
+        Self::EMPTY
+    }
+}
+impl From<Value> for Outcome {
+    fn from(value: Value) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ActionError {
@@ -91,13 +113,15 @@ pub enum ActionError {
 
 pub trait Drive: Sized + 'static {
     type Action: 'static;
+    /// Typed result; `()` for actions with nothing to report.
+    type Output: Into<Outcome>;
     fn decode(action: &Action) -> Result<Self::Action, ActionError>;
     fn apply(
         &mut self,
         action: Self::Action,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), ActionError>;
+    ) -> Result<Self::Output, ActionError>;
 }
 
 /// Where an action came from. More sources may follow.
@@ -113,28 +137,74 @@ pub enum Source {
     Script,
     Mcp,
     Replay,
+    /// The application itself, outside any user gesture.
+    Host,
+    Devtools,
+    Test,
 }
 
+/// A run of actions on one target that is one undo step, such as a drag-paint.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Group {
+    pub id: ControlId,
+    pub source: Source,
+    pub len: usize,
+}
+
+/// Observes and may veto dispatch. Hooks get read access to the window and app,
+/// so they can consult the store for permission checks or recording.
 pub trait Interceptor {
-    fn before(&self, id: ControlId, action: &Action, source: Source) -> Result<(), ActionError>;
+    fn before(
+        &self,
+        id: ControlId,
+        action: &Action,
+        source: Source,
+        window: &Window,
+        cx: &App,
+    ) -> Result<(), ActionError>;
     fn after(
         &self,
         id: ControlId,
         action: &Action,
         source: Source,
-        result: &Result<(), ActionError>,
+        result: &Result<Outcome, ActionError>,
+        window: &Window,
+        cx: &App,
     );
+    /// A `dispatch_batch` starts; its actions follow as ordinary `before`/`after` calls.
+    fn begin_group(&self, _group: Group, _window: &Window, _cx: &App) {}
+    /// The batch ended, after its last applied or rejected action.
+    fn end_group(
+        &self,
+        _group: Group,
+        _result: &Result<(), ActionError>,
+        _window: &Window,
+        _cx: &App,
+    ) {
+    }
 }
 
 trait Endpoint {
-    fn apply(&self, action: &Action, window: &mut Window, cx: &mut App) -> Result<(), ActionError>;
+    fn apply(
+        &self,
+        action: &Action,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<Outcome, ActionError>;
     fn snapshot(&self, cx: &App) -> Result<ControlSnapshot, ActionError>;
 }
 impl<T: Observe + Drive> Endpoint for gpui_kit::WeakEntity<T> {
-    fn apply(&self, action: &Action, window: &mut Window, cx: &mut App) -> Result<(), ActionError> {
+    fn apply(
+        &self,
+        action: &Action,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<Outcome, ActionError> {
         let entity = self.upgrade().ok_or(ActionError::UnknownTarget)?;
         let typed = T::decode(action)?;
-        entity.update(cx, |state, cx| state.apply(typed, window, cx))
+        entity
+            .update(cx, |state, cx| state.apply(typed, window, cx))
+            .map(Into::into)
     }
     fn snapshot(&self, cx: &App) -> Result<ControlSnapshot, ActionError> {
         let entity = self.upgrade().ok_or(ActionError::UnknownTarget)?;
@@ -314,16 +384,64 @@ impl ActionBus {
         source: Source,
         window: &mut Window,
         cx: &mut App,
+    ) -> Result<Outcome, ActionError> {
+        let bus = Self::bus(window, cx)?;
+        let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
+        if bus.hooks.is_empty() {
+            // The empty interceptor list costs a branch (design section 8.5).
+            return target
+                .ok_or(ActionError::UnknownTarget)?
+                .apply(action, window, cx);
+        }
+        let hooks = bus.hooks.clone();
+        Self::run(id, target.as_deref(), &hooks, action, source, window, cx)
+    }
+
+    /// Apply `actions` to one target as one group: interceptors see `begin_group`,
+    /// each action, then `end_group`, and store history records one undo step.
+    /// Stops at the first rejected action and returns its error.
+    pub fn dispatch_batch(
+        id: ControlId,
+        actions: &[Action],
+        source: Source,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Result<(), ActionError> {
         let bus = Self::bus(window, cx)?;
         let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
         let hooks = bus.hooks.clone();
+        let group = Group {
+            id,
+            source,
+            len: actions.len(),
+        };
+        for hook in hooks.iter() {
+            hook.begin_group(group, window, cx);
+        }
+        let result = actions.iter().try_for_each(|action| {
+            Self::run(id, target.as_deref(), &hooks, action, source, window, cx).map(drop)
+        });
+        for hook in hooks.iter().rev() {
+            hook.end_group(group, &result, window, cx);
+        }
+        result
+    }
+
+    fn run(
+        id: ControlId,
+        target: Option<&dyn Endpoint>,
+        hooks: &[Rc<dyn Interceptor>],
+        action: &Action,
+        source: Source,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<Outcome, ActionError> {
         let mut called = 0;
         let result = hooks
             .iter()
             .try_for_each(|hook| {
                 called += 1;
-                hook.before(id, action, source)
+                hook.before(id, action, source, window, cx)
             })
             .and_then(|()| {
                 target
@@ -331,7 +449,7 @@ impl ActionBus {
                     .apply(action, window, cx)
             });
         for hook in hooks[..called].iter().rev() {
-            hook.after(id, action, source, &result);
+            hook.after(id, action, source, &result, window, cx);
         }
         result
     }
@@ -386,8 +504,16 @@ mod tests {
         }
     }
     impl gpui_kit::EventEmitter<bool> for Toggle {}
+    /// A typed outcome with its erased conversion.
+    struct Toggled(bool);
+    impl From<Toggled> for Outcome {
+        fn from(Toggled(on): Toggled) -> Self {
+            Self(Value::Bool(on))
+        }
+    }
     impl Drive for Toggle {
         type Action = ();
+        type Output = Toggled;
         fn decode(action: &Action) -> Result<(), ActionError> {
             if action.name == names::TOGGLE {
                 Ok(())
@@ -400,10 +526,10 @@ mod tests {
             _: (),
             _: &mut Window,
             cx: &mut Context<Self>,
-        ) -> Result<(), ActionError> {
+        ) -> Result<Toggled, ActionError> {
             self.0 = !self.0;
             cx.emit(self.0);
-            Ok(())
+            Ok(Toggled(self.0))
         }
     }
     #[gpui_kit::test]
@@ -454,10 +580,25 @@ mod tests {
     fn denied_dispatch_preserves_state_and_reports_outcome(cx: &mut TestAppContext) {
         struct Deny(std::cell::Cell<usize>);
         impl Interceptor for Deny {
-            fn before(&self, _: ControlId, _: &Action, _: Source) -> Result<(), ActionError> {
+            fn before(
+                &self,
+                _: ControlId,
+                _: &Action,
+                _: Source,
+                _: &Window,
+                _: &App,
+            ) -> Result<(), ActionError> {
                 Err(ActionError::ReadOnly)
             }
-            fn after(&self, _: ControlId, _: &Action, _: Source, result: &Result<(), ActionError>) {
+            fn after(
+                &self,
+                _: ControlId,
+                _: &Action,
+                _: Source,
+                result: &Result<Outcome, ActionError>,
+                _: &Window,
+                _: &App,
+            ) {
                 assert_eq!(result, &Err(ActionError::ReadOnly));
                 self.0.set(self.0.get() + 1);
             }
@@ -527,11 +668,17 @@ mod tests {
                 Source::Script,
                 Source::Mcp,
                 Source::Replay,
+                Source::Host,
+                Source::Devtools,
+                Source::Test,
             ]
             .into_iter()
             .enumerate()
             {
-                assert_eq!(ActionBus::dispatch(id, &action, source, window, cx), Ok(()));
+                assert_eq!(
+                    ActionBus::dispatch(id, &action, source, window, cx),
+                    Ok(Outcome(Value::Bool(i % 2 == 0)))
+                );
                 assert_eq!(
                     ActionBus::query(id, window, cx).map(|s| s.checked),
                     Ok(Some(i % 2 == 0))
@@ -547,7 +694,7 @@ mod tests {
             );
             assert_eq!(
                 ActionBus::query(id, window, cx).map(|s| s.checked),
-                Ok(Some(true))
+                Ok(Some(false))
             );
             let stranger = cx.new(|_| Toggle(false));
             assert!(!ActionBus::unregister(id, &stranger, window, cx));
@@ -559,7 +706,120 @@ mod tests {
         });
         assert_eq!(
             *events.borrow(),
-            [true, false, true, false, true, false, true, false, true]
+            [
+                true, false, true, false, true, false, true, false, true, false, true, false
+            ]
         );
+    }
+
+    #[gpui_kit::test]
+    fn batch_is_one_group_and_hooks_see_outcomes_and_state(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        #[derive(Default)]
+        struct Record {
+            target: RefCell<Option<Entity<Toggle>>>,
+            log: RefCell<Vec<String>>,
+        }
+        impl Interceptor for Record {
+            fn before(
+                &self,
+                _: ControlId,
+                action: &Action,
+                _: Source,
+                _: &Window,
+                cx: &App,
+            ) -> Result<(), ActionError> {
+                // Read access: a permission check can consult current state.
+                let on = self.target.borrow().as_ref().map(|e| e.read(cx).0);
+                self.log
+                    .borrow_mut()
+                    .push(format!("before {} {on:?}", action.name));
+                if action.name == names::OPEN {
+                    return Err(ActionError::ReadOnly);
+                }
+                Ok(())
+            }
+            fn after(
+                &self,
+                _: ControlId,
+                _: &Action,
+                _: Source,
+                result: &Result<Outcome, ActionError>,
+                _: &Window,
+                _: &App,
+            ) {
+                self.log.borrow_mut().push(format!("after {result:?}"));
+            }
+            fn begin_group(&self, group: Group, _: &Window, _: &App) {
+                self.log
+                    .borrow_mut()
+                    .push(format!("begin {} {:?}", group.len, group.source));
+            }
+            fn end_group(&self, _: Group, result: &Result<(), ActionError>, _: &Window, _: &App) {
+                self.log.borrow_mut().push(format!("end {result:?}"));
+            }
+        }
+        let (_, vcx) = cx.add_window_view(|_, _| Empty);
+        vcx.update(|window, cx| {
+            let entity = cx.new(|_| Toggle(false));
+            let id = ActionBus::register(
+                "grid/steps",
+                &entity,
+                "toggle",
+                Capabilities::TOGGLE,
+                window,
+                cx,
+            );
+            let hook = Rc::new(Record::default());
+            *hook.target.borrow_mut() = Some(entity.clone());
+            ActionBus::add_interceptor(hook.clone(), window, cx);
+            let toggle = Action {
+                name: names::TOGGLE.into(),
+                payload: Value::Null,
+            };
+            let open = Action {
+                name: names::OPEN.into(),
+                payload: Value::Null,
+            };
+            assert_eq!(
+                ActionBus::dispatch_batch(
+                    id,
+                    &[toggle.clone(), toggle.clone()],
+                    Source::Pointer,
+                    window,
+                    cx
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                ActionBus::dispatch_batch(
+                    id,
+                    &[toggle.clone(), open, toggle],
+                    Source::Pointer,
+                    window,
+                    cx
+                ),
+                Err(ActionError::ReadOnly)
+            );
+            assert!(entity.read(cx).0, "the rejected action stops the batch");
+            assert_eq!(
+                *hook.log.borrow(),
+                [
+                    "begin 2 Pointer",
+                    "before toggle Some(false)",
+                    "after Ok(Outcome(Bool(true)))",
+                    "before toggle Some(true)",
+                    "after Ok(Outcome(Bool(false)))",
+                    "end Ok(())",
+                    "begin 3 Pointer",
+                    "before toggle Some(false)",
+                    "after Ok(Outcome(Bool(true)))",
+                    "before open Some(true)",
+                    "after Err(ReadOnly)",
+                    "end Err(ReadOnly)",
+                ]
+            );
+            drop(hook.target.borrow_mut().take());
+        });
     }
 }

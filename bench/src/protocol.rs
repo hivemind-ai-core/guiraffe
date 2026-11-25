@@ -18,6 +18,7 @@ impl Observe for Counter {
 }
 impl Drive for Counter {
     type Action = ();
+    type Output = ();
     fn decode(action: &Action) -> Result<(), ActionError> {
         if action.name.as_ref() == names::TOGGLE {
             Ok(())
@@ -109,12 +110,12 @@ impl Fixture {
         self.app.update_window(self.window.into(), |_, w, cx| {
             // Path resolution is a client-boundary cost; the measured body is dispatch alone.
             assert_eq!(ControlId::lookup("page/999", cx), Some(id));
-            let mut result = Ok(());
+            let mut result = Ok(Outcome::EMPTY);
             let measured = measure(&mut || {
                 result = ActionBus::dispatch(id, &self.action, Source::Script, w, cx);
             });
             result
-                .map(|()| measured)
+                .map(|_| measured)
                 .map_err(|e| anyhow::anyhow!("dispatch failed: {e:?}"))
         })?
     }
