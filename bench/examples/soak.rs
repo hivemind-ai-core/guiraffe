@@ -697,6 +697,13 @@ mod mounted {
         }
         let at = point(px(380.), px(310.));
         let elapsed = mount_started.elapsed();
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            // Two coordinates and the UTF-8 formula text in each input record.
+            let raw = (1..=count.min(999_999))
+                .map(|row| std::mem::size_of::<CellPos>() + row.ilog10() as usize + 5)
+                .sum();
+            raw_bytes(raw);
+        }
         run(
             &mut |frame| {
                 if frame.is_multiple_of(16) {
