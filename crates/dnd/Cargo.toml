@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
 gpui-kit.workspace = true
 guiraffe-components.workspace = true
 guiraffe-core.workspace = true

@@ -1069,6 +1069,46 @@ mod tests {
         }
     }
 
+    #[gpui_kit::test]
+    fn detached_panel_restores_and_docks_back_with_same_entity(cx: &mut TestAppContext) {
+        let (root, host) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
+        host.update(|window, cx| {
+            let area = root.read(cx).area.clone();
+            let panel = cx.new(|cx| TestPanel(cx.focus_handle(), "Detached"));
+            let id = PanelId::from(panel.entity_id());
+            area.update(cx, |area, cx| {
+                area.add_panel_view(
+                    panel_handle(panel.clone()),
+                    DockPlacement::Right,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            let commands =
+                crate::dock::DockablePanel::new("test/panel", area.clone(), panel, window);
+            let before = cx.windows().len();
+            assert!(commands.pop_out(window, cx).unwrap());
+            assert_eq!(cx.windows().len(), before + 1);
+            assert!(area.read(cx).panel(id).is_none());
+            assert!(!commands.pop_out(window, cx).unwrap());
+            assert!(commands.dock_back(window, cx).unwrap());
+            assert!(
+                area.read(cx)
+                    .layout(DockPlacement::Right)
+                    .unwrap()
+                    .find_panel_node(id)
+                    .is_some()
+            );
+            assert!(!commands.restore(window, cx).unwrap());
+            cx.global::<guiraffe_layout::LayoutStore>()
+                .persist()
+                .save(commands.key(), "right");
+            assert!(commands.restore(window, cx).unwrap());
+            assert!(commands.dock_back(window, cx).unwrap());
+        });
+    }
+
     #[test]
     fn resolves_every_split_edge_and_the_center() {
         let bounds = Bounds::new(point(px(10.), px(20.)), size(px(200.), px(100.)));
