@@ -58,9 +58,10 @@ proportion to what changed.
 
 | # | Item | Notes |
 |---|---|---|
+| 16 | `guiraffe` umbrella crate and one supported way to consume the vendored patches | If time allows; otherwise the first 0.4 item |
 | 19 | Trim GPUI's per-frame high-water buffers | Accepted 0.2 exception. Falls out of item 8 |
 
-Items 16, 17, 18 and 20 moved to later releases on 2026-11-25 (see below).
+Items 17, 18 and 20 are deferred until after 0.4 (decided on 2026-11-25; see "After 0.4").
 
 ### Added for 0.3
 
@@ -71,10 +72,6 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 | Item | Reason |
 |---|---|
-| Umbrella `guiraffe` crate and one way to consume the vendored patches (was item 16) | Pared from 0.3 P3 |
-| Compile-only CI for macOS and Windows (was item 17) | Can't be done yet |
-| Startup study (was item 18) | Nice to have, not critical; can be done any time |
-| Re-test the 0.1 and 0.2 visual bug reports, drop the date-picker StyleContext workaround, reduced motion in Kit's skeleton (was item 20) | Pared from 0.3 P3 |
 | Live drag of panels between windows | Requires upstream typed drag transport. Source inspection found file-URI-only `start_external_drag` on both locked Linux backends. The Wayland pointer grab keeps release on the source surface |
 | Tear-off panels, parent/child and modal windows, X11 restore offset | Not needed for docking |
 | Devtools time travel | 0.3 ships the action log it needs |
@@ -138,6 +135,7 @@ express one of these items, fix the API before 0.3 freezes rather than working a
 
 Candidates, in likely order:
 
+0. **Umbrella crate**, if 0.3 didn't ship it (0.3 item 16).
 1. **Text:** evaluate Parley against GPUI's text system, then rich text editing with IME,
    accessibility text ranges and selection across virtualized content.
 2. **Accessibility:** an incremental tree fed by the control registry, its measured cost, and
@@ -162,3 +160,13 @@ Candidates, in likely order:
 7. The items moved from 0.3 above.
 
 Mobile is out of scope until the desktop platforms are supported.
+
+## After 0.4
+
+Deferred from 0.3 P3:
+
+- Compile-only CI for macOS and Windows (was 0.3 item 17). Can't be done yet.
+- Startup study (was 0.3 item 18): phase breakdown, floor against an empty GPUI window, cheap
+  wins. Nice to have; can be done any time.
+- Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext
+  workaround, make Kit's skeleton respect reduced motion (was 0.3 item 20).
