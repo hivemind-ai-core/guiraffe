@@ -88,26 +88,49 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 **Goal:** Passage, a DAW built on GUIraffe, can drop its hand-built controls and its own undo
 stack. Requested on 2026-11-25 against rev `716d957e`. Starts after 0.3 and comes before
-any 0.4 work.
+any 0.4 work. Passage moves to 0.3 when 0.3 ships, so every item is built on the 0.3 design,
+not on the 0.2 shapes the requests sketch.
 
-Every editor that changes project data emits actions on the 0.3 bus, so undo, shortcuts,
-Spotlight and scripts cover it without extra code. Passage then moves `NoteEditStack` onto
-GUIraffe's undo.
+How the 0.3 design changes the requests:
+
+- **The model lives in a store.** Keys, curves, track heights, clip data, the loop range, step
+  cells and knob values are store state bound with `ui!` lenses. There are no `&mut self` model
+  setters on views and no host-held copies to keep in sync.
+- **Every edit is an action.** Insert key, set a segment's interpolation, resize a track, trim a
+  clip, toggle a step and set a value are each one domain action on the bus with an erased,
+  schema-described form. Pointer, keyboard, shortcut, Spotlight, ribbon, MCP and scripts all go
+  through `apply`. Undo comes from the store, so Passage's `NoteEditStack` becomes store history
+  over the project revision.
+- **Events are bus outcomes.** `KeyInserted`, `TrackResized`, `SelectionChanged` and the rest
+  are what interceptors and subscribers observe, not a second channel.
+- **The host writes, the view doesn't echo.** Setting the playhead, the view range or the
+  tracks is a store write. A write never comes back as a user action, so Passage needs no
+  feedback filter. User seeks are `Seek` actions tagged with their source. Because the model is
+  diffed in place, nothing is rebuilt and zoom survives.
+- **Hot values are sinks.** Meter levels and the playhead are fed through reactive sinks, so a
+  frame repaints the meter alone at zero allocation and never rerenders the parent.
+- **Formatting and mapping are shared types.** Value formatters and the value-mapping trait
+  (linear, log, exp, units) are plain data or traits used by `Knob`, `NumberField`, `Slider` and
+  the dope sheet readout. Closures stay out of the model.
+- **Every control registers ids and snapshots,** with paged snapshots for grids and sheets, so
+  devtools, MCP and tests drive them without simulated clicks.
 
 | # | Item | Notes |
 |---|---|---|
-| 1 | `DopeSheet` authoring: insert and remove keys, value channels with segment interpolation (Constant, Linear, Bezier, eases), toggle channels, `ChannelCurve::value_at`, expand a row into a `CurveView` lane | One model for both views. `value_at` must match the drawn segment. Includes a keyboard-only flow |
-| 2 | `TracksView`: per-track height and resizing, a `ClipPainter`, a themed selection style and `SelectionChanged`, move vs trim in `ClipChanged`, end trim past the content | Row layout becomes a prefix sum; hit testing uses binary search. 60 fps with 64 tracks × 200 clips |
-| 3 | Programmatic playhead and view: `set_playhead` that does not emit, follow mode, `set_view`/`view`, in-place `update_tracks` that diffs | Removes the host's seek feedback filter and the zoom loss on rebuild |
-| 4 | `Meter`: peak, RMS, peak hold, clip latch, dB zones from theme tokens, gain reduction, stereo, LUFS slot | Repaints itself from an `f32` without rerendering its parent |
-| 5 | `Knob` and a `NumberField` with units, scrub, typed entry and log mapping | One value-mapping trait shared with sliders |
-| 6 | `StepGrid`: fixed cells, row headers, column grouping, per-cell value styles, paint and erase by drag, keyboard, per-row length | State never changes layout. Painted in one pass |
-| 7 | Time ruler with a loop range, locators and `TimeFormat::Musical` | Shared by the piano roll and the arrangement |
-| 8 | `ScopeLayer` and `SpectrumLayer` presets for `PlotSurface` | Min/max per pixel column; log-frequency and dB axes |
-| 9 | `Canvas` helper: local coordinates, hover, drag gestures, cursor, virtual accessible items | Makes custom editors first-class |
+| 1 | `DopeSheet` authoring: insert and remove keys, value channels with segment interpolation (Constant, Linear, Bezier, eases), toggle channels, `ChannelCurve::value_at`, expand a row into a `CurveView` lane | The dope sheet and `CurveView` bind the same store slice. Actions: `InsertKey`, `RemoveKeys`, `SetKeyValue`, `SetSegmentInterp`, `BendSegment`, `ToggleSpan`. `value_at` is pure, matches the drawn segment, and is usable off the UI thread. Includes a keyboard-only flow |
+| 2 | `TracksView`: per-track height and resizing, a clip painter, a themed selection style, move vs trim, end trim past the content | Heights and selection are store state. Actions: `ResizeTrack`, `MoveClip`, `TrimClip`, `Select`. Row layout becomes a prefix sum; hit testing uses binary search. The clip painter only paints, from a snapshot of the clip. 60 fps with 64 tracks × 200 clips |
+| 3 | Playhead, follow mode and view range as store state; in-place track updates | Replaces `set_playhead`/`set_view`/`update_tracks`: the host writes the store, and the view diffs |
+| 4 | `Meter`: peak, RMS, peak hold, clip latch, dB zones from theme tokens, gain reduction, stereo, LUFS slot | Level is a sink. Clip reset is an action. Zero allocation per frame |
+| 5 | `Knob` and a `NumberField` with units, scrub, typed entry and log mapping | One value-mapping trait shared with `Slider`. Standard `SetValue`/`Increment`/`Decrement` actions, so every parameter is bindable to shortcuts and the ribbon |
+| 6 | `StepGrid`: fixed cells, row headers, column grouping, per-cell value styles, paint and erase by drag, keyboard, per-row length | Cells are store state; a drag-paint is one action, so one undo step. State never changes layout. Painted in one pass |
+| 7 | Time ruler with a loop range, locators and `TimeFormat::Musical` | The loop range and locators are store state with `SetRange`/`MoveLocator` actions. Shared by the piano roll and the arrangement |
+| 8 | `ScopeLayer` and `SpectrumLayer` presets for `PlotSurface` | Sample buffers come in through sinks. Min/max per pixel column; log-frequency and dB axes |
+| 9 | `Canvas` helper: local coordinates, hover, drag gestures, cursor, virtual accessible items | Virtual items register control ids and snapshots, so custom editors are drivable and accessible |
 
 Requests: `../daw/docs/guiraffe-requests/`. Items 2 and 3 change `TracksView`, which the 0.3
-performance work also touches, so they start after it merges.
+performance work also touches, so they start after it merges. If a 0.3 API turns out unable to
+express one of these items, fix the API before 0.3 freezes rather than working around it in
+0.3.1.
 
 ## 0.4: Text, pixels and platforms
 
