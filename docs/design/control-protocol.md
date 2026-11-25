@@ -48,6 +48,10 @@ click executes.
   and something is bound to them; otherwise they are invisible to the registry.
 - Cross-window addressing: `WindowId/ControlId`. When a docked panel moves windows (0.3 §D), its
   registrations move with it; ids don't change.
+  `guiraffe_dnd::dock::DockablePanel` does this today: its key is the panel's id scope, its own
+  `dock-panel` control (shared `open` = pop out, `close` = dock back) re-registers in whichever
+  window hosts the panel, and commands issued from the detached window run in the home window.
+  Panel-internal controls should build their paths under the same key and re-register with it.
 - Duplicate ids within a window are a debug-build error with both call sites, and a no-op
   (first wins) in release.
 
