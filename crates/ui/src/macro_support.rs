@@ -315,9 +315,9 @@ pub fn field<'a>(value: &'a Value, name: &'static str) -> Option<&'a Value> {
 // ---- Bound control entities (`guiraffe_components::controls`) ---------------------------
 
 use guiraffe_components::controls::{
-    CheckboxBuilder, CheckboxControl, SelectBuilder, SelectControl, SelectionEvent,
-    SliderBuilder, SliderControl, SliderControlEvent, SwitchBuilder, SwitchControl,
-    TextInputBuilder, TextInputControl, TextInputEvent, ToggleEvent,
+    CheckboxBuilder, CheckboxControl, SelectBuilder, SelectControl, SelectionEvent, SliderBuilder,
+    SliderControl, SliderControlEvent, SwitchBuilder, SwitchControl, TextInputBuilder,
+    TextInputControl, TextInputEvent, ToggleEvent,
 };
 
 /// The seam between `ui!` bindings and a protocol control entity: how to build it with an
@@ -402,16 +402,28 @@ impl ControlBinding for SliderControl {
     fn builder() -> SliderBuilder {
         SliderControl::new()
     }
-    fn build(builder: SliderBuilder, value: &f32, window: &mut Window, cx: &mut App) -> gpui_kit::Entity<Self> {
+    fn build(
+        builder: SliderBuilder,
+        value: &f32,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui_kit::Entity<Self> {
         builder.value(*value).build(window, cx)
     }
     fn edited(event: &SliderControlEvent) -> Option<f32> {
         let SliderControlEvent::Changed(value) = event;
         Some(*value)
     }
-    fn host_set(entity: &gpui_kit::Entity<Self>, window: gpui_kit::AnyWindowHandle, value: &f32, cx: &mut App) {
+    fn host_set(
+        entity: &gpui_kit::Entity<Self>,
+        window: gpui_kit::AnyWindowHandle,
+        value: &f32,
+        cx: &mut App,
+    ) {
         let value = *value;
-        later(entity, window, cx, move |control, window, cx| control.set_value(value, window, cx));
+        later(entity, window, cx, move |control, window, cx| {
+            control.set_value(value, window, cx)
+        });
     }
 }
 
@@ -441,7 +453,9 @@ impl ControlBinding for TextInputControl {
         cx: &mut App,
     ) {
         let value = value.clone();
-        later(entity, window, cx, move |control, window, cx| control.set_value(value, window, cx));
+        later(entity, window, cx, move |control, window, cx| {
+            control.set_value(value, window, cx)
+        });
     }
 }
 
@@ -475,7 +489,9 @@ impl ControlBinding for SelectControl {
         cx: &mut App,
     ) {
         let value = *value;
-        later(entity, window, cx, move |control, window, cx| control.set_selected(value, window, cx));
+        later(entity, window, cx, move |control, window, cx| {
+            control.set_selected(value, window, cx)
+        });
     }
 }
 

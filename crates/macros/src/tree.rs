@@ -513,7 +513,11 @@ fn control_binding(
     let binds: Vec<_> = items
         .iter()
         .filter_map(|item| match item {
-            Item::Bind { lens, handler, prop } => Some((prop, lens, handler.is_some())),
+            Item::Bind {
+                lens,
+                handler,
+                prop,
+            } => Some((prop, lens, handler.is_some())),
             _ => None,
         })
         .collect();
@@ -552,13 +556,15 @@ fn control_binding(
     let store = store_ident();
     let id = site_id();
     let lens = lens.expand();
-    Some(quote_spanned!(path.span()=> ::guiraffe_ui::__macro::bound_control::<#path, _, _>(
-        #id,
-        #store,
-        #lens,
-        #two_way,
-        move |#builder| #builder #(#configure)*,
-    )))
+    Some(
+        quote_spanned!(path.span()=> ::guiraffe_ui::__macro::bound_control::<#path, _, _>(
+            #id,
+            #store,
+            #lens,
+            #two_way,
+            move |#builder| #builder #(#configure)*,
+        )),
+    )
 }
 
 /// `count -= step` becomes `__guiraffe_fields.count -= step`.
@@ -598,7 +604,6 @@ struct Scope {
 thread_local! {
     static SCOPE: std::cell::RefCell<Scope> = std::cell::RefCell::default();
 }
-
 
 fn next_site() -> u64 {
     SCOPE.with(|scope| {
@@ -651,10 +656,7 @@ impl LensPath {
         }
         lens
     }
-
 }
-
-
 
 /// Wrap `body` (which may refer to `__guiraffe_store` and `__guiraffe_bound`) in a bound view
 /// over `lenses`. `values` are the identifiers the body uses for each bound value.

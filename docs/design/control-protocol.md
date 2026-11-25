@@ -234,7 +234,11 @@ one target as a `Group`. Interceptors see `begin_group`, each action's
 action. It returns a `Batch`: the applied outcomes in order as `Outcomes`,
 a `SmallVec` that holds up to eight inline, and a `BatchError` with the index
 and error if it stopped early. `into_result` turns it into a `Result`. Store history (phase 4) maps one group to one undo step, so a
-drag-paint of N cells undoes at once. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
+drag-paint of N cells undoes at once. The store side exists: changes between
+`Store::begin_undo_group` and `Store::end_undo_group` record one step, which a
+bounded history (`HistoryLimits`: `max_steps`, optional `max_weight`) drops as a
+unit. Calling them from a bus interceptor's `begin_group`/`end_group` is the
+remaining wiring. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
 (`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
 (`bench/benches/instructions.rs`; 2,121 measured with no interceptors), which excludes path lookup. A batch of
 eight allocates nothing and has a 8,000 instruction ceiling (6,407 measured).

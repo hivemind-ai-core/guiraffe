@@ -130,7 +130,12 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     ///
     /// This is how a bound control entity receives host writes: `changed` calls its
     /// non-emitting setter, so the write never comes back as an edit.
-    pub fn watch<L>(&self, lens: L, changed: impl Fn(&L::Target, &mut App) + 'static, cx: &mut App) -> Watch
+    pub fn watch<L>(
+        &self,
+        lens: L,
+        changed: impl Fn(&L::Target, &mut App) + 'static,
+        cx: &mut App,
+    ) -> Watch
     where
         L: Lens<Root = S>,
         L::Target: Clone + PartialEq,

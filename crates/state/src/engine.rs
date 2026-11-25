@@ -12,6 +12,7 @@ use guiraffe_core::protocol::Source;
 use crate::keyed::KeyedList;
 use crate::lens::{Lens, write_keys};
 
+use crate::history::{BoundedHistory, HistoryLimits};
 use std::{
     any::{Any, TypeId},
     collections::{BTreeMap, HashMap, VecDeque},
@@ -449,16 +450,20 @@ pub struct Outcome {
     pub error: Option<EngineError>,
 }
 
-type Capture<S> = Box<dyn Fn(&Arc<S>) -> Box<dyn Any>>;
+/// Snapshot the undo scope and weigh it once, at capture.
+type Capture<S> = Box<dyn Fn(&Arc<S>) -> (Box<dyn Any>, u64)>;
 type Restore<S> = Box<dyn Fn(&mut Arc<S>, Box<dyn Any>)>;
 
 /// Undo history over a *scope* of the state (the whole state, or a lens onto part of it).
 struct Undo<S> {
-    limit: usize,
-    past: VecDeque<Box<dyn Any>>,
-    future: Vec<Box<dyn Any>>,
+    past: BoundedHistory<Box<dyn Any>>,
+    future: Vec<(Box<dyn Any>, u64)>,
     capture: Capture<S>,
     restore: Restore<S>,
+    /// Open [`Engine::begin_undo_group`] calls.
+    group_depth: usize,
+    /// The open group already recorded its step.
+    group_recorded: bool,
 }
 
 pub struct Engine<S> {
@@ -510,16 +515,28 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
         self.interceptors.push(Box::new(i));
     }
 
-    /// Undo/redo over the **whole** state, keeping up to `limit` steps (0 disables undo).
+    /// Undo/redo over the **whole** state within `limits` (a step count converts; 0 or
+    /// [`HistoryLimits::DISABLED`] disables undo). Each step weighs `size_of::<S>()`; use
+    /// [`Engine::enable_undo_weighed`] to supply a better estimate for a weight limit.
     /// Calling again replaces (and clears) any existing history.
     ///
     /// Caveat: undo restores the entire state, so it also reverts changes made by
     /// non-undoable events since that step (e.g. data that was loaded). Prefer
     /// [`Engine::enable_undo_lens`] to scope undo to the document part of the state.
-    pub fn enable_undo(&mut self, limit: usize) {
+    pub fn enable_undo(&mut self, limits: impl Into<HistoryLimits>) {
+        self.enable_undo_weighed(limits, |_| size_of::<S>() as u64);
+    }
+
+    /// [`Engine::enable_undo`] with `weigh` estimating each step's size (approximate bytes).
+    /// It runs once per recorded step, so keep it cheap (e.g. a length times a row size).
+    pub fn enable_undo_weighed(
+        &mut self,
+        limits: impl Into<HistoryLimits>,
+        weigh: impl Fn(&S) -> u64 + 'static,
+    ) {
         self.set_undo(
-            limit,
-            Box::new(|s: &Arc<S>| Box::new(s.clone()) as Box<dyn Any>),
+            limits.into(),
+            Box::new(move |s: &Arc<S>| (Box::new(s.clone()) as Box<dyn Any>, weigh(s))),
             Box::new(|st: &mut Arc<S>, snap: Box<dyn Any>| {
                 if let Ok(prev) = snap.downcast::<Arc<S>>() {
                     *st = *prev;
@@ -529,16 +546,32 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
     }
 
     /// Undo/redo scoped to the part of the state reached by `get`/`set` (re-frame's
-    /// undo `:path`). State outside the lens is never touched by undo or redo.
+    /// undo `:path`). State outside the lens is never touched by undo or redo. Each step
+    /// weighs `size_of::<U>()`; see [`Engine::enable_undo_lens_weighed`].
     pub fn enable_undo_lens<U: Clone + 'static>(
         &mut self,
-        limit: usize,
+        limits: impl Into<HistoryLimits>,
         get: impl Fn(&S) -> U + 'static,
         set: impl Fn(&mut S, U) + 'static,
     ) {
+        self.enable_undo_lens_weighed(limits, get, set, |_| size_of::<U>() as u64);
+    }
+
+    /// [`Engine::enable_undo_lens`] with `weigh` estimating each step's size.
+    pub fn enable_undo_lens_weighed<U: Clone + 'static>(
+        &mut self,
+        limits: impl Into<HistoryLimits>,
+        get: impl Fn(&S) -> U + 'static,
+        set: impl Fn(&mut S, U) + 'static,
+        weigh: impl Fn(&U) -> u64 + 'static,
+    ) {
         self.set_undo(
-            limit,
-            Box::new(move |s: &Arc<S>| Box::new(get(s)) as Box<dyn Any>),
+            limits.into(),
+            Box::new(move |s: &Arc<S>| {
+                let u = get(s);
+                let w = weigh(&u);
+                (Box::new(u) as Box<dyn Any>, w)
+            }),
             Box::new(move |st: &mut Arc<S>, snap: Box<dyn Any>| {
                 if let Ok(u) = snap.downcast::<U>() {
                     set(Arc::make_mut(st), *u);
@@ -547,14 +580,60 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
         );
     }
 
-    fn set_undo(&mut self, limit: usize, capture: Capture<S>, restore: Restore<S>) {
-        self.undo = (limit > 0).then(|| Undo {
-            limit,
-            past: VecDeque::new(),
+    fn set_undo(&mut self, limits: HistoryLimits, capture: Capture<S>, restore: Restore<S>) {
+        self.undo = limits.is_enabled().then(|| Undo {
+            past: BoundedHistory::new(limits),
             future: Vec::new(),
             capture,
             restore,
+            group_depth: 0,
+            group_recorded: false,
         });
+    }
+
+    /// Change the history limits without clearing it; the oldest steps that no longer fit
+    /// are dropped. Has no effect while undo is disabled.
+    pub fn set_undo_limits(&mut self, limits: impl Into<HistoryLimits>) {
+        let limits = limits.into();
+        if !limits.is_enabled() {
+            self.undo = None;
+        } else if let Some(u) = self.undo.as_mut() {
+            u.past.set_limits(limits);
+        }
+    }
+
+    /// The current history limits ([`HistoryLimits::DISABLED`] without undo).
+    pub fn undo_limits(&self) -> HistoryLimits {
+        self.undo
+            .as_ref()
+            .map_or(HistoryLimits::DISABLED, |u| u.past.limits())
+    }
+
+    /// Undo steps kept, and their total weight.
+    pub fn undo_depth(&self) -> (usize, u64) {
+        self.undo
+            .as_ref()
+            .map_or((0, 0), |u| (u.past.len(), u.past.weight()))
+    }
+
+    /// Start an undo group: every undoable change until the matching
+    /// [`Engine::end_undo_group`] is one step (the state before the group), undone and
+    /// dropped as a unit. Groups nest; only the outermost one records. This is how a
+    /// control-protocol `dispatch_batch` becomes one step.
+    pub fn begin_undo_group(&mut self) {
+        if let Some(u) = self.undo.as_mut() {
+            if u.group_depth == 0 {
+                u.group_recorded = false;
+            }
+            u.group_depth += 1;
+        }
+    }
+
+    /// End the innermost undo group (a no-op without one).
+    pub fn end_undo_group(&mut self) {
+        if let Some(u) = self.undo.as_mut() {
+            u.group_depth = u.group_depth.saturating_sub(1);
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -579,17 +658,19 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
             return false;
         };
         let target = if back {
-            u.past.pop_back()
+            u.past.pop()
         } else {
-            u.future.pop()
+            u.future.pop().map(|(t, _)| t)
         };
         let Some(target) = target else { return false };
-        let current = (u.capture)(&self.state);
+        let (current, weight) = (u.capture)(&self.state);
         if back {
-            u.future.push(current);
+            u.future.push((current, weight));
         } else {
-            u.past.push_back(current);
+            u.past.push(current, weight);
         }
+        // A change after an undo or redo inside a group starts a new step.
+        u.group_recorded = false;
         let before = self.state.clone();
         (u.restore)(&mut self.state, target);
         !Arc::ptr_eq(&before, &self.state) && *before != *self.state
@@ -723,9 +804,10 @@ impl<S: Clone + PartialEq + 'static> Engine<S> {
                 && undoable
                 && let (Some(u), Some(before)) = (self.undo.as_mut(), before.as_ref())
             {
-                u.past.push_back((u.capture)(before));
-                while u.past.len() > u.limit {
-                    u.past.pop_front();
+                if !(u.group_depth > 0 && u.group_recorded) {
+                    let (snapshot, weight) = (u.capture)(before);
+                    u.past.push(snapshot, weight);
+                    u.group_recorded = u.group_depth > 0;
                 }
                 u.future.clear();
             }
@@ -1125,5 +1207,135 @@ mod tests {
         e.dispatch_queued(later.into_queued());
         run(&mut e);
         assert_eq!(e.state().n, 1);
+    }
+
+    fn apply(e: &mut Engine<S>, events: &[i32]) {
+        for &n in events {
+            e.dispatch(Add(n));
+            run(e);
+        }
+    }
+
+    fn undo_all(e: &mut Engine<S>) -> Vec<i32> {
+        let mut seen = Vec::new();
+        while e.undo() {
+            seen.push(e.state().n);
+        }
+        seen
+    }
+
+    #[test]
+    fn weight_limit_drops_the_oldest_steps() {
+        let mut e = Engine::new(S::default());
+        // Every step weighs 10, so a cap of 25 keeps two.
+        e.enable_undo_weighed(HistoryLimits::steps(100).with_max_weight(25), |_| 10);
+        apply(&mut e, &[1, 1, 1, 1]);
+        assert_eq!(e.undo_depth(), (2, 20));
+        assert_eq!(undo_all(&mut e), [3, 2]);
+    }
+
+    #[test]
+    fn a_step_heavier_than_the_cap_is_still_undoable() {
+        let mut e = Engine::new(S::default());
+        // A step weighs the `n` it restores.
+        e.enable_undo_weighed(HistoryLimits::steps(100).with_max_weight(10), |s| {
+            s.n.unsigned_abs().into()
+        });
+        apply(&mut e, &[1, 1, 48, 10]); // steps restore 0, 1, 2, 50
+        assert_eq!(
+            e.undo_depth(),
+            (1, 50),
+            "the heavy newest step is kept alone"
+        );
+        assert_eq!(undo_all(&mut e), [50]);
+        assert!(e.can_redo());
+    }
+
+    #[test]
+    fn default_estimate_is_the_scope_size() {
+        let mut e = Engine::new(S::default());
+        let step = size_of::<S>() as u64;
+        e.enable_undo(HistoryLimits::steps(100).with_max_weight(step * 3));
+        apply(&mut e, &[1, 1, 1, 1, 1]);
+        assert_eq!(e.undo_depth(), (3, step * 3));
+        let mut e = Engine::new(S::default());
+        e.enable_undo_lens(
+            HistoryLimits::steps(100).with_max_weight(4),
+            |s| s.n,
+            |s, n| s.n = n,
+        );
+        apply(&mut e, &[1, 1, 1]);
+        assert_eq!(e.undo_depth(), (1, 4), "an i32 lens step weighs four bytes");
+    }
+
+    #[test]
+    fn a_group_is_one_step_and_is_dropped_as_a_unit() {
+        let mut e = Engine::new(S::default());
+        e.enable_undo(2);
+        apply(&mut e, &[1]);
+        e.begin_undo_group();
+        apply(&mut e, &[1, 1, 1]);
+        e.end_undo_group();
+        assert_eq!(e.undo_depth().0, 2);
+        // A third step evicts the oldest one, never part of the group.
+        apply(&mut e, &[10]);
+        assert_eq!(e.undo_depth().0, 2);
+        assert_eq!(undo_all(&mut e), [4, 1], "the group undoes at once");
+        // One more step evicts the whole group.
+        let mut e = Engine::new(S::default());
+        e.enable_undo(2);
+        e.begin_undo_group();
+        apply(&mut e, &[1, 1, 1]);
+        e.end_undo_group();
+        apply(&mut e, &[1, 1]);
+        assert_eq!(undo_all(&mut e), [4, 3]);
+    }
+
+    #[test]
+    fn a_group_straddling_the_weight_cap_stays_whole() {
+        let mut e = Engine::new(S::default());
+        e.enable_undo_weighed(HistoryLimits::steps(100).with_max_weight(15), |_| 10);
+        apply(&mut e, &[1]);
+        e.begin_undo_group();
+        // Recorded singly these would be three steps of 30; grouped they are one of 10.
+        apply(&mut e, &[1, 1, 1]);
+        e.end_undo_group();
+        assert_eq!(
+            e.undo_depth(),
+            (1, 10),
+            "the older step went, the group stayed"
+        );
+        assert_eq!(undo_all(&mut e), [1]);
+    }
+
+    #[test]
+    fn nested_groups_record_once_and_empty_groups_record_nothing() {
+        let mut e = Engine::new(S::default());
+        e.enable_undo(10);
+        e.begin_undo_group();
+        e.end_undo_group();
+        assert!(!e.can_undo());
+        e.begin_undo_group();
+        apply(&mut e, &[1]);
+        e.begin_undo_group();
+        apply(&mut e, &[1]);
+        e.end_undo_group();
+        apply(&mut e, &[1]);
+        e.end_undo_group();
+        e.end_undo_group(); // unbalanced end is ignored
+        apply(&mut e, &[1]);
+        assert_eq!(undo_all(&mut e), [3, 0]);
+    }
+
+    #[test]
+    fn set_undo_limits_trims_without_clearing() {
+        let mut e = Engine::new(S::default());
+        e.enable_undo(10);
+        apply(&mut e, &[1, 1, 1, 1]);
+        e.set_undo_limits(2);
+        assert_eq!(e.undo_limits(), HistoryLimits::steps(2));
+        assert_eq!(undo_all(&mut e), [3, 2]);
+        e.set_undo_limits(HistoryLimits::DISABLED);
+        assert!(!e.can_undo() && !e.can_redo());
     }
 }

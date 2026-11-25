@@ -31,6 +31,10 @@ so states keep their contrast across schemes.
 - State that changes often lives in a small view, which notifies only itself.
 - Large collections are virtualized or culled to the viewport.
 - Caches have a bound or an owner that releases them.
+- Undo history is bounded the same way everywhere (store history, grid and sheet, flow editor):
+  `HistoryLimits { max_steps, max_weight }`. Each step's weight (approximate bytes) is provided or
+  estimated once, when it is recorded. Over a limit the oldest steps go first; the newest is
+  always kept. An undo group is one step and is dropped whole.
 - Parsing, sorting, layout of large graphs and recalculation run off the UI thread and cancel when
   superseded.
 

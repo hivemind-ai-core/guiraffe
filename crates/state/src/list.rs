@@ -7,7 +7,14 @@
 //! (uniform row height) by default and plain children when mounted. A variable-height layout
 //! (prefix sums) can drive the same [`RowViews`].
 
-use std::{cell::{Cell, RefCell}, collections::HashMap, hash::Hash, ops::Range, panic::Location, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    hash::Hash,
+    ops::Range,
+    panic::Location,
+    rc::Rc,
+};
 
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Context, ElementId, Entity, IntoElement, ParentElement,
@@ -274,13 +281,14 @@ where
         self.pending = false;
         self.renders += 1;
         let cached = |row: Entity<RowView<S, L, K, T>>, height: Option<Pixels>| match height {
-            Some(height) => AnyView::from(row).cached(
-                StyleRefinement::default()
-                    .w_full()
-                    .h(height)
-                    .flex_shrink_0(),
-            )
-            .into_any_element(),
+            Some(height) => AnyView::from(row)
+                .cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(height)
+                        .flex_shrink_0(),
+                )
+                .into_any_element(),
             None => AnyView::from(row).into_any_element(),
         };
         let (mode, row_height) = self.settings.get();

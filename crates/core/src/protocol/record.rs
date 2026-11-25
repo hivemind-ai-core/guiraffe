@@ -109,7 +109,8 @@ pub fn replay(
         if first.group.is_some() {
             let actions: Vec<Action> = log[at..at + len].iter().map(|r| r.action.clone()).collect();
             ActionBus::dispatch_batch(id, &actions, Source::Replay, window, cx)
-                .map_err(|e| (at, e))?;
+                .into_result()
+                .map_err(|e| (at + e.index, e.error))?;
         } else {
             ActionBus::dispatch(id, &first.action, Source::Replay, window, cx)
                 .map_err(|e| (at, e))?;
@@ -217,6 +218,7 @@ mod tests {
                 window,
                 cx,
             )
+            .into_result()
             .unwrap();
             // Rejected actions are not part of the session.
             assert!(

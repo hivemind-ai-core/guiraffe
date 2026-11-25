@@ -18,6 +18,7 @@
 
 pub mod bind;
 pub mod engine;
+pub mod history;
 mod keyed;
 pub mod lens;
 pub mod list;
@@ -30,6 +31,7 @@ pub use engine::{
 };
 pub use guiraffe_core::protocol::Source;
 pub use guiraffe_macros::{Lens, store};
+pub use history::{BoundedHistory, HistoryLimits};
 pub use keyed::KeyedList;
 pub use lens::{ByKey, Compose, Field, Identity, Lens, Lensed, ListLens};
 pub use list::{BoundList, ListMode, ListView, RowView, RowViews, bound_list};
