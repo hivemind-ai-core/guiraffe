@@ -69,6 +69,18 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 - **gpui-fast rebuilds its scene for rounded overflow clips** on every changed frame. Clip
   rectangularly inside rounded shapes where it matters.
 
+## Store binding (provisional)
+
+- On upstream GPUI, a bound control's edit also re-renders its ancestors and their unbound
+  children. Only gpui-fast isolates the render. Store-side work is isolated on both.
+- On gpui-fast, the first bound edit after a page mounts rebuilds the page once (and with it
+  its bound children). Later edits are isolated. The cause is in gpui-fast's dependency
+  recording for newly created child views and isn't understood yet.
+- A bound control's parent re-render always re-renders the bound control, because its unbound
+  props may have changed.
+- Two-way binding of entity-backed inputs (`InputState`) needs an adapter. Stateful component
+  ids must be unique per window: the bus rejects duplicates in debug builds.
+
 ## GPUI behavior
 
 - **An invalid key-binding string panics** inside GPUI, and `secondary-` isn't resolved. Use

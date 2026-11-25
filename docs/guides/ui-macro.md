@@ -115,3 +115,12 @@ Each `cached` call site gets a separate retained view under each key. The macro 
 `cached` inside an unkeyed `for`. Render repeated instances of a `#[component]` containing
 `cached` in distinct keyed scopes as well. Inside a loop, use `for … key …`; for individually
 written siblings, give each an enclosing element with a distinct GPUI ID.
+
+## Stores and binding
+
+Inside `store(s) { … }`, controls bind to store state: `value <= lens` reads it,
+`value <=> lens` also writes it back through the store, and `on_click => Event` dispatches.
+`#[component(stateful)]` makes a component with its own state, driven over the action bus.
+[Stores and binding](stores.md) covers the syntax, its cost and the builder-API equivalent.
+The syntax is provisional in 0.3. Outside `store(…)`, the macro expands exactly as described
+above.

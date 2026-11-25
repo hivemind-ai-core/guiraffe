@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
+guiraffe-macros.workspace = true
+imbl = "7.0"
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
