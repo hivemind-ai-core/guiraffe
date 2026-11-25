@@ -587,20 +587,36 @@ fn limit_sample(
     mount: Duration,
     stream: bool,
 ) -> Result<()> {
+    use nix::time::{ClockId, clock_gettime};
+
+    let cpu_clock = std::env::var_os("SOAK_FRAME_CPU").map(|_| ClockId::CLOCK_THREAD_CPUTIME_ID);
+    let mut cpu_times = Vec::new();
     let mut times = Vec::with_capacity(120);
     // Once mount fails there is no reason to run this dataset through the replay.
     if mount <= Duration::from_millis(200) {
         for index in 0..128 {
+            let cpu_start = cpu_clock.map(clock_gettime).transpose()?;
             let start = Instant::now();
             frame(index)?;
             let elapsed = start.elapsed();
             if index >= 8 {
                 times.push(elapsed.as_micros());
+                if let (Some(clock), Some(start)) = (cpu_clock, cpu_start) {
+                    let delta = clock_gettime(clock)? - start;
+                    cpu_times.push(Duration::from(delta).as_micros());
+                }
             }
             if stream {
                 std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
             }
         }
+    }
+    if !cpu_times.is_empty() {
+        cpu_times.sort_unstable();
+        println!(
+            "frame_thread_cpu_p99_us={}",
+            cpu_times[(cpu_times.len() * 99).div_ceil(100) - 1]
+        );
     }
     limit_report(mount, times)
 }

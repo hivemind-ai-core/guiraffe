@@ -566,90 +566,100 @@ impl Render for FlameGraph {
                                 let height = f64::from(f32::from(bounds.size.height));
                                 let width = f64::from(f32::from(bounds.size.width));
                                 let slots = (height / ROW_HEIGHT).ceil() as usize;
-                                for slot in 0..slots.min(layout.rows().saturating_sub(first_row)) {
-                                    let y = match orientation {
-                                        Orientation::Flame => {
-                                            height - (slot + 1) as f64 * ROW_HEIGHT
-                                        }
-                                        Orientation::Icicle => slot as f64 * ROW_HEIGHT,
-                                    };
-                                    layout.visit_paint_row(
-                                        first_row + slot,
-                                        domain.clone(),
-                                        width,
-                                        search.as_deref(),
-                                        |segment| {
-                                            let frame = segment.id.and_then(|id| layout.frame(id));
-                                            let color = frame.map_or(0, |frame| match colour {
-                                                ColourScheme::Heat => {
-                                                    ((frame.self_value / frame.total)
-                                                        * (colors.len() - 1) as f64)
-                                                        as usize
-                                                }
-                                                scheme => {
-                                                    let mut hash = DefaultHasher::new();
-                                                    if scheme == ColourScheme::Package {
-                                                        frame.package
-                                                    } else {
-                                                        frame.label
-                                                    }
-                                                    .hash(&mut hash);
-                                                    hash.finish() as usize % colors.len()
-                                                }
-                                            });
-                                            let rect = Bounds::new(
-                                                bounds.origin
-                                                    + point(
-                                                        px(segment.x.start as f32),
-                                                        px(y as f32),
-                                                    ),
-                                                size(
-                                                    px((segment.x.end - segment.x.start) as f32),
-                                                    px(ROW_HEIGHT as f32 - 1.),
-                                                ),
-                                            );
-                                            let style = if segment.highlighted {
-                                                highlight
-                                            } else {
-                                                colors[color]
-                                            };
-                                            window
-                                                .paint_quad(fill(rect, style.background.to_hsla()));
-                                            if let Some(frame) =
-                                                frame.filter(|_| rect.size.width >= px(32.))
-                                            {
-                                                let text = labels.text(frame.label);
-                                                let len = text.len();
-                                                let line = window.text_system().shape_line(
-                                                    text,
-                                                    px(11.),
-                                                    &[gpui_kit::TextRun {
-                                                        len,
-                                                        font: gpui_kit::Font::default(),
-                                                        color: style.foreground.to_hsla(),
-                                                        background_color: None,
-                                                        underline: None,
-                                                        strikethrough: None,
-                                                    }],
-                                                    None,
-                                                );
-                                                window.with_content_mask(
-                                                    Some(ContentMask { bounds: rect }),
-                                                    |window| {
-                                                        let _ = line.paint(
-                                                            rect.origin + point(px(4.), px(2.)),
-                                                            px(16.),
-                                                            gpui_kit::TextAlign::Left,
-                                                            None,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                );
+                                // Frame rectangles occupy disjoint rows and columns. GPUI can
+                                // order their quads together, then draw clipped labels above.
+                                window.paint_layer(bounds, |window| {
+                                    for slot in
+                                        0..slots.min(layout.rows().saturating_sub(first_row))
+                                    {
+                                        let y = match orientation {
+                                            Orientation::Flame => {
+                                                height - (slot + 1) as f64 * ROW_HEIGHT
                                             }
-                                        },
-                                    );
-                                }
+                                            Orientation::Icicle => slot as f64 * ROW_HEIGHT,
+                                        };
+                                        layout.visit_paint_row(
+                                            first_row + slot,
+                                            domain.clone(),
+                                            width,
+                                            search.as_deref(),
+                                            |segment| {
+                                                let frame =
+                                                    segment.id.and_then(|id| layout.frame(id));
+                                                let color = frame.map_or(0, |frame| match colour {
+                                                    ColourScheme::Heat => {
+                                                        ((frame.self_value / frame.total)
+                                                            * (colors.len() - 1) as f64)
+                                                            as usize
+                                                    }
+                                                    scheme => {
+                                                        let mut hash = DefaultHasher::new();
+                                                        if scheme == ColourScheme::Package {
+                                                            frame.package
+                                                        } else {
+                                                            frame.label
+                                                        }
+                                                        .hash(&mut hash);
+                                                        hash.finish() as usize % colors.len()
+                                                    }
+                                                });
+                                                let rect = Bounds::new(
+                                                    bounds.origin
+                                                        + point(
+                                                            px(segment.x.start as f32),
+                                                            px(y as f32),
+                                                        ),
+                                                    size(
+                                                        px((segment.x.end - segment.x.start)
+                                                            as f32),
+                                                        px(ROW_HEIGHT as f32 - 1.),
+                                                    ),
+                                                );
+                                                let style = if segment.highlighted {
+                                                    highlight
+                                                } else {
+                                                    colors[color]
+                                                };
+                                                window.paint_quad(fill(
+                                                    rect,
+                                                    style.background.to_hsla(),
+                                                ));
+                                                if let Some(frame) =
+                                                    frame.filter(|_| rect.size.width >= px(32.))
+                                                {
+                                                    let text = labels.text(frame.label);
+                                                    let len = text.len();
+                                                    let line = window.text_system().shape_line(
+                                                        text,
+                                                        px(11.),
+                                                        &[gpui_kit::TextRun {
+                                                            len,
+                                                            font: gpui_kit::Font::default(),
+                                                            color: style.foreground.to_hsla(),
+                                                            background_color: None,
+                                                            underline: None,
+                                                            strikethrough: None,
+                                                        }],
+                                                        None,
+                                                    );
+                                                    window.with_content_mask(
+                                                        Some(ContentMask { bounds: rect }),
+                                                        |window| {
+                                                            let _ = line.paint(
+                                                                rect.origin + point(px(4.), px(2.)),
+                                                                px(16.),
+                                                                gpui_kit::TextAlign::Left,
+                                                                None,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    }
+                                });
                             },
                         )
                         .size_full(),

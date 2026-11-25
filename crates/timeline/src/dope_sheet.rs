@@ -49,6 +49,7 @@ pub struct DopeSheet {
     focus: FocusHandle,
     playhead: f64,
     lock_style: LockStyle,
+    first_header_row: usize,
     headers: Vec<(ChannelHeader, Entity<ChannelHeader>)>,
 }
 impl EventEmitter<DopeEvent> for DopeSheet {}
@@ -77,6 +78,7 @@ impl DopeSheet {
             focus: cx.focus_handle(),
             playhead: 0.,
             lock_style: LockStyle::Badge,
+            first_header_row: 0,
             headers: Vec::new(),
         })
     }
@@ -398,7 +400,10 @@ fn key_indices(
         let next = index + 1;
         // Preserve the source sequence for picking and editing. Only the
         // rendered marks skip diamonds that overlap at this zoom.
-        let next = if let Some(spacing) = spacing {
+        let next = if let Some(spacing) = spacing
+            && next < end
+            && times[next] < times[index] + spacing
+        {
             next + times[next..end].partition_point(|&t| t < times[index] + spacing)
         } else {
             next
@@ -445,10 +450,9 @@ fn viewport_keys(
                 .range((channel, 0)..=(channel, u64::MAX))
                 .next()
                 .is_some();
-            let compact = !row.summary
-                && c.decor.is_none()
-                && !has_selection
-                && end.saturating_sub(first) > (axis.width / 4.) as usize;
+            // Check spacing where the keys actually fall. A tight cluster can
+            // cover a few pixels even when most of the viewport is empty.
+            let compact = !row.summary && c.decor.is_none() && !has_selection;
             let locked = !model.editable(channel);
             let y = (start + row_index) as f64 * f64::from(ROW_H) - offset;
             key_indices(times, first, end, compact.then_some(4. * axis.scale)).map(move |index| {
@@ -505,6 +509,17 @@ impl Render for DopeSheet {
             .get(start..end.min(self.model.rows().len()))
             .unwrap_or(&[]);
         let owner = cx.weak_entity();
+        // Keep the entities for channels still visible after a vertical scroll.
+        // Header equality below also handles edits and changes in the row tree.
+        let shift = start
+            .abs_diff(self.first_header_row)
+            .min(self.headers.len());
+        if start > self.first_header_row {
+            self.headers.rotate_left(shift);
+        } else {
+            self.headers.rotate_right(shift);
+        }
+        self.first_header_row = start;
         for (index, row) in rows.iter().enumerate() {
             let c = &self.model.channels[row.channel];
             let current = self.headers.get_mut(index);
@@ -796,8 +811,9 @@ impl Render for DopeSheet {
                                             height,
                                             sheet.offset,
                                         );
-                                        // Keep sparse scenes on the original raster path.
-                                        let batch_diamonds = keys.clone().nth(512).is_some();
+                                        // Sparse scenes keep their original rasterization. Count
+                                        // only up to the crossover before traversing for paint.
+                                        let batch_diamonds = keys.clone().nth(32).is_some();
                                         let at = |x: f64, y: f64| {
                                             gpui_kit::point(
                                                 b.origin.x + px(x as f32),
@@ -979,6 +995,15 @@ mod tests {
                 [-0.5 * row_height, 0.5 * row_height, 1.5 * row_height]
             );
         }
+    }
+
+    #[test]
+    fn a_cluster_in_an_otherwise_sparse_lane_retains_isolated_keys() {
+        let model = DopeModel::new(vec![Channel::new("lane", vec![1., 2., 3., 5., 80.])]);
+        let marks: Vec<_> = viewport_keys(&model, Axis::new(0., 100., 100.), f64::from(ROW_H), 0.)
+            .map(|mark| mark.x)
+            .collect();
+        assert_eq!(marks, [1., 5., 80.]);
     }
 
     #[test]

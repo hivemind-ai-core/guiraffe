@@ -442,6 +442,12 @@ fn overview_columns(track: &Track, axis: Axis) -> impl Iterator<Item = (usize, u
     })
 }
 
+// Plain clips have no per-element input handlers. For populated rows the
+// canvas paints the same bordered, rounded rectangles; the body owns picking.
+fn canvas_clips(track: &Track, axis: &Axis) -> bool {
+    crate::visible(track.clips(), axis, |c| c.start, |c| c.end()).len() >= 16
+}
+
 fn overview(track: &Track, axis: &Axis) -> bool {
     crate::visible(track.clips(), axis, |c| c.start, |c| c.end()).len() > (axis.width / 4.) as usize
 }
@@ -654,6 +660,22 @@ impl Render for TracksView {
                                         window.paint_layer(b, |window| {
                                             for (row, (_, track)) in view.tracks.iter().take(height).enumerate() {
                                                 if !overview(track, &axis) {
+                                                    if editable && canvas_clips(track, &axis) {
+                                                        for clip in crate::visible(track.clips(), &axis, |c| c.start, |c| c.end()) {
+                                                            if selected == Some((row, clip.id)) || view.locked.contains(&(row, clip.id)) {
+                                                                continue;
+                                                            }
+                                                            let left = axis.x(clip.start) as f32;
+                                                            let right = axis.x(clip.end()) as f32;
+                                                            window.paint_quad(gpui_kit::quad(
+                                                                Bounds::new(
+                                                                    b.origin + gpui_kit::point(px(left), px(row as f32 * TRACK_H + 4.)),
+                                                                    gpui_kit::size(px((right - left).max(2.)), px(TRACK_H - 8.)),
+                                                                ),
+                                                                px(4.), normal, px(1.), clip_v.foreground.to_hsla(), gpui_kit::BorderStyle::Solid,
+                                                            ));
+                                                        }
+                                                    }
                                                     continue;
                                                 }
                                                 let paint = |start: usize, end: usize, ink, window: &mut Window| {
@@ -707,8 +729,10 @@ impl Render for TracksView {
                                 } else {
                                     crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
                                 };
+                                let detailed_canvas = !accessibility && editable && canvas_clips(tr, &axis);
                                 clips
                                     .iter()
+                                    .filter(move |clip| !detailed_canvas || selected == Some((i, clip.id)) || locked.contains(&(i, clip.id)))
                                     .map(move |c| {
                                         let (x0, x1) =
                                             (axis.x(c.start) as f32, axis.x(c.end()) as f32);
