@@ -439,7 +439,23 @@ fn cached_label_updates_and_selector_scaling() {
 #[test]
 fn fully_visible_row_edits_splice_the_page() {
     let mut app = app();
-    let n = 200;
+    let small = fully_visible_edit_allocations(&mut app, 100);
+    let large = fully_visible_edit_allocations(&mut app, 400);
+    if gpui_kit::GPUI_FAST {
+        // Unchanged rows are copied as ranges: an edit allocates for the
+        // edited row and the frame, not for every row.
+        assert!(large <= 300, "{large} allocations per edit at 400 rows");
+        assert!(
+            large <= small + 16,
+            "edit allocations grow with rows: {small} at 100, {large} at 400"
+        );
+    }
+}
+
+/// Median allocations of a row edit in a page showing all `n` rows, checking
+/// on the way that the edit runs one selector and, on gpui-fast, splices the
+/// page.
+fn fully_visible_edit_allocations(app: &mut HeadlessAppContext, n: usize) -> u64 {
     let probe = Probe::new(n);
     let handle = app
         .open_window(
@@ -448,10 +464,7 @@ fn fully_visible_row_edits_splice_the_page() {
         )
         .expect("mount page");
     app.run_until_parked();
-    let mut window = Mounted {
-        app: &mut app,
-        handle,
-    };
+    let mut window = Mounted { app, handle };
     let page = window.update(|window, cx| {
         let page = window.root::<Page>().flatten().expect("page");
         window.focus(&page.read(cx).input.focus_handle(cx), cx);
@@ -459,25 +472,38 @@ fn fully_visible_row_edits_splice_the_page() {
     });
     let store = window.update(|_, cx| page.read(cx).store.clone());
     let edit = |window: &mut Mounted<'_>, label: &'static str| {
-        window.update(|_, cx| store.dispatch(Change::RowLabel(EDITED, label.into()), cx));
+        count_allocations(|| {
+            window.update(|_, cx| store.dispatch(Change::RowLabel(EDITED, label.into()), cx));
+        })
+        .expect("allocation scope")
+        .1
+        .allocations
     };
     edit(&mut window, "Row 00004");
     edit(&mut window, "Row 00003");
     let (root, row) = (probe.root.get(), probe.rows[EDITED].get());
     let visits = probe.selectors.get();
-    for label in ["Row 00004", "Row 00003", "Row 00004", "Row 00003"] {
-        edit(&mut window, label);
-    }
-    assert_eq!(probe.rows[EDITED].get(), row + 4, "the row drew each edit");
+    let mut allocations: Vec<u64> = [
+        "Row 00004",
+        "Row 00003",
+        "Row 00004",
+        "Row 00003",
+        "Row 00004",
+    ]
+    .into_iter()
+    .map(|label| edit(&mut window, label))
+    .collect();
+    assert_eq!(probe.rows[EDITED].get(), row + 5, "the row drew each edit");
     assert_eq!(
         probe.selectors.get() - visits,
-        4,
+        5,
         "a keyed edit runs one selector"
     );
     if gpui_kit::GPUI_FAST {
         assert_eq!(probe.root.get(), root, "the page was spliced");
     }
     close(window);
+    percentile(&mut allocations, 50)
 }
 
 fn cpu_ns() -> u64 {

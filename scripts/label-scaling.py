@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Gate gpui-fast's virtualized visible and offscreen release edit instruction counts."""
+"""Gate gpui-fast's release edit instruction counts: virtualized visible and offscreen edits
+stay flat from 1k to 10k rows; fully mounted edits splice the page and stay under a ceiling."""
 
 import argparse
 import json
@@ -23,15 +24,18 @@ def build():
     raise RuntimeError("Cargo returned no composed test executable")
 
 
-def measure(binary, directory, edit, rows):
-    output = directory / f"{edit}-{rows}.cg"
+def measure(binary, directory, edit, rows, mounted=False):
+    output = directory / f"{edit}-{rows}-{mounted}.cg"
     env = dict(os.environ, COMPOSED_PHASE_ROWS=str(rows), COMPOSED_PHASE_SAMPLES="3",
                COMPOSED_PHASE_EDIT=edit)
     env.pop("COMPOSED_ALL_VISIBLE", None)
+    if mounted:
+        env["COMPOSED_ALL_VISIBLE"] = "1"
+    sweep = "composed_label_phase_sweep" if mounted else "virtualized_label_phase_sweep"
     run = subprocess.run(
         ["valgrind", "--tool=callgrind", "--collect-atstart=no",
          "--toggle-collect=composed::measured_label_frame", f"--callgrind-out-file={output}",
-         str(binary), "--ignored", "--exact", "virtualized_label_phase_sweep", "--nocapture"],
+         str(binary), "--ignored", "--exact", sweep, "--nocapture"],
         env=env, capture_output=True, text=True,
     )
     if run.returncode or run.stdout.count(f"rows={rows} mounted=") != 1:
@@ -57,8 +61,14 @@ def main():
             counts = [measure(binary, Path(directory), edit, n) for n in (1000, 3000, 10000)]
             print(f"{edit}: Ir for three changed frames at 1k/3k/10k = {counts}", flush=True)
             failed |= max(counts[1:]) * 100 > counts[0] * 102
+        # Seven measured frames (four warm-up, three samples) per run. Before the
+        # page was spliced a fully mounted frame cost 28.7M at 1k and 85.0M at 3k.
+        counts = [measure(binary, Path(directory), "visible", n, mounted=True) // 7
+                  for n in (1000, 3000)]
+        print(f"fully mounted: Ir per changed frame at 1k/3k = {counts}", flush=True)
+        failed |= counts[0] > 14_000_000 or counts[1] > 42_000_000
     if failed:
-        raise SystemExit("Changed-frame instruction growth exceeds the 2% frame scaling budget")
+        raise SystemExit("Changed-frame instructions exceed the 2% virtualized scaling or the fully mounted ceiling")
 
 
 if __name__ == "__main__":
