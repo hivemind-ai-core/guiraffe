@@ -54,15 +54,13 @@ proportion to what changed.
 | 14 | Multi-window docking | Pop out, dock back, restore layout. Control ids survive the move. Spike cross-window drag early |
 | 15 | The dogfood tool | Start with item 9, so it shapes the API |
 
-### P3: release quality (cut first)
+### P3: release quality
 
 | # | Item | Notes |
 |---|---|---|
-| 16 | `guiraffe` umbrella crate and one supported way to consume the vendored patches | Copying a patch table is the worst part of adoption today |
-| 17 | Compile-only CI for macOS and Windows | No hardware needed. Makes platform claims checkable |
-| 18 | Startup study | Phase breakdown, floor against an empty GPUI window, cheap wins |
 | 19 | Trim GPUI's per-frame high-water buffers | Accepted 0.2 exception. Falls out of item 8 |
-| 20 | Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext workaround, make Kit's skeleton respect reduced motion | Many are probably fixed already. The skeleton is a small accessibility fix in vendored GPUI Kit |
+
+Items 16, 17, 18 and 20 moved to later releases on 2026-11-25 (see below).
 
 ### Added for 0.3
 
@@ -73,6 +71,10 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 | Item | Reason |
 |---|---|
+| Umbrella `guiraffe` crate and one way to consume the vendored patches (was item 16) | Pared from 0.3 P3 |
+| Compile-only CI for macOS and Windows (was item 17) | Can't be done yet |
+| Startup study (was item 18) | Nice to have, not critical; can be done any time |
+| Re-test the 0.1 and 0.2 visual bug reports, drop the date-picker StyleContext workaround, reduced motion in Kit's skeleton (was item 20) | Pared from 0.3 P3 |
 | Live drag of panels between windows | Requires upstream typed drag transport. Source inspection found file-URI-only `start_external_drag` on both locked Linux backends. The Wayland pointer grab keeps release on the source surface |
 | Tear-off panels, parent/child and modal windows, X11 restore offset | Not needed for docking |
 | Devtools time travel | 0.3 ships the action log it needs |
@@ -88,7 +90,7 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 **Goal:** Passage, a DAW built on GUIraffe, can drop its hand-built controls and its own undo
 stack. Requested on 2026-11-25 against rev `716d957e`. Starts after 0.3 and comes before
-any 0.4 work. Passage moves to 0.3 when 0.3 ships, so every item is built on the 0.3 design,
+any 0.4 work. Reread the requests in `../daw/docs/guiraffe-requests/` when it starts: the list may have changed. Passage moves to 0.3 when 0.3 ships, so every item is built on the 0.3 design,
 not on the 0.2 shapes the requests sketch.
 
 How the 0.3 design changes the requests:
