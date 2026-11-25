@@ -1029,7 +1029,28 @@ const IMPERATIVE: &[(&str, &str)] = &[
     ),
 ];
 
+/// Native protocol control entities (`guiraffe_components::controls`). Documents reach
+/// them through `ui!` lowering (item 9) and the action bus, not through their own kinds.
+const PROTOCOL_CONTROLS: &[&str] = &[
+    "components::ButtonControl",
+    "components::CheckboxControl",
+    "components::SwitchControl",
+    "components::SliderControl",
+    "components::TextInputControl",
+    "components::SelectControl",
+    "components::TabsControl",
+    "components::MenuControl",
+];
+
 fn covered(surface: &str) -> bool {
+    if PROTOCOL_CONTROLS.iter().any(|control| {
+        surface == *control
+            || surface
+                .strip_prefix(control)
+                .is_some_and(|rest| rest.starts_with("::"))
+    }) {
+        return true;
+    }
     if IMPERATIVE
         .iter()
         .any(|(api, reason)| *api == surface && !reason.is_empty())
