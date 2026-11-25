@@ -52,9 +52,19 @@ enum Change {
 
 impl Event<State> for Change {
     fn handle(self, fx: &mut Fx<'_, State>) {
+        if let Self::RowLabel(id, label) = self {
+            // Only the selections keyed by the row see this write.
+            fx.set_keyed_field(
+                id as u64,
+                label,
+                move |state| &state.rows[id].label,
+                move |state| &mut state.rows[id].label,
+            );
+            return;
+        }
         fx.update(|state| match self {
             Self::Label(label) => state.rows[EDITED].label = label,
-            Self::RowLabel(id, label) => state.rows[id].label = label,
+            Self::RowLabel(..) => {}
             Self::Toggle(id) => state.rows[id].checked = !state.rows[id].checked,
             Self::Half(half) => state.half = half,
         });
@@ -85,7 +95,7 @@ fn select_row<T: 'static>(
     cx: &mut Context<T>,
 ) -> Selected<Row> {
     let visits = probe.selectors.clone();
-    store.select(cx, move |state| {
+    store.select_key(id as u64, cx, move |state| {
         visits.set(visits.get() + 1);
         state.rows[id].clone()
     })
@@ -421,6 +431,53 @@ fn cached_label_updates_and_selector_scaling() {
         assert_eq!(probe.selectors.get() - visits, n);
         close(window);
     }
+}
+
+/// The page's focused input writes its state as it is drawn, state the page
+/// read as it rendered. Those writes are the page's own, so a row edit draws
+/// the page from last frame around the row instead of rendering it again.
+#[test]
+fn fully_visible_row_edits_splice_the_page() {
+    let mut app = app();
+    let n = 200;
+    let probe = Probe::new(n);
+    let handle = app
+        .open_window(
+            size(px(WIDTH), px((n + 1) as f32 * ROW_HEIGHT)),
+            |window, cx| cx.new(|cx| Page::new(true, false, probe.clone(), window, cx)),
+        )
+        .expect("mount page");
+    app.run_until_parked();
+    let mut window = Mounted {
+        app: &mut app,
+        handle,
+    };
+    let page = window.update(|window, cx| {
+        let page = window.root::<Page>().flatten().expect("page");
+        window.focus(&page.read(cx).input.focus_handle(cx), cx);
+        page
+    });
+    let store = window.update(|_, cx| page.read(cx).store.clone());
+    let edit = |window: &mut Mounted<'_>, label: &'static str| {
+        window.update(|_, cx| store.dispatch(Change::RowLabel(EDITED, label.into()), cx));
+    };
+    edit(&mut window, "Row 00004");
+    edit(&mut window, "Row 00003");
+    let (root, row) = (probe.root.get(), probe.rows[EDITED].get());
+    let visits = probe.selectors.get();
+    for label in ["Row 00004", "Row 00003", "Row 00004", "Row 00003"] {
+        edit(&mut window, label);
+    }
+    assert_eq!(probe.rows[EDITED].get(), row + 4, "the row drew each edit");
+    assert_eq!(
+        probe.selectors.get() - visits,
+        4,
+        "a keyed edit runs one selector"
+    );
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(probe.root.get(), root, "the page was spliced");
+    }
+    close(window);
 }
 
 fn cpu_ns() -> u64 {
