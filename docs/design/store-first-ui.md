@@ -134,3 +134,20 @@ components are as drivable as built-ins.
 - GPUI tests: two-way binding round-trips; undo restores bound controls; Spotlight/shortcut/MCP
   driving a bound control updates the store and every other control bound to the same lens.
 - Gates in §6.
+
+### Provisional fixed-metric label experiment
+
+The bench-only `reactive_sinks` test mounts one binding per row and patches
+eight glyph commands in a retained buffer on each changed write. A standalone
+optimized build of the same sweep measured 6.30 ns CPU/edit at 1,000 rows and
+6.35 ns at 3,000 (median of seven processes, one million edits per process,
+including startup and mount). These timings cover indexed dispatch and the
+buffer write. They exclude Store notification, shaping, layout, GPUI frame
+submission and presentation.
+
+Keep the binding syntax provisional. An indexed write can carry a stable row
+key and property identity straight to its sink. A positional row index works
+only while rows stay put. Reordering, removal and width-changing text need
+invalidation semantics before freezing that contract. Leave unbound builder
+calls on their existing expansion. Defer adoption until the composed-window
+benchmark measures the complete frame and compares unbound controls.
