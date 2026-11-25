@@ -113,6 +113,18 @@ fn kind(surface: &str) -> Option<&'static str> {
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
     (
+        "commands::CommandRibbon::when_open",
+        "Host layout helper that adds the bar only while open; documents use the `open` prop.",
+    ),
+    (
+        "commands::RibbonState::set_leader",
+        "The leader is a host keyboard setting, like a keymap entry, not a document property.",
+    ),
+    (
+        "commands::RibbonState::window_id",
+        "Read-only window identity for hosts with several windows.",
+    ),
+    (
         "commands::RibbonState::activate",
         "Activates an entry by index for pointer hosts; documents use chord keys.",
     ),
