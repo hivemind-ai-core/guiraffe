@@ -143,10 +143,9 @@ ui! {
 ```
 
 The entity is built once with the lens's value. Edits arrive through its typed event and are
-written with `Set`. Host writes reach it through its non-emitting setter, so they never echo.
-Slider, text-input and select setters need the window today, so a host write reaches them one
-effect cycle later. A bus edit of a control entity is tagged `Pointer` until its events carry
-their source (both are being fixed in the components crate).
+written with `Set`, tagged with the source the event carries. Host writes reach it through its
+non-emitting setter, synchronously, so they never echo. `SelectControl<T>` binds the option's
+value (`.values([(Theme::Dark, "Dark"), …])`), not its index.
 
 ## Store-bound lists
 

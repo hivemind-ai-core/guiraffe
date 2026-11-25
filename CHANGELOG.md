@@ -50,3 +50,4 @@ Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select s
 Catalogue 1.2.0 snapshot `9cfca66b723596b0` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper and event-timeline kinds, and PropertyGrid editing options).
 Catalogue 1.3.0 snapshot `f02fd1904da6e29f` adds the `sheet` kind, PropertyGrid and Stack `animate-layout`, and ActionIcon `toggled` and `tooltip`.
 Catalogue 1.4.0 snapshot `32f852d2b157035f` adds the `calendar` kind.
+Catalogue 1.4.0 snapshot `bcbe38d18d3993d0` adds the `command-ribbon` kind.

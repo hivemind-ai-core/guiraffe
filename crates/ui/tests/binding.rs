@@ -491,9 +491,11 @@ fn control_entities_bind_through_their_events_and_host_setters(cx: &mut TestAppC
     });
     vcx.run_until_parked();
     vcx.update(|_, cx| assert!(store.state(cx).dark, "the bus edit reached the store"));
-    // TODO(03-adopt): typed control events are delivered after `Drive::apply` returns, so the
-    // bus source is gone by then; they should carry it. Until then the edit reads as Pointer.
-    assert_eq!(sources.borrow().len(), 1);
+    assert_eq!(
+        *sources.borrow(),
+        [Source::Mcp],
+        "the event carries the bus source"
+    );
 
     // A host write reaches the control without echoing back as an edit.
     vcx.update(|_, cx| store.set(Prefs::volume, 0.25, cx));

@@ -3416,6 +3416,7 @@ dependencies = [
  "guiraffe-charts",
  "guiraffe-chat",
  "guiraffe-code",
+ "guiraffe-commands",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
@@ -3541,6 +3542,7 @@ dependencies = [
  "guiraffe-test",
  "schemars",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

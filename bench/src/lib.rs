@@ -2,6 +2,7 @@
 pub mod allocator;
 mod data_ui;
 mod production_frame;
+pub mod ribbon;
 pub mod stats;
 pub mod suites;
 mod warm_repaint;

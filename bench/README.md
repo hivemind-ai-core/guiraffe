@@ -229,3 +229,8 @@ The mounted Linux allocator tests run with the bench suite and can be run
 directly with `cargo test -p guiraffe-bench --example soak`. Repeat with
 `--features gpui-fast` to exercise the second backend. Each fixture checks
 eight consecutive draws after warm-up.
+
+`ribbon_open`, `ribbon_navigate` and `ribbon_filter` (Callgrind only) measure the command ribbon at
+application scale: 2,000 commands in 200 categories (`src/ribbon.rs`). They project the root,
+descend two chords, and reproject after a context change hides half a menu. Each has a hard
+instruction ceiling about 1.5x over its measured count.

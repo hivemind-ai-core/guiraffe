@@ -315,32 +315,28 @@ pub fn field<'a>(value: &'a Value, name: &'static str) -> Option<&'a Value> {
 // ---- Bound control entities (`guiraffe_components::controls`) ---------------------------
 
 use guiraffe_components::controls::{
-    CheckboxBuilder, CheckboxControl, SelectBuilder, SelectControl, SelectionEvent, SliderBuilder,
-    SliderControl, SliderControlEvent, SwitchBuilder, SwitchControl, TextInputBuilder,
-    TextInputControl, TextInputEvent, ToggleEvent,
+    CheckboxBuilder, CheckboxControl, SelectBuilder, SelectControl, SelectValue, SelectedValue,
+    SliderBuilder, SliderControl, SliderControlEvent, SwitchBuilder, SwitchControl,
+    TextInputBuilder, TextInputControl, TextInputEvent, ToggleEvent,
 };
+use guiraffe_core::protocol::Source;
 
 /// The seam between `ui!` bindings and a protocol control entity: how to build it with an
-/// initial value, read an edit from its typed event, and apply a host write without emitting.
+/// initial value, read an edit (and its source) from its typed event, and apply a host write
+/// through its non-emitting setter.
 pub trait ControlBinding: Render + gpui_kit::EventEmitter<Self::Event> + Sized + 'static {
-    type Value: Clone + PartialEq + Default + 'static;
+    type Value: Clone + PartialEq + 'static;
     type Event: 'static;
     type Builder;
     fn builder() -> Self::Builder;
     fn build(
         builder: Self::Builder,
-        value: &Self::Value,
+        value: Option<&Self::Value>,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui_kit::Entity<Self>;
-    fn edited(event: &Self::Event) -> Option<Self::Value>;
-    /// Apply a host write. Setters that need the window run on the next effect cycle.
-    fn host_set(
-        entity: &gpui_kit::Entity<Self>,
-        window: gpui_kit::AnyWindowHandle,
-        value: &Self::Value,
-        cx: &mut App,
-    );
+    fn edited(event: &Self::Event) -> Option<(Self::Value, Source)>;
+    fn host_set(&mut self, value: &Self::Value, cx: &mut Context<Self>);
 }
 
 macro_rules! toggle_binding {
@@ -354,46 +350,26 @@ macro_rules! toggle_binding {
             }
             fn build(
                 builder: $builder,
-                value: &bool,
+                value: Option<&bool>,
                 window: &mut Window,
                 cx: &mut App,
             ) -> gpui_kit::Entity<Self> {
-                builder.checked(*value).build(window, cx)
+                builder
+                    .checked(value.copied().unwrap_or_default())
+                    .build(window, cx)
             }
-            fn edited(event: &ToggleEvent) -> Option<bool> {
-                let ToggleEvent::Changed(checked) = event;
-                Some(*checked)
+            fn edited(event: &ToggleEvent) -> Option<(bool, Source)> {
+                let ToggleEvent::Changed(checked, source) = event;
+                Some((*checked, *source))
             }
-            fn host_set(
-                entity: &gpui_kit::Entity<Self>,
-                _: gpui_kit::AnyWindowHandle,
-                value: &bool,
-                cx: &mut App,
-            ) {
-                let value = *value;
-                entity.update(cx, |control, cx| control.set_checked(value, cx));
+            fn host_set(&mut self, value: &bool, cx: &mut Context<Self>) {
+                self.set_checked(*value, cx);
             }
         }
     };
 }
 toggle_binding!(CheckboxControl, CheckboxBuilder);
 toggle_binding!(SwitchControl, SwitchBuilder);
-
-fn later<C: 'static>(
-    entity: &gpui_kit::Entity<C>,
-    window: gpui_kit::AnyWindowHandle,
-    cx: &mut App,
-    set: impl FnOnce(&mut C, &mut Window, &mut Context<C>) + 'static,
-) {
-    let entity = entity.downgrade();
-    cx.defer(move |cx| {
-        let _ = window.update(cx, |_, window, cx| {
-            if let Some(entity) = entity.upgrade() {
-                entity.update(cx, |control, cx| set(control, window, cx));
-            }
-        });
-    });
-}
 
 impl ControlBinding for SliderControl {
     type Value = f32;
@@ -404,26 +380,22 @@ impl ControlBinding for SliderControl {
     }
     fn build(
         builder: SliderBuilder,
-        value: &f32,
+        value: Option<&f32>,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui_kit::Entity<Self> {
-        builder.value(*value).build(window, cx)
+        match value {
+            Some(value) => builder.value(*value),
+            None => builder,
+        }
+        .build(window, cx)
     }
-    fn edited(event: &SliderControlEvent) -> Option<f32> {
-        let SliderControlEvent::Changed(value) = event;
-        Some(*value)
+    fn edited(event: &SliderControlEvent) -> Option<(f32, Source)> {
+        let SliderControlEvent::Changed(value, source) = event;
+        Some((*value, *source))
     }
-    fn host_set(
-        entity: &gpui_kit::Entity<Self>,
-        window: gpui_kit::AnyWindowHandle,
-        value: &f32,
-        cx: &mut App,
-    ) {
-        let value = *value;
-        later(entity, window, cx, move |control, window, cx| {
-            control.set_value(value, window, cx)
-        });
+    fn host_set(&mut self, value: &f32, cx: &mut Context<Self>) {
+        self.set_value(*value, cx);
     }
 }
 
@@ -436,62 +408,50 @@ impl ControlBinding for TextInputControl {
     }
     fn build(
         builder: TextInputBuilder,
-        value: &SharedString,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> gpui_kit::Entity<Self> {
-        builder.value(value.clone()).build(window, cx)
-    }
-    fn edited(event: &TextInputEvent) -> Option<SharedString> {
-        let TextInputEvent::Changed(value) = event;
-        Some(value.clone())
-    }
-    fn host_set(
-        entity: &gpui_kit::Entity<Self>,
-        window: gpui_kit::AnyWindowHandle,
-        value: &SharedString,
-        cx: &mut App,
-    ) {
-        let value = value.clone();
-        later(entity, window, cx, move |control, window, cx| {
-            control.set_value(value, window, cx)
-        });
-    }
-}
-
-impl ControlBinding for SelectControl {
-    type Value = Option<usize>;
-    type Event = SelectionEvent;
-    type Builder = SelectBuilder;
-    fn builder() -> SelectBuilder {
-        SelectControl::new()
-    }
-    fn build(
-        builder: SelectBuilder,
-        value: &Option<usize>,
+        value: Option<&SharedString>,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui_kit::Entity<Self> {
         match value {
-            Some(index) => builder.selected(*index),
+            Some(value) => builder.value(value.clone()),
             None => builder,
         }
         .build(window, cx)
     }
-    fn edited(event: &SelectionEvent) -> Option<Option<usize>> {
-        let SelectionEvent::Selected(index) = event;
-        Some(Some(*index))
+    fn edited(event: &TextInputEvent) -> Option<(SharedString, Source)> {
+        let TextInputEvent::Changed(value, source) = event;
+        Some((value.clone(), *source))
     }
-    fn host_set(
-        entity: &gpui_kit::Entity<Self>,
-        window: gpui_kit::AnyWindowHandle,
-        value: &Option<usize>,
+    fn host_set(&mut self, value: &SharedString, cx: &mut Context<Self>) {
+        self.set_value(value.clone(), cx);
+    }
+}
+
+/// A select binds the option's value: `SelectControl { value <=> theme  .values([...]) }`.
+impl<T: SelectValue> ControlBinding for SelectControl<T> {
+    type Value = T;
+    type Event = SelectedValue<T>;
+    type Builder = SelectBuilder<T>;
+    fn builder() -> SelectBuilder<T> {
+        SelectBuilder::default()
+    }
+    fn build(
+        builder: SelectBuilder<T>,
+        value: Option<&T>,
+        window: &mut Window,
         cx: &mut App,
-    ) {
-        let value = *value;
-        later(entity, window, cx, move |control, window, cx| {
-            control.set_selected(value, window, cx)
-        });
+    ) -> gpui_kit::Entity<Self> {
+        match value {
+            Some(value) => builder.selected_value(value),
+            None => builder,
+        }
+        .build(window, cx)
+    }
+    fn edited(event: &SelectedValue<T>) -> Option<(T, Source)> {
+        Some((event.0.clone(), event.1))
+    }
+    fn host_set(&mut self, value: &T, cx: &mut Context<Self>) {
+        self.set_selected_value(value, cx);
     }
 }
 
@@ -562,21 +522,15 @@ where
             two_way,
             configure,
         } = self;
-        let handle = window.window_handle();
         let site = window.use_keyed_state(id, cx, move |window, cx| {
             let initial = lens.get(&store.state_untracked(cx)).cloned();
-            let control = C::build(
-                configure(C::builder()),
-                &initial.unwrap_or_default(),
-                window,
-                cx,
-            );
+            let control = C::build(configure(C::builder()), initial.as_ref(), window, cx);
             let weak = control.downgrade();
             let watch = store.watch(
                 lens,
                 move |value, cx| {
                     if let Some(control) = weak.upgrade() {
-                        C::host_set(&control, handle, value, cx);
+                        control.update(cx, |control, cx| control.host_set(value, cx));
                     }
                 },
                 cx,
@@ -584,8 +538,10 @@ where
             let edits = two_way.then(|| {
                 let store = store.downgrade();
                 cx.subscribe(&control, move |_, _, event: &C::Event, cx| {
-                    if let (Some(value), Some(store)) = (C::edited(event), store.upgrade()) {
-                        store.set_from_control(lens, value, cx);
+                    if let (Some((value, source)), Some(store)) =
+                        (C::edited(event), store.upgrade())
+                    {
+                        store.set_from(lens, value, source, cx);
                     }
                 })
             });
