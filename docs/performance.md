@@ -40,7 +40,8 @@ The machine was not idle (load 1.1 to 1.9), so treat these as indicative.
 - **Middle sizes are slower than the largest**, because level of detail only helps at the top:
   flame graphs reach 96 ms p99 at 262k frames upstream, and Tracks 53 ms at 12.8k clips.
 - **Memory:** Sheet with 100k formulas uses about 120 MiB, and CodeViewer peaks at 379 MiB while
-  loading 10M lines.
+  loading 10M lines in 0.2. Both 0.3 mounted regression gates now pass on both backends
+  ([measurements](#sheet-and-codeviewer-load-memory)).
 - **Soak:** process memory grows about 6 % over 30 minutes. The leak check finds no leak.
 - **Allocation:** zero on an unchanged repaint is gated for some components only. DataUi, `ui!`,
   the command menu and devtools still allocate (42 to 735 per repaint).
@@ -84,6 +85,14 @@ window in separate processes. They compare the median of five peak RSS differenc
 the raw-data budget. Sheet waits for the last cell of its 100,000-formula chain to publish,
 changes the first input, and verifies the new last value. CodeViewer streams 199,999,999
 UTF-8 bytes into its shared source and builds the 10-million-line index.
+
+The Cargo test profile measured the following peak differences in KiB above the empty
+window. Each value is the median of five fresh loaded/baseline process pairs.
+
+| Fixture | Upstream | gpui-fast | Budget |
+|---|---:|---:|---:|
+| Sheet, 100,000 formulas, initial and edited calculation | 59,224 | 59,988 | 69,443 |
+| CodeViewer, 10 million lines | 197,144 | 197,044 | 309,677 |
 
 An optimized, renderer-free probe of the same CodeDocument source measured 392,988 KiB
 peak process RSS when converting the generated String into an Arc, and 197,744 KiB when

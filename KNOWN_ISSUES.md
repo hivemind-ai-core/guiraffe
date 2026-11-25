@@ -43,8 +43,8 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 | Dope sheet in the mixed soak | frames up to 10.5 ms on gpui-fast | 8 ms |
 | Calendar year view | p99 12-16 ms. Month and week can exceed 8 ms on a busy machine | 8 ms |
 | Mermaid mount at 64 nodes | 278-281 ms | 200 ms |
-| Sheet memory, 100k formulas | 119-123 MiB over an empty window | about 68 MiB |
-| CodeViewer loading 10M lines | 379 MiB peak, 192 MiB afterwards | 302 MiB |
+| Sheet memory, 100k formulas (fixed in 0.3) | 119-123 MiB over an empty window | about 68 MiB |
+| CodeViewer loading 10M lines (fixed in 0.3 for streaming loads) | 379 MiB peak, 192 MiB afterwards | 302 MiB |
 | Chat, 100k messages | one 22 ms frame while warming up on gpui-fast | 16 ms |
 | Process memory over a 30-minute soak | +5.8 % upstream, +5.7 % gpui-fast | 2 % |
 | Unchanged repaint allocations | DataUi 132, `ui!` 42, command menu 735, devtools 615, router, state and motion 6-18 | 0 |
