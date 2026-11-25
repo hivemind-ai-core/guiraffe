@@ -153,6 +153,7 @@ jobs:
           if test -f "$RUNNER_TEMP/guiraffe-base"/bench/benches/instructions.rs; then
             cd "$RUNNER_TEMP/guiraffe-base"
             cargo bench --locked -p guiraffe-bench --features instruction-counts --bench instructions -- --save-baseline=pr_base
+            cargo clean
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::The base predates the benchmarks: instruction counts are not compared."
