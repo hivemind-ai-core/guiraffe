@@ -48,6 +48,8 @@ pub enum Call {
     Check,
     /// A recorded script, run again.
     Replay { script: Script },
+    /// The snapshot of a registered control, by path.
+    Query { control: String },
 }
 
 /// The answer of a call.
@@ -85,6 +87,9 @@ pub struct Answer {
     /// What a run of a script did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ReplayResult>,
+    /// The snapshot of a control.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<serde_json::Value>,
 }
 
 /// The server: answers the calls of the API.
@@ -169,6 +174,18 @@ impl<'a, T: InspectTarget> Server<'a, T> {
                     ..Default::default()
                 }
             }
+            Call::Query { control } => match self.driver.query(&control) {
+                Ok(snapshot) => Answer {
+                    ok: true,
+                    snapshot: Some(snapshot),
+                    ..Default::default()
+                },
+                Err(error) => Answer {
+                    ok: false,
+                    error: Some(error),
+                    ..Default::default()
+                },
+            },
             Call::Replay { script } => {
                 let result = crate::replay::run(&mut self.driver, &script);
                 Answer {
@@ -252,6 +269,24 @@ pub fn tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "query".into(),
+            description: "The snapshot of a registered control (value, checked, selected, open, disabled, focused, label), by control path.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "control": { "type": "string" } },
+                "required": ["control"]
+            }),
+        },
+        Tool {
+            name: "apply".into(),
+            description: "Applies an action ({\"name\", \"payload\"}) to a registered control on the action bus and answers what it changed.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "control": { "type": "string" }, "action": { "type": "object" } },
+                "required": ["control", "action"]
+            }),
+        },
+        Tool {
             name: "check".into(),
             description: "The findings of the checks of the screen (clipped text, small targets, contrast, unlabeled nodes, focus traps, tab order, layout jumps).".into(),
             input_schema: empty.clone(),
@@ -298,7 +333,13 @@ pub fn mcp<T: InspectTarget>(request: &str, server: &mut Server<'_, T>) -> Optio
                 .unwrap_or(serde_json::json!({}));
             match call_of(name, arguments) {
                 Some(call) => {
+                    // Actions an MCP client applies reach the bus as `Source::Mcp`.
+                    let previous = server.driver.source();
+                    server
+                        .driver
+                        .set_source(guiraffe_core::protocol::Source::Mcp);
                     let answer = server.call(call);
+                    server.driver.set_source(previous);
                     let text = serde_json::to_string(&answer).unwrap_or_default();
                     Ok(serde_json::json!({
                         "content": [{ "type": "text", "text": text }],
@@ -344,6 +385,19 @@ fn call_of(name: &str, arguments: serde_json::Value) -> Option<Call> {
         "drive" => Call::Drive {
             action: serde_json::from_value(arguments.get("action")?.clone()).ok()?,
         },
+        "query" => Call::Query {
+            control: arguments.get("control")?.as_str()?.to_owned(),
+        },
+        "apply" => {
+            let action = arguments.get("action")?;
+            Call::Drive {
+                action: Action::Apply {
+                    control: arguments.get("control")?.as_str()?.to_owned(),
+                    name: action.get("name")?.as_str()?.to_owned(),
+                    payload: action.get("payload").cloned().unwrap_or_default(),
+                },
+            }
+        }
         "check" => Call::Check,
         "replay" => Call::Replay {
             script: serde_json::from_value(arguments.get("script")?.clone()).ok()?,

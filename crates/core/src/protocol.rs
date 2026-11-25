@@ -3,6 +3,9 @@ use crate::widget_value::Value;
 use gpui_kit::{App, Context, Entity, Global, Window, WindowId};
 use std::{collections::HashMap, panic::Location, rc::Rc};
 
+mod record;
+pub use record::{Recorded, Recorder, replay};
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ControlId(u64);
 
@@ -46,6 +49,36 @@ pub struct ControlSnapshot {
     pub disabled: Option<bool>,
     pub focused: Option<bool>,
     pub label: Option<Rc<str>>,
+}
+
+impl ControlSnapshot {
+    /// Wire form for the inspect/drive API, MCP and scripts. Absent fields are omitted.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        if let Some(value) = &self.value {
+            out.insert("value".into(), value.to_json());
+        }
+        for (key, flag) in [
+            ("checked", self.checked),
+            ("open", self.open),
+            ("disabled", self.disabled),
+            ("focused", self.focused),
+        ] {
+            if let Some(flag) = flag {
+                out.insert(key.into(), flag.into());
+            }
+        }
+        if let Some(selected) = &self.selected {
+            out.insert(
+                "selected".into(),
+                selected.iter().copied().collect::<Vec<_>>().into(),
+            );
+        }
+        if let Some(label) = &self.label {
+            out.insert("label".into(), label.as_ref().into());
+        }
+        serde_json::Value::Object(out)
+    }
 }
 
 pub trait Observe {

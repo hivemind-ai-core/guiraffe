@@ -862,3 +862,126 @@ fn spotlight_actions_carry_group_and_shortcut_chips_and_recents_persist(cx: &mut
     })
     .expect("reopen");
 }
+#[gpui_kit::test]
+fn control_actions_run_from_shortcut_and_spotlight_like_the_pointer(cx: &mut TestAppContext) {
+    use guiraffe_core::protocol::{
+        Action, ActionBus, ActionError, Capabilities, ControlSnapshot, Drive, Observe, Recorder,
+        Source, names,
+    };
+    struct Theme(bool, Rc<std::cell::RefCell<Vec<bool>>>);
+    impl Observe for Theme {
+        type Snapshot = ControlSnapshot;
+        fn snapshot(&self, _: &App) -> ControlSnapshot {
+            ControlSnapshot {
+                checked: Some(self.0),
+                label: Some("Dark theme".into()),
+                ..Default::default()
+            }
+        }
+    }
+    impl Drive for Theme {
+        type Action = ();
+        type Output = ();
+        fn decode(action: &Action) -> Result<(), ActionError> {
+            (action.name == names::TOGGLE)
+                .then_some(())
+                .ok_or(ActionError::Unsupported)
+        }
+        fn apply(
+            &mut self,
+            _: (),
+            _: &mut Window,
+            _: &mut Context<Self>,
+        ) -> Result<(), ActionError> {
+            self.0 = !self.0;
+            self.1.borrow_mut().push(self.0);
+            Ok(())
+        }
+    }
+    let (handle, commands) = open(cx, "Editor");
+    let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let recorder = Recorder::new();
+    let theme = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let theme = cx.new(|_| Theme(false, events.clone()));
+            ActionBus::register(
+                "settings/theme",
+                &theme,
+                "switch",
+                Capabilities::TOGGLE,
+                window,
+                cx,
+            );
+            ActionBus::add_interceptor(recorder.clone(), window, cx);
+            // Registering a control creates no command: surfacing is lazy.
+            assert!(commands.entity().read(cx).catalog().is_empty());
+            // The pointer path.
+            let id = guiraffe_core::protocol::ControlId::lookup("settings/theme", cx).expect("id");
+            let toggle = Action {
+                name: names::TOGGLE.into(),
+                payload: guiraffe_core::widget_value::Value::Null,
+            };
+            ActionBus::dispatch(id, &toggle, Source::Pointer, window, cx).expect("pointer");
+            // Bind a shortcut to the control action, declaratively.
+            let command = commands
+                .control_command("settings/theme", "toggle", window, cx)
+                .expect("command");
+            assert_eq!(command.title, "Dark theme: Toggle");
+            assert!(command.run.control_action().is_some());
+            assert!(
+                commands
+                    .control_command("settings/theme", "open", window, cx)
+                    .is_err()
+            );
+            commands
+                .register_handler(
+                    command.keybinding(Keybinding::parse("ctrl+alt+t").expect("binding")),
+                    cx,
+                )
+                .expect("register");
+            theme
+        })
+        .expect("setup");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press("ctrl-alt-t", cx)
+    })
+    .expect("shortcut");
+    cx.run_until_parked();
+    // The control action is listed once, although it is also a registered command.
+    cx.update_window(handle.into(), |_, window, cx| {
+        let palette = commands.open_spotlight(window, cx).expect("palette");
+        let listed = palette
+            .read(cx)
+            .model()
+            .actions()
+            .iter()
+            .filter(|a| a.id.as_ref() == "control.settings/theme.toggle")
+            .count();
+        assert_eq!(listed, 1);
+        window.input("dark theme", cx);
+        window.press("enter", cx);
+    })
+    .expect("spotlight");
+    cx.run_until_parked();
+    // Unregistered control commands execute by id too.
+    cx.update_window(handle.into(), |_, window, cx| {
+        crate::execute(&id("control.settings/theme.toggle"), window, cx).expect("execute");
+    })
+    .expect("programmatic");
+    let theme_state = cx.update(|cx| theme.read(cx).0);
+    assert!(!theme_state, "four toggles");
+    assert_eq!(
+        *events.borrow(),
+        [true, false, true, false],
+        "same events as the pointer"
+    );
+    assert_eq!(
+        recorder.take().iter().map(|r| r.source).collect::<Vec<_>>(),
+        [
+            Source::Pointer,
+            Source::Shortcut,
+            Source::Spotlight,
+            Source::Host
+        ]
+    );
+}

@@ -90,6 +90,8 @@ struct Shared {
     host_renders: Cell<u64>,
     repeat_viewport: Cell<crate::RepeatViewport>,
     owner: std::rc::Weak<Shared>,
+    /// Bus registration, once the host is registered as a control.
+    control: Cell<Option<guiraffe_core::protocol::ControlId>>,
 }
 
 impl Shared {
@@ -796,10 +798,40 @@ impl DataUi {
             // by writing the host entity). The cell breaks the Rc cycle Shared ↔ emit.
             let shared_slot: Rc<RefCell<std::rc::Weak<Shared>>> = Rc::default();
             let target = shared_slot.clone();
-            let emit: Emit = Rc::new(move |id, payload, scope, generation, _w, cx| {
-                if let Some(shared) = target.borrow().upgrade() {
-                    shared.dispatch(id, payload, scope, generation, cx);
+            let emit: Emit = Rc::new(move |id, payload, scope, generation, window, cx| {
+                let Some(shared) = target.borrow().upgrade() else {
+                    return;
+                };
+                // A registered host routes document-level events over the action bus, so
+                // interceptors (recording, permissions) see them and replay reproduces them.
+                if scope == 0
+                    && let Some(control) = shared.control.get()
+                {
+                    if !shared.valid_event(id, generation) {
+                        return;
+                    }
+                    let name = shared
+                        .template
+                        .borrow()
+                        .names()
+                        .event_name(id)
+                        .map(str::to_owned);
+                    if let Some(name) = name {
+                        let action = guiraffe_core::protocol::Action {
+                            name: name.into(),
+                            payload,
+                        };
+                        let _ = guiraffe_core::protocol::ActionBus::dispatch(
+                            control,
+                            &action,
+                            guiraffe_core::protocol::Source::DataUi,
+                            window,
+                            cx,
+                        );
+                    }
+                    return;
                 }
+                shared.dispatch(id, payload, scope, generation, cx);
             });
             let input_target = shared_slot.clone();
             let input_emit: crate::widget::InputEmit = Rc::new(move |request, cx| {
@@ -839,6 +871,7 @@ impl DataUi {
                 host_renders: Cell::new(0),
                 repeat_viewport: Cell::default(),
                 owner: owner.clone(),
+                control: Cell::default(),
             });
             *shared_slot.borrow_mut() = Rc::downgrade(&shared);
             Self { registry, shared }
@@ -927,6 +960,77 @@ impl DataUi {
             .borrow_mut()
             .apply(&mut self.shared.buf.borrow_mut());
         cx.notify();
+        Ok(())
+    }
+}
+
+impl DataUi {
+    /// Register this host on the window's action bus at `path`. Each document event is
+    /// then an action named after the event, with the event payload: pointer input in the
+    /// document dispatches it with [`Source::DataUi`], and scripts, MCP and replay apply
+    /// the same action by path. Events inside repeated rows stay direct (their row
+    /// identity is not addressable yet). Re-register after moving windows.
+    ///
+    /// [`Source::DataUi`]: guiraffe_core::protocol::Source::DataUi
+    pub fn register(
+        this: &Entity<Self>,
+        path: &str,
+        window: &Window,
+        cx: &mut App,
+    ) -> guiraffe_core::protocol::ControlId {
+        let id = guiraffe_core::protocol::ActionBus::register(
+            path,
+            this,
+            "data-ui",
+            guiraffe_core::protocol::Capabilities::empty(),
+            window,
+            cx,
+        );
+        this.read(cx).shared.control.set(Some(id));
+        id
+    }
+}
+
+impl guiraffe_core::protocol::Observe for DataUi {
+    type Snapshot = guiraffe_core::protocol::ControlSnapshot;
+    fn snapshot(&self, cx: &App) -> Self::Snapshot {
+        guiraffe_core::protocol::ControlSnapshot {
+            label: self
+                .shared
+                .control
+                .get()
+                .and_then(|id| id.path(cx))
+                .map(Into::into),
+            ..Default::default()
+        }
+    }
+}
+
+impl guiraffe_core::protocol::Drive for DataUi {
+    /// Event names resolve against the current document when applied.
+    type Action = guiraffe_core::protocol::Action;
+    type Output = ();
+    fn decode(
+        action: &guiraffe_core::protocol::Action,
+    ) -> Result<Self::Action, guiraffe_core::protocol::ActionError> {
+        Ok(action.clone())
+    }
+    fn apply(
+        &mut self,
+        action: Self::Action,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), guiraffe_core::protocol::ActionError> {
+        let event = self
+            .shared
+            .template
+            .borrow()
+            .names()
+            .event(&action.name)
+            .ok_or(guiraffe_core::protocol::ActionError::Unsupported)?;
+        let generation = self.shared.generation.get();
+        self.shared
+            .dispatch(event, action.payload, 0, generation, cx);
         Ok(())
     }
 }

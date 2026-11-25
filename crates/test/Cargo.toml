@@ -92,3 +92,7 @@ required-features = ["inspect"]
 [[test]]
 name = "socket"
 required-features = ["inspect"]
+
+[[test]]
+name = "bus"
+required-features = ["inspect"]

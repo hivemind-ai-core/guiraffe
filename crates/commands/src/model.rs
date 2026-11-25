@@ -18,7 +18,8 @@ impl CommandId {
     pub fn parse(value: &str) -> Result<Self, Error> {
         let mut segment_start = true;
         for c in value.chars() {
-            if matches!(c, '.' | '-' | '_') {
+            // `/` separates control-path segments in `control.<path>.<action>` ids.
+            if matches!(c, '.' | '-' | '_' | '/') {
                 if segment_start {
                     return Err(Error::InvalidId(value.into()));
                 }
