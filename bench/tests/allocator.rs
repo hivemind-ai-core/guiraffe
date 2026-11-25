@@ -905,3 +905,31 @@ fn disabled_undo_history_allocates_nothing_on_the_push_path() -> anyhow::Result<
     assert_eq!(counts.allocations, 0);
     Ok(())
 }
+
+#[test]
+fn store_writes_outside_a_batch_allocate_nothing_extra() -> anyhow::Result<()> {
+    use guiraffe_state::Store;
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    app.update(|cx| -> anyhow::Result<()> {
+        let store = Store::new(Counter::default(), cx);
+        // Warm the store; the batch check reads an absent global and then a present one.
+        store.dispatch_now(Bump, cx);
+        let (_, absent) = count_allocations(|| store.dispatch_now(Bump, cx))?;
+        assert_eq!(absent.allocations, 0, "no batch global: {absent:?}");
+        cx.default_global::<Marker>();
+        let (_, counts) = count_allocations(|| store.dispatch_now(Bump, cx))?;
+        assert_eq!(counts.allocations, 0, "{counts:?}");
+        assert_eq!(store.state(cx).0, 3);
+        Ok(())
+    })
+}
+
+/// Any global, so the app's global map is non-empty like a real app's.
+#[derive(Default)]
+struct Marker;
+impl gpui_kit::Global for Marker {}

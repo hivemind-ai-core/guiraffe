@@ -1,7 +1,7 @@
 //! Provisional control protocol. Persist paths; integer handles belong to one App.
 use crate::widget_value::Value;
 use gpui_kit::{App, Context, Entity, Global, Window, WindowId};
-use std::{collections::HashMap, panic::Location, rc::Rc};
+use std::{cell::Cell, collections::HashMap, panic::Location, rc::Rc};
 
 mod record;
 pub use record::{Recorded, Recorder, replay};
@@ -323,6 +323,18 @@ struct Entry {
 #[derive(Default)]
 struct Buses(HashMap<WindowId, WindowBus>);
 impl Global for Buses {}
+
+/// The `dispatch_batch` currently running on this app, if any. Stores read it to record a
+/// batch's writes as one undo step, so no interceptor is installed and a single `dispatch`
+/// keeps the hook-free fast path.
+#[derive(Default)]
+struct OpenBatch {
+    /// Nested `dispatch_batch` calls; only the outermost opens a group.
+    depth: Cell<usize>,
+    /// Counts outermost batches, so consecutive batches are distinct groups.
+    serial: Cell<u64>,
+}
+impl Global for OpenBatch {}
 #[derive(Default)]
 struct WindowBus {
     entries: HashMap<ControlId, Entry>,
@@ -459,6 +471,14 @@ impl ActionBus {
         Self::run(id, target.as_deref(), &hooks, action, source, window, cx)
     }
 
+    /// The outermost `dispatch_batch` running now, as a serial that differs for each
+    /// batch, or `None` outside a batch. A store with history joins the batch's undo
+    /// group when it is written during one.
+    pub fn open_batch(cx: &App) -> Option<u64> {
+        let open = cx.try_global::<OpenBatch>()?;
+        (open.depth.get() > 0).then(|| open.serial.get())
+    }
+
     /// Apply `actions` to one target as one group: interceptors see `begin_group`,
     /// each action, then `end_group`, and store history records one undo step.
     /// Returns each action's outcome, or stops at the first rejected action.
@@ -481,6 +501,11 @@ impl ActionBus {
         };
         let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
         let hooks = bus.hooks.clone();
+        let open = cx.default_global::<OpenBatch>();
+        if open.depth.get() == 0 {
+            open.serial.set(open.serial.get().wrapping_add(1));
+        }
+        open.depth.set(open.depth.get() + 1);
         let group = Group {
             id,
             source,
@@ -506,6 +531,9 @@ impl ActionBus {
         };
         for hook in hooks.iter().rev() {
             hook.end_group(group, &result, window, cx);
+        }
+        if let Some(open) = cx.try_global::<OpenBatch>() {
+            open.depth.set(open.depth.get().saturating_sub(1));
         }
         Batch {
             outcomes,
