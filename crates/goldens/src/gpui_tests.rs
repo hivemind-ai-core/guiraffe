@@ -84,12 +84,7 @@ fn pointer_and_mcp_produce_the_same_events_and_state(cx: &mut TestAppContext) {
         window.focus(&focus, cx);
     });
     vcx.run_until_parked();
-    vcx.update(|window, cx| {
-        window.render_frame(cx);
-        window.input("clipped", cx);
-        let value = pointer_app.read(cx).list().read(cx).reason_value(cx);
-        eprintln!("DIAG value={value:?}");
-    });
+    vcx.simulate_input("clipped");
     vcx.run_until_parked();
     assert_eq!(
         &*state(&pointer_app, vcx).reason,
@@ -190,7 +185,21 @@ fn pointer_and_mcp_produce_the_same_events_and_state(cx: &mut TestAppContext) {
 
     assert_eq!(reviewed(&by_mcp), reviewed(&by_pointer));
     assert_eq!(by_mcp.verdicts.len(), 2);
-    assert_eq!(*mcp_events.0.borrow(), *pointer_events.0.borrow());
+    // Typing emits one reason edit per keystroke; MCP sets the text in one action. Edits
+    // of the same field coalesce to the last, as an undo history would.
+    let coalesced = |events: &Events| {
+        let mut out: Vec<String> = Vec::new();
+        for event in events.0.borrow().iter() {
+            if event.starts_with("SetReason")
+                && out.last().is_some_and(|last| last.starts_with("SetReason"))
+            {
+                out.pop();
+            }
+            out.push(event.clone());
+        }
+        out
+    };
+    assert_eq!(coalesced(&mcp_events), coalesced(&pointer_events));
     assert!(recorder.take().iter().all(|r| r.source == Source::Mcp));
 }
 

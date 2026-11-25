@@ -157,7 +157,6 @@ pub struct ListPanel {
     mirrored: Arc<str>,
     reason: Entity<InputState>,
     _typed: Subscription,
-    _focus_watch: [Subscription; 2],
 }
 
 impl ListPanel {
@@ -187,13 +186,7 @@ impl ListPanel {
                 }
             },
         );
-        // Dock content is a cached view: without a re-render on focus, the text field keeps
-        // the paint (and input handler) from before it was focused and drops typed text.
-        let field = reason.read(cx).focus_handle(cx);
-        let focused = cx.on_focus(&field, window, |_, _, cx| cx.notify());
-        let blurred = cx.on_blur(&field, window, |_, _, cx| cx.notify());
         Self {
-            _focus_watch: [focused, blurred],
             focus: cx.focus_handle(),
             rows,
             status,
@@ -202,9 +195,6 @@ impl ListPanel {
             reason,
             _typed: typed,
         }
-    }
-    pub fn reason_value(&self, cx: &App) -> SharedString {
-        self.reason.read(cx).value()
     }
     pub fn reason_focus(&self, cx: &App) -> FocusHandle {
         self.reason.read(cx).focus_handle(cx)
@@ -216,11 +206,16 @@ pub const ROW_HEIGHT: f32 = 28.;
 impl Render for ListPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Mirror the store's reason into the field (set over the bus, or cleared by a verdict).
+        // Only on store changes: mirroring every frame would fight typing whenever a
+        // keystroke lands before its store update does.
         let wanted = self.reason_text.get(cx).clone();
-        if *self.reason.read(cx).value() != *wanted {
-            self.reason.update(cx, |input, cx| {
-                input.set_value(wanted.to_string(), window, cx)
-            });
+        if wanted != self.mirrored {
+            self.mirrored = wanted.clone();
+            if *self.reason.read(cx).value() != *wanted {
+                self.reason.update(cx, |input, cx| {
+                    input.set_value(wanted.to_string(), window, cx)
+                });
+            }
         }
         let (body, text, border, primary) = colors(cx);
         let (goldens, selected, verdicts) = self.rows.get(cx).clone();
@@ -238,6 +233,7 @@ impl Render for ListPanel {
                     div()
                         .id(("golden-row", i))
                         .test_support()
+                        .w_full()
                         .h(px(ROW_HEIGHT))
                         .px(px(8.))
                         .flex()
