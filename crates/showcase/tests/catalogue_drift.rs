@@ -493,6 +493,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Read-only node render counter for instrumentation.",
     ),
     (
+        "ui::DataUi::register",
+        "Rust host registration on the action bus; document events become control actions.",
+    ),
+    (
         "ui::DataUi::set_document",
         "Rust hot-reload operation that swaps the document mounted by an existing host.",
     ),

@@ -33,6 +33,15 @@ pub enum Action {
     SetTheme { scheme: String },
     /// Switches the fixture of the app.
     SetFixture { name: String },
+    /// Applies a protocol action to a registered control, by path, on the action bus.
+    /// This is how agents and scripts drive the app; simulated input stays for tests of
+    /// hit-testing and focus. Wire form: `{"action": "apply", "control", "name", "payload"}`.
+    Apply {
+        control: String,
+        name: String,
+        #[serde(default)]
+        payload: serde_json::Value,
+    },
 }
 
 impl Action {
@@ -49,6 +58,7 @@ impl Action {
             Action::Resize { .. } => "resize",
             Action::SetTheme { .. } => "set_theme",
             Action::SetFixture { .. } => "set_fixture",
+            Action::Apply { .. } => "apply",
         }
     }
 }
@@ -93,6 +103,7 @@ pub type Hook = Box<dyn FnMut(&str, &mut gpui_kit::App) -> bool>;
 pub struct Driver<'a, T> {
     target: &'a mut T,
     events: EventSink,
+    source: guiraffe_core::protocol::Source,
     theme: Option<Hook>,
     fixture: Option<Hook>,
 }
@@ -103,9 +114,37 @@ impl<'a, T: InspectTarget> Driver<'a, T> {
         Self {
             target,
             events,
+            source: guiraffe_core::protocol::Source::Script,
             theme: None,
             fixture: None,
         }
+    }
+
+    /// The bus source of [`Action::Apply`]: [`Source::Script`] by default, [`Source::Mcp`]
+    /// while the MCP server answers a tool call.
+    ///
+    /// [`Source::Script`]: guiraffe_core::protocol::Source::Script
+    /// [`Source::Mcp`]: guiraffe_core::protocol::Source::Mcp
+    pub fn set_source(&mut self, source: guiraffe_core::protocol::Source) {
+        self.source = source;
+    }
+
+    /// The bus source of [`Action::Apply`].
+    pub fn source(&self) -> guiraffe_core::protocol::Source {
+        self.source
+    }
+
+    /// The snapshot of a registered control, as JSON.
+    pub fn query(&mut self, control: &str) -> Result<serde_json::Value, String> {
+        use guiraffe_core::protocol::{ActionBus, ControlId};
+        self.with_window(|window, cx| {
+            let id = ControlId::lookup(control, cx)
+                .ok_or_else(|| format!("there is no control {control}"))?;
+            ActionBus::query(id, window, cx)
+                .map(|snapshot| snapshot.to_json())
+                .map_err(|error| format!("the control {control} answered {error:?}"))
+        })
+        .unwrap_or_else(|| Err("the window is gone".into()))
     }
 
     /// The hook that switches the theme of the app.
@@ -233,6 +272,27 @@ impl<'a, T: InspectTarget> Driver<'a, T> {
                 if changed != Some(true) {
                     return Err(format!("the app does not know the fixture {name:?}"));
                 }
+            }
+            Action::Apply {
+                control,
+                name,
+                payload,
+            } => {
+                use guiraffe_core::protocol::{Action as BusAction, ActionBus, ControlId};
+                let action =
+                    BusAction::from_json(&serde_json::json!({"name": name, "payload": payload}))
+                        .map_err(|error| format!("{error:?}"))?;
+                let source = self.source;
+                self.with_window(|window, cx| {
+                    let id = ControlId::lookup(control, cx)
+                        .ok_or_else(|| format!("there is no control {control}"))?;
+                    ActionBus::dispatch(id, &action, source, window, cx)
+                        .map(drop)
+                        .map_err(|error| {
+                            format!("the control {control} rejected the action: {error:?}")
+                        })
+                })
+                .unwrap_or_else(|| Err("the window is gone".into()))?;
             }
         }
         let _ = result;

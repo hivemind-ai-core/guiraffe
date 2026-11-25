@@ -28,6 +28,8 @@ fn noop(_: &Payload, _: &mut Window, _: &mut gpui_kit::App) {}
 struct Host {
     ribbon: Option<Entity<RibbonState>>,
     button: bool,
+    /// Both windows own a ribbon state, so they differ only in what they render.
+    _state: Entity<RibbonState>,
 }
 impl Render for Host {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -108,12 +110,13 @@ fn mount(
                 move |window, cx| {
                     let focus = cx.focus_handle();
                     focus.focus(window, cx);
-                    let ribbon = with_ribbon
-                        .then(|| cx.new(|cx| RibbonState::new(&commands, model, window, cx)));
+                    let state = cx.new(|cx| RibbonState::new(&commands, model, window, cx));
+                    let ribbon = with_ribbon.then(|| state.clone());
                     *out.borrow_mut() = ribbon.clone();
                     let host = cx.new(|_| Host {
                         button: ribbon.is_some() && with_button,
                         ribbon,
+                        _state: state,
                     });
                     guiraffe_overlays::root(host, window, cx)
                 },

@@ -115,6 +115,25 @@ One per-window bus: `bus.dispatch(target, action, source, cx)` where `source` is
 - The inspect/drive API gains `query(id) → snapshot` and `apply(id, action)`. Simulated input
   stays for tests that exercise hit-testing and focus; agents and scripts use actions.
 
+Status (0.3 item 12):
+
+- Commands: `Handler::apply(path, action)` is the declarative binding. Any registered control
+  action is the command `control.<path>.<action>` (command ids accept `/`), resolved on the bus
+  only when invoked; `Commands::control_command` builds one titled from the control's label for
+  a shortcut or ribbon entry, and Spotlight lists every control action when it opens (none are
+  enumerated or allocated before). Keymap runs dispatch as `Shortcut`, the palette as
+  `Spotlight`, menus as `Pointer`, programmatic `execute` as `Host`.
+- DataUi: `DataUi::register(host, path, window, cx)` makes the host a control; each document
+  event is an action named after the event. Pointer input dispatches with `Source::DataUi`.
+  Events inside repeated rows still dispatch directly: row identity is not addressable yet.
+- Inspect/drive and MCP: `Action::Apply { control, action }` and `Call::Query { control }`;
+  MCP tools `query` and `apply`. Applies are `Source::Script` from scripts and the socket, and
+  `Source::Mcp` from MCP tool calls.
+- `Recorder` is the recording interceptor (by path, batches kept as groups); `replay` dispatches
+  a recording with `Source::Replay`, which is never recorded again.
+- Toasts: `Toast::action(label, control, action)` adds a button that dispatches the action with
+  `Source::Pointer` and dismisses the toast.
+
 ## 7. Store binding
 
 - `guiraffe-state`'s `Store<S>` becomes the canonical binding layer. A control prop can be bound

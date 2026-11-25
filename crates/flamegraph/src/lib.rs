@@ -9,6 +9,7 @@
 mod model;
 pub use model::*;
 
+mod strips;
 mod view;
 pub use view::*;
 

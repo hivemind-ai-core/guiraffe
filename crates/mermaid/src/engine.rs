@@ -167,7 +167,7 @@ fn draw_layout(
     let graph = &parsed.graph;
     let layout = if let Some(preview) = stage
         && graph.kind == DiagramKind::Flowchart
-        && (graph.nodes.len() >= 256 || graph.edges.len() >= 256)
+        && (graph.nodes.len() >= 64 || graph.edges.len() >= 64)
     {
         compute_flowchart_staged(graph, theme, &config, preview, cancelled)
     } else {
@@ -626,7 +626,8 @@ mod tests {
         let mut source = String::from(
             "flowchart TD\nsubgraph Group\nA{Start} ==>|thick| B\nend\nB -.-> C\nstyle A fill:#123456\n",
         );
-        for node in 0..256 {
+        // A, B, C and 61 leaves exercise the first staged node count.
+        for node in 0..61 {
             writeln!(source, "C --> n{node}[Node {node}]").expect("write edge");
         }
         let request = request(&source);

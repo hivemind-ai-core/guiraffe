@@ -161,6 +161,8 @@ fn the_tools_cover_the_api() {
         "drive",
         "check",
         "replay",
+        "query",
+        "apply",
     ] {
         assert!(
             names.contains(&expected.to_string()),

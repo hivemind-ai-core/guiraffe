@@ -30,6 +30,8 @@ mod document;
 mod widget_specs;
 
 pub mod context;
+pub mod control;
+pub use control::ControlAction;
 mod error;
 pub mod keybinding;
 pub mod model;

@@ -54,15 +54,14 @@ proportion to what changed.
 | 14 | Multi-window docking | Pop out, dock back, restore layout. Control ids survive the move. Spike cross-window drag early |
 | 15 | The dogfood tool | Start with item 9, so it shapes the API |
 
-### P3: release quality (cut first)
+### P3: release quality
 
 | # | Item | Notes |
 |---|---|---|
-| 16 | `guiraffe` umbrella crate and one supported way to consume the vendored patches | Copying a patch table is the worst part of adoption today |
-| 17 | Compile-only CI for macOS and Windows | No hardware needed. Makes platform claims checkable |
-| 18 | Startup study | Phase breakdown, floor against an empty GPUI window, cheap wins |
+| 16 | `guiraffe` umbrella crate and one supported way to consume the vendored patches | If time allows; otherwise the first 0.4 item |
 | 19 | Trim GPUI's per-frame high-water buffers | Accepted 0.2 exception. Falls out of item 8 |
-| 20 | Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext workaround, make Kit's skeleton respect reduced motion | Many are probably fixed already. The skeleton is a small accessibility fix in vendored GPUI Kit |
+
+Items 17, 18 and 20 are deferred until after 0.4 (decided on 2026-11-25; see "After 0.4").
 
 ### Added for 0.3
 
@@ -88,7 +87,7 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 **Goal:** Passage, a DAW built on GUIraffe, can drop its hand-built controls and its own undo
 stack. Requested on 2026-11-25 against rev `716d957e`. Starts after 0.3 and comes before
-any 0.4 work. Passage moves to 0.3 when 0.3 ships, so every item is built on the 0.3 design,
+any 0.4 work. Reread the requests in `../daw/docs/guiraffe-requests/` when it starts: the list may have changed. Passage moves to 0.3 when 0.3 ships, so every item is built on the 0.3 design,
 not on the 0.2 shapes the requests sketch.
 
 How the 0.3 design changes the requests:
@@ -134,8 +133,18 @@ express one of these items, fix the API before 0.3 freezes rather than working a
 
 ## 0.4: Text, pixels and platforms
 
-Candidates, in likely order:
+Candidates, in likely order. Item 0 comes first, after 0.3.1 has landed what Passage needs.
 
+0. **Our own GPUI fork and the umbrella crate.** Fork `gpui-fast` into a crate we publish on
+   crates.io. The name is open: `gpui-faster` and `guiraffe-gpui` are free; avoid `gpui-warp`,
+   which collides with Warp's own Rust UI framework. Its package keeps the `gpui` crate name, so
+   GPUI Kit and macros resolve unchanged. We track `gpui-fast` releases and it tracks Zed:
+   GUIraffe's changes live in their own module, as gpui-fast keeps its additions in `fast/`, so a
+   sync stays a merge, with a script and a gate per release. The patches in `vendor/README.md`
+   become commits in the fork. Drop the upstream GPUI backend from the gates and keep one frozen
+   upstream measurement in `docs/performance.md` as a baseline. Ship the `guiraffe` umbrella crate
+   on top (0.3 item 16, if 0.3 didn't ship it), so apps depend on one crate and copy no patch
+   table. Check Longbridge's release cadence first: syncing is our job from then on.
 1. **Text:** evaluate Parley against GPUI's text system, then rich text editing with IME,
    accessibility text ranges and selection across virtualized content.
 2. **Accessibility:** an incremental tree fed by the control registry, its measured cost, and
@@ -147,7 +156,8 @@ Candidates, in likely order:
    already reserves a surface pipeline that draws nothing today. Pulsar's WGPUI
    (`wgpu_surface`) shows the approach; we patch our GPUI rather than adopt that fork.
    gpui-fast's `ExternalGpu` composition layer is the alternative for video.
-4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io. Decide
+4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io. In the
+   fork, decide
    whether macOS and Windows draw with the wgpu renderer that Linux and the web use (wgpu runs on
    Metal and Direct3D 12) instead of GPUI's native Metal and Direct3D 11 renderers. One renderer
    would carry gpui-fast's renderer work and GPU surfaces everywhere; measure startup, frame
@@ -160,3 +170,13 @@ Candidates, in likely order:
 7. The items moved from 0.3 above.
 
 Mobile is out of scope until the desktop platforms are supported.
+
+## After 0.4
+
+Deferred from 0.3 P3:
+
+- Compile-only CI for macOS and Windows (was 0.3 item 17). Can't be done yet.
+- Startup study (was 0.3 item 18): phase breakdown, floor against an empty GPUI window, cheap
+  wins. Nice to have; can be done any time.
+- Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext
+  workaround, make Kit's skeleton respect reduced motion (was 0.3 item 20).

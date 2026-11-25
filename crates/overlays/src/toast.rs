@@ -30,6 +30,17 @@ pub struct Toast {
     pub auto_close: Option<Duration>,
     pub elapsed: Duration,
     pub paused: bool,
+    /// An action button on the card, such as Undo. Pressing it dispatches a bus action.
+    pub action: Option<ToastAction>,
+}
+
+/// A toast's action button: pressing it applies `action` to the control at `control`
+/// (a path on the window's action bus) with `Source::Pointer`, then dismisses the toast.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToastAction {
+    pub label: gpui_kit::SharedString,
+    pub control: gpui_kit::SharedString,
+    pub action: guiraffe_core::protocol::Action,
 }
 impl Toast {
     pub fn new(id: ToastId, message: impl Into<String>) -> Self {
@@ -40,7 +51,22 @@ impl Toast {
             auto_close: Some(Duration::from_secs(5)),
             elapsed: Duration::ZERO,
             paused: false,
+            action: None,
         }
+    }
+    /// Add an action button, for example Undo on a "Deleted 3 rows" toast.
+    pub fn action(
+        mut self,
+        label: impl Into<gpui_kit::SharedString>,
+        control: impl Into<gpui_kit::SharedString>,
+        action: guiraffe_core::protocol::Action,
+    ) -> Self {
+        self.action = Some(ToastAction {
+            label: label.into(),
+            control: control.into(),
+            action,
+        });
+        self
     }
     /// Remaining fraction, or `None` for persistent toasts.
     pub fn progress(&self) -> Option<f32> {
