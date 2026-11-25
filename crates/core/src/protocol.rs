@@ -345,7 +345,10 @@ mod tests {
     #[test]
     fn erased_action_roundtrip() {
         let input = serde_json::json!({"name":"select","payload":{"indices":[1,3]}});
-        assert_eq!(Action::from_json(&input).unwrap().to_json(), input);
+        assert_eq!(
+            Action::from_json(&input).map(|action| action.to_json()),
+            Ok(input)
+        );
         assert!(Action::from_json(&serde_json::json!({"name":"select"})).is_err());
     }
     #[test]
@@ -470,10 +473,10 @@ mod tests {
             .into_iter()
             .enumerate()
             {
-                ActionBus::dispatch(id, &action, source, window, cx).unwrap();
+                assert_eq!(ActionBus::dispatch(id, &action, source, window, cx), Ok(()));
                 assert_eq!(
-                    ActionBus::query(id, window, cx).unwrap().checked,
-                    Some(i % 2 == 0)
+                    ActionBus::query(id, window, cx).map(|s| s.checked),
+                    Ok(Some(i % 2 == 0))
                 );
             }
             let invalid = Action {
@@ -485,8 +488,8 @@ mod tests {
                 Err(ActionError::Unsupported)
             );
             assert_eq!(
-                ActionBus::query(id, window, cx).unwrap().checked,
-                Some(true)
+                ActionBus::query(id, window, cx).map(|s| s.checked),
+                Ok(Some(true))
             );
             ActionBus::unregister(id, window, cx);
             assert_eq!(
