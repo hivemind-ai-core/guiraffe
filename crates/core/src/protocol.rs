@@ -389,9 +389,8 @@ impl ActionBus {
         let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
         if bus.hooks.is_empty() {
             // The empty interceptor list costs a branch (design section 8.5).
-            return target
-                .ok_or(ActionError::UnknownTarget)?
-                .apply(action, window, cx);
+            let target = target.ok_or(ActionError::UnknownTarget)?;
+            return with_source(source, || target.apply(action, window, cx));
         }
         let hooks = bus.hooks.clone();
         Self::run(id, target.as_deref(), &hooks, action, source, window, cx)
@@ -444,14 +443,40 @@ impl ActionBus {
                 hook.before(id, action, source, window, cx)
             })
             .and_then(|()| {
-                target
-                    .ok_or(ActionError::UnknownTarget)?
-                    .apply(action, window, cx)
+                let target = target.ok_or(ActionError::UnknownTarget)?;
+                with_source(source, || target.apply(action, window, cx))
             });
         for hook in hooks[..called].iter().rev() {
             hook.after(id, action, source, &result, window, cx);
         }
         result
+    }
+}
+
+thread_local! {
+    static CURRENT_SOURCE: std::cell::Cell<Option<Source>> = const { std::cell::Cell::new(None) };
+}
+
+/// Restores the enclosing dispatch's source, also when `apply` unwinds.
+struct RestoreSource(Option<Source>);
+
+impl Drop for RestoreSource {
+    fn drop(&mut self) {
+        CURRENT_SOURCE.with(|current| current.set(self.0));
+    }
+}
+
+fn with_source<R>(source: Source, apply: impl FnOnce() -> R) -> R {
+    let _restore = RestoreSource(CURRENT_SOURCE.with(|current| current.replace(Some(source))));
+    apply()
+}
+
+impl ActionBus {
+    /// The source of the action being applied, while a control's `Drive::apply` runs
+    /// under [`ActionBus::dispatch`] or [`ActionBus::dispatch_batch`]. `None` outside a
+    /// dispatch. Nested dispatches see their own source and restore the outer one.
+    pub fn current_source(_cx: &App) -> Option<Source> {
+        CURRENT_SOURCE.with(std::cell::Cell::get)
     }
 }
 
@@ -821,5 +846,95 @@ mod tests {
             );
             drop(hook.target.borrow_mut().take());
         });
+    }
+
+    #[gpui_kit::test]
+    fn apply_sees_its_own_source_and_nested_dispatch_restores_it(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        struct Probe {
+            inner: Option<ControlId>,
+            seen: Rc<RefCell<Vec<Option<Source>>>>,
+        }
+        impl Observe for Probe {
+            type Snapshot = ControlSnapshot;
+            fn snapshot(&self, _: &App) -> ControlSnapshot {
+                ControlSnapshot::default()
+            }
+        }
+        impl Drive for Probe {
+            type Action = ();
+            type Output = ();
+            fn decode(_: &Action) -> Result<(), ActionError> {
+                Ok(())
+            }
+            fn apply(
+                &mut self,
+                _: (),
+                window: &mut Window,
+                cx: &mut Context<Self>,
+            ) -> Result<(), ActionError> {
+                self.seen.borrow_mut().push(ActionBus::current_source(cx));
+                if let Some(inner) = self.inner {
+                    let action = Action {
+                        name: names::ACTIVATE.into(),
+                        payload: Value::Null,
+                    };
+                    ActionBus::dispatch(inner, &action, Source::Script, window, cx)?;
+                    self.seen.borrow_mut().push(ActionBus::current_source(cx));
+                }
+                Ok(())
+            }
+        }
+        let (_, vcx) = cx.add_window_view(|_, _| Empty);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        vcx.update(|window, cx| {
+            let inner = cx.new(|_| Probe {
+                inner: None,
+                seen: seen.clone(),
+            });
+            let inner_id = ActionBus::register(
+                "nest/inner",
+                &inner,
+                "probe",
+                Capabilities::ACTIVATE,
+                window,
+                cx,
+            );
+            let outer = cx.new(|_| Probe {
+                inner: Some(inner_id),
+                seen: seen.clone(),
+            });
+            let outer_id = ActionBus::register(
+                "nest/outer",
+                &outer,
+                "probe",
+                Capabilities::ACTIVATE,
+                window,
+                cx,
+            );
+            let action = Action {
+                name: names::ACTIVATE.into(),
+                payload: Value::Null,
+            };
+            assert_eq!(ActionBus::current_source(cx), None);
+            assert!(ActionBus::dispatch(outer_id, &action, Source::Mcp, window, cx).is_ok());
+            assert_eq!(ActionBus::current_source(cx), None);
+            assert!(
+                ActionBus::dispatch_batch(outer_id, &[action], Source::Ribbon, window, cx).is_ok()
+            );
+            assert_eq!(ActionBus::current_source(cx), None);
+            drop((inner, outer));
+        });
+        assert_eq!(
+            *seen.borrow(),
+            [
+                Some(Source::Mcp),
+                Some(Source::Script),
+                Some(Source::Mcp),
+                Some(Source::Ribbon),
+                Some(Source::Script),
+                Some(Source::Ribbon),
+            ]
+        );
     }
 }
