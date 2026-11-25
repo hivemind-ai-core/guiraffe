@@ -22,6 +22,36 @@ pub struct Entry {
 /// Public renderable types that are not standalone components (state entities, internal
 /// hosts), with the reason they need no showcase entry of their own.
 pub const INTERNAL: &[(&str, &str, &str)] = &[
+    (
+        "components",
+        "ButtonControl",
+        "drivable protocol wrapper of the kit control shown in the Kit entry",
+    ),
+    (
+        "components",
+        "MenuControl",
+        "drivable protocol wrapper of the kit control shown in the Kit entry",
+    ),
+    (
+        "components",
+        "SelectControl",
+        "drivable protocol wrapper of the kit control shown in the Kit entry",
+    ),
+    (
+        "components",
+        "SliderControl",
+        "drivable protocol wrapper of the kit control shown in the Kit entry",
+    ),
+    (
+        "components",
+        "TabsControl",
+        "drivable protocol wrapper of the kit control shown in the Kit entry",
+    ),
+    (
+        "components",
+        "TextInputControl",
+        "drivable protocol wrapper of the kit control shown in the Kit entry",
+    ),
     ("layout", "Col", "child of Grid; shown in the Grid entry"),
     (
         "sheet",

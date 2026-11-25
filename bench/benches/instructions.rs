@@ -3,7 +3,14 @@ use iai_callgrind::{
 };
 macro_rules! define_instruction {
     (data_ui_instantiate) => {
-        #[library_benchmark(setup = guiraffe_bench::suites::prepare_data_ui)]
+        // Same binary, runs measured 2,299 to 2,663 Ir. Every gpui and guiraffe function
+        // counted identically; the difference is glibc malloc/calloc slow paths, whose
+        // heap state after setup depends on how GPUI's background threads were scheduled.
+        // A 20 percent tolerance covers that spread; allocation traffic stays bounded in
+        // bench/tests/allocator.rs.
+        #[library_benchmark(setup = guiraffe_bench::suites::prepare_data_ui, config = LibraryBenchmarkConfig::default().tool(
+            Callgrind::default().soft_limits([(EventKind::Ir, 20.0)])
+        ))]
         fn data_ui_instantiate(_: ()) {
             guiraffe_bench::suites::data_ui_instantiate();
         }
@@ -60,7 +67,7 @@ fn registered_controls() -> guiraffe_bench::protocol::Fixture {
 }
 
 // One registered toggle dispatched through the window bus, excluding path lookup.
-// The bench profile measured 2,111 Ir on x86-64 at the 0.3 phase 1 core. The
+// The bench profile measured 2,121 Ir on x86-64 at the 0.3 phase 1 core. The
 // hard ceiling applies even before a base revision contains this suite.
 #[library_benchmark(setup = registered_controls, config = LibraryBenchmarkConfig::default().tool(
     Callgrind::default().hard_limits([(EventKind::Ir, 3_000)]).soft_limits([(EventKind::Ir, 2.0)])
@@ -71,5 +78,18 @@ fn registered_dispatch(
     fixture.dispatch_once().expect("dispatch protocol action");
     fixture
 }
-library_benchmark_group!(name = protocol; benchmarks = registered_dispatch);
+// Eight toggles through `dispatch_batch`, outcomes returned inline. Measured
+// 6,407 Ir in the bench profile.
+#[library_benchmark(setup = registered_controls, config = LibraryBenchmarkConfig::default().tool(
+    Callgrind::default().hard_limits([(EventKind::Ir, 8_000)]).soft_limits([(EventKind::Ir, 2.0)])
+))]
+fn registered_batch(
+    mut fixture: guiraffe_bench::protocol::Fixture,
+) -> guiraffe_bench::protocol::Fixture {
+    fixture
+        .dispatch_batch_once()
+        .expect("dispatch protocol batch");
+    fixture
+}
+library_benchmark_group!(name = protocol; benchmarks = registered_dispatch, registered_batch);
 main!(config = LibraryBenchmarkConfig::default().tool(Callgrind::default().soft_limits([(EventKind::Ir, 2.0)])); library_benchmark_groups = workloads, protocol);

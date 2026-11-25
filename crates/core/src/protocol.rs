@@ -176,6 +176,35 @@ pub enum Source {
     Test,
 }
 
+/// Outcomes of a batch, in action order. Batches of up to eight stay inline.
+pub type Outcomes = smallvec::SmallVec<[Outcome; 8]>;
+
+/// The action at `index` was rejected and the batch stopped there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchError {
+    pub index: usize,
+    pub error: ActionError,
+}
+
+/// Result of `dispatch_batch`: the applied prefix's outcomes and, if the batch
+/// stopped early, why.
+#[derive(Debug, Clone, PartialEq)]
+#[must_use]
+pub struct Batch {
+    pub outcomes: Outcomes,
+    pub error: Option<BatchError>,
+}
+
+impl Batch {
+    /// All outcomes when every action applied; the rejection otherwise.
+    pub fn into_result(self) -> Result<Outcomes, BatchError> {
+        match self.error {
+            None => Ok(self.outcomes),
+            Some(error) => Err(error),
+        }
+    }
+}
+
 /// A run of actions on one target that is one undo step, such as a drag-paint.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Group {
@@ -432,15 +461,24 @@ impl ActionBus {
 
     /// Apply `actions` to one target as one group: interceptors see `begin_group`,
     /// each action, then `end_group`, and store history records one undo step.
-    /// Stops at the first rejected action and returns its error.
+    /// Returns each action's outcome, or stops at the first rejected action.
+    /// Up to eight actions allocate nothing.
     pub fn dispatch_batch(
         id: ControlId,
         actions: &[Action],
         source: Source,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<(), ActionError> {
-        let bus = Self::bus(window, cx)?;
+    ) -> Batch {
+        let bus = match Self::bus(window, cx) {
+            Ok(bus) => bus,
+            Err(error) => {
+                return Batch {
+                    outcomes: Outcomes::new(),
+                    error: Some(BatchError { index: 0, error }),
+                };
+            }
+        };
         let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
         let hooks = bus.hooks.clone();
         let group = Group {
@@ -451,13 +489,28 @@ impl ActionBus {
         for hook in hooks.iter() {
             hook.begin_group(group, window, cx);
         }
-        let result = actions.iter().try_for_each(|action| {
-            Self::run(id, target.as_deref(), &hooks, action, source, window, cx).map(drop)
-        });
+        let mut outcomes = Outcomes::new();
+        let mut failed = None;
+        for (index, action) in actions.iter().enumerate() {
+            match Self::run(id, target.as_deref(), &hooks, action, source, window, cx) {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(error) => {
+                    failed = Some((index, error));
+                    break;
+                }
+            }
+        }
+        let result = match &failed {
+            None => Ok(()),
+            Some((_, error)) => Err(error.clone()),
+        };
         for hook in hooks.iter().rev() {
             hook.end_group(group, &result, window, cx);
         }
-        result
+        Batch {
+            outcomes,
+            error: failed.map(|(index, error)| BatchError { index, error }),
+        }
     }
 
     fn run(
@@ -822,7 +875,13 @@ mod tests {
                     window,
                     cx
                 ),
-                Ok(())
+                Batch {
+                    error: None,
+                    outcomes: Outcomes::from_iter([
+                        Outcome(Value::Bool(true)),
+                        Outcome(Value::Bool(false))
+                    ]),
+                }
             );
             assert_eq!(
                 ActionBus::dispatch_batch(
@@ -832,7 +891,13 @@ mod tests {
                     window,
                     cx
                 ),
-                Err(ActionError::ReadOnly)
+                Batch {
+                    outcomes: Outcomes::from_iter([Outcome(Value::Bool(true))]),
+                    error: Some(BatchError {
+                        index: 1,
+                        error: ActionError::ReadOnly,
+                    }),
+                }
             );
             assert!(entity.read(cx).0, "the rejected action stops the batch");
             assert_eq!(
