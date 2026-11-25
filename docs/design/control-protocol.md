@@ -212,7 +212,10 @@ checks and recorders can read the store. They cannot mutate it during dispatch.
 `ActionBus::dispatch_batch(id, actions, source, ..)` applies a run of actions to
 one target as a `Group`. Interceptors see `begin_group`, each action's
 `before`/`after`, then `end_group`. The batch stops at the first rejected
-action. Store history (phase 4) maps one group to one undo step, so a
+action. It returns a `Batch`: the applied outcomes in order as `Outcomes`,
+a `SmallVec` that holds up to eight inline, and a `BatchError` with the index
+and error if it stopped early. `into_result` turns it into a `Result`. Store history (phase 4) maps one group to one undo step, so a
 drag-paint of N cells undoes at once. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
 (`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
-(`bench/benches/instructions.rs`; 2,111 measured with no interceptors), which excludes path lookup.
+(`bench/benches/instructions.rs`; 2,121 measured with no interceptors), which excludes path lookup. A batch of
+eight allocates nothing and has a 8,000 instruction ceiling (6,407 measured).

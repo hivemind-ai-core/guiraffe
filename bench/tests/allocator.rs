@@ -841,5 +841,8 @@ fn registered_protocol_dispatch_and_repaint() -> anyhow::Result<()> {
     registered.dispatch(|call| call())?;
     let (_, counts) = registered.dispatch(|call| count_allocations(call))??;
     assert_eq!(counts.allocations, 0);
+    registered.dispatch_batch(|call| call())?;
+    let (_, batch) = registered.dispatch_batch(|call| count_allocations(call))??;
+    assert_eq!(batch.allocations, 0, "a batch of eight dispatches inline");
     Ok(())
 }

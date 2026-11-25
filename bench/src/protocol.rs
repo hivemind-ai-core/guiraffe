@@ -48,7 +48,10 @@ pub struct Fixture {
     window: WindowHandle<Host>,
     id: Option<ControlId>,
     action: Action,
+    batch: Vec<Action>,
 }
+/// Actions in the measured batch: the inline capacity of `Outcomes`.
+pub const BATCH: usize = 8;
 impl Fixture {
     pub fn new(registered: bool) -> anyhow::Result<Self> {
         let text = gpui_kit::platform::current_platform(true).text_system();
@@ -84,6 +87,13 @@ impl Fixture {
                 name: names::TOGGLE.into(),
                 payload: Value::Null,
             },
+            batch: vec![
+                Action {
+                    name: names::TOGGLE.into(),
+                    payload: Value::Null,
+                };
+                BATCH
+            ],
         };
         for _ in 0..4 {
             fixture.draw()?;
@@ -117,6 +127,30 @@ impl Fixture {
             result
                 .map(|_| measured)
                 .map_err(|e| anyhow::anyhow!("dispatch failed: {e:?}"))
+        })?
+    }
+    /// Execute one measured batch outside Callgrind's generated wrapper module.
+    pub fn dispatch_batch_once(&mut self) -> anyhow::Result<()> {
+        self.dispatch_batch(|call| call())
+    }
+    /// Measure one `dispatch_batch` of [`BATCH`] toggles within an existing window update.
+    pub fn dispatch_batch<R>(
+        &mut self,
+        measure: impl FnOnce(&mut dyn FnMut()) -> R,
+    ) -> anyhow::Result<R> {
+        let id = self
+            .id
+            .ok_or_else(|| anyhow::anyhow!("fixture has no registered target"))?;
+        self.app.update_window(self.window.into(), |_, w, cx| {
+            let mut result = Ok(Outcomes::new());
+            let measured = measure(&mut || {
+                result = ActionBus::dispatch_batch(id, &self.batch, Source::Pointer, w, cx)
+                    .into_result();
+            });
+            match result {
+                Ok(outcomes) if outcomes.len() == BATCH => Ok(measured),
+                other => Err(anyhow::anyhow!("batch failed: {other:?}")),
+            }
         })?
     }
 }

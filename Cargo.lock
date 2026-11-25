@@ -3564,6 +3564,7 @@ dependencies = [
  "gpui-kit",
  "imbl",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]
