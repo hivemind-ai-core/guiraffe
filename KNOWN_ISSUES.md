@@ -21,6 +21,10 @@ The workspace pins 0.1.15. Apps copy the lockfile (`guiraffe new` does it), and 
   [RUSTSEC-2026-0555](https://rustsec.org/advisories/RUSTSEC-2026-0555): `chrono` and `chrono-tz`,
   used by the calendar and date inputs, are unmaintained.
 
+Miri passes on the focused tests of every `imbl` consumer. A full Miri run is not clean yet:
+`guiraffe-core` reports leaks after its assertions pass, the sheet proptests call `getcwd` under
+isolation, and the full sheet and UI runs did not finish.
+
 ## Performance
 
 The budgets and test conditions are in [performance](docs/performance.md). Open in 0.2:
