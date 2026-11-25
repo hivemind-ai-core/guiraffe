@@ -1,7 +1,7 @@
 //! The GPUI command ribbon: a keyboard-first command bar that slides in above the status bar.
 //!
-//! [`RibbonState`] is the per-window control (navigation, prompt, focus). [`RibbonScope`] wraps
-//! a window's content and routes the leader key; [`CommandRibbon`] is the bar itself and
+//! [`RibbonState`] is the per-window control (navigation, prompt, focus). [`ribbon_scope`] is a
+//! window's root (the leader works inside it); [`CommandRibbon`] is the bar itself and
 //! [`RibbonButton`] the status-bar toggle. While closed, the bar renders one empty element and
 //! does no other work; its rows are projected once per open, navigation or registry change.
 use super::model::{NavError, Navigator, RibbonModel, Step};
@@ -142,7 +142,6 @@ pub struct RibbonState {
     window: gpui_kit::WindowId,
     _leader: Subscription,
     /// Parsed once: building a key context per frame would allocate.
-    scope_context: gpui_kit::KeyContext,
     bar_context: gpui_kit::KeyContext,
     _registry: Subscription,
 }
@@ -219,7 +218,6 @@ impl RibbonState {
             last_leader: None,
             window: window_id,
             _leader: leader,
-            scope_context: gpui_kit::KeyContext::parse(RIBBON_CONTEXT).unwrap_or_default(),
             bar_context: gpui_kit::KeyContext::parse("GrRibbonBar").unwrap_or_default(),
             _registry: registry,
         }
@@ -667,49 +665,32 @@ impl RibbonState {
     }
 }
 
-/// Wraps a window's content: the leader works while focus is inside it ([`RIBBON_CONTEXT`]). Place [`CommandRibbon`] and [`RibbonButton`] inside it.
-#[derive(IntoElement)]
-pub struct RibbonScope {
-    state: Entity<RibbonState>,
-    children: Vec<gpui_kit::AnyElement>,
-    style: StyleRefinement,
-}
-impl RibbonScope {
-    pub fn new(state: &Entity<RibbonState>) -> Self {
-        Self {
-            state: state.clone(),
-            children: Vec::new(),
-            style: StyleRefinement::default(),
-        }
-    }
-}
-impl ParentElement for RibbonScope {
-    fn extend(&mut self, elements: impl IntoIterator<Item = gpui_kit::AnyElement>) {
-        self.children.extend(elements);
-    }
-}
-impl Styled for RibbonScope {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
-    }
-}
-impl RenderOnce for RibbonScope {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        // Only a cached key context: no listeners, so the scope costs nothing per frame.
-        let key_context = self.state.read(cx).scope_context.clone();
-        let mut element = div().key_context(key_context).children(self.children);
-        element.style().refine(&self.style);
-        element
-    }
+thread_local! {
+    static SCOPE_CONTEXT: gpui_kit::KeyContext =
+        gpui_kit::KeyContext::parse(RIBBON_CONTEXT).unwrap_or_default();
 }
 
-/// The ribbon bar. Renders an empty element while closed.
+/// The root of a window that has a ribbon: a plain `div` carrying [`RIBBON_CONTEXT`], so the
+/// leader works while focus is inside it. Add the bar with
+/// `.children(CommandRibbon::when_open(&ribbon, cx))` and a [`RibbonButton`] in the status bar.
+///
+/// No listeners, no wrapper element and a cached key context: with the ribbon closed, the
+/// window renders exactly what it would without one (gated in `tests/ribbon_alloc.rs`).
+pub fn ribbon_scope(_state: &Entity<RibbonState>) -> gpui_kit::Div {
+    div().key_context(SCOPE_CONTEXT.with(Clone::clone))
+}
+
+/// The ribbon bar. Use [`CommandRibbon::when_open`] so a closed ribbon adds no element.
 #[derive(IntoElement)]
 pub struct CommandRibbon {
     state: Entity<RibbonState>,
     style: StyleRefinement,
 }
 impl CommandRibbon {
+    /// The bar while the ribbon is open, otherwise nothing: pass to `.children(..)`.
+    pub fn when_open(state: &Entity<RibbonState>, cx: &App) -> Option<Self> {
+        state.read(cx).open.then(|| Self::new(state))
+    }
     pub fn new(state: &Entity<RibbonState>) -> Self {
         Self {
             state: state.clone(),

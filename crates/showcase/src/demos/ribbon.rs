@@ -10,7 +10,7 @@ use guiraffe_commands::{
     When, WhenContext,
     ribbon::{
         CommandRibbon, RibbonButton, RibbonCategory, RibbonEntry, RibbonEvent, RibbonLayout,
-        RibbonMenu, RibbonModel, RibbonScope, RibbonState,
+        RibbonMenu, RibbonModel, RibbonState, ribbon_scope,
     },
 };
 use guiraffe_core::{GuiraffeTheme, Size};
@@ -271,7 +271,7 @@ impl Render for RibbonDemo {
                             })),
                     ),
                 );
-        let app = RibbonScope::new(&self.ribbon)
+        let app = ribbon_scope(&self.ribbon)
             .flex()
             .flex_col()
             .border_1()
@@ -284,7 +284,7 @@ impl Render for RibbonDemo {
                         .child(editor),
                 ),
             )
-            .child(CommandRibbon::new(&self.ribbon))
+            .children(CommandRibbon::when_open(&self.ribbon, cx))
             .child(
                 div()
                     .flex()

@@ -1,5 +1,5 @@
 //! Zero cost when closed: a window with a closed ribbon repaints with exactly the allocations
-//! of the same window with an empty placeholder (the leader is a once-per-window keystroke
+//! of the same window without the ribbon (the leader is a once-per-window keystroke
 //! interceptor, not a per-frame listener). An open, unchanged ribbon
 //! stays within budget and does not grow.
 use gpui_kit::{
@@ -11,7 +11,7 @@ use guiraffe_commands::{
     Command, CommandId, Commands, Payload, init,
     ribbon::{
         CommandRibbon, RibbonButton, RibbonCategory, RibbonEntry, RibbonLayout, RibbonMenu,
-        RibbonModel, RibbonScope, RibbonState,
+        RibbonModel, RibbonState, ribbon_scope,
     },
 };
 use guiraffe_test::alloc::{CountingAllocator, count_allocations};
@@ -27,39 +27,35 @@ fn noop(_: &Payload, _: &mut Window, _: &mut gpui_kit::App) {}
 
 struct Host {
     ribbon: Option<Entity<RibbonState>>,
+    button: bool,
 }
 impl Render for Host {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = div().flex_1().child("content");
         match &self.ribbon {
-            Some(ribbon) => RibbonScope::new(ribbon)
+            // The status-bar button is ordinary visible UI, so neither window has one: the
+            // comparison isolates the scope and the closed bar.
+            Some(ribbon) if self.button => ribbon_scope(ribbon)
                 .size_full()
                 .flex()
                 .flex_col()
                 .child(content)
-                .child(CommandRibbon::new(ribbon))
+                .children(CommandRibbon::when_open(ribbon, cx))
                 .child(div().child(RibbonButton::new(ribbon)))
                 .into_any_element(),
-            // Baseline: the same tree with the ribbon replaced by an empty placeholder
-            // and a plain status-bar button.
+            Some(ribbon) => ribbon_scope(ribbon)
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(content)
+                .children(CommandRibbon::when_open(ribbon, cx))
+                .into_any_element(),
+            // Baseline: the same window without the ribbon.
             None => div()
                 .size_full()
                 .flex()
                 .flex_col()
                 .child(content)
-                .child(div())
-                .child(div().child({
-                    use gpui_kit::component::{Sizable, button::ButtonVariants};
-                    gpui_kit::component::button::Button::new("ribbon-toggle")
-                        .ghost()
-                        .xsmall()
-                        .label("Commands")
-                        .tooltip("Command ribbon · Ctrl+Space")
-                        .accessibility_label("Command ribbon")
-                        .tab_stop(false)
-                        .toggled(false)
-                        .on_click(|_, _, _| {})
-                }))
                 .into_any_element(),
         }
     }
@@ -68,6 +64,7 @@ impl Render for Host {
 fn mount(
     cx: &mut TestAppContext,
     with_ribbon: bool,
+    with_button: bool,
 ) -> (WindowHandle<Root>, Option<Entity<RibbonState>>) {
     cx.update(init);
     cx.update(|cx| {
@@ -111,10 +108,13 @@ fn mount(
                 move |window, cx| {
                     let focus = cx.focus_handle();
                     focus.focus(window, cx);
-                    let ribbon =
-                        with_ribbon.then(|| cx.new(|cx| RibbonState::new(&commands, model, window, cx)));
+                    let ribbon = with_ribbon
+                        .then(|| cx.new(|cx| RibbonState::new(&commands, model, window, cx)));
                     *out.borrow_mut() = ribbon.clone();
-                    let host = cx.new(|_| Host { ribbon });
+                    let host = cx.new(|_| Host {
+                        button: ribbon.is_some() && with_button,
+                        ribbon,
+                    });
                     guiraffe_overlays::root(host, window, cx)
                 },
             )
@@ -146,8 +146,8 @@ fn series(cx: &mut TestAppContext, window: WindowHandle<Root>) -> Vec<u64> {
 
 #[gpui_kit::test]
 fn a_closed_ribbon_costs_nothing_per_frame(cx: &mut TestAppContext) {
-    let (baseline, _) = mount(cx, false);
-    let (closed, _) = mount(cx, true);
+    let (baseline, _) = mount(cx, false, false);
+    let (closed, _) = mount(cx, true, false);
     let base = series(cx, baseline);
     let with = series(cx, closed);
     eprintln!("ribbon closed repaint: baseline {base:?}, with ribbon {with:?}");
@@ -161,7 +161,7 @@ fn a_closed_ribbon_costs_nothing_per_frame(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn an_open_unchanged_ribbon_stays_within_budget_and_does_not_grow(cx: &mut TestAppContext) {
-    let (window, ribbon) = mount(cx, true);
+    let (window, ribbon) = mount(cx, true, true);
     let ribbon = ribbon.expect("ribbon");
     cx.update_window(window.into(), |_, window, cx| {
         ribbon.update(cx, |state, cx| state.open(window, cx));

@@ -22,8 +22,8 @@ struct Host {
     focus: FocusHandle,
 }
 impl Render for Host {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        RibbonScope::new(&self.ribbon)
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ribbon_scope(&self.ribbon)
             .size_full()
             .flex()
             .flex_col()
@@ -37,7 +37,7 @@ impl Render for Host {
                         .child("content"),
                 ),
             )
-            .child(CommandRibbon::new(&self.ribbon))
+            .children(CommandRibbon::when_open(&self.ribbon, cx))
             .child(
                 div()
                     .flex()

@@ -37,10 +37,9 @@ impl RibbonFixture {
         let odd = When::parse("Odd")?;
         for group in 0..GROUPS {
             let group_id = format!("group{group}");
-            root = root.category(
-                RibbonCategory::new(format!("Group {group}"))
-                    .entry(RibbonEntry::menu(format!("g{group}"), key(group), group_id.clone())),
-            );
+            root = root.category(RibbonCategory::new(format!("Group {group}")).entry(
+                RibbonEntry::menu(format!("g{group}"), key(group), group_id.clone()),
+            ));
             let mut group_menu = RibbonMenu::new(group_id, format!("Group {group}"));
             // Half of each group's categories show only in the "Odd" context: the filter step.
             let (mut always, mut sometimes) = (
@@ -60,9 +59,11 @@ impl RibbonFixture {
                 for e in 0..PER_CATEGORY {
                     let id = CommandId::parse(&format!("c{c}.e{e}"))?;
                     registry.register(Command::new(id.clone(), format!("Command {c}.{e}"), ()))?;
-                    category = category.entry(RibbonEntry::command(format!("e{c}-{e}"), key(e), id));
+                    category =
+                        category.entry(RibbonEntry::command(format!("e{c}-{e}"), key(e), id));
                 }
-                layout = layout.menu(RibbonMenu::new(menu_id, format!("Category {c}")).category(category));
+                layout = layout
+                    .menu(RibbonMenu::new(menu_id, format!("Category {c}")).category(category));
             }
             group_menu = group_menu.category(always).category(sometimes);
             layout = layout.menu(group_menu);
@@ -100,7 +101,11 @@ impl RibbonFixture {
         let mut nav = Navigator::default();
         nav.press("c", &self.model, &self.registry, &self.all)?;
         nav.reconcile(&self.model, &self.filtered);
-        Ok(rows(&self.model.sections(&nav, &self.registry, &self.filtered)))
+        Ok(rows(&self.model.sections(
+            &nav,
+            &self.registry,
+            &self.filtered,
+        )))
     }
 }
 

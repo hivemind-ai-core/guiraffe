@@ -40,7 +40,7 @@ pub use error::Error;
 pub use keybinding::{Keybinding, Platform};
 pub use model::{Bindings, Command, CommandId, Conflict, PrefixConflict, Registry};
 pub use params::{Choice, Choices, Draft, Param, ParamKind};
-pub use ribbon::{CommandRibbon, RibbonButton, RibbonScope, RibbonState};
+pub use ribbon::{CommandRibbon, RibbonButton, RibbonState, ribbon_scope};
 
 mod menu;
 mod service;

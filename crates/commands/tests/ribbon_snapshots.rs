@@ -7,7 +7,7 @@ use guiraffe_commands::{
     Command, CommandId, Commands, ContextStack, Keybinding, Payload, When, WhenContext,
     ribbon::{
         CommandRibbon, RibbonButton, RibbonCategory, RibbonEntry, RibbonLayout, RibbonMenu,
-        RibbonModel, RibbonScope, RibbonState,
+        RibbonModel, RibbonState, ribbon_scope,
     },
 };
 use guiraffe_core::{GuiraffeTheme, Scheme, Size, apply};
@@ -21,7 +21,7 @@ impl Render for Scene {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = GuiraffeTheme::global(cx);
         let surfaces = theme.surfaces();
-        RibbonScope::new(&self.ribbon)
+        ribbon_scope(&self.ribbon)
             .size_full()
             .flex()
             .flex_col()
@@ -33,7 +33,7 @@ impl Render for Scene {
                     .p(px(Size::Md.spacing()))
                     .child("document.rs"),
             )
-            .child(CommandRibbon::new(&self.ribbon))
+            .children(CommandRibbon::when_open(&self.ribbon, cx))
             .child(
                 div()
                     .flex()

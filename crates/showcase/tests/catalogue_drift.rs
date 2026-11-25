@@ -27,7 +27,7 @@ fn kind(surface: &str) -> Option<&'static str> {
         "commands::CommandScope" => "command-scope",
         "commands::Menu" | "commands::MenuProps" => "command-menu",
         "commands::CommandRibbon"
-        | "commands::RibbonScope"
+        | "commands::fn ribbon_scope"
         | "commands::RibbonButton"
         | "commands::RibbonProps"
         | "commands::RibbonState" => "command-ribbon",

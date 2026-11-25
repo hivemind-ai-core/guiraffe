@@ -48,8 +48,9 @@ The crate supplies an in-app menu and metadata access for future adapters. Platf
 `ribbon` adds a keyboard-first command bar over the same registry. Build a `RibbonLayout` (menus of
 categories of entries that run a command, open a submenu or apply a control action through the
 action bus), compile it once with `RibbonModel::build` (ids, references, cycles and chord
-collisions are validated), and create one `RibbonState` per window. Wrap the window's content in
-`RibbonScope`, place `CommandRibbon` above the status bar and `RibbonButton` in it. Ctrl+Space
+collisions are validated), and create one `RibbonState` per window. Use `ribbon_scope` as the window's root,
+add `.children(CommandRibbon::when_open(&ribbon, cx))` above the status bar and put
+`RibbonButton` in it; a closed ribbon adds no element and no per-frame work. Ctrl+Space
 toggles; an entry's key descends or runs, Backspace goes up, Escape goes to the root and then
 closes. Commands with `Param`s prompt for text or choices (dynamic choices come from
 `RibbonState::set_choices`) and run with `InvocationSource::Ribbon`; action entries dispatch with
