@@ -285,6 +285,12 @@ Where the kit state owns the input (slider drag and arrow keys, typing, the
 select list), the kit's change event is routed the same way, and a rejected
 action restores the kit state.
 
+Every typed event carries the edit's `Source`, captured inside `apply` from
+`ActionBus::current_source()`. An unregistered control's own pointer or key
+input reports `Pointer` or `Keyboard`, and a host calling `apply` directly
+reports `Host`. A binding can therefore tag a store write as `Mcp` even though
+GPUI delivers the event after the dispatch returns.
+
 Payloads: `set_value` takes a `Bool`, `Num` or `Str` matching the control.
 `select` and a menu's `activate` take a `Num` index. `increment` and
 `decrement` take `Null`. Outcomes carry the new state.

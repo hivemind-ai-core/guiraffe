@@ -52,6 +52,8 @@ use std::rc::Rc;
 struct Identity {
     id: Option<ControlId>,
     base: SharedString,
+    /// Source of a direct (unregistered) input while its `apply` runs.
+    direct: Option<Source>,
 }
 
 impl Identity {
@@ -60,6 +62,13 @@ impl Identity {
     }
     fn child(&self, ix: usize) -> ElementId {
         ElementId::NamedInteger(self.base.clone(), ix as u64)
+    }
+    /// The source of the edit being applied: the bus dispatch's, else the direct
+    /// input's. A host calling `apply` itself is tagged `Host`.
+    fn source(&self, cx: &App) -> Source {
+        ActionBus::current_source(cx)
+            .or(self.direct)
+            .unwrap_or(Source::Host)
     }
 }
 
@@ -77,7 +86,15 @@ fn build<T: Observe + Drive + Render + Identified>(
             .clone()
             .or(name)
             .unwrap_or_else(|| format!("{kind}-{}", cx.entity_id().as_u64()).into());
-        make(Identity { id: None, base }, window, cx)
+        make(
+            Identity {
+                id: None,
+                base,
+                direct: None,
+            },
+            window,
+            cx,
+        )
     });
     if let Some(path) = path {
         let id = ActionBus::register(&path, &entity, kind, capabilities, window, cx);
@@ -106,7 +123,12 @@ fn route<T: Observe + Drive + Identified>(
         None => {
             let typed = T::decode(&action)?;
             entity
-                .update(cx, |control, cx| control.apply(typed, window, cx))
+                .update(cx, |control, cx| {
+                    control.identity_mut().direct = Some(source);
+                    let result = control.apply(typed, window, cx);
+                    control.identity_mut().direct = None;
+                    result
+                })
                 .map(Into::into)
         }
     }
@@ -190,7 +212,7 @@ macro_rules! identified {
 /// Emitted when a [`ButtonControl`] is activated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonEvent {
-    Activated,
+    Activated(Source),
 }
 
 /// Builder for [`ButtonControl`].
@@ -292,7 +314,7 @@ impl Drive for ButtonControl {
     }
     fn apply(&mut self, (): (), _: &mut Window, cx: &mut Context<Self>) -> Result<(), ActionError> {
         enabled(self.disabled)?;
-        cx.emit(ButtonEvent::Activated);
+        cx.emit(ButtonEvent::Activated(self.identity.source(cx)));
         Ok(())
     }
 }
@@ -321,7 +343,7 @@ impl Render for ButtonControl {
 /// Emitted when a checkbox or switch changes state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToggleEvent {
-    Changed(bool),
+    Changed(bool, Source),
 }
 
 /// Typed actions of a checkbox or switch.
@@ -466,7 +488,7 @@ macro_rules! toggle_control {
                 };
                 if next != self.checked {
                     self.checked = next;
-                    cx.emit(ToggleEvent::Changed(next));
+                    cx.emit(ToggleEvent::Changed(next, self.identity.source(cx)));
                     cx.notify();
                 }
                 Ok(Outcome(Value::Bool(next)))
@@ -509,7 +531,7 @@ toggle_control!(SwitchControl, SwitchBuilder, "switch", Switch, "A switch.");
 /// Emitted when a [`SliderControl`] value changes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SliderControlEvent {
-    Changed(f32),
+    Changed(f32, Source),
 }
 
 /// Typed actions of a slider.
@@ -742,7 +764,7 @@ impl Drive for SliderControl {
         if next != self.value {
             self.value = next;
             self.sync_state(window, cx);
-            cx.emit(SliderControlEvent::Changed(next));
+            cx.emit(SliderControlEvent::Changed(next, self.identity.source(cx)));
         }
         Ok(Outcome(Value::Num(f64::from(next))))
     }
@@ -766,7 +788,7 @@ impl Render for SliderControl {
 /// Emitted when a [`TextInputControl`] value changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextInputEvent {
-    Changed(SharedString),
+    Changed(SharedString, Source),
 }
 
 /// Typed actions of a text input.
@@ -978,7 +1000,7 @@ impl Drive for TextInputControl {
                 if text != self.value {
                     self.value = text.clone();
                     self.sync_input(window, cx);
-                    cx.emit(TextInputEvent::Changed(text));
+                    cx.emit(TextInputEvent::Changed(text, self.identity.source(cx)));
                 }
                 Ok(Outcome(Value::Str(self.value.clone())))
             }
@@ -1007,13 +1029,13 @@ impl Render for TextInputControl {
 /// Emitted when a [`SelectControl`] or [`TabsControl`] selection changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionEvent {
-    Selected(usize),
+    Selected(usize, Source),
 }
 
 /// Emitted with the typed value when a [`SelectControl`] selection changes,
 /// after the index-based [`SelectionEvent`].
 #[derive(Debug, Clone, PartialEq)]
-pub struct SelectedValue<T>(pub T);
+pub struct SelectedValue<T>(pub T, pub Source);
 
 /// Bounds on a [`SelectControl`] value: a store enum or any comparable value.
 pub trait SelectValue: Clone + PartialEq + 'static {}
@@ -1309,9 +1331,10 @@ impl<T: SelectValue> Drive for SelectControl<T> {
         if self.selected != Some(index) {
             self.selected = Some(index);
             self.sync_state(window, cx);
-            cx.emit(SelectionEvent::Selected(index));
+            let source = self.identity.source(cx);
+            cx.emit(SelectionEvent::Selected(index, source));
             if let Some(value) = self.values.get(index) {
-                cx.emit(SelectedValue(value.clone()));
+                cx.emit(SelectedValue(value.clone(), source));
             }
         }
         Ok(Outcome(Value::Str(label)))
@@ -1442,7 +1465,7 @@ impl Drive for TabsControl {
         }
         if index != self.selected {
             self.selected = index;
-            cx.emit(SelectionEvent::Selected(index));
+            cx.emit(SelectionEvent::Selected(index, self.identity.source(cx)));
             cx.notify();
         }
         Ok(Outcome(Value::Num(index as f64)))
@@ -1478,7 +1501,7 @@ impl Render for TabsControl {
 /// Emitted when a [`MenuControl`] item is activated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuEvent {
-    Activated(usize),
+    Activated(usize, Source),
 }
 
 /// Builder for [`MenuControl`].
@@ -1570,7 +1593,7 @@ impl Drive for MenuControl {
             .get(index)
             .ok_or(ActionError::Invalid("index out of range"))?;
         enabled(*disabled)?;
-        cx.emit(MenuEvent::Activated(index));
+        cx.emit(MenuEvent::Activated(index, self.identity.source(cx)));
         Ok(Outcome(Value::Num(index as f64)))
     }
 }
