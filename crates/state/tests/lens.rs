@@ -24,7 +24,7 @@ store! {
     pub Project {
         title: u32 = 0,
         tempo: f32 = 120.0 where 20.0..=300.0,
-        even: u32 = 0 where |v: &u32| v % 2 == 0,
+        even: u32 = 0 where |v: &u32| v.is_multiple_of(2),
         scroll: u32 = 0 #[no_undo],
         clips: KeyedList<u64, Clip> = KeyedList::new(),
     }
