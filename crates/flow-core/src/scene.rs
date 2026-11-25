@@ -19,7 +19,7 @@ struct Branch {
 #[derive(Clone, Debug, Default)]
 pub struct SpatialIndex {
     root: Option<Arc<Branch>>,
-    locations: im::OrdMap<u64, u64>,
+    locations: imbl::OrdMap<u64, u64>,
     max_depth: u32,
     baseline_quality: f64,
 }
@@ -181,7 +181,7 @@ impl SpatialIndex {
         root: &mut Arc<Branch>,
         entry: (u64, Rect),
         path: u64,
-        locations: &mut im::OrdMap<u64, u64>,
+        locations: &mut imbl::OrdMap<u64, u64>,
         max_depth: &mut u32,
     ) {
         let branch = Arc::make_mut(root);
@@ -615,16 +615,16 @@ fn edge_envelope(
 #[derive(Clone, Debug)]
 pub struct Scene {
     graph: Graph,
-    paths: im::OrdMap<EdgeId, Arc<EdgePath>>,
+    paths: imbl::OrdMap<EdgeId, Arc<EdgePath>>,
     nodes: SpatialIndex,
     edges: SpatialIndex,
     deferred_edges: Option<Arc<DeferredIndex>>,
     bounds: Option<Rect>,
-    incident: im::OrdMap<NodeId, Vec<EdgeId>>,
-    depths: im::OrdMap<NodeId, usize>,
-    revisions: im::OrdMap<NodeId, u64>,
+    incident: imbl::OrdMap<NodeId, Vec<EdgeId>>,
+    depths: imbl::OrdMap<NodeId, usize>,
+    revisions: imbl::OrdMap<NodeId, u64>,
     revision: u64,
-    children: im::OrdMap<NodeId, Vec<NodeId>>,
+    children: imbl::OrdMap<NodeId, Vec<NodeId>>,
 }
 impl Scene {
     pub fn new(graph: Graph) -> Result<Self, FlowError> {
@@ -655,8 +655,8 @@ impl Scene {
                 .all(|value| value.abs() <= safe_coordinate)
             }))
         .then(Arc::<DeferredIndex>::default);
-        let paths: im::OrdMap<EdgeId, Arc<EdgePath>> = if deferred_edges.is_some() {
-            im::OrdMap::new()
+        let paths: imbl::OrdMap<EdgeId, Arc<EdgePath>> = if deferred_edges.is_some() {
+            imbl::OrdMap::new()
         } else {
             graph
                 .edges
@@ -689,7 +689,7 @@ impl Scene {
             nodes.bounds()
         };
         let edges = SpatialIndex::new(paths.iter().map(|(id, path)| (*id, path.bounds)));
-        let mut incident: im::OrdMap<NodeId, Vec<EdgeId>> = im::OrdMap::new();
+        let mut incident: imbl::OrdMap<NodeId, Vec<EdgeId>> = imbl::OrdMap::new();
         if deferred_edges.is_none() {
             for edge in graph.edges.values() {
                 incident.entry(edge.source.node).or_default().push(edge.id);
@@ -698,20 +698,20 @@ impl Scene {
                 }
             }
         }
-        let mut children: im::OrdMap<NodeId, Vec<NodeId>> = im::OrdMap::new();
+        let mut children: imbl::OrdMap<NodeId, Vec<NodeId>> = imbl::OrdMap::new();
         for n in graph.nodes.values() {
             if let Some(parent) = n.parent {
                 children.entry(parent).or_default().push(n.id);
             }
         }
         let depths = if children.is_empty() {
-            im::OrdMap::new()
+            imbl::OrdMap::new()
         } else {
             Self::depths(&graph)
         };
         Ok(Self {
             depths,
-            revisions: im::OrdMap::new(),
+            revisions: imbl::OrdMap::new(),
             revision: 0,
             children,
             graph,
@@ -725,7 +725,7 @@ impl Scene {
     }
     /// The prepared route table for eager scenes. Deferred scenes use
     /// [Self::edge_route] to read a route without retaining the whole table.
-    pub fn paths(&self) -> &im::OrdMap<EdgeId, Arc<EdgePath>> {
+    pub fn paths(&self) -> &imbl::OrdMap<EdgeId, Arc<EdgePath>> {
         &self.paths
     }
 
@@ -839,7 +839,7 @@ impl Scene {
                     output.extend(candidates.iter().filter(|edge_id| {
                         self.graph
                             .edges
-                            .get(edge_id)
+                            .get(*edge_id)
                             .is_some_and(|edge| edge.source.node == id || edge.target.node == id)
                     }));
                 }
@@ -858,8 +858,8 @@ impl Scene {
     pub fn graph(&self) -> &Graph {
         &self.graph
     }
-    fn depths(graph: &Graph) -> im::OrdMap<NodeId, usize> {
-        let mut result = im::OrdMap::new();
+    fn depths(graph: &Graph) -> imbl::OrdMap<NodeId, usize> {
+        let mut result = imbl::OrdMap::new();
         for id in graph.nodes.keys() {
             let mut chain = Vec::new();
             let mut next = Some(*id);
@@ -897,7 +897,8 @@ impl Scene {
         let node_changes: BTreeMap<_, _> = changed_nodes
             .iter()
             .filter(|id| {
-                self.graph.nodes.get(id).map(|n| n.rect()) != graph.nodes.get(id).map(|n| n.rect())
+                self.graph.nodes.get(*id).map(|n| n.rect())
+                    != graph.nodes.get(*id).map(|n| n.rect())
             })
             .map(|id| (*id, graph.nodes.get(id).map(|n| n.rect())))
             .collect();

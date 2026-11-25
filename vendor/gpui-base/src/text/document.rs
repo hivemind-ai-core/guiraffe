@@ -19,7 +19,7 @@ use crate::text::{
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct ParsedDocument {
     pub(crate) source: SharedString,
-    pub(crate) blocks: Arc<im::Vector<BlockNode>>,
+    pub(crate) blocks: Arc<imbl::Vector<BlockNode>>,
 }
 
 const MAX_CACHED_BLOCKS: usize = 256;
@@ -28,7 +28,7 @@ const MAX_CACHED_BLOCKS: usize = 256;
 pub(super) struct ViewportBlockCache(Rc<RefCell<BTreeSet<usize>>>);
 
 impl ViewportBlockCache {
-    fn touch(&self, index: usize, blocks: &im::Vector<BlockNode>) {
+    fn touch(&self, index: usize, blocks: &imbl::Vector<BlockNode>) {
         let mut cached = self.0.borrow_mut();
         if !cached.insert(index) || cached.len() <= MAX_CACHED_BLOCKS {
             return;

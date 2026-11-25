@@ -115,7 +115,7 @@ pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument
 
     Ok(ParsedDocument {
         source: source.to_string().into(),
-        blocks: Arc::new(im::vector![node]),
+        blocks: Arc::new(imbl::vector![node]),
     })
 }
 
@@ -1057,7 +1057,7 @@ mod tests {
             node,
             ParsedDocument {
                 source: html.to_string().into(),
-                blocks: Arc::new(im::vector![BlockNode::Paragraph(Paragraph {
+                blocks: Arc::new(imbl::vector![BlockNode::Paragraph(Paragraph {
                     span: None,
                     children: Arc::new(vec![InlineNode::image(ImageNode {
                         url: "https://example.com/image.png".to_string().into(),
@@ -1078,7 +1078,7 @@ mod tests {
             node,
             ParsedDocument {
                 source: html.to_string().into(),
-                blocks: Arc::new(im::vector![BlockNode::Paragraph(Paragraph {
+                blocks: Arc::new(imbl::vector![BlockNode::Paragraph(Paragraph {
                     span: None,
                     children: Arc::new(vec![InlineNode::image(ImageNode {
                         url: "https://example.com/image.png".to_string().into(),

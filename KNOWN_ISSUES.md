@@ -13,21 +13,10 @@
 gpui-fast 0.1.16 doesn't compile with gpui-kit 0.9.1, and a fresh dependency resolution picks it.
 The workspace pins 0.1.15. Apps copy the lockfile (`guiraffe new` does it), and `guiraffe doctor` checks the pin.
 
-## Soundness
-
-Under Miri's Stacked Borrows model, `guiraffe-flow-core` tests report undefined behavior inside
-`sized-chunks` 0.6.5, reached through `im` 15.1, which gpui-base and guiraffe-core use. A Tree
-Borrows run timed out, so it is unknown whether this is more than an aliasing-model violation.
-`im` is unmaintained and will be replaced by `imbl` in 0.3 ([roadmap](ROADMAP.md) item 3).
-
 ## Dependency advisories
 
-`cargo deny` excepts four advisories that have no fixed release. Any other advisory fails CI.
+`cargo deny` excepts two advisories that have no fixed release. Any other advisory fails CI.
 
-- [RUSTSEC-2023-0126](https://rustsec.org/advisories/RUSTSEC-2023-0126): `im` 15.1 is unsound in
-  ordered-set insertion. GUIraffe depends on `im`, including its ordered maps. Replacing it is
-  [roadmap](ROADMAP.md) item 3.
-- [RUSTSEC-2026-0248](https://rustsec.org/advisories/RUSTSEC-2026-0248): `im` is unmaintained.
 - [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543) and
   [RUSTSEC-2026-0555](https://rustsec.org/advisories/RUSTSEC-2026-0555): `chrono` and `chrono-tz`,
   used by the calendar and date inputs, are unmaintained.

@@ -331,8 +331,8 @@ impl Edge {
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Graph {
-    pub nodes: im::OrdMap<NodeId, Node>,
-    pub edges: im::OrdMap<EdgeId, Edge>,
+    pub nodes: imbl::OrdMap<NodeId, Node>,
+    pub edges: imbl::OrdMap<EdgeId, Edge>,
     /// High-water mark; never rewound by undo, serialized even after edge deletion.
     #[serde(default)]
     pub edge_id_high_water: EdgeId,
@@ -390,35 +390,26 @@ where
 }
 /// Bulk-load a persistent map with densely packed leaves.
 ///
-/// `im::OrdMap` nodes hold a fixed 64-entry array and split full nodes at the
-/// median, so inserting ascending keys leaves every node half full: twice the
-/// entry size per key. The first pass inserts a sparse ascending subset spaced
-/// so that each half-full leaf, bounded by its two separator keys, spans
-/// exactly 64 keys of the sorted input. The second pass fills those gaps
-/// without splitting, so leaves end full. Only a changed `im` node width
-/// affects the density (a regression test locks it); the map is the same.
+/// `imbl::OrdMap` is a B+ tree with fixed 16-entry leaves that split at the
+/// median, so inserting ascending keys leaves every leaf half full: twice the
+/// entry size per key. The first pass inserts every second sorted key, so each
+/// half-full leaf spans exactly 16 keys of the sorted input. The second pass
+/// fills those gaps without splitting, so leaves end full. A changed `imbl`
+/// node width affects only the density (`tests/memory.rs` locks it); the map is
+/// the same.
 fn packed<V: Clone>(
     values: impl IntoIterator<Item = V>,
     key: impl Fn(&V) -> u64,
-) -> Result<im::OrdMap<u64, V>, FlowError> {
-    // `im` 15 B-tree width and the keys a split leaves in the left node.
-    const WIDTH: usize = 64;
-    const HALF: usize = WIDTH / 2;
+) -> Result<imbl::OrdMap<u64, V>, FlowError> {
     let mut values: Vec<V> = values.into_iter().collect();
     values.sort_unstable_by_key(&key);
     if values.windows(2).any(|pair| key(&pair[0]) == key(&pair[1])) {
         return Err(FlowError::DuplicateId);
     }
     let mut slots: Vec<Option<V>> = values.into_iter().map(Some).collect();
-    let mut map = im::OrdMap::new();
-    // Ascending splits make every (HALF + 1)th first-pass key a separator, so
-    // HALF + 1 first-pass keys must cover WIDTH + 1 sorted positions.
-    let len = slots.len();
-    let sparse = (0..)
-        .map(|step: usize| step * (WIDTH + 1) / (HALF + 1))
-        .take_while(|&position| position < len);
-    for position in sparse {
-        if let Some(value) = slots.get_mut(position).and_then(Option::take) {
+    let mut map = imbl::OrdMap::new();
+    for slot in slots.iter_mut().step_by(2) {
+        if let Some(value) = slot.take() {
             map.insert(key(&value), value);
         }
     }
@@ -587,11 +578,14 @@ mod storage_tests {
 
     #[test]
     fn packed_maps_match_sequential_insertion_for_any_order() {
-        for len in [0_u64, 1, 2, 31, 32, 33, 63, 64, 65, 66, 129, 2_113, 5_000] {
+        for len in [
+            0_u64, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 66, 129, 2_113, 5_000,
+        ] {
             // A deterministic permutation: 7919 is prime and larger than every length.
             let keys = (0..len).map(|i| (i * 7_919) % len.max(1));
             let map = packed(keys.map(|k| (k, k * 3)), |(k, _)| *k).expect("unique keys");
-            let expected: im::OrdMap<u64, (u64, u64)> = (0..len).map(|k| (k, (k, k * 3))).collect();
+            let expected: imbl::OrdMap<u64, (u64, u64)> =
+                (0..len).map(|k| (k, (k, k * 3))).collect();
             assert_eq!(map, expected, "len {len}");
             assert_eq!(map.len() as u64, len);
         }

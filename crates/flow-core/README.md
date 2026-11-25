@@ -1,7 +1,7 @@
 # guiraffe-flow-core
 
 GPUI-free graph documents, atomic editing, bounded undo/redo, spatial queries and
-cached edge geometry. Uses serde/serde_json and structurally shared `im` maps.
+cached edge geometry. Uses serde/serde_json and structurally shared `imbl` maps.
 
 `Graph::from_parts` validates IDs, finite positive node rectangles, named handles,
 handle directions and acyclic parent chains. Deserialization is deliberately

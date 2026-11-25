@@ -96,7 +96,7 @@ fn soak_document_storage_stays_within_byte_budget() {
         graph_bytes as f64 / NODES as f64
     );
     // Before shared handle names and packed maps this document took 43.4 MB:
-    // half-full 64-entry map nodes doubled each entry and every node and edge
+    // half-full map nodes doubled each entry and every node and edge
     // owned copies of "in", "out", "default" and its handle list.
     assert!(
         graph_bytes <= 20_000_000,
