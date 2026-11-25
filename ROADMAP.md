@@ -84,6 +84,31 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 | Calendar-aware Timeline ticks, style helper traits, showcase option matrix | Polish |
 | `guiraffe dev` hot relaunch, docs site, input-latency and energy benchmarks | Tooling |
 
+## 0.3.1: What Passage needs
+
+**Goal:** Passage, a DAW built on GUIraffe, can drop its hand-built controls and its own undo
+stack. Requested on 2026-11-25 against rev `716d957e`. Starts after 0.3 and comes before
+any 0.4 work.
+
+Every editor that changes project data emits actions on the 0.3 bus, so undo, shortcuts,
+Spotlight and scripts cover it without extra code. Passage then moves `NoteEditStack` onto
+GUIraffe's undo.
+
+| # | Item | Notes |
+|---|---|---|
+| 1 | `DopeSheet` authoring: insert and remove keys, value channels with segment interpolation (Constant, Linear, Bezier, eases), toggle channels, `ChannelCurve::value_at`, expand a row into a `CurveView` lane | One model for both views. `value_at` must match the drawn segment. Includes a keyboard-only flow |
+| 2 | `TracksView`: per-track height and resizing, a `ClipPainter`, a themed selection style and `SelectionChanged`, move vs trim in `ClipChanged`, end trim past the content | Row layout becomes a prefix sum; hit testing uses binary search. 60 fps with 64 tracks × 200 clips |
+| 3 | Programmatic playhead and view: `set_playhead` that does not emit, follow mode, `set_view`/`view`, in-place `update_tracks` that diffs | Removes the host's seek feedback filter and the zoom loss on rebuild |
+| 4 | `Meter`: peak, RMS, peak hold, clip latch, dB zones from theme tokens, gain reduction, stereo, LUFS slot | Repaints itself from an `f32` without rerendering its parent |
+| 5 | `Knob` and a `NumberField` with units, scrub, typed entry and log mapping | One value-mapping trait shared with sliders |
+| 6 | `StepGrid`: fixed cells, row headers, column grouping, per-cell value styles, paint and erase by drag, keyboard, per-row length | State never changes layout. Painted in one pass |
+| 7 | Time ruler with a loop range, locators and `TimeFormat::Musical` | Shared by the piano roll and the arrangement |
+| 8 | `ScopeLayer` and `SpectrumLayer` presets for `PlotSurface` | Min/max per pixel column; log-frequency and dB axes |
+| 9 | `Canvas` helper: local coordinates, hover, drag gestures, cursor, virtual accessible items | Makes custom editors first-class |
+
+Requests: `../daw/docs/guiraffe-requests/`. Items 2 and 3 change `TracksView`, which the 0.3
+performance work also touches, so they start after it merges.
+
 ## 0.4: Text, pixels and platforms
 
 Candidates, in likely order:
