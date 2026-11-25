@@ -28,6 +28,7 @@ pub(crate) fn visible<'a, T>(
     let hi = items.partition_point(|i| start(i) <= axis.end());
     items.get(lo..hi.max(lo)).unwrap_or(&[])
 }
+pub mod tracks_model;
 pub mod tracks_view;
 
 pub use axis::{Axis, TimeFormat};
@@ -37,7 +38,9 @@ pub use curves::{Curve, Interp, Key};
 pub use dope_sheet::{Channel, DopeEvent, DopeSheet};
 pub use gantt::{ScheduleError, Scheduled, Task, schedule};
 pub use gantt_view::{GanttEvent, GanttView};
-pub use tracks_view::{TracksEvent, TracksView};
+pub use tracks_view::{
+    ClipPaint, ClipPainter, HeaderMode, HeaderRow, SelectionStyle, TracksEvent, TracksView,
+};
 
 pub use edit::ResizeEdges;
 

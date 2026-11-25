@@ -9,9 +9,14 @@ import sys
 SIZES = {
     "flamegraph": (32_768, 65_536, 131_072, 262_144, 524_288, 10_000_000),
     "tracks": (32, 64, 128, 256, 1_000),
+    # 64 tracks with a clip painter drawing 16 rectangles per clip (P0.3.1 #2: 60 fps).
+    "tracks-painter": (50, 100, 200),
     "timeline": (16, 64, 128, 256, 1_000),
     "mermaid": (16, 32, 64, 128, 500),
 }
+
+# Frame p99 budgets; 8 ms unless listed. The painter scenario's acceptance is 60 fps.
+FRAME_BUDGET_US = {"tracks-painter": 16_000}
 
 
 def replay(binary, component, settings, timeout):
@@ -31,7 +36,8 @@ def check(binary, component, count):
     record, = (line for line in lines if line.startswith("LIMIT "))
     mount, p99, _rss = map(int, record.split()[1:])
     cpu = next((line for line in lines if line.startswith("frame_thread_cpu_p99_us=")), "")
-    return 0 < mount <= 200_000 and 0 < p99 <= 8_000, f"mount={mount}us p99={p99}us {cpu}".strip()
+    budget = FRAME_BUDGET_US.get(component, 8_000)
+    return 0 < mount <= 200_000 and 0 < p99 <= budget, f"mount={mount}us p99={p99}us {cpu}".strip()
 
 
 def check_mixed(binary):

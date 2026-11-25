@@ -1,7 +1,7 @@
 //! DAW / animation track editing: clips on a track never overlap; moves, trims and splits
 //! keep that invariant and respect snapping.
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Clip {
     pub id: u32,
     pub start: f64,
@@ -44,6 +44,11 @@ impl Track {
 
     fn find(&self, id: u32) -> Option<usize> {
         self.clips.iter().position(|c| c.id == id)
+    }
+
+    /// Index of clip `id` in [`Track::clips`].
+    pub fn index_of(&self, id: u32) -> Option<usize> {
+        self.find(id)
     }
 
     /// Free interval around position `i` (between neighbours), excluding the clip itself.
@@ -94,30 +99,61 @@ impl Track {
         Some(self.next_id)
     }
 
+    /// The clip with this id.
+    pub fn clip(&self, id: u32) -> Option<&Clip> {
+        self.find(id).map(|i| &self.clips[i])
+    }
+
     /// Move clip `id` to `start`, clamped against its neighbours (it cannot jump over them).
     pub fn move_clip(&mut self, id: u32, start: f64) -> bool {
-        let Some(i) = self.find(id) else { return false };
-        if !start.is_finite() {
-            return false;
-        }
-        let (lo, hi) = self.room(i);
-        let len = self.clips[i].len;
-        let s = start.max(lo).min(hi - len);
-        let changed = s != self.clips[i].start;
-        self.clips[i].start = s;
-        changed
+        self.apply(id, |track, i| track.moved_at(i, start))
     }
 
     /// Trim an edge to time `t`, clamped to neighbours and a minimum length. Trimming the
-    /// start also advances the source offset so the content stays in place.
+    /// start also advances the source offset so the content stays in place. The end has no
+    /// content limit: a clip's length is the host's data, so an end trim may extend past
+    /// its media (only the next clip stops it).
     pub fn trim(&mut self, id: u32, edge: Edge, t: f64) -> bool {
+        self.apply(id, |track, i| track.trimmed_at(i, edge, t))
+    }
+
+    /// Clip `id` as [`Track::move_clip`] would leave it, without changing the track.
+    pub fn moved(&self, id: u32, start: f64) -> Option<Clip> {
+        self.moved_at(self.find(id)?, start)
+    }
+
+    /// Clip `id` as [`Track::trim`] would leave it, without changing the track.
+    pub fn trimmed(&self, id: u32, edge: Edge, t: f64) -> Option<Clip> {
+        self.trimmed_at(self.find(id)?, edge, t)
+    }
+
+    fn apply(&mut self, id: u32, next: impl FnOnce(&Self, usize) -> Option<Clip>) -> bool {
         let Some(i) = self.find(id) else { return false };
-        if !t.is_finite() {
-            return false;
+        match next(self, i) {
+            Some(clip) if clip != self.clips[i] => {
+                self.clips[i] = clip;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn moved_at(&self, i: usize, start: f64) -> Option<Clip> {
+        if !start.is_finite() {
+            return None;
         }
         let (lo, hi) = self.room(i);
-        let c = &mut self.clips[i];
-        let before = (c.start, c.len, c.source_offset);
+        let mut c = self.clips[i];
+        c.start = start.max(lo).min(hi - c.len);
+        Some(c)
+    }
+
+    fn trimmed_at(&self, i: usize, edge: Edge, t: f64) -> Option<Clip> {
+        if !t.is_finite() {
+            return None;
+        }
+        let (lo, hi) = self.room(i);
+        let mut c = self.clips[i];
         match edge {
             Edge::Start => {
                 let end = c.end();
@@ -134,7 +170,7 @@ impl Track {
                 c.len = e - c.start;
             }
         }
-        (c.start, c.len, c.source_offset) != before
+        Some(c)
     }
 
     /// Split clip `id` at `t`; returns the new right-hand clip id.
@@ -239,6 +275,12 @@ mod tests {
             t.clips()[1].start,
             4.0,
             "cannot extend before the source start"
+        );
+        assert!(t.trim(b, Edge::End, 100.0));
+        assert_eq!(
+            t.clips()[1].end(),
+            100.0,
+            "the last clip's end extends past its content: length is host data"
         );
         assert!(t.trim(a, Edge::End, 100.0));
         assert_eq!(t.clips()[0].end(), 4.0, "end trim stops at the next clip");

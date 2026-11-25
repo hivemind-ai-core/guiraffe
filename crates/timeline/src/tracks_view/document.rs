@@ -9,6 +9,7 @@ use guiraffe_core::{
 };
 
 use super::{TracksEvent, TracksView};
+use crate::tracks_model::{SetPlayhead, SetTracks, TrackUpdate};
 use crate::{Clip, LockStyle, ResizeEdges, TimeFormat, Track, widget_specs};
 
 pub(crate) fn register(cx: &mut App) {
@@ -196,10 +197,12 @@ impl RenderOnce for TrackDocument {
                 |state: &mut TrackState, timeline, event, window, cx| {
                     let (index, value) =
                         match event {
-                            TracksEvent::ClipChanged { track, clip } => {
-                                let entry = timeline.read(cx).tracks().get(*track).and_then(
-                                    |(_, track)| track.clips().iter().find(|c| c.id == *clip),
-                                );
+                            TracksEvent::ClipChanged { track, clip, .. } => {
+                                let entry = timeline
+                                    .read(cx)
+                                    .tracks(cx)
+                                    .get(*track)
+                                    .and_then(|row| row.track.clip(*clip).copied());
                                 let mut fields = std::collections::BTreeMap::from([
                                     ("track".into(), Value::Num(*track as f64)),
                                     ("clip".into(), Value::Num(f64::from(*clip))),
@@ -215,6 +218,7 @@ impl RenderOnce for TrackDocument {
                                 (0, Value::Record(Arc::new(fields)))
                             }
                             TracksEvent::Seek(time) => (1, Value::Num(*time)),
+                            _ => return,
                         };
                     if let Some(handler) = &state.handlers[index] {
                         handler(value, window, cx);
@@ -245,24 +249,26 @@ impl RenderOnce for TrackDocument {
                         state.format = self.format;
                     }
                     if state.length != self.length {
-                        timeline.pending_fit = Some((0.0, self.length));
+                        timeline.fit(0.0, self.length, cx);
                         state.length = self.length;
                     }
                     cx.notify();
                 }
                 if let Some(source) = source {
-                    let selected = timeline.selected();
-                    timeline.tracks = source.tracks;
+                    let updates = source
+                        .tracks
+                        .into_iter()
+                        .map(|(name, track)| TrackUpdate::new(name, track))
+                        .collect();
+                    timeline.store().dispatch_now(SetTracks(updates), cx);
                     timeline.locked = source.locks;
-                    timeline.release();
-                    timeline.select(selected, cx);
+                    timeline.cancel_drag();
                     cx.notify();
                 }
                 if let Some(playhead) = self.playhead
-                    && timeline.playhead != playhead
+                    && timeline.playhead(cx) != playhead
                 {
-                    timeline.playhead = playhead;
-                    cx.notify();
+                    timeline.store().dispatch_now(SetPlayhead(playhead), cx);
                 }
                 timeline.set_snap(self.snap);
                 if timeline.resize != self.resize {
