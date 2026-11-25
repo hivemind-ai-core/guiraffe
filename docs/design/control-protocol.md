@@ -1,6 +1,6 @@
 # Control protocol: addressable, observable, drivable controls
 
-Status: draft for 0.3, not implemented (see the [roadmap](../../ROADMAP.md)).
+Status: phase 1 has a provisional core implementation. Component adoption, binding and input-source integration follow in later phases (see the [roadmap](../../ROADMAP.md)).
 Read with store-first `ui!` (store-first `ui!`) and the command ribbon (command ribbon).
 
 ## 1. Goal
