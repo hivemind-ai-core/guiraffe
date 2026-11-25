@@ -760,6 +760,17 @@ pub enum WindowControlArea {
     Min,
 }
 
+/// How many frames a window drew by patching the last one in place, and how
+/// many tried to and were drawn in full. Always zero on this backend; see
+/// [`Window::frame_patch_stats`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PatchStats {
+    /// Frames drawn by patching last frame.
+    pub patched: u64,
+    /// Frames that tried to and were drawn as before.
+    pub refused: u64,
+}
+
 /// An identifier for a [Hitbox] which also includes [HitboxBehavior].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
@@ -5612,6 +5623,44 @@ impl Window {
         let snapped_offset = self.pixel_snap_point(self.element_offset());
         bounds.origin += snapped_offset;
         bounds
+    }
+
+    /// The frames this window drew by patching the last one in place: never
+    /// on this backend, which draws every frame. The same test-support call
+    /// as gpui-fast's, which does patch.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn frame_patch_stats(&self) -> PatchStats {
+        PatchStats::default()
+    }
+
+    /// What the rendered frame hit-tests by, how many tab stops it has and
+    /// how many primitives it draws, as text: the same test-support call as
+    /// gpui-fast's, which describes the scene in full.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn frame_fingerprint(&self) -> String {
+        use std::fmt::Write as _;
+        let frame = &self.rendered_frame;
+        let scene = &frame.scene;
+        let mut out = format!(
+            "scene {} {} {} {} {} {} {} {}\n",
+            scene.shadows.len(),
+            scene.quads.len(),
+            scene.paths.len(),
+            scene.underlines.len(),
+            scene.monochrome_sprites.len(),
+            scene.subpixel_sprites.len(),
+            scene.polychrome_sprites.len(),
+            scene.surfaces.len()
+        );
+        for hitbox in &frame.hitboxes {
+            let _ = writeln!(
+                out,
+                "hitbox {:?} {:?} {:?}",
+                hitbox.bounds, hitbox.content_mask, hitbox.behavior
+            );
+        }
+        let _ = writeln!(out, "tab stops {}", frame.tab_stops.insertion_history.len());
+        out
     }
 
     /// This method should be called during `prepaint`. You can use

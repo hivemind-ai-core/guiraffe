@@ -280,6 +280,9 @@ pub(crate) struct RetainedState {
     /// The focus of the input handler last given to the platform window, if
     /// one was. See [`note_restored_input_handler`].
     pub(crate) installed_input_focus: Option<Option<crate::FocusId>>,
+    /// What a patched frame compares against and looks subtrees up by. See
+    /// [`crate::fast::patch`].
+    pub(crate) patch: crate::fast::patch::PatchState,
 }
 
 impl RetainedState {
@@ -299,6 +302,7 @@ impl RetainedState {
             rendering_since: FxHashMap::default(),
             render_writes: FxHashMap::default(),
             installed_input_focus: None,
+            patch: crate::fast::patch::PatchState::new(),
         }
     }
 

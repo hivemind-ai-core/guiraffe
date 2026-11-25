@@ -3770,6 +3770,10 @@ impl Window {
                 self.rendered_frame.input_handlers.push(Some(input_handler));
             }
         }
+        let patch_log_start = cx.entities.access_log.patch_log.len();
+        if !cx.mode.skip_drawing() && crate::fast::patch::try_patch_frame(self, cx) {
+            return self.finish_patched_draw(cx, arena_scope, patch_log_start);
+        }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
             #[cfg(feature = "profiler")]
@@ -3895,8 +3899,70 @@ impl Window {
             self.debug_frame_overlay.record_frame(draw_duration);
         }
 
+        crate::fast::patch::finish_frame(self, cx, patch_log_start, false);
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
+        arena_scope.exit(&cx.element_arena)
+    }
+
+    /// Ends a draw that patched last frame in place instead of drawing a new
+    /// one (see [`crate::fast::patch`]): last frame stays the rendered frame,
+    /// and what the draw does once a frame is drawn is done for it. Focus,
+    /// the pointer and the window's size are as they were, so no focus event
+    /// is due and the cursor stands.
+    fn finish_patched_draw(
+        &mut self,
+        cx: &mut App,
+        arena_scope: ElementArenaScope,
+        patch_log_start: usize,
+    ) -> ArenaClearNeeded {
+        self.dirty_views.clear();
+        // The platform handed back its input handler, which went back into
+        // last frame: it is handed over again, as after any draw.
+        let focused_text_input = if let Some(mut input_handler) = self
+            .rendered_frame
+            .input_handlers
+            .iter_mut()
+            .rev()
+            .find_map(|h| h.take())
+        {
+            let accepts_text_input = input_handler.accepts_text_input(self, cx);
+            crate::fast::retained::note_installed_input_handler(self, &input_handler);
+            self.platform_window.set_input_handler(input_handler);
+            self.focus.filter(|_| accepts_text_input)
+        } else {
+            None
+        };
+        self.apply_text_input_configuration(cx);
+        let previous = mem::replace(&mut self.focused_text_input, focused_text_input);
+        if previous.is_some() != focused_text_input.is_some() {
+            self.platform_window
+                .text_input_state_changed(if focused_text_input.is_some() {
+                    TextInputStateChange::FocusGained
+                } else {
+                    TextInputStateChange::FocusLost
+                });
+        }
+        crate::fast::layout_key::WindowLayout::end_frame(&mut self.fast_layout);
+        crate::fast::retained::finish_retained_frame(self);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(observe) = &self.test_frame_observer {
+            observe(self);
+        }
+        // The window still draws everything it drew; what the patch read is
+        // added to it.
+        let entities = cx.entities.take_accessed();
+        crate::fast::tracked_entities::add_entities_accessed(
+            cx,
+            self.handle,
+            self.invalidator.clone(),
+            &entities,
+        );
+        cx.entities.restore_accessed(entities);
+        self.refreshing = false;
+        self.invalidator.set_phase(DrawPhase::None);
+        self.needs_present.set(true);
+        crate::fast::patch::finish_frame(self, cx, patch_log_start, true);
         arena_scope.exit(&cx.element_arena)
     }
 
@@ -5645,6 +5711,129 @@ impl Window {
         let snapped_offset = self.pixel_snap_point(self.element_offset());
         bounds.origin += snapped_offset;
         bounds
+    }
+
+    /// How many frames this window drew by patching the last one in place,
+    /// and how many tried to and were drawn in full. See [`crate::fast::patch`].
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn frame_patch_stats(&self) -> crate::fast::patch::PatchStats {
+        self.retained_state.patch.stats
+    }
+
+    /// Everything the rendered frame draws, hit-tests, focuses and dispatches
+    /// by, as text a patched frame and a frame drawn in full are compared by:
+    /// the scene's primitives, the hitboxes in hit-test order, the dispatch
+    /// tree, the tab order, the mouse listeners and cursor styles, and the
+    /// element states. Hitbox ids are written as places, atlas tiles left
+    /// out, and primitives of one draw order sorted, since none of these
+    /// change what is drawn or hit.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn frame_fingerprint(&self) -> String {
+        use std::fmt::Write as _;
+        let frame = &self.rendered_frame;
+        let mut out = String::new();
+        let mut scene = frame.scene.describe();
+        scene.sort();
+        for line in scene {
+            let _ = writeln!(out, "scene {line}");
+        }
+        let place: FxHashMap<HitboxId, usize> = frame
+            .hitboxes
+            .iter()
+            .enumerate()
+            .map(|(place, hitbox)| (hitbox.id, place))
+            .collect();
+        for hitbox in &frame.hitboxes {
+            let _ = writeln!(
+                out,
+                "hitbox {:?} {:?} {:?}",
+                hitbox.bounds, hitbox.content_mask, hitbox.behavior
+            );
+        }
+        for (index, node) in frame.dispatch_tree.nodes.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "node {index} parent {:?} focus {:?} view {:?} context {:?} key {} action {} modifiers {}",
+                node.parent.map(|parent| parent.0),
+                node.focus_id,
+                node.view_id,
+                node.context,
+                node.key_listeners.len(),
+                node.action_listeners.len(),
+                node.modifiers_changed_listeners.len(),
+            );
+        }
+        for operation in &frame.tab_stops.insertion_history {
+            let _ = match operation {
+                crate::tab_stop::TabStopOperation::Insert(handle) => writeln!(
+                    out,
+                    "tab {:?} {} {}",
+                    handle.id, handle.tab_index, handle.tab_stop
+                ),
+                crate::tab_stop::TabStopOperation::Group(index) => writeln!(out, "tab group {index}"),
+                crate::tab_stop::TabStopOperation::GroupEnd => writeln!(out, "tab group end"),
+            };
+        }
+        let _ = writeln!(
+            out,
+            "mouse listeners {}",
+            frame.mouse_listeners.iter().filter(|l| l.is_some()).count()
+        );
+        for cursor in &frame.cursor_styles {
+            let _ = writeln!(
+                out,
+                "cursor {:?} at {:?}",
+                cursor.style,
+                cursor.hitbox_id.and_then(|id| place.get(&id))
+            );
+        }
+        let mut states: Vec<String> = frame
+            .element_states
+            .keys()
+            .map(|(id, type_id)| format!("{id:?} {type_id:?}"))
+            .collect();
+        states.sort();
+        for state in states {
+            let _ = writeln!(out, "state {state}");
+        }
+        out
+    }
+
+    /// An empty frame for a patched frame to build its view into, away from
+    /// the next frame, whose maps are as large as a whole frame. See
+    /// [`crate::fast::patch`].
+    pub(crate) fn new_patch_frame(cx: &App) -> Frame {
+        Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone()))
+    }
+
+    /// For a patched frame (see [`crate::fast::patch`]): makes the hitboxes
+    /// inserted next take the ids last frame's hitboxes `reused` had, which
+    /// must follow one another, returning the id to resume from once they
+    /// are inserted, or `None` if they do not.
+    pub(crate) fn reuse_hitbox_ids(&mut self, reused: Range<usize>) -> Option<HitboxId> {
+        let reused = &self.rendered_frame.hitboxes[reused];
+        let resume = self.next_hitbox_id;
+        if let Some(first) = reused.first() {
+            if !reused
+                .iter()
+                .enumerate()
+                .all(|(offset, hitbox)| hitbox.id.0 == first.id.0.wrapping_add(offset as u64))
+            {
+                return None;
+            }
+            self.next_hitbox_id = first.id;
+        }
+        Some(resume)
+    }
+
+    /// Goes on inserting hitboxes from `resume`. See [`Self::reuse_hitbox_ids`].
+    pub(crate) fn resume_hitbox_ids(&mut self, resume: HitboxId) {
+        self.next_hitbox_id = resume;
+    }
+
+    /// Whether a prompt is shown over the window.
+    pub(crate) fn has_prompt(&self) -> bool {
+        self.prompt.is_some()
     }
 
     /// This method should be called during `prepaint`. You can use

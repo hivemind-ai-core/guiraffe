@@ -45,6 +45,32 @@ pub enum TabStopOperation {
     GroupEnd,
 }
 
+impl TabStopMap {
+    /// Whether this map was built by the same insertions as `others`: the
+    /// same focus handles, at the same tab indices, in the same groups. A
+    /// patched frame keeps last frame's tab order only then (see
+    /// [`crate::fast::patch`]).
+    pub(crate) fn same_insertions(&self, others: &[TabStopOperation]) -> bool {
+        self.insertion_history.len() == others.len()
+            && self
+                .insertion_history
+                .iter()
+                .zip(others)
+                .all(|(this, other)| match (this, other) {
+                    (TabStopOperation::Insert(this), TabStopOperation::Insert(other)) => {
+                        this.id == other.id
+                            && this.tab_index == other.tab_index
+                            && this.tab_stop == other.tab_stop
+                    }
+                    (TabStopOperation::Group(this), TabStopOperation::Group(other)) => {
+                        this == other
+                    }
+                    (TabStopOperation::GroupEnd, TabStopOperation::GroupEnd) => true,
+                    _ => false,
+                })
+    }
+}
+
 impl TabStopOperation {
     fn focus_handle(&self) -> Option<&FocusHandle> {
         match self {

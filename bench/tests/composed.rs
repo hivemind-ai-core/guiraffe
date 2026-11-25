@@ -509,6 +509,181 @@ fn fully_visible_edit_allocations(app: &mut HeadlessAppContext, n: usize) -> u64
     percentile(&mut allocations, 50)
 }
 
+/// Opens a window showing all `n` rows of a page of cached rows, its input
+/// focused.
+fn mount_all_visible(
+    app: &mut HeadlessAppContext,
+    n: usize,
+    probe: Probe,
+) -> (Entity<Page>, Mounted<'_>) {
+    let handle = app
+        .open_window(
+            size(px(WIDTH), px((n + 1) as f32 * ROW_HEIGHT)),
+            |window, cx| cx.new(|cx| Page::new(true, false, probe, window, cx)),
+        )
+        .expect("mount page");
+    app.run_until_parked();
+    let mut window = Mounted { app, handle };
+    let page = window.update(|window, cx| {
+        let page = window.root::<Page>().flatten().expect("page");
+        window.focus(&page.read(cx).input.focus_handle(cx), cx);
+        page
+    });
+    (page, window)
+}
+
+/// The rendered frame as text, drawn again in full: what a patched frame
+/// has to equal.
+fn redrawn_in_full(window: &mut Mounted<'_>) -> String {
+    window.update(|window, _| window.refresh());
+    window.update(|window, _| window.frame_fingerprint())
+}
+
+fn row_label(window: &mut Mounted<'_>, store: &Store<State>, row: usize, label: &str) {
+    let label = SharedString::from(label.to_string());
+    window.update(|_, cx| store.dispatch(Change::RowLabel(row, label), cx));
+}
+
+/// A row edited to a label of the same length patches last frame in place
+/// on gpui-fast; one that shapes to another number of glyphs is drawn in
+/// full. Either way the frame is the one a full redraw draws.
+#[test]
+fn patched_row_edits_match_a_full_redraw() {
+    let mut app = app();
+    let probe = Probe::new(40);
+    let (page, mut window) = mount_all_visible(&mut app, 40, probe.clone());
+    let store = window.update(|_, cx| page.read(cx).store.clone());
+    let stats = |window: &mut Mounted<'_>| window.update(|window, _| window.frame_patch_stats());
+    row_label(&mut window, &store, EDITED, "Row 00004");
+    for (row, label) in [
+        (EDITED, "Row 00009"),
+        (17, "Row 00071"),
+        (EDITED, "Row 00003"),
+    ] {
+        let before = stats(&mut window);
+        let renders = probe.rows[row].get();
+        row_label(&mut window, &store, row, label);
+        assert_eq!(probe.rows[row].get(), renders + 1, "row {row} drew once");
+        let patched = window.update(|window, _| window.frame_fingerprint());
+        if gpui_kit::GPUI_FAST {
+            assert_eq!(
+                stats(&mut window).patched,
+                before.patched + 1,
+                "{label} patched"
+            );
+        }
+        assert_eq!(
+            patched,
+            redrawn_in_full(&mut window),
+            "{label} as drawn in full"
+        );
+    }
+    // Another number of glyphs: drawn as before. On gpui-fast the row was
+    // built for the patch first, so it rendered twice.
+    let before = stats(&mut window);
+    let renders = probe.rows[EDITED].get();
+    row_label(&mut window, &store, EDITED, "Row 000004444");
+    assert_eq!(
+        probe.rows[EDITED].get(),
+        renders + 2 - usize::from(!gpui_kit::GPUI_FAST)
+    );
+    let drawn = window.update(|window, _| window.frame_fingerprint());
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            stats(&mut window).patched,
+            before.patched,
+            "a longer label is not patched"
+        );
+    }
+    assert_eq!(drawn, redrawn_in_full(&mut window));
+    close(window);
+}
+
+/// After rows are patched in, a click lands on the patched row's checkbox
+/// and the tab order is the one a full redraw gives.
+#[test]
+fn patched_rows_hit_test_and_tab_like_a_full_redraw() {
+    let mut app = app();
+    let probe = Probe::new(20);
+    let (page, mut window) = mount_all_visible(&mut app, 20, probe.clone());
+    let store = window.update(|_, cx| page.read(cx).store.clone());
+    row_label(&mut window, &store, EDITED, "Row 00004");
+    row_label(&mut window, &store, EDITED, "Row 00007");
+
+    // The checkbox follows the 130-pixel label and the row's 8-pixel gap.
+    let at = point(px(146.), px(ROW_HEIGHT * (1.5 + EDITED as f32)));
+    let click = |window: &mut Mounted<'_>| {
+        window.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position: at,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+        });
+        for down in [true, false] {
+            window.update(|window, cx| {
+                let event = if down {
+                    PlatformInput::MouseDown(gpui_kit::MouseDownEvent {
+                        button: gpui_kit::MouseButton::Left,
+                        position: at,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    })
+                } else {
+                    PlatformInput::MouseUp(gpui_kit::MouseUpEvent {
+                        button: gpui_kit::MouseButton::Left,
+                        position: at,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    })
+                };
+                window.dispatch_event(event, cx);
+            });
+        }
+    };
+    let checked = |window: &mut Mounted<'_>| {
+        window.update(|_, cx| {
+            store
+                .state(cx)
+                .rows
+                .iter()
+                .map(|row| row.checked)
+                .collect::<Vec<_>>()
+        })
+    };
+    let unchecked = checked(&mut window);
+    click(&mut window);
+    let after = checked(&mut window);
+    let toggled: Vec<usize> = (0..unchecked.len())
+        .filter(|&row| unchecked[row] != after[row])
+        .collect();
+    assert_eq!(toggled, vec![EDITED], "the click toggled the patched row");
+
+    let tab_order = |window: &mut Mounted<'_>| {
+        window.update(|window, cx| {
+            window.focus(&page.read(cx).input.focus_handle(cx), cx);
+        });
+        (0..12)
+            .map(|_| {
+                window.update(|window, cx| {
+                    window.focus_next(cx);
+                    format!("{:?}", window.focused(cx).map(|handle| handle.tab_index))
+                        + &format!("{:?}", window.focused(cx))
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    row_label(&mut window, &store, EDITED, "Row 00008");
+    let patched = tab_order(&mut window);
+    window.update(|window, _| window.refresh());
+    assert_eq!(patched, tab_order(&mut window));
+    close(window);
+}
+
 fn cpu_ns() -> u64 {
     let time = clock_gettime(ClockId::CLOCK_THREAD_CPUTIME_ID).expect("thread CPU clock");
     time.tv_sec() as u64 * 1_000_000_000 + time.tv_nsec() as u64

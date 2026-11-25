@@ -921,6 +921,44 @@ impl TaffyLayoutEngine {
 /// caches, which is what lets the next frame skip recomputing the parts of
 /// the tree that did not change.
 #[inline]
+/// Gives back the claims a patched frame made on `keys`, as though it never
+/// ran: nothing else was claimed, so nothing is swept, and the frame counter
+/// stays where the last drawn frame left it (see [`crate::fast::patch`]).
+/// With `finished`, the patched frame was kept: what it laid out on nodes of
+/// its own goes, as the end of any frame lets it go. Otherwise the frame is
+/// drawn after all, which releases them itself.
+pub(crate) fn give_back_patched_claims(
+    engine: &mut TaffyLayoutEngine,
+    keys: &[u64],
+    finished: bool,
+) {
+    let retention = &mut engine.retention;
+    let frame = retention.frame;
+    for key in keys {
+        if let Some(node) = retention.retained.get_mut(key)
+            && node.claimed_in_frame == frame
+        {
+            node.claimed_in_frame = frame.wrapping_sub(1);
+            retention.claimed_this_frame = retention.claimed_this_frame.saturating_sub(1);
+        }
+    }
+    if !finished {
+        return;
+    }
+    for (id, _) in mem::take(&mut retention.pending_replays) {
+        let _ = engine.taffy.mark_dirty(id.into());
+    }
+    for id in retention.transient.drain(..) {
+        retention.unstretched_styles.remove(&id);
+        if !retention.robbed_parents.is_empty() {
+            retention.robbed_parents.remove(&id);
+        }
+        remove_node(&mut engine.taffy, id);
+        retention.stats.nodes_freed += 1;
+    }
+    retention.claimed_this_frame = 0;
+}
+
 pub(crate) fn release_unclaimed_nodes(engine: &mut TaffyLayoutEngine) {
     // A measured node left clean but not laid out this frame is measured
     // afresh the next time it is.

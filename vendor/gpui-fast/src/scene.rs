@@ -53,6 +53,7 @@ pub struct Scene {
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
     pub(crate) sort_scratch: crate::fast::scene::SortScratch,
+    pub(crate) fast_slots: crate::fast::scene::SceneSlots,
     pub(crate) fast_rounded_clip: crate::fast::rounded_clip::SceneClips,
     pub layers: crate::fast::layers::scene::SceneLayers,
 }
@@ -61,6 +62,7 @@ pub struct Scene {
 impl Scene {
     pub fn clear(&mut self) {
         crate::fast::rounded_clip::clear(self);
+        self.fast_slots.clear();
         self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.layer_stack.clear();

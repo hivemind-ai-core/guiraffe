@@ -47,3 +47,28 @@ pub(crate) fn record_entities_accessed(
     tracked_entities.extend(entities.iter().copied());
     cx.tracked_entities.insert(window_id, tracked_entities);
 }
+
+/// Records that the window also drew `entities`, keeping what it drew
+/// before: a patched frame draws only what changed and keeps the rest (see
+/// [`crate::fast::patch`]). An entity the patched view no longer reads stays
+/// tracked until the window next draws a frame in full, which at most draws
+/// it once more than needed.
+pub(crate) fn add_entities_accessed(
+    cx: &mut App,
+    window_handle: AnyWindowHandle,
+    invalidator: WindowInvalidator,
+    entities: &FxHashSet<EntityId>,
+) {
+    let window_id = window_handle.id;
+    let mut tracked_entities = std::mem::take(cx.tracked_entities.entry(window_id).or_default());
+    for entity in entities.iter() {
+        if tracked_entities.insert(*entity) {
+            cx.window_invalidators_by_entity
+                .entry(*entity)
+                .or_default()
+                .insert(window_id, invalidator.clone());
+        }
+        cx.current_window_by_entity.insert(*entity, window_id);
+    }
+    cx.tracked_entities.insert(window_id, tracked_entities);
+}

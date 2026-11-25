@@ -55,6 +55,14 @@ impl TaffyLayoutEngine {
         }
     }
 
+    /// Ends a patched frame: see [`crate::fast::layout::give_back_patched_claims`].
+    pub(crate) fn finish_patched_frame(&mut self, keys: &[u64]) {
+        crate::fast::layout::give_back_patched_claims(self, keys, true);
+        self.absolute_layout_bounds.clear();
+        self.absolute_outer_origins.clear();
+        self.computed_layouts.clear();
+    }
+
     pub fn clear(&mut self) {
         crate::fast::layout::release_unclaimed_nodes(self);
         self.absolute_layout_bounds.clear();

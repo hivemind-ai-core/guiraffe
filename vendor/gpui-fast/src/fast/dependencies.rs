@@ -146,6 +146,11 @@ struct LogRanges {
 }
 
 impl AppDependencies {
+    /// How many changes to globals were stamped so far.
+    pub(crate) fn global_generation(&self) -> u64 {
+        self.global_generation
+    }
+
     /// Stamps a change to the global of type `global_type`.
     pub(crate) fn global_changed(&mut self, global_type: TypeId) {
         // Stamped on every change, not only the first one an effect is queued
@@ -622,6 +627,50 @@ pub(crate) struct EntityAccessLog {
     /// The entity being asked something through [`Entity::query`], whose
     /// update is not counted as a change unless it notifies.
     queried: Option<EntityId>,
+    /// The entities changed, updated or written since the window last drew
+    /// (and while it drew), for a patched frame to find the subtrees that
+    /// read them without walking all of them. See [`crate::fast::patch`].
+    pub(crate) patch_log: PatchLog,
+}
+
+/// The entities changed, updated or written, in order and with repeats, up
+/// to [`PatchLog::CAPACITY`] of them. Past that, it only knows it is full.
+#[derive(Default)]
+pub(crate) struct PatchLog {
+    entries: Vec<EntityId>,
+    full: bool,
+}
+
+impl PatchLog {
+    /// More changes than a patched frame would look up one by one.
+    const CAPACITY: usize = 256;
+
+    #[inline(always)]
+    fn push(&mut self, entity: EntityId) {
+        if self.entries.len() < Self::CAPACITY {
+            self.entries.push(entity);
+        } else {
+            self.full = true;
+        }
+    }
+
+    /// Where the log stands, to drop what came before it once a frame drew.
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// The changes logged, or `None` when there were too many to log.
+    pub(crate) fn entries(&self) -> Option<&[EntityId]> {
+        (!self.full).then_some(&self.entries[..])
+    }
+
+    /// Drops the changes logged before `start`, which the frame just drawn
+    /// accounted for, keeping those made while it drew for the next frame.
+    pub(crate) fn drop_before(&mut self, start: usize) {
+        let start = start.min(self.entries.len());
+        self.entries.drain(..start);
+        self.full = self.full && self.entries.len() >= Self::CAPACITY;
+    }
 }
 
 impl EntityAccessLog {
@@ -659,6 +708,7 @@ impl EntityAccessLog {
 
     /// Stamps `entity_id` as changed.
     fn stamp_changed(&mut self, entity_id: EntityId) {
+        self.patch_log.push(entity_id);
         self.update_generation += 1;
         self.changed_at.insert(entity_id, self.update_generation);
     }
@@ -802,6 +852,7 @@ pub(crate) fn note_update(entities: &mut EntityMap, entity_id: EntityId) {
     if log.queried == Some(entity_id) {
         return;
     }
+    log.patch_log.push(entity_id);
     if log.recordings.get() == 0 {
         log.update_generation += 1;
         log.updated_at.insert(entity_id, log.update_generation);
@@ -1043,6 +1094,17 @@ pub(crate) struct RenderDependencies {
 #[derive(Clone, Default, Debug)]
 pub(crate) struct StateVersion(Rc<Cell<u64>>);
 
+thread_local! {
+    /// Counts the changes to every [`StateVersion`] on the thread, for a
+    /// patched frame to tell that none changed without asking each one.
+    static STATE_EPOCH: Cell<u64> = const { Cell::new(0) };
+}
+
+/// See [`STATE_EPOCH`].
+pub(crate) fn state_epoch() -> u64 {
+    STATE_EPOCH.with(Cell::get)
+}
+
 impl StateVersion {
     pub(crate) fn get(&self) -> u64 {
         self.0.get()
@@ -1051,6 +1113,7 @@ impl StateVersion {
     /// Marks the state as changed.
     pub(crate) fn bump(&self) {
         self.0.set(self.0.get().wrapping_add(1));
+        STATE_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
     }
 
     /// Marks the state as changed if `changed`, for a change that may leave

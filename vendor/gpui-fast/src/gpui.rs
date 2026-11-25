@@ -139,6 +139,7 @@ pub use fast::layers::scene::{
     decode_layer_tile, layer_tile_id, layer_tile_texture_id,
 };
 #[cfg(any(test, feature = "test-support"))]
+pub use fast::patch::PatchStats;
 pub use fast::stats::LayoutStats;
 pub use geometry::*;
 pub use gestures::*;
