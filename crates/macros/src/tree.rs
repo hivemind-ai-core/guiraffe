@@ -780,12 +780,7 @@ impl Node {
         self.check_in(store, &mut Vec::new(), &lens)
     }
 
-    fn check_in(
-        &self,
-        store: bool,
-        items: &mut Vec<Ident>,
-        lens: &LensCheck<'_>,
-    ) -> Result<()> {
+    fn check_in(&self, store: bool, items: &mut Vec<Ident>, lens: &LensCheck<'_>) -> Result<()> {
         let all = |nodes: &[Node], items: &mut Vec<Ident>| {
             nodes
                 .iter()

@@ -29,6 +29,7 @@ use crate::{
     store::Slot,
 };
 
+type BodySlot<S, L, K, T> = Rc<RefCell<Option<Rc<RowBody<S, L, K, T>>>>>;
 type RowBody<S, L, K, T> = dyn Fn(ByKey<L, K>, &T, &Store<S>, &mut Window, &mut App) -> AnyElement;
 
 /// How a [`BoundList`] lays out its rows.
@@ -46,7 +47,7 @@ pub struct RowView<S: Clone + PartialEq + 'static, L, K: 'static, T: 'static> {
     store: Store<S>,
     item: ByKey<L, K>,
     value: Option<T>,
-    body: Rc<RefCell<Option<Rc<RowBody<S, L, K, T>>>>>,
+    body: BodySlot<S, L, K, T>,
     pending: bool,
     renders: usize,
     _watch: Option<Watch>,
@@ -124,7 +125,7 @@ pub struct RowViews<S: Clone + PartialEq + 'static, L, K: 'static, T: 'static> {
     store: Store<S>,
     list: L,
     rows: HashMap<K, Entity<RowView<S, L, K, T>>>,
-    body: Rc<RefCell<Option<Rc<RowBody<S, L, K, T>>>>>,
+    body: BodySlot<S, L, K, T>,
 }
 
 impl<S, L, K, T> RowViews<S, L, K, T>

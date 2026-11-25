@@ -180,10 +180,12 @@ impl<S, T: Slot<S> + ?Sized> Slot<S> for Rc<T> {
     }
 }
 
+type Changed<T> = Box<dyn Fn(&T, &mut App)>;
+
 struct WatchSlot<L: Lens> {
     lens: L,
     last: std::cell::RefCell<Option<L::Target>>,
-    changed: Box<dyn Fn(&L::Target, &mut App)>,
+    changed: Changed<L::Target>,
 }
 
 impl<L: Lens> Slot<L::Root> for WatchSlot<L>
