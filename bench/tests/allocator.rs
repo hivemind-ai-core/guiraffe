@@ -835,6 +835,7 @@ fn registered_protocol_dispatch_and_repaint() -> anyhow::Result<()> {
     plain?;
     let (frame, bound) = count_allocations(|| registered.draw())?;
     frame?;
+    eprintln!("protocol repaint: unregistered {baseline:?}, registered {bound:?}");
     assert_eq!(bound.allocations, baseline.allocations);
     assert_eq!(bound.bytes, baseline.bytes);
     registered.dispatch(|call| call())?;

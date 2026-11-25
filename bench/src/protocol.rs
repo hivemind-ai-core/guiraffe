@@ -94,6 +94,10 @@ impl Fixture {
             .update_window(self.window.into(), |_, w, cx| w.draw(cx).clear(cx))?;
         Ok(())
     }
+    /// Execute the measured operation outside Callgrind's generated wrapper module.
+    pub fn dispatch_once(&mut self) -> anyhow::Result<()> {
+        self.dispatch(|call| call())
+    }
     /// Measure only the synchronous body within an existing window update.
     pub fn dispatch<R>(
         &mut self,

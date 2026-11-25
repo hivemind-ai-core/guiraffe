@@ -59,13 +59,15 @@ fn registered_controls() -> guiraffe_bench::protocol::Fixture {
     guiraffe_bench::protocol::Fixture::new(true).expect("mount protocol fixture")
 }
 
-#[library_benchmark(setup = registered_controls)]
+// The unoptimized workspace profile measured 8,363 Ir on x86-64. The ceiling
+// applies even before a base revision contains this suite.
+#[library_benchmark(setup = registered_controls, config = LibraryBenchmarkConfig::default().tool(
+    Callgrind::default().hard_limits([(EventKind::Ir, 10_000)]).soft_limits([(EventKind::Ir, 2.0)])
+))]
 fn registered_dispatch(
     mut fixture: guiraffe_bench::protocol::Fixture,
 ) -> guiraffe_bench::protocol::Fixture {
-    fixture
-        .dispatch(|call| call())
-        .expect("dispatch protocol action");
+    fixture.dispatch_once().expect("dispatch protocol action");
     fixture
 }
 library_benchmark_group!(name = protocol; benchmarks = registered_dispatch);
