@@ -436,9 +436,9 @@ fn run_component(component: &str, short: bool, no_minimap: bool) -> Result<()> {
         "tracks" => {
             mounted::tracks(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
-        "tracks-painter" => mounted::tracks_painter(|frame| {
-            result = sample(frame, mount_started.elapsed(), short)
-        })?,
+        "tracks-painter" => {
+            mounted::tracks_painter(|frame| result = sample(frame, mount_started.elapsed(), short))?
+        }
         "curve-editor" => {
             mounted::curve_editor(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }

@@ -156,7 +156,11 @@ impl RowLayout {
     /// Rows overlapping content ys `top..bottom`.
     pub fn rows_in(&self, top: f32, bottom: f32) -> Range<usize> {
         let n = self.len();
-        let first = self.tops.partition_point(|&t| t <= top).saturating_sub(1).min(n);
+        let first = self
+            .tops
+            .partition_point(|&t| t <= top)
+            .saturating_sub(1)
+            .min(n);
         let last = self.tops.partition_point(|&t| t < bottom).min(n);
         first..last.max(first)
     }
@@ -250,7 +254,9 @@ impl TracksModel {
     }
 
     fn row_mut(&mut self, track: usize) -> Option<&mut TrackRow> {
-        Arc::make_mut(&mut self.rows).get_mut(track).map(Arc::make_mut)
+        Arc::make_mut(&mut self.rows)
+            .get_mut(track)
+            .map(Arc::make_mut)
     }
 
     /// Replace the tracks, diffing by index: unchanged rows keep their allocation, a row
@@ -258,7 +264,10 @@ impl TracksModel {
     /// exists. Zoom and scroll are untouched. Returns whether anything changed.
     pub fn update_tracks(&mut self, tracks: Vec<TrackUpdate>) -> bool {
         let same = tracks.len() == self.rows.len()
-            && tracks.iter().zip(self.rows.iter()).all(|(u, row)| u.matches(row));
+            && tracks
+                .iter()
+                .zip(self.rows.iter())
+                .all(|(u, row)| u.matches(row));
         if same {
             return false;
         }
@@ -339,7 +348,8 @@ impl TracksModel {
     }
 
     fn clamp_time(&self, time: f64) -> Option<f64> {
-        time.is_finite().then(|| time.max(self.min_time.unwrap_or(0.0)).max(0.0))
+        time.is_finite()
+            .then(|| time.max(self.min_time.unwrap_or(0.0)).max(0.0))
     }
 
     /// Move the playhead (no event) and follow it if follow mode is on.
@@ -427,7 +437,11 @@ pub enum TracksAction {
     /// Move a clip to start at `start` (clamped by its neighbours).
     MoveClip { clip: ClipRef, start: f64 },
     /// Move one edge of a clip to `time`. The end may extend past the clip's content.
-    TrimClip { clip: ClipRef, edge: Edge, time: f64 },
+    TrimClip {
+        clip: ClipRef,
+        edge: Edge,
+        time: f64,
+    },
     /// Select a clip, or clear the selection.
     Select(Option<ClipRef>),
     /// Move the playhead.
@@ -438,10 +452,21 @@ pub enum TracksAction {
 /// listeners see.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TracksChange {
-    TrackResized { track: usize, height: f32 },
-    ClipChanged { clip: ClipRef, edit: ClipEdit, span: Clip },
-    SelectionChanged { selection: Option<ClipRef> },
-    Seek { time: f64 },
+    TrackResized {
+        track: usize,
+        height: f32,
+    },
+    ClipChanged {
+        clip: ClipRef,
+        edit: ClipEdit,
+        span: Clip,
+    },
+    SelectionChanged {
+        selection: Option<ClipRef>,
+    },
+    Seek {
+        time: f64,
+    },
 }
 
 /// Erased action names (the payload is a record).
@@ -760,7 +785,10 @@ mod tests {
     #[test]
     fn layout_is_a_prefix_sum_and_hit_tests_by_binary_search() {
         let layout = RowLayout::new([40.0, 100.0, 25.0]);
-        assert_eq!((layout.top(1), layout.top(2), layout.total()), (40.0, 140.0, 165.0));
+        assert_eq!(
+            (layout.top(1), layout.top(2), layout.total()),
+            (40.0, 140.0, 165.0)
+        );
         assert_eq!(layout.height(1), 100.0);
         assert_eq!(layout.row_at(0.0), Some(0));
         assert_eq!(layout.row_at(39.9), Some(0));
@@ -773,11 +801,19 @@ mod tests {
         assert_eq!(layout.rows_in(200.0, 300.0), 3..3);
         assert_eq!(layout.bottom_edge_at(141.0, 3.0), Some(1));
         assert_eq!(layout.bottom_edge_at(100.0, 3.0), None);
-        assert_eq!(layout.bottom_edge_at(-2.0, 3.0), None, "the top edge is not a row bottom");
+        assert_eq!(
+            layout.bottom_edge_at(-2.0, 3.0),
+            None,
+            "the top edge is not a row bottom"
+        );
         let mut again = layout.clone();
         let capacity = again.tops.capacity();
         again.rebuild([10.0, 10.0, 10.0]);
-        assert_eq!(again.tops.capacity(), capacity, "rebuild reuses the allocation");
+        assert_eq!(
+            again.tops.capacity(),
+            capacity,
+            "rebuild reuses the allocation"
+        );
         assert_eq!(again.row_at(25.0), Some(2));
     }
 
@@ -799,15 +835,33 @@ mod tests {
         let mut m = model();
         let a = ClipRef { track: 0, clip: 1 };
         assert_eq!(
-            m.apply(TracksAction::ResizeTrack { track: 0, height: 5.0 }),
-            Some(TracksChange::TrackResized { track: 0, height: MIN_TRACK_HEIGHT })
+            m.apply(TracksAction::ResizeTrack {
+                track: 0,
+                height: 5.0
+            }),
+            Some(TracksChange::TrackResized {
+                track: 0,
+                height: MIN_TRACK_HEIGHT
+            })
         );
-        assert_eq!(m.apply(TracksAction::ResizeTrack { track: 0, height: 5.0 }), None);
+        assert_eq!(
+            m.apply(TracksAction::ResizeTrack {
+                track: 0,
+                height: 5.0
+            }),
+            None
+        );
         assert!(matches!(
             m.apply(TracksAction::MoveClip { clip: a, start: 1.5 }),
             Some(TracksChange::ClipChanged { edit: ClipEdit::Move, span, .. }) if span.start == 1.5
         ));
-        assert_eq!(m.apply(TracksAction::MoveClip { clip: a, start: 1.5 }), None);
+        assert_eq!(
+            m.apply(TracksAction::MoveClip {
+                clip: a,
+                start: 1.5
+            }),
+            None
+        );
         // The end trims past the content up to the next clip at 5.
         assert!(matches!(
             m.apply(TracksAction::TrimClip { clip: a, edge: Edge::End, time: 9.0 }),
@@ -818,10 +872,16 @@ mod tests {
             m.apply(TracksAction::Select(Some(a))),
             Some(TracksChange::SelectionChanged { selection: Some(a) })
         );
-        assert_eq!(m.apply(TracksAction::Select(Some(ClipRef { track: 0, clip: 99 }))),
-            Some(TracksChange::SelectionChanged { selection: None }), "a missing clip clears");
+        assert_eq!(
+            m.apply(TracksAction::Select(Some(ClipRef { track: 0, clip: 99 }))),
+            Some(TracksChange::SelectionChanged { selection: None }),
+            "a missing clip clears"
+        );
         assert_eq!(m.apply(TracksAction::Seek(-3.0)), None, "already at 0");
-        assert_eq!(m.apply(TracksAction::Seek(2.0)), Some(TracksChange::Seek { time: 2.0 }));
+        assert_eq!(
+            m.apply(TracksAction::Seek(2.0)),
+            Some(TracksChange::Seek { time: 2.0 })
+        );
         assert_eq!(m.apply(TracksAction::Seek(f64::NAN)), None);
     }
 
@@ -829,7 +889,10 @@ mod tests {
     fn update_tracks_diffs_in_place_and_keeps_heights_selection_and_view() {
         let mut m = model();
         m.selection = Some(ClipRef { track: 0, clip: 2 });
-        m.set_view(ViewRange { start: 3.0, scale: 0.01 });
+        m.set_view(ViewRange {
+            start: 3.0,
+            scale: 0.01,
+        });
         let before = m.clone();
         let same: Vec<_> = m
             .rows()
@@ -841,7 +904,10 @@ mod tests {
         let mut changed = same;
         changed[1].track = track(&[(2.0, 1.0)]);
         assert!(m.update_tracks(changed));
-        assert!(Arc::ptr_eq(&m.rows()[0], &before.rows()[0]), "unchanged row shared");
+        assert!(
+            Arc::ptr_eq(&m.rows()[0], &before.rows()[0]),
+            "unchanged row shared"
+        );
         assert_eq!(m.rows()[1].height, 100.0, "height kept");
         assert_eq!(m.view, before.view, "zoom survives");
         assert_eq!(m.selection, before.selection);
@@ -854,7 +920,10 @@ mod tests {
     fn follow_modes_and_min_time() {
         let mut m = model();
         m.viewport = 100.0;
-        m.set_view(ViewRange { start: 0.0, scale: 0.1 }); // 10 s visible
+        m.set_view(ViewRange {
+            start: 0.0,
+            scale: 0.1,
+        }); // 10 s visible
         m.set_playhead(5.0);
         assert_eq!(m.view.map(|v| v.start), Some(0.0), "follow off");
         m.follow = Follow::Page;
@@ -866,8 +935,15 @@ mod tests {
         m.set_playhead(30.0);
         assert_eq!(m.view.map(|v| v.start), Some(25.0));
         m.min_time = Some(0.0);
-        m.set_view(ViewRange { start: -4.0, scale: 0.1 });
-        assert_eq!(m.view.map(|v| v.start), Some(0.0), "clamped to the minimum time");
+        m.set_view(ViewRange {
+            start: -4.0,
+            scale: 0.1,
+        });
+        assert_eq!(
+            m.view.map(|v| v.start),
+            Some(0.0),
+            "clamped to the minimum time"
+        );
         m.set_playhead(-1.0);
         assert_eq!(m.playhead, 0.0);
     }
@@ -876,10 +952,24 @@ mod tests {
     fn erased_actions_round_trip_and_reject_bad_payloads() {
         let at = ClipRef { track: 2, clip: 7 };
         for action in [
-            TracksAction::ResizeTrack { track: 1, height: 64.0 },
-            TracksAction::MoveClip { clip: at, start: 1.25 },
-            TracksAction::TrimClip { clip: at, edge: Edge::End, time: 9.5 },
-            TracksAction::TrimClip { clip: at, edge: Edge::Start, time: 0.5 },
+            TracksAction::ResizeTrack {
+                track: 1,
+                height: 64.0,
+            },
+            TracksAction::MoveClip {
+                clip: at,
+                start: 1.25,
+            },
+            TracksAction::TrimClip {
+                clip: at,
+                edge: Edge::End,
+                time: 9.5,
+            },
+            TracksAction::TrimClip {
+                clip: at,
+                edge: Edge::Start,
+                time: 0.5,
+            },
             TracksAction::Select(Some(at)),
             TracksAction::Select(None),
             TracksAction::Seek(3.0),
@@ -890,7 +980,10 @@ mod tests {
             name: action_names::MOVE_CLIP.into(),
             payload: record(&[("track", Value::Num(-1.0))]),
         };
-        assert_eq!(TracksAction::decode(&bad), Err(ActionError::Invalid("track")));
+        assert_eq!(
+            TracksAction::decode(&bad),
+            Err(ActionError::Invalid("track"))
+        );
         let seek = Action {
             name: action_names::SEEK.into(),
             payload: Value::Num(2.0),

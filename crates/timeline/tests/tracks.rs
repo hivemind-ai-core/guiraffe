@@ -104,21 +104,23 @@ impl Mounted<'_> {
     /// Window point at time `t` and content y `y` (before scrolling).
     fn at(&mut self, t: f64, y: f32) -> Point<Pixels> {
         let body = self.body();
-        let (x, scroll) = self
-            .vcx
-            .update(|_, cx| {
-                let v = self.view.read(cx);
-                (v.axis().x(t), v.scroll_y())
-            });
+        let (x, scroll) = self.vcx.update(|_, cx| {
+            let v = self.view.read(cx);
+            (v.axis().x(t), v.scroll_y())
+        });
         body.origin + point(px(x as f32), px(y - scroll))
     }
     fn model(&mut self) -> TracksModel {
-        self.vcx.update(|_, cx| self.store.state(cx).as_ref().clone())
+        self.vcx
+            .update(|_, cx| self.store.state(cx).as_ref().clone())
     }
     fn drag(&mut self, a: Point<Pixels>, b: Point<Pixels>) {
-        self.vcx.simulate_mouse_down(a, MouseButton::Left, Default::default());
-        self.vcx.simulate_mouse_move(b, Some(MouseButton::Left), Default::default());
-        self.vcx.simulate_mouse_up(b, MouseButton::Left, Default::default());
+        self.vcx
+            .simulate_mouse_down(a, MouseButton::Left, Default::default());
+        self.vcx
+            .simulate_mouse_move(b, Some(MouseButton::Left), Default::default());
+        self.vcx
+            .simulate_mouse_up(b, MouseButton::Left, Default::default());
         self.vcx.run_until_parked();
     }
     fn click(&mut self, p: Point<Pixels>) {
@@ -152,8 +154,10 @@ fn mount(cx: &mut TestAppContext, rows: usize, registered: bool) -> Mounted<'_> 
         let id = registered.then(|| TracksView::register(&view, "arrange", window, cx));
         ActionBus::add_interceptor(Rc::new(Recorder(log.clone())), window, cx);
         let ev = events.clone();
-        cx.subscribe(&view, move |_, _, e: &TracksEvent, _| ev.borrow_mut().push(e.clone()))
-            .detach();
+        cx.subscribe(&view, move |_, _, e: &TracksEvent, _| {
+            ev.borrow_mut().push(e.clone())
+        })
+        .detach();
         parts = Some((view.clone(), store, id));
         Root(view)
     });
@@ -170,7 +174,10 @@ fn mount(cx: &mut TestAppContext, rows: usize, registered: bool) -> Mounted<'_> 
     }
 }
 
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn mixed_heights_lay_out_hit_test_and_scroll(cx: &mut TestAppContext) {
     let mut m = mount(cx, 8, true);
@@ -215,36 +222,63 @@ fn mixed_heights_lay_out_hit_test_and_scroll(cx: &mut TestAppContext) {
     assert_eq!(scroll, total - height);
 }
 
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn a_resize_drag_is_one_bus_batch_and_one_undo_step(cx: &mut TestAppContext) {
     let mut m = mount(cx, 4, true);
     let a = m.at(8.0, 40.0);
-    m.vcx.simulate_mouse_down(a, MouseButton::Left, Default::default());
+    m.vcx
+        .simulate_mouse_down(a, MouseButton::Left, Default::default());
     for dy in [10.0, 20.0, 35.0] {
         let p = m.at(8.0, 40.0 + dy);
-        m.vcx.simulate_mouse_move(p, Some(MouseButton::Left), Default::default());
+        m.vcx
+            .simulate_mouse_move(p, Some(MouseButton::Left), Default::default());
         m.vcx.run_until_parked();
     }
-    assert_eq!(m.model().row(0).map(|r| r.height), Some(40.0), "a preview until release");
+    assert_eq!(
+        m.model().row(0).map(|r| r.height),
+        Some(40.0),
+        "a preview until release"
+    );
     let b = m.at(8.0, 75.0);
-    m.vcx.simulate_mouse_up(b, MouseButton::Left, Default::default());
+    m.vcx
+        .simulate_mouse_up(b, MouseButton::Left, Default::default());
     m.vcx.run_until_parked();
     assert_eq!(m.model().row(0).map(|r| r.height), Some(75.0));
     assert_eq!(*m.log.groups.borrow(), 1, "committed as one dispatch_batch");
-    let actions: Vec<_> = m.log.actions.borrow().iter().map(|(s, a)| (*s, a.name.clone())).collect();
+    let actions: Vec<_> = m
+        .log
+        .actions
+        .borrow()
+        .iter()
+        .map(|(s, a)| (*s, a.name.clone()))
+        .collect();
     assert_eq!(actions, [(Source::Pointer, "resize_track".into())]);
     assert_eq!(
         *m.events.borrow(),
-        [TracksEvent::TrackResized { track: 0, height: 75.0 }]
+        [TracksEvent::TrackResized {
+            track: 0,
+            height: 75.0
+        }]
     );
-    m.vcx.update(|_, cx| m.store.dispatch(guiraffe_state::UndoEvent, cx));
+    m.vcx
+        .update(|_, cx| m.store.dispatch(guiraffe_state::UndoEvent, cx));
     m.vcx.run_until_parked();
-    assert_eq!(m.model().row(0).map(|r| r.height), Some(40.0), "one undo step");
+    assert_eq!(
+        m.model().row(0).map(|r| r.height),
+        Some(40.0),
+        "one undo step"
+    );
 }
 
 /// Each user action, through the pointer, and the same action through the bus.
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
     let clip = ClipRef { track: 0, clip: 1 };
@@ -259,20 +293,38 @@ fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
     let (a, b) = (pointer.at(8.0, 40.0), pointer.at(8.0, 90.0));
     pointer.drag(a, b);
     let ruler = pointer.body().origin - point(px(0.0), px(RULER_H / 2.0));
-    let x = pointer.vcx.update(|_, cx| pointer.view.read(cx).axis().x(7.0));
+    let x = pointer
+        .vcx
+        .update(|_, cx| pointer.view.read(cx).axis().x(7.0));
     pointer.click(ruler + point(px(x as f32), px(0.0)));
     let after_pointer = pointer.model();
-    let sent: Vec<_> = pointer.log.actions.borrow().iter().map(|(s, a)| (*s, a.clone())).collect();
+    let sent: Vec<_> = pointer
+        .log
+        .actions
+        .borrow()
+        .iter()
+        .map(|(s, a)| (*s, a.clone()))
+        .collect();
     assert!(sent.iter().all(|(s, _)| *s == Source::Pointer));
     let names: Vec<_> = sent.iter().map(|(_, a)| a.name.to_string()).collect();
-    assert_eq!(names, ["select", "move_clip", "trim_clip", "resize_track", "seek"]);
+    assert_eq!(
+        names,
+        ["select", "move_clip", "trim_clip", "resize_track", "seek"]
+    );
     let pointer_outcomes = pointer.log.outcomes.borrow().clone();
     let pointer_events = pointer.events.borrow().clone();
     assert!(matches!(
         pointer_events[2],
-        TracksEvent::ClipChanged { edit: ClipEdit::Trim(Edge::End), .. }
+        TracksEvent::ClipChanged {
+            edit: ClipEdit::Trim(Edge::End),
+            ..
+        }
     ));
-    assert_eq!(after_pointer.clip(clip).map(|c| c.end()), Some(4.5), "the end trims past the content");
+    assert_eq!(
+        after_pointer.clip(clip).map(|c| c.end()),
+        Some(4.5),
+        "the end trims past the content"
+    );
 
     // A second window replays the same erased actions from a script.
     let mut bus = mount(cx, 3, true);
@@ -290,7 +342,10 @@ fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
     assert_eq!(*bus.events.borrow(), pointer_events);
 }
 
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn unregistered_pointer_input_applies_the_same_actions(cx: &mut TestAppContext) {
     let mut m = mount(cx, 2, false);
@@ -298,20 +353,35 @@ fn unregistered_pointer_input_applies_the_same_actions(cx: &mut TestAppContext) 
     m.click(p);
     let (a, b) = (m.at(2.0, 20.0), m.at(2.5, 20.0));
     m.drag(a, b);
-    assert!(m.log.actions.borrow().is_empty(), "nothing registered, nothing on the bus");
-    assert_eq!(m.model().clip(ClipRef { track: 0, clip: 1 }).map(|c| c.start), Some(1.5));
+    assert!(
+        m.log.actions.borrow().is_empty(),
+        "nothing registered, nothing on the bus"
+    );
+    assert_eq!(
+        m.model()
+            .clip(ClipRef { track: 0, clip: 1 })
+            .map(|c| c.start),
+        Some(1.5)
+    );
     assert_eq!(m.events.borrow().len(), 2);
 }
 
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn host_writes_never_echo_and_zoom_survives_track_updates(cx: &mut TestAppContext) {
     let mut m = mount(cx, 3, true);
-    let view = ViewRange { start: 2.0, scale: 0.004 };
+    let view = ViewRange {
+        start: 2.0,
+        scale: 0.004,
+    };
     m.vcx.update(|_, cx| {
         m.store.dispatch(SetView(view), cx);
         m.store.dispatch(SetPlayhead(3.0), cx);
-        m.store.dispatch(SetSelection(Some(ClipRef { track: 1, clip: 2 })), cx);
+        m.store
+            .dispatch(SetSelection(Some(ClipRef { track: 1, clip: 2 })), cx);
         m.store.dispatch(SetFollow(Follow::Page), cx);
     });
     m.vcx.run_until_parked();
@@ -322,7 +392,11 @@ fn host_writes_never_echo_and_zoom_survives_track_updates(cx: &mut TestAppContex
         .iter()
         .enumerate()
         .map(|(i, r)| {
-            let t = if i == 2 { track(&[(4.0, 1.0)]) } else { r.track.clone() };
+            let t = if i == 2 {
+                track(&[(4.0, 1.0)])
+            } else {
+                r.track.clone()
+            };
             TrackUpdate::new(r.name.clone(), t)
         })
         .collect();
@@ -330,12 +404,21 @@ fn host_writes_never_echo_and_zoom_survives_track_updates(cx: &mut TestAppContex
     m.vcx.update(|_, cx| m.store.dispatch(SetTracks(rows), cx));
     m.vcx.run_until_parked();
     let after = m.model();
-    assert!(m.log.actions.borrow().is_empty(), "host writes are not actions");
-    assert!(m.events.borrow().is_empty(), "host writes emit no TracksEvent");
+    assert!(
+        m.log.actions.borrow().is_empty(),
+        "host writes are not actions"
+    );
+    assert!(
+        m.events.borrow().is_empty(),
+        "host writes emit no TracksEvent"
+    );
     assert_eq!(after.view, Some(view), "zoom and scroll survive");
     assert_eq!(after.playhead, 3.0);
     assert_eq!(after.selection, before.selection);
-    assert!(std::sync::Arc::ptr_eq(&after.rows()[0], &before.rows()[0]), "unchanged rows kept");
+    assert!(
+        std::sync::Arc::ptr_eq(&after.rows()[0], &before.rows()[0]),
+        "unchanged rows kept"
+    );
     assert_eq!(after.rows()[1].height, 120.0);
     let axis = m.vcx.update(|_, cx| *m.view.read(cx).axis());
     assert_eq!((axis.start, axis.scale), (2.0, 0.004));
@@ -347,8 +430,14 @@ fn host_writes_never_echo_and_zoom_survives_track_updates(cx: &mut TestAppContex
     // A user seek is an action with its source.
     let id = m.id.expect("registered");
     m.vcx.update(|window, cx| {
-        ActionBus::dispatch(id, &TracksAction::Seek(1.0).to_action(), Source::Shortcut, window, cx)
-            .ok();
+        ActionBus::dispatch(
+            id,
+            &TracksAction::Seek(1.0).to_action(),
+            Source::Shortcut,
+            window,
+            cx,
+        )
+        .ok();
     });
     assert_eq!(m.log.actions.borrow()[0].0, Source::Shortcut);
     assert_eq!(*m.events.borrow(), [TracksEvent::Seek(1.0)]);
@@ -371,14 +460,18 @@ impl ClipPainter for Bars {
     }
 }
 
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn the_painter_runs_for_visible_clips_only(cx: &mut TestAppContext) {
     let m = mount(cx, 8, true);
     let calls = Rc::new(RefCell::new(Vec::new()));
     m.vcx.update(|_, cx| {
-        m.view
-            .update(cx, |v, cx| v.set_clip_painter(Some(Rc::new(Bars(calls.clone()))), cx))
+        m.view.update(cx, |v, cx| {
+            v.set_clip_painter(Some(Rc::new(Bars(calls.clone()))), cx)
+        })
     });
     m.vcx.run_until_parked();
     let painted: std::collections::BTreeSet<_> = calls.borrow().iter().map(|c| c.0).collect();
@@ -388,8 +481,14 @@ fn the_painter_runs_for_visible_clips_only(cx: &mut TestAppContext) {
         v.layout().rows_in(v.scroll_y(), v.scroll_y() + h)
     });
     assert!(!painted.is_empty());
-    assert!(painted.iter().all(|row| visible.contains(row)), "{painted:?} vs {visible:?}");
-    assert!(!painted.contains(&7), "the last row is scrolled out of view");
+    assert!(
+        painted.iter().all(|row| visible.contains(row)),
+        "{painted:?} vs {visible:?}"
+    );
+    assert!(
+        !painted.contains(&7),
+        "the last row is scrolled out of view"
+    );
 }
 
 #[test]
@@ -429,7 +528,9 @@ fn tracks_selection_light_and_dark() {
                                     .px(px(6.))
                                     .flex()
                                     .items_center()
-                                    .when(row.selected, |d| d.font_weight(gpui_kit::FontWeight::BOLD))
+                                    .when(row.selected, |d| {
+                                        d.font_weight(gpui_kit::FontWeight::BOLD)
+                                    })
                                     .child(row.row.name.clone())
                                     .into_any_element()
                             }),
@@ -449,16 +550,30 @@ fn tracks_selection_light_and_dark() {
     }
 }
 
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn header_modes_size_the_column(cx: &mut TestAppContext) {
     let mut m = mount(cx, 2, false);
-    assert_eq!(m.body().origin.x, px(guiraffe_timeline::tracks_view::HEADER_W));
-    m.vcx.update(|_, cx| m.view.update(cx, |v, cx| v.set_header(HeaderMode::Hidden, cx)));
+    assert_eq!(
+        m.body().origin.x,
+        px(guiraffe_timeline::tracks_view::HEADER_W)
+    );
+    m.vcx.update(|_, cx| {
+        m.view
+            .update(cx, |v, cx| v.set_header(HeaderMode::Hidden, cx))
+    });
     m.vcx.run_until_parked();
-    assert_eq!(m.body().origin.x, px(0.0), "hidden: the body starts at the left edge");
+    assert_eq!(
+        m.body().origin.x,
+        px(0.0),
+        "hidden: the body starts at the left edge"
+    );
     let custom = HeaderMode::Custom(60.0, Rc::new(|_, _, _| div().into_any_element()));
-    m.vcx.update(|_, cx| m.view.update(cx, |v, cx| v.set_header(custom, cx)));
+    m.vcx
+        .update(|_, cx| m.view.update(cx, |v, cx| v.set_header(custom, cx)));
     m.vcx.run_until_parked();
     assert_eq!(m.body().origin.x, px(60.0));
 }

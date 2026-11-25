@@ -938,12 +938,21 @@ impl gpui_kit::Global for Marker {}
 
 struct Notes;
 impl guiraffe_timeline::ClipPainter for Notes {
-    fn paint(&self, clip: &guiraffe_timeline::ClipPaint<'_>, window: &mut gpui_kit::Window, _: &gpui_kit::App) {
+    fn paint(
+        &self,
+        clip: &guiraffe_timeline::ClipPaint<'_>,
+        window: &mut gpui_kit::Window,
+        _: &gpui_kit::App,
+    ) {
         let b = clip.bounds;
         for k in 0..16 {
             window.paint_quad(gpui_kit::fill(
                 gpui_kit::Bounds::new(
-                    b.origin + gpui_kit::point(gpui_kit::px(k as f32 * 3.), gpui_kit::px((k % 12) as f32)),
+                    b.origin
+                        + gpui_kit::point(
+                            gpui_kit::px(k as f32 * 3.),
+                            gpui_kit::px((k % 12) as f32),
+                        ),
                     gpui_kit::size(gpui_kit::px(2.), gpui_kit::px(1.)),
                 ),
                 gpui_kit::rgb(0x33_66_cc),
@@ -954,7 +963,11 @@ impl guiraffe_timeline::ClipPainter for Notes {
 
 struct TracksRoot(gpui_kit::Entity<guiraffe_timeline::TracksView>);
 impl gpui_kit::Render for TracksRoot {
-    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
         use gpui_kit::{ParentElement, Styled};
         gpui_kit::div().size_full().child(self.0.clone())
     }
@@ -974,30 +987,35 @@ fn tracks_repaint(painter: bool, mixed: bool) -> anyhow::Result<guiraffe_bench::
         || Ok(None),
     );
     let mut handle = None;
-    let window = app.open_window(gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(800.)), |_, cx| {
-        guiraffe_timeline::init(cx);
-        let rows = (0..64)
-            .map(|t| {
-                let mut track = Track::default();
-                for k in 0..200 {
-                    track.insert(k as f64 * 2. + (t % 4) as f64 * 0.25, 1.5);
-                }
-                // 30 + 50 per pair keeps the same rows in view as 40 + 40.
-                let h = if mixed { [30., 50.][t % 2] } else { 40. };
-                TrackRow::new(format!("Track {t}"), track).with_height(h)
-            })
-            .collect();
-        let store = tracks_store(TracksModel::new(rows), 100, cx);
-        store.dispatch_now(SetSelection(Some(ClipRef { track: 1, clip: 3 })), cx);
-        let view = TracksView::with_store(store, TimeFormat::Seconds, 40., cx);
-        if painter {
-            view.update(cx, |v, cx| v.set_clip_painter(Some(std::rc::Rc::new(Notes)), cx));
-        }
-        handle = Some(view.clone());
-        cx.new(|_| TracksRoot(view))
-    })?;
+    let window = app.open_window(
+        gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(800.)),
+        |_, cx| {
+            guiraffe_timeline::init(cx);
+            let rows = (0..64)
+                .map(|t| {
+                    let mut track = Track::default();
+                    for k in 0..200 {
+                        track.insert(k as f64 * 2. + (t % 4) as f64 * 0.25, 1.5);
+                    }
+                    // 30 + 50 per pair keeps the same rows in view as 40 + 40.
+                    let h = if mixed { [30., 50.][t % 2] } else { 40. };
+                    TrackRow::new(format!("Track {t}"), track).with_height(h)
+                })
+                .collect();
+            let store = tracks_store(TracksModel::new(rows), 100, cx);
+            store.dispatch_now(SetSelection(Some(ClipRef { track: 1, clip: 3 })), cx);
+            let view = TracksView::with_store(store, TimeFormat::Seconds, 40., cx);
+            if painter {
+                view.update(cx, |v, cx| {
+                    v.set_clip_painter(Some(std::rc::Rc::new(Notes)), cx)
+                });
+            }
+            handle = Some(view.clone());
+            cx.new(|_| TracksRoot(view))
+        },
+    )?;
     let view = handle.ok_or_else(|| anyhow::anyhow!("no view"))?;
-    let mut frame = |app: &mut gpui_kit::HeadlessAppContext| {
+    let frame = |app: &mut gpui_kit::HeadlessAppContext| {
         app.update_window(window.into(), |_, w, cx| {
             view.update(cx, |_, cx| cx.notify());
             w.draw(cx).clear(cx)
@@ -1018,7 +1036,13 @@ fn tracks_painter_heights_and_selection_add_no_frame_allocations() -> anyhow::Re
     let painted = tracks_repaint(true, false)?;
     let mixed = tracks_repaint(true, true)?;
     eprintln!("tracks repaint: plain {plain:?}, painter {painted:?}, mixed heights {mixed:?}");
-    assert_eq!(painted.allocations, plain.allocations, "the clip painter allocates nothing");
-    assert_eq!(mixed.allocations, plain.allocations, "variable heights allocate nothing");
+    assert_eq!(
+        painted.allocations, plain.allocations,
+        "the clip painter allocates nothing"
+    );
+    assert_eq!(
+        mixed.allocations, plain.allocations,
+        "variable heights allocate nothing"
+    );
     Ok(())
 }

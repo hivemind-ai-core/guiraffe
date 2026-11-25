@@ -165,8 +165,15 @@ impl HeaderMode {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Drag {
-    Clip { clip: ClipRef, grab: Grab },
-    Resize { track: usize, from_y: f32, from_h: f32 },
+    Clip {
+        clip: ClipRef,
+        grab: Grab,
+    },
+    Resize {
+        track: usize,
+        from_y: f32,
+        from_h: f32,
+    },
 }
 
 pub struct TracksView {
@@ -330,12 +337,7 @@ impl TracksView {
 
     /// Register on the window's action bus at `path`. Pointer and keyboard input then go
     /// through the bus, so interceptors see them.
-    pub fn register(
-        view: &Entity<Self>,
-        path: &str,
-        window: &Window,
-        cx: &mut App,
-    ) -> ControlId {
+    pub fn register(view: &Entity<Self>, path: &str, window: &Window, cx: &mut App) -> ControlId {
         let id = ActionBus::register(path, view, "tracks", Capabilities::SELECT, window, cx);
         view.update(cx, |v, _| v.id = Some(id));
         id
@@ -417,7 +419,11 @@ impl TracksView {
     }
 
     /// Paint inside each visible clip (see [`ClipPainter`]).
-    pub fn set_clip_painter(&mut self, painter: Option<Rc<dyn ClipPainter>>, cx: &mut Context<Self>) {
+    pub fn set_clip_painter(
+        &mut self,
+        painter: Option<Rc<dyn ClipPainter>>,
+        cx: &mut Context<Self>,
+    ) {
         self.painter = painter;
         cx.notify();
     }
@@ -464,7 +470,11 @@ impl TracksView {
 
     fn clamp_scroll(&self, y: f32) -> f32 {
         let max = (self.layout.total() - self.body_height()).max(0.0);
-        if y.is_finite() { y.clamp(0.0, max) } else { 0.0 }
+        if y.is_finite() {
+            y.clamp(0.0, max)
+        } else {
+            0.0
+        }
     }
 
     /// Keyboard edit of the selected clip by `dir` steps (snap grid, else a quarter tick).
@@ -501,9 +511,9 @@ impl TracksView {
     fn select_step_action(&self, dir: i32, cx: &App) -> Option<TracksAction> {
         let model = self.model(cx);
         let rows = model.rows();
-        let current = model.selection.and_then(|s| {
-            Some((s.track, rows.get(s.track)?.track.index_of(s.clip)?))
-        });
+        let current = model
+            .selection
+            .and_then(|s| Some((s.track, rows.get(s.track)?.track.index_of(s.clip)?)));
         let next = if dir < 0 {
             match current {
                 Some((row, index)) if index > 0 => Some((row, index - 1)),
@@ -802,14 +812,18 @@ impl TracksView {
     /// The clip as the active preview would leave it.
     fn shown(&self, track: usize, clip: &Clip, model: &TracksModel) -> Clip {
         let preview = match self.preview {
-            Some(TracksAction::MoveClip { clip: at, start }) if at.track == track && at.clip == clip.id => {
-                model.row(track).and_then(|r| r.track.moved(clip.id, start))
-            }
-            Some(TracksAction::TrimClip { clip: at, edge, time })
+            Some(TracksAction::MoveClip { clip: at, start })
                 if at.track == track && at.clip == clip.id =>
             {
-                model.row(track).and_then(|r| r.track.trimmed(clip.id, edge, time))
+                model.row(track).and_then(|r| r.track.moved(clip.id, start))
             }
+            Some(TracksAction::TrimClip {
+                clip: at,
+                edge,
+                time,
+            }) if at.track == track && at.clip == clip.id => model
+                .row(track)
+                .and_then(|r| r.track.trimmed(clip.id, edge, time)),
             _ => None,
         };
         preview.unwrap_or(*clip)
@@ -901,12 +915,21 @@ fn overview(track: &Track, axis: &Axis) -> bool {
 }
 
 /// A clip's rectangle inside a row whose top is `top` (body-local) and height `height`.
-fn clip_rect(origin: gpui_kit::Point<Pixels>, axis: &Axis, clip: &Clip, top: f32, height: f32) -> Bounds<Pixels> {
+fn clip_rect(
+    origin: gpui_kit::Point<Pixels>,
+    axis: &Axis,
+    clip: &Clip,
+    top: f32,
+    height: f32,
+) -> Bounds<Pixels> {
     let left = axis.x(clip.start) as f32;
     let right = axis.x(clip.end()) as f32;
     Bounds::new(
         origin + gpui_kit::point(px(left), px(top + CLIP_INSET)),
-        gpui_kit::size(px((right - left).max(2.)), px((height - 2. * CLIP_INSET).max(1.))),
+        gpui_kit::size(
+            px((right - left).max(2.)),
+            px((height - 2. * CLIP_INSET).max(1.)),
+        ),
     )
 }
 
@@ -1012,7 +1035,9 @@ impl TracksView {
                 let render = render.clone();
                 let mut cells = Vec::with_capacity(rows.len());
                 for i in rows {
-                    let Some(row) = model.rows().get(i).cloned() else { continue };
+                    let Some(row) = model.rows().get(i).cloned() else {
+                        continue;
+                    };
                     let info = HeaderRow {
                         index: i,
                         height: self.layout.height(i),
@@ -1085,10 +1110,16 @@ impl Render for TracksView {
             Some(TracksAction::ResizeTrack { track, height }) => Some((track, height)),
             _ => None,
         };
-        self.layout.rebuild(model.rows().iter().enumerate().map(|(i, r)| match resizing {
-            Some((track, h)) if track == i => h,
-            _ => r.height,
-        }));
+        self.layout.rebuild(
+            model
+                .rows()
+                .iter()
+                .enumerate()
+                .map(|(i, r)| match resizing {
+                    Some((track, h)) if track == i => h,
+                    _ => r.height,
+                }),
+        );
         self.scroll_y = self.clamp_scroll(self.scroll_y);
         let scroll = self.scroll_y;
         let body_h = self.body_height();
@@ -1127,14 +1158,13 @@ impl Render for TracksView {
         let cursor = if this.hover_resize || matches!(this.drag, Some(Drag::Resize { .. })) {
             gpui_kit::CursorStyle::ResizeUpDown
         } else {
-            crate::edit::cursor_for(
-                match this.drag {
-                    Some(Drag::Clip { grab, .. }) => Some(grab),
-                    _ => this.hover,
-                },
-            )
+            crate::edit::cursor_for(match this.drag {
+                Some(Drag::Clip { grab, .. }) => Some(grab),
+                _ => this.hover,
+            })
         };
-        let on = |view: &WeakEntity<Self>, f: fn(&mut Self, &mut Context<Self>) -> Option<TracksAction>| {
+        let on = |view: &WeakEntity<Self>,
+                  f: fn(&mut Self, &mut Context<Self>) -> Option<TracksAction>| {
             let view = view.clone();
             move |window: &mut Window, cx: &mut App| {
                 let Some(entity) = view.upgrade() else { return };
@@ -1518,7 +1548,11 @@ mod tests {
             let x = |t: f64| a.x(t);
             assert!(v.press(0, x(2.0), cx)); // clip body, grab_dt = 1
             v.drag_to(x(3.21), cx); // 2.21 -> snaps to 2.0
-            assert_eq!(v.tracks(cx)[0].track.clips()[0].start, 1.0, "a preview until release");
+            assert_eq!(
+                v.tracks(cx)[0].track.clips()[0].start,
+                1.0,
+                "a preview until release"
+            );
             v.release(cx);
             v.seek(4.0, cx);
             v.seek(4.0, cx); // no-op
@@ -1529,8 +1563,14 @@ mod tests {
         assert_eq!(
             *events,
             [
-                TracksEvent::SelectionChanged { selected: Some((0, 1)) },
-                TracksEvent::ClipChanged { track: 0, clip: 1, edit: ClipEdit::Move },
+                TracksEvent::SelectionChanged {
+                    selected: Some((0, 1))
+                },
+                TracksEvent::ClipChanged {
+                    track: 0,
+                    clip: 1,
+                    edit: ClipEdit::Move
+                },
                 TracksEvent::Seek(4.0),
             ]
         );
@@ -1603,7 +1643,13 @@ mod tests {
             assert!(v.grab(0, a.x(2.0), cx).is_none());
             assert_eq!(
                 v.perform(
-                    TracksAction::MoveClip { clip: ClipRef { track: 0, clip: first }, start: 2.0 },
+                    TracksAction::MoveClip {
+                        clip: ClipRef {
+                            track: 0,
+                            clip: first
+                        },
+                        start: 2.0
+                    },
                     cx
                 ),
                 Err(ActionError::Disabled),

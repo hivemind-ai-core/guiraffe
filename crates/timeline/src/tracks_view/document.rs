@@ -195,31 +195,28 @@ impl RenderOnce for TrackDocument {
                 &timeline,
                 window,
                 |state: &mut TrackState, timeline, event, window, cx| {
-                    let (index, value) =
-                        match event {
-                            TracksEvent::ClipChanged { track, clip, .. } => {
-                                let entry = timeline
-                                    .read(cx)
-                                    .tracks(cx)
-                                    .get(*track)
-                                    .and_then(|row| row.track.clip(*clip).copied());
-                                let mut fields = std::collections::BTreeMap::from([
-                                    ("track".into(), Value::Num(*track as f64)),
-                                    ("clip".into(), Value::Num(f64::from(*clip))),
-                                ]);
-                                if let Some(entry) = entry {
-                                    fields.insert("start".into(), Value::Num(entry.start));
-                                    fields.insert("length".into(), Value::Num(entry.len));
-                                    fields.insert(
-                                        "sourceOffset".into(),
-                                        Value::Num(entry.source_offset),
-                                    );
-                                }
-                                (0, Value::Record(Arc::new(fields)))
+                    let (index, value) = match event {
+                        TracksEvent::ClipChanged { track, clip, .. } => {
+                            let entry = timeline
+                                .read(cx)
+                                .tracks(cx)
+                                .get(*track)
+                                .and_then(|row| row.track.clip(*clip).copied());
+                            let mut fields = std::collections::BTreeMap::from([
+                                ("track".into(), Value::Num(*track as f64)),
+                                ("clip".into(), Value::Num(f64::from(*clip))),
+                            ]);
+                            if let Some(entry) = entry {
+                                fields.insert("start".into(), Value::Num(entry.start));
+                                fields.insert("length".into(), Value::Num(entry.len));
+                                fields
+                                    .insert("sourceOffset".into(), Value::Num(entry.source_offset));
                             }
-                            TracksEvent::Seek(time) => (1, Value::Num(*time)),
-                            _ => return,
-                        };
+                            (0, Value::Record(Arc::new(fields)))
+                        }
+                        TracksEvent::Seek(time) => (1, Value::Num(*time)),
+                        _ => return,
+                    };
                     if let Some(handler) = &state.handlers[index] {
                         handler(value, window, cx);
                     }
