@@ -319,6 +319,27 @@ pub(crate) struct Coordinates {
 }
 
 impl Coordinates {
+    // Line, point and bubble extents depend only on their packed coordinates.
+    fn scan_extents(
+        &self,
+        extents: &mut [Extent; 3],
+        x_scale: &Scale,
+        y_axis: usize,
+        y_scale: &Scale,
+        cancelled: &impl Fn() -> bool,
+    ) -> bool {
+        for (xs, ys) in self.x.chunks(256).zip(self.y.chunks(256)) {
+            if cancelled() {
+                return false;
+            }
+            for (&x, &y) in xs.iter().zip(ys) {
+                extents[0].add(x_scale, x);
+                extents[y_axis].add(y_scale, y);
+            }
+        }
+        true
+    }
+
     fn id(&self, index: usize, first: DatumId) -> DatumId {
         let (index, key) = self.ids.get(index).copied().unwrap_or_else(|| {
             self.regular_id(first, index)
@@ -664,50 +685,65 @@ impl ChartSpec {
                         .unwrap_or_else(|| format!("Facet {facet}"))
                 });
                 has_right_axis |= layer.secondary;
-                for (index, row) in rows.iter().enumerate() {
-                    if index.is_multiple_of(256) && cancelled() {
-                        break 'layers;
+                match &rows {
+                    Rows::Plain(columns) => {
+                        if !columns.scan_extents(
+                            &mut extents,
+                            &self.x.scale,
+                            y_axis,
+                            y_scale,
+                            cancelled,
+                        ) {
+                            break 'layers;
+                        }
                     }
-                    let normalize = layer.mark.arrangement() == Arrangement::Normalize;
-                    if !(normalize && layer.mark.horizontal()) {
-                        extents[0].add(&self.x.scale, row.x);
-                    }
-                    if !(normalize && !layer.mark.horizontal()) {
-                        extents[y_axis].add(y_scale, row.y);
-                    }
-                    match layer.mark {
-                        Mark::Bar(_, Orientation::Horizontal) => {
-                            extents[0].add(&self.x.scale, row.base);
-                            extents[0].add(&self.x.scale, row.top);
-                            max_x_extent = max_x_extent
-                                .max((row.top - row.x).abs())
-                                .max((row.base - row.x).abs());
-                        }
-                        Mark::Area(_) | Mark::Bar(_, _) => {
-                            extents[y_axis].add(y_scale, row.base);
-                            extents[y_axis].add(y_scale, row.top);
-                        }
-                        Mark::Rect => {
-                            if let Some(x2) = row.x2.filter(|&x| x.is_finite()) {
-                                extents[0].add(&self.x.scale, x2);
-                                max_x_extent = max_x_extent.max((x2 - row.x).abs());
+                    Rows::Styled(samples) => {
+                        for (index, row) in samples.iter().enumerate() {
+                            if index.is_multiple_of(256) && cancelled() {
+                                break 'layers;
                             }
-                            if let Some(y2) = row.y2 {
-                                extents[y_axis].add(y_scale, y2);
+                            let normalize = layer.mark.arrangement() == Arrangement::Normalize;
+                            if !(normalize && layer.mark.horizontal()) {
+                                extents[0].add(&self.x.scale, row.x);
+                            }
+                            if !(normalize && !layer.mark.horizontal()) {
+                                extents[y_axis].add(y_scale, row.y);
+                            }
+                            match layer.mark {
+                                Mark::Bar(_, Orientation::Horizontal) => {
+                                    extents[0].add(&self.x.scale, row.base);
+                                    extents[0].add(&self.x.scale, row.top);
+                                    max_x_extent = max_x_extent
+                                        .max((row.top - row.x).abs())
+                                        .max((row.base - row.x).abs());
+                                }
+                                Mark::Area(_) | Mark::Bar(_, _) => {
+                                    extents[y_axis].add(y_scale, row.base);
+                                    extents[y_axis].add(y_scale, row.top);
+                                }
+                                Mark::Rect => {
+                                    if let Some(x2) = row.x2.filter(|&x| x.is_finite()) {
+                                        extents[0].add(&self.x.scale, x2);
+                                        max_x_extent = max_x_extent.max((x2 - row.x).abs());
+                                    }
+                                    if let Some(y2) = row.y2 {
+                                        extents[y_axis].add(y_scale, y2);
+                                    }
+                                }
+                                Mark::ErrorBar => {
+                                    for value in [row.low, row.y2].into_iter().flatten() {
+                                        extents[y_axis].add(y_scale, value);
+                                    }
+                                }
+                                Mark::Candlestick => {
+                                    if let Some(ohlc) = row.ohlc {
+                                        extents[y_axis].add(y_scale, ohlc.low);
+                                        extents[y_axis].add(y_scale, ohlc.high);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                        Mark::ErrorBar => {
-                            for value in [row.low, row.y2].into_iter().flatten() {
-                                extents[y_axis].add(y_scale, value);
-                            }
-                        }
-                        Mark::Candlestick => {
-                            if let Some(ohlc) = row.ohlc {
-                                extents[y_axis].add(y_scale, ohlc.low);
-                                extents[y_axis].add(y_scale, ohlc.high);
-                            }
-                        }
-                        _ => {}
                     }
                 }
                 rows.sort();
@@ -937,6 +973,44 @@ mod tests {
         assert_eq!(middle.size, 5.);
         assert_eq!(middle.color, Some(Color::Category(2)));
         assert_eq!(middle.text.as_deref(), Some("middle"));
+    }
+
+    #[test]
+    fn packed_extents_match_sample_scan_at_cancellation_boundaries() {
+        use std::cell::Cell;
+        for mark in [Mark::Line, Mark::Point, Mark::Bubble] {
+            let chart = ChartSpec::new("extents")
+                .layer(Layer::new(
+                    mark,
+                    (0..513).collect::<Vec<u32>>(),
+                    Channels::new(|i| f64::from(*i) - 100., |i| 300. - f64::from(*i)),
+                ))
+                .prepare();
+            let rows = &chart.runs[0].rows;
+            let Rows::Plain(columns) = rows else {
+                panic!("expected packed coordinates")
+            };
+            for (axis, scale) in [(1, Scale::Linear), (2, Scale::Log)] {
+                for limit in [0, 1, 2, 3] {
+                    let mut expected = [Extent::default(); 3];
+                    for row in rows.iter().take(limit * 256) {
+                        expected[0].add(&scale, row.x);
+                        expected[axis].add(&scale, row.y);
+                    }
+                    let mut actual = [Extent::default(); 3];
+                    let checks = Cell::new(0);
+                    let complete = columns.scan_extents(&mut actual, &scale, axis, &scale, &|| {
+                        let index = checks.get();
+                        checks.set(index + 1);
+                        index == limit
+                    });
+                    assert_eq!(complete, limit == 3);
+                    for (a, e) in actual.iter().zip(expected) {
+                        assert_eq!((a.min, a.max), (e.min, e.max));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
