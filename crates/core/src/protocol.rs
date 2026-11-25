@@ -267,6 +267,17 @@ impl ActionBus {
             .and_then(|b| b.0.get(&window.window_handle().window_id()))
             .ok_or(ActionError::UnknownTarget)
     }
+    /// Enumerate this window's registered targets without taking snapshots.
+    pub fn controls<'a>(
+        window: &Window,
+        cx: &'a App,
+    ) -> impl Iterator<Item = (ControlId, &'static str, Capabilities)> + use<'a> {
+        Self::bus(window, cx).into_iter().flat_map(|bus| {
+            bus.entries
+                .iter()
+                .map(|(id, entry)| (*id, entry.kind, entry.capabilities))
+        })
+    }
     pub fn describe(
         id: ControlId,
         window: &Window,
