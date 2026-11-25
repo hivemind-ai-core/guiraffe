@@ -228,6 +228,7 @@ fn attach<P: Panel>(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "test assertions")]
 mod tests {
     use super::*;
     #[test]
@@ -250,8 +251,12 @@ mod tests {
         tree.remove_panel(first);
         tree.insert_panel(first, slot.target(&tree).unwrap());
         assert_eq!(tree.panels().collect::<Vec<_>>(), [first, second]);
+        // A sibling keeps the tree alive, so emptying the group collapses it away.
+        let third = PanelId::from_u64(3);
+        tree.split(tree.root().id(), third, Placement::Left, None);
         tree.remove_panel(first);
         tree.remove_panel(second);
+        assert!(tree.find_node(group).is_none());
         assert!(slot.target(&tree).is_none());
     }
 

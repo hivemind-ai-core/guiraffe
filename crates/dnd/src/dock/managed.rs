@@ -1070,6 +1070,10 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "gpui_kit::test bodies are tests; clippy does not see them as such"
+    )]
     fn detached_panel_restores_and_docks_back_with_same_entity(cx: &mut TestAppContext) {
         let (root, host) = cx.add_window_view(|window, cx| fixture(window, cx, Rc::default()));
         let saved = host.update(|window, cx| {
@@ -1089,10 +1093,10 @@ mod tests {
             let commands =
                 crate::dock::DockablePanel::new("test/panel", area.clone(), panel, window);
             let before = cx.windows().len();
-            assert!(commands.pop_out(window, cx).unwrap());
+            assert!(matches!(commands.pop_out(window, cx), Ok(true)));
             assert_eq!(cx.windows().len(), before + 1);
             assert!(area.read(cx).panel(id).is_none());
-            assert!(!commands.pop_out(window, cx).unwrap());
+            assert!(matches!(commands.pop_out(window, cx), Ok(false)));
             let stored = cx
                 .global::<guiraffe_layout::LayoutStore>()
                 .persist()
@@ -1114,10 +1118,10 @@ mod tests {
                     });
                 })
                 .unwrap();
-            assert!(!commands.dock_back(window, cx).unwrap());
+            assert!(matches!(commands.dock_back(window, cx), Ok(false)));
             assert!(area.read(cx).panel(id).is_none());
             veto.set(false);
-            assert!(commands.dock_back(window, cx).unwrap());
+            assert!(matches!(commands.dock_back(window, cx), Ok(true)));
             assert!(focus.is_focused(window));
             assert!(
                 area.read(cx)
@@ -1126,7 +1130,7 @@ mod tests {
                     .find_panel_node(id)
                     .is_some()
             );
-            assert!(!commands.restore(window, cx).unwrap());
+            assert!(matches!(commands.restore(window, cx), Ok(false)));
             stored
         });
 
@@ -1141,8 +1145,8 @@ mod tests {
             cx.global::<guiraffe_layout::LayoutStore>()
                 .persist()
                 .save(commands.key(), &saved);
-            assert!(commands.restore(window, cx).unwrap());
-            assert!(commands.dock_back(window, cx).unwrap());
+            assert!(matches!(commands.restore(window, cx), Ok(true)));
+            assert!(matches!(commands.dock_back(window, cx), Ok(true)));
             assert!(
                 area.read(cx)
                     .layout(DockPlacement::Right)
