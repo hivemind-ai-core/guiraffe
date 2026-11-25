@@ -134,8 +134,9 @@ scaling tests that don't depend on machine load:
    render work to 0.2 (bench: 1k-control page, protocol on vs off ⇒ equal allocation counts,
    equal element count).
 2. **Zero cost at render when used.** Registration happens on entity creation, re-key or
-   unmount, never in `render`. An unchanged repaint of a page with 1k registered, bound controls
-   allocates nothing (the 0.2 warm-repaint gate, extended).
+   unmount, never in `render`. Phase 1 gates the protocol’s own cost at zero: an unchanged frame with 1k registered
+   controls must allocate exactly the same count and bytes as the identical unregistered frame.
+   The whole-frame zero-allocation target belongs to roadmap items 8 and 19.
 3. **No string work on hot paths.** Ids are interned integers; lookups are `O(1)` hash or
    index; display paths are built only for MCP/devtools/errors.
 4. **Precise invalidation.** A store change notifies only controls whose lens result changed
