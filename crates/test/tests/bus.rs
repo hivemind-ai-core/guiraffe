@@ -136,7 +136,7 @@ fn script_and_mcp_match_the_pointer_and_replay_restores_the_state(cx: &mut TestA
     assert!(query.ok, "{query:?}");
     assert_eq!(
         query.snapshot,
-        Some(serde_json::json!({"value": 3.0, "label": "Counter"}))
+        Some(serde_json::json!({"value": 3, "label": "Counter"}))
     );
     let missing = server.call(Call::Query {
         control: "doc/nope".into(),
