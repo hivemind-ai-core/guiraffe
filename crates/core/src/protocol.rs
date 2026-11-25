@@ -176,6 +176,7 @@ impl Capabilities {
 }
 
 struct Entry {
+    owner: gpui_kit::EntityId,
     endpoint: Rc<dyn Endpoint>,
     kind: &'static str,
     capabilities: Capabilities,
@@ -238,6 +239,7 @@ impl ActionBus {
         Self::window_bus(window, cx).entries.insert(
             id,
             Entry {
+                owner: entity.entity_id(),
                 endpoint: Rc::new(entity.downgrade()),
                 kind,
                 capabilities,
@@ -248,15 +250,23 @@ impl ActionBus {
         id
     }
 
-    pub fn unregister(id: ControlId, window: &Window, cx: &mut App) {
-        if cx.has_global::<Buses>()
-            && let Some(bus) = cx
-                .default_global::<Buses>()
-                .0
-                .get_mut(&window.window_handle().window_id())
+    /// Release this entity's registration before re-keying or moving windows.
+    /// A stale owner cannot remove the current occupant of the same path.
+    pub fn unregister<T: 'static>(
+        id: ControlId,
+        owner: &Entity<T>,
+        window: &Window,
+        cx: &mut App,
+    ) -> bool {
+        if Self::bus(window, cx)
+            .ok()
+            .and_then(|bus| bus.entries.get(&id))
+            .is_none_or(|entry| entry.owner != owner.entity_id())
         {
-            bus.entries.remove(&id);
+            return false;
         }
+        Self::window_bus(window, cx).entries.remove(&id);
+        true
     }
     pub fn add_interceptor(hook: Rc<dyn Interceptor>, window: &Window, cx: &mut App) {
         let bus = Self::window_bus(window, cx);
@@ -535,7 +545,9 @@ mod tests {
                 ActionBus::query(id, window, cx).map(|s| s.checked),
                 Ok(Some(true))
             );
-            ActionBus::unregister(id, window, cx);
+            let stranger = cx.new(|_| Toggle(false));
+            assert!(!ActionBus::unregister(id, &stranger, window, cx));
+            assert!(ActionBus::unregister(id, &entity, window, cx));
             assert_eq!(
                 ActionBus::dispatch(id, &action, Source::Script, window, cx),
                 Err(ActionError::UnknownTarget)
