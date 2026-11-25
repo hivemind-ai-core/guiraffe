@@ -61,7 +61,22 @@ impl ReturnSlot {
 
 /// Commands for one panel. Construct once with an application-wide stable instance key.
 /// Reuse the same key and panel factory on relaunch. The key is the panel's control-id
-/// scope across windows; the live entity and its descendants survive each move.
+/// scope across windows. The same live entity becomes the detached window's root.
+/// Keep the controller with the home dock so closing the detached window docks it back.
+/// Use the same key for the logical panel instance on each launch.
+///
+/// ```
+/// use gpui_kit::{App, Entity, Window};
+/// use guiraffe_dnd::dock::{DockArea, DockablePanel, Panel};
+///
+/// fn mount_inspector<P: Panel>(
+///     dock: Entity<DockArea>, panel: Entity<P>, window: &mut Window, cx: &mut App,
+/// ) -> anyhow::Result<DockablePanel<P>> {
+///     let inspector = DockablePanel::new("workspace/inspector", dock, panel, window);
+///     inspector.restore(window, cx)?;
+///     Ok(inspector)
+/// }
+/// ```
 pub struct DockablePanel<P: Panel> {
     key: SharedString,
     area: Entity<DockArea>,
