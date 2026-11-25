@@ -390,6 +390,48 @@ mod tests {
         }
     }
     #[gpui_kit::test]
+    fn denied_dispatch_preserves_state_and_reports_outcome(cx: &mut TestAppContext) {
+        struct Deny(std::cell::Cell<usize>);
+        impl Interceptor for Deny {
+            fn before(&self, _: ControlId, _: &Action, _: Source) -> Result<(), ActionError> {
+                Err(ActionError::ReadOnly)
+            }
+            fn after(&self, _: ControlId, _: &Action, _: Source, result: &Result<(), ActionError>) {
+                assert_eq!(result, &Err(ActionError::ReadOnly));
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        let (_, vcx) = cx.add_window_view(|_, _| Empty);
+        let (entity, id) = vcx.update(|window, cx| {
+            let entity = cx.new(|_| Toggle(false));
+            let id = ActionBus::register(
+                "panel/control",
+                &entity,
+                "toggle",
+                Capabilities::TOGGLE,
+                window,
+                cx,
+            );
+            let deny = Rc::new(Deny(std::cell::Cell::new(0)));
+            ActionBus::add_interceptor(deny.clone(), window, cx);
+            let action = Action {
+                name: names::TOGGLE.into(),
+                payload: Value::Null,
+            };
+            assert_eq!(
+                ActionBus::dispatch(id, &action, Source::Mcp, window, cx),
+                Err(ActionError::ReadOnly)
+            );
+            assert_eq!(deny.0.get(), 1);
+            assert!(!entity.read(cx).0);
+            (entity, id)
+        });
+        drop(entity);
+        vcx.run_until_parked();
+        vcx.update(|window, cx| assert_eq!(ActionBus::describe(id, window, cx), None));
+    }
+
+    #[gpui_kit::test]
     fn every_source_reaches_the_same_control(cx: &mut TestAppContext) {
         let (_, vcx) = cx.add_window_view(|_, _| Empty);
         let events = Rc::new(std::cell::RefCell::new(Vec::new()));
