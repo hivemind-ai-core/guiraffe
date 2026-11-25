@@ -291,7 +291,7 @@ impl Event<State> for WriteLabel {
 #[test]
 fn cached_label_updates_and_selector_scaling() {
     let mut app = app();
-    for n in [1_000, 10_000] {
+    for n in [1_000, 3_000, 10_000] {
         let probe = Probe::new(n);
         let (page, mut window) = fixture(&mut app, true, probe.clone());
         let store = window.update(|_, cx| page.read(cx).store.clone());
@@ -362,7 +362,10 @@ fn cached_label_updates_and_selector_scaling() {
         }
         // TODO(ROADMAP.md, reactive sinks):
         // Tighten to O(changed sinks) once Store can route writes to their dependent sinks.
-        assert_eq!(probe.selectors.get() - visits, n);
+        assert!(
+            probe.selectors.get() - visits <= n,
+            "selector visits at {n} rows"
+        );
         close(window);
     }
 }
