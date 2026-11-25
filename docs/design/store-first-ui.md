@@ -161,3 +161,21 @@ This should remove sibling-dependent replay CPU for fixed-size labels. The
 buffer experiment cannot predict the absolute frame time. Even a free draw
 would leave the cost of notifying all current row selectors, so a keyed write
 path in the Store is a separate prerequisite.
+
+The composed headless window sweep measures a changed label in a cached row
+end to end. Run `cargo test --release -p guiraffe-bench --test composed
+composed_label_phase_sweep -- --ignored --nocapture`. Each sample checks that
+the edited row rendered. A FIFO marker after the Store flush separates dispatch
+and selector refresh from subsequent GPUI notifications, rendering, draw and
+replay. This split includes the row's GUIraffe render code in the second phase.
+There are four warm-ups and 31 measured updates per size. CPU is measured on
+the calling thread and allocation counts include benchmark marker overhead.
+
+| Upstream, test profile | Total median CPU | Through Store flush | After flush | Median allocations |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 cached rows | 16.09 ms | 0.56 ms | 15.50 ms | 1,303 |
+| 3,000 cached rows | 53.66 ms | 2.13 ms | 51.26 ms | 3,303 |
+
+Phase medians are computed independently. The fixed-width buffer allocation
+assertion passed at both sizes. Unbound controls receive no prototype code
+because the binding table lives entirely in the benchmark.
