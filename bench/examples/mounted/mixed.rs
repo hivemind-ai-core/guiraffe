@@ -44,9 +44,22 @@ impl Data {
         } else {
             Self::Code(CodeHandle::new(
                 1,
-                Arc::new(CodeDocument::new(Arc::<str>::from(
-                    "let value = read();\n".repeat(count - 1) + "let value = read();",
-                ))),
+                Arc::new({
+                    let line = b"let value = read();\n";
+                    // Supply the same bytes as a streaming file load.
+                    struct RepeatingLine<'a>(&'a [u8], usize);
+                    impl std::io::Read for RepeatingLine<'_> {
+                        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                            let count = buf.len().min(self.0.len() - self.1);
+                            buf[..count].copy_from_slice(&self.0[self.1..self.1 + count]);
+                            self.1 = (self.1 + count) % self.0.len();
+                            Ok(count)
+                        }
+                    }
+                    let chunk = line.repeat(8192);
+                    CodeDocument::read_exact(RepeatingLine(&chunk, 0), count * line.len() - 1)
+                        .expect("valid UTF-8 fixture")
+                }),
                 cx,
             ))
         }

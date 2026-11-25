@@ -669,6 +669,32 @@ mod mounted {
             let model = SheetModel::from_cells(1_000_000, 1000, cells);
             cx.new(|cx| SheetState::new(model, cx))
         })?;
+        #[cfg(test)]
+        if std::env::var("GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO").as_deref() == Ok("sheet") {
+            for seed in [0, 1] {
+                if seed != 0 {
+                    window.update(|_, cx| {
+                        sheet.update(cx, |state, cx| {
+                            state.edit([(CellPos::default(), Cell::new(seed.to_string()))], cx);
+                        })
+                    });
+                }
+                let deadline = Instant::now() + Duration::from_secs(120);
+                while window.update(|_, cx| {
+                    sheet
+                        .read(cx)
+                        .calculation()
+                        .and_then(|c| c.value(CellPos::new(count, 0)))
+                        != Some(Ok((count + seed) as f64))
+                }) {
+                    if Instant::now() >= deadline {
+                        return Err("formula chain did not finish".into());
+                    }
+                    settle(&mut window);
+                    std::thread::sleep(Duration::from_millis(8));
+                }
+            }
+        }
         let at = point(px(380.), px(310.));
         let elapsed = mount_started.elapsed();
         run(
@@ -1996,6 +2022,11 @@ mod mounted {
             if let Ok(scenario) = std::env::var(SCENARIO) {
                 match scenario.as_str() {
                     "empty" => empty(|_| {}).expect("mount baseline"),
+                    "sheet" => {
+                        super::sheet(Instant::now(), |_, _| {}).expect("calculate 100k formulas")
+                    }
+                    "code" => super::mixed::run_data("code", Instant::now(), |_, _| {})
+                        .expect("load 10M lines"),
                     "chat" => chat(|_| {}).expect("mount 100k chat history"),
                     "markdown" => markdown(Instant::now(), |frame, _| {
                         for index in 0..64 {
@@ -2042,6 +2073,24 @@ mod mounted {
                 delta <= budget,
                 "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
             );
+        }
+
+        #[test]
+        fn sheet_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget("mounted::tests::sheet_rss_budget", "sheet", 100_000 * 32);
+            }
+        }
+
+        #[test]
+        fn code_load_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget(
+                    "mounted::tests::code_load_rss_budget",
+                    "code",
+                    10_000_000 * 20 - 1,
+                );
+            }
         }
 
         #[test]
