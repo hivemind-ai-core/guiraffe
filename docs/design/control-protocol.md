@@ -190,3 +190,8 @@ Keymaps, Spotlight and the ribbon can enumerate their wire names with
 `action_names()`. Bits 10–63 are reserved for future shared actions.
 Item 10 will supply descriptors for domain actions and generate payload
 schemas from the catalogue as controls adopt the protocol.
+
+`Source` and `ActionError` are non-exhaustive so later sources and rejection
+reasons are additive. Dispatch has an allocation gate of zero
+(`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
+(`bench/benches/instructions.rs`; 2,079 measured), which excludes path lookup.

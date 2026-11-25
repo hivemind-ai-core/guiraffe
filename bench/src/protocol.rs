@@ -107,10 +107,15 @@ impl Fixture {
             .id
             .ok_or_else(|| anyhow::anyhow!("fixture has no registered target"))?;
         self.app.update_window(self.window.into(), |_, w, cx| {
-            measure(&mut || {
-                assert_eq!(ControlId::lookup("page/999", cx), Some(id));
-                assert!(ActionBus::dispatch(id, &self.action, Source::Script, w, cx).is_ok());
-            })
-        })
+            // Path resolution is a client-boundary cost; the measured body is dispatch alone.
+            assert_eq!(ControlId::lookup("page/999", cx), Some(id));
+            let mut result = Ok(());
+            let measured = measure(&mut || {
+                result = ActionBus::dispatch(id, &self.action, Source::Script, w, cx);
+            });
+            result
+                .map(|()| measured)
+                .map_err(|e| anyhow::anyhow!("dispatch failed: {e:?}"))
+        })?
     }
 }

@@ -78,7 +78,9 @@ impl Action {
     }
 }
 
+/// Reasons the bus or a control rejects an action. More variants may follow.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ActionError {
     UnknownTarget,
     Unsupported,
@@ -98,7 +100,9 @@ pub trait Drive: Sized + 'static {
     ) -> Result<(), ActionError>;
 }
 
+/// Where an action came from. More sources may follow.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Source {
     Pointer,
     Keyboard,
