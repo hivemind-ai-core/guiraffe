@@ -426,7 +426,7 @@ mod tests {
             assert!(!entity.read(cx).0);
             (entity, id)
         });
-        drop(entity);
+        vcx.update(|_, _| drop(entity));
         vcx.run_until_parked();
         vcx.update(|window, cx| assert_eq!(ActionBus::describe(id, window, cx), None));
     }
