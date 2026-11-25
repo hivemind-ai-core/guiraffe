@@ -31,8 +31,9 @@ Implemented in `guiraffe-commands::ribbon` (ROADMAP 0.3 #13). Not yet done:
 
 - Placement (top/bottom) and open/close animation props from the design are not implemented; the
   host places `CommandRibbon` in its layout.
-- `ui!`'s `ribbon: "format/b"` and DataUi mounting are not wired. `control_menus` builds entries
-  from a window's action bus registrations instead.
+- `ui!`'s `ribbon: "format/b"` is not wired, and a DataUi `command-ribbon` mounts over the
+  application registry with an empty layout: documents cannot describe ribbon layouts yet.
+  `control_menus` builds entries from a window's action bus registrations instead.
 - Shortcut and chord overrides persist through `ribbon::OverrideFile`; there is no keybinding
   editor page yet.
 - Spotlight cannot prompt for parameters, so commands with parameters run only from the ribbon

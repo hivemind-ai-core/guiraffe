@@ -1363,7 +1363,7 @@ fn covered(surface: &str) -> bool {
                     "navbar-collapsed".into()
                 }
                 ("commands::Menu", "props") => "show-categories".into(),
-                ("commands::RibbonState", "props") => "rows-per-column".into(),
+                ("commands::RibbonState", "props" | "set_props") => "rows-per-column".into(),
                 ("commands::RibbonState", "open" | "close" | "toggle" | "is_open") => "open".into(),
                 ("components::ActionIcon" | "components::ThemeIcon", "from_asset") => "icon".into(),
                 ("layout::Splitter", "pane_size") => "pane-sizes".into(),

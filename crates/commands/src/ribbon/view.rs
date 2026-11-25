@@ -226,6 +226,13 @@ impl RibbonState {
         self.props = props;
         self
     }
+    /// Change props in place; notifies only when they differ.
+    pub fn set_props(&mut self, props: RibbonProps, cx: &mut Context<Self>) {
+        if self.props != props {
+            self.props = props;
+            cx.notify();
+        }
+    }
     pub fn is_open(&self) -> bool {
         self.open
     }
