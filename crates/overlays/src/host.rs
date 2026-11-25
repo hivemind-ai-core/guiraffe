@@ -652,7 +652,9 @@ fn notification(
 ) -> Notification {
     let id = toast.id;
     let message: gpui_kit::SharedString = toast.message.clone().into();
+    let action = toast.action.clone().map(std::rc::Rc::new);
     let closed = host.clone();
+    let pressed = host.clone();
     Notification::new()
         .id1::<ManagedToast>(id.0)
         .autohide(false)
@@ -695,6 +697,14 @@ fn notification(
                     });
                 })
                 .child(message.clone())
+                .children(action.clone().map(|toast_action| {
+                    let pressed = pressed.clone();
+                    gpui_kit::component::button::Button::new(("guiraffe-toast-action", id.0))
+                        .label(toast_action.label.clone())
+                        .on_click(move |_, window, cx| {
+                            run_toast_action(&toast_action, &pressed, id, generation, window, cx);
+                        })
+                }))
                 .children(progress.map(|value| {
                     Progress::new("toast-progress")
                         .value(value * 100.)
@@ -702,6 +712,33 @@ fn notification(
                 }))
                 .into_any_element()
         })
+}
+/// Dispatch a toast's action on the bus, then dismiss the toast (it did its job).
+fn run_toast_action(
+    toast_action: &crate::toast::ToastAction,
+    host: &gpui_kit::WeakEntity<OverlayHost>,
+    id: ToastId,
+    generation: u64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    use guiraffe_core::protocol::{ActionBus, ControlId, Source};
+    if let Some(control) = ControlId::lookup(&toast_action.control, cx) {
+        let _ = ActionBus::dispatch(control, &toast_action.action, Source::Pointer, window, cx);
+    }
+    let host = host.clone();
+    window.defer(cx, move |window, cx| {
+        let _ = host.update(cx, |host, cx| {
+            if host
+                .cards
+                .get(&id)
+                .is_some_and(|card| card.generation == generation)
+            {
+                host.toasts.remove(id);
+                host.sync_cards(window, cx);
+            }
+        });
+    });
 }
 fn anchor(position: ToastPosition) -> Anchor {
     match position {
