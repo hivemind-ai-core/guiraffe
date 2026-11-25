@@ -15,6 +15,7 @@ use guiraffe_overlays::{
     toast::{Toast, ToastId},
 };
 use guiraffe_timeline::{Channel, DopeSheet, GanttView, TimeFormat};
+use nix::time::{ClockId, clock_gettime};
 
 #[derive(Clone)]
 enum Data {
@@ -268,6 +269,8 @@ pub fn run(short: bool) -> Result<()> {
     let mut failed = false;
     let clock = Instant::now();
     let mut times = std::array::from_fn::<_, 12, _>(|_| Vec::with_capacity(1_200));
+    let cpu_clock = std::env::var_os("SOAK_FRAME_CPU").map(|_| ClockId::CLOCK_THREAD_CPUTIME_ID);
+    let mut cpu_max = [0; 12];
     let profile_frames = std::env::var("SOAK_FRAMES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok());
@@ -284,6 +287,7 @@ pub fn run(short: bool) -> Result<()> {
     } {
         let deadline = clock + Duration::from_secs(10 * (sample + 1));
         while profile_frames.map_or_else(|| Instant::now() < deadline, |limit| input < limit) {
+            let cpu_start = cpu_clock.map(clock_gettime).transpose()?;
             let started = Instant::now();
             let active = PHASES[(input / STEPS_PER_PHASE) % PHASES.len()].0;
             let cycle = input / (STEPS_PER_PHASE * PHASES.len());
@@ -423,6 +427,10 @@ pub fn run(short: bool) -> Result<()> {
             let elapsed = started.elapsed();
             failed |= elapsed > Duration::from_millis(50);
             times[active as usize].push(elapsed.as_micros());
+            if let (Some(clock), Some(start)) = (cpu_clock, cpu_start) {
+                let cost = Duration::from(clock_gettime(clock)? - start).as_micros();
+                cpu_max[active as usize] = cpu_max[active as usize].max(cost);
+            }
             input += 1;
             if profile_frames.is_none() {
                 std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
@@ -462,7 +470,7 @@ pub fn run(short: bool) -> Result<()> {
             branches * 10 + 1,
             groups * 10 + 1
         );
-        for ((_, name), times) in PHASES.into_iter().zip(&mut times) {
+        for ((phase, name), times) in PHASES.into_iter().zip(&mut times) {
             if times.is_empty() {
                 println!("component={name} frames=0");
                 continue;
@@ -477,6 +485,13 @@ pub fn run(short: bool) -> Result<()> {
                 p(99),
                 p(100)
             );
+            if cpu_clock.is_some() {
+                println!(
+                    "cpu_component={name} thread_cpu_max_us={}",
+                    cpu_max[phase as usize]
+                );
+                cpu_max[phase as usize] = 0;
+            }
             times.clear();
         }
     }

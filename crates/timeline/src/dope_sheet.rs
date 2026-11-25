@@ -1,10 +1,12 @@
 //! Hierarchical, frame-snapped dope sheet with viewport-culling and explicit selection.
+#[path = "dope_sheet_button.rs"]
+mod button;
 use crate::plot::append_diamond;
 use crate::{
     Axis, LockStyle, Playhead, PlotSurface, SelectionBox, TimeFormat, Zebra, dope_model::DopeModel,
 };
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, Icon, Sizable, Size, Theme, tooltip::Tooltip};
+use gpui_kit::component::{ActiveTheme, Theme, tooltip::Tooltip};
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Role, Styled,
@@ -49,6 +51,8 @@ pub struct DopeSheet {
     focus: FocusHandle,
     playhead: f64,
     lock_style: LockStyle,
+    header_column: Option<Entity<HeaderColumn>>,
+    header_offset: f64,
     first_header_row: usize,
     headers: Vec<(ChannelHeader, Entity<ChannelHeader>)>,
 }
@@ -78,6 +82,8 @@ impl DopeSheet {
             focus: cx.focus_handle(),
             playhead: 0.,
             lock_style: LockStyle::Badge,
+            header_column: None,
+            header_offset: 0.,
             first_header_row: 0,
             headers: Vec::new(),
         })
@@ -152,6 +158,12 @@ impl DopeSheet {
         self.press_with(row, x, false)
     }
     pub fn press_with(&mut self, row: usize, x: f64, add: bool) -> bool {
+        self.press_key(row, x, add).is_some()
+    }
+
+    // On a hit, report whether the selection needs repainting. Starting a
+    // drag on an already selected key changes only the pending gesture.
+    fn press_key(&mut self, row: usize, x: f64, add: bool) -> Option<bool> {
         let channel = self.model.rows().get(row).map(|r| r.channel).unwrap_or(row);
         let nearest = self
             .model
@@ -178,7 +190,8 @@ impl DopeSheet {
                 .min_by(|a, b| a.1.total_cmp(&b.1))
             });
         if let Some((t, _)) = nearest {
-            if add || !self.model.selected.contains(&(channel, t.to_bits())) {
+            let changed = add || !self.model.selected.contains(&(channel, t.to_bits()));
+            if changed {
                 if self.model.channels[channel].group {
                     self.model.select_summary(channel, t, add);
                 } else {
@@ -188,9 +201,9 @@ impl DopeSheet {
             self.drag = (self.editable && self.model.editable(channel)).then_some(Gesture::Keys {
                 last: self.surface.axis.t(x),
             });
-            true
+            Some(changed)
         } else {
-            false
+            None
         }
     }
     pub fn drag_to(&mut self, x: f64, cx: &mut Context<Self>) {
@@ -327,38 +340,62 @@ impl ChannelHeader {
             .opacity(if theme.mode.is_dark() { 0.5 } else { 1. });
         let hover_foreground = theme.accent_foreground;
         let active = theme.tokens.button_active;
-        div()
+        let inner = div()
             .debug_selector(move || format!("{id}-{channel}"))
-            .child(
-                div()
-                    .id((id, channel))
-                    .role(Role::Button)
-                    .aria_description(label)
-                    .aria_selected(selected)
-                    .size_5()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_center()
-                    .rounded(theme.radius)
-                    .text_color(foreground)
-                    .when(selected, |el| el.bg(theme.tokens.secondary_active))
-                    .when(!disabled && !selected, |el| {
-                        el.hover(move |style| style.bg(hover).text_color(hover_foreground))
-                            .active(move |style| style.bg(active))
+            .id((id, channel))
+            .role(Role::Button)
+            .aria_description(label)
+            .aria_selected(selected)
+            .size_5()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .rounded(theme.radius)
+            .text_color(foreground)
+            .when(selected, |el| el.bg(theme.tokens.secondary_active))
+            .when(!disabled && !selected, |el| {
+                el.hover(move |style| style.bg(hover).text_color(hover_foreground))
+                    .active(move |style| style.bg(active))
+            })
+            .when(!disabled, |el| {
+                el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .on_click(move |_, _, cx| {
+                        if let Some(owner) = owner.upgrade() {
+                            owner.update(cx, |view, cx| view.toggle(channel, kind, cx));
+                        }
                     })
-                    .when(!disabled, |el| {
-                        el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                            .on_click(move |_, _, cx| {
-                                if let Some(owner) = owner.upgrade() {
-                                    owner.update(cx, |view, cx| view.toggle(channel, kind, cx));
-                                }
-                            })
-                    })
-                    .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
-                    .child(Icon::new(icon).with_size(Size::XSmall))
-                    .a11y_disabled(disabled),
-            )
+            })
+            .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+            .a11y_disabled(disabled);
+        button::ChannelButton {
+            inner,
+            icon: icon.path(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct HeaderColumn {
+    rows: Vec<Entity<ChannelHeader>>,
+    top: f32,
+}
+
+impl Render for HeaderColumn {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .children(self.rows.iter().enumerate().map(|(index, entity)| {
+                entity.clone().cached(
+                    gpui_kit::StyleRefinement::default()
+                        .absolute()
+                        .top(px(self.top + index as f32 * ROW_H))
+                        .w(px(NAME_W))
+                        .h(px(ROW_H)),
+                )
+            }))
     }
 }
 
@@ -511,6 +548,9 @@ impl Render for DopeSheet {
         let owner = cx.weak_entity();
         // Keep the entities for channels still visible after a vertical scroll.
         // Header equality below also handles edits and changes in the row tree.
+        let mut headers_changed =
+            self.header_offset != self.offset || rows.len() != self.headers.len();
+        self.header_offset = self.offset;
         let shift = start
             .abs_diff(self.first_header_row)
             .min(self.headers.len());
@@ -543,6 +583,7 @@ impl Render for DopeSheet {
             };
             if let Some(entry) = current {
                 if entry.0 != header {
+                    headers_changed = true;
                     *entry = (header.clone(), cx.new(|_| header));
                 }
             } else {
@@ -550,6 +591,20 @@ impl Render for DopeSheet {
             }
         }
         self.headers.truncate(rows.len());
+        let column = self
+            .header_column
+            .get_or_insert_with(|| cx.new(|_| HeaderColumn::default()))
+            .clone();
+        if headers_changed {
+            column.update(cx, |column, cx| {
+                column.rows.clear();
+                column
+                    .rows
+                    .extend(self.headers.iter().map(|(_, entity)| entity.clone()));
+                column.top = (start as f64 * f64::from(ROW_H) - self.offset) as f32;
+                cx.notify();
+            });
+        }
         let mut background = self.surface.clone();
         background.insert_layer(
             0,
@@ -568,7 +623,6 @@ impl Render for DopeSheet {
                 end: (end.0, f64::from(end.1)),
             });
         }
-        let offset = self.offset;
         let key_owner = cx.weak_entity();
         let body = self.body.clone();
         let owner = cx.entity_id();
@@ -665,23 +719,12 @@ impl Render for DopeSheet {
                     .min_h_0()
                     .overflow_hidden()
                     .child(
-                        div()
-                            .relative()
-                            .w(px(NAME_W))
-                            .flex_none()
-                            .overflow_hidden()
-                            .children(self.headers.iter().enumerate().map(
-                                |(index, (_, entity))| {
-                                    let y = (start + index) as f64 * f64::from(ROW_H) - offset;
-                                    entity.clone().cached(
-                                        gpui_kit::StyleRefinement::default()
-                                            .absolute()
-                                            .top(px(y as f32))
-                                            .w(px(NAME_W))
-                                            .h(px(ROW_H)),
-                                    )
-                                },
-                            )),
+                        column.cached(
+                            gpui_kit::StyleRefinement::default()
+                                .w(px(NAME_W))
+                                .flex_none()
+                                .h_full(),
+                        ),
                     )
                     .child(
                         div()
@@ -692,6 +735,13 @@ impl Render for DopeSheet {
                             .flex_1()
                             .overflow_hidden()
                             .cursor(gpui_kit::CursorStyle::Crosshair)
+                            // The plot owns its drag feedback. Suppress GPUI's generic
+                            // pressed state before bubbling would refresh the whole window.
+                            .capture_any_mouse_down(|event, window, _| {
+                                if event.button == MouseButton::Left {
+                                    window.prevent_default();
+                                }
+                            })
                             .on_scroll(cx.listener(|this, e: &gpui_kit::ScrollEvent, _, cx| {
                                 let d = e.delta.pixel_delta(px(16.));
                                 let (x, _) = this.local(e.position);
@@ -728,22 +778,29 @@ impl Render for DopeSheet {
                                     let row = ((f64::from(y) + this.offset) / f64::from(ROW_H))
                                         .max(0.)
                                         as usize;
-                                    if !this.press_with(row, x, e.modifiers.shift) {
-                                        if !e.modifiers.shift {
-                                            this.model.selected.clear();
-                                        }
-                                        this.drag = Some(Gesture::Box {
-                                            start: (
-                                                this.surface.axis.t(x),
-                                                f64::from(y) + this.offset,
-                                            ),
-                                            end: (x, y),
-                                            add: e.modifiers.shift,
-                                            base: this.model.selected.clone(),
+                                    let repaint = this
+                                        .press_key(row, x, e.modifiers.shift)
+                                        .unwrap_or_else(|| {
+                                            let cleared = !e.modifiers.shift
+                                                && !this.model.selected.is_empty();
+                                            if !e.modifiers.shift {
+                                                this.model.selected.clear();
+                                            }
+                                            this.drag = Some(Gesture::Box {
+                                                start: (
+                                                    this.surface.axis.t(x),
+                                                    f64::from(y) + this.offset,
+                                                ),
+                                                end: (x, y),
+                                                add: e.modifiers.shift,
+                                                base: this.model.selected.clone(),
+                                            });
+                                            cleared
                                         });
-                                    }
                                     cx.emit(DopeEvent::SelectionChanged);
-                                    cx.notify();
+                                    if repaint {
+                                        cx.notify();
+                                    }
                                 }),
                             )
                             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
@@ -780,7 +837,13 @@ impl Render for DopeSheet {
                             }))
                             .on_mouse_up(
                                 MouseButton::Left,
-                                cx.listener(|this, _, _, _| this.release()),
+                                cx.listener(|this, _, _, cx| {
+                                    let marquee = matches!(this.drag, Some(Gesture::Box { .. }));
+                                    this.release();
+                                    if marquee {
+                                        cx.notify();
+                                    }
+                                }),
                             )
                             .child(
                                 canvas(
