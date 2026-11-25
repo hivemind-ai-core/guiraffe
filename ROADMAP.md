@@ -133,9 +133,18 @@ express one of these items, fix the API before 0.3 freezes rather than working a
 
 ## 0.4: Text, pixels and platforms
 
-Candidates, in likely order:
+Candidates, in likely order. Item 0 comes first, after 0.3.1 has landed what Passage needs.
 
-0. **Umbrella crate**, if 0.3 didn't ship it (0.3 item 16).
+0. **Our own GPUI fork and the umbrella crate.** Fork `gpui-fast` into a crate we publish on
+   crates.io. The name is open: `gpui-faster` and `guiraffe-gpui` are free; avoid `gpui-warp`,
+   which collides with Warp's own Rust UI framework. Its package keeps the `gpui` crate name, so
+   GPUI Kit and macros resolve unchanged. We track `gpui-fast` releases and it tracks Zed:
+   GUIraffe's changes live in their own module, as gpui-fast keeps its additions in `fast/`, so a
+   sync stays a merge, with a script and a gate per release. The patches in `vendor/README.md`
+   become commits in the fork. Drop the upstream GPUI backend from the gates and keep one frozen
+   upstream measurement in `docs/performance.md` as a baseline. Ship the `guiraffe` umbrella crate
+   on top (0.3 item 16, if 0.3 didn't ship it), so apps depend on one crate and copy no patch
+   table. Check Longbridge's release cadence first: syncing is our job from then on.
 1. **Text:** evaluate Parley against GPUI's text system, then rich text editing with IME,
    accessibility text ranges and selection across virtualized content.
 2. **Accessibility:** an incremental tree fed by the control registry, its measured cost, and
@@ -147,7 +156,8 @@ Candidates, in likely order:
    already reserves a surface pipeline that draws nothing today. Pulsar's WGPUI
    (`wgpu_surface`) shows the approach; we patch our GPUI rather than adopt that fork.
    gpui-fast's `ExternalGpu` composition layer is the alternative for video.
-4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io. Decide
+4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io. In the
+   fork, decide
    whether macOS and Windows draw with the wgpu renderer that Linux and the web use (wgpu runs on
    Metal and Direct3D 12) instead of GPUI's native Metal and Direct3D 11 renderers. One renderer
    would carry gpui-fast's renderer work and GPU surfaces everywhere; measure startup, frame
