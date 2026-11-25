@@ -1018,7 +1018,9 @@ mod tests {
             assert!(ActionBus::dispatch(outer_id, &action, Source::Mcp, window, cx).is_ok());
             assert_eq!(ActionBus::current_source(cx), None);
             assert!(
-                ActionBus::dispatch_batch(outer_id, &[action], Source::Ribbon, window, cx).is_ok()
+                ActionBus::dispatch_batch(outer_id, &[action], Source::Ribbon, window, cx)
+                    .error
+                    .is_none()
             );
             assert_eq!(ActionBus::current_source(cx), None);
             drop((inner, outer));

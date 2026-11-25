@@ -50,7 +50,7 @@ struct LensPath {
 #[derive(Clone)]
 enum Step {
     Field(Ident),
-    ByKey(Ident, Expr),
+    ByKey(Ident, Box<Expr>),
 }
 
 /// Options after `for row in <= lens`.
@@ -180,7 +180,7 @@ impl Parse for LensPath {
             if input.peek(token::Paren) {
                 let args;
                 parenthesized!(args in input);
-                steps.push(Step::ByKey(name, args.parse()?));
+                steps.push(Step::ByKey(name, Box::new(args.parse()?)));
             } else {
                 steps.push(Step::Field(name));
             }
@@ -761,11 +761,14 @@ fn same_heads<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> bool {
         .is_some_and(|first| heads.all(|head| head.as_ref() == Some(&first)))
 }
 
+/// Checks one lens path against the enclosing row names and store scope.
+type LensCheck<'a> = dyn Fn(&LensPath, &[Ident], bool) -> Result<()> + 'a;
+
 impl Node {
     /// Reject bindings outside a store scope and handlers outside their context.
     fn check(&self, store: bool) -> Result<()> {
         let lens = |lens: &LensPath, items: &[Ident], store: bool| {
-            if store || items.iter().any(|item| *item == lens.root) {
+            if store || items.contains(&lens.root) {
                 Ok(())
             } else {
                 Err(Error::new(
@@ -781,7 +784,7 @@ impl Node {
         &self,
         store: bool,
         items: &mut Vec<Ident>,
-        lens: &dyn Fn(&LensPath, &[Ident], bool) -> Result<()>,
+        lens: &LensCheck<'_>,
     ) -> Result<()> {
         let all = |nodes: &[Node], items: &mut Vec<Ident>| {
             nodes
