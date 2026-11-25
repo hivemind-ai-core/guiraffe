@@ -50,7 +50,7 @@ proportion to what changed.
 | # | Item | Notes |
 |---|---|---|
 | 12 | Keymap, Spotlight, DataUi, MCP, scripts and replay on the bus. Toast actions too | Replaces simulated clicks. In-app toasts have no action button today, so Undo has to live elsewhere; a toast action is a bus action |
-| 13 | Command ribbon | [Design](docs/design/command-ribbon.md). The one new component, and the bus's first real client |
+| 13 | Command ribbon | [Design](docs/design/command-ribbon.md). The one new component, and the bus's first real client. Core landed in `guiraffe-commands::ribbon`; open parts in KNOWN_ISSUES |
 | 14 | Multi-window docking | Pop out, dock back, restore layout. Control ids survive the move. Spike cross-window drag early |
 | 15 | The dogfood tool | Start with item 9, so it shapes the API |
 
@@ -117,7 +117,7 @@ How the 0.3 design changes the requests:
 | # | Item | Notes |
 |---|---|---|
 | 1 | `DopeSheet` authoring: insert and remove keys, value channels with segment interpolation (Constant, Linear, Bezier, eases), toggle channels, `ChannelCurve::value_at`, expand a row into a `CurveView` lane | The dope sheet and `CurveView` bind the same store slice. Actions: `InsertKey`, `RemoveKeys`, `SetKeyValue`, `SetSegmentInterp`, `BendSegment`, `ToggleSpan`. `value_at` is pure, matches the drawn segment, and is usable off the UI thread. Includes a keyboard-only flow |
-| 2 | `TracksView`: per-track height and resizing, a clip painter, a themed selection style, move vs trim, end trim past the content | Heights and selection are store state. Actions: `ResizeTrack`, `MoveClip`, `TrimClip`, `Select`. Row layout becomes a prefix sum; hit testing uses binary search. The clip painter only paints, from a snapshot of the clip. 60 fps with 64 tracks × 200 clips |
+| 2 | `TracksView`: per-track height and resizing, a clip painter, a themed selection style, move vs trim, end trim past the content, and a header column that can be hidden or replaced (`HeaderMode`) | Heights and selection are store state. Actions: `ResizeTrack`, `MoveClip`, `TrimClip`, `Select`. Row layout becomes a prefix sum; hit testing uses binary search. The clip painter only paints, from a snapshot of the clip. 60 fps with 64 tracks × 200 clips |
 | 3 | Playhead, follow mode and view range as store state; in-place track updates | Replaces `set_playhead`/`set_view`/`update_tracks`: the host writes the store, and the view diffs |
 | 4 | `Meter`: peak, RMS, peak hold, clip latch, dB zones from theme tokens, gain reduction, stereo, LUFS slot | Level is a sink. Clip reset is an action. Zero allocation per frame |
 | 5 | `Knob` and a `NumberField` with units, scrub, typed entry and log mapping | One value-mapping trait shared with `Slider`. Standard `SetValue`/`Increment`/`Decrement` actions, so every parameter is bindable to shortcuts and the ribbon |
@@ -125,6 +125,7 @@ How the 0.3 design changes the requests:
 | 7 | Time ruler with a loop range, locators and `TimeFormat::Musical` | The loop range and locators are store state with `SetRange`/`MoveLocator` actions. Shared by the piano roll and the arrangement |
 | 8 | `ScopeLayer` and `SpectrumLayer` presets for `PlotSurface` | Sample buffers come in through sinks. Min/max per pixel column; log-frequency and dB axes |
 | 9 | `Canvas` helper: local coordinates, hover, drag gestures, cursor, virtual accessible items | Virtual items register control ids and snapshots, so custom editors are drivable and accessible |
+| 10 | GUIraffe `Tabs`: themed, keyboard-navigable, optional icons, badges and closable tabs | Replaces Kit's `TabBar` in Passage's editor pane. Tab switching is a `Select` action on the bus |
 
 Requests: `../daw/docs/guiraffe-requests/`. Items 2 and 3 change `TracksView`, which the 0.3
 performance work also touches, so they start after it merges. If a 0.3 API turns out unable to
@@ -170,6 +171,39 @@ Candidates, in likely order. Item 0 comes first, after 0.3.1 has landed what Pas
 7. The items moved from 0.3 above.
 
 Mobile is out of scope until the desktop platforms are supported.
+
+## 0.5: Compiled reactivity
+
+**Goal:** a typical store-and-`ui!` app costs, per change, only what that change touches, and
+beats the same app written for plain gpui-fast. In 0.3 the Store's share of a label edit is
+already small and flat (1-20 µs of about 250 µs). What remains is rendering, which only our own
+GPUI fork (0.4) can change.
+
+Passage, the DAW built on GUIraffe, is the real-world stress test: a complex UI with dense
+timelines, meters, step grids and many windows. Each item is measured on Passage as well as on
+the composed benchmarks, and against a plain gpui-fast version of the same workload (the
+store-vs-plain A/B bench added in 0.3).
+
+Candidates:
+
+1. **Fine-grained updates instead of re-rendering:** `ui!` knows at compile time which element
+   property reads which lens, so a write patches that element in place without running a render
+   function (Solid-style rather than React-style). Builds on the retained-element step from 0.3.
+2. **Change kinds known statically:** paint-only bindings (colour, value, progress) skip layout
+   and hit testing; only text and geometry bindings pay for shaping and layout.
+3. **Static subtrees from `ui!`:** subtrees with no bindings are built once and kept, with no
+   per-frame bookkeeping.
+4. **Keyed list deltas:** keyed store writes and `imbl` snapshots give inserts, removes and moves
+   directly, so list updates cost what changed, with no diffing.
+5. **Sinks that skip the view tree:** high-rate values (meters, playheads, scopes) write straight
+   into retained scene primitives.
+6. **Scheduling:** coalesce writes per frame, update visible items first, slow down high-rate
+   sources, and prepare snapshots (text shaping, layout inputs) off the UI thread.
+7. **Compiled dispatch:** `ui!` resolves binding routes once, so a direct binding costs close to
+   nothing instead of a bus lookup.
+
+Rules: the builder API and plain views keep gpui-fast's behaviour as the fallback, and every fast
+path is tested against a full redraw.
 
 ## After 0.4
 

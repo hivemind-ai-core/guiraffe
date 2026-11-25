@@ -13,7 +13,7 @@
 //!     assert_eq!(model.copy_tsv().as_deref(), Some("42"));
 //! }
 //! ```
-pub use guiraffe_datagrid::{CellPos, Nav};
+pub use guiraffe_datagrid::{CellPos, HistoryLimits, Nav};
 
 mod address;
 pub use address::{a1, column_name, parse_a1};

@@ -841,5 +841,103 @@ fn registered_protocol_dispatch_and_repaint() -> anyhow::Result<()> {
     registered.dispatch(|call| call())?;
     let (_, counts) = registered.dispatch(|call| count_allocations(call))??;
     assert_eq!(counts.allocations, 0);
+    registered.dispatch_batch(|call| call())?;
+    let (_, batch) = registered.dispatch_batch(|call| count_allocations(call))??;
+    assert_eq!(batch.allocations, 0, "a batch of eight dispatches inline");
+    Ok(())
+}
+
+#[test]
+fn adopted_controls_cost_the_same_bound_or_unbound() -> anyhow::Result<()> {
+    use guiraffe_bench::protocol::Controls;
+    let mut unbound = Controls::new(false)?;
+    let mut bound = Controls::new(true)?;
+    assert_eq!((unbound.registered()?, bound.registered()?), (0, 1000));
+    let (plain, baseline) = count_allocations(|| unbound.draw())?;
+    plain?;
+    let (frame, registered) = count_allocations(|| bound.draw())?;
+    frame?;
+    eprintln!("adopted controls: unbound {baseline:?}, bound {registered:?}");
+    assert_eq!(registered.allocations, baseline.allocations);
+    assert_eq!(registered.bytes, baseline.bytes);
+    Ok(())
+}
+
+// Undo history
+
+#[derive(Clone, Default, PartialEq)]
+struct Counter(u64);
+
+#[derive(Debug)]
+struct Bump;
+impl guiraffe_state::Event<Counter> for Bump {
+    fn handle(self, fx: &mut guiraffe_state::Fx<'_, Counter>) {
+        // The in-place keyed write: no new state Arc, so only history could allocate.
+        let next = fx.state().0 + 1;
+        fx.set_keyed_field(1, next, |c| &c.0, |c| &mut c.0);
+    }
+}
+
+#[test]
+fn disabled_undo_history_allocates_nothing_on_the_push_path() -> anyhow::Result<()> {
+    use guiraffe_state::{BoundedHistory, Coeffects, Engine, HistoryLimits};
+    let cofx = Coeffects::default();
+    for limits in [None, Some(HistoryLimits::DISABLED)] {
+        let mut engine = Engine::new(Counter::default());
+        if let Some(limits) = limits {
+            engine.enable_undo(limits);
+        }
+        // Warm the queue, then time only processing (the event box is the dispatch's cost).
+        engine.dispatch(Bump);
+        engine.process(&cofx);
+        engine.dispatch(Bump);
+        let (_, counts) = count_allocations(|| {
+            engine.begin_undo_group();
+            let out = engine.process(&cofx);
+            engine.end_undo_group();
+            out.changed
+        })?;
+        assert_eq!(counts.allocations, 0, "{limits:?}: {counts:?}");
+        assert!(!engine.can_undo());
+    }
+    let mut history = BoundedHistory::new(HistoryLimits::DISABLED);
+    let (_, counts) = count_allocations(|| history.push(vec![0_u8; 0], 1))?;
+    assert_eq!(counts.allocations, 0);
+    Ok(())
+}
+
+#[test]
+fn store_writes_outside_a_batch_allocate_nothing_extra() -> anyhow::Result<()> {
+    use guiraffe_state::Store;
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    app.update(|cx| -> anyhow::Result<()> {
+        let store = Store::new(Counter::default(), cx);
+        // Warm the store; the batch check reads an absent global and then a present one.
+        store.dispatch_now(Bump, cx);
+        let (_, absent) = count_allocations(|| store.dispatch_now(Bump, cx))?;
+        assert_eq!(absent.allocations, 0, "no batch global: {absent:?}");
+        cx.default_global::<Marker>();
+        let (_, counts) = count_allocations(|| store.dispatch_now(Bump, cx))?;
+        assert_eq!(counts.allocations, 0, "{counts:?}");
+        assert_eq!(store.state(cx).0, 3);
+        Ok(())
+    })
+}
+
+/// Any global, so the app's global map is non-empty like a real app's.
+#[derive(Default)]
+struct Marker;
+impl gpui_kit::Global for Marker {}
+
+#[test]
+fn control_host_setters_allocate_nothing() -> anyhow::Result<()> {
+    let mut writes = guiraffe_bench::protocol::HostWrites::new()?;
+    let (_, counts) = writes.write(|call| count_allocations(call))??;
+    assert_eq!(counts.allocations, 0, "host writes: {counts:?}");
     Ok(())
 }

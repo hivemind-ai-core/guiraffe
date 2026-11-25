@@ -1,7 +1,7 @@
 //! Provisional control protocol. Persist paths; integer handles belong to one App.
 use crate::widget_value::Value;
 use gpui_kit::{App, Context, Entity, Global, Window, WindowId};
-use std::{collections::HashMap, panic::Location, rc::Rc};
+use std::{cell::Cell, collections::HashMap, panic::Location, rc::Rc};
 
 mod record;
 pub use record::{Recorded, Recorder, replay};
@@ -176,6 +176,35 @@ pub enum Source {
     Test,
 }
 
+/// Outcomes of a batch, in action order. Batches of up to eight stay inline.
+pub type Outcomes = smallvec::SmallVec<[Outcome; 8]>;
+
+/// The action at `index` was rejected and the batch stopped there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchError {
+    pub index: usize,
+    pub error: ActionError,
+}
+
+/// Result of `dispatch_batch`: the applied prefix's outcomes and, if the batch
+/// stopped early, why.
+#[derive(Debug, Clone, PartialEq)]
+#[must_use]
+pub struct Batch {
+    pub outcomes: Outcomes,
+    pub error: Option<BatchError>,
+}
+
+impl Batch {
+    /// All outcomes when every action applied; the rejection otherwise.
+    pub fn into_result(self) -> Result<Outcomes, BatchError> {
+        match self.error {
+            None => Ok(self.outcomes),
+            Some(error) => Err(error),
+        }
+    }
+}
+
 /// A run of actions on one target that is one undo step, such as a drag-paint.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Group {
@@ -294,6 +323,18 @@ struct Entry {
 #[derive(Default)]
 struct Buses(HashMap<WindowId, WindowBus>);
 impl Global for Buses {}
+
+/// The `dispatch_batch` currently running on this app, if any. Stores read it to record a
+/// batch's writes as one undo step, so no interceptor is installed and a single `dispatch`
+/// keeps the hook-free fast path.
+#[derive(Default)]
+struct OpenBatch {
+    /// Nested `dispatch_batch` calls; only the outermost opens a group.
+    depth: Cell<usize>,
+    /// Counts outermost batches, so consecutive batches are distinct groups.
+    serial: Cell<u64>,
+}
+impl Global for OpenBatch {}
 #[derive(Default)]
 struct WindowBus {
     entries: HashMap<ControlId, Entry>,
@@ -422,27 +463,48 @@ impl ActionBus {
         let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
         if bus.hooks.is_empty() {
             // The empty interceptor list costs a branch (design section 8.5).
-            return target
-                .ok_or(ActionError::UnknownTarget)?
-                .apply(action, window, cx);
+            let target = target.ok_or(ActionError::UnknownTarget)?;
+            return with_source(source, || target.apply(action, window, cx));
         }
         let hooks = bus.hooks.clone();
         Self::run(id, target.as_deref(), &hooks, action, source, window, cx)
     }
 
+    /// The outermost `dispatch_batch` running now, as a serial that differs for each
+    /// batch, or `None` outside a batch. A store with history joins the batch's undo
+    /// group when it is written during one.
+    pub fn open_batch(cx: &App) -> Option<u64> {
+        let open = cx.try_global::<OpenBatch>()?;
+        (open.depth.get() > 0).then(|| open.serial.get())
+    }
+
     /// Apply `actions` to one target as one group: interceptors see `begin_group`,
     /// each action, then `end_group`, and store history records one undo step.
-    /// Stops at the first rejected action and returns its error.
+    /// Returns each action's outcome, or stops at the first rejected action.
+    /// Up to eight actions allocate nothing.
     pub fn dispatch_batch(
         id: ControlId,
         actions: &[Action],
         source: Source,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<(), ActionError> {
-        let bus = Self::bus(window, cx)?;
+    ) -> Batch {
+        let bus = match Self::bus(window, cx) {
+            Ok(bus) => bus,
+            Err(error) => {
+                return Batch {
+                    outcomes: Outcomes::new(),
+                    error: Some(BatchError { index: 0, error }),
+                };
+            }
+        };
         let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
         let hooks = bus.hooks.clone();
+        let open = cx.default_global::<OpenBatch>();
+        if open.depth.get() == 0 {
+            open.serial.set(open.serial.get().wrapping_add(1));
+        }
+        open.depth.set(open.depth.get() + 1);
         let group = Group {
             id,
             source,
@@ -451,13 +513,31 @@ impl ActionBus {
         for hook in hooks.iter() {
             hook.begin_group(group, window, cx);
         }
-        let result = actions.iter().try_for_each(|action| {
-            Self::run(id, target.as_deref(), &hooks, action, source, window, cx).map(drop)
-        });
+        let mut outcomes = Outcomes::new();
+        let mut failed = None;
+        for (index, action) in actions.iter().enumerate() {
+            match Self::run(id, target.as_deref(), &hooks, action, source, window, cx) {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(error) => {
+                    failed = Some((index, error));
+                    break;
+                }
+            }
+        }
+        let result = match &failed {
+            None => Ok(()),
+            Some((_, error)) => Err(error.clone()),
+        };
         for hook in hooks.iter().rev() {
             hook.end_group(group, &result, window, cx);
         }
-        result
+        if let Some(open) = cx.try_global::<OpenBatch>() {
+            open.depth.set(open.depth.get().saturating_sub(1));
+        }
+        Batch {
+            outcomes,
+            error: failed.map(|(index, error)| BatchError { index, error }),
+        }
     }
 
     fn run(
@@ -477,14 +557,40 @@ impl ActionBus {
                 hook.before(id, action, source, window, cx)
             })
             .and_then(|()| {
-                target
-                    .ok_or(ActionError::UnknownTarget)?
-                    .apply(action, window, cx)
+                let target = target.ok_or(ActionError::UnknownTarget)?;
+                with_source(source, || target.apply(action, window, cx))
             });
         for hook in hooks[..called].iter().rev() {
             hook.after(id, action, source, &result, window, cx);
         }
         result
+    }
+}
+
+thread_local! {
+    static CURRENT_SOURCE: std::cell::Cell<Option<Source>> = const { std::cell::Cell::new(None) };
+}
+
+/// Restores the enclosing dispatch's source, also when `apply` unwinds.
+struct RestoreSource(Option<Source>);
+
+impl Drop for RestoreSource {
+    fn drop(&mut self) {
+        CURRENT_SOURCE.with(|current| current.set(self.0));
+    }
+}
+
+fn with_source<R>(source: Source, apply: impl FnOnce() -> R) -> R {
+    let _restore = RestoreSource(CURRENT_SOURCE.with(|current| current.replace(Some(source))));
+    apply()
+}
+
+impl ActionBus {
+    /// The source of the action being applied, while a control's `Drive::apply` runs
+    /// under [`ActionBus::dispatch`] or [`ActionBus::dispatch_batch`]. `None` outside a
+    /// dispatch. Nested dispatches see their own source and restore the outer one.
+    pub fn current_source(_cx: &App) -> Option<Source> {
+        CURRENT_SOURCE.with(std::cell::Cell::get)
     }
 }
 
@@ -822,7 +928,13 @@ mod tests {
                     window,
                     cx
                 ),
-                Ok(())
+                Batch {
+                    error: None,
+                    outcomes: Outcomes::from_iter([
+                        Outcome(Value::Bool(true)),
+                        Outcome(Value::Bool(false))
+                    ]),
+                }
             );
             assert_eq!(
                 ActionBus::dispatch_batch(
@@ -832,7 +944,13 @@ mod tests {
                     window,
                     cx
                 ),
-                Err(ActionError::ReadOnly)
+                Batch {
+                    outcomes: Outcomes::from_iter([Outcome(Value::Bool(true))]),
+                    error: Some(BatchError {
+                        index: 1,
+                        error: ActionError::ReadOnly,
+                    }),
+                }
             );
             assert!(entity.read(cx).0, "the rejected action stops the batch");
             assert_eq!(
@@ -854,5 +972,97 @@ mod tests {
             );
             drop(hook.target.borrow_mut().take());
         });
+    }
+
+    #[gpui_kit::test]
+    fn apply_sees_its_own_source_and_nested_dispatch_restores_it(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        struct Probe {
+            inner: Option<ControlId>,
+            seen: Rc<RefCell<Vec<Option<Source>>>>,
+        }
+        impl Observe for Probe {
+            type Snapshot = ControlSnapshot;
+            fn snapshot(&self, _: &App) -> ControlSnapshot {
+                ControlSnapshot::default()
+            }
+        }
+        impl Drive for Probe {
+            type Action = ();
+            type Output = ();
+            fn decode(_: &Action) -> Result<(), ActionError> {
+                Ok(())
+            }
+            fn apply(
+                &mut self,
+                _: (),
+                window: &mut Window,
+                cx: &mut Context<Self>,
+            ) -> Result<(), ActionError> {
+                self.seen.borrow_mut().push(ActionBus::current_source(cx));
+                if let Some(inner) = self.inner {
+                    let action = Action {
+                        name: names::ACTIVATE.into(),
+                        payload: Value::Null,
+                    };
+                    ActionBus::dispatch(inner, &action, Source::Script, window, cx)?;
+                    self.seen.borrow_mut().push(ActionBus::current_source(cx));
+                }
+                Ok(())
+            }
+        }
+        let (_, vcx) = cx.add_window_view(|_, _| Empty);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        vcx.update(|window, cx| {
+            let inner = cx.new(|_| Probe {
+                inner: None,
+                seen: seen.clone(),
+            });
+            let inner_id = ActionBus::register(
+                "nest/inner",
+                &inner,
+                "probe",
+                Capabilities::ACTIVATE,
+                window,
+                cx,
+            );
+            let outer = cx.new(|_| Probe {
+                inner: Some(inner_id),
+                seen: seen.clone(),
+            });
+            let outer_id = ActionBus::register(
+                "nest/outer",
+                &outer,
+                "probe",
+                Capabilities::ACTIVATE,
+                window,
+                cx,
+            );
+            let action = Action {
+                name: names::ACTIVATE.into(),
+                payload: Value::Null,
+            };
+            assert_eq!(ActionBus::current_source(cx), None);
+            assert!(ActionBus::dispatch(outer_id, &action, Source::Mcp, window, cx).is_ok());
+            assert_eq!(ActionBus::current_source(cx), None);
+            assert!(
+                ActionBus::dispatch_batch(outer_id, &[action], Source::Ribbon, window, cx)
+                    .into_result()
+                    .is_ok()
+            );
+            assert_eq!(ActionBus::current_source(cx), None);
+            drop((inner, outer));
+        });
+        assert_eq!(
+            *seen.borrow(),
+            [
+                Some(Source::Mcp),
+                Some(Source::Script),
+                Some(Source::Mcp),
+                Some(Source::Ribbon),
+                Some(Source::Script),
+                Some(Source::Ribbon),
+            ]
+        );
     }
 }

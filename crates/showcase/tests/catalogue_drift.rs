@@ -26,6 +26,11 @@ fn kind(surface: &str) -> Option<&'static str> {
         "layout::Grid" | "layout::Col" => "responsive-grid",
         "commands::CommandScope" => "command-scope",
         "commands::Menu" | "commands::MenuProps" => "command-menu",
+        "commands::CommandRibbon"
+        | "commands::fn ribbon_scope"
+        | "commands::RibbonButton"
+        | "commands::RibbonProps"
+        | "commands::RibbonState" => "command-ribbon",
         "components::ActionIcon" => "action-icon",
         "components::ThemeIcon" => "theme-icon",
         "components::fn close_button" => "close-button",
@@ -107,6 +112,62 @@ fn kind(surface: &str) -> Option<&'static str> {
 
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
+    (
+        "commands::CommandRibbon::when_open",
+        "Host layout helper that adds the bar only while open; documents use the `open` prop.",
+    ),
+    (
+        "commands::RibbonState::set_leader",
+        "The leader is a host keyboard setting, like a keymap entry, not a document property.",
+    ),
+    (
+        "commands::RibbonState::window_id",
+        "Read-only window identity for hosts with several windows.",
+    ),
+    (
+        "commands::RibbonState::activate",
+        "Activates an entry by index for pointer hosts; documents use chord keys.",
+    ),
+    (
+        "commands::RibbonState::back",
+        "Navigation step driven by Backspace or the Parent button, not a document property.",
+    ),
+    (
+        "commands::RibbonState::root",
+        "Navigation step driven by Escape or the Root button, not a document property.",
+    ),
+    (
+        "commands::RibbonState::press",
+        "Feeds one chord key; keyboard input, not a document property.",
+    ),
+    (
+        "commands::RibbonState::submit",
+        "Fills the prompted parameter; prompt input, not a document property.",
+    ),
+    (
+        "commands::RibbonState::breadcrumbs",
+        "Read-only navigation state for hosts and tests.",
+    ),
+    (
+        "commands::RibbonState::depth",
+        "Read-only navigation state for hosts and tests.",
+    ),
+    (
+        "commands::RibbonState::message",
+        "Read-only refusal text for hosts and tests.",
+    ),
+    (
+        "commands::RibbonState::prompting",
+        "Read-only prompt state for hosts and tests.",
+    ),
+    (
+        "commands::RibbonState::model",
+        "The compiled layout is built by the host from its registry.",
+    ),
+    (
+        "commands::RibbonState::set_model",
+        "The compiled layout is built by the host from its registry.",
+    ),
     (
         "overlays::Popover::track_focus",
         "A caller supplies a native FocusHandle. Document triggers use the component default.",
@@ -1073,7 +1134,28 @@ const IMPERATIVE: &[(&str, &str)] = &[
     ),
 ];
 
+/// Native protocol control entities (`guiraffe_components::controls`). Documents reach
+/// them through `ui!` lowering (item 9) and the action bus, not through their own kinds.
+const PROTOCOL_CONTROLS: &[&str] = &[
+    "components::ButtonControl",
+    "components::CheckboxControl",
+    "components::SwitchControl",
+    "components::SliderControl",
+    "components::TextInputControl",
+    "components::SelectControl",
+    "components::TabsControl",
+    "components::MenuControl",
+];
+
 fn covered(surface: &str) -> bool {
+    if PROTOCOL_CONTROLS.iter().any(|control| {
+        surface == *control
+            || surface
+                .strip_prefix(control)
+                .is_some_and(|rest| rest.starts_with("::"))
+    }) {
+        return true;
+    }
     if IMPERATIVE
         .iter()
         .any(|(api, reason)| *api == surface && !reason.is_empty())
@@ -1135,6 +1217,10 @@ fn covered(surface: &str) -> bool {
             ("chat::ChatState", "AttachmentRequested") => "attachment-request",
             ("chat::ChatState", "Finished") => "finish",
             ("overlays::SpotlightState", "Activated") => "activate",
+            ("commands::RibbonState", "Opened") => "opened",
+            ("commands::RibbonState", "Closed") => "closed",
+            ("commands::RibbonState", "Ran") => "ran",
+            ("commands::RibbonState", "Refused") => "refused",
             ("timeline::EventTimelineState", "Activated") => "activate",
             ("inputs::Picker", "Change") => "change",
             ("inputs::Picker", "OpenChange") => "open-change",
@@ -1334,6 +1420,8 @@ fn covered(surface: &str) -> bool {
                     "navbar-collapsed".into()
                 }
                 ("commands::Menu", "props") => "show-categories".into(),
+                ("commands::RibbonState", "props" | "set_props") => "rows-per-column".into(),
+                ("commands::RibbonState", "open" | "close" | "toggle" | "is_open") => "open".into(),
                 ("components::ActionIcon" | "components::ThemeIcon", "from_asset") => "icon".into(),
                 ("layout::Splitter", "pane_size") => "pane-sizes".into(),
                 ("components::Loader", "set_period") => "period-ms".into(),

@@ -19,6 +19,7 @@ pub mod accordion;
 pub mod avatar_group;
 pub mod burger;
 pub mod color_swatch;
+pub mod controls;
 pub mod copy_button;
 mod disclosure_data;
 mod disclosure_motion;

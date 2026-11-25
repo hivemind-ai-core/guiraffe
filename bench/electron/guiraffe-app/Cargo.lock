@@ -3246,6 +3246,7 @@ dependencies = [
  "gpui-kit",
  "imbl",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]
@@ -3303,6 +3304,7 @@ name = "guiraffe-state"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "guiraffe-core",
 ]
 
 [[package]]

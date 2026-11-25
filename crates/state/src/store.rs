@@ -23,6 +23,8 @@ use crate::engine::{
     Coeffects, DirtyKeys, DispatchLater, Effect, Engine, EngineError, Event, Interceptor, Queued,
     UndoEvent,
 };
+use crate::history::HistoryLimits;
+use guiraffe_core::protocol::ActionBus;
 
 type EffectHandler<S> = Rc<dyn Fn(Box<dyn std::any::Any>, &Store<S>, &mut App)>;
 type ErrorHandler = Rc<dyn Fn(&EngineError, &mut App)>;
@@ -97,6 +99,8 @@ struct Inner<S: Clone + PartialEq + 'static> {
     debounce: HashMap<&'static str, (u64, Queued<S>, Task<()>)>,
     next_timer: u64,
     stats: StoreStats,
+    /// The `ActionBus::dispatch_batch` whose undo group the engine has open.
+    batch: Option<u64>,
 }
 
 /// An event-driven state container. Cheap to clone (it is a handle).
@@ -175,6 +179,7 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
             debounce: HashMap::new(),
             next_timer: 0,
             stats: StoreStats::default(),
+            batch: None,
         });
         Self {
             inner,
@@ -197,21 +202,74 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
         self.inner.read(cx).engine.state().clone()
     }
 
-    /// Whole-state undo (see [`Engine::enable_undo`] for the caveat).
-    pub fn enable_undo(&self, limit: usize, cx: &mut App) {
-        self.inner.update(cx, |i, _| i.engine.enable_undo(limit));
+    /// Whole-state undo within `limits` (see [`Engine::enable_undo`] for the caveat).
+    pub fn enable_undo(&self, limits: impl Into<HistoryLimits>, cx: &mut App) {
+        let limits = limits.into();
+        self.inner.update(cx, |i, _| i.engine.enable_undo(limits));
+    }
+
+    /// Whole-state undo with a per-step weight estimate (see [`Engine::enable_undo_weighed`]).
+    pub fn enable_undo_weighed(
+        &self,
+        limits: impl Into<HistoryLimits>,
+        weigh: impl Fn(&S) -> u64 + 'static,
+        cx: &mut App,
+    ) {
+        let limits = limits.into();
+        self.inner
+            .update(cx, |i, _| i.engine.enable_undo_weighed(limits, weigh));
     }
 
     /// Undo scoped to part of the state (see [`Engine::enable_undo_lens`]).
     pub fn enable_undo_lens<U: Clone + 'static>(
         &self,
-        limit: usize,
+        limits: impl Into<HistoryLimits>,
         get: impl Fn(&S) -> U + 'static,
         set: impl Fn(&mut S, U) + 'static,
         cx: &mut App,
     ) {
+        let limits = limits.into();
         self.inner
-            .update(cx, |i, _| i.engine.enable_undo_lens(limit, get, set));
+            .update(cx, |i, _| i.engine.enable_undo_lens(limits, get, set));
+    }
+
+    /// Scoped undo with a per-step weight estimate (see [`Engine::enable_undo_lens_weighed`]).
+    pub fn enable_undo_lens_weighed<U: Clone + 'static>(
+        &self,
+        limits: impl Into<HistoryLimits>,
+        get: impl Fn(&S) -> U + 'static,
+        set: impl Fn(&mut S, U) + 'static,
+        weigh: impl Fn(&U) -> u64 + 'static,
+        cx: &mut App,
+    ) {
+        let limits = limits.into();
+        self.inner.update(cx, |i, _| {
+            i.engine.enable_undo_lens_weighed(limits, get, set, weigh)
+        });
+    }
+
+    /// Change the history limits, keeping the steps that still fit.
+    pub fn set_undo_limits(&self, limits: impl Into<HistoryLimits>, cx: &mut App) {
+        let limits = limits.into();
+        self.inner
+            .update(cx, |i, _| i.engine.set_undo_limits(limits));
+    }
+
+    pub fn undo_limits(&self, cx: &App) -> HistoryLimits {
+        self.inner.read(cx).engine.undo_limits()
+    }
+
+    /// Start an undo group (see [`Engine::begin_undo_group`]). Events dispatched before the
+    /// matching [`Store::end_undo_group`] are flushed first, so they stay in this group.
+    pub fn begin_undo_group(&self, cx: &mut App) {
+        self.flush(cx);
+        self.inner.update(cx, |i, _| i.engine.begin_undo_group());
+    }
+
+    /// End the undo group, flushing its pending events into it first.
+    pub fn end_undo_group(&self, cx: &mut App) {
+        self.flush(cx);
+        self.inner.update(cx, |i, _| i.engine.end_undo_group());
     }
 
     pub fn can_undo(&self, cx: &App) -> bool {
@@ -264,6 +322,7 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     /// Queue an event. All events dispatched in the same tick are processed together
     /// (one refresh of selections, so views re-render at most once).
     pub fn dispatch(&self, event: impl Event<S>, cx: &mut App) {
+        self.sync_batch(cx);
         self.inner.update(cx, |i, _| i.engine.dispatch(event));
         self.schedule(cx);
     }
@@ -273,11 +332,50 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
     /// When the store already has a scheduled batch or is processing effects,
     /// the event enters that batch in FIFO order.
     pub fn dispatch_now(&self, event: impl Event<S>, cx: &mut App) {
+        self.sync_batch(cx);
         if self.scheduled.get() || self.processing.get() || self.inner.read(cx).engine.has_pending()
         {
             self.dispatch(event, cx);
         } else {
             self.flush_with_first(Some(event), cx);
+        }
+    }
+
+    /// Follow `ActionBus::dispatch_batch`: writes during a batch are one undo step. On the
+    /// first write in a batch, earlier events are processed outside the group and the group
+    /// opens; the next write or flush after the batch processes the batch's events, then
+    /// closes it. Outside batches this is a global lookup and a compare.
+    fn sync_batch(&self, cx: &mut App) {
+        if self.processing.get() {
+            return; // joins the running flush, and whatever group it is in
+        }
+        let open = ActionBus::open_batch(cx);
+        let joined = self.inner.read(cx).batch;
+        if joined == open {
+            return;
+        }
+        if joined.is_some() {
+            self.flush(cx); // processes the finished batch's events and closes its group
+        }
+        if let Some(serial) = open {
+            self.flush(cx);
+            self.inner.update(cx, |i, _| {
+                i.engine.begin_undo_group();
+                i.batch = Some(serial);
+            });
+        }
+    }
+
+    /// Close this store's batch group once its batch has finished (after processing).
+    fn close_finished_batch(&self, cx: &mut App) {
+        let Some(joined) = self.inner.read(cx).batch else {
+            return;
+        };
+        if ActionBus::open_batch(cx) != Some(joined) {
+            self.inner.update(cx, |i, _| {
+                i.engine.end_undo_group();
+                i.batch = None;
+            });
         }
     }
 
@@ -352,6 +450,7 @@ impl<S: Clone + PartialEq + 'static> Store<S> {
                 break;
             }
         }
+        self.close_finished_batch(cx);
         let handler = self.inner.update(cx, |i, _| {
             i.stats.flushes += 1;
             i.stats.last_error = error.clone();
