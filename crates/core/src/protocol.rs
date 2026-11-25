@@ -137,10 +137,48 @@ impl<T: Observe + Drive> Endpoint for gpui_kit::WeakEntity<T> {
         Ok(entity.read(cx).snapshot(cx).into())
     }
 }
+bitflags::bitflags! {
+    /// Provisional set of shared actions offered by a registered control.
+    /// Bits 10 through 63 are reserved for future shared actions.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+    pub struct Capabilities: u64 {
+        const SET_VALUE = 1 << 0;
+        const ACTIVATE = 1 << 1;
+        const TOGGLE = 1 << 2;
+        const OPEN = 1 << 3;
+        const CLOSE = 1 << 4;
+        const SELECT = 1 << 5;
+        const FOCUS = 1 << 6;
+        const SCROLL_TO = 1 << 7;
+        const INCREMENT = 1 << 8;
+        const DECREMENT = 1 << 9;
+    }
+}
+
+impl Capabilities {
+    /// Enumerate bindable shared actions using their protocol wire names.
+    pub fn action_names(self) -> impl Iterator<Item = &'static str> {
+        [
+            (Self::SET_VALUE, names::SET_VALUE),
+            (Self::ACTIVATE, names::ACTIVATE),
+            (Self::TOGGLE, names::TOGGLE),
+            (Self::OPEN, names::OPEN),
+            (Self::CLOSE, names::CLOSE),
+            (Self::SELECT, names::SELECT),
+            (Self::FOCUS, names::FOCUS),
+            (Self::SCROLL_TO, names::SCROLL_TO),
+            (Self::INCREMENT, names::INCREMENT),
+            (Self::DECREMENT, names::DECREMENT),
+        ]
+        .into_iter()
+        .filter_map(move |(flag, name)| self.contains(flag).then_some(name))
+    }
+}
+
 struct Entry {
     endpoint: Rc<dyn Endpoint>,
     kind: &'static str,
-    capabilities: u64,
+    capabilities: Capabilities,
     site: &'static Location<'static>,
     _release: gpui_kit::Subscription,
 }
@@ -176,7 +214,7 @@ impl ActionBus {
         path: &str,
         entity: &Entity<T>,
         kind: &'static str,
-        capabilities: u64,
+        capabilities: Capabilities,
         window: &Window,
         cx: &mut App,
     ) -> ControlId {
@@ -229,7 +267,11 @@ impl ActionBus {
             .and_then(|b| b.0.get(&window.window_handle().window_id()))
             .ok_or(ActionError::UnknownTarget)
     }
-    pub fn describe(id: ControlId, window: &Window, cx: &App) -> Option<(&'static str, u64)> {
+    pub fn describe(
+        id: ControlId,
+        window: &Window,
+        cx: &App,
+    ) -> Option<(&'static str, Capabilities)> {
         let entry = Self::bus(window, cx).ok()?.entries.get(&id)?;
         Some((entry.kind, entry.capabilities))
     }
@@ -295,6 +337,16 @@ mod tests {
         assert_eq!(Action::from_json(&input).unwrap().to_json(), input);
         assert!(Action::from_json(&serde_json::json!({"name":"select"})).is_err());
     }
+    #[test]
+    fn flags_enumerate_only_advertised_actions() {
+        let flags = Capabilities::TOGGLE | Capabilities::FOCUS;
+        assert_eq!(
+            flags.action_names().collect::<Vec<_>>(),
+            [names::TOGGLE, names::FOCUS]
+        );
+        assert_eq!(Capabilities::all().action_names().count(), 10);
+    }
+
     struct Toggle(bool);
     impl Observe for Toggle {
         type Snapshot = ControlSnapshot;
@@ -338,7 +390,14 @@ mod tests {
             entity
         });
         vcx.update(|window, cx| {
-            let id = ActionBus::register("settings/theme", &entity, "toggle", 1, window, cx);
+            let id = ActionBus::register(
+                "settings/theme",
+                &entity,
+                "toggle",
+                Capabilities::TOGGLE,
+                window,
+                cx,
+            );
             assert_eq!(ControlId::lookup("settings/theme", cx), Some(id));
             let action = Action {
                 name: names::TOGGLE.into(),

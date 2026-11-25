@@ -184,3 +184,9 @@ interner and resolve the same handle against their own registrations.
 Register at entity creation and unregister before changing the path.
 The registry observes entity release and window closure. To inspect a path
 without creating a registration, use `NodeId::control_id` in guiraffe-test.
+
+The provisional `Capabilities` flags advertise the ten shared actions.
+Keymaps, Spotlight and the ribbon can enumerate their wire names with
+`action_names()`. Bits 10–63 are reserved for future shared actions.
+Item 10 will supply descriptors for domain actions and generate payload
+schemas from the catalogue as controls adopt the protocol.

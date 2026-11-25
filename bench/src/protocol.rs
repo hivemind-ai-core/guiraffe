@@ -65,7 +65,7 @@ impl Fixture {
                             &format!("page/{i}"),
                             &entity,
                             "toggle",
-                            1,
+                            Capabilities::TOGGLE,
                             window,
                             cx,
                         ));
