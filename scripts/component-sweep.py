@@ -36,10 +36,11 @@ def check(binary, component, count):
 
 def check_mixed(binary):
     # Include tab activation and chart ingestion from the original mixed soak.
-    lines = replay(binary, "mixed", {"SOAK_FRAMES": "384"}, timeout=120)
+    lines = replay(binary, "mixed", {"SOAK_FRAMES": "384", "SOAK_FRAME_CPU": "1"}, timeout=120)
     record, = (line for line in lines if line.startswith("component=timeline "))
     metrics = dict(field.split("=", 1) for field in record.split())
-    return int(metrics["frames"]) > 0 and int(metrics["max_us"]) <= 8_000, record
+    cpu = next((line for line in lines if line.startswith("cpu_component=timeline ")), "")
+    return int(metrics["frames"]) == 32 and int(metrics["max_us"]) <= 8_000, f"{record} {cpu}".strip()
 
 
 def report(label, operation, *args):
