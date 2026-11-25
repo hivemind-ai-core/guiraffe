@@ -215,7 +215,7 @@ fn flow_editor(f: impl FnOnce(&mut guiraffe_flow_core::Editor)) {
             *slot = Some(
                 match guiraffe_flow_core::Editor::new(flow_graph().clone()) {
                     Ok(mut e) => {
-                        e.history_limit(1);
+                        e.set_undo_limits(1);
                         e
                     }
                     Err(error) => panic!("flow benchmark editor rejected: {error}"),

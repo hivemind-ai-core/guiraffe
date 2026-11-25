@@ -45,7 +45,7 @@ use crate::{
     model::{
         clipboard::{parse_tsv, paste_target, write_tsv},
         selection::{Advance, CellPos, Nav, Region, Selection, SelectionMode},
-        undo::{Change, UndoLog},
+        undo::{Change, HistoryLimits, Transaction, UndoLog, estimate_weight},
     },
     order::{
         Filter, FilterSpec, Inverse, RowOrder, SortDir, SortKey, SortSpec, compute_order,
@@ -310,6 +310,13 @@ struct CellWrite {
     value: String,
     /// Undo/redo only: the row must still have this key, or the write is rejected.
     expect: Option<RowKey>,
+}
+
+/// Undo weight of a grid transaction: its change records plus the text they own, counted
+/// once when the transaction is recorded.
+fn text_weight(t: &Transaction<CellKey, String, EditOp>) -> u64 {
+    let text: usize = t.changes.iter().map(|c| c.old.len() + c.new.len()).sum();
+    estimate_weight(t) + text as u64
 }
 
 /// Text that round-trips a cell through `GridSource::set_cell` for undo: the default display,
@@ -780,7 +787,7 @@ impl GridHandle {
             validator: None,
             pending: None,
             copying: 0,
-            undo: UndoLog::default(),
+            undo: UndoLog::default().with_weigher(text_weight),
             src_rows: count,
             any_editable: false,
             autoscroll: None,
@@ -1154,6 +1161,17 @@ impl GridHandle {
 
     pub fn can_undo(&self) -> bool {
         self.core.m.borrow().undo.can_undo()
+    }
+
+    /// Bound the undo history by step count and, optionally, approximate bytes (each
+    /// transaction weighs its change records plus the old and new text). The oldest steps
+    /// go first; the default keeps 200 steps.
+    pub fn set_undo_limits(&self, limits: impl Into<HistoryLimits>) {
+        self.core.m.borrow_mut().undo.set_limits(limits);
+    }
+
+    pub fn undo_limits(&self) -> HistoryLimits {
+        self.core.m.borrow().undo.limits()
     }
 
     pub fn can_redo(&self) -> bool {

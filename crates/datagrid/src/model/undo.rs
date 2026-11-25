@@ -32,12 +32,67 @@ impl<K, V, L> Transaction<K, V, L> {
     }
 }
 
-/// Bounded undo and redo stacks.
+/// How much undo history to keep: a step count and an optional weight (approximate bytes).
+///
+/// Mirrors `guiraffe_state::HistoryLimits` (same names) for this GPUI-free model; every
+/// GUIraffe undo stack is configured the same way. The log keeps at least one step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HistoryLimits {
+    /// Most transactions kept.
+    pub max_steps: usize,
+    /// Most total transaction weight kept, or no weight limit.
+    pub max_weight: Option<u64>,
+}
+
+impl HistoryLimits {
+    /// Keep up to `max_steps` transactions, with no weight limit.
+    pub const fn steps(max_steps: usize) -> Self {
+        Self {
+            max_steps,
+            max_weight: None,
+        }
+    }
+
+    /// Also cap the total weight of kept transactions.
+    pub const fn with_max_weight(self, max_weight: u64) -> Self {
+        Self {
+            max_weight: Some(max_weight),
+            ..self
+        }
+    }
+}
+
+impl From<usize> for HistoryLimits {
+    fn from(max_steps: usize) -> Self {
+        Self::steps(max_steps)
+    }
+}
+
+impl Default for HistoryLimits {
+    fn default() -> Self {
+        Self::steps(UNDO_LIMIT)
+    }
+}
+
+/// Weighs a transaction once, when it is recorded.
+pub type Weigher<K, V, L> = fn(&Transaction<K, V, L>) -> u64;
+
+/// The default weight: the transaction and its change records, ignoring heap data the
+/// values own. Supply a [`Weigher`] that counts it (e.g. string lengths) when it matters.
+pub fn estimate_weight<K, V, L>(t: &Transaction<K, V, L>) -> u64 {
+    (size_of::<Transaction<K, V, L>>() + t.changes.len() * size_of::<Change<K, V>>()) as u64
+}
+
+/// Bounded undo and redo stacks. Over a limit, the oldest transactions are dropped first; the
+/// newest is always kept, even when it alone is heavier than the weight limit.
 #[derive(Debug, Clone)]
 pub struct UndoLog<K, V, L> {
     done: VecDeque<Transaction<K, V, L>>,
-    undone: Vec<Transaction<K, V, L>>,
-    limit: usize,
+    done_weight: VecDeque<u64>,
+    undone: Vec<(Transaction<K, V, L>, u64)>,
+    weight: u64,
+    limits: HistoryLimits,
+    weigh: Weigher<K, V, L>,
 }
 
 /// Default number of transactions kept.
@@ -50,13 +105,42 @@ impl<K, V: PartialEq, L> Default for UndoLog<K, V, L> {
 }
 
 impl<K, V: PartialEq, L> UndoLog<K, V, L> {
-    /// A log keeping at most `limit` transactions (oldest dropped first).
-    pub fn new(limit: usize) -> Self {
+    /// A log within `limits` (a count converts; at least one transaction is kept), weighing
+    /// transactions with [`estimate_weight`].
+    pub fn new(limits: impl Into<HistoryLimits>) -> Self {
+        let mut limits = limits.into();
+        limits.max_steps = limits.max_steps.max(1);
         Self {
             done: VecDeque::new(),
+            done_weight: VecDeque::new(),
             undone: Vec::new(),
-            limit: limit.max(1),
+            weight: 0,
+            limits,
+            weigh: estimate_weight,
         }
+    }
+
+    /// Weigh new transactions with `weigh` instead of [`estimate_weight`].
+    pub fn with_weigher(mut self, weigh: Weigher<K, V, L>) -> Self {
+        self.weigh = weigh;
+        self
+    }
+
+    pub fn limits(&self) -> HistoryLimits {
+        self.limits
+    }
+
+    /// Change the limits, dropping the oldest transactions that no longer fit.
+    pub fn set_limits(&mut self, limits: impl Into<HistoryLimits>) {
+        let mut limits = limits.into();
+        limits.max_steps = limits.max_steps.max(1);
+        self.limits = limits;
+        self.trim();
+    }
+
+    /// Total weight of the transactions available to undo.
+    pub fn weight(&self) -> u64 {
+        self.weight
     }
 
     /// Record a finished action. No-op changes (`old == new`) are dropped; an empty
@@ -67,11 +151,29 @@ impl<K, V: PartialEq, L> UndoLog<K, V, L> {
             return false;
         }
         self.undone.clear();
-        self.done.push_back(Transaction { label, changes });
-        while self.done.len() > self.limit {
-            self.done.pop_front();
-        }
+        let t = Transaction { label, changes };
+        let w = (self.weigh)(&t);
+        self.push_done(t, w);
         true
+    }
+
+    fn push_done(&mut self, t: Transaction<K, V, L>, w: u64) {
+        self.done.push_back(t);
+        self.done_weight.push_back(w);
+        self.weight = self.weight.saturating_add(w);
+        self.trim();
+    }
+
+    fn trim(&mut self) {
+        while self.done.len() > 1
+            && (self.done.len() > self.limits.max_steps
+                || self.limits.max_weight.is_some_and(|m| self.weight > m))
+        {
+            self.done.pop_front();
+            if let Some(w) = self.done_weight.pop_front() {
+                self.weight -= w;
+            }
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -86,15 +188,17 @@ impl<K, V: PartialEq, L> UndoLog<K, V, L> {
     /// [`Transaction::undo_steps`].
     pub fn undo(&mut self) -> Option<&Transaction<K, V, L>> {
         let t = self.done.pop_back()?;
-        self.undone.push(t);
-        self.undone.last()
+        let w = self.done_weight.pop_back().unwrap_or(0);
+        self.weight -= w;
+        self.undone.push((t, w));
+        self.undone.last().map(|(t, _)| t)
     }
 
     /// Move the newest undone transaction back and return it; the caller writes
     /// [`Transaction::redo_steps`].
     pub fn redo(&mut self) -> Option<&Transaction<K, V, L>> {
-        let t = self.undone.pop()?;
-        self.done.push_back(t);
+        let (t, w) = self.undone.pop()?;
+        self.push_done(t, w);
         self.done.back()
     }
 
@@ -106,11 +210,13 @@ impl<K, V: PartialEq, L> UndoLog<K, V, L> {
 
     /// The transaction [`UndoLog::redo`] would return, without moving it.
     pub fn peek_redo(&self) -> Option<&Transaction<K, V, L>> {
-        self.undone.last()
+        self.undone.last().map(|(t, _)| t)
     }
 
     pub fn clear(&mut self) {
         self.done.clear();
+        self.done_weight.clear();
+        self.weight = 0;
         self.undone.clear();
     }
 
@@ -161,6 +267,72 @@ mod tests {
             .collect();
         v.sort_unstable();
         v
+    }
+
+    fn one(key: u8, n: usize) -> Vec<Change<u8, u8>> {
+        (0..n)
+            .map(|i| Change {
+                key: key.wrapping_add(i as u8),
+                old: 0,
+                new: 1,
+            })
+            .collect()
+    }
+
+    fn labels(log: &mut UndoLog<u8, u8, u8>) -> Vec<u8> {
+        let mut seen = Vec::new();
+        while let Some(t) = log.undo() {
+            seen.push(t.label);
+        }
+        seen
+    }
+
+    #[test]
+    fn weight_limit_drops_oldest_transactions() {
+        // Weigh one per change: a cap of 5 keeps the newest transactions totalling <= 5.
+        let mut log = UndoLog::new(HistoryLimits::steps(100).with_max_weight(5))
+            .with_weigher(|t: &Transaction<u8, u8, u8>| t.changes.len() as u64);
+        log.push(0, one(0, 2));
+        log.push(1, one(0, 2));
+        log.push(2, one(0, 1));
+        assert_eq!(log.weight(), 5, "exactly at the cap is kept");
+        log.push(3, one(0, 2));
+        assert_eq!((log.len(), log.weight()), (3, 5));
+        assert_eq!(labels(&mut log), [3, 2, 1]);
+    }
+
+    #[test]
+    fn a_transaction_heavier_than_the_cap_is_kept_alone_and_stays_whole() {
+        // A 10-cell paste is one transaction, so it straddles a cap of 4 without splitting.
+        let mut log = UndoLog::new(HistoryLimits::steps(100).with_max_weight(4))
+            .with_weigher(|t: &Transaction<u8, u8, u8>| t.changes.len() as u64);
+        log.push(0, one(0, 1));
+        log.push(1, one(0, 10));
+        assert_eq!((log.len(), log.weight()), (1, 10));
+        assert_eq!(log.peek_undo().map(|t| t.changes.len()), Some(10));
+        // Undo then redo keeps the weight accounting.
+        assert!(log.undo().is_some());
+        assert_eq!(log.weight(), 0);
+        assert!(log.redo().is_some());
+        assert_eq!(log.weight(), 10);
+        log.push(2, one(0, 1));
+        assert_eq!(labels(&mut log), [2]);
+    }
+
+    #[test]
+    fn default_weight_estimates_change_records_and_limits_reconfigure() {
+        let mut log: UndoLog<u8, u8, u8> = UndoLog::new(10);
+        log.push(0, one(0, 3));
+        let t = log.peek_undo().map(estimate_weight);
+        assert_eq!(Some(log.weight()), t);
+        for i in 1..6 {
+            log.push(i, one(0, 1));
+        }
+        log.set_limits(2);
+        assert_eq!(log.limits(), HistoryLimits::steps(2));
+        assert_eq!(labels(&mut log), [5, 4]);
+        log.set_limits(0);
+        assert_eq!(log.limits().max_steps, 1, "the log keeps at least one step");
     }
 
     #[test]

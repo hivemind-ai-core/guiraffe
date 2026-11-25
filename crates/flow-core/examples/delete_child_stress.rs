@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     )?;
     let mut editor = Editor::new(graph)?;
-    editor.history_limit(1);
+    editor.set_undo_limits(1);
     let mut times = Vec::with_capacity(100);
     for sample in 0..120 {
         editor.select(&BTreeSet::from([1]), false);
