@@ -29,6 +29,16 @@ jobs:
           cargo run --release --locked -p guiraffe-bench -- run --profile nightly-quiet --samples 40 --notes 'Dedicated nightly runner' --output "bench/history/${GITHUB_RUN_ID}.json"
           cargo bench --locked -p guiraffe-bench --bench micro
           cargo run --release --locked -p guiraffe-bench -- report --input bench/history --output bench/reports/trends.html
+      - name: Mounted component size sweeps
+        shell: bash
+        run: |
+          for backend in upstream fast; do
+            features=()
+            if [[ "$backend" == fast ]]; then features=(--features gpui-fast); fi
+            export CARGO_TARGET_DIR="target/sweep-$backend"
+            cargo build --release --locked -p guiraffe-bench --example soak "${features[@]}"
+            python3 scripts/component-sweep.py "$CARGO_TARGET_DIR/release/examples/soak"
+          done
       - uses: actions/cache/save@v4
         with:
           path: bench/history
