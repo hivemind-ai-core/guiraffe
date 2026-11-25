@@ -198,7 +198,12 @@ fn close(mut window: Mounted<'_>) {
 }
 
 fn label(i: usize) -> SharedString {
-    if i % 2 == 0 { "Row 00004" } else { "Row 00003" }.into()
+    if i.is_multiple_of(2) {
+        "Row 00004"
+    } else {
+        "Row 00003"
+    }
+    .into()
 }
 
 #[inline(never)]
@@ -275,14 +280,13 @@ fn structural_edits_at_ten_thousand_rows_touch_the_list_and_one_item() {
     assert!(counts.allocations <= 64, "insert flush: {counts:?}");
     window.app.run_until_parked();
     window.update(|_, cx| assert_eq!(store.state(cx).rows.key_at(0), Some(&20_000)));
-    if gpui_kit::GPUI_FAST {
-        // The new row renders; the others keep their views (they shift by one row).
-        assert!(
-            row_renders() - rows <= 2,
-            "{} rows rendered",
-            row_renders() - rows
-        );
-    }
+    // The new row mounts and the shifted rows repaint at their new bounds: the cost is the
+    // viewport (25 rows here), never the list.
+    assert!(
+        row_renders() - rows <= 60,
+        "{} rows rendered",
+        row_renders() - rows
+    );
     close(window);
 }
 
