@@ -151,3 +151,13 @@ only while rows stay put. Reordering, removal and width-changing text need
 invalidation semantics before freezing that contract. Leave unbound builder
 calls on their existing expansion. Defer adoption until the composed-window
 benchmark measures the complete frame and compares unbound controls.
+
+A backend experiment would need stable handles to retained text paint commands,
+an invalidation queue keyed by property, and a replay path that splices a dirty
+command range without traversing sibling views. Preserve paint order, clipping,
+transforms, hit testing and accessibility. Re-shape changed text and propagate
+layout invalidation when advances or bounds change. Retire handles on unmount.
+This should remove sibling-dependent replay CPU for fixed-size labels. The
+buffer experiment cannot predict the absolute frame time. Even a free draw
+would leave the cost of notifying all current row selectors, so a keyed write
+path in the Store is a separate prerequisite.
