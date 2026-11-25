@@ -52,6 +52,8 @@ use std::rc::Rc;
 struct Identity {
     id: Option<ControlId>,
     base: SharedString,
+    /// Source of a direct (unregistered) input while its `apply` runs.
+    direct: Option<Source>,
 }
 
 impl Identity {
@@ -60,6 +62,13 @@ impl Identity {
     }
     fn child(&self, ix: usize) -> ElementId {
         ElementId::NamedInteger(self.base.clone(), ix as u64)
+    }
+    /// The source of the edit being applied: the bus dispatch's, else the direct
+    /// input's. A host calling `apply` itself is tagged `Host`.
+    fn source(&self, cx: &App) -> Source {
+        ActionBus::current_source(cx)
+            .or(self.direct)
+            .unwrap_or(Source::Host)
     }
 }
 
@@ -77,7 +86,15 @@ fn build<T: Observe + Drive + Render + Identified>(
             .clone()
             .or(name)
             .unwrap_or_else(|| format!("{kind}-{}", cx.entity_id().as_u64()).into());
-        make(Identity { id: None, base }, window, cx)
+        make(
+            Identity {
+                id: None,
+                base,
+                direct: None,
+            },
+            window,
+            cx,
+        )
     });
     if let Some(path) = path {
         let id = ActionBus::register(&path, &entity, kind, capabilities, window, cx);
@@ -106,7 +123,12 @@ fn route<T: Observe + Drive + Identified>(
         None => {
             let typed = T::decode(&action)?;
             entity
-                .update(cx, |control, cx| control.apply(typed, window, cx))
+                .update(cx, |control, cx| {
+                    control.identity_mut().direct = Some(source);
+                    let result = control.apply(typed, window, cx);
+                    control.identity_mut().direct = None;
+                    result
+                })
                 .map(Into::into)
         }
     }
@@ -190,7 +212,7 @@ macro_rules! identified {
 /// Emitted when a [`ButtonControl`] is activated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonEvent {
-    Activated,
+    Activated(Source),
 }
 
 /// Builder for [`ButtonControl`].
@@ -250,9 +272,20 @@ impl ButtonControl {
     pub fn new() -> ButtonBuilder {
         ButtonBuilder::default()
     }
+    /// Host write: one-way.
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
-        self.disabled = disabled;
-        cx.notify();
+        if disabled != self.disabled {
+            self.disabled = disabled;
+            cx.notify();
+        }
+    }
+    /// Host write: one-way.
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if label != self.label {
+            self.label = label;
+            cx.notify();
+        }
     }
 }
 
@@ -281,7 +314,7 @@ impl Drive for ButtonControl {
     }
     fn apply(&mut self, (): (), _: &mut Window, cx: &mut Context<Self>) -> Result<(), ActionError> {
         enabled(self.disabled)?;
-        cx.emit(ButtonEvent::Activated);
+        cx.emit(ButtonEvent::Activated(self.identity.source(cx)));
         Ok(())
     }
 }
@@ -310,7 +343,7 @@ impl Render for ButtonControl {
 /// Emitted when a checkbox or switch changes state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToggleEvent {
-    Changed(bool),
+    Changed(bool, Source),
 }
 
 /// Typed actions of a checkbox or switch.
@@ -405,9 +438,20 @@ macro_rules! toggle_control {
                     cx.notify();
                 }
             }
+            /// Host write: one-way.
             pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
-                self.disabled = disabled;
-                cx.notify();
+                if disabled != self.disabled {
+                    self.disabled = disabled;
+                    cx.notify();
+                }
+            }
+            /// Host write: one-way.
+            pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+                let label = label.into();
+                if label != self.label {
+                    self.label = label;
+                    cx.notify();
+                }
             }
         }
 
@@ -444,7 +488,7 @@ macro_rules! toggle_control {
                 };
                 if next != self.checked {
                     self.checked = next;
-                    cx.emit(ToggleEvent::Changed(next));
+                    cx.emit(ToggleEvent::Changed(next, self.identity.source(cx)));
                     cx.notify();
                 }
                 Ok(Outcome(Value::Bool(next)))
@@ -487,7 +531,7 @@ toggle_control!(SwitchControl, SwitchBuilder, "switch", Switch, "A switch.");
 /// Emitted when a [`SliderControl`] value changes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SliderControlEvent {
-    Changed(f32),
+    Changed(f32, Source),
 }
 
 /// Typed actions of a slider.
@@ -504,6 +548,7 @@ pub struct SliderBuilder {
     max: f32,
     step: f32,
     value: f32,
+    label: SharedString,
     disabled: bool,
     path: Option<SharedString>,
     name: Option<SharedString>,
@@ -516,6 +561,7 @@ impl Default for SliderBuilder {
             max: 100.0,
             step: 1.0,
             value: 0.0,
+            label: SharedString::default(),
             disabled: false,
             path: None,
             name: None,
@@ -535,6 +581,11 @@ impl SliderBuilder {
     }
     pub fn value(mut self, value: f32) -> Self {
         self.value = value;
+        self
+    }
+    /// Accessible name of the slider.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = label.into();
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -600,7 +651,9 @@ impl SliderBuilder {
                     min: self.min,
                     max: self.max,
                     step: self.step,
+                    label: self.label,
                     disabled: self.disabled,
+                    pending: false,
                     _subscription: subscription,
                 }
             },
@@ -617,7 +670,10 @@ pub struct SliderControl {
     min: f32,
     max: f32,
     step: f32,
+    label: SharedString,
     disabled: bool,
+    /// A host write the kit state has not seen yet.
+    pending: bool,
     _subscription: Subscription,
 }
 
@@ -633,10 +689,30 @@ impl SliderControl {
     pub fn state(&self) -> &Entity<SliderState> {
         &self.state
     }
-    /// Host write: changes the value without emitting an event.
-    pub fn set_value(&mut self, value: f32, window: &mut Window, cx: &mut Context<Self>) {
-        self.value = value.clamp(self.min, self.max);
-        self.sync_state(window, cx);
+    /// Host write: changes the value without emitting an event. Needs no window;
+    /// the kit state follows at the next render.
+    pub fn set_value(&mut self, value: f32, cx: &mut Context<Self>) {
+        let value = value.clamp(self.min, self.max);
+        if value != self.value {
+            self.value = value;
+            self.pending = true;
+            cx.notify();
+        }
+    }
+    /// Host write: one-way.
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if disabled != self.disabled {
+            self.disabled = disabled;
+            cx.notify();
+        }
+    }
+    /// Host write: the accessible name. One-way.
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if label != self.label {
+            self.label = label;
+            cx.notify();
+        }
     }
     fn sync_state(&self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.value;
@@ -654,6 +730,7 @@ impl Observe for SliderControl {
     fn snapshot(&self, _: &App) -> ControlSnapshot {
         ControlSnapshot {
             value: Some(Value::Num(f64::from(self.value))),
+            label: (!self.label.is_empty()).then(|| self.label.as_ref().into()),
             disabled: Some(self.disabled),
             ..ControlSnapshot::default()
         }
@@ -687,18 +764,22 @@ impl Drive for SliderControl {
         if next != self.value {
             self.value = next;
             self.sync_state(window, cx);
-            cx.emit(SliderControlEvent::Changed(next));
+            cx.emit(SliderControlEvent::Changed(next, self.identity.source(cx)));
         }
         Ok(Outcome(Value::Num(f64::from(next))))
     }
 }
 
 impl Render for SliderControl {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id(self.identity.element())
-            .w_full()
-            .child(Slider::new(&self.state).disabled(self.disabled))
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.pending) {
+            self.sync_state(window, cx);
+        }
+        let mut slider = Slider::new(&self.state).disabled(self.disabled);
+        if !self.label.is_empty() {
+            slider = slider.accessibility_label(self.label.clone());
+        }
+        div().id(self.identity.element()).w_full().child(slider)
     }
 }
 
@@ -707,7 +788,7 @@ impl Render for SliderControl {
 /// Emitted when a [`TextInputControl`] value changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextInputEvent {
-    Changed(SharedString),
+    Changed(SharedString, Source),
 }
 
 /// Typed actions of a text input.
@@ -761,7 +842,8 @@ impl TextInputBuilder {
             cx,
             |identity, window, cx| {
                 let placeholder = self.placeholder;
-                let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+                let input =
+                    cx.new(|cx| InputState::new(window, cx).placeholder(placeholder.clone()));
                 let value = self.value;
                 input.update(cx, |state, cx| state.set_value(value.clone(), window, cx));
                 let this: WeakEntity<TextInputControl> = cx.entity().downgrade();
@@ -796,6 +878,9 @@ impl TextInputBuilder {
                     identity,
                     input,
                     value,
+                    placeholder,
+                    value_pending: false,
+                    placeholder_pending: false,
                     disabled: self.disabled,
                     _subscription: subscription,
                 }
@@ -810,6 +895,10 @@ pub struct TextInputControl {
     identity: Identity,
     input: Entity<InputState>,
     value: SharedString,
+    placeholder: SharedString,
+    /// Host writes the kit state has not seen yet.
+    value_pending: bool,
+    placeholder_pending: bool,
     disabled: bool,
     _subscription: Subscription,
 }
@@ -826,21 +915,48 @@ impl TextInputControl {
     pub fn input(&self) -> &Entity<InputState> {
         &self.input
     }
-    /// Host write: changes the text without emitting an event.
-    pub fn set_value(
+    /// Host write: changes the text without emitting an event. Needs no window;
+    /// the kit state follows at the next render.
+    pub fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let value = value.into();
+        if value != self.value {
+            self.value = value;
+            self.value_pending = true;
+            cx.notify();
+        }
+    }
+    /// Host write: one-way.
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if disabled != self.disabled {
+            self.disabled = disabled;
+            cx.notify();
+        }
+    }
+    /// Host write: the placeholder, which is the input's visible label. One-way.
+    pub fn set_placeholder(
         &mut self,
-        value: impl Into<SharedString>,
-        window: &mut Window,
+        placeholder: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        self.value = value.into();
-        self.sync_input(window, cx);
+        let placeholder = placeholder.into();
+        if placeholder != self.placeholder {
+            self.placeholder = placeholder;
+            self.placeholder_pending = true;
+            cx.notify();
+        }
     }
-    fn sync_input(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn sync_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.value_pending = false;
         if self.input.read(cx).value() != self.value {
             let value = self.value.clone();
             self.input
                 .update(cx, |state, cx| state.set_value(value, window, cx));
+        }
+        if std::mem::take(&mut self.placeholder_pending) {
+            let placeholder = self.placeholder.clone();
+            self.input.update(cx, |state, cx| {
+                state.set_placeholder(placeholder, window, cx)
+            });
         }
     }
 }
@@ -852,6 +968,7 @@ impl Observe for TextInputControl {
     fn snapshot(&self, _: &App) -> ControlSnapshot {
         ControlSnapshot {
             value: Some(Value::Str(self.value.clone())),
+            label: (!self.placeholder.is_empty()).then(|| self.placeholder.as_ref().into()),
             disabled: Some(self.disabled),
             ..ControlSnapshot::default()
         }
@@ -883,7 +1000,7 @@ impl Drive for TextInputControl {
                 if text != self.value {
                     self.value = text.clone();
                     self.sync_input(window, cx);
-                    cx.emit(TextInputEvent::Changed(text));
+                    cx.emit(TextInputEvent::Changed(text, self.identity.source(cx)));
                 }
                 Ok(Outcome(Value::Str(self.value.clone())))
             }
@@ -896,7 +1013,10 @@ impl Drive for TextInputControl {
 }
 
 impl Render for TextInputControl {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.value_pending || self.placeholder_pending {
+            self.sync_input(window, cx);
+        }
         div()
             .id(self.identity.element())
             .w_full()
@@ -909,26 +1029,79 @@ impl Render for TextInputControl {
 /// Emitted when a [`SelectControl`] or [`TabsControl`] selection changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionEvent {
-    Selected(usize),
+    Selected(usize, Source),
 }
 
+/// Emitted with the typed value when a [`SelectControl`] selection changes,
+/// after the index-based [`SelectionEvent`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectedValue<T>(pub T, pub Source);
+
+/// Bounds on a [`SelectControl`] value: a store enum or any comparable value.
+pub trait SelectValue: Clone + PartialEq + 'static {}
+impl<T: Clone + PartialEq + 'static> SelectValue for T {}
+
 /// Builder for [`SelectControl`].
-#[derive(Default)]
-pub struct SelectBuilder {
-    options: Vec<SharedString>,
+pub struct SelectBuilder<T: SelectValue = SharedString> {
+    options: Vec<(T, SharedString)>,
     selected: Option<usize>,
+    label: SharedString,
     disabled: bool,
     path: Option<SharedString>,
     name: Option<SharedString>,
 }
 
-impl SelectBuilder {
+impl<T: SelectValue> Default for SelectBuilder<T> {
+    fn default() -> Self {
+        Self {
+            options: Vec::new(),
+            selected: None,
+            label: SharedString::default(),
+            disabled: false,
+            path: None,
+            name: None,
+        }
+    }
+}
+
+impl SelectBuilder<SharedString> {
+    /// Options whose values are their labels.
     pub fn options(mut self, options: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
-        self.options = options.into_iter().map(Into::into).collect();
+        self.options = options
+            .into_iter()
+            .map(|label| {
+                let label = label.into();
+                (label.clone(), label)
+            })
+            .collect();
+        self
+    }
+}
+
+impl<T: SelectValue> SelectBuilder<T> {
+    /// Typed options as `(value, label)` pairs.
+    pub fn values(
+        mut self,
+        options: impl IntoIterator<Item = (T, impl Into<SharedString>)>,
+    ) -> Self {
+        self.options = options
+            .into_iter()
+            .map(|(value, label)| (value, label.into()))
+            .collect();
         self
     }
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = Some(index);
+        self
+    }
+    /// Select the first option equal to `value`.
+    pub fn selected_value(mut self, value: &T) -> Self {
+        self.selected = self.options.iter().position(|(v, _)| v == value);
+        self
+    }
+    /// Accessible name of the dropdown.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = label.into();
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -945,7 +1118,7 @@ impl SelectBuilder {
         self.name = Some(name.into());
         self
     }
-    pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<SelectControl> {
+    pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<SelectControl<T>> {
         let handle = window.window_handle();
         build(
             "select",
@@ -955,14 +1128,15 @@ impl SelectBuilder {
             window,
             cx,
             |identity, window, cx| {
-                let options: Rc<[SharedString]> = self.options.into();
-                let selected = self.selected.filter(|&i| i < options.len());
-                let items = options.to_vec();
+                let (values, labels): (Vec<T>, Vec<SharedString>) =
+                    self.options.into_iter().unzip();
+                let selected = self.selected.filter(|&i| i < labels.len());
+                let items = labels.clone();
                 let state =
                     cx.new(|cx| SelectState::new(items, selected.map(IndexPath::new), window, cx));
-                let this: WeakEntity<SelectControl> = cx.entity().downgrade();
+                let this: WeakEntity<SelectControl<T>> = cx.entity().downgrade();
                 let subscription = App::subscribe(cx, &state, move |state, event, cx| {
-                    let SelectEvent::Confirm(Some(value)) = event else {
+                    let SelectEvent::Confirm(Some(label)) = event else {
                         return;
                     };
                     let Some(control) = this.upgrade() else {
@@ -971,7 +1145,7 @@ impl SelectBuilder {
                     let (index, current) = {
                         let control = control.read(cx);
                         (
-                            control.options.iter().position(|o| o == value),
+                            control.labels.iter().position(|l| l == label),
                             control.selected,
                         )
                     };
@@ -1001,9 +1175,12 @@ impl SelectBuilder {
                 SelectControl {
                     identity,
                     state,
-                    options,
+                    values: values.into(),
+                    labels: labels.into(),
                     selected,
+                    label: self.label,
                     disabled: self.disabled,
+                    pending: false,
                     _subscription: subscription,
                 }
             },
@@ -1011,37 +1188,76 @@ impl SelectBuilder {
     }
 }
 
-/// A dropdown select. Actions: `select` (index). Outcome: the selected option.
-pub struct SelectControl {
+/// A dropdown select over typed values; `SelectControl` alone selects labels.
+/// Actions: `select` (index). Outcome: the selected label.
+pub struct SelectControl<T: SelectValue = SharedString> {
     identity: Identity,
     state: Entity<SelectState<Vec<SharedString>>>,
-    options: Rc<[SharedString]>,
+    values: Rc<[T]>,
+    labels: Rc<[SharedString]>,
     selected: Option<usize>,
+    label: SharedString,
     disabled: bool,
+    /// A host write the kit state has not seen yet.
+    pending: bool,
     _subscription: Subscription,
 }
 
-impl SelectControl {
+impl SelectControl<SharedString> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new() -> SelectBuilder {
+    pub fn new() -> SelectBuilder<SharedString> {
         SelectBuilder::default()
+    }
+}
+
+impl<T: SelectValue> SelectControl<T> {
+    /// A select over typed `(value, label)` options.
+    pub fn typed(
+        options: impl IntoIterator<Item = (T, impl Into<SharedString>)>,
+    ) -> SelectBuilder<T> {
+        SelectBuilder::default().values(options)
     }
     pub fn selected(&self) -> Option<usize> {
         self.selected
+    }
+    pub fn selected_value(&self) -> Option<&T> {
+        self.values.get(self.selected?)
     }
     /// The kit state that renders the dropdown and receives pointer input.
     pub fn state(&self) -> &Entity<SelectState<Vec<SharedString>>> {
         &self.state
     }
-    /// Host write: changes the selection without emitting an event.
-    pub fn set_selected(
-        &mut self,
-        index: Option<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selected = index.filter(|&i| i < self.options.len());
-        self.sync_state(window, cx);
+    /// Host write: changes the selection without emitting an event. Needs no
+    /// window; the kit state follows at the next render.
+    pub fn set_selected(&mut self, index: Option<usize>, cx: &mut Context<Self>) {
+        let index = index.filter(|&i| i < self.labels.len());
+        if index != self.selected {
+            self.selected = index;
+            self.pending = true;
+            cx.notify();
+        }
+    }
+    /// Host write: selects the first option equal to `value`, or nothing if none
+    /// matches. Returns whether one matched.
+    pub fn set_selected_value(&mut self, value: &T, cx: &mut Context<Self>) -> bool {
+        let index = self.values.iter().position(|v| v == value);
+        self.set_selected(index, cx);
+        index.is_some()
+    }
+    /// Host write: one-way.
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if disabled != self.disabled {
+            self.disabled = disabled;
+            cx.notify();
+        }
+    }
+    /// Host write: the accessible name. One-way.
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if label != self.label {
+            self.label = label;
+            cx.notify();
+        }
     }
     fn sync_state(&self, window: &mut Window, cx: &mut Context<Self>) {
         let wanted = self.selected.map(IndexPath::new);
@@ -1052,24 +1268,46 @@ impl SelectControl {
     }
 }
 
-impl EventEmitter<SelectionEvent> for SelectControl {}
+impl<T: SelectValue> Identified for SelectControl<T> {
+    fn identity_mut(&mut self) -> &mut Identity {
+        &mut self.identity
+    }
+    fn identity(&self) -> &Identity {
+        &self.identity
+    }
+}
 
-impl Observe for SelectControl {
+impl<T: SelectValue> SelectControl<T> {
+    /// The bus handle, when built with a path.
+    pub fn control_id(&self) -> Option<ControlId> {
+        self.identity.id
+    }
+    /// The id of the rendered root element (the path when registered).
+    pub fn element_id(&self) -> ElementId {
+        self.identity.element()
+    }
+}
+
+impl<T: SelectValue> EventEmitter<SelectionEvent> for SelectControl<T> {}
+impl<T: SelectValue> EventEmitter<SelectedValue<T>> for SelectControl<T> {}
+
+impl<T: SelectValue> Observe for SelectControl<T> {
     type Snapshot = ControlSnapshot;
     fn snapshot(&self, _: &App) -> ControlSnapshot {
         ControlSnapshot {
             value: self
                 .selected
-                .and_then(|i| self.options.get(i))
-                .map(|o| Value::Str(o.clone())),
+                .and_then(|i| self.labels.get(i))
+                .map(|l| Value::Str(l.clone())),
             selected: self.selected.map(|i| Rc::from([i])),
+            label: (!self.label.is_empty()).then(|| self.label.as_ref().into()),
             disabled: Some(self.disabled),
             ..ControlSnapshot::default()
         }
     }
 }
 
-impl Drive for SelectControl {
+impl<T: SelectValue> Drive for SelectControl<T> {
     type Action = usize;
     type Output = Outcome;
     fn decode(action: &Action) -> Result<usize, ActionError> {
@@ -1085,25 +1323,34 @@ impl Drive for SelectControl {
         cx: &mut Context<Self>,
     ) -> Result<Outcome, ActionError> {
         enabled(self.disabled)?;
-        let option = self
-            .options
+        let label = self
+            .labels
             .get(index)
             .cloned()
             .ok_or(ActionError::Invalid("index out of range"))?;
         if self.selected != Some(index) {
             self.selected = Some(index);
             self.sync_state(window, cx);
-            cx.emit(SelectionEvent::Selected(index));
+            let source = self.identity.source(cx);
+            cx.emit(SelectionEvent::Selected(index, source));
+            if let Some(value) = self.values.get(index) {
+                cx.emit(SelectedValue(value.clone(), source));
+            }
         }
-        Ok(Outcome(Value::Str(option)))
+        Ok(Outcome(Value::Str(label)))
     }
 }
 
-impl Render for SelectControl {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id(self.identity.element())
-            .child(Select::new(&self.state).disabled(self.disabled))
+impl<T: SelectValue> Render for SelectControl<T> {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.pending) {
+            self.sync_state(window, cx);
+        }
+        let mut select = Select::new(&self.state).disabled(self.disabled);
+        if !self.label.is_empty() {
+            select = select.accessibility_label(self.label.clone());
+        }
+        div().id(self.identity.element()).child(select)
     }
 }
 
@@ -1218,7 +1465,7 @@ impl Drive for TabsControl {
         }
         if index != self.selected {
             self.selected = index;
-            cx.emit(SelectionEvent::Selected(index));
+            cx.emit(SelectionEvent::Selected(index, self.identity.source(cx)));
             cx.notify();
         }
         Ok(Outcome(Value::Num(index as f64)))
@@ -1254,7 +1501,7 @@ impl Render for TabsControl {
 /// Emitted when a [`MenuControl`] item is activated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuEvent {
-    Activated(usize),
+    Activated(usize, Source),
 }
 
 /// Builder for [`MenuControl`].
@@ -1346,7 +1593,7 @@ impl Drive for MenuControl {
             .get(index)
             .ok_or(ActionError::Invalid("index out of range"))?;
         enabled(*disabled)?;
-        cx.emit(MenuEvent::Activated(index));
+        cx.emit(MenuEvent::Activated(index, self.identity.source(cx)));
         Ok(Outcome(Value::Num(index as f64)))
     }
 }
@@ -1385,7 +1632,6 @@ identified!(
     SwitchControl,
     SliderControl,
     TextInputControl,
-    SelectControl,
     TabsControl,
     MenuControl
 );

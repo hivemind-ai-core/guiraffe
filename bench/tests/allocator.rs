@@ -933,3 +933,11 @@ fn store_writes_outside_a_batch_allocate_nothing_extra() -> anyhow::Result<()> {
 #[derive(Default)]
 struct Marker;
 impl gpui_kit::Global for Marker {}
+
+#[test]
+fn control_host_setters_allocate_nothing() -> anyhow::Result<()> {
+    let mut writes = guiraffe_bench::protocol::HostWrites::new()?;
+    let (_, counts) = writes.write(|call| count_allocations(call))??;
+    assert_eq!(counts.allocations, 0, "host writes: {counts:?}");
+    Ok(())
+}
