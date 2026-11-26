@@ -3236,6 +3236,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-motion",
+ "guiraffe-state",
 ]
 
 [[package]]

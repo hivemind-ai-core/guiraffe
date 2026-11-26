@@ -12,6 +12,7 @@ workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-motion.workspace = true
+guiraffe-state.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
@@ -20,4 +21,4 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 proptest = "1"
 
 [features]
-gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-motion/gpui-fast"]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-motion/gpui-fast", "guiraffe-state/gpui-fast"]

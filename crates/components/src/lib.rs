@@ -37,6 +37,8 @@ pub mod ring;
 pub mod segmented;
 pub mod speed_dial;
 pub mod spoiler;
+pub mod step_grid;
+pub mod step_model;
 pub mod stepper;
 mod style;
 pub mod timeline;
@@ -65,6 +67,10 @@ pub use ring::{RingProgress, arc_spans};
 pub use segmented::{SegmentedControl, SegmentedEvent};
 pub use speed_dial::{DialAction, DialArc, DialLayout, SpeedDial, SpeedDialEvent};
 pub use spoiler::Spoiler;
+pub use step_grid::{
+    LevelStyle, RowId, StepCell, StepGrid, StepGridEvent, StepGridOptions, StepPlayheadFeed,
+    StepRow, StepRowHeader,
+};
 pub use stepper::{Step, StepState, Stepper, connector_complete, step_state};
 pub use timeline::{ItemState, Timeline, TimelineItem};
 pub use typography::{Text, Title};

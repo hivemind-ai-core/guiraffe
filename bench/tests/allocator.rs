@@ -1323,3 +1323,149 @@ fn a_meter_bank_costs_one_view_whatever_its_size() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+// StepGrid (0.3.1 #6): one-pass cells, a fed playhead and toggles without a parent render
+
+struct StepHost {
+    grid: gpui_kit::Entity<guiraffe_components::StepGrid>,
+    renders: std::rc::Rc<std::cell::Cell<usize>>,
+}
+impl gpui_kit::Render for StepHost {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement, Styled};
+        self.renders.set(self.renders.get() + 1);
+        gpui_kit::div().size_full().child(self.grid.clone())
+    }
+}
+
+/// Allocations of a playhead frame and a toggle frame on a `rows` x `columns` grid, after
+/// warm-up, and the parent's renders across them.
+fn step_frames(rows: usize, columns: usize) -> anyhow::Result<(u64, u64, u64, usize)> {
+    use gpui_kit::AppContext;
+    use guiraffe_components::step_grid::{
+        RowId, StepAction, StepCell, StepDoc, StepGrid, StepGridOptions, StepRow, step_store,
+    };
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    let renders = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = renders.clone();
+    let mut handle = None;
+    let window = app.open_window(
+        gpui_kit::size(gpui_kit::px(2400.), gpui_kit::px(1600.)),
+        |_, cx| {
+            guiraffe_components::init(cx);
+            let rows = (0..rows as u64)
+                .map(|r| {
+                    let mut row = StepRow::new(r, format!("Row {r}"), columns - (r as usize % 3));
+                    for c in (0..columns).step_by(3) {
+                        row = row.with_cell(c, StepCell::on().with_level(0.5).with_ratchet(2));
+                    }
+                    row
+                })
+                .collect();
+            let store = step_store(StepDoc::new(columns, 4, rows), 100, cx);
+            let grid = StepGrid::new(
+                store,
+                StepGridOptions {
+                    cell: 14.,
+                    ..Default::default()
+                },
+                cx,
+            );
+            handle = Some(grid.clone());
+            cx.new(|_| StepHost {
+                grid,
+                renders: counter,
+            })
+        },
+    )?;
+    let grid = handle.ok_or_else(|| anyhow::anyhow!("no grid"))?;
+    let feed = app.update(|cx| grid.read(cx).playhead());
+    let mut column = 0;
+    let mut playhead = |app: &mut gpui_kit::HeadlessAppContext| {
+        column = (column + 1) % columns;
+        app.update_window(window.into(), |_, w, cx| {
+            feed.set(Some(column));
+            feed.publish(cx);
+            w.draw(cx).clear(cx)
+        })
+    };
+    let toggle = |app: &mut gpui_kit::HeadlessAppContext| {
+        app.update_window(window.into(), |_, w, cx| {
+            grid.update(cx, |g, cx| {
+                g.perform(
+                    StepAction::ToggleCell {
+                        row: RowId(1),
+                        column: 1,
+                    },
+                    cx,
+                )
+                .ok()
+            });
+            w.draw(cx).clear(cx)
+        })
+    };
+    for _ in 0..6 {
+        playhead(&mut app)?;
+        toggle(&mut app)?;
+        app.run_until_parked();
+    }
+    let before = renders.get();
+    let (r, idle) =
+        count_allocations(|| app.update_window(window.into(), |_, w, cx| w.draw(cx).clear(cx)))?;
+    r?;
+    let (r, head) = count_allocations(|| playhead(&mut app))?;
+    r?;
+    let (r, edit) = count_allocations(|| toggle(&mut app))?;
+    r?;
+    Ok((
+        idle.allocations,
+        head.allocations,
+        edit.allocations,
+        renders.get() - before,
+    ))
+}
+
+#[test]
+fn step_grid_playhead_and_toggles_cost_a_fixed_amount_without_a_parent_render() -> anyhow::Result<()>
+{
+    let (small_idle, small_head, small_edit, small_parent) = step_frames(4, 16)?;
+    let (large_idle, large_head, large_edit, large_parent) = step_frames(64, 64)?;
+    eprintln!(
+        "step grid: 4x16 idle {small_idle} playhead {small_head} toggle {small_edit}; 64x64 idle {large_idle} playhead {large_head} toggle {large_edit}"
+    );
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            (small_parent, large_parent),
+            (0, 0),
+            "the grid's parent never renders"
+        );
+        // A frame-level jitter of a few; the playhead's own work is the same at any size.
+        assert!(
+            small_head.abs_diff(large_head) <= 4,
+            "the playhead costs the same at any grid size"
+        );
+        assert!(large_head <= 96, "{large_head}");
+        // 4,096 cells against 64: one-pass paint allocates per frame, not per cell. GPUI's own
+        // buffers grow a little with the scene (about 70 here), far below one per added cell.
+        assert_eq!(
+            (small_idle, large_idle),
+            (0, 0),
+            "an unchanged repaint allocates nothing"
+        );
+        let added_cells = 64 * 64 - 4 * 16;
+        assert!(
+            large_edit.saturating_sub(small_edit) * 16 < added_cells,
+            "a toggle costs {small_edit} at 64 cells and {large_edit} at 4,096"
+        );
+    }
+    Ok(())
+}

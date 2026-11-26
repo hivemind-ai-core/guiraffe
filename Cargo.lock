@@ -3553,6 +3553,7 @@ dependencies = [
  "gpui-kit",
  "guiraffe-core",
  "guiraffe-motion",
+ "guiraffe-state",
  "guiraffe-test",
  "image",
  "proptest",
