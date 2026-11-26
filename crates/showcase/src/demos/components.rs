@@ -118,6 +118,13 @@ pub fn entries() -> Vec<Entry> {
         },
         Entry {
             krate: "components",
+            name: "Panel controls",
+            summary: "Workstation panels on the bus: icon and latched buttons, M / S / R toggle chips, a vertical fader, meters that fill their container.",
+            covers: &["ToggleChipControl"],
+            demo: panel_controls,
+        },
+        Entry {
+            krate: "components",
             name: "Knob & NumberField",
             summary: "Parameter controls over a shared value mapping: log Hz, bipolar pan, modulation range, typed entry with units.",
             covers: &["KnobControl", "NumberFieldControl"],
@@ -533,6 +540,39 @@ fn meter(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|_| MeterDemo { meters, bank }).into()
 }
 
+struct PanelDemo {
+    transport: Vec<AnyView>,
+    chips: Vec<AnyView>,
+    fader: AnyView,
+    meter: Entity<Meter>,
+    bank: Entity<MeterBank>,
+}
+
+impl gpui_kit::Render for PanelDemo {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        column([
+            example(
+                "Transport: icon buttons with tooltips, latched Rec (on) and Arm (off)",
+                div().flex().gap(px(4.)).children(self.transport.clone()),
+            ),
+            example(
+                "Track header: M / S / R toggle chips",
+                div().flex().gap(px(2.)).children(self.chips.clone()),
+            ),
+            example(
+                "Mixer strip: a vertical fader and a meter filling a 140 px strip, a filling bank",
+                div()
+                    .flex()
+                    .gap(px(16.))
+                    .h(px(140.))
+                    .child(self.fader.clone())
+                    .child(self.meter.clone())
+                    .child(self.bank.clone()),
+            ),
+        ])
+    }
+}
+
 /// An editor's tab row: click or arrows and Enter select; the x, Delete or Ctrl+W closes.
 struct TabsDemo(Entity<Tabs>, Entity<EventLog>);
 
@@ -546,6 +586,104 @@ impl gpui_kit::Render for TabsDemo {
             example("Events", self.1.clone()),
         ])
     }
+}
+
+fn panel_controls(window: &mut Window, cx: &mut App) -> AnyView {
+    use gpui_kit::component::IconName;
+    use guiraffe_components::controls::{
+        ButtonControl, ButtonVariant, SliderControl, ToggleChipControl,
+    };
+    let button = |b: guiraffe_components::controls::ButtonBuilder,
+                  window: &mut Window,
+                  cx: &mut App| { AnyView::from(b.small().build(window, cx)) };
+    let transport = vec![
+        button(
+            ButtonControl::new().icon(IconName::Play).tooltip("Play"),
+            window,
+            cx,
+        ),
+        button(
+            ButtonControl::new().icon(IconName::Pause).tooltip("Pause"),
+            window,
+            cx,
+        ),
+        button(
+            ButtonControl::new()
+                .label("Rec")
+                .variant(ButtonVariant::Danger)
+                .toggled(true),
+            window,
+            cx,
+        ),
+        button(
+            ButtonControl::new()
+                .label("Arm")
+                .variant(ButtonVariant::Danger)
+                .toggled(false),
+            window,
+            cx,
+        ),
+        button(
+            ButtonControl::new().icon(IconName::Undo).tooltip("Undo"),
+            window,
+            cx,
+        ),
+        button(
+            ButtonControl::new().icon(IconName::Redo).tooltip("Redo"),
+            window,
+            cx,
+        ),
+    ];
+    let chips = [
+        ("M", "Mute", true, ButtonVariant::Warning),
+        ("S", "Solo", false, ButtonVariant::Primary),
+        ("R", "Record arm", true, ButtonVariant::Danger),
+    ]
+    .into_iter()
+    .map(|(label, tooltip, on, variant)| {
+        ToggleChipControl::new()
+            .label(label)
+            .tooltip(tooltip)
+            .checked(on)
+            .variant(variant)
+            .build(window, cx)
+            .into()
+    })
+    .collect();
+    let fader = SliderControl::new()
+        .range(0.0, 1.0)
+        .step(0.01)
+        .value(0.7)
+        .vertical()
+        .length(140.)
+        .label("Volume")
+        .build(window, cx)
+        .into();
+    let meter = Meter::new(MeterOptions::stereo().fill(), cx);
+    meter
+        .read(cx)
+        .feed()
+        .set_stereo(Level::new(-9., -15.), Level::new(-4., -11.));
+    let bank = MeterBank::new(
+        4,
+        MeterOptions {
+            thickness: 6.,
+            ticks: Vec::new(),
+            ..MeterOptions::default().fill()
+        },
+        cx,
+    );
+    for (i, feed) in MeterBank::feeds(&bank, cx).iter().enumerate() {
+        feed.set(0, Level::new(-30. + i as f32 * 8., -36. + i as f32 * 8.));
+    }
+    cx.new(|_| PanelDemo {
+        transport,
+        chips,
+        fader,
+        meter,
+        bank,
+    })
+    .into()
 }
 
 fn tabs_demo(_: &mut Window, cx: &mut App) -> AnyView {
