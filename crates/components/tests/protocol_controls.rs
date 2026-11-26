@@ -726,3 +726,36 @@ fn events_carry_the_dispatch_source(cx: &mut TestAppContext) {
         [ToggleEvent::Changed(true, Source::Host)]
     );
 }
+
+#[gpui_kit::test]
+fn button_variants_survive_host_writes(cx: &mut TestAppContext) {
+    let ((_, physical, bus_side), vcx) = mount(cx, |path, window, cx| {
+        let b = ButtonControl::new()
+            .label("Reject")
+            .variant(ButtonVariant::Danger);
+        match path {
+            Some(path) => b.path(path),
+            None => b,
+        }
+        .build(window, cx)
+    });
+    let logs = [record(vcx, &physical), record(vcx, &bus_side)];
+    assert_eq!(
+        vcx.update(|_, cx| *physical.read(cx).variant()),
+        ButtonVariant::Danger
+    );
+    vcx.update(|_, cx| {
+        physical.update(cx, |b, cx| b.set_label("Accept", cx));
+        bus_side.update(cx, |b, cx| b.set_variant(ButtonVariant::Primary, cx));
+    });
+    vcx.run_until_parked();
+    click(vcx, &physical, ButtonControl::element_id);
+    assert_eq!(
+        bus(vcx, "test/bus", names::ACTIVATE, Value::Null),
+        Ok(Outcome::EMPTY)
+    );
+    assert_eq!(*logs[0].borrow(), [ButtonEvent::Activated(Source::Pointer)]);
+    assert_eq!(*logs[1].borrow(), [ButtonEvent::Activated(Source::Mcp)]);
+    let (a, b) = vcx.update(|_, cx| (*physical.read(cx).variant(), *bus_side.read(cx).variant()));
+    assert_eq!((a, b), (ButtonVariant::Danger, ButtonVariant::Primary));
+}

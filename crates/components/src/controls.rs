@@ -25,6 +25,7 @@
 //! Payloads: `set_value` takes a `Bool`, `Num` or `Str` matching the control.
 //! `select` and a menu's `activate` take a `Num` index. `increment` and
 //! `decrement` take `Null`.
+pub use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::{
     Disableable, IndexPath,
     button::{Button, ButtonVariants},
@@ -120,17 +121,15 @@ fn route<T: Observe + Drive + Identified>(
     let entity = this.upgrade().ok_or(ActionError::UnknownTarget)?;
     match entity.read(cx).identity().id {
         Some(id) => ActionBus::dispatch(id, &action, source, window, cx),
-        None => {
-            let typed = T::decode(&action)?;
-            entity
-                .update(cx, |control, cx| {
-                    control.identity_mut().direct = Some(source);
-                    let result = control.apply(typed, window, cx);
-                    control.identity_mut().direct = None;
-                    result
-                })
-                .map(Into::into)
-        }
+        None => entity
+            .update(cx, |control, cx| {
+                let typed = control.decode_for(&action)?;
+                control.identity_mut().direct = Some(source);
+                let result = control.apply(typed, window, cx);
+                control.identity_mut().direct = None;
+                result
+            })
+            .map(Into::into),
     }
 }
 
@@ -219,6 +218,7 @@ pub enum ButtonEvent {
 #[derive(Default)]
 pub struct ButtonBuilder {
     label: SharedString,
+    variant: ButtonVariant,
     disabled: bool,
     path: Option<SharedString>,
     name: Option<SharedString>,
@@ -227,6 +227,11 @@ pub struct ButtonBuilder {
 impl ButtonBuilder {
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
+        self
+    }
+    /// The kit's style variant: primary, danger, ghost and so on.
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -254,6 +259,7 @@ impl ButtonBuilder {
             |identity, _, _| ButtonControl {
                 identity,
                 label: self.label,
+                variant: self.variant,
                 disabled: self.disabled,
             },
         )
@@ -264,6 +270,7 @@ impl ButtonBuilder {
 pub struct ButtonControl {
     identity: Identity,
     label: SharedString,
+    variant: ButtonVariant,
     disabled: bool,
 }
 
@@ -284,6 +291,16 @@ impl ButtonControl {
         let label = label.into();
         if label != self.label {
             self.label = label;
+            cx.notify();
+        }
+    }
+    pub fn variant(&self) -> &ButtonVariant {
+        &self.variant
+    }
+    /// Host write: the style variant. One-way.
+    pub fn set_variant(&mut self, variant: ButtonVariant, cx: &mut Context<Self>) {
+        if variant != self.variant {
+            self.variant = variant;
             cx.notify();
         }
     }
@@ -324,6 +341,7 @@ impl Render for ButtonControl {
         let this = cx.entity().downgrade();
         Button::new(self.identity.element())
             .label(self.label.clone())
+            .with_variant(self.variant)
             .disabled(self.disabled)
             .on_click(move |_, window, cx| {
                 route(
