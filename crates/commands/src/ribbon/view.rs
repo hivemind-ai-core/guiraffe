@@ -4,7 +4,7 @@
 //! window's root (the leader works inside it); [`CommandRibbon`] is the bar itself and
 //! [`RibbonButton`] the status-bar toggle. While closed, the bar renders one empty element and
 //! does no other work; its rows are projected once per open, navigation or registry change.
-use super::model::{NavError, Navigator, RibbonModel, Step};
+use super::model::{KeyOutcome, NavError, Navigator, RibbonKey, RibbonModel, Step};
 use crate::{Choices, Commands, ContextStack, InvocationSource, Param, ParamKind, params::Draft};
 use gpui_kit::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -36,6 +36,9 @@ const LEADER_REPEAT: std::time::Duration = std::time::Duration::from_millis(600)
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct RibbonProps {
+    /// Where the open bar goes. Overlay (the default) draws it over the bottom of the
+    /// window, so the content above never moves; slotted takes layout space.
+    pub placement: RibbonPlacement,
     /// Rows per column; a longer category spans several columns.
     pub rows_per_column: usize,
     pub show_icons: bool,
@@ -44,6 +47,28 @@ pub struct RibbonProps {
     pub max_columns: usize,
     /// Row height in pixels; `None` derives a compact height from the theme's size scale.
     pub row_height: Option<f32>,
+}
+
+/// Where the open ribbon is drawn.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum RibbonPlacement {
+    /// Over the bottom of the window, in a deferred layer: opening and closing never
+    /// re-layout the content.
+    #[default]
+    Overlay,
+    /// As a child of its parent, taking layout space (the content above shrinks).
+    Slotted,
 }
 
 fn props_row_height(props: &RibbonProps) -> f32 {
@@ -55,6 +80,7 @@ fn props_row_height(props: &RibbonProps) -> f32 {
 impl Default for RibbonProps {
     fn default() -> Self {
         Self {
+            placement: RibbonPlacement::Overlay,
             rows_per_column: 6,
             show_icons: true,
             show_shortcuts: true,
@@ -378,7 +404,8 @@ impl RibbonState {
         self.window
     }
 
-    /// The leader: toggles, except for auto-repeat while the leader is held.
+    /// The leader: opens, or closes from any depth (mid-chord too), except for auto-repeat
+    /// while the leader is held.
     fn leader_pressed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let now = std::time::Instant::now();
         let repeat = self.leader_down
@@ -390,14 +417,18 @@ impl RibbonState {
             return;
         }
         self.leader_down = true;
-        self.toggle(window, cx);
+        if self.open {
+            let _ = self.nav.key(RibbonKey::Leader, self.prompt.is_some());
+            self.close(window, cx);
+        } else {
+            self.open(window, cx);
+        }
     }
 
     /// Up one level (Backspace / the Parent button). In a prompt, back to the menu.
     pub fn back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.prompt.take().is_none() {
-            self.nav.back();
-        }
+        let prompting = self.prompt.take().is_some();
+        let _ = self.nav.key(RibbonKey::Backspace, prompting);
         self.message = None;
         self.refocus(window, cx);
         self.reproject(cx);
@@ -410,7 +441,7 @@ impl RibbonState {
         }
     }
 
-    /// To the root (the Root button); Escape at the root closes instead.
+    /// To the root (the Root button and Escape).
     pub fn root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.prompt = None;
         self.message = None;
@@ -419,11 +450,11 @@ impl RibbonState {
         self.reproject(cx);
     }
 
+    /// Escape discards a partial chord or prompt and returns to the root. It never closes;
+    /// at the root it does nothing (close with the leader or the status-bar button).
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.prompt.is_some() || self.nav.depth() > 0 {
+        if self.nav.key(RibbonKey::Escape, self.prompt.is_some()) == KeyOutcome::Root {
             self.root(window, cx);
-        } else {
-            self.close(window, cx);
         }
     }
 
@@ -711,7 +742,38 @@ impl Styled for CommandRibbon {
     }
 }
 impl RenderOnce for CommandRibbon {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let placement = self.state.read(cx).props.placement;
+        let bar = self.bar(cx);
+        match placement {
+            RibbonPlacement::Slotted => bar.into_any_element(),
+            // A zero-height slot where the bar would go; the bar is drawn in a deferred layer
+            // growing upward from it. It takes no layout space, so the content above never
+            // re-lays out, and whatever sits below the slot (a status bar) stays visible.
+            RibbonPlacement::Overlay => {
+                let width = window.viewport_size().width;
+                div()
+                    .w_full()
+                    .h_0()
+                    .flex_shrink_0()
+                    .child(
+                        gpui_kit::deferred(
+                            gpui_kit::anchored()
+                                .position_mode(gpui_kit::AnchoredPositionMode::Local)
+                                .anchor(gpui_kit::Anchor::BottomLeft)
+                                .position(gpui_kit::point(px(0.), px(0.)))
+                                .child(bar.w(width).shadow_lg()),
+                        )
+                        .with_priority(1),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+}
+
+impl CommandRibbon {
+    fn bar(self, cx: &mut App) -> gpui_kit::Stateful<gpui_kit::Div> {
         let state = self.state.read(cx);
         if !state.open {
             return div().id("command-ribbon-closed");
