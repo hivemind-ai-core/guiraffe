@@ -32,11 +32,11 @@ impl Render for Host {
     }
 }
 
-fn host<'a>(
-    cx: &'a mut TestAppContext,
+fn host(
+    cx: &mut TestAppContext,
     control: impl Into<AnyView>,
     shown: bool,
-) -> (Entity<Host>, &'a mut VisualTestContext) {
+) -> (Entity<Host>, &mut VisualTestContext) {
     let control = control.into();
     let (host, vcx) = cx.add_window_view(move |_, _| Host { control, shown });
     vcx.run_until_parked();
