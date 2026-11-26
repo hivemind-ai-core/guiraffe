@@ -200,7 +200,7 @@ fn typed_entry_parses_through_the_mapping(cx: &mut TestAppContext) {
     let seen = events(vcx, &field);
     vcx.update(|window, cx| field.update(cx, |f, cx| f.begin_entry(window, cx)));
     vcx.run_until_parked();
-    let entry = vcx.update(|_, cx| field.read(cx).entry().clone());
+    let entry = vcx.update(|_, cx| field.read(cx).entry().expect("entry state").clone());
     vcx.update(|window, cx| entry.update(cx, |e, cx| e.set_value("2.5k", window, cx)));
     vcx.simulate_keystrokes("enter");
     vcx.run_until_parked();

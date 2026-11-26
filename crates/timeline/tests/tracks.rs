@@ -346,6 +346,56 @@ fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
     assert_eq!(*bus.events.borrow(), pointer_events);
 }
 
+/// With a minimum time, a wheel pan past it reads the minimum straight away, before the
+/// next frame renders (#147).
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn a_wheel_pan_is_clamped_to_the_minimum_time_before_the_next_frame(cx: &mut TestAppContext) {
+    let mut m = mount(cx, 2, false);
+    let body = m.body();
+    let mut starts = Vec::new();
+    for dx in [400.0, -400.0] {
+        let store = m.store.clone();
+        let view = m.view.clone();
+        m.vcx.update(|_, cx| {
+            store.dispatch_now(guiraffe_timeline::tracks_model::SetMinTime(Some(0.0)), cx);
+            store.dispatch_now(
+                SetView(ViewRange {
+                    start: 0.0,
+                    scale: 50.0,
+                }),
+                cx,
+            );
+        });
+        m.vcx.run_until_parked();
+        // Dispatch the wheel and read the axis in one update: no frame runs in between.
+        let start = m.vcx.update(|window, cx| {
+            window.dispatch_event(
+                gpui_kit::PlatformInput::Scroll(gpui_kit::ScrollEvent {
+                    position: body.center(),
+                    delta: gpui_kit::ScrollDelta::Pixels(point(px(dx), px(0.0))),
+                    ..Default::default()
+                }),
+                cx,
+            );
+            view.read(cx).axis().start
+        });
+        starts.push(start);
+        m.vcx.run_until_parked();
+    }
+    assert!(
+        starts.iter().all(|&start| start >= 0.0),
+        "the axis never reads below the minimum: {starts:?}"
+    );
+    assert!(
+        starts.contains(&0.0) && starts.iter().any(|&start| start > 0.0),
+        "one pan goes past the minimum and stops at it, the other moves away: {starts:?}"
+    );
+}
+
 #[cfg_attr(
     not(debug_assertions),
     ignore = "GPUI records debug bounds in debug builds"

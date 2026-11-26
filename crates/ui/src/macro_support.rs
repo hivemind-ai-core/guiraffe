@@ -388,7 +388,8 @@ impl ControlEntity for TextInputControl {
         builder.build(window, cx)
     }
     fn focus(&self, cx: &App) -> Option<gpui_kit::FocusHandle> {
-        Some(gpui_kit::Focusable::focus_handle(self.input().read(cx), cx))
+        self.input()
+            .map(|input| gpui_kit::Focusable::focus_handle(input.read(cx), cx))
     }
 }
 

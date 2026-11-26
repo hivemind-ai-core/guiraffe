@@ -6,7 +6,7 @@
 //! `dispatch_batch` on release, so a drag is one undo step. Host setters never emit, and
 //! every event carries the input's [`Source`].
 
-use super::{Identified, Identity, action, build, enabled, num_payload, route};
+use super::{Identified, Identity, action, build, enabled, mount, num_payload, route};
 use crate::mapping::{ValueMap, ValueMapping};
 use crate::style::{hsla, surfaces};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -305,8 +305,17 @@ impl KnobBuilder {
         self.modulation = range;
         self
     }
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<KnobControl> {
-        let _ = window;
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<KnobControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<KnobControl> {
         build(
             "knob",
             Capabilities::SET_VALUE | Capabilities::INCREMENT | Capabilities::DECREMENT,
@@ -537,6 +546,7 @@ pub fn knob_dial(
 
 impl Render for KnobControl {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         let p = &self.param;
         let map = p.map.clone();
         let travel = map.to_normal(p.shown());
@@ -755,7 +765,17 @@ pub struct NumberFieldBuilder {
 param_builder!(NumberFieldBuilder);
 
 impl NumberFieldBuilder {
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<NumberFieldControl> {
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<NumberFieldControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<NumberFieldControl> {
         build(
             "number-field",
             Capabilities::SET_VALUE | Capabilities::INCREMENT | Capabilities::DECREMENT,
@@ -764,23 +784,11 @@ impl NumberFieldBuilder {
             window,
             cx,
             |identity, window, cx| {
-                let entry = cx.new(|cx| InputState::new(window, cx));
-                let this = cx.weak_entity();
-                let handle = window.window_handle();
-                let subscription = cx.subscribe(
-                    &entry,
-                    move |field: &mut NumberFieldControl, _, event: &InputEvent, cx| match event {
-                        InputEvent::PressEnter { .. } | InputEvent::Blur if field.editing => {
-                            let this = this.clone();
-                            cx.defer(move |cx| {
-                                handle
-                                    .update(cx, |_, window, cx| entry_done(&this, true, window, cx))
-                                    .ok();
-                            });
-                        }
-                        _ => {}
-                    },
-                );
+                // The entry state needs a window; built without one, it is made when typed
+                // entry first opens.
+                let (entry, subscription) = window
+                    .map(|window| new_entry(&identity.window, window, cx))
+                    .unzip();
                 NumberFieldControl {
                     param: make_param(self.param, identity, cx),
                     entry,
@@ -799,10 +807,39 @@ impl NumberFieldBuilder {
 /// `250 ms` and `C#4` all work where the unit allows.
 pub struct NumberFieldControl {
     param: Param,
-    entry: Entity<InputState>,
+    /// `None` until typed entry first opens, for a control built without a window.
+    entry: Option<Entity<InputState>>,
     editing: bool,
     error: Option<SharedString>,
-    _subscription: Subscription,
+    _subscription: Option<Subscription>,
+}
+
+/// The typed-entry state of a [`NumberFieldControl`] living in `window`: Enter or blur
+/// commits.
+fn new_entry(
+    handle: &super::WindowCell,
+    window: &mut Window,
+    cx: &mut Context<NumberFieldControl>,
+) -> (Entity<InputState>, Subscription) {
+    let entry = cx.new(|cx| InputState::new(window, cx));
+    let this = cx.weak_entity();
+    let handle = handle.clone();
+    let subscription = cx.subscribe(
+        &entry,
+        move |field: &mut NumberFieldControl, _, event: &InputEvent, cx| match event {
+            InputEvent::PressEnter { .. } | InputEvent::Blur if field.editing => {
+                let this = this.clone();
+                let handle = handle.clone();
+                cx.defer(move |cx| {
+                    super::in_window(&handle, cx, |window, cx| {
+                        entry_done(&this, true, window, cx)
+                    });
+                });
+            }
+            _ => {}
+        },
+    );
+    (entry, subscription)
 }
 
 impl Identified for NumberFieldControl {
@@ -851,9 +888,10 @@ impl NumberFieldControl {
     pub fn error(&self) -> Option<&SharedString> {
         self.error.as_ref()
     }
-    /// The text entry state (tests and focus).
-    pub fn entry(&self) -> &Entity<InputState> {
-        &self.entry
+    /// The text entry state (tests and focus); `None` before typed entry first opens in a
+    /// control built without a window (`build_later`).
+    pub fn entry(&self) -> Option<&Entity<InputState>> {
+        self.entry.as_ref()
     }
     /// Host write: the value, without an event. Needs no window.
     pub fn set_value(&mut self, value: f64, cx: &mut Context<Self>) {
@@ -880,7 +918,16 @@ impl NumberFieldControl {
             return;
         }
         let text = self.param.map.format(self.param.value);
-        self.entry.update(cx, |entry, cx| {
+        let entry = match &self.entry {
+            Some(entry) => entry.clone(),
+            None => {
+                let (entry, subscription) = new_entry(&self.param.identity.window, window, cx);
+                self.entry = Some(entry.clone());
+                self._subscription = Some(subscription);
+                entry
+            }
+        };
+        entry.update(cx, |entry, cx| {
             entry.set_value(text, window, cx);
             entry.focus(window, cx);
         });
@@ -907,7 +954,15 @@ fn entry_done(
             cx.notify();
             return None;
         }
-        let text = field.entry.read(cx).value().clone();
+        let Some(text) = field
+            .entry
+            .as_ref()
+            .map(|entry| entry.read(cx).value().clone())
+        else {
+            field.editing = false;
+            cx.notify();
+            return None;
+        };
         match field.param.map.parse(&text) {
             Ok(value) => {
                 field.editing = false;
@@ -981,6 +1036,7 @@ fn field_move(this: &WeakEntity<NumberFieldControl>, e: &MouseMoveEvent, cx: &mu
 
 impl Render for NumberFieldControl {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         let s = surfaces(cx);
         let p = &self.param;
         let map = p.map.clone();
@@ -1016,8 +1072,10 @@ impl Render for NumberFieldControl {
             .border_color(border)
             .text_sm()
             .text_color(hsla(s.text));
-        if self.editing {
-            return base.child(Input::new(&self.entry)).into_any_element();
+        if self.editing
+            && let Some(entry) = &self.entry
+        {
+            return base.child(Input::new(entry)).into_any_element();
         }
         let dragging = p.drag.is_some();
         let down = this.clone();
