@@ -2,6 +2,7 @@
 //! and a registered control's physical input passes through the bus.
 use std::{cell::RefCell, rc::Rc};
 
+use gpui_kit::component::IconName;
 use gpui_kit::{
     AnyView, App, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
     TestAppContext, VisualTestContext, Window, component::select::SelectEvent, div, px,
@@ -137,9 +138,9 @@ fn button_pointer_and_bus_activate_identically(cx: &mut TestAppContext) {
     });
     let hook = sources(vcx, None);
     let logs = [
-        record(vcx, &plain),
-        record(vcx, &physical),
-        record(vcx, &bus_side),
+        record::<_, ButtonEvent>(vcx, &plain),
+        record::<_, ButtonEvent>(vcx, &physical),
+        record::<_, ButtonEvent>(vcx, &bus_side),
     ];
     click(vcx, &plain, ButtonControl::element_id);
     click(vcx, &physical, ButtonControl::element_id);
@@ -665,7 +666,10 @@ fn one_way_disabled_blocks_pointer_and_bus(cx: &mut TestAppContext) {
         }
         .build(window, cx)
     });
-    let logs = [record(vcx, &physical), record(vcx, &bus_side)];
+    let logs = [
+        record::<_, ButtonEvent>(vcx, &physical),
+        record::<_, ButtonEvent>(vcx, &bus_side),
+    ];
     vcx.update(|_, cx| {
         for entity in [&physical, &bus_side] {
             entity.update(cx, |c, cx| {
@@ -747,7 +751,10 @@ fn button_variants_survive_host_writes(cx: &mut TestAppContext) {
         }
         .build(window, cx)
     });
-    let logs = [record(vcx, &physical), record(vcx, &bus_side)];
+    let logs = [
+        record::<_, ButtonEvent>(vcx, &physical),
+        record::<_, ButtonEvent>(vcx, &bus_side),
+    ];
     assert_eq!(
         vcx.update(|_, cx| *physical.read(cx).variant()),
         ButtonVariant::Danger
@@ -766,4 +773,157 @@ fn button_variants_survive_host_writes(cx: &mut TestAppContext) {
     assert_eq!(*logs[1].borrow(), [ButtonEvent::Activated(Source::Mcp)]);
     let (a, b) = vcx.update(|_, cx| (*physical.read(cx).variant(), *bus_side.read(cx).variant()));
     assert_eq!((a, b), (ButtonVariant::Danger, ButtonVariant::Primary));
+}
+
+#[gpui_kit::test]
+fn latched_button_pointer_and_bus_toggle_identically(cx: &mut TestAppContext) {
+    let ((plain, physical, bus_side), vcx) = mount(cx, |path, window, cx| {
+        let b = ButtonControl::new()
+            .icon(IconName::Play)
+            .tooltip("Record")
+            .xsmall()
+            .toggled(false);
+        match path {
+            Some(path) => b.path(path),
+            None => b,
+        }
+        .build(window, cx)
+    });
+    let hook = sources(vcx, None);
+    let logs = [
+        record::<_, ToggleEvent>(vcx, &plain),
+        record::<_, ToggleEvent>(vcx, &physical),
+        record::<_, ToggleEvent>(vcx, &bus_side),
+    ];
+    let activations = record::<_, ButtonEvent>(vcx, &physical);
+    click(vcx, &plain, ButtonControl::element_id);
+    click(vcx, &physical, ButtonControl::element_id);
+    assert_eq!(
+        bus(vcx, "test/bus", names::TOGGLE, Value::Null),
+        Ok(Outcome(Value::Bool(true)))
+    );
+    for (log, source) in logs
+        .iter()
+        .zip([Source::Pointer, Source::Pointer, Source::Mcp])
+    {
+        assert_eq!(*log.borrow(), [ToggleEvent::Changed(true, source)]);
+    }
+    assert!(
+        activations.borrow().is_empty(),
+        "a latched click is a toggle"
+    );
+    assert_eq!(*hook.0.borrow(), [Source::Pointer, Source::Mcp]);
+    assert_eq!(snapshot(vcx, "test/physical"), snapshot(vcx, "test/bus"));
+    let snap = snapshot(vcx, "test/bus");
+    assert_eq!(snap.as_ref().and_then(|s| s.checked), Some(true));
+    assert_eq!(
+        snap.and_then(|s| s.label).as_deref(),
+        Some("Record"),
+        "an icon-only button is named by its tooltip"
+    );
+    assert_eq!(
+        bus(vcx, "test/bus", names::ACTIVATE, Value::Null),
+        Err(ActionError::Unsupported)
+    );
+    assert_eq!(
+        bus(vcx, "test/bus", names::SET_VALUE, Value::Bool(false)),
+        Ok(Outcome(Value::Bool(false)))
+    );
+    // A host write: no window, no event.
+    vcx.update(|_, cx| {
+        let app: &mut App = cx;
+        bus_side.update(app, |b, cx| b.set_toggled(true, cx));
+        physical.update(app, |b, cx| b.set_toggled(false, cx));
+    });
+    vcx.run_until_parked();
+    assert_eq!(logs[2].borrow().len(), 2);
+    assert_eq!(vcx.update(|_, cx| bus_side.read(cx).toggled()), Some(true));
+}
+
+#[gpui_kit::test]
+fn toggle_chip_pointer_and_bus_toggle_identically(cx: &mut TestAppContext) {
+    let ((plain, physical, bus_side), vcx) = mount(cx, |path, window, cx| {
+        let b = ToggleChipControl::new().label("M").tooltip("Mute");
+        match path {
+            Some(path) => b.path(path),
+            None => b,
+        }
+        .build(window, cx)
+    });
+    let hook = sources(vcx, None);
+    let logs = [
+        record(vcx, &plain),
+        record(vcx, &physical),
+        record(vcx, &bus_side),
+    ];
+    click(vcx, &plain, ToggleChipControl::element_id);
+    click(vcx, &physical, ToggleChipControl::element_id);
+    assert_eq!(
+        bus(vcx, "test/bus", names::SET_VALUE, Value::Bool(true)),
+        Ok(Outcome(Value::Bool(true)))
+    );
+    for (log, source) in logs
+        .iter()
+        .zip([Source::Pointer, Source::Pointer, Source::Mcp])
+    {
+        assert_eq!(*log.borrow(), [ToggleEvent::Changed(true, source)]);
+    }
+    assert_eq!(*hook.0.borrow(), [Source::Pointer, Source::Mcp]);
+    assert_eq!(snapshot(vcx, "test/physical"), snapshot(vcx, "test/bus"));
+    assert_eq!(
+        snapshot(vcx, "test/bus").and_then(|s| s.label).as_deref(),
+        Some("Mute")
+    );
+    vcx.update(|_, cx| bus_side.update(cx, |c, cx| c.set_checked(false, cx)));
+    vcx.run_until_parked();
+    assert_eq!(logs[2].borrow().len(), 1);
+    assert!(!vcx.update(|_, cx| bus_side.read(cx).checked()));
+}
+
+#[gpui_kit::test]
+fn vertical_slider_steps_and_bus_like_horizontal(cx: &mut TestAppContext) {
+    let ((plain, physical, bus_side), vcx) = mount(cx, |path, window, cx| {
+        let b = SliderControl::new()
+            .range(0.0, 10.0)
+            .step(1.0)
+            .value(4.0)
+            .vertical()
+            .length(120.);
+        match path {
+            Some(path) => b.path(path),
+            None => b,
+        }
+        .build(window, cx)
+    });
+    let hook = sources(vcx, None);
+    let logs = [
+        record(vcx, &plain),
+        record(vcx, &physical),
+        record(vcx, &bus_side),
+    ];
+    for entity in [&plain, &physical] {
+        let state = vcx.update(|_, cx| entity.read(cx).state().clone());
+        vcx.update(|window, cx| state.update(cx, |s, cx| s.step_thumb(false, 1.0, window, cx)));
+        vcx.run_until_parked();
+    }
+    assert_eq!(
+        bus(vcx, "test/bus", names::SET_VALUE, Value::Num(5.0)),
+        Ok(Outcome(Value::Num(5.0)))
+    );
+    for (log, source) in logs
+        .iter()
+        .zip([Source::Pointer, Source::Pointer, Source::Mcp])
+    {
+        assert_eq!(*log.borrow(), [SliderControlEvent::Changed(5.0, source)]);
+    }
+    assert_eq!(*hook.0.borrow(), [Source::Pointer, Source::Mcp]);
+    assert_eq!(snapshot(vcx, "test/physical"), snapshot(vcx, "test/bus"));
+    let id = vcx.update(|_, cx| physical.read(cx).element_id());
+    let track = vcx.update(|window, _| window.within(id).find("slider-bar-container").bounds());
+    let (w, h) = (f32::from(track.size.width), f32::from(track.size.height));
+    assert!(h > w, "a vertical track: {w}x{h}");
+    assert!(
+        (100.0..=120.0).contains(&h),
+        "the fader's length bounds the track: {h}"
+    );
 }

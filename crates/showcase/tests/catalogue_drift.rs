@@ -289,6 +289,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Real-time audio meter fed by the host per frame through MeterFeed; documents cannot feed levels.",
     ),
     (
+        "components::MeterOptions::field fill",
+        "Real-time audio meter fed by the host per frame through MeterFeed; documents cannot feed levels.",
+    ),
+    (
         "components::MeterOptions::field length",
         "Real-time audio meter fed by the host per frame through MeterFeed; documents cannot feed levels.",
     ),
@@ -1630,6 +1634,7 @@ const IMPERATIVE: &[(&str, &str)] = &[
 /// them through `ui!` lowering (item 9) and the action bus, not through their own kinds.
 const PROTOCOL_CONTROLS: &[&str] = &[
     "components::ButtonControl",
+    "components::ToggleChipControl",
     "components::CheckboxControl",
     "components::SwitchControl",
     "components::SliderControl",

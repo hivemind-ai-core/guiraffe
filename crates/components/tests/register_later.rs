@@ -198,6 +198,14 @@ fn every_control_builds_without_a_window(cx: &mut TestAppContext) {
                 SwitchControl::new().path("c/switch").build_later(cx).into(),
             ),
             (
+                "c/chip",
+                ToggleChipControl::new()
+                    .label("M")
+                    .path("c/chip")
+                    .build_later(cx)
+                    .into(),
+            ),
+            (
                 "c/slider",
                 SliderControl::new().path("c/slider").build_later(cx).into(),
             ),
@@ -253,6 +261,7 @@ fn every_control_builds_without_a_window(cx: &mut TestAppContext) {
         "c/button",
         "c/checkbox",
         "c/switch",
+        "c/chip",
         "c/slider",
         "c/text",
         "c/select",

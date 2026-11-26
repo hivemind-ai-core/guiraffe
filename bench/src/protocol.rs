@@ -179,7 +179,7 @@ impl Controls {
             let views = (0..1000)
                 .map(|i| {
                     let path = (bound, format!("page/{i}"));
-                    let view: gpui_kit::AnyView = match i % 8 {
+                    let view: gpui_kit::AnyView = match i % 10 {
                         0 => with_path(
                             ButtonControl::new().label("Go"),
                             path,
@@ -233,6 +233,22 @@ impl Controls {
                             path,
                             TabsBuilder::path,
                             TabsBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        8 => with_path(
+                            ToggleChipControl::new().label("M"),
+                            path,
+                            ToggleChipBuilder::path,
+                            ToggleChipBuilder::element_id,
+                        )
+                        .build(window, cx)
+                        .into(),
+                        9 => with_path(
+                            ButtonControl::new().tooltip("Rec").toggled(false),
+                            path,
+                            ButtonBuilder::path,
+                            ButtonBuilder::element_id,
                         )
                         .build(window, cx)
                         .into(),
@@ -297,6 +313,8 @@ struct HostControls {
     input: Entity<guiraffe_components::controls::TextInputControl>,
     select: Entity<guiraffe_components::controls::SelectControl>,
     tabs: Entity<guiraffe_components::controls::TabsControl>,
+    latched: Entity<guiraffe_components::controls::ButtonControl>,
+    chip: Entity<guiraffe_components::controls::ToggleChipControl>,
 }
 impl HostWrites {
     pub fn new() -> anyhow::Result<Self> {
@@ -324,6 +342,15 @@ impl HostWrites {
                     .tabs(["a", "b"])
                     .path("host/tabs")
                     .build(window, cx),
+                latched: ButtonControl::new()
+                    .tooltip("Rec")
+                    .toggled(false)
+                    .path("host/latched")
+                    .build(window, cx),
+                chip: ToggleChipControl::new()
+                    .label("M")
+                    .path("host/chip")
+                    .build(window, cx),
             };
             let views = vec![
                 c.button.clone().into(),
@@ -332,6 +359,8 @@ impl HostWrites {
                 c.input.clone().into(),
                 c.select.clone().into(),
                 c.tabs.clone().into(),
+                c.latched.clone().into(),
+                c.chip.clone().into(),
             ];
             controls = Some(c);
             cx.new(|_| ControlHost(views))
@@ -379,6 +408,11 @@ impl HostWrites {
                 });
                 c.tabs
                     .update(cx, |s, cx| s.set_selected(usize::from(on), cx));
+                c.latched.update(cx, |b, cx| b.set_toggled(on, cx));
+                c.chip.update(cx, |b, cx| {
+                    b.set_checked(on, cx);
+                    b.set_label(label, cx);
+                });
             })
         })
     }

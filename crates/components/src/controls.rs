@@ -29,9 +29,10 @@
 //! Payloads: `set_value` takes a `Bool`, `Num` or `Str` matching the control.
 //! `select` and a menu's `activate` take a `Num` index. `increment` and
 //! `decrement` take `Null`.
+use gpui_kit::component::IconName;
 pub use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::{
-    Disableable, IndexPath,
+    Disableable, IndexPath, Selectable, Sizable, Size as KitSize,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
@@ -275,16 +276,40 @@ macro_rules! identified {
 
 // --- Button -------------------------------------------------------------------
 
-/// Emitted when a [`ButtonControl`] is activated.
+/// Emitted when a plain [`ButtonControl`] is activated. A latched button (built with
+/// [`ButtonBuilder::toggled`]) emits [`ToggleEvent`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonEvent {
     Activated(Source),
+}
+
+/// The compact sizes a button control renders at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ControlSize {
+    #[default]
+    Medium,
+    Small,
+    XSmall,
+}
+
+impl ControlSize {
+    fn kit(self) -> KitSize {
+        match self {
+            Self::Medium => KitSize::Medium,
+            Self::Small => KitSize::Small,
+            Self::XSmall => KitSize::XSmall,
+        }
+    }
 }
 
 /// Builder for [`ButtonControl`].
 #[derive(Default)]
 pub struct ButtonBuilder {
     label: SharedString,
+    icon: Option<IconName>,
+    tooltip: Option<SharedString>,
+    size: ControlSize,
+    toggled: Option<bool>,
     variant: ButtonVariant,
     disabled: bool,
     path: Option<SharedString>,
@@ -294,6 +319,30 @@ pub struct ButtonBuilder {
 impl ButtonBuilder {
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
+        self
+    }
+    /// An icon, beside the label or alone (an icon button) when there is no label.
+    pub fn icon(mut self, icon: IconName) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+    /// A tooltip; it is also the accessible name of an icon-only button.
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+    pub fn small(mut self) -> Self {
+        self.size = ControlSize::Small;
+        self
+    }
+    pub fn xsmall(mut self) -> Self {
+        self.size = ControlSize::XSmall;
+        self
+    }
+    /// A latched button (Record, Arm): a click toggles it, it shows its state and emits
+    /// [`ToggleEvent`]. Actions: `toggle`, `set_value` (bool).
+    pub fn toggled(mut self, on: bool) -> Self {
+        self.toggled = Some(on);
         self
     }
     /// The kit's style variant: primary, danger, ghost and so on.
@@ -326,9 +375,14 @@ impl ButtonBuilder {
         self.build_with(None, cx)
     }
     fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<ButtonControl> {
+        let capabilities = if self.toggled.is_some() {
+            Capabilities::TOGGLE | Capabilities::SET_VALUE
+        } else {
+            Capabilities::ACTIVATE
+        };
         build(
             "button",
-            Capabilities::ACTIVATE,
+            capabilities,
             self.path,
             self.name,
             window,
@@ -336,6 +390,10 @@ impl ButtonBuilder {
             |identity, _, _| ButtonControl {
                 identity,
                 label: self.label,
+                icon: self.icon,
+                tooltip: self.tooltip,
+                size: self.size,
+                toggled: self.toggled,
                 variant: self.variant,
                 disabled: self.disabled,
             },
@@ -343,12 +401,24 @@ impl ButtonBuilder {
     }
 }
 
-/// A push button. Actions: `activate`.
+/// A push button, or a latched one. Actions: `activate`; latched: `toggle` and
+/// `set_value` (bool), with the new state as outcome.
 pub struct ButtonControl {
     identity: Identity,
     label: SharedString,
+    icon: Option<IconName>,
+    tooltip: Option<SharedString>,
+    size: ControlSize,
+    toggled: Option<bool>,
     variant: ButtonVariant,
     disabled: bool,
+}
+
+/// Typed actions of a [`ButtonControl`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonAction {
+    Activate,
+    Toggle(ToggleAction),
 }
 
 impl ButtonControl {
@@ -381,15 +451,37 @@ impl ButtonControl {
             cx.notify();
         }
     }
+    /// A latched button's state; `None` for a plain button.
+    pub fn toggled(&self) -> Option<bool> {
+        self.toggled
+    }
+    /// Host write: a latched button's state, without emitting. Needs no window. A plain
+    /// button stays plain: its capabilities were registered at build.
+    pub fn set_toggled(&mut self, on: bool, cx: &mut Context<Self>) {
+        if let Some(current) = self.toggled.as_mut()
+            && *current != on
+        {
+            *current = on;
+            cx.notify();
+        }
+    }
+    /// The accessible name: the label, else the tooltip.
+    fn name(&self) -> Option<&SharedString> {
+        Some(&self.label)
+            .filter(|l| !l.is_empty())
+            .or(self.tooltip.as_ref())
+    }
 }
 
 impl EventEmitter<ButtonEvent> for ButtonControl {}
+impl EventEmitter<ToggleEvent> for ButtonControl {}
 
 impl Observe for ButtonControl {
     type Snapshot = ControlSnapshot;
     fn snapshot(&self, _: &App) -> ControlSnapshot {
         ControlSnapshot {
-            label: Some(self.label.as_ref().into()),
+            label: self.name().map(|l| l.as_ref().into()),
+            checked: self.toggled,
             disabled: Some(self.disabled),
             ..ControlSnapshot::default()
         }
@@ -397,19 +489,47 @@ impl Observe for ButtonControl {
 }
 
 impl Drive for ButtonControl {
-    type Action = ();
-    type Output = ();
-    fn decode(action: &Action) -> Result<(), ActionError> {
+    type Action = ButtonAction;
+    type Output = Outcome;
+    fn decode(action: &Action) -> Result<ButtonAction, ActionError> {
         if action.name == names::ACTIVATE {
-            Ok(())
+            Ok(ButtonAction::Activate)
         } else {
             Err(ActionError::Unsupported)
         }
     }
-    fn apply(&mut self, (): (), _: &mut Window, cx: &mut Context<Self>) -> Result<(), ActionError> {
+    fn decode_for(&self, action: &Action) -> Result<ButtonAction, ActionError> {
+        match self.toggled {
+            Some(_) => decode_toggle(action).map(ButtonAction::Toggle),
+            None => Self::decode(action),
+        }
+    }
+    fn apply(
+        &mut self,
+        action: ButtonAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Outcome, ActionError> {
         enabled(self.disabled)?;
-        cx.emit(ButtonEvent::Activated(self.identity.source(cx)));
-        Ok(())
+        match (action, self.toggled) {
+            (ButtonAction::Activate, _) => {
+                cx.emit(ButtonEvent::Activated(self.identity.source(cx)));
+                Ok(Outcome::EMPTY)
+            }
+            (ButtonAction::Toggle(toggle), Some(current)) => {
+                let next = match toggle {
+                    ToggleAction::Toggle => !current,
+                    ToggleAction::Set(value) => value,
+                };
+                if next != current {
+                    self.toggled = Some(next);
+                    cx.emit(ToggleEvent::Changed(next, self.identity.source(cx)));
+                    cx.notify();
+                }
+                Ok(Outcome(Value::Bool(next)))
+            }
+            (ButtonAction::Toggle(_), None) => Err(ActionError::Unsupported),
+        }
     }
 }
 
@@ -417,20 +537,240 @@ impl Render for ButtonControl {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         mount(self, window, cx);
         let this = cx.entity().downgrade();
-        Button::new(self.identity.element())
+        let latched = self.toggled.is_some();
+        // A latched button shows its variant only while on.
+        let variant = match self.toggled {
+            Some(false) => ButtonVariant::Default,
+            _ => self.variant,
+        };
+        let mut button = Button::new(self.identity.element())
+            .with_variant(variant)
+            .with_size(self.size.kit())
+            .selected(self.toggled.unwrap_or(false))
+            .disabled(self.disabled);
+        if !self.label.is_empty() {
+            button = button.label(self.label.clone());
+        }
+        if let Some(icon) = self.icon.clone() {
+            button = button.icon(icon);
+        }
+        if let Some(tooltip) = &self.tooltip {
+            button = button.tooltip(tooltip.clone());
+        }
+        if let Some(name) = self.name() {
+            button = button.accessibility_label(name.clone());
+        }
+        button.on_click(move |_, window, cx| {
+            let action = if latched {
+                action(names::TOGGLE, Value::Null)
+            } else {
+                action(names::ACTIVATE, Value::Null)
+            };
+            route(&this, action, Source::Pointer, window, cx).ok();
+        })
+    }
+}
+
+// --- Toggle chip ----------------------------------------------------------------
+
+/// Builder for [`ToggleChipControl`].
+#[derive(Default)]
+pub struct ToggleChipBuilder {
+    label: SharedString,
+    tooltip: Option<SharedString>,
+    checked: bool,
+    variant: ButtonVariant,
+    size: ControlSize,
+    disabled: bool,
+    path: Option<SharedString>,
+    name: Option<SharedString>,
+}
+
+impl ToggleChipBuilder {
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = label.into();
+        self
+    }
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self
+    }
+    /// The variant shown while the chip is on (off chips are ghost).
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+    pub fn small(mut self) -> Self {
+        self.size = ControlSize::Small;
+        self
+    }
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+    /// Register on the window's action bus under this inspect path.
+    pub fn path(mut self, path: impl Into<SharedString>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+    /// Element id. Without it, the path (if any) names the element; with both, this wins.
+    pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+    /// Build the control, registering its path (if any) in `window`.
+    pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<ToggleChipControl> {
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<ToggleChipControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<ToggleChipControl> {
+        build(
+            "toggle_chip",
+            Capabilities::TOGGLE | Capabilities::SET_VALUE,
+            self.path,
+            self.name,
+            window,
+            cx,
+            |identity, _, _| ToggleChipControl {
+                identity,
+                label: self.label,
+                tooltip: self.tooltip,
+                checked: self.checked,
+                variant: self.variant,
+                size: self.size,
+                disabled: self.disabled,
+            },
+        )
+    }
+}
+
+/// A compact toggle that looks like a small button (mute, solo, record-arm chips).
+/// Extra-small by default. Actions: `toggle`, `set_value` (bool). Outcome: the new state.
+pub struct ToggleChipControl {
+    identity: Identity,
+    label: SharedString,
+    tooltip: Option<SharedString>,
+    checked: bool,
+    variant: ButtonVariant,
+    size: ControlSize,
+    disabled: bool,
+}
+
+impl ToggleChipControl {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new() -> ToggleChipBuilder {
+        ToggleChipBuilder {
+            size: ControlSize::XSmall,
+            variant: ButtonVariant::Primary,
+            ..ToggleChipBuilder::default()
+        }
+    }
+    pub fn checked(&self) -> bool {
+        self.checked
+    }
+    /// Host write: changes state without emitting an event. Needs no window.
+    pub fn set_checked(&mut self, checked: bool, cx: &mut Context<Self>) {
+        if self.checked != checked {
+            self.checked = checked;
+            cx.notify();
+        }
+    }
+    /// Host write: one-way.
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if disabled != self.disabled {
+            self.disabled = disabled;
+            cx.notify();
+        }
+    }
+    /// Host write: one-way.
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if label != self.label {
+            self.label = label;
+            cx.notify();
+        }
+    }
+}
+
+impl EventEmitter<ToggleEvent> for ToggleChipControl {}
+
+impl Observe for ToggleChipControl {
+    type Snapshot = ControlSnapshot;
+    fn snapshot(&self, _: &App) -> ControlSnapshot {
+        ControlSnapshot {
+            checked: Some(self.checked),
+            label: Some(self.tooltip.as_ref().unwrap_or(&self.label).as_ref().into()),
+            disabled: Some(self.disabled),
+            ..ControlSnapshot::default()
+        }
+    }
+}
+
+impl Drive for ToggleChipControl {
+    type Action = ToggleAction;
+    type Output = Outcome;
+    fn decode(action: &Action) -> Result<ToggleAction, ActionError> {
+        decode_toggle(action)
+    }
+    fn apply(
+        &mut self,
+        action: ToggleAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Outcome, ActionError> {
+        enabled(self.disabled)?;
+        let next = match action {
+            ToggleAction::Toggle => !self.checked,
+            ToggleAction::Set(value) => value,
+        };
+        if next != self.checked {
+            self.checked = next;
+            cx.emit(ToggleEvent::Changed(next, self.identity.source(cx)));
+            cx.notify();
+        }
+        Ok(Outcome(Value::Bool(next)))
+    }
+}
+
+impl Render for ToggleChipControl {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
+        let this = cx.entity().downgrade();
+        let mut chip = Button::new(self.identity.element())
             .label(self.label.clone())
-            .with_variant(self.variant)
-            .disabled(self.disabled)
-            .on_click(move |_, window, cx| {
-                route(
-                    &this,
-                    action(names::ACTIVATE, Value::Null),
-                    Source::Pointer,
-                    window,
-                    cx,
-                )
-                .ok();
+            .with_variant(if self.checked {
+                self.variant
+            } else {
+                ButtonVariant::Ghost
             })
+            .with_size(self.size.kit())
+            .compact()
+            .selected(self.checked)
+            .disabled(self.disabled);
+        if let Some(tooltip) = &self.tooltip {
+            chip = chip
+                .tooltip(tooltip.clone())
+                .accessibility_label(tooltip.clone());
+        }
+        chip.on_click(move |_, window, cx| {
+            route(
+                &this,
+                action(names::TOGGLE, Value::Null),
+                Source::Pointer,
+                window,
+                cx,
+            )
+            .ok();
+        })
     }
 }
 
@@ -658,6 +998,8 @@ pub struct SliderBuilder {
     value: Option<f64>,
     label: SharedString,
     disabled: bool,
+    vertical: bool,
+    length: Option<f32>,
     path: Option<SharedString>,
     name: Option<SharedString>,
 }
@@ -683,6 +1025,8 @@ impl Default for SliderBuilder {
             value: None,
             label: SharedString::default(),
             disabled: false,
+            vertical: false,
+            length: None,
             path: None,
             name: None,
         }
@@ -690,6 +1034,18 @@ impl Default for SliderBuilder {
 }
 
 impl SliderBuilder {
+    /// A vertical slider (a mixer fader): minimum at the bottom. Give it a
+    /// [`length`](Self::length), or it fills its parent's height.
+    pub fn vertical(mut self) -> Self {
+        self.vertical = true;
+        self
+    }
+    /// Length along the slider's axis in pixels. Without it, the slider fills its
+    /// parent along that axis.
+    pub fn length(mut self, length: f32) -> Self {
+        self.length = Some(length);
+        self
+    }
     /// A linear range (keeps the step). Use [`SliderBuilder::mapping`] for log, units and more.
     pub fn range(self, min: f32, max: f32) -> Self {
         self.linear_with(|l| Linear { min, max, ..l })
@@ -803,6 +1159,8 @@ impl SliderBuilder {
                     space,
                     label: self.label,
                     disabled: self.disabled,
+                    vertical: self.vertical,
+                    length: self.length,
                     pending: false,
                     _subscription: subscription,
                 }
@@ -876,6 +1234,8 @@ pub struct SliderControl {
     space: Space,
     label: SharedString,
     disabled: bool,
+    vertical: bool,
+    length: Option<f32>,
     /// A host write the kit state has not seen yet.
     pending: bool,
     _subscription: Subscription,
@@ -997,10 +1357,20 @@ impl Render for SliderControl {
             self.sync_state(window, cx);
         }
         let mut slider = Slider::new(&self.state).disabled(self.disabled);
+        if self.vertical {
+            slider = slider.vertical();
+        }
         if !self.label.is_empty() {
             slider = slider.accessibility_label(self.label.clone());
         }
-        div().id(self.identity.element()).w_full().child(slider)
+        let root = div().id(self.identity.element());
+        let root = match (self.vertical, self.length) {
+            (false, None) => root.w_full(),
+            (false, Some(length)) => root.w(gpui_kit::px(length)),
+            (true, None) => root.h_full(),
+            (true, Some(length)) => root.h(gpui_kit::px(length)),
+        };
+        root.child(slider)
     }
 }
 
@@ -1971,6 +2341,7 @@ impl Render for MenuControl {
 
 identified!(
     ButtonControl,
+    ToggleChipControl,
     CheckboxControl,
     SwitchControl,
     SliderControl,
