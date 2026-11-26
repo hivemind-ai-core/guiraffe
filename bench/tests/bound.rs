@@ -269,8 +269,11 @@ fn edit_costs(app: &mut HeadlessAppContext, n: u64) -> (u64, u64, usize, FirstEd
         frames.push(counts.allocations);
     }
     let rows = row_renders() - rows;
-    // Same-length labels: the derived width was recomputed on every edit and never changed.
-    assert_eq!(DERIVED_RENDERS.with(Cell::get), derived_renders);
+    // Same-length labels: the derived width was recomputed on every edit and never changed,
+    // so it never rendered (upstream renders it with its page; the update is gated on both).
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(DERIVED_RENDERS.with(Cell::get), derived_renders);
+    }
     // A steady edit as one scope (update plus frame), and the first edit of a row nobody has
     // edited yet, once the window's frame buffers are warm: the binding layer adds nothing to
     // a site's first edit.
