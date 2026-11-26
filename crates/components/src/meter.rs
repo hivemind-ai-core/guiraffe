@@ -979,6 +979,22 @@ impl MeterBank {
         id
     }
 
+    fn route_reset(owner: &WeakEntity<Self>, index: usize, window: &mut Window, cx: &mut App) {
+        let Some(bank) = owner.upgrade() else { return };
+        match bank.read(cx).id {
+            Some(id) => {
+                let action = Action {
+                    name: SharedString::new_static(RESET_CLIP),
+                    payload: Value::Num(index as f64),
+                };
+                ActionBus::dispatch(id, &action, Source::Pointer, window, cx).ok();
+            }
+            None => {
+                bank.update(cx, |b, cx| b.reset_clip(Some(index), cx));
+            }
+        }
+    }
+
     fn width(&self) -> f32 {
         let lanes = self.options.channels.clamp(1, 2) as f32;
         self.options.thickness * lanes + 2.0 * (lanes - 1.0)
@@ -1055,6 +1071,7 @@ impl Render for MeterBank {
             colors,
             width: self.width(),
             gap: self.gap,
+            owner: cx.weak_entity(),
         }
     }
 }
@@ -1066,6 +1083,31 @@ struct BankElement {
     colors: Colors,
     width: f32,
     gap: f32,
+    owner: WeakEntity<MeterBank>,
+}
+
+/// Depth of a meter's clip area from its top (vertical) or right end (horizontal).
+pub const CLIP_AREA: f32 = 12.0;
+
+/// The meter whose clip area holds the bank-local point `(x, y)`, if any. Pure.
+pub fn bank_clip_hit(
+    (x, y): (f32, f32),
+    count: usize,
+    width: f32,
+    gap: f32,
+    length: f32,
+    orientation: Orientation,
+) -> Option<usize> {
+    let (across, along) = match orientation {
+        Orientation::Vertical => (x, y),
+        Orientation::Horizontal => (y, length - x),
+    };
+    if !(0.0..=CLIP_AREA).contains(&along) || across < 0.0 {
+        return None;
+    }
+    let step = width + gap;
+    let index = (across / step) as usize;
+    (index < count && across - index as f32 * step <= width).then_some(index)
 }
 
 impl IntoElement for BankElement {
@@ -1149,6 +1191,25 @@ impl Element for BankElement {
                 window,
             );
         }
+        // A click in a meter's clip area resets that meter (one listener for the bank).
+        let owner = self.owner.clone();
+        let (count, width, gap) = (self.frames.borrow().len(), self.width, self.gap);
+        let (length, orientation) = (self.options.length, self.options.orientation);
+        window.on_mouse_event(move |e: &gpui_kit::MouseDownEvent, phase, window, cx| {
+            if phase != gpui_kit::DispatchPhase::Bubble
+                || e.button != MouseButton::Left
+                || !bounds.contains(&e.position)
+            {
+                return;
+            }
+            let local = (
+                f32::from(e.position.x - bounds.origin.x),
+                f32::from(e.position.y - bounds.origin.y),
+            );
+            if let Some(index) = bank_clip_hit(local, count, width, gap, length, orientation) {
+                MeterBank::route_reset(&owner, index, window, cx);
+            }
+        });
     }
 }
 
@@ -1233,6 +1294,19 @@ mod tests {
         assert!(s.clipped, "latched");
         s.reset_clip();
         assert!(!s.clipped);
+    }
+
+    #[test]
+    fn bank_clicks_hit_the_clip_area_of_one_meter() {
+        let hit = |p| bank_clip_hit(p, 4, 10.0, 6.0, 160.0, Orientation::Vertical);
+        assert_eq!(hit((5.0, 4.0)), Some(0));
+        assert_eq!(hit((20.0, 11.0)), Some(1));
+        assert_eq!(hit((13.0, 4.0)), None, "the gap between meters");
+        assert_eq!(hit((5.0, 40.0)), None, "below the clip area");
+        assert_eq!(hit((70.0, 4.0)), None, "past the last meter");
+        let h = |p| bank_clip_hit(p, 2, 10.0, 6.0, 160.0, Orientation::Horizontal);
+        assert_eq!(h((155.0, 20.0)), Some(1), "the right end of the second row");
+        assert_eq!(h((20.0, 20.0)), None);
     }
 
     #[test]
