@@ -722,7 +722,9 @@ pub fn timeline_track_schema() -> Value {
     json!({
         "type":"object","required":["name","clips"],"additionalProperties":false,
         "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
             "name":{"type":"string"},
+            "height":{"type":"number","minimum":20,"maximum":800},
             "clips":{"type":"array","items":{
                 "type":"object","required":["id","start","length"],"additionalProperties":false,
                 "properties":{

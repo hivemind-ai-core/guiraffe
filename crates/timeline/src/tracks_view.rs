@@ -31,7 +31,7 @@ use guiraffe_core::{
 use guiraffe_state::{Selected, Store};
 
 pub use crate::tracks_model::{
-    ClipEdit, ClipRef, DEFAULT_TRACK_HEIGHT, Follow, RowLayout, TrackRow, TrackUpdate,
+    ClipEdit, ClipRef, DEFAULT_TRACK_HEIGHT, Follow, RowLayout, TrackId, TrackRow, TrackUpdate,
     TracksAction, TracksChange, TracksModel, ViewRange, tracks_store,
 };
 use crate::{
@@ -58,16 +58,16 @@ pub use crate::edit::EDGE_GRAB;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TracksEvent {
     ClipChanged {
-        track: usize,
+        track: TrackId,
         clip: u32,
         edit: ClipEdit,
     },
     TrackResized {
-        track: usize,
+        track: TrackId,
         height: f32,
     },
     SelectionChanged {
-        selected: Option<(usize, u32)>,
+        selected: Option<ClipRef>,
     },
     Seek(f64),
 }
@@ -82,7 +82,7 @@ impl From<TracksChange> for TracksEvent {
             },
             TracksChange::TrackResized { track, height } => Self::TrackResized { track, height },
             TracksChange::SelectionChanged { selection } => Self::SelectionChanged {
-                selected: selection.map(|s| (s.track, s.clip)),
+                selected: selection,
             },
             TracksChange::Seek { time } => Self::Seek(time),
         }
@@ -170,7 +170,7 @@ enum Drag {
         grab: Grab,
     },
     Resize {
-        track: usize,
+        track: TrackId,
         from_y: f32,
         from_h: f32,
     },
@@ -360,9 +360,10 @@ impl TracksView {
         self.model(cx).rows()
     }
 
-    /// The selected clip `(track, clip id)`.
+    /// The selected clip as `(display position, clip id)`; see [`TracksModel::selection`]
+    /// for its stable [`ClipRef`].
     pub fn selected(&self, cx: &App) -> Option<(usize, u32)> {
-        self.model(cx).selection.map(|s| (s.track, s.clip))
+        self.model(cx).selected_index()
     }
 
     pub fn playhead(&self, cx: &App) -> f64 {
@@ -381,7 +382,11 @@ impl TracksView {
     /// Host write of the selection (no event).
     pub fn select(&mut self, sel: Option<(usize, u32)>, cx: &mut Context<Self>) {
         self.store.dispatch_now(
-            SetSelection(sel.map(|(track, clip)| ClipRef { track, clip })),
+            SetSelection(
+                sel.and_then(|(track, clip)| {
+                    Some(ClipRef::new(self.model(cx).row(track)?.id, clip))
+                }),
+            ),
             cx,
         );
     }
@@ -394,7 +399,11 @@ impl TracksView {
         cx: &mut Context<Self>,
     ) -> Result<Option<TracksChange>, ActionError> {
         if let TracksAction::MoveClip { clip, .. } | TracksAction::TrimClip { clip, .. } = action
-            && (!self.editable || self.locked.contains(&(clip.track, clip.clip)))
+            && (!self.editable
+                || self
+                    .model(cx)
+                    .index_of(clip.track)
+                    .is_some_and(|i| self.locked.contains(&(i, clip.clip))))
         {
             return Err(ActionError::Disabled);
         }
@@ -438,6 +447,11 @@ impl TracksView {
     pub fn selection_style(&self, cx: &App) -> SelectionStyle {
         self.selection_style
             .unwrap_or_else(|| SelectionStyle::themed(GuiraffeTheme::global(cx)))
+    }
+
+    /// Whether the header column is hidden.
+    pub fn header_hidden(&self) -> bool {
+        matches!(self.header, HeaderMode::Hidden)
     }
 
     pub fn set_header(&mut self, header: HeaderMode, cx: &mut Context<Self>) {
@@ -511,9 +525,10 @@ impl TracksView {
     fn select_step_action(&self, dir: i32, cx: &App) -> Option<TracksAction> {
         let model = self.model(cx);
         let rows = model.rows();
-        let current = model
-            .selection
-            .and_then(|s| Some((s.track, rows.get(s.track)?.track.index_of(s.clip)?)));
+        let current = model.selection.and_then(|s| {
+            let row = model.index_of(s.track)?;
+            Some((row, rows[row].track.index_of(s.clip)?))
+        });
         let next = if dir < 0 {
             match current {
                 Some((row, index)) if index > 0 => Some((row, index - 1)),
@@ -540,7 +555,7 @@ impl TracksView {
         };
         (next != current).then(|| {
             TracksAction::Select(next.map(|(row, index)| ClipRef {
-                track: row,
+                track: rows[row].id,
                 clip: rows[row].track.clips()[index].id,
             }))
         })
@@ -594,17 +609,18 @@ impl TracksView {
     /// Start a drag; returns the selection action to route, if the press hit a clip.
     fn press_item(&mut self, track: usize, x: f64, cx: &App) -> Option<TracksAction> {
         let model = self.model(cx);
+        let id = model.row(track)?.id;
         let hit = model.row(track).and_then(|row| {
             hit_index(&row.track, &self.surface.axis, x, ResizeEdges::None)
                 .map(|(index, _)| row.track.clips()[index].id)
         });
         self.preview = None;
         self.drag = self.grab(track, x, cx).map(|(clip, grab)| Drag::Clip {
-            clip: ClipRef { track, clip },
+            clip: ClipRef::new(id, clip),
             grab,
         });
         let selection = model.selection;
-        hit.map(|clip| ClipRef { track, clip })
+        hit.map(|clip| ClipRef::new(id, clip))
             .filter(|at| selection != Some(*at))
             .map(|at| TracksAction::Select(Some(at)))
     }
@@ -619,7 +635,7 @@ impl TracksView {
         }
         self.preview = None;
         self.drag = Some(Drag::Resize {
-            track,
+            track: row.id,
             from_y: y,
             from_h: row.height,
         });
@@ -810,19 +826,22 @@ impl TracksView {
     }
 
     /// The clip as the active preview would leave it.
-    fn shown(&self, track: usize, clip: &Clip, model: &TracksModel) -> Clip {
+    fn shown(&self, row: usize, clip: &Clip, model: &TracksModel) -> Clip {
+        let Some(track) = model.row(row).map(|r| r.id) else {
+            return *clip;
+        };
         let preview = match self.preview {
             Some(TracksAction::MoveClip { clip: at, start })
                 if at.track == track && at.clip == clip.id =>
             {
-                model.row(track).and_then(|r| r.track.moved(clip.id, start))
+                model.row(row).and_then(|r| r.track.moved(clip.id, start))
             }
             Some(TracksAction::TrimClip {
                 clip: at,
                 edge,
                 time,
             }) if at.track == track && at.clip == clip.id => model
-                .row(track)
+                .row(row)
                 .and_then(|r| r.track.trimmed(clip.id, edge, time)),
             _ => None,
         };
@@ -837,8 +856,8 @@ impl Observe for TracksView {
         ControlSnapshot {
             value: Some(Value::Num(model.playhead)),
             selected: model
-                .selection
-                .map(|s| Rc::from([s.track, s.clip as usize].as_slice())),
+                .selected_index()
+                .map(|(row, clip)| Rc::from([row, clip as usize].as_slice())),
             disabled: Some(!self.editable),
             ..Default::default()
         }
@@ -1010,7 +1029,7 @@ impl TracksView {
             return None;
         }
         let scroll = self.scroll_y;
-        let selected_track = model.selection.map(|s| s.track);
+        let selected_track = model.selected_index().map(|s| s.0);
         let column = div()
             .id("tracks-header")
             .relative()
@@ -1101,13 +1120,15 @@ impl Render for TracksView {
             .selection_style
             .unwrap_or_else(|| SelectionStyle::themed(t));
         let model = self.model(cx).clone();
-        let selected = model.selection.map(|s| (s.track, s.clip));
+        let selected = model.selected_index();
         let accessibility = window.is_a11y_active();
         let view = cx.weak_entity();
 
         // Row layout: a prefix sum over heights, with a resize preview applied.
         let resizing = match self.preview {
-            Some(TracksAction::ResizeTrack { track, height }) => Some((track, height)),
+            Some(TracksAction::ResizeTrack { track, height }) => {
+                model.index_of(track).map(|i| (i, height))
+            }
             _ => None,
         };
         self.layout.rebuild(
@@ -1564,10 +1585,10 @@ mod tests {
             *events,
             [
                 TracksEvent::SelectionChanged {
-                    selected: Some((0, 1))
+                    selected: Some(ClipRef::new(0, 1))
                 },
                 TracksEvent::ClipChanged {
-                    track: 0,
+                    track: TrackId(0),
                     clip: 1,
                     edit: ClipEdit::Move
                 },
@@ -1644,10 +1665,7 @@ mod tests {
             assert_eq!(
                 v.perform(
                     TracksAction::MoveClip {
-                        clip: ClipRef {
-                            track: 0,
-                            clip: first
-                        },
+                        clip: ClipRef::new(0, first),
                         start: 2.0
                     },
                     cx

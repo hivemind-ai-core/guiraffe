@@ -39,17 +39,31 @@ pub fn clamp_height(height: f32) -> f32 {
     }
 }
 
-/// One track: its name, clips and row height.
+/// A track's stable key, provided by the host (Passage's track id). Rows, heights, the
+/// selection and actions refer to tracks by it, so inserting, removing or reordering
+/// tracks never moves state onto a neighbour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TrackId(pub u64);
+
+impl From<u64> for TrackId {
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+/// One track: its key, name, clips and row height.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackRow {
+    pub id: TrackId,
     pub name: SharedString,
     pub track: Track,
     pub height: f32,
 }
 
 impl TrackRow {
-    pub fn new(name: impl Into<SharedString>, track: Track) -> Self {
+    pub fn new(id: impl Into<TrackId>, name: impl Into<SharedString>, track: Track) -> Self {
         Self {
+            id: id.into(),
             name: name.into(),
             track,
             height: DEFAULT_TRACK_HEIGHT,
@@ -62,11 +76,20 @@ impl TrackRow {
     }
 }
 
-/// A clip by track index and clip id.
+/// A clip by track key and clip id (both stable; never positions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClipRef {
-    pub track: usize,
+    pub track: TrackId,
     pub clip: u32,
+}
+
+impl ClipRef {
+    pub fn new(track: impl Into<TrackId>, clip: u32) -> Self {
+        Self {
+            track: track.into(),
+            clip,
+        }
+    }
 }
 
 /// Keep the playhead visible while it moves.
@@ -226,12 +249,13 @@ impl TracksModel {
         }
     }
 
-    /// From `(name, track)` pairs at the default height.
+    /// From `(name, track)` pairs at the default height, keyed by their position.
     pub fn from_tracks(tracks: Vec<(String, Track)>) -> Self {
         Self::new(
             tracks
                 .into_iter()
-                .map(|(name, track)| TrackRow::new(name, track))
+                .enumerate()
+                .map(|(i, (name, track))| TrackRow::new(i as u64, name, track))
                 .collect(),
         )
     }
@@ -240,12 +264,29 @@ impl TracksModel {
         &self.rows
     }
 
-    pub fn row(&self, track: usize) -> Option<&TrackRow> {
-        self.rows.get(track).map(|r| &**r)
+    /// The row at display position `index`.
+    pub fn row(&self, index: usize) -> Option<&TrackRow> {
+        self.rows.get(index).map(|r| &**r)
+    }
+
+    /// The display position of track `id`.
+    pub fn index_of(&self, id: TrackId) -> Option<usize> {
+        self.rows.iter().position(|r| r.id == id)
+    }
+
+    /// The row with key `id`.
+    pub fn row_by_id(&self, id: TrackId) -> Option<&TrackRow> {
+        self.row(self.index_of(id)?)
     }
 
     pub fn clip(&self, at: ClipRef) -> Option<&Clip> {
-        self.row(at.track)?.track.clip(at.clip)
+        self.row_by_id(at.track)?.track.clip(at.clip)
+    }
+
+    /// The selection as a display position and clip id.
+    pub fn selected_index(&self) -> Option<(usize, u32)> {
+        let s = self.selection?;
+        Some((self.index_of(s.track)?, s.clip))
     }
 
     /// Whether the rows (content or heights) are the same allocation as `other`'s.
@@ -253,15 +294,19 @@ impl TracksModel {
         Arc::ptr_eq(&self.rows, &other.rows)
     }
 
-    fn row_mut(&mut self, track: usize) -> Option<&mut TrackRow> {
+    fn row_mut(&mut self, id: TrackId) -> Option<&mut TrackRow> {
+        let index = self.index_of(id)?;
         Arc::make_mut(&mut self.rows)
-            .get_mut(track)
+            .get_mut(index)
             .map(Arc::make_mut)
     }
 
-    /// Replace the tracks, diffing by index: unchanged rows keep their allocation, a row
-    /// keeps its height unless `height` is given, and the selection survives while its clip
-    /// exists. Zoom and scroll are untouched. Returns whether anything changed.
+    /// Replace the tracks, diffing by [`TrackId`]: a row whose key and content are unchanged
+    /// keeps its allocation, a known key keeps its height (unless `height` is given) wherever
+    /// it moves, new keys get the default height, and removed keys take only their own state
+    /// with them. The selection follows its track's key and survives while its clip exists.
+    /// Zoom and scroll are untouched. Later duplicates of a key are ignored. Returns whether
+    /// anything changed.
     pub fn update_tracks(&mut self, tracks: Vec<TrackUpdate>) -> bool {
         let same = tracks.len() == self.rows.len()
             && tracks
@@ -271,16 +316,19 @@ impl TracksModel {
         if same {
             return false;
         }
-        let old = Arc::clone(&self.rows);
+        let old: std::collections::HashMap<TrackId, &Arc<TrackRow>> =
+            self.rows.iter().map(|r| (r.id, r)).collect();
+        let mut seen = std::collections::HashSet::with_capacity(tracks.len());
         let rows = tracks
             .into_iter()
-            .enumerate()
-            .map(|(i, u)| match old.get(i) {
+            .filter(|u| seen.insert(u.id))
+            .map(|u| match old.get(&u.id) {
                 Some(row) if u.matches(row) => Arc::clone(row),
                 Some(row) => Arc::new(u.into_row(row.height)),
                 None => Arc::new(u.into_row(DEFAULT_TRACK_HEIGHT)),
             })
             .collect();
+        drop(old);
         self.rows = Arc::new(rows);
         if self.selection.is_some_and(|s| self.clip(s).is_none()) {
             self.selection = None;
@@ -293,7 +341,7 @@ impl TracksModel {
         match action {
             TracksAction::ResizeTrack { track, height } => {
                 let height = clamp_height(height);
-                let row = self.row(track)?;
+                let row = self.row_by_id(track)?;
                 if row.height == height {
                     return None;
                 }
@@ -301,11 +349,14 @@ impl TracksModel {
                 Some(TracksChange::TrackResized { track, height })
             }
             TracksAction::MoveClip { clip, start } => {
-                let next = self.row(clip.track)?.track.moved(clip.clip, start)?;
+                let next = self.row_by_id(clip.track)?.track.moved(clip.clip, start)?;
                 self.set_clip(clip, next, ClipEdit::Move)
             }
             TracksAction::TrimClip { clip, edge, time } => {
-                let next = self.row(clip.track)?.track.trimmed(clip.clip, edge, time)?;
+                let next = self
+                    .row_by_id(clip.track)?
+                    .track
+                    .trimmed(clip.clip, edge, time)?;
                 self.set_clip(clip, next, ClipEdit::Trim(edge))
             }
             TracksAction::Select(selection) => {
@@ -396,31 +447,41 @@ pub enum ClipEdit {
     Trim(Edge),
 }
 
-/// One track in a [`SetTracks`] write. `height: None` keeps the row's current height.
+/// One track in a [`SetTracks`] write, keyed by `id`. `height: None` keeps the row's
+/// current height.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackUpdate {
+    pub id: TrackId,
     pub name: SharedString,
     pub track: Track,
     pub height: Option<f32>,
 }
 
 impl TrackUpdate {
-    pub fn new(name: impl Into<SharedString>, track: Track) -> Self {
+    pub fn new(id: impl Into<TrackId>, name: impl Into<SharedString>, track: Track) -> Self {
         Self {
+            id: id.into(),
             name: name.into(),
             track,
             height: None,
         }
     }
 
+    pub fn with_height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+
     fn matches(&self, row: &TrackRow) -> bool {
-        self.name == row.name
+        self.id == row.id
+            && self.name == row.name
             && self.track == row.track
             && self.height.is_none_or(|h| clamp_height(h) == row.height)
     }
 
     fn into_row(self, height: f32) -> TrackRow {
         TrackRow {
+            id: self.id,
             name: self.name,
             track: self.track,
             height: self.height.map_or(height, clamp_height),
@@ -433,7 +494,7 @@ impl TrackUpdate {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TracksAction {
     /// Set a track's row height (clamped).
-    ResizeTrack { track: usize, height: f32 },
+    ResizeTrack { track: TrackId, height: f32 },
     /// Move a clip to start at `start` (clamped by its neighbours).
     MoveClip { clip: ClipRef, start: f64 },
     /// Move one edge of a clip to `time`. The end may extend past the clip's content.
@@ -453,7 +514,7 @@ pub enum TracksAction {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TracksChange {
     TrackResized {
-        track: usize,
+        track: TrackId,
         height: f32,
     },
     ClipChanged {
@@ -507,9 +568,17 @@ fn index(value: &Value, name: &'static str) -> Result<u64, ActionError> {
         .ok_or(ActionError::Invalid(name))
 }
 
+/// Track keys travel as numbers, so they are exact up to 2^53.
+fn track_id(value: &Value) -> Result<TrackId, ActionError> {
+    let v = num(value, "track")?;
+    (v >= 0.0 && v.fract() == 0.0 && v <= 9_007_199_254_740_992.0)
+        .then_some(TrackId(v as u64))
+        .ok_or(ActionError::Invalid("track"))
+}
+
 fn clip_ref(value: &Value) -> Result<ClipRef, ActionError> {
     Ok(ClipRef {
-        track: index(value, "track")? as usize,
+        track: track_id(value)?,
         clip: index(value, "clip")? as u32,
     })
 }
@@ -523,7 +592,7 @@ fn edge_name(edge: Edge) -> &'static str {
 
 fn clip_fields(at: ClipRef) -> [(&'static str, Value); 2] {
     [
-        ("track", Value::Num(at.track as f64)),
+        ("track", Value::Num(at.track.0 as f64)),
         ("clip", Value::Num(f64::from(at.clip))),
     ]
 }
@@ -536,7 +605,7 @@ impl TracksAction {
             Self::ResizeTrack { track, height } => (
                 RESIZE_TRACK,
                 record(&[
-                    ("track", Value::Num(track as f64)),
+                    ("track", Value::Num(track.0 as f64)),
                     ("height", Value::Num(f64::from(height))),
                 ]),
             ),
@@ -572,7 +641,7 @@ impl TracksAction {
         let p = &action.payload;
         Ok(match action.name.as_ref() {
             RESIZE_TRACK => Self::ResizeTrack {
-                track: index(p, "track")? as usize,
+                track: track_id(p)?,
                 height: num(p, "height")? as f32,
             },
             MOVE_CLIP => Self::MoveClip {
@@ -604,7 +673,7 @@ impl From<TracksChange> for Value {
         match change {
             TracksChange::TrackResized { track, height } => record(&[
                 ("kind", Value::Str("trackResized".into())),
-                ("track", Value::Num(track as f64)),
+                ("track", Value::Num(track.0 as f64)),
                 ("height", Value::Num(f64::from(height))),
             ]),
             TracksChange::ClipChanged { clip, edit, span } => {
@@ -734,10 +803,10 @@ host_event!(
 );
 host_event!(
     /// Host write: a track's height.
-    SetTrackHeight(usize, f32),
+    SetTrackHeight(TrackId, f32),
     |m, track, height| {
         let h = clamp_height(height);
-        if m.row(track).is_some_and(|r| r.height != h)
+        if m.row_by_id(track).is_some_and(|r| r.height != h)
             && let Some(row) = m.row_mut(track)
         {
             row.height = h;
@@ -776,9 +845,9 @@ mod tests {
 
     fn model() -> TracksModel {
         TracksModel::new(vec![
-            TrackRow::new("A", track(&[(1.0, 2.0), (5.0, 1.0)])),
-            TrackRow::new("B", track(&[(0.0, 1.0)])).with_height(100.0),
-            TrackRow::new("C", track(&[])).with_height(25.0),
+            TrackRow::new(10, "A", track(&[(1.0, 2.0), (5.0, 1.0)])),
+            TrackRow::new(20, "B", track(&[(0.0, 1.0)])).with_height(100.0),
+            TrackRow::new(30, "C", track(&[])).with_height(25.0),
         ])
     }
 
@@ -833,20 +902,20 @@ mod tests {
     #[test]
     fn actions_report_what_changed_and_no_ops_report_nothing() {
         let mut m = model();
-        let a = ClipRef { track: 0, clip: 1 };
+        let a = ClipRef::new(10, 1);
         assert_eq!(
             m.apply(TracksAction::ResizeTrack {
-                track: 0,
+                track: TrackId(10),
                 height: 5.0
             }),
             Some(TracksChange::TrackResized {
-                track: 0,
+                track: TrackId(10),
                 height: MIN_TRACK_HEIGHT
             })
         );
         assert_eq!(
             m.apply(TracksAction::ResizeTrack {
-                track: 0,
+                track: TrackId(10),
                 height: 5.0
             }),
             None
@@ -873,7 +942,7 @@ mod tests {
             Some(TracksChange::SelectionChanged { selection: Some(a) })
         );
         assert_eq!(
-            m.apply(TracksAction::Select(Some(ClipRef { track: 0, clip: 99 }))),
+            m.apply(TracksAction::Select(Some(ClipRef::new(10, 99)))),
             Some(TracksChange::SelectionChanged { selection: None }),
             "a missing clip clears"
         );
@@ -888,7 +957,7 @@ mod tests {
     #[test]
     fn update_tracks_diffs_in_place_and_keeps_heights_selection_and_view() {
         let mut m = model();
-        m.selection = Some(ClipRef { track: 0, clip: 2 });
+        m.selection = Some(ClipRef::new(10, 2));
         m.set_view(ViewRange {
             start: 3.0,
             scale: 0.01,
@@ -897,7 +966,7 @@ mod tests {
         let same: Vec<_> = m
             .rows()
             .iter()
-            .map(|r| TrackUpdate::new(r.name.clone(), r.track.clone()))
+            .map(|r| TrackUpdate::new(r.id, r.name.clone(), r.track.clone()))
             .collect();
         assert!(!m.update_tracks(same.clone()));
         assert!(m.same_rows(&before));
@@ -911,7 +980,7 @@ mod tests {
         assert_eq!(m.rows()[1].height, 100.0, "height kept");
         assert_eq!(m.view, before.view, "zoom survives");
         assert_eq!(m.selection, before.selection);
-        assert!(m.update_tracks(vec![TrackUpdate::new("A", Track::default())]));
+        assert!(m.update_tracks(vec![TrackUpdate::new(10, "A", Track::default())]));
         assert_eq!(m.selection, None, "selected clip gone");
         assert_eq!(m.rows().len(), 1);
     }
@@ -950,10 +1019,10 @@ mod tests {
 
     #[test]
     fn erased_actions_round_trip_and_reject_bad_payloads() {
-        let at = ClipRef { track: 2, clip: 7 };
+        let at = ClipRef::new(2, 7);
         for action in [
             TracksAction::ResizeTrack {
-                track: 1,
+                track: TrackId(1),
                 height: 64.0,
             },
             TracksAction::MoveClip {
@@ -994,5 +1063,98 @@ mod tests {
             payload: Value::Null,
         };
         assert_eq!(TracksAction::decode(&other), Err(ActionError::Unsupported));
+    }
+
+    fn ids(m: &TracksModel) -> Vec<u64> {
+        m.rows().iter().map(|r| r.id.0).collect()
+    }
+
+    fn updates(m: &TracksModel) -> Vec<TrackUpdate> {
+        m.rows()
+            .iter()
+            .map(|r| TrackUpdate::new(r.id, r.name.clone(), r.track.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn insert_remove_and_reorder_keep_state_on_the_right_tracks() {
+        let mut m = model(); // 10: 40 px, 20: 100 px, 30: 25 px
+        m.selection = Some(ClipRef::new(20, 1));
+        let before = m.clone();
+
+        // Insert a track in the middle.
+        let mut rows = updates(&m);
+        rows.insert(1, TrackUpdate::new(15, "New", track(&[(0.0, 4.0)])));
+        assert!(m.update_tracks(rows));
+        assert_eq!(ids(&m), [10, 15, 20, 30]);
+        let heights: Vec<f32> = m.rows().iter().map(|r| r.height).collect();
+        assert_eq!(heights, [40.0, DEFAULT_TRACK_HEIGHT, 100.0, 25.0]);
+        for id in [10, 20, 30] {
+            let (a, b) = (
+                m.rows()[m.index_of(TrackId(id)).unwrap_or(0)].clone(),
+                before.row_by_id(TrackId(id)),
+            );
+            assert!(
+                b.is_some_and(|b| std::ptr::eq(&*a, b)),
+                "track {id} keeps its allocation"
+            );
+        }
+        assert_eq!(
+            m.selection,
+            Some(ClipRef::new(20, 1)),
+            "selection follows the key"
+        );
+        assert_eq!(m.selected_index(), Some((2, 1)), "and moves down a row");
+
+        // Remove the track above the selection.
+        let mut rows = updates(&m);
+        rows.remove(0);
+        assert!(m.update_tracks(rows));
+        assert_eq!(ids(&m), [15, 20, 30]);
+        assert_eq!(m.row_by_id(TrackId(20)).map(|r| r.height), Some(100.0));
+        assert_eq!(m.selected_index(), Some((1, 1)));
+
+        // Reorder: state moves with the key.
+        let mut rows = updates(&m);
+        rows.reverse();
+        assert!(m.update_tracks(rows));
+        assert_eq!(ids(&m), [30, 20, 15]);
+        let heights: Vec<f32> = m.rows().iter().map(|r| r.height).collect();
+        assert_eq!(heights, [25.0, 100.0, DEFAULT_TRACK_HEIGHT]);
+        assert_eq!(m.selection, Some(ClipRef::new(20, 1)));
+
+        // Actions address tracks by key wherever they are.
+        assert!(
+            m.apply(TracksAction::ResizeTrack {
+                track: TrackId(30),
+                height: 60.0
+            })
+            .is_some()
+        );
+        assert_eq!(m.rows()[0].height, 60.0);
+        assert!(
+            m.apply(TracksAction::MoveClip {
+                clip: ClipRef::new(20, 1),
+                start: 0.5
+            })
+            .is_some()
+        );
+        assert_eq!(
+            m.row_by_id(TrackId(20)).map(|r| r.track.clips()[0].start),
+            Some(0.5)
+        );
+
+        // Removing the selected track clears the selection; a duplicate key is ignored.
+        let mut rows = updates(&m);
+        rows.retain(|u| u.id != TrackId(20));
+        rows.push(TrackUpdate::new(30, "Dup", Track::default()));
+        assert!(m.update_tracks(rows));
+        assert_eq!(ids(&m), [30, 15]);
+        assert_eq!(
+            m.rows()[0].name.as_ref(),
+            "C",
+            "the first occurrence of a key wins"
+        );
+        assert_eq!(m.selection, None);
     }
 }
