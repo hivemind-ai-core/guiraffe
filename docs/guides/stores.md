@@ -166,7 +166,8 @@ builder calls and costs the same (gated in `guiraffe-bench`).
 ### Protocol control entities
 
 The controls in `guiraffe_components::controls` (`SwitchControl`, `CheckboxControl`,
-`SliderControl`, `TextInputControl`, `SelectControl`) own their state and register on the bus.
+`SliderControl`, `TextInputControl`, `SelectControl`, and `KnobControl` and `NumberFieldControl`
+from [Parameters](parameters.md)) own their state and register on the bus.
 Bind one with a single binding. The rest of its body configures its builder:
 
 ```rust

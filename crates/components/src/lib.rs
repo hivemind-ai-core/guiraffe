@@ -29,6 +29,7 @@ pub mod highlight;
 pub mod icons;
 pub mod kbd;
 pub mod loader;
+pub mod mapping;
 pub mod meter;
 pub mod misc;
 pub mod paper;

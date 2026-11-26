@@ -104,6 +104,13 @@ pub fn entries() -> Vec<Entry> {
         },
         Entry {
             krate: "components",
+            name: "Knob & NumberField",
+            summary: "Parameter controls over a shared value mapping: log Hz, bipolar pan, modulation range, typed entry with units.",
+            covers: &["KnobControl", "NumberFieldControl"],
+            demo: knobs_demo,
+        },
+        Entry {
+            krate: "components",
             name: "SegmentedControl",
             summary: "Animated single choice; keyboard and pointer.",
             covers: &["SegmentedControl"],
@@ -720,6 +727,87 @@ fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
                     .child(control.clone())
                     .into_any_element(),
                 example("Events", log.clone()),
+            ])
+        },
+        window,
+        cx,
+    )
+}
+
+fn knobs_demo(window: &mut Window, cx: &mut App) -> AnyView {
+    use guiraffe_components::controls::{KnobControl, NumberFieldControl, ParamEvent};
+    use guiraffe_components::mapping::{Curve, Unit, ValueMap};
+    playground_with_update(
+        "Live Knob & NumberField",
+        &[Knob::toggle("Disabled")],
+        |window, cx| {
+            let hz = ValueMap::new(20.0, 20_000.0)
+                .curve(Curve::Log)
+                .unit(Unit::Hertz)
+                .default_to(1_000.0);
+            let cutoff = KnobControl::new()
+                .mapping(hz)
+                .label("Cutoff")
+                .diameter(48.)
+                .build(window, cx);
+            let pan = KnobControl::new()
+                .mapping(ValueMap::new(-1.0, 1.0).bipolar(true).decimals(2))
+                .label("Pan")
+                .diameter(48.)
+                .build(window, cx);
+            let depth = KnobControl::new()
+                .mapping(ValueMap::new(0.0, 1.0).unit(Unit::Percent))
+                .value(0.5)
+                .modulation(Some((0.3, 0.8)))
+                .label("Depth")
+                .diameter(48.)
+                .build(window, cx);
+            let field = NumberFieldControl::new()
+                .mapping(hz)
+                .label("Cutoff")
+                .build(window, cx);
+            let attack = NumberFieldControl::new()
+                .mapping(
+                    ValueMap::new(0.001, 10.0)
+                        .curve(Curve::Log)
+                        .unit(Unit::Seconds),
+                )
+                .value(0.01)
+                .label("Attack")
+                .build(window, cx);
+            let log = EventLog::new(cx);
+            for knob in [&cutoff, &pan, &depth] {
+                EventLog::watch::<ParamEvent, _>(&log, knob, cx);
+            }
+            EventLog::watch::<ParamEvent, _>(&log, &field, cx);
+            EventLog::watch::<ParamEvent, _>(&log, &attack, cx);
+            ([cutoff, pan, depth], [field, attack], log)
+        },
+        |(knobs, fields, _), v, cx| {
+            let disabled = v.on(0);
+            for knob in knobs {
+                knob.update(cx, |k, cx| k.set_disabled(disabled, cx));
+            }
+            for field in fields {
+                field.update(cx, |f, cx| f.set_disabled(disabled, cx));
+            }
+        },
+        |(knobs, fields, log), _, _, _| {
+            column([
+                div()
+                    .flex()
+                    .gap(px(24.))
+                    .children(knobs.iter().map(|k| k.clone().into_any_element()))
+                    .into_any_element(),
+                div()
+                    .flex()
+                    .gap(px(12.))
+                    .children(fields.iter().map(|f| f.clone().into_any_element()))
+                    .into_any_element(),
+                example(
+                    "Drag (Shift: fine), scroll, arrow keys; double-click a knob to reset; double-click a field to type 2.5k or 250 ms",
+                    log.clone(),
+                ),
             ])
         },
         window,
