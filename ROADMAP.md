@@ -1,5 +1,33 @@
 # Roadmap
 
+Work is tracked in [GitHub issues](https://github.com/hivemind-ai-core/guiraffe/issues), sequenced
+into [milestones](https://github.com/hivemind-ai-core/guiraffe/milestones). Each milestone is about
+a day of work followed by a night of benchmarking on a quiet machine. Passage, the DAW built on
+GUIraffe, comes first; GPU surfaces and compositing wait until the project that needs them is active.
+Unsequenced work carries the `backlog` label. The sections below give the reasoning; the issues
+are the source of truth.
+
+| Milestone | Theme |
+|---|---|
+| 0.3 | Finish 0.3: trim per-frame buffers, the quiet benchmark night, golden tool in real use, release |
+| 0.3.1 | Passage controls: Knob and NumberField, StepGrid, Tabs, overflow menus, Canvas |
+| 0.3.2 | Passage timeline and port: time ruler, scope and spectrum, clip interaction, frame stats |
+| 0.3.3 | Freeze the `ui!` binding syntax |
+| 0.4 | Our own GPUI fork, tracking gpui-fast |
+| 0.4.1 | Umbrella crate and publishing on the fork |
+| 0.5 | Real-time rendering for Passage: paint-only sinks, boundaries, several changed views |
+| 0.5.1 | Performance budgets |
+| 0.6 | Allocation-free rendering |
+| 0.7 | Compiled `ui!` bindings |
+| 0.7.1 | Compiled `ui!` lists and scheduling |
+| 0.8 | GPU surfaces and compositing |
+| 0.9 | Text |
+| 0.10 | Accessibility |
+| 0.11 | Platforms |
+
+Older section numbers below (0.4 "Text, pixels and platforms", 0.5 "Compiled reactivity") predate
+this sequencing; their items now live in the milestones above.
+
 ## 0.3: One action, every input
 
 **Goal:** any control in a GUIraffe app can be addressed, observed and driven the same way from a
