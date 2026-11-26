@@ -445,14 +445,14 @@ fn advance(
     };
     let mut animating = false;
     let fresh = cell.written.replace(false);
-    for i in 0..frame.channels {
+    for (i, slot) in states.iter_mut().enumerate().take(frame.channels) {
         let input = if fresh {
             cell.levels[i].get()
         } else {
             Level::new(f32::NEG_INFINITY, f32::NAN)
         };
-        let state = states[i].advance(input, now, &b);
-        states[i] = state;
+        let state = slot.advance(input, now, &b);
+        *slot = state;
         frame.peaks[i] = state.peak_at(now, &b);
         frame.holds[i] = state.hold_at(now, &b);
         frame.rms[i] = state.rms;
@@ -519,8 +519,10 @@ impl Element for BarsElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
-        let mut style = Style::default();
-        style.size = size(relative(1.).into(), relative(1.).into());
+        let style = Style {
+            size: size(relative(1.).into(), relative(1.).into()),
+            ..Style::default()
+        };
         (window.request_layout(style, [], cx), ())
     }
     fn prepaint(
@@ -1091,11 +1093,13 @@ impl Element for BankElement {
     ) -> (LayoutId, ()) {
         let n = self.frames.borrow().len() as f32;
         let extent = n * self.width + (n - 1.0).max(0.0) * self.gap;
-        let mut style = Style::default();
-        style.size = if self.options.orientation == Orientation::Vertical {
-            size(px(extent).into(), px(self.options.length).into())
-        } else {
-            size(px(self.options.length).into(), px(extent).into())
+        let style = Style {
+            size: if self.options.orientation == Orientation::Vertical {
+                size(px(extent).into(), px(self.options.length).into())
+            } else {
+                size(px(self.options.length).into(), px(extent).into())
+            },
+            ..Style::default()
         };
         (window.request_layout(style, [], cx), ())
     }

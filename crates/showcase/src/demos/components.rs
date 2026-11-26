@@ -1,8 +1,8 @@
 //! guiraffe-components: typography, surfaces, icons, feedback.
 
 use gpui_kit::{
-    AnyView, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, assets::IconName,
-    div, px,
+    AnyView, App, AppContext, Entity, FontWeight, IntoElement, ParentElement, Styled, Window,
+    assets::IconName, div, px,
 };
 use guiraffe_components::*;
 use guiraffe_core::{ColorName, Size, Variant};
