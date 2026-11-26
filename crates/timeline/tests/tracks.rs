@@ -682,3 +682,78 @@ fn track_inserts_removes_and_moves_keep_state_with_the_key(cx: &mut TestAppConte
         .collect();
     assert_eq!(names, ["select"]);
 }
+
+/// A lock belongs to its clip's key, so it follows the track when tracks move, and the row
+/// that takes the old position stays editable.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn clip_locks_follow_the_track_key(cx: &mut TestAppContext) {
+    let mut m = mount(cx, 3, true); // keys 100, 101, 102
+    let locked = ClipRef::new(101, 1);
+    m.vcx
+        .update(|_, cx| m.view.update(cx, |v, cx| v.set_locked(locked, true, cx)));
+    // Move the locked track to the bottom: 100, 102, 101.
+    let mut next: Vec<_> = m
+        .model()
+        .rows()
+        .iter()
+        .map(|r| TrackUpdate::new(r.id, r.name.clone(), r.track.clone()))
+        .collect();
+    let moved = next.remove(1);
+    next.push(moved);
+    m.vcx.update(|_, cx| m.store.dispatch(SetTracks(next), cx));
+    m.vcx.run_until_parked();
+    let id = m.id.expect("registered");
+    let (moved_at, kept) = m.vcx.update(|window, cx| {
+        let view = m.view.read(cx);
+        let x = view.axis().x(2.0);
+        let grabs = (0..3)
+            .map(|row| view.grab(row, x, cx).is_some())
+            .collect::<Vec<_>>();
+        let refused = ActionBus::dispatch(
+            id,
+            &TracksAction::MoveClip {
+                clip: locked,
+                start: 1.5,
+            }
+            .to_action(),
+            Source::Script,
+            window,
+            cx,
+        );
+        (grabs, refused)
+    });
+    assert_eq!(
+        moved_at,
+        [true, true, false],
+        "only the moved track's clip is locked"
+    );
+    assert_eq!(
+        kept,
+        Err(ActionError::Disabled),
+        "the bus refuses the locked clip too"
+    );
+    assert!(m.vcx.update(|_, cx| m.view.read(cx).is_locked(locked)));
+    // The track now at the old position (102) still moves.
+    let free = ClipRef::new(102, 1);
+    m.vcx.update(|window, cx| {
+        assert!(
+            ActionBus::dispatch(
+                id,
+                &TracksAction::MoveClip {
+                    clip: free,
+                    start: 1.5
+                }
+                .to_action(),
+                Source::Script,
+                window,
+                cx,
+            )
+            .is_ok()
+        );
+    });
+    assert_eq!(m.model().clip(free).map(|c| c.start), Some(1.5));
+}

@@ -409,9 +409,15 @@ fn gantt_and_tracks_row_lock_buttons_toggle_admission(cx: &mut TestAppContext) {
             .expect("lock button")
             .center();
         click(vcx, button, false);
-        assert!(vcx.update(|_, cx| view.read(cx).is_locked(0, id)));
+        assert!(vcx.update(|_, cx| {
+            view.read(cx)
+                .is_locked(guiraffe_timeline::tracks_model::ClipRef::new(0, id))
+        }));
         click(vcx, button, false);
-        assert!(!vcx.update(|_, cx| view.read(cx).is_locked(0, id)));
+        assert!(!vcx.update(|_, cx| {
+            view.read(cx)
+                .is_locked(guiraffe_timeline::tracks_model::ClipRef::new(0, id))
+        }));
     }
 }
 
