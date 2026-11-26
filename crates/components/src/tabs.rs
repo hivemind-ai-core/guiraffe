@@ -19,8 +19,8 @@ use std::{collections::BTreeSet, rc::Rc, sync::Arc};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
-    SharedString, StatefulInteractiveElement, Styled, WeakEntity, Window, assets::IconName,
-    component::Icon, div, prelude::*, px,
+    SharedString, StatefulInteractiveElement, Styled, TestSupportExt, WeakEntity, Window,
+    assets::IconName, component::Icon, div, prelude::*, px,
 };
 use guiraffe_core::{
     GuiraffeTheme, StateKind, Variant,
@@ -324,6 +324,8 @@ pub struct Tabs {
     focused: Option<TabId>,
     focus: FocusHandle,
     id: Option<ControlId>,
+    /// Test hook: draw the focus ring without keyboard focus (goldens).
+    force_ring: bool,
 }
 
 impl EventEmitter<TabsEvent> for Tabs {}
@@ -362,6 +364,7 @@ impl Tabs {
             focused: None,
             focus: cx.focus_handle(),
             id: None,
+            force_ring: false,
         })
     }
 
@@ -389,6 +392,15 @@ impl Tabs {
 
     pub fn selected(&self, cx: &App) -> Option<TabId> {
         self.doc(cx).selected
+    }
+
+    /// Test hook for goldens: give `id` the roving focus and draw its focus ring.
+    #[doc(hidden)]
+    pub fn focus_for_snapshot(&mut self, id: TabId, window: &mut Window, cx: &mut Context<Self>) {
+        self.focused = Some(id);
+        self.force_ring = true;
+        self.focus.focus(window, cx);
+        cx.notify();
     }
 
     /// The tab with keyboard focus.
@@ -543,7 +555,7 @@ impl Render for Tabs {
             .state(StateKind::FocusRing, Variant::Default, None)
             .border
             .to_hsla();
-        let ring_on = guiraffe_core::ring_visible(&self.focus, window);
+        let ring_on = self.force_ring || guiraffe_core::ring_visible(&self.focus, window);
         let badge_bg = theme.variant(None, Variant::Light).background.to_hsla();
         let badge_fg = theme.variant(None, Variant::Light).foreground.to_hsla();
         let view = cx.weak_entity();
@@ -559,6 +571,7 @@ impl Render for Tabs {
             };
             div()
                 .id(tab_element_id(tab.id))
+                .test_support()
                 .role(Role::Tab)
                 .aria_label(tab.label.clone())
                 .aria_selected(selected)
@@ -601,6 +614,7 @@ impl Render for Tabs {
                     d.child(
                         div()
                             .id(tab_close_id(id))
+                            .test_support()
                             .role(Role::Button)
                             .aria_label(SharedString::from(format!("Close {}", tab.label)))
                             .rounded(px(3.))
@@ -628,11 +642,22 @@ impl Render for Tabs {
                             .bg(accent),
                     )
                 })
-                .when(focused, |d| d.border_1().border_color(ring))
+                // Focus ring as an overlay: focus never changes layout.
+                .when(focused, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded_t(px(4.))
+                            .border_1()
+                            .border_color(ring),
+                    )
+                })
         });
         let trailing = self.options.trailing.clone().map(|t| t(window, cx));
         div()
             .id("tabs")
+            .test_support()
             .role(Role::TabList)
             .track_focus(&self.focus)
             .key_context("Tabs")

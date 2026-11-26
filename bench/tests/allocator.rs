@@ -1323,3 +1323,51 @@ fn a_meter_bank_costs_one_view_whatever_its_size() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+// Tabs (0.3.1 #10): an unchanged repaint allocates nothing
+
+struct TabsRoot(gpui_kit::Entity<guiraffe_components::Tabs>);
+impl gpui_kit::Render for TabsRoot {
+    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement, Styled};
+        gpui_kit::div().size_full().child(self.0.clone())
+    }
+}
+
+#[test]
+fn tabs_unchanged_repaint_allocates_nothing() -> anyhow::Result<()> {
+    use gpui_kit::AppContext;
+    use guiraffe_components::tabs::{TabItem, Tabs, TabsDoc, TabsOptions, tabs_store};
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    let window = app.open_window(gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(200.)), |_, cx| {
+        guiraffe_components::init(cx);
+        let tabs = (0..12u64)
+            .map(|i| {
+                let t = TabItem::new(i, format!("Tab {i}")).badge("3");
+                if i % 2 == 0 { t.closable().icon(gpui_kit::assets::IconName::File) } else { t }
+            })
+            .collect();
+        let store = tabs_store(TabsDoc::new(tabs), cx);
+        let view = Tabs::new(store, TabsOptions::default(), cx);
+        cx.new(|_| TabsRoot(view))
+    })?;
+    let frame = |app: &mut gpui_kit::HeadlessAppContext| {
+        app.update_window(window.into(), |_, w, cx| w.draw(cx).clear(cx))
+    };
+    for _ in 0..6 {
+        frame(&mut app)?;
+        app.run_until_parked();
+    }
+    let (r, counts) = count_allocations(|| frame(&mut app))?;
+    r?;
+    eprintln!("tabs unchanged repaint {counts:?}");
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(counts.allocations, 0, "an unchanged repaint allocates nothing");
+    }
+    Ok(())
+}
