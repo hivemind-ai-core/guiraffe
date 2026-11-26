@@ -438,7 +438,7 @@ fn dense_tracks_select_a_clip_by_canvas_position(cx: &mut TestAppContext) {
         let x = vcx.update(|_, cx| view.read(cx).axis().x(f64::from(target) * 2. + 0.75));
         click(vcx, body.origin + point(px(x as f32), px(20.)), false);
         assert_eq!(
-            vcx.update(|_, cx| view.read(cx).selected()),
+            vcx.update(|_, cx| view.read(cx).selected(cx)),
             Some((0, target + 1))
         );
     }
