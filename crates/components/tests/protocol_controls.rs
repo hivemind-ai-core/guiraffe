@@ -331,7 +331,7 @@ fn text_input_typing_and_bus_set_value_identically(cx: &mut TestAppContext) {
         record(vcx, &bus_side),
     ];
     for entity in [&plain, &physical] {
-        let input = vcx.update(|_, cx| entity.read(cx).input().clone());
+        let input = vcx.update(|_, cx| entity.read(cx).input().expect("kit input").clone());
         vcx.update(|window, cx| {
             input.update(cx, |s, cx| s.focus(window, cx));
             window.input("Ada", cx);
@@ -353,7 +353,10 @@ fn text_input_typing_and_bus_set_value_identically(cx: &mut TestAppContext) {
         );
         let (value, kit) = vcx.update(|_, cx| {
             let control = entity.read(cx);
-            (control.value().clone(), control.input().read(cx).value())
+            (
+                control.value().clone(),
+                control.input().expect("kit input").read(cx).value(),
+            )
         });
         assert_eq!((value.as_ref(), kit.as_ref()), ("Ada", "Ada"));
     }
@@ -385,7 +388,7 @@ fn select_confirm_and_bus_select_identically(cx: &mut TestAppContext) {
     ];
     // The kit list's confirm, as a pointer click on an open dropdown emits it.
     for entity in [&plain, &physical] {
-        let state = vcx.update(|_, cx| entity.read(cx).state().clone());
+        let state = vcx.update(|_, cx| entity.read(cx).state().expect("kit state").clone());
         vcx.update(|_, cx| {
             state.update(cx, |_, cx| {
                 cx.emit(SelectEvent::Confirm(Some("Blue".into())))
@@ -555,8 +558,13 @@ fn host_setters_need_no_window_and_never_emit(cx: &mut TestAppContext) {
     let (kit_slider, kit_input, kit_select) = vcx.update(|_, cx| {
         (
             slider.read(cx).state().read(cx).value(),
-            input.read(cx).input().read(cx).value(),
-            select.read(cx).state().read(cx).selected_index(cx),
+            input.read(cx).input().expect("kit input").read(cx).value(),
+            select
+                .read(cx)
+                .state()
+                .expect("kit state")
+                .read(cx)
+                .selected_index(cx),
         )
     });
     assert_eq!(
@@ -613,7 +621,7 @@ fn typed_select_binds_values_by_pointer_and_bus(cx: &mut TestAppContext) {
         record::<_, SelectedValue<Theme>>(vcx, &bus_side),
     ];
     for entity in [&plain, &physical] {
-        let state = vcx.update(|_, cx| entity.read(cx).state().clone());
+        let state = vcx.update(|_, cx| entity.read(cx).state().expect("kit state").clone());
         vcx.update(|_, cx| {
             state.update(cx, |_, cx| {
                 cx.emit(SelectEvent::Confirm(Some("Dark".into())))

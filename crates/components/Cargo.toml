@@ -16,7 +16,8 @@ guiraffe-state.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
-guiraffe-test = { workspace = true, features = ["snapshot", "render", "layout"] }
+guiraffe-test = { workspace = true, features = ["snapshot", "render", "layout", "inspect"] }
+serde_json.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 proptest = "1"
 

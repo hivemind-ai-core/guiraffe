@@ -807,13 +807,15 @@ impl TracksView {
         let (x, _) = self.local(e.position);
         let mut surface = self.surface.clone();
         if surface.navigate(x, dx, dy, zoom) {
-            self.surface.axis = surface.axis;
             let view = ViewRange {
                 start: surface.axis.start,
                 scale: surface.axis.scale,
             };
             self.store
                 .dispatch_now(SetViewport(surface.axis.width, Some(view)), cx);
+            // The model clamps the view to its minimum time: the axis follows it now, so it
+            // is never out of range between this event and the next frame.
+            self.surface.axis = self.store.state(cx).axis(surface.axis.width, self.length);
             cx.notify();
         }
     }

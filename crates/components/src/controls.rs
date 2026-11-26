@@ -11,7 +11,11 @@
 //! Every control has the same surface:
 //! - `XControl::new()` plus builder props, then `.path(..)` to register it on the
 //!   window's action bus at build time. Without a path nothing is registered.
-//! - `build(window, cx) -> Entity<XControl>`.
+//! - `build(window, cx) -> Entity<XControl>`, or `build_later(cx)` where no window is at
+//!   hand: the path is reserved at once and registers in the window the control first
+//!   renders in, following it if it renders in another. Until then the bus answers
+//!   queries and actions for the path with `ActionError::NotMounted`. Text inputs, selects
+//!   and number fields make their kit state at that first render.
 //! - A typed event (`XEvent`) per user-visible change. Bindings subscribe to it for
 //!   `control → store`.
 //! - Host setters (`set_checked`, `set_value`, ...) for `store → control`. They never
@@ -57,7 +61,18 @@ struct Identity {
     base: SharedString,
     /// Source of a direct (unregistered) input while its `apply` runs.
     direct: Option<Source>,
+    /// For a control built without a window ([`ActionBus::reserve`]): what it registers
+    /// as, in the window it renders in.
+    deferred: Option<(&'static str, Capabilities)>,
+    /// The window a deferred control is registered in.
+    mounted: Option<gpui_kit::WindowId>,
+    /// The window the control was built for or last rendered in, which a kit state
+    /// subscription routes its input through ([`route_in`]).
+    window: WindowCell,
 }
+
+/// The window a control lives in, shared with its kit state subscriptions.
+type WindowCell = Rc<std::cell::Cell<Option<AnyWindowHandle>>>;
 
 impl Identity {
     fn element(&self) -> ElementId {
@@ -75,14 +90,16 @@ impl Identity {
     }
 }
 
+/// Build a control, registering its path in `window`; or, without a window, reserving the
+/// path for the window it first renders in ([`mount`]).
 fn build<T: Observe + Drive + Render + Identified>(
     kind: &'static str,
     capabilities: Capabilities,
     path: Option<SharedString>,
     name: Option<SharedString>,
-    window: &mut Window,
+    mut window: Option<&mut Window>,
     cx: &mut App,
-    make: impl FnOnce(Identity, &mut Window, &mut Context<T>) -> T,
+    make: impl FnOnce(Identity, Option<&mut Window>, &mut Context<T>) -> T,
 ) -> Entity<T> {
     let entity = cx.new(|cx| {
         // An explicit element id names the element even when a path registers the control,
@@ -95,16 +112,54 @@ fn build<T: Observe + Drive + Render + Identified>(
                 id: None,
                 base,
                 direct: None,
+                deferred: None,
+                mounted: None,
+                window: Rc::new(std::cell::Cell::new(
+                    window.as_ref().map(|window| window.window_handle()),
+                )),
             },
-            window,
+            window.as_deref_mut(),
             cx,
         )
     });
     if let Some(path) = path {
-        let id = ActionBus::register(&path, &entity, kind, capabilities, window, cx);
-        entity.update(cx, |control, _| control.identity_mut().id = Some(id));
+        match window {
+            Some(window) => {
+                let id = ActionBus::register(&path, &entity, kind, capabilities, window, cx);
+                entity.update(cx, |control, _| control.identity_mut().id = Some(id));
+            }
+            None => {
+                let id = ActionBus::reserve(&path, &entity, cx);
+                entity.update(cx, |control, _| {
+                    let identity = control.identity_mut();
+                    identity.id = Some(id);
+                    identity.deferred = Some((kind, capabilities));
+                });
+            }
+        }
     }
     entity
+}
+
+/// Register a control built without a window in the window it renders in, at its first
+/// render there. Once registered, a frame in the same window is one comparison.
+fn mount<T: Observe + Drive + Identified>(control: &mut T, window: &Window, cx: &mut Context<T>) {
+    let identity = control.identity_mut();
+    let handle = window.window_handle();
+    if identity.window.get() != Some(handle) {
+        identity.window.set(Some(handle));
+    }
+    let Some((kind, capabilities)) = identity.deferred else {
+        return;
+    };
+    let here = window.window_handle().window_id();
+    if identity.mounted == Some(here) {
+        return;
+    }
+    identity.mounted = Some(here);
+    if let Some(id) = identity.id {
+        ActionBus::mount(id, &cx.entity(), kind, capabilities, window, cx);
+    }
 }
 
 /// Access to the shared identity, for the routing helpers.
@@ -136,17 +191,26 @@ fn route<T: Observe + Drive + Identified>(
     }
 }
 
-/// Route from a kit state subscription, which runs outside any window update.
+/// Route from a kit state subscription, which runs outside any window update, in the
+/// window the control lives in.
 fn route_in<T: Observe + Drive + Identified>(
-    handle: AnyWindowHandle,
+    window: &WindowCell,
     this: &WeakEntity<T>,
     action: Action,
     source: Source,
     cx: &mut App,
 ) -> Result<Outcome, ActionError> {
+    let handle = window.get().ok_or(ActionError::NotMounted)?;
     handle
         .update(cx, |_, window, cx| route(this, action, source, window, cx))
         .unwrap_or(Err(ActionError::UnknownTarget))
+}
+
+/// Run `f` in the window the control lives in, if it lives in one.
+fn in_window(window: &WindowCell, cx: &mut App, f: impl FnOnce(&mut Window, &mut App)) {
+    if let Some(handle) = window.get() {
+        handle.update(cx, |_, window, cx| f(window, cx)).ok();
+    }
 }
 
 fn action(name: &'static str, payload: Value) -> Action {
@@ -251,7 +315,17 @@ impl ButtonBuilder {
         self.name = Some(name.into());
         self
     }
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<ButtonControl> {
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<ButtonControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<ButtonControl> {
         build(
             "button",
             Capabilities::ACTIVATE,
@@ -340,7 +414,8 @@ impl Drive for ButtonControl {
 }
 
 impl Render for ButtonControl {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         let this = cx.entity().downgrade();
         Button::new(self.identity.element())
             .label(self.label.clone())
@@ -417,7 +492,17 @@ macro_rules! toggle_control {
                 self.name = Some(name.into());
                 self
             }
+            /// Build the control, registering its path (if any) in `window`.
             pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<$control> {
+                self.build_with(Some(window), cx)
+            }
+            /// Build the control without a window. A path is reserved now and registers in the
+            /// window the control first renders in, following it to another window; until then,
+            /// the bus answers queries for it with `ActionError::NotMounted`.
+            pub fn build_later(self, cx: &mut App) -> Entity<$control> {
+                self.build_with(None, cx)
+            }
+            fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<$control> {
                 build(
                     $kind,
                     Capabilities::TOGGLE | Capabilities::SET_VALUE,
@@ -517,7 +602,8 @@ macro_rules! toggle_control {
         }
 
         impl Render for $control {
-            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                mount(self, window, cx);
                 let this = cx.entity().downgrade();
                 $kit::new(self.identity.element())
                     .label(self.label.clone())
@@ -651,8 +737,17 @@ impl SliderBuilder {
         self.name = Some(name.into());
         self
     }
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<SliderControl> {
-        let handle = window.window_handle();
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<SliderControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<SliderControl> {
         let map = self.map;
         let linear = self.linear;
         build(
@@ -663,6 +758,7 @@ impl SliderBuilder {
             window,
             cx,
             |identity, _, cx| {
+                let handle = identity.window.clone();
                 let space = Space::of(linear, &*map);
                 let value =
                     space.constrain(&*map, self.value.unwrap_or_else(|| map.default_value()));
@@ -683,7 +779,7 @@ impl SliderBuilder {
                     };
                     let value = space.value_of(&*read, normal);
                     let routed = route_in(
-                        handle,
+                        &handle,
                         &this,
                         action(names::SET_VALUE, Value::Num(value)),
                         Source::Pointer,
@@ -694,11 +790,9 @@ impl SliderBuilder {
                         && let Some(control) = this.upgrade()
                     {
                         let current = control.read(cx).normal();
-                        handle
-                            .update(cx, |_, window, cx| {
-                                state.update(cx, |s, cx| s.set_value(current, window, cx))
-                            })
-                            .ok();
+                        in_window(&handle, cx, |window, cx| {
+                            state.update(cx, |s, cx| s.set_value(current, window, cx))
+                        });
                     }
                 });
                 SliderControl {
@@ -898,6 +992,7 @@ impl Drive for SliderControl {
 
 impl Render for SliderControl {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         if std::mem::take(&mut self.pending) {
             self.sync_state(window, cx);
         }
@@ -960,8 +1055,17 @@ impl TextInputBuilder {
         self.name = Some(name.into());
         self
     }
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<TextInputControl> {
-        let handle = window.window_handle();
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<TextInputControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<TextInputControl> {
         build(
             "text_input",
             Capabilities::SET_VALUE | Capabilities::FOCUS,
@@ -970,44 +1074,17 @@ impl TextInputBuilder {
             window,
             cx,
             |identity, window, cx| {
-                let placeholder = self.placeholder;
-                let input =
-                    cx.new(|cx| InputState::new(window, cx).placeholder(placeholder.clone()));
-                let value = self.value;
-                input.update(cx, |state, cx| state.set_value(value.clone(), window, cx));
-                let this: WeakEntity<TextInputControl> = cx.entity().downgrade();
-                let subscription = App::subscribe(cx, &input, move |input, event, cx| {
-                    if !matches!(event, InputEvent::Change) {
-                        return;
-                    }
-                    let Some(control) = this.upgrade() else {
-                        return;
-                    };
-                    let typed = input.read(cx).value();
-                    let current = control.read(cx).value.clone();
-                    if typed == current {
-                        return;
-                    }
-                    let routed = route_in(
-                        handle,
-                        &this,
-                        action(names::SET_VALUE, Value::Str(typed)),
-                        Source::Keyboard,
-                        cx,
-                    );
-                    if routed.is_err() {
-                        handle
-                            .update(cx, |_, window, cx| {
-                                input.update(cx, |s, cx| s.set_value(current, window, cx))
-                            })
-                            .ok();
-                    }
+                // The kit state needs a window; built without one, it is made at the
+                // first render.
+                let kit = window.map(|window| {
+                    new_input(&identity.window, &self.value, &self.placeholder, window, cx)
                 });
+                let (input, subscription) = kit.unzip();
                 TextInputControl {
                     identity,
                     input,
-                    value,
-                    placeholder,
+                    value: self.value,
+                    placeholder: self.placeholder,
                     value_pending: false,
                     placeholder_pending: false,
                     disabled: self.disabled,
@@ -1018,18 +1095,62 @@ impl TextInputBuilder {
     }
 }
 
+/// The kit state of a [`TextInputControl`] living in `window`, routing typing as
+/// keyboard input.
+fn new_input(
+    handle: &WindowCell,
+    value: &SharedString,
+    placeholder: &SharedString,
+    window: &mut Window,
+    cx: &mut Context<TextInputControl>,
+) -> (Entity<InputState>, Subscription) {
+    let placeholder = placeholder.clone();
+    let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+    let value = value.clone();
+    input.update(cx, |state, cx| state.set_value(value, window, cx));
+    let this: WeakEntity<TextInputControl> = cx.entity().downgrade();
+    let handle = handle.clone();
+    let subscription = App::subscribe(cx, &input, move |input, event, cx| {
+        if !matches!(event, InputEvent::Change) {
+            return;
+        }
+        let Some(control) = this.upgrade() else {
+            return;
+        };
+        let typed = input.read(cx).value();
+        let current = control.read(cx).value.clone();
+        if typed == current {
+            return;
+        }
+        let routed = route_in(
+            &handle,
+            &this,
+            action(names::SET_VALUE, Value::Str(typed)),
+            Source::Keyboard,
+            cx,
+        );
+        if routed.is_err() {
+            in_window(&handle, cx, |window, cx| {
+                input.update(cx, |s, cx| s.set_value(current, window, cx))
+            });
+        }
+    });
+    (input, subscription)
+}
+
 /// A single-line text input. Actions: `set_value` (str), `focus`.
 /// Outcome: the new text.
 pub struct TextInputControl {
     identity: Identity,
-    input: Entity<InputState>,
+    /// `None` until the first render for a control built without a window.
+    input: Option<Entity<InputState>>,
     value: SharedString,
     placeholder: SharedString,
     /// Host writes the kit state has not seen yet.
     value_pending: bool,
     placeholder_pending: bool,
     disabled: bool,
-    _subscription: Subscription,
+    _subscription: Option<Subscription>,
 }
 
 impl TextInputControl {
@@ -1040,9 +1161,27 @@ impl TextInputControl {
     pub fn value(&self) -> &SharedString {
         &self.value
     }
-    /// The kit state that renders the input and receives typing.
-    pub fn input(&self) -> &Entity<InputState> {
-        &self.input
+    /// The kit state that renders the input and receives typing; `None` before the first
+    /// render of a control built without a window (`build_later`).
+    pub fn input(&self) -> Option<&Entity<InputState>> {
+        self.input.as_ref()
+    }
+    /// The kit state, made in `window` if the control was built without one.
+    fn kit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
+        if let Some(input) = &self.input {
+            return input.clone();
+        }
+        let (input, subscription) = new_input(
+            &self.identity.window,
+            &self.value,
+            &self.placeholder,
+            window,
+            cx,
+        );
+        self.input = Some(input.clone());
+        self._subscription = Some(subscription);
+        self.placeholder_pending = false;
+        input
     }
     /// Host write: changes the text without emitting an event. Needs no window;
     /// the kit state follows at the next render.
@@ -1076,14 +1215,14 @@ impl TextInputControl {
     }
     fn sync_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.value_pending = false;
-        if self.input.read(cx).value() != self.value {
+        let input = self.kit(window, cx);
+        if input.read(cx).value() != self.value {
             let value = self.value.clone();
-            self.input
-                .update(cx, |state, cx| state.set_value(value, window, cx));
+            input.update(cx, |state, cx| state.set_value(value, window, cx));
         }
         if std::mem::take(&mut self.placeholder_pending) {
             let placeholder = self.placeholder.clone();
-            self.input.update(cx, |state, cx| {
+            input.update(cx, |state, cx| {
                 state.set_placeholder(placeholder, window, cx)
             });
         }
@@ -1134,7 +1273,8 @@ impl Drive for TextInputControl {
                 Ok(Outcome(Value::Str(self.value.clone())))
             }
             TextInputAction::Focus => {
-                self.input.update(cx, |state, cx| state.focus(window, cx));
+                self.kit(window, cx)
+                    .update(cx, |state, cx| state.focus(window, cx));
                 Ok(Outcome::EMPTY)
             }
         }
@@ -1143,13 +1283,15 @@ impl Drive for TextInputControl {
 
 impl Render for TextInputControl {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         if self.value_pending || self.placeholder_pending {
             self.sync_input(window, cx);
         }
+        let input = self.kit(window, cx);
         div()
             .id(self.identity.element())
             .w_full()
-            .child(Input::new(&self.input).disabled(self.disabled))
+            .child(Input::new(&input).disabled(self.disabled))
     }
 }
 
@@ -1247,8 +1389,17 @@ impl<T: SelectValue> SelectBuilder<T> {
         self.name = Some(name.into());
         self
     }
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<SelectControl<T>> {
-        let handle = window.window_handle();
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<SelectControl<T>> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<SelectControl<T>> {
         build(
             "select",
             Capabilities::SELECT,
@@ -1260,52 +1411,17 @@ impl<T: SelectValue> SelectBuilder<T> {
                 let (values, labels): (Vec<T>, Vec<SharedString>) =
                     self.options.into_iter().unzip();
                 let selected = self.selected.filter(|&i| i < labels.len());
-                let items = labels.clone();
-                let state =
-                    cx.new(|cx| SelectState::new(items, selected.map(IndexPath::new), window, cx));
-                let this: WeakEntity<SelectControl<T>> = cx.entity().downgrade();
-                let subscription = App::subscribe(cx, &state, move |state, event, cx| {
-                    let SelectEvent::Confirm(Some(label)) = event else {
-                        return;
-                    };
-                    let Some(control) = this.upgrade() else {
-                        return;
-                    };
-                    let (index, current) = {
-                        let control = control.read(cx);
-                        (
-                            control.labels.iter().position(|l| l == label),
-                            control.selected,
-                        )
-                    };
-                    let Some(index) = index else {
-                        return;
-                    };
-                    if Some(index) == current {
-                        return;
-                    }
-                    let routed = route_in(
-                        handle,
-                        &this,
-                        action(names::SELECT, Value::Num(index as f64)),
-                        Source::Pointer,
-                        cx,
-                    );
-                    if routed.is_err() {
-                        handle
-                            .update(cx, |_, window, cx| {
-                                state.update(cx, |s, cx| {
-                                    s.set_selected_index(current.map(IndexPath::new), window, cx)
-                                })
-                            })
-                            .ok();
-                    }
-                });
+                let labels: Rc<[SharedString]> = labels.into();
+                // The kit state needs a window; built without one, it is made at the
+                // first render.
+                let (state, subscription) = window
+                    .map(|window| new_select(&identity.window, &labels, selected, window, cx))
+                    .unzip();
                 SelectControl {
                     identity,
                     state,
                     values: values.into(),
-                    labels: labels.into(),
+                    labels,
                     selected,
                     label: self.label,
                     disabled: self.disabled,
@@ -1317,11 +1433,63 @@ impl<T: SelectValue> SelectBuilder<T> {
     }
 }
 
+/// The kit state of a [`SelectControl`] living in `window`, routing a confirmed choice
+/// as pointer input.
+fn new_select<T: SelectValue>(
+    handle: &WindowCell,
+    labels: &Rc<[SharedString]>,
+    selected: Option<usize>,
+    window: &mut Window,
+    cx: &mut Context<SelectControl<T>>,
+) -> (Entity<SelectState<Vec<SharedString>>>, Subscription) {
+    let items = labels.to_vec();
+    let state = cx.new(|cx| SelectState::new(items, selected.map(IndexPath::new), window, cx));
+    let this: WeakEntity<SelectControl<T>> = cx.entity().downgrade();
+    let handle = handle.clone();
+    let subscription = App::subscribe(cx, &state, move |state, event, cx| {
+        let SelectEvent::Confirm(Some(label)) = event else {
+            return;
+        };
+        let Some(control) = this.upgrade() else {
+            return;
+        };
+        let (index, current) = {
+            let control = control.read(cx);
+            (
+                control.labels.iter().position(|l| l == label),
+                control.selected,
+            )
+        };
+        let Some(index) = index else {
+            return;
+        };
+        if Some(index) == current {
+            return;
+        }
+        let routed = route_in(
+            &handle,
+            &this,
+            action(names::SELECT, Value::Num(index as f64)),
+            Source::Pointer,
+            cx,
+        );
+        if routed.is_err() {
+            in_window(&handle, cx, |window, cx| {
+                state.update(cx, |s, cx| {
+                    s.set_selected_index(current.map(IndexPath::new), window, cx)
+                })
+            });
+        }
+    });
+    (state, subscription)
+}
+
 /// A dropdown select over typed values; `SelectControl` alone selects labels.
 /// Actions: `select` (index). Outcome: the selected label.
 pub struct SelectControl<T: SelectValue = SharedString> {
     identity: Identity,
-    state: Entity<SelectState<Vec<SharedString>>>,
+    /// `None` until the first render for a control built without a window.
+    state: Option<Entity<SelectState<Vec<SharedString>>>>,
     values: Rc<[T]>,
     labels: Rc<[SharedString]>,
     selected: Option<usize>,
@@ -1329,7 +1497,7 @@ pub struct SelectControl<T: SelectValue = SharedString> {
     disabled: bool,
     /// A host write the kit state has not seen yet.
     pending: bool,
-    _subscription: Subscription,
+    _subscription: Option<Subscription>,
 }
 
 impl SelectControl<SharedString> {
@@ -1353,8 +1521,30 @@ impl<T: SelectValue> SelectControl<T> {
         self.values.get(self.selected?)
     }
     /// The kit state that renders the dropdown and receives pointer input.
-    pub fn state(&self) -> &Entity<SelectState<Vec<SharedString>>> {
-        &self.state
+    /// The kit state; `None` before the first render of a control built without a
+    /// window (`build_later`).
+    pub fn state(&self) -> Option<&Entity<SelectState<Vec<SharedString>>>> {
+        self.state.as_ref()
+    }
+    /// The kit state, made in `window` if the control was built without one.
+    fn kit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SelectState<Vec<SharedString>>> {
+        if let Some(state) = &self.state {
+            return state.clone();
+        }
+        let (state, subscription) = new_select(
+            &self.identity.window,
+            &self.labels,
+            self.selected,
+            window,
+            cx,
+        );
+        self.state = Some(state.clone());
+        self._subscription = Some(subscription);
+        state
     }
     /// Host write: changes the selection without emitting an event. Needs no
     /// window; the kit state follows at the next render.
@@ -1388,11 +1578,11 @@ impl<T: SelectValue> SelectControl<T> {
             cx.notify();
         }
     }
-    fn sync_state(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn sync_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let wanted = self.selected.map(IndexPath::new);
-        if self.state.read(cx).selected_index(cx) != wanted {
-            self.state
-                .update(cx, |state, cx| state.set_selected_index(wanted, window, cx));
+        let state = self.kit(window, cx);
+        if state.read(cx).selected_index(cx) != wanted {
+            state.update(cx, |state, cx| state.set_selected_index(wanted, window, cx));
         }
     }
 }
@@ -1472,10 +1662,12 @@ impl<T: SelectValue> Drive for SelectControl<T> {
 
 impl<T: SelectValue> Render for SelectControl<T> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         if std::mem::take(&mut self.pending) {
             self.sync_state(window, cx);
         }
-        let mut select = Select::new(&self.state).disabled(self.disabled);
+        let state = self.kit(window, cx);
+        let mut select = Select::new(&state).disabled(self.disabled);
         if !self.label.is_empty() {
             select = select.accessibility_label(self.label.clone());
         }
@@ -1513,7 +1705,17 @@ impl TabsBuilder {
         self.name = Some(name.into());
         self
     }
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<TabsControl> {
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<TabsControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<TabsControl> {
         build(
             "tabs",
             Capabilities::SELECT,
@@ -1602,7 +1804,8 @@ impl Drive for TabsControl {
 }
 
 impl Render for TabsControl {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         let this = cx.entity().downgrade();
         let identity = &self.identity;
         TabBar::new(identity.element())
@@ -1660,7 +1863,17 @@ impl MenuBuilder {
         self.name = Some(name.into());
         self
     }
+    /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<MenuControl> {
+        self.build_with(Some(window), cx)
+    }
+    /// Build the control without a window. A path is reserved now and registers in the
+    /// window the control first renders in, following it to another window; until then,
+    /// the bus answers queries for it with `ActionError::NotMounted`.
+    pub fn build_later(self, cx: &mut App) -> Entity<MenuControl> {
+        self.build_with(None, cx)
+    }
+    fn build_with(self, window: Option<&mut Window>, cx: &mut App) -> Entity<MenuControl> {
         build(
             "menu",
             Capabilities::ACTIVATE,
@@ -1728,7 +1941,8 @@ impl Drive for MenuControl {
 }
 
 impl Render for MenuControl {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        mount(self, window, cx);
         let this = cx.entity().downgrade();
         let identity = &self.identity;
         div()

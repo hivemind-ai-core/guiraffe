@@ -138,6 +138,9 @@ impl From<Value> for Outcome {
 #[non_exhaustive]
 pub enum ActionError {
     UnknownTarget,
+    /// The path is reserved by a control built without a window
+    /// ([`ActionBus::reserve`]) that has not rendered in this window yet.
+    NotMounted,
     Unsupported,
     Disabled,
     Invalid(&'static str),
@@ -332,6 +335,20 @@ struct Entry {
 struct Buses(HashMap<WindowId, WindowBus>);
 impl Global for Buses {}
 
+/// Paths reserved by controls built without a window, which register in the window they
+/// first render in. See [`ActionBus::reserve`].
+#[derive(Default)]
+struct Reserved(HashMap<ControlId, Reservation>);
+impl Global for Reserved {}
+
+struct Reservation {
+    owner: gpui_kit::EntityId,
+    /// The window it is registered in, once it rendered in one.
+    window: Option<WindowId>,
+    site: &'static Location<'static>,
+    _release: gpui_kit::Subscription,
+}
+
 /// The `dispatch_batch` currently running on this app, if any. Stores read it to record a
 /// batch's writes as one undo step, so no interceptor is installed and a single `dispatch`
 /// keeps the hook-free fast path.
@@ -406,6 +423,121 @@ impl ActionBus {
         id
     }
 
+    /// Reserve `path` for a control built without a window. It registers in the window it
+    /// first renders in through [`ActionBus::mount`], and moves there if it later renders
+    /// in another. Until then, a query or a dispatch for the path in any window answers
+    /// [`ActionError::NotMounted`]. The reservation ends with the entity. A path reserved
+    /// twice is a duplicate, rejected in debug builds as [`ActionBus::register`] rejects one.
+    #[track_caller]
+    pub fn reserve<T: 'static>(path: &str, entity: &Entity<T>, cx: &mut App) -> ControlId {
+        let id = ControlId::intern(path, cx);
+        let owner = entity.entity_id();
+        if let Some(existing) = cx.default_global::<Reserved>().0.get(&id) {
+            debug_assert!(
+                existing.owner == owner,
+                "duplicate control {path} at {} and {}",
+                existing.site,
+                Location::caller()
+            );
+            return id;
+        }
+        let release = cx.observe_release(entity, move |_, cx| {
+            let Some(reservation) = cx.default_global::<Reserved>().0.remove(&id) else {
+                return;
+            };
+            if let Some(window) = reservation.window
+                && let Some(bus) = cx.default_global::<Buses>().0.get_mut(&window)
+                && bus
+                    .entries
+                    .get(&id)
+                    .is_some_and(|entry| entry.owner == owner)
+            {
+                bus.entries.remove(&id);
+            }
+        });
+        cx.default_global::<Reserved>().0.insert(
+            id,
+            Reservation {
+                owner,
+                window: None,
+                site: Location::caller(),
+                _release: release,
+            },
+        );
+        id
+    }
+
+    /// Register the control that reserved `id` ([`ActionBus::reserve`]) in `window`, which
+    /// it renders in, moving its registration there from the window it was registered in
+    /// before. Returns whether anything changed; a control calls it when it renders in a
+    /// window other than the last one, so a frame in the same window costs nothing.
+    pub fn mount<T: Observe + Drive>(
+        id: ControlId,
+        entity: &Entity<T>,
+        kind: &'static str,
+        capabilities: Capabilities,
+        window: &Window,
+        cx: &mut App,
+    ) -> bool {
+        let wid = window.window_handle().window_id();
+        let owner = entity.entity_id();
+        let (previous, site) = match cx.default_global::<Reserved>().0.get_mut(&id) {
+            Some(reservation) if reservation.owner == owner => {
+                if reservation.window == Some(wid) {
+                    return false;
+                }
+                (reservation.window.replace(wid), reservation.site)
+            }
+            _ => return false,
+        };
+        if let Some(previous) = previous
+            && let Some(bus) = cx.default_global::<Buses>().0.get_mut(&previous)
+            && bus
+                .entries
+                .get(&id)
+                .is_some_and(|entry| entry.owner == owner)
+        {
+            bus.entries.remove(&id);
+        }
+        let bus = Self::window_bus(window, cx);
+        if let Some(existing) = bus.entries.get(&id) {
+            debug_assert!(
+                existing.owner == owner,
+                "duplicate control {id:?} at {} and {}",
+                existing.site,
+                site
+            );
+            return false;
+        }
+        // The reservation's release removes the entry; the entry keeps no subscription of
+        // its own.
+        let release = gpui_kit::Subscription::new(|| {});
+        Self::window_bus(window, cx).entries.insert(
+            id,
+            Entry {
+                owner,
+                endpoint: Rc::new(entity.downgrade()),
+                kind,
+                capabilities,
+                site,
+                _release: release,
+            },
+        );
+        true
+    }
+
+    /// What a missing target means: a path reserved but not rendered here yet, or none.
+    fn missing(id: ControlId, cx: &App) -> ActionError {
+        if cx
+            .try_global::<Reserved>()
+            .is_some_and(|reserved| reserved.0.contains_key(&id))
+        {
+            ActionError::NotMounted
+        } else {
+            ActionError::UnknownTarget
+        }
+    }
+
     /// Release this entity's registration before re-keying or moving windows.
     /// A stale owner cannot remove the current occupant of the same path.
     pub fn unregister<T: 'static>(
@@ -453,10 +585,10 @@ impl ActionBus {
         Some((entry.kind, entry.capabilities))
     }
     pub fn query(id: ControlId, window: &Window, cx: &App) -> Result<ControlSnapshot, ActionError> {
-        Self::bus(window, cx)?
-            .entries
-            .get(&id)
-            .ok_or(ActionError::UnknownTarget)?
+        Self::bus(window, cx)
+            .ok()
+            .and_then(|bus| bus.entries.get(&id))
+            .ok_or_else(|| Self::missing(id, cx))?
             .endpoint
             .snapshot(cx)
     }
@@ -467,11 +599,11 @@ impl ActionBus {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<Outcome, ActionError> {
-        let bus = Self::bus(window, cx)?;
+        let bus = Self::bus(window, cx).map_err(|_| Self::missing(id, cx))?;
         let target = bus.entries.get(&id).map(|e| e.endpoint.clone());
         if bus.hooks.is_empty() {
             // The empty interceptor list costs a branch (design section 8.5).
-            let target = target.ok_or(ActionError::UnknownTarget)?;
+            let target = target.ok_or_else(|| Self::missing(id, cx))?;
             return with_source(source, || target.apply(action, window, cx));
         }
         let hooks = bus.hooks.clone();
@@ -565,7 +697,7 @@ impl ActionBus {
                 hook.before(id, action, source, window, cx)
             })
             .and_then(|()| {
-                let target = target.ok_or(ActionError::UnknownTarget)?;
+                let target = target.ok_or_else(|| Self::missing(id, cx))?;
                 with_source(source, || target.apply(action, window, cx))
             });
         for hook in hooks[..called].iter().rev() {
