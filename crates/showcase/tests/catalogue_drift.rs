@@ -809,6 +809,18 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Finishes the active native input gesture.",
     ),
     (
+        "timeline::CurveView::set_curve",
+        "Host write for an embedding view; documents bind the curves prop.",
+    ),
+    (
+        "timeline::CurveView::set_view",
+        "Host write for an embedding view (a dope sheet lane).",
+    ),
+    (
+        "timeline::CurveView::event Released",
+        "Ends a drag for an embedding view; documents receive change.",
+    ),
+    (
         "timeline::DopeSheet::with_store",
         "Store-backed constructor for Rust hosts; documents construct from props.",
     ),
@@ -1428,8 +1440,14 @@ fn covered(surface: &str) -> bool {
             ("timeline::DopeSheet", "SelectionChanged") => "selection-change",
             (
                 "timeline::DopeSheet",
-                "KeyInserted" | "KeysRemoved" | "KeysDuplicated" | "KeyValueChanged"
-                | "SegmentInterpChanged" | "SegmentBent" | "SpanToggled" | "CurveEdited",
+                "KeyInserted"
+                | "KeysRemoved"
+                | "KeysDuplicated"
+                | "KeyValueChanged"
+                | "SegmentInterpChanged"
+                | "SegmentBent"
+                | "SpanToggled"
+                | "CurveEdited",
             ) => "change",
             ("timeline::DopeSheet", "ChannelChanged") => "channel-change",
             ("components::SpeedDial", "Open") => "change",

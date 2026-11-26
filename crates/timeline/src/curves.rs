@@ -1,9 +1,10 @@
 //! Keyframe curves for dope sheets and curve editors: keys with constant, linear or bezier
 //! interpolation (bezier uses per-key tangent handles in (time, value) space).
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Interp {
     Constant,
+    #[default]
     Linear,
     Bezier,
     /// Starts slow: `u²`.
@@ -52,7 +53,7 @@ impl Interp {
 /// The single definition every view draws and [`Curve::eval`] samples.
 pub fn segment_value(a: &Key, b: &Key, t: f64) -> f64 {
     let span = b.t - a.t;
-    if !(span > 0.0) {
+    if span.is_nan() || span <= 0.0 {
         return a.v;
     }
     let u = ((t - a.t) / span).clamp(0.0, 1.0);

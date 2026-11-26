@@ -2047,12 +2047,12 @@ fn segment_canvas(
                 ));
             };
             window.paint_layer(b, |window| {
-                for row in start..end {
+                for (row, row_top) in tops.iter().enumerate().take(end).skip(start) {
                     let index = sheet.model.rows()[row].channel;
                     let Some(c) = doc.channels().get(index) else {
                         continue;
                     };
-                    let top = tops[row] - sheet.offset;
+                    let top = row_top - sheet.offset;
                     if focused && row == sheet.cursor_row {
                         let mut hl = ink;
                         hl.a = 0.08;

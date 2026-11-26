@@ -194,12 +194,6 @@ pub struct ChannelCurve {
     pub default_interp: Interp,
 }
 
-impl Default for Interp {
-    fn default() -> Self {
-        Interp::Linear
-    }
-}
-
 impl ChannelCurve {
     /// Keys are sorted; a key whose time or id repeats an earlier one, or that isn't finite,
     /// is dropped.
