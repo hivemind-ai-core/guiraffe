@@ -1248,7 +1248,8 @@ mod mounted {
                 for k in 0..per_track {
                     track.insert(k as f64 * 2. + (t % 4) as f64 * 0.25, 1.5);
                 }
-                TrackRow::new(format!("Track {t}"), track).with_height([40., 64., 96.][t % 3])
+                TrackRow::new(t as u64, format!("Track {t}"), track)
+                    .with_height([40., 64., 96.][t % 3])
             })
             .collect();
         let length = per_track as f64 * 2. + 1.;

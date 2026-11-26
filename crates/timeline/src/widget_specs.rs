@@ -54,6 +54,7 @@ pub static TRACKS: WidgetSpec = WidgetSpec {
         choice("lock-style", "\"badge\"", LOCK),
         choice("global-lock-style", "\"none\"", LOCK),
         prop("selected", "track-selection", "null"),
+        choice("header", "\"default\"", &["default", "hidden"]),
     ],
     accepts_children: false,
     events: &[

@@ -40,7 +40,8 @@ fn field<'a>(value: &'a Value, name: &str) -> &'a Value {
 
 #[derive(Default)]
 struct Tracks {
-    tracks: Vec<(String, Track)>,
+    /// Keyed updates: a record's `id` (else its position) and optional `height`.
+    tracks: Vec<TrackUpdate>,
     locks: HashSet<(usize, u32)>,
 }
 
@@ -100,9 +101,13 @@ impl Tracks {
                     Some(clip)
                 })
                 .collect();
-            result
-                .tracks
-                .push((name.to_owned(), Track::from_validated_clips(clips)));
+            let key = field(value, "id")
+                .as_f64()
+                .filter(|v| *v >= 0.0 && v.fract() == 0.0 && *v <= 9_007_199_254_740_991.0)
+                .map_or(track as u64, |v| v as u64);
+            let mut update = TrackUpdate::new(key, name, Track::from_validated_clips(clips));
+            update.height = field(value, "height").as_f64().map(|h| h as f32);
+            result.tracks.push(update);
         }
         result
     }
@@ -123,6 +128,7 @@ struct TrackDocument {
     global_lock_style: LockStyle,
     selection: Option<Option<(usize, u32)>>,
     handlers: [Option<EventHandler>; 2],
+    hidden_header: bool,
 }
 
 impl TrackDocument {
@@ -172,6 +178,7 @@ impl TrackDocument {
                     .zip(selection.list_get(1).and_then(uint))
             }),
             handlers: std::array::from_fn(|i| node.handler(i)),
+            hidden_header: node.prop(12).as_str() == Some("hidden"),
         }
     }
 }
@@ -189,7 +196,10 @@ impl RenderOnce for TrackDocument {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.key, cx, |window, cx| {
             let source = Tracks::parse(&self.tracks);
-            let timeline = TracksView::new(source.tracks, self.format, self.length, cx);
+            let mut model = crate::tracks_model::TracksModel::default();
+            model.update_tracks(source.tracks);
+            let store = crate::tracks_model::tracks_store(model, 100, cx);
+            let timeline = TracksView::with_store(store, self.format, self.length, cx);
             timeline.update(cx, |timeline, _| timeline.locked = source.locks);
             let subscription = cx.subscribe_in(
                 &timeline,
@@ -197,13 +207,13 @@ impl RenderOnce for TrackDocument {
                 |state: &mut TrackState, timeline, event, window, cx| {
                     let (index, value) = match event {
                         TracksEvent::ClipChanged { track, clip, .. } => {
-                            let entry = timeline
-                                .read(cx)
-                                .tracks(cx)
-                                .get(*track)
+                            let model = timeline.read(cx).model(cx);
+                            let index = model.index_of(*track).unwrap_or_default();
+                            let entry = model
+                                .row(index)
                                 .and_then(|row| row.track.clip(*clip).copied());
                             let mut fields = std::collections::BTreeMap::from([
-                                ("track".into(), Value::Num(*track as f64)),
+                                ("track".into(), Value::Num(index as f64)),
                                 ("clip".into(), Value::Num(f64::from(*clip))),
                             ]);
                             if let Some(entry) = entry {
@@ -252,12 +262,7 @@ impl RenderOnce for TrackDocument {
                     cx.notify();
                 }
                 if let Some(source) = source {
-                    let updates = source
-                        .tracks
-                        .into_iter()
-                        .map(|(name, track)| TrackUpdate::new(name, track))
-                        .collect();
-                    timeline.store().dispatch_now(SetTracks(updates), cx);
+                    timeline.store().dispatch_now(SetTracks(source.tracks), cx);
                     timeline.locked = source.locks;
                     timeline.cancel_drag();
                     cx.notify();
@@ -279,6 +284,16 @@ impl RenderOnce for TrackDocument {
                     || timeline.global_lock_style != self.global_lock_style
                 {
                     timeline.set_lock_style(self.lock_style, self.global_lock_style, cx);
+                }
+                if timeline.header_hidden() != self.hidden_header {
+                    timeline.set_header(
+                        if self.hidden_header {
+                            super::HeaderMode::Hidden
+                        } else {
+                            super::HeaderMode::Default
+                        },
+                        cx,
+                    );
                 }
                 if let Some(selection) = self.selection {
                     timeline.select(selection, cx);

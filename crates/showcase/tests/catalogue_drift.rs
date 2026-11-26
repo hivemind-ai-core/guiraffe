@@ -1053,6 +1053,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "A clip painter trait implementation is application-owned Rust code.",
     ),
     (
+        "timeline::TracksView::header_hidden",
+        "Read-only state of the header prop for Rust hosts.",
+    ),
+    (
         "timeline::TracksView::set_header",
         "A custom header renderer is application-owned Rust code.",
     ),
