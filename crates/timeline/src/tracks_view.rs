@@ -194,7 +194,8 @@ pub struct TracksView {
     pending_fit: Option<(f64, f64)>,
     resize: ResizeEdges,
     /// Clips that cannot be moved or resized, by (track, clip id).
-    pub(crate) locked: std::collections::HashSet<(usize, u32)>,
+    /// Clips that cannot be moved or resized, by stable key (they survive track moves).
+    pub(crate) locked: std::collections::HashSet<ClipRef>,
     /// When false, nothing can be edited (seek still works).
     editable: bool,
     resizable: bool,
@@ -400,10 +401,7 @@ impl TracksView {
     ) -> Result<Option<TracksChange>, ActionError> {
         if let TracksAction::MoveClip { clip, .. } | TracksAction::TrimClip { clip, .. } = action
             && (!self.editable
-                || self
-                    .model(cx)
-                    .index_of(clip.track)
-                    .is_some_and(|i| self.locked.contains(&(i, clip.clip))))
+                || self.model(cx).row_by_id(clip.track).is_some() && self.locked.contains(&clip))
         {
             return Err(ActionError::Disabled);
         }
@@ -649,7 +647,7 @@ impl TracksView {
         }
         let row = self.model(cx).row(track)?;
         hit(&row.track, &self.surface.axis, x, self.resize)
-            .filter(|(clip, _)| !self.locked.contains(&(track, *clip)))
+            .filter(|(clip, _)| !self.locked.contains(&ClipRef::new(row.id, *clip)))
     }
 
     /// Which clip edges resize (default: both).
@@ -658,20 +656,21 @@ impl TracksView {
         cx.notify();
     }
 
-    /// Lock or unlock one clip's position and size.
-    pub fn set_locked(&mut self, track: usize, clip: u32, locked: bool, cx: &mut Context<Self>) {
+    /// Lock or unlock one clip's position and size, by its stable key. The lock stays with
+    /// the clip when its track moves.
+    pub fn set_locked(&mut self, clip: ClipRef, locked: bool, cx: &mut Context<Self>) {
         let changed = if locked {
-            self.locked.insert((track, clip))
+            self.locked.insert(clip)
         } else {
-            self.locked.remove(&(track, clip))
+            self.locked.remove(&clip)
         };
         if changed {
             cx.notify();
         }
     }
 
-    pub fn is_locked(&self, track: usize, clip: u32) -> bool {
-        self.locked.contains(&(track, clip))
+    pub fn is_locked(&self, clip: ClipRef) -> bool {
+        self.locked.contains(&clip)
     }
 
     /// Allow or forbid all edits (a global lock).
@@ -1071,7 +1070,8 @@ impl TracksView {
                 .children(rows.filter_map(|i| {
                     let row = model.rows().get(i)?;
                     let first = row.track.clips().first().map(|c| c.id);
-                    let locked = first.is_some_and(|id| self.is_locked(i, id));
+                    let key = row.id;
+                    let locked = first.is_some_and(|id| self.is_locked(ClipRef::new(key, id)));
                     Some(
                         cell(i)
                             .px(px(8.))
@@ -1091,11 +1091,11 @@ impl TracksView {
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let ids: Vec<_> = this
                                             .model(cx)
-                                            .row(i)
+                                            .row_by_id(key)
                                             .map(|r| r.track.clips().iter().map(|c| c.id).collect())
                                             .unwrap_or_default();
                                         for id in ids {
-                                            this.set_locked(i, id, !locked, cx);
+                                            this.set_locked(ClipRef::new(key, id), !locked, cx);
                                         }
                                     })),
                             ))
@@ -1332,7 +1332,7 @@ impl Render for TracksView {
                                                 if !overview(track, &axis) {
                                                     if editable && canvas_clips(track, &axis) {
                                                         for clip in crate::visible(track.clips(), &axis, |c| c.start, |c| c.end()) {
-                                                            if selected == Some((row, clip.id)) || view.locked.contains(&(row, clip.id)) {
+                                                            if selected == Some((row, clip.id)) || view.locked.contains(&ClipRef::new(r.id, clip.id)) {
                                                                 continue;
                                                             }
                                                             let shown = view.shown(row, clip, model);
@@ -1355,7 +1355,7 @@ impl Render for TracksView {
                                                 };
                                                 let mut run = None;
                                                 for (column, clip) in overview_columns(track, axis) {
-                                                    let style = if view.locked.contains(&(row, clip)) {
+                                                    let style = if view.locked.contains(&ClipRef::new(r.id, clip)) {
                                                         item_style
                                                     } else if !editable {
                                                         global_style
@@ -1401,15 +1401,16 @@ impl Render for TracksView {
                                 };
                                 let detailed_canvas = !overview_row && !accessibility && editable && canvas_clips(tr, &axis);
                                 let name = &r.name;
+                                let key = r.id;
                                 let model = &model;
                                 clips
                                     .iter()
-                                    .filter(move |clip| !detailed_canvas || selected == Some((i, clip.id)) || locked.contains(&(i, clip.id)))
+                                    .filter(move |clip| !detailed_canvas || selected == Some((i, clip.id)) || locked.contains(&ClipRef::new(key, clip.id)))
                                     .map(move |c| {
                                         let shown = this.shown(i, c, model);
                                         let (x0, x1) = (axis.x(shown.start) as f32, axis.x(shown.end()) as f32);
                                         let on = selected == Some((i, c.id));
-                                        let is_locked = !editable || locked.contains(&(i, c.id));
+                                        let is_locked = !editable || locked.contains(&ClipRef::new(key, c.id));
                                         div()
                                             .id(clip_element_id(i, c.id))
                                             .test_support()
@@ -1431,7 +1432,7 @@ impl Render for TracksView {
                                             .bg(clip_v.background.to_hsla())
                                             .border_color(clip_v.foreground.to_hsla())
                                             .when(is_locked, |el| {
-                                                if locked.contains(&(i, c.id)) {
+                                                if locked.contains(&ClipRef::new(key, c.id)) {
                                                     item_style.decorate(el, t)
                                                 } else {
                                                     global_style.decorate(el, t)
@@ -1660,7 +1661,7 @@ mod tests {
             v.release(cx);
             let c = v.tracks(cx)[0].track.clips()[0];
             assert_eq!((c.start, c.end(), c.source_offset), (1.5, 3.0, 0.5));
-            v.set_locked(0, first, true, cx);
+            v.set_locked(ClipRef::new(0, first), true, cx);
             assert!(v.grab(0, a.x(2.0), cx).is_none());
             assert_eq!(
                 v.perform(
@@ -1673,7 +1674,7 @@ mod tests {
                 Err(ActionError::Disabled),
                 "a locked clip refuses bus edits too"
             );
-            v.set_locked(0, first, false, cx);
+            v.set_locked(ClipRef::new(0, first), false, cx);
             v.set_resize_edges(ResizeEdges::End, cx);
             assert!(
                 matches!(v.grab(0, a.x(1.5) + 1.0, cx), Some((_, Grab::Move { .. }))),

@@ -248,6 +248,7 @@ impl EventSpec {
                 "type":"object","required":["track","clip"],"additionalProperties":false,
                 "properties":{
                     "track":{"type":"integer","minimum":0},
+                    "trackId":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
                     "clip":{"type":"integer","minimum":0},
                     "start":{"type":"number"},
                     "length":{"type":"number","minimum":0.001},

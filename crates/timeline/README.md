@@ -26,6 +26,8 @@ The model is store state. `TracksModel` holds the track rows (name, clips, heigh
 
 In a DataUi document, each track record may carry an `id` (its key; else its position) and a `height`, and the `header` prop is `default` or `hidden`.
 
+Clip locks (`set_locked(ClipRef, ..)`) are keyed, so they stay with a clip when its track moves. The `clip-change` payload carries `trackId` (the key) as well as `track` (the display position).
+
 Not yet: a clip-content pointer handler (first refusal on pointer events inside a clip). Painters only paint.
 
 Dope sheets accept `Channel::group(name, children)` and `Channel::with_keyframes(name, keys)` as well as time-only channels. Group rows aggregate descendant times as neutral diamonds without value hold bars; channel controls expand/collapse, mute, lock and hide keys, with theme-colored channel swatches. Only visible rows and horizontally visible key glyphs instantiate/paint. Click selects, Shift-click toggles selection, dragging moves selected editable keys together with frame snapping, and dragging empty space selects a box. Collisions reject the entire move. `set_focusable(true, cx)` opts into Tab focus and keyboard editing. Pointer presses preserve existing focus. Once focused, Ctrl/Command+A selects all, Ctrl/Command+D duplicates one frame later, arrows nudge, and Delete/Backspace removes selected editable keys. Group collapse retains selection. Mute/visibility are host-readable channel state; this crate does not evaluate animation playback.

@@ -329,7 +329,11 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
             .and_then(|row| row.track.clips().first())
             .map(|c| c.id)
         {
-            v.set_locked(3, id, true, cx);
+            v.set_locked(
+                guiraffe_timeline::tracks_model::ClipRef::new(3, id),
+                true,
+                cx,
+            );
         }
     });
     with_options(
