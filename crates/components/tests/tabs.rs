@@ -86,8 +86,7 @@ fn click_key_and_bus_select_alike(cx: &mut TestAppContext) {
         let m = mount(cx);
         m.vcx.update(|w, cx| w.click(tab_element_id(TabId(3)), cx));
         m.vcx.run_until_parked();
-        let e = m.events.borrow().clone();
-        e
+        m.events.take()
     };
     let key = {
         let m = mount(cx);
@@ -96,8 +95,7 @@ fn click_key_and_bus_select_alike(cx: &mut TestAppContext) {
             handle.focus(window, cx);
         });
         m.vcx.simulate_keystrokes("right right enter");
-        let e = m.events.borrow().clone();
-        e
+        m.events.take()
     };
     let bus = {
         let m = mount(cx);
@@ -111,8 +109,7 @@ fn click_key_and_bus_select_alike(cx: &mut TestAppContext) {
             )
             .ok();
         });
-        let e = m.events.borrow().clone();
-        e
+        m.events.take()
     };
     assert_eq!(click, [TabsEvent::Selected(TabId(3))]);
     assert_eq!(key, click, "arrows move focus, Enter selects");

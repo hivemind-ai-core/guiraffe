@@ -1474,7 +1474,11 @@ fn step_grid_playhead_and_toggles_cost_a_fixed_amount_without_a_parent_render() 
 
 struct TabsRoot(gpui_kit::Entity<guiraffe_components::Tabs>);
 impl gpui_kit::Render for TabsRoot {
-    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
         use gpui_kit::{ParentElement, Styled};
         gpui_kit::div().size_full().child(self.0.clone())
     }
@@ -1490,18 +1494,25 @@ fn tabs_unchanged_repaint_allocates_nothing() -> anyhow::Result<()> {
         std::sync::Arc::new(gpui_kit::assets::Assets),
         || Ok(None),
     );
-    let window = app.open_window(gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(200.)), |_, cx| {
-        guiraffe_components::init(cx);
-        let tabs = (0..12u64)
-            .map(|i| {
-                let t = TabItem::new(i, format!("Tab {i}")).badge("3");
-                if i % 2 == 0 { t.closable().icon(gpui_kit::assets::IconName::File) } else { t }
-            })
-            .collect();
-        let store = tabs_store(TabsDoc::new(tabs), cx);
-        let view = Tabs::new(store, TabsOptions::default(), cx);
-        cx.new(|_| TabsRoot(view))
-    })?;
+    let window = app.open_window(
+        gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(200.)),
+        |_, cx| {
+            guiraffe_components::init(cx);
+            let tabs = (0..12u64)
+                .map(|i| {
+                    let t = TabItem::new(i, format!("Tab {i}")).badge("3");
+                    if i % 2 == 0 {
+                        t.closable().icon(gpui_kit::assets::IconName::File)
+                    } else {
+                        t
+                    }
+                })
+                .collect();
+            let store = tabs_store(TabsDoc::new(tabs), cx);
+            let view = Tabs::new(store, TabsOptions::default(), cx);
+            cx.new(|_| TabsRoot(view))
+        },
+    )?;
     let frame = |app: &mut gpui_kit::HeadlessAppContext| {
         app.update_window(window.into(), |_, w, cx| w.draw(cx).clear(cx))
     };
@@ -1513,7 +1524,10 @@ fn tabs_unchanged_repaint_allocates_nothing() -> anyhow::Result<()> {
     r?;
     eprintln!("tabs unchanged repaint {counts:?}");
     if gpui_kit::GPUI_FAST {
-        assert_eq!(counts.allocations, 0, "an unchanged repaint allocates nothing");
+        assert_eq!(
+            counts.allocations, 0,
+            "an unchanged repaint allocates nothing"
+        );
     }
     Ok(())
 }
