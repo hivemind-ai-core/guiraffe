@@ -192,14 +192,14 @@ fn mixed_heights_lay_out_hit_test_and_scroll(cx: &mut TestAppContext) {
     m.click(p);
     assert_eq!(m.model().selection, Some(ClipRef { track: 1, clip: 1 }));
     // Scroll down; content y 175 is row 2 at any scroll.
-    m.wheel(-200.0);
+    m.wheel(-100.0);
     let scroll = m.vcx.update(|_, cx| m.view.read(cx).scroll_y());
     assert!(scroll > 0.0, "the rows overflow, so the wheel scrolls them");
     let p = m.at(2.0, 175.0);
     m.click(p);
     assert_eq!(m.model().selection, Some(ClipRef { track: 2, clip: 1 }));
     // Resize row 3 by its bottom edge (content y 270) while scrolled.
-    let (a, b) = (m.at(8.0, 270.0), m.at(8.0, 300.0));
+    let (a, b) = (m.at(4.0, 270.0), m.at(4.0, 300.0));
     m.drag(a, b);
     assert_eq!(m.model().row(3).map(|r| r.height), Some(110.0));
     let p = m.at(2.0, 290.0);
@@ -229,11 +229,11 @@ fn mixed_heights_lay_out_hit_test_and_scroll(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_resize_drag_is_one_bus_batch_and_one_undo_step(cx: &mut TestAppContext) {
     let mut m = mount(cx, 4, true);
-    let a = m.at(8.0, 40.0);
+    let a = m.at(4.0, 40.0);
     m.vcx
         .simulate_mouse_down(a, MouseButton::Left, Default::default());
     for dy in [10.0, 20.0, 35.0] {
-        let p = m.at(8.0, 40.0 + dy);
+        let p = m.at(4.0, 40.0 + dy);
         m.vcx
             .simulate_mouse_move(p, Some(MouseButton::Left), Default::default());
         m.vcx.run_until_parked();
@@ -243,7 +243,7 @@ fn a_resize_drag_is_one_bus_batch_and_one_undo_step(cx: &mut TestAppContext) {
         Some(40.0),
         "a preview until release"
     );
-    let b = m.at(8.0, 75.0);
+    let b = m.at(4.0, 75.0);
     m.vcx
         .simulate_mouse_up(b, MouseButton::Left, Default::default());
     m.vcx.run_until_parked();
@@ -290,12 +290,12 @@ fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
     pointer.drag(a, b);
     let (a, b) = (pointer.at(3.5, 20.0), pointer.at(4.5, 20.0));
     pointer.drag(a, b); // the clip now ends at 3.5; drag its end edge to 4.5
-    let (a, b) = (pointer.at(8.0, 40.0), pointer.at(8.0, 90.0));
+    let (a, b) = (pointer.at(4.0, 40.0), pointer.at(4.0, 90.0));
     pointer.drag(a, b);
     let ruler = pointer.body().origin - point(px(0.0), px(RULER_H / 2.0));
     let x = pointer
         .vcx
-        .update(|_, cx| pointer.view.read(cx).axis().x(7.0));
+        .update(|_, cx| pointer.view.read(cx).axis().x(4.2));
     pointer.click(ruler + point(px(x as f32), px(0.0)));
     let after_pointer = pointer.model();
     let sent: Vec<_> = pointer
