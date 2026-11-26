@@ -315,47 +315,35 @@ tuples!(A 0, B 1, C 2, D 3, E 4, G 5, H 6);
 tuples!(A 0, B 1, C 2, D 3, E 4, G 5, H 6, I 7);
 
 type Body<S, B> = dyn Fn(&B, &Store<S>, &mut Window, &mut App) -> AnyElement;
-type BodyCell<S, B> = Rc<std::cell::RefCell<Option<Rc<Body<S, B>>>>>;
+type BodyProps<S, B> = Option<Rc<Body<S, B>>>;
 
-/// Element state for a bound site: never written after creation, so a parent that reads it
-/// while rendering does not depend on the control's changes (gpui-fast tracks entity reads).
-pub(crate) struct Holder<V, C> {
+/// The keyed element state of a bound site, and the props its parent hands the site's view.
+///
+/// The parent writes `props` as it renders; the view reads them as it renders. On gpui-fast a
+/// write while drawing builds the readers again in the same frame, and the parent depends only
+/// on this holder, never on the view the Store notifies, so a store edit never rebuilds it.
+pub(crate) struct Holder<V, P> {
     pub(crate) view: gpui_kit::Entity<V>,
-    pub(crate) cell: C,
-    pub(crate) fresh: std::cell::Cell<bool>,
-}
-
-/// Notify `views` once drawing is done. On gpui-fast a notification while drawing, or a write,
-/// would make the parent depend on the control's own later changes.
-pub(crate) fn refresh_later(views: Vec<gpui_kit::EntityId>, cx: &mut App) {
-    cx.defer(move |cx| {
-        for view in views {
-            cx.notify(view);
-        }
-    });
-}
-
-impl<V: 'static, C> Holder<V, C> {
-    /// Whether the parent re-rendered an already mounted site, so its views must render
-    /// again with the new body. Never on mount (they render anyway) or on upstream GPUI
-    /// (they render with the parent).
-    pub(crate) fn remounted(&self) -> bool {
-        !self.fresh.replace(false) && gpui_kit::GPUI_FAST
-    }
+    pub(crate) props: P,
 }
 
 /// The retained view behind one bound control.
 pub struct BoundView<S: Clone + PartialEq + 'static, B: Bindings<S>> {
     store: Store<S>,
     bindings: B,
-    body: BodyCell<S, B>,
+    holder: WeakEntity<Holder<Self, BodyProps<S, B>>>,
     pending: bool,
     renders: usize,
     _watch: Option<Watch>,
 }
 
 impl<S: Clone + PartialEq + 'static, B: Bindings<S>> BoundView<S, B> {
-    fn new(store: Store<S>, bindings: B, body: BodyCell<S, B>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        store: Store<S>,
+        bindings: B,
+        holder: WeakEntity<Holder<Self, BodyProps<S, B>>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let slot: Rc<dyn Slot<S>> = Rc::new(BindSlot::<S, B> {
             view: cx.weak_entity(),
         });
@@ -363,7 +351,7 @@ impl<S: Clone + PartialEq + 'static, B: Bindings<S>> BoundView<S, B> {
         Self {
             store,
             bindings,
-            body,
+            holder,
             pending: false,
             renders: 0,
             _watch: Some(watch),
@@ -385,7 +373,12 @@ impl<S: Clone + PartialEq + 'static, B: Bindings<S>> Render for BoundView<S, B> 
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.pending = false;
         self.renders += 1;
-        let body = self.body.borrow().clone();
+        // Reading the holder makes a parent's re-render (which writes it) rebuild this view in
+        // the same frame.
+        let body = self
+            .holder
+            .upgrade()
+            .and_then(|holder| holder.read(cx).props.clone());
         match body {
             Some(body) => body(&self.bindings, &self.store, window, cx),
             None => gpui_kit::Empty.into_any_element(),
@@ -497,20 +490,15 @@ impl<S: Clone + PartialEq + 'static, L: Lenses<S>> RenderOnce for Bound<S, L> {
         let init = store.clone();
         let holder = window.use_keyed_state(id, cx, move |_, cx: &mut Context<Holder<_, _>>| {
             let bindings = lenses.bind(&init.snapshot(cx));
-            let cell: BodyCell<S, L::Bound> = Rc::default();
-            let view = cx.new(|cx| BoundView::new(init, bindings, cell.clone(), cx));
-            Holder {
-                view,
-                cell,
-                fresh: std::cell::Cell::new(true),
-            }
+            let weak = cx.weak_entity();
+            let view = cx.new(|cx| BoundView::new(init, bindings, weak, cx));
+            Holder { view, props: None }
         });
-        let holder = holder.read(cx);
-        *holder.cell.borrow_mut() = Some(body);
-        let view = holder.view.clone();
-        if holder.remounted() {
-            refresh_later(vec![view.entity_id()], cx);
-        }
+        // The parent rendered: hand the control its new body, in this frame. No notification.
+        let view = holder.update(cx, |holder, _| {
+            holder.props = Some(body);
+            holder.view.clone()
+        });
         AnyView::from(view)
     }
 }
