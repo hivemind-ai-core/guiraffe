@@ -20,10 +20,12 @@ are the source of truth.
 | 0.6 | Allocation-free rendering |
 | 0.7 | Compiled `ui!` bindings |
 | 0.7.1 | Compiled `ui!` lists and scheduling |
-| 0.8 | GPU surfaces and compositing |
-| 0.9 | Text |
-| 0.10 | Accessibility |
-| 0.11 | Platforms |
+| 0.8 | Hardening, part 1: no panics in library code, contained host-callback panics, property and model tests for stores and the bus, nightly hardening CI |
+| 0.8.1 | Hardening, part 2: component model tests, fuzzing every untrusted input, extreme-size stress, long soaks, fault injection |
+| 0.9 | GPU surfaces and compositing |
+| 0.10 | Text |
+| 0.11 | Accessibility |
+| 0.12 | Platforms |
 
 Older section numbers below (0.4 "Text, pixels and platforms", 0.5 "Compiled reactivity") predate
 this sequencing; their items now live in the milestones above.
