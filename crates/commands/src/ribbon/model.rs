@@ -519,6 +519,30 @@ pub enum NavError {
     Disabled(String),
 }
 
+/// A navigation key of the open ribbon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RibbonKey {
+    /// The leader (Ctrl+Space by default): closes the ribbon from any depth.
+    Leader,
+    /// Discards a partial chord or prompt and returns to the root; never closes.
+    Escape,
+    /// Up one level, or out of a prompt.
+    Backspace,
+}
+
+/// What a [`RibbonKey`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOutcome {
+    /// Close the ribbon (the navigator is back at the root).
+    Close,
+    /// Back at the root, still open.
+    Root,
+    /// Up one level (or out of the prompt), still open.
+    Back,
+    /// Nothing to do: Escape or Backspace at the root.
+    Nothing,
+}
+
 /// The path into the menu DAG as entry indices, not menu ids, so the conditions of the
 /// entries actually used stay attached even when several parents share a submenu.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -534,6 +558,26 @@ impl Navigator {
     }
     pub fn back(&mut self) {
         self.path.pop();
+    }
+    /// Apply a navigation key. `prompting` is whether a parameter prompt is open, which
+    /// counts as one level below the menu it came from.
+    pub fn key(&mut self, key: RibbonKey, prompting: bool) -> KeyOutcome {
+        match key {
+            RibbonKey::Leader => {
+                self.root();
+                KeyOutcome::Close
+            }
+            RibbonKey::Escape if prompting || self.depth() > 0 => {
+                self.root();
+                KeyOutcome::Root
+            }
+            RibbonKey::Backspace if prompting => KeyOutcome::Back,
+            RibbonKey::Backspace if self.depth() > 0 => {
+                self.back();
+                KeyOutcome::Back
+            }
+            RibbonKey::Escape | RibbonKey::Backspace => KeyOutcome::Nothing,
+        }
     }
     /// The current menu's index. A broken path stops at its last valid menu.
     pub(crate) fn current(&self, model: &RibbonModel) -> usize {
@@ -967,5 +1011,60 @@ mod tests {
             started.elapsed()
         );
         assert!(worst.as_millis() < 50, "{worst:?}");
+    }
+
+    #[test]
+    fn navigation_keys_close_return_to_root_and_go_back() {
+        let mut v = layout();
+        v.menus[1].categories[0]
+            .entries
+            .push(RibbonEntry::menu("deeper", "d", "deep"));
+        v.menus.push(RibbonMenu::new("deep", "Deep").category(
+            RibbonCategory::new("Deep").entry(RibbonEntry::command("deep-msg", "x", id("message"))),
+        ));
+        let model = build(&v).expect("model");
+        let registry = registry();
+        let cx = contexts(&["records"]);
+        let nested = || {
+            let mut nav = Navigator::default();
+            nav.press("r", &model, &registry, &cx).expect("r");
+            nav.press("d", &model, &registry, &cx).expect("d");
+            nav
+        };
+
+        // The leader closes from the root, mid-level, and mid-chord (a prompt open).
+        let mut root = Navigator::default();
+        assert_eq!(root.key(RibbonKey::Leader, false), KeyOutcome::Close);
+        let mut deep = nested();
+        assert_eq!(deep.key(RibbonKey::Leader, false), KeyOutcome::Close);
+        assert_eq!(deep.depth(), 0);
+        let mut prompting = nested();
+        assert_eq!(prompting.key(RibbonKey::Leader, true), KeyOutcome::Close);
+        assert_eq!(prompting.depth(), 0);
+
+        // Escape returns to the root from any depth and never closes; at the root it is a
+        // no-op.
+        let mut deep = nested();
+        assert_eq!(deep.key(RibbonKey::Escape, false), KeyOutcome::Root);
+        assert_eq!(deep.depth(), 0);
+        let mut prompt_at_root = Navigator::default();
+        assert_eq!(
+            prompt_at_root.key(RibbonKey::Escape, true),
+            KeyOutcome::Root
+        );
+        let mut root = Navigator::default();
+        assert_eq!(root.key(RibbonKey::Escape, false), KeyOutcome::Nothing);
+        assert_eq!(root.depth(), 0);
+
+        // Backspace pops one level; out of a prompt it leaves the menu as it was.
+        let mut deep = nested();
+        assert_eq!(deep.key(RibbonKey::Backspace, false), KeyOutcome::Back);
+        assert_eq!(deep.breadcrumbs(&model), ["Root", "Records"]);
+        assert_eq!(deep.key(RibbonKey::Backspace, false), KeyOutcome::Back);
+        assert_eq!(deep.depth(), 0);
+        assert_eq!(deep.key(RibbonKey::Backspace, false), KeyOutcome::Nothing);
+        let mut prompting = nested();
+        assert_eq!(prompting.key(RibbonKey::Backspace, true), KeyOutcome::Back);
+        assert_eq!(prompting.depth(), 2, "leaving a prompt keeps the menu");
     }
 }

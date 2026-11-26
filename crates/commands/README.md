@@ -51,7 +51,8 @@ action bus), compile it once with `RibbonModel::build` (ids, references, cycles 
 collisions are validated), and create one `RibbonState` per window. Use `ribbon_scope` as the window's root,
 add `.children(CommandRibbon::when_open(&ribbon, cx))` above the status bar and put
 `RibbonButton` in it; a closed ribbon adds no element and no per-frame work. Ctrl+Space
-toggles; an entry's key descends or runs, Backspace goes up, Escape goes to the root and then
-closes. Commands with `Param`s prompt for text or choices (dynamic choices come from
+opens and closes it from any depth; an entry's key descends or runs, Backspace goes up, and Escape
+returns to the root (it never closes). The open bar overlays the content above it by default
+(`RibbonPlacement::Overlay`), so nothing moves; `RibbonPlacement::Slotted` takes layout space. Commands with `Param`s prompt for text or choices (dynamic choices come from
 `RibbonState::set_choices`) and run with `InvocationSource::Ribbon`; action entries dispatch with
 `Source::Ribbon`. `ribbon::OverrideFile` persists shortcut and chord overrides atomically.
