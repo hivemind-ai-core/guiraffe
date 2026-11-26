@@ -17,7 +17,11 @@ use std::{
 pub struct CommandId(String);
 impl CommandId {
     pub fn parse(value: &str) -> Result<Self, Error> {
+        // Later segments may start with a digit (`goldens.view-2`); the id starts with a letter.
         let mut segment_start = true;
+        if !value.starts_with(|c: char| c.is_ascii_lowercase()) {
+            return Err(Error::InvalidId(value.into()));
+        }
         for c in value.chars() {
             // `/` separates control-path segments, only in `control.<path>.<action>` ids.
             if matches!(c, '.' | '-' | '_') || (c == '/' && value.starts_with("control.")) {
@@ -25,7 +29,7 @@ impl CommandId {
                     return Err(Error::InvalidId(value.into()));
                 }
                 segment_start = true;
-            } else if c.is_ascii_lowercase() || (!segment_start && c.is_ascii_digit()) {
+            } else if c.is_ascii_lowercase() || c.is_ascii_digit() {
                 segment_start = false;
             } else {
                 return Err(Error::InvalidId(value.into()));
@@ -447,10 +451,17 @@ mod tests {
     }
     #[test]
     fn slugs_validate_every_segment() {
-        for value in ["file.save", "editor-format", "app_open", "a", "a1.b2"] {
+        for value in [
+            "file.save",
+            "editor-format",
+            "app_open",
+            "a",
+            "a1.b2",
+            "a.2b",
+        ] {
             assert!(CommandId::parse(value).is_ok());
         }
-        for value in ["", "A", "a b", "1a", "a..b", "a-", ".a", "a.2b", "é", "a/b"] {
+        for value in ["", "A", "a b", "1a", "a..b", "a-", ".a", "é", "a/b"] {
             assert!(CommandId::parse(value).is_err(), "{value}");
         }
     }
@@ -708,5 +719,36 @@ mod tests {
         r.unregister(&id("a"));
         assert_eq!(r.bound_to(&save).count(), 0);
         assert!(r.index.is_empty(), "empty buckets are dropped");
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::CommandId;
+
+    #[test]
+    fn segments_may_start_with_a_digit_but_ids_start_with_a_letter() {
+        for ok in [
+            "goldens.view-2",
+            "view.2",
+            "panel_3d.open",
+            "a1.b2-c3",
+            "control.grid/2.select",
+        ] {
+            assert!(CommandId::parse(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "2view",
+            "9",
+            ".view",
+            "view.",
+            "view..2",
+            "View.open",
+            "view-",
+            "",
+            "view/2",
+        ] {
+            assert!(CommandId::parse(bad).is_err(), "{bad}");
+        }
     }
 }

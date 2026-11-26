@@ -40,6 +40,18 @@ impl DopeModel {
         out.rebuild_summaries();
         out
     }
+    /// A model over channels already flattened in display order, with `parent` indices set.
+    pub(crate) fn from_flat(channels: Vec<Channel>) -> Self {
+        let mut out = Self {
+            channels,
+            selected: BTreeSet::new(),
+            rows: Vec::new(),
+            summaries: Default::default(),
+        };
+        out.rebuild_rows();
+        out.rebuild_summaries();
+        out
+    }
     pub fn rows(&self) -> &[ChannelRow] {
         &self.rows
     }
@@ -283,7 +295,7 @@ impl DopeModel {
             .map(Vec::as_slice)
             .unwrap_or(&[])
     }
-    fn rebuild_summaries(&mut self) {
+    pub(crate) fn rebuild_summaries(&mut self) {
         self.summaries = self
             .channels
             .iter()

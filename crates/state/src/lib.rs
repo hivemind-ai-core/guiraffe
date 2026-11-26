@@ -24,7 +24,10 @@ pub mod lens;
 pub mod list;
 mod store;
 
-pub use bind::{Bind, Bindings, Bound, BoundView, Lenses, Set, Sourced, Watch, bound, bound_at};
+pub use bind::{
+    Bind, BindSource, Bindings, Bound, BoundView, Derived, DerivedN, Lenses, Set, Sourced, Watch,
+    bound, bound_at, derived, derived2, derived3, derived4,
+};
 pub use engine::{
     Coeffects, DispatchLater, Effect, Engine, EngineError, Event, EventRecord, Fx, Interceptor,
     Outcome, RedoEvent, UndoEvent,

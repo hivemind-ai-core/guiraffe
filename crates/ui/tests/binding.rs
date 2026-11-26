@@ -14,9 +14,7 @@ use gpui_kit::{
 };
 use guiraffe_core::protocol::{Action, ActionBus, ControlId, Source, names};
 use guiraffe_core::widget_value::Value;
-use guiraffe_state::{
-    EventRecord, Interceptor, KeyedList, Lens as _, ListLens, Store, UndoEvent, store,
-};
+use guiraffe_state::{EventRecord, Interceptor, KeyedList, Store, UndoEvent, store};
 use guiraffe_ui::{component, ui};
 
 type Callback = Rc<dyn Fn(&u32, &mut Window, &mut App)>;
@@ -534,4 +532,228 @@ impl Interceptor<Prefs> for PrefSources {
     fn after(&mut self, record: &EventRecord, _: &Arc<Prefs>, _: &Arc<Prefs>) {
         self.0.borrow_mut().push(record.source);
     }
+}
+
+// ---- Handles, derived values, row context, activation ---------------------------------
+
+store! {
+    pub Inbox {
+        items: KeyedList<u32, Step> = KeyedList::new(),
+        selected: u32 = 0,
+        count: u32 = 0,
+        note: SharedString = SharedString::default(),
+    }
+    events {
+        Bump => |s| s.count += 1,
+        Shift => |s| { s.count += 1; s.selected -= 1; },
+    }
+}
+
+thread_local! {
+    static INBOX_ROWS: RefCell<Vec<(u32, bool)>> = RefCell::default();
+    static PARITY: RefCell<Vec<SharedString>> = RefCell::default();
+    static SUMS: RefCell<Vec<u32>> = RefCell::default();
+}
+
+struct InboxPage {
+    store: Store<Inbox>,
+    note: guiraffe_ui::ControlHandle<guiraffe_components::controls::TextInputControl>,
+}
+
+impl Render for InboxPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let store = self.store.clone();
+        let note = self.note.clone();
+        ui! {
+            div {
+                size_full
+                store(store) {
+                    guiraffe_components::controls::TextInputControl {
+                        value <=> note
+                        .path("inbox/note")
+                        .element_id("inbox-note")
+                        handle: note
+                    }
+                    guiraffe_components::controls::ButtonControl {
+                        .label("Bump")
+                        .path("inbox/bump")
+                        on_click => Bump
+                    }
+                    div {
+                        let parity <= derived(count, |n| if n % 2 == 0 { "even" } else { "odd" });
+                        {
+                            PARITY.with(|p| p.borrow_mut().push((*parity).into()));
+                            *parity
+                        }
+                    }
+                    div {
+                        let sum <= derived((count, selected), |c, s| c + s);
+                        {
+                            SUMS.with(|p| p.borrow_mut().push(*sum));
+                            format!("{sum}")
+                        }
+                    }
+                    for (key, item) in <= items, row_height: px(20.) {
+                        div {
+                            let selected <= derived(selected, move |s| *s == key);
+                            h: px(20.)
+                            {
+                                // Row bodies get the window and app: theme reads are live.
+                                let _theme = guiraffe_core::GuiraffeTheme::global(cx);
+                                INBOX_ROWS.with(|r| r.borrow_mut().push((key, *selected)));
+                                format!("{} {}", item.velocity, selected)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn inbox(
+    cx: &mut TestAppContext,
+) -> (
+    Store<Inbox>,
+    guiraffe_ui::ControlHandle<guiraffe_components::controls::TextInputControl>,
+    &mut VisualTestContext,
+) {
+    let store = cx.update(|cx| {
+        guiraffe_components::init(cx);
+        Store::new(
+            Inbox {
+                items: (0..50).map(|k| (k, Step { velocity: k })).collect(),
+                ..Inbox::default()
+            },
+            cx,
+        )
+    });
+    let note = guiraffe_ui::ControlHandle::new();
+    let (_, vcx) = cx.add_window_view({
+        let store = store.clone();
+        let note = note.clone();
+        move |_, _| InboxPage { store, note }
+    });
+    vcx.simulate_resize(gpui_kit::size(px(300.), px(400.)));
+    vcx.run_until_parked();
+    (store, note, vcx)
+}
+
+#[gpui_kit::test]
+fn ui_built_controls_expose_handles_and_focus(cx: &mut TestAppContext) {
+    let (store, note, vcx) = inbox(cx);
+    vcx.update(|window, cx| {
+        let control = note.entity().expect("the handle fills on mount");
+        // Both the path and the element id name the control.
+        assert_eq!(
+            control.read(cx).element_id(),
+            gpui_kit::ElementId::Name("inbox-note".into())
+        );
+        assert!(ControlId::lookup("inbox/note", cx).is_some());
+        let focus = note.focus_handle(cx).expect("a text input takes focus");
+        window.focus(&focus, cx);
+        assert!(focus.is_focused(window));
+    });
+    // `on_click => Event` on a button control dispatches with the activation's source.
+    let sources = Rc::new(RefCell::new(Vec::new()));
+    vcx.update(|_, cx| store.add_interceptor(InboxSources(sources.clone()), cx));
+    vcx.update(|window, cx| {
+        let bump = ControlId::lookup("inbox/bump", cx).expect("registered");
+        let activate = Action {
+            name: names::ACTIVATE.into(),
+            payload: Value::Null,
+        };
+        assert!(ActionBus::dispatch(bump, &activate, Source::Shortcut, window, cx).is_ok());
+    });
+    vcx.run_until_parked();
+    vcx.update(|_, cx| assert_eq!(store.state(cx).count, 1));
+    assert_eq!(*sources.borrow(), [Source::Shortcut]);
+}
+
+struct InboxSources(Rc<RefCell<Vec<Source>>>);
+
+impl Interceptor<Inbox> for InboxSources {
+    fn after(&mut self, record: &EventRecord, _: &Arc<Inbox>, _: &Arc<Inbox>) {
+        self.0.borrow_mut().push(record.source);
+    }
+}
+
+#[gpui_kit::test]
+fn derived_values_notify_only_when_the_result_changes(cx: &mut TestAppContext) {
+    let (store, _, vcx) = inbox(cx);
+    PARITY.with(|p| p.borrow_mut().clear());
+    vcx.update(|_, cx| store.set(Inbox::count, 2, cx));
+    vcx.run_until_parked();
+    if gpui_kit::GPUI_FAST {
+        assert!(
+            PARITY.with(|p| p.borrow().is_empty()),
+            "0 -> 2 is still even"
+        );
+    }
+    vcx.update(|_, cx| {
+        store.set(Inbox::count, 3, cx);
+        store.set(Inbox::count, 5, cx);
+    });
+    vcx.run_until_parked();
+    // Upstream renders bound children with their notified ancestors: render counts are a
+    // gpui-fast property; the values hold on both.
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            PARITY.with(|p| p.borrow().clone()),
+            ["odd"],
+            "coalesced to one render"
+        );
+    }
+    assert_eq!(
+        PARITY.with(|p| p.borrow().last().cloned()),
+        Some("odd".into())
+    );
+}
+
+#[gpui_kit::test]
+fn rows_read_the_selection_and_only_two_rows_render(cx: &mut TestAppContext) {
+    let (store, _, vcx) = inbox(cx);
+    vcx.update(|_, cx| store.set(Inbox::count, 2, cx));
+    vcx.run_until_parked();
+    INBOX_ROWS.with(|r| r.borrow_mut().clear());
+    vcx.update(|_, cx| store.set(Inbox::selected, 4, cx));
+    vcx.run_until_parked();
+    let mut rendered = INBOX_ROWS.with(|r| r.borrow().clone());
+    rendered.sort_unstable();
+    assert_eq!(
+        rendered,
+        [(0, false), (4, true)],
+        "the old and new selection only"
+    );
+}
+
+#[gpui_kit::test]
+fn derived_over_several_lenses_recomputes_on_any_input_only(cx: &mut TestAppContext) {
+    let (store, _, vcx) = inbox(cx);
+    SUMS.with(|p| p.borrow_mut().clear());
+    // An unrelated field: no render.
+    vcx.update(|_, cx| store.set(Inbox::note, "hi".into(), cx));
+    vcx.run_until_parked();
+    let fast = gpui_kit::GPUI_FAST;
+    assert!(!fast || SUMS.with(|p| p.borrow().is_empty()));
+    // Either input: one render; both in one tick: still one.
+    vcx.update(|_, cx| store.set(Inbox::count, 2, cx));
+    vcx.run_until_parked();
+    vcx.update(|_, cx| {
+        store.set(Inbox::count, 3, cx);
+        store.set(Inbox::selected, 4, cx);
+    });
+    vcx.run_until_parked();
+    if fast {
+        assert_eq!(SUMS.with(|p| p.borrow().clone()), [2, 7]);
+    }
+    assert_eq!(SUMS.with(|p| p.borrow().last().copied()), Some(7));
+    // Both inputs change in one flush and the result stays put: no render. (Two separate
+    // flushes would notify for the intermediate result, and render once with the last.)
+    vcx.update(|_, cx| store.dispatch_now(Shift, cx));
+    vcx.run_until_parked();
+    if fast {
+        assert_eq!(SUMS.with(|p| p.borrow().clone()), [2, 7]);
+    }
+    assert_eq!(SUMS.with(|p| p.borrow().last().copied()), Some(7));
 }

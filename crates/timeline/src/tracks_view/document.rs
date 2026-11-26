@@ -9,7 +9,7 @@ use guiraffe_core::{
 };
 
 use super::{TracksEvent, TracksView};
-use crate::tracks_model::{SetPlayhead, SetTracks, TrackUpdate};
+use crate::tracks_model::{ClipRef, SetPlayhead, SetTracks, TrackId, TrackUpdate, TracksModel};
 use crate::{Clip, LockStyle, ResizeEdges, TimeFormat, Track, widget_specs};
 
 pub(crate) fn register(cx: &mut App) {
@@ -40,8 +40,9 @@ fn field<'a>(value: &'a Value, name: &str) -> &'a Value {
 
 #[derive(Default)]
 struct Tracks {
-    tracks: Vec<(String, Track)>,
-    locks: HashSet<(usize, u32)>,
+    /// Keyed updates: a record's `id` (else its position) and optional `height`.
+    tracks: Vec<TrackUpdate>,
+    locks: HashSet<ClipRef>,
 }
 
 impl Tracks {
@@ -87,6 +88,7 @@ impl Tracks {
             clips.sort_by(|a, b| a.0.start.total_cmp(&b.0.start));
             let mut end = f64::NEG_INFINITY;
             let track = result.tracks.len();
+            let mut locked_ids = Vec::new();
             let clips = clips
                 .into_iter()
                 .filter_map(|(clip, locked)| {
@@ -95,17 +97,41 @@ impl Tracks {
                     }
                     end = clip.end();
                     if locked {
-                        result.locks.insert((track, clip.id));
+                        locked_ids.push(clip.id);
                     }
                     Some(clip)
                 })
                 .collect();
+            let key = field(value, "id")
+                .as_f64()
+                .filter(|v| *v >= 0.0 && v.fract() == 0.0 && *v <= 9_007_199_254_740_991.0)
+                .map_or(track as u64, |v| v as u64);
             result
-                .tracks
-                .push((name.to_owned(), Track::from_validated_clips(clips)));
+                .locks
+                .extend(locked_ids.into_iter().map(|id| ClipRef::new(key, id)));
+            let mut update = TrackUpdate::new(key, name, Track::from_validated_clips(clips));
+            update.height = field(value, "height").as_f64().map(|h| h as f32);
+            result.tracks.push(update);
         }
         result
     }
+}
+
+/// The `clip-change` payload: the track's display position (`track`) and its key
+/// (`trackId`), the clip id, and the clip's span after the change.
+fn clip_change(model: &TracksModel, track: TrackId, clip: u32) -> Value {
+    let index = model.index_of(track).unwrap_or_default();
+    let mut fields = std::collections::BTreeMap::from([
+        ("track".into(), Value::Num(index as f64)),
+        ("trackId".into(), Value::Num(track.0 as f64)),
+        ("clip".into(), Value::Num(f64::from(clip))),
+    ]);
+    if let Some(entry) = model.clip(ClipRef::new(track, clip)) {
+        fields.insert("start".into(), Value::Num(entry.start));
+        fields.insert("length".into(), Value::Num(entry.len));
+        fields.insert("sourceOffset".into(), Value::Num(entry.source_offset));
+    }
+    Value::Record(Arc::new(fields))
 }
 
 #[derive(IntoElement)]
@@ -123,6 +149,7 @@ struct TrackDocument {
     global_lock_style: LockStyle,
     selection: Option<Option<(usize, u32)>>,
     handlers: [Option<EventHandler>; 2],
+    hidden_header: bool,
 }
 
 impl TrackDocument {
@@ -172,6 +199,7 @@ impl TrackDocument {
                     .zip(selection.list_get(1).and_then(uint))
             }),
             handlers: std::array::from_fn(|i| node.handler(i)),
+            hidden_header: node.prop(12).as_str() == Some("hidden"),
         }
     }
 }
@@ -189,7 +217,10 @@ impl RenderOnce for TrackDocument {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.key, cx, |window, cx| {
             let source = Tracks::parse(&self.tracks);
-            let timeline = TracksView::new(source.tracks, self.format, self.length, cx);
+            let mut model = crate::tracks_model::TracksModel::default();
+            model.update_tracks(source.tracks);
+            let store = crate::tracks_model::tracks_store(model, 100, cx);
+            let timeline = TracksView::with_store(store, self.format, self.length, cx);
             timeline.update(cx, |timeline, _| timeline.locked = source.locks);
             let subscription = cx.subscribe_in(
                 &timeline,
@@ -197,22 +228,7 @@ impl RenderOnce for TrackDocument {
                 |state: &mut TrackState, timeline, event, window, cx| {
                     let (index, value) = match event {
                         TracksEvent::ClipChanged { track, clip, .. } => {
-                            let entry = timeline
-                                .read(cx)
-                                .tracks(cx)
-                                .get(*track)
-                                .and_then(|row| row.track.clip(*clip).copied());
-                            let mut fields = std::collections::BTreeMap::from([
-                                ("track".into(), Value::Num(*track as f64)),
-                                ("clip".into(), Value::Num(f64::from(*clip))),
-                            ]);
-                            if let Some(entry) = entry {
-                                fields.insert("start".into(), Value::Num(entry.start));
-                                fields.insert("length".into(), Value::Num(entry.len));
-                                fields
-                                    .insert("sourceOffset".into(), Value::Num(entry.source_offset));
-                            }
-                            (0, Value::Record(Arc::new(fields)))
+                            (0, clip_change(timeline.read(cx).model(cx), *track, *clip))
                         }
                         TracksEvent::Seek(time) => (1, Value::Num(*time)),
                         _ => return,
@@ -252,12 +268,7 @@ impl RenderOnce for TrackDocument {
                     cx.notify();
                 }
                 if let Some(source) = source {
-                    let updates = source
-                        .tracks
-                        .into_iter()
-                        .map(|(name, track)| TrackUpdate::new(name, track))
-                        .collect();
-                    timeline.store().dispatch_now(SetTracks(updates), cx);
+                    timeline.store().dispatch_now(SetTracks(source.tracks), cx);
                     timeline.locked = source.locks;
                     timeline.cancel_drag();
                     cx.notify();
@@ -280,11 +291,61 @@ impl RenderOnce for TrackDocument {
                 {
                     timeline.set_lock_style(self.lock_style, self.global_lock_style, cx);
                 }
+                if timeline.header_hidden() != self.hidden_header {
+                    timeline.set_header(
+                        if self.hidden_header {
+                            super::HeaderMode::Hidden
+                        } else {
+                            super::HeaderMode::Default
+                        },
+                        cx,
+                    );
+                }
                 if let Some(selection) = self.selection {
                     timeline.select(selection, cx);
                 }
             });
             state.timeline.clone()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tracks() -> Value {
+        Value::try_from_json(&serde_json::json!([
+            {"id": 40, "name": "Video", "clips": [{"id": 12, "start": 2, "length": 3, "locked": true}]},
+            {"name": "Audio", "height": 90, "clips": [{"id": 5, "start": 0, "length": 2, "locked": true}]}
+        ]))
+        .expect("tracks json")
+    }
+
+    #[test]
+    fn locks_are_keyed_by_track_id_and_clip_id() {
+        let parsed = Tracks::parse(&tracks());
+        let keys: Vec<_> = parsed.tracks.iter().map(|u| u.id).collect();
+        assert_eq!(keys, [TrackId(40), TrackId(1)], "an id, else the position");
+        assert_eq!(parsed.tracks[1].height, Some(90.0));
+        assert_eq!(
+            parsed.locks,
+            HashSet::from([ClipRef::new(40, 12), ClipRef::new(1, 5)])
+        );
+    }
+
+    #[test]
+    fn clip_change_reports_the_position_and_the_track_key() {
+        let mut model = TracksModel::default();
+        let mut updates = Tracks::parse(&tracks()).tracks;
+        model.update_tracks(updates.clone());
+        updates.reverse(); // the keyed track moves to the bottom
+        model.update_tracks(updates);
+        let payload = clip_change(&model, TrackId(40), 12);
+        let get = |k: &str| payload.field(&[k.into()]).as_f64();
+        assert_eq!(get("track"), Some(1.0), "display position");
+        assert_eq!(get("trackId"), Some(40.0), "stable key");
+        assert_eq!(get("clip"), Some(12.0));
+        assert_eq!((get("start"), get("length")), (Some(2.0), Some(3.0)));
     }
 }

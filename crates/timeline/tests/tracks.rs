@@ -17,7 +17,7 @@ use guiraffe_timeline::{
     ClipPaint, ClipPainter, Edge, HeaderMode, TimeFormat, Track, TracksEvent, TracksView,
     tracks_model::{
         ClipEdit, ClipRef, Follow, SetFollow, SetPlayhead, SetSelection, SetTracks, SetView,
-        TrackRow, TrackUpdate, TracksAction, TracksModel, ViewRange, tracks_store,
+        TrackId, TrackRow, TrackUpdate, TracksAction, TracksModel, ViewRange, tracks_store,
     },
     tracks_view::RULER_H,
 };
@@ -36,8 +36,12 @@ fn model(rows: usize) -> TracksModel {
     TracksModel::new(
         (0..rows)
             .map(|i| {
-                TrackRow::new(format!("T{i}"), track(&[(1.0, 2.0), (5.0, 1.0)]))
-                    .with_height(heights[i % heights.len()])
+                TrackRow::new(
+                    100 + i as u64,
+                    format!("T{i}"),
+                    track(&[(1.0, 2.0), (5.0, 1.0)]),
+                )
+                .with_height(heights[i % heights.len()])
             })
             .collect(),
     )
@@ -190,14 +194,14 @@ fn mixed_heights_lay_out_hit_test_and_scroll(cx: &mut TestAppContext) {
     // Row 1 is 120 px tall: its lower part still hits row 1.
     let p = m.at(2.0, 150.0);
     m.click(p);
-    assert_eq!(m.model().selection, Some(ClipRef { track: 1, clip: 1 }));
+    assert_eq!(m.model().selection, Some(ClipRef::new(101, 1)));
     // Scroll down; content y 175 is row 2 at any scroll.
     m.wheel(-100.0);
     let scroll = m.vcx.update(|_, cx| m.view.read(cx).scroll_y());
     assert!(scroll > 0.0, "the rows overflow, so the wheel scrolls them");
     let p = m.at(2.0, 175.0);
     m.click(p);
-    assert_eq!(m.model().selection, Some(ClipRef { track: 2, clip: 1 }));
+    assert_eq!(m.model().selection, Some(ClipRef::new(102, 1)));
     // Resize row 3 by its bottom edge (content y 270) while scrolled.
     let (a, b) = (m.at(4.0, 270.0), m.at(4.0, 300.0));
     m.drag(a, b);
@@ -206,12 +210,12 @@ fn mixed_heights_lay_out_hit_test_and_scroll(cx: &mut TestAppContext) {
     m.click(p);
     assert_eq!(
         m.model().selection,
-        Some(ClipRef { track: 3, clip: 1 }),
+        Some(ClipRef::new(103, 1)),
         "content y 290 is now inside the taller row 3"
     );
     let p = m.at(2.0, 305.0);
     m.click(p);
-    assert_eq!(m.model().selection, Some(ClipRef { track: 4, clip: 1 }));
+    assert_eq!(m.model().selection, Some(ClipRef::new(104, 1)));
     // The scroll is clamped to the new content height.
     m.wheel(-10_000.0);
     let (scroll, total) = m.vcx.update(|_, cx| {
@@ -260,7 +264,7 @@ fn a_resize_drag_is_one_bus_batch_and_one_undo_step(cx: &mut TestAppContext) {
     assert_eq!(
         *m.events.borrow(),
         [TracksEvent::TrackResized {
-            track: 0,
+            track: TrackId(100),
             height: 75.0
         }]
     );
@@ -281,7 +285,7 @@ fn a_resize_drag_is_one_bus_batch_and_one_undo_step(cx: &mut TestAppContext) {
 )]
 #[gpui_kit::test]
 fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
-    let clip = ClipRef { track: 0, clip: 1 };
+    let clip = ClipRef::new(100, 1);
     let mut pointer = mount(cx, 3, true);
     // Select by click, move by body drag, trim the end past the content, resize, seek.
     let p = pointer.at(2.0, 20.0);
@@ -358,9 +362,7 @@ fn unregistered_pointer_input_applies_the_same_actions(cx: &mut TestAppContext) 
         "nothing registered, nothing on the bus"
     );
     assert_eq!(
-        m.model()
-            .clip(ClipRef { track: 0, clip: 1 })
-            .map(|c| c.start),
+        m.model().clip(ClipRef::new(100, 1)).map(|c| c.start),
         Some(1.5)
     );
     assert_eq!(m.events.borrow().len(), 2);
@@ -381,7 +383,7 @@ fn host_writes_never_echo_and_zoom_survives_track_updates(cx: &mut TestAppContex
         m.store.dispatch(SetView(view), cx);
         m.store.dispatch(SetPlayhead(3.0), cx);
         m.store
-            .dispatch(SetSelection(Some(ClipRef { track: 1, clip: 2 })), cx);
+            .dispatch(SetSelection(Some(ClipRef::new(101, 2))), cx);
         m.store.dispatch(SetFollow(Follow::Page), cx);
     });
     m.vcx.run_until_parked();
@@ -397,7 +399,7 @@ fn host_writes_never_echo_and_zoom_survives_track_updates(cx: &mut TestAppContex
             } else {
                 r.track.clone()
             };
-            TrackUpdate::new(r.name.clone(), t)
+            TrackUpdate::new(r.id, r.name.clone(), t)
         })
         .collect();
     let before = m.model();
@@ -509,12 +511,12 @@ fn tracks_selection_light_and_dark() {
                     cx,
                 );
                 let model = TracksModel::new(vec![
-                    TrackRow::new("Drums", track(&[(0.5, 2.0), (3.0, 1.5)])),
-                    TrackRow::new("Keys", track(&[(1.0, 4.0)])).with_height(90.0),
-                    TrackRow::new("Bass", track(&[(0.0, 1.5), (2.0, 2.0)])).with_height(30.0),
+                    TrackRow::new(1, "Drums", track(&[(0.5, 2.0), (3.0, 1.5)])),
+                    TrackRow::new(2, "Keys", track(&[(1.0, 4.0)])).with_height(90.0),
+                    TrackRow::new(3, "Bass", track(&[(0.0, 1.5), (2.0, 2.0)])).with_height(30.0),
                 ]);
                 let store = tracks_store(model, 10, cx);
-                store.dispatch_now(SetSelection(Some(ClipRef { track: 1, clip: 1 })), cx);
+                store.dispatch_now(SetSelection(Some(ClipRef::new(2, 1))), cx);
                 store.dispatch_now(SetPlayhead(2.25), cx);
                 let view = TracksView::with_store(store, TimeFormat::Seconds, 6.0, cx);
                 view.update(cx, |v, cx| {
@@ -576,4 +578,182 @@ fn header_modes_size_the_column(cx: &mut TestAppContext) {
         .update(|_, cx| m.view.update(cx, |v, cx| v.set_header(custom, cx)));
     m.vcx.run_until_parked();
     assert_eq!(m.body().origin.x, px(60.0));
+}
+
+/// Insert, remove and reorder tracks in the middle with host writes: heights, selection
+/// and the rendered layout stay with each track's key, and nothing echoes.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn track_inserts_removes_and_moves_keep_state_with_the_key(cx: &mut TestAppContext) {
+    let mut m = mount(cx, 4, true); // keys 100..=103, heights 40, 120, 30, 80
+    let selected = ClipRef::new(102, 1);
+    m.vcx
+        .update(|_, cx| m.store.dispatch(SetSelection(Some(selected)), cx));
+    m.vcx.run_until_parked();
+    let rows = |m: &mut Mounted<'_>| -> Vec<TrackUpdate> {
+        m.model()
+            .rows()
+            .iter()
+            .map(|r| TrackUpdate::new(r.id, r.name.clone(), r.track.clone()))
+            .collect()
+    };
+    let check =
+        |m: &mut Mounted<'_>, keys: &[u64], heights: &[f32], selected_row: Option<usize>| {
+            let model = m.model();
+            let got: Vec<u64> = model.rows().iter().map(|r| r.id.0).collect();
+            assert_eq!(got, keys);
+            let got: Vec<f32> = model.rows().iter().map(|r| r.height).collect();
+            assert_eq!(got, heights);
+            let layout: Vec<f32> = m.vcx.update(|_, cx| {
+                let l = m.view.read(cx).layout().clone();
+                (0..l.len()).map(|i| l.height(i)).collect()
+            });
+            assert_eq!(layout, heights, "the rendered rows follow the keys");
+            assert_eq!(model.selected_index().map(|s| s.0), selected_row);
+            assert_eq!(
+                m.vcx
+                    .update(|_, cx| m.view.read(cx).selected(cx))
+                    .map(|s| s.0),
+                selected_row
+            );
+        };
+
+    // Insert above the selection.
+    let mut next = rows(&mut m);
+    next.insert(1, TrackUpdate::new(150, "Inserted", track(&[(0.0, 9.0)])));
+    m.vcx.update(|_, cx| m.store.dispatch(SetTracks(next), cx));
+    m.vcx.run_until_parked();
+    check(
+        &mut m,
+        &[100, 150, 101, 102, 103],
+        &[40.0, 40.0, 120.0, 30.0, 80.0],
+        Some(3),
+    );
+    assert_eq!(m.model().selection, Some(selected));
+
+    // Remove a track above the selection.
+    let mut next = rows(&mut m);
+    next.retain(|u| u.id != TrackId(101));
+    m.vcx.update(|_, cx| m.store.dispatch(SetTracks(next), cx));
+    m.vcx.run_until_parked();
+    check(
+        &mut m,
+        &[100, 150, 102, 103],
+        &[40.0, 40.0, 30.0, 80.0],
+        Some(2),
+    );
+
+    // Move the selected track to the top.
+    let mut next = rows(&mut m);
+    let moved = next.remove(2);
+    next.insert(0, moved);
+    m.vcx.update(|_, cx| m.store.dispatch(SetTracks(next), cx));
+    m.vcx.run_until_parked();
+    check(
+        &mut m,
+        &[102, 100, 150, 103],
+        &[30.0, 40.0, 40.0, 80.0],
+        Some(0),
+    );
+
+    // A click on the moved row still hits the selected track's clips by key.
+    let p = m.at(2.0, 15.0);
+    m.click(p);
+    assert_eq!(m.model().selection, Some(selected), "same clip, no change");
+    let p = m.at(2.0, 50.0);
+    m.click(p);
+    assert_eq!(m.model().selection, Some(ClipRef::new(100, 1)));
+    assert_eq!(
+        *m.events.borrow(),
+        [TracksEvent::SelectionChanged {
+            selected: Some(ClipRef::new(100, 1))
+        }],
+        "only the user's click emitted; the three host writes did not"
+    );
+    let names: Vec<_> = m
+        .log
+        .actions
+        .borrow()
+        .iter()
+        .map(|(_, a)| a.name.to_string())
+        .collect();
+    assert_eq!(names, ["select"]);
+}
+
+/// A lock belongs to its clip's key, so it follows the track when tracks move, and the row
+/// that takes the old position stays editable.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn clip_locks_follow_the_track_key(cx: &mut TestAppContext) {
+    let mut m = mount(cx, 3, true); // keys 100, 101, 102
+    let locked = ClipRef::new(101, 1);
+    m.vcx
+        .update(|_, cx| m.view.update(cx, |v, cx| v.set_locked(locked, true, cx)));
+    // Move the locked track to the bottom: 100, 102, 101.
+    let mut next: Vec<_> = m
+        .model()
+        .rows()
+        .iter()
+        .map(|r| TrackUpdate::new(r.id, r.name.clone(), r.track.clone()))
+        .collect();
+    let moved = next.remove(1);
+    next.push(moved);
+    m.vcx.update(|_, cx| m.store.dispatch(SetTracks(next), cx));
+    m.vcx.run_until_parked();
+    let id = m.id.expect("registered");
+    let (moved_at, kept) = m.vcx.update(|window, cx| {
+        let view = m.view.read(cx);
+        let x = view.axis().x(2.0);
+        let grabs = (0..3)
+            .map(|row| view.grab(row, x, cx).is_some())
+            .collect::<Vec<_>>();
+        let refused = ActionBus::dispatch(
+            id,
+            &TracksAction::MoveClip {
+                clip: locked,
+                start: 1.5,
+            }
+            .to_action(),
+            Source::Script,
+            window,
+            cx,
+        );
+        (grabs, refused)
+    });
+    assert_eq!(
+        moved_at,
+        [true, true, false],
+        "only the moved track's clip is locked"
+    );
+    assert_eq!(
+        kept,
+        Err(ActionError::Disabled),
+        "the bus refuses the locked clip too"
+    );
+    assert!(m.vcx.update(|_, cx| m.view.read(cx).is_locked(locked)));
+    // The track now at the old position (102) still moves.
+    let free = ClipRef::new(102, 1);
+    m.vcx.update(|window, cx| {
+        assert!(
+            ActionBus::dispatch(
+                id,
+                &TracksAction::MoveClip {
+                    clip: free,
+                    start: 1.5
+                }
+                .to_action(),
+                Source::Script,
+                window,
+                cx,
+            )
+            .is_ok()
+        );
+    });
+    assert_eq!(m.model().clip(free).map(|c| c.start), Some(1.5));
 }

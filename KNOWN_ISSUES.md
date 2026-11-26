@@ -84,8 +84,7 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
   children. Only gpui-fast isolates the render. Store-side work is isolated on both.
 - A bound control's parent re-render always re-renders the bound control in the same frame,
   because its unbound props may have changed.
-- Two-way binding of entity-backed inputs (`InputState`) needs an adapter. Stateful component
-  ids must be unique per window: the bus rejects duplicates in debug builds.
+- Stateful component ids must be unique per window: the bus rejects duplicates in debug builds.
 
 ## GPUI behavior
 
@@ -97,6 +96,8 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
   guarantee render isolation on gpui-fast.
 
 ## Components
+
+- `guiraffe-goldens` zooms images with GPUI's linear sampling, so magnified goldens blur; the pixel readout stays exact. GPUI's `img` has no nearest-neighbour option. Add one in our GPUI fork (0.4).
 
 ### Chat
 

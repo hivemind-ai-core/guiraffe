@@ -9,7 +9,7 @@ use guiraffe_core::{
     widget_value::Value,
 };
 
-use super::{Channel, DopeEvent, DopeModel, DopeSheet, LockStyle, PlotSurface, TimeFormat};
+use super::{Channel, DopeEvent, DopeSheet, LockStyle, PlotSurface, TimeFormat};
 use crate::{Interp, Key, widget_specs};
 
 pub(crate) fn register(cx: &mut App) {
@@ -45,11 +45,10 @@ fn channel(value: &Value, remaining_depth: usize) -> Option<Channel> {
                     let value = field(key, "value")
                         .as_f64()
                         .filter(|value| value.is_finite())?;
-                    let interpolation = match field(key, "interpolation").as_str() {
-                        Some("constant") => Interp::Constant,
-                        Some("bezier") => Interp::Bezier,
-                        _ => Interp::Linear,
-                    };
+                    let interpolation = field(key, "interpolation")
+                        .as_str()
+                        .and_then(Interp::from_name)
+                        .unwrap_or(Interp::Linear);
                     Some(Key::new(time, value, interpolation))
                 })
                 .collect(),
@@ -166,21 +165,37 @@ impl RenderOnce for DopeDocument {
                 window,
                 |state: &mut DopeDocumentState, sheet, event, window, cx| {
                     let index = match event {
-                        DopeEvent::KeyRetimed { .. } => 0,
+                        DopeEvent::KeysRetimed { .. } => 0,
                         DopeEvent::SelectionChanged => 1,
-                        DopeEvent::Changed => 2,
                         DopeEvent::ChannelChanged { .. } => 3,
+                        DopeEvent::Seek(_) => return,
+                        _ => 2,
                     };
                     let Some(handler) = state.handlers[index].clone() else {
                         return;
                     };
+                    let doc = sheet.read(cx).doc(cx);
                     let model = sheet.read(cx).model();
-                    let value = match *event {
-                        DopeEvent::KeyRetimed { channel, from, to } => record([
-                            ("channel", Value::Num(channel as f64)),
-                            ("from", Value::Num(from)),
-                            ("to", Value::Num(to)),
-                        ]),
+                    let value = match event {
+                        // One `key-retime` per moved key, in display indices.
+                        DopeEvent::KeysRetimed { keys, delta } => {
+                            let moved: Vec<Value> = keys
+                                .iter()
+                                .filter_map(|k| {
+                                    let channel = doc.index_of(k.channel)?;
+                                    let to = doc.key(*k)?.key.t;
+                                    Some(record([
+                                        ("channel", Value::Num(channel as f64)),
+                                        ("from", Value::Num(to - delta)),
+                                        ("to", Value::Num(to)),
+                                    ]))
+                                })
+                                .collect();
+                            for value in moved {
+                                handler(value, window, cx);
+                            }
+                            return;
+                        }
                         DopeEvent::SelectionChanged => Value::List(
                             model
                                 .selected
@@ -194,7 +209,7 @@ impl RenderOnce for DopeDocument {
                                 .collect::<Vec<_>>()
                                 .into(),
                         ),
-                        DopeEvent::Changed => Value::List(
+                        _ if index == 2 => Value::List(
                             model
                                 .channels
                                 .iter()
@@ -218,12 +233,16 @@ impl RenderOnce for DopeDocument {
                                 .collect::<Vec<_>>()
                                 .into(),
                         ),
-                        DopeEvent::ChannelChanged { channel } => {
-                            let Some(channel_data) = model.channels.get(channel) else {
+                        DopeEvent::ChannelChanged { channel, .. } => {
+                            let Some(index) = doc.index_of(*channel) else {
                                 return;
                             };
-                            record(flags(channel_data, channel))
+                            let Some(channel_data) = model.channels.get(index) else {
+                                return;
+                            };
+                            record(flags(channel_data, index))
                         }
+                        _ => return,
                     };
                     handler(value, window, cx);
                 },
@@ -241,8 +260,13 @@ impl RenderOnce for DopeDocument {
             state.sheet.update(cx, |sheet, cx| {
                 if state.channels != self.channels {
                     state.channels = self.channels;
-                    sheet.model = DopeModel::new(parse_channels(&state.channels));
-                    sheet.release();
+                    let doc = super::doc_from_channels(parse_channels(&state.channels));
+                    let channels = doc.channels().iter().map(|c| (**c).clone()).collect();
+                    sheet.drag = None;
+                    sheet
+                        .store()
+                        .dispatch_now(crate::dope_store::SetChannels(channels), cx);
+                    sheet.resync(cx);
                     cx.notify();
                 }
                 if sheet.format != self.format {
@@ -266,9 +290,11 @@ impl RenderOnce for DopeDocument {
                     sheet.set_lock_style(self.lock_style, cx);
                 }
                 if let Some(playhead) = self.playhead
-                    && sheet.playhead != playhead
+                    && sheet.playhead(cx) != playhead
                 {
-                    sheet.playhead = playhead;
+                    sheet
+                        .store()
+                        .dispatch_now(crate::dope_store::SetPlayhead(playhead), cx);
                     cx.notify();
                 }
             });

@@ -15,7 +15,7 @@ use gpui_kit::{
     div, px, size,
 };
 use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
-use guiraffe_state::{Event, Fx, KeyedList, Lens as _, ListLens, Store, store};
+use guiraffe_state::{Event, Fx, KeyedList, Lens as _, Store, store};
 use guiraffe_ui::ui;
 use nix::time::{ClockId, clock_gettime};
 
@@ -73,6 +73,7 @@ impl Event<Table> for InsertRow {
 thread_local! {
     static ROW_RENDERS: Cell<usize> = const { Cell::new(0) };
     static PAGE_RENDERS: Cell<usize> = const { Cell::new(0) };
+    static DERIVED_RENDERS: Cell<usize> = const { Cell::new(0) };
 }
 
 fn row_renders() -> usize {
@@ -118,6 +119,18 @@ impl Render for Page {
                 flex flex_col w: px(WIDTH) h: px(800.)
                 store(store) {
                     div { h: px(ROW_HEIGHT) {<= title} }
+                    div {
+                        // A value derived from two inputs, one of them the edited row's label:
+                        // it recomputes on every label edit and must not allocate.
+                        let width <= derived(
+                            (title, rows.by_key(EDITED).label),
+                            |t, l| t.len() + l.len()
+                        );
+                        {
+                            DERIVED_RENDERS.with(|r| r.set(r.get() + 1));
+                            format!("{width}")
+                        }
+                    }
                     for row in <= rows, row_height: px(ROW_HEIGHT) {
                         div {
                             flex items_center gap_2 w: px(WIDTH) h: px(ROW_HEIGHT)
@@ -238,6 +251,7 @@ fn edit_costs(app: &mut HeadlessAppContext, n: u64) -> (u64, u64, usize, FirstEd
         window.app.run_until_parked();
     }
     let rows = row_renders();
+    let derived_renders = DERIVED_RENDERS.with(Cell::get);
     let mut frames = Vec::new();
     let mut updates = Vec::new();
     for i in 0..7 {
@@ -255,6 +269,11 @@ fn edit_costs(app: &mut HeadlessAppContext, n: u64) -> (u64, u64, usize, FirstEd
         frames.push(counts.allocations);
     }
     let rows = row_renders() - rows;
+    // Same-length labels: the derived width was recomputed on every edit and never changed,
+    // so it never rendered (upstream renders it with its page; the update is gated on both).
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(DERIVED_RENDERS.with(Cell::get), derived_renders);
+    }
     // A steady edit as one scope (update plus frame), and the first edit of a row nobody has
     // edited yet, once the window's frame buffers are warm: the binding layer adds nothing to
     // a site's first edit.

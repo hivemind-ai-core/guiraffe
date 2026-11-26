@@ -436,6 +436,21 @@ Two timing defects were fixed before the syntax freezes.
   body closure. A parent re-render and a store write in one tick render once, with both values
   (`a_parent_render_and_a_store_write_in_one_tick_show_together`).
 
+### Dogfood fixes (guiraffe-goldens)
+
+The golden review tool moved onto stores and `ui!` and reported what forced it back to hand
+binding. Each fix moved that part back into `ui!`:
+
+- control entities take `handle:` (`ControlHandle`: entity and focus handle) and
+  `on_click => Event` on `ButtonControl`, and `.element_id()` applies alongside `.path()`;
+- `derived(lens, f)` and `let name <= source;`. Bound and row bodies get `window` and `cx`,
+  so rows read the theme live and read the selection through a derived binding. A selection
+  move renders two rows, and the row data no longer carries a `selected` copy;
+- `store!` setters moved under `Store::set().field(v)`;
+- `SelectControl` infers its value type, a call that starts a new line after a prop is its
+  own builder call, and `by_key`/`then` need no imports;
+- plain elements still need `.test_support()` to be found by tests. The guide says why.
+
 ### Passage (0.3.1) against the binding layer
 
 | Passage need | How the binding layer expresses it | Gap |

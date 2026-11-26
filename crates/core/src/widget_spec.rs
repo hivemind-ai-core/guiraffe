@@ -248,6 +248,7 @@ impl EventSpec {
                 "type":"object","required":["track","clip"],"additionalProperties":false,
                 "properties":{
                     "track":{"type":"integer","minimum":0},
+                    "trackId":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
                     "clip":{"type":"integer","minimum":0},
                     "start":{"type":"number"},
                     "length":{"type":"number","minimum":0.001},
@@ -722,7 +723,9 @@ pub fn timeline_track_schema() -> Value {
     json!({
         "type":"object","required":["name","clips"],"additionalProperties":false,
         "properties":{
+            "id":{"type":"integer","minimum":0,"maximum":(1_u64<<53)-1},
             "name":{"type":"string"},
+            "height":{"type":"number","minimum":20,"maximum":800},
             "clips":{"type":"array","items":{
                 "type":"object","required":["id","start","length"],"additionalProperties":false,
                 "properties":{
@@ -1042,7 +1045,7 @@ fn dope_channel_schema_with_depth(depth: usize) -> Value {
                 "properties":{
                     "time":{"type":"number"},
                     "value":{"type":"number"},
-                    "interpolation":{"enum":["constant","linear","bezier"]}
+                    "interpolation":{"enum":["constant","linear","bezier","ease-in","ease-out","ease-in-out"]}
                 }
             }},
             "group":{"type":"boolean"},
@@ -1111,7 +1114,7 @@ pub fn curve_series_schema() -> Value {
                 "type":"object","additionalProperties":false,"required":["time","value"],
                 "properties":{
                     "time":{"type":"number"},"value":{"type":"number"},
-                    "interpolation":{"enum":["constant","linear","bezier"]},
+                    "interpolation":{"enum":["constant","linear","bezier","ease-in","ease-out","ease-in-out"]},
                     "inHandle":handle,"outHandle":handle
                 }
             }}

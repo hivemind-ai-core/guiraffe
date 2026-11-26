@@ -113,9 +113,15 @@ fn tangent_handles(curve: &Curve, index: usize) -> Option<[(bool, (f64, f64)); 2
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum CurveEvent {
-    KeyMoved { index: usize, t: f64, v: f64 },
+    KeyMoved {
+        index: usize,
+        t: f64,
+        v: f64,
+    },
     Changed,
     SelectionChanged,
+    /// A key or handle drag ended (after its `KeyMoved` events): commit it as one edit.
+    Released,
 }
 #[derive(Clone)]
 pub struct CurveSeries {
@@ -176,6 +182,32 @@ impl CurveView {
             focus: cx.focus_handle(),
             focusable: None,
         })
+    }
+    /// Host write: replace the active curve (no event; keeps the selection when it still
+    /// exists).
+    pub fn set_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
+        if *self.curves[self.active].curve != curve {
+            self.curves[self.active].curve = Rc::new(curve);
+            let len = self.curves[self.active].curve.keys().len();
+            self.selected = self.selected.filter(|(c, k)| *c != self.active || *k < len);
+            cx.notify();
+        }
+    }
+    /// Host write: show time from `start` at `scale` seconds per pixel over values
+    /// `lo..hi` (no event). An embedding view passes its own axis so both line up.
+    pub fn set_view(&mut self, start: f64, scale: f64, lo: f64, hi: f64, cx: &mut Context<Self>) {
+        let mut axis = self.surface.axis;
+        if start.is_finite() && scale.is_finite() && scale > 0.0 {
+            axis.start = start;
+            axis.scale = scale.clamp(axis.min_scale, axis.max_scale);
+        }
+        let range = ValueRange::new(lo, hi, self.range().height);
+        if self.surface.axis != axis || self.surface.range != Some(range) {
+            self.surface.axis = axis;
+            self.surface.range = Some(range);
+            self.pending_fit = None;
+            cx.notify();
+        }
     }
     pub fn curve(&self) -> &Curve {
         &self.curves[self.active].curve
@@ -512,7 +544,12 @@ impl Render for CurveView {
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, _| this.release()),
+                cx.listener(|this, _, _, cx| {
+                    if this.drag.is_some() {
+                        cx.emit(CurveEvent::Released);
+                    }
+                    this.release();
+                }),
             )
             .child(
                 canvas(

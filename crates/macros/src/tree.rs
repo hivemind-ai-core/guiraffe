@@ -30,6 +30,8 @@ enum Item {
         lens: LensPath,
         handler: Option<Ident>,
     },
+    /// `let name <= source;` binds a value for the rest of the element.
+    Let(Ident, LensPath),
     /// `on_x => Event(args)` dispatches into the scope's store;
     /// `on_x => field op= value` mutates a stateful component's state.
     Handle(Ident, Handler),
@@ -45,6 +47,10 @@ enum Handler {
 struct LensPath {
     root: Ident,
     steps: Vec<Step>,
+    /// `derived(path, |v| …)`: bind the closure's result instead of the path's value.
+    derive: Option<Box<Expr>>,
+    /// `derived((path, more…), |a, b| …)`: the other inputs.
+    more: Vec<LensPath>,
 }
 
 #[derive(Clone)]
@@ -160,6 +166,39 @@ fn change_handler(prop: &Ident) -> Ident {
 
 impl Parse for LensPath {
     fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(Ident) && input.peek2(token::Paren) {
+            let fork = input.fork();
+            if fork.parse::<Ident>()? == "derived" {
+                input.parse::<Ident>()?;
+                let args;
+                parenthesized!(args in input);
+                let mut path: LensPath = if args.peek(token::Paren) {
+                    let inputs;
+                    parenthesized!(inputs in args);
+                    let mut paths =
+                        Punctuated::<LensPath, Token![,]>::parse_terminated(&inputs)?.into_iter();
+                    let mut first = paths.next().ok_or_else(|| {
+                        inputs.error("`derived(( … ), f)` needs at least one lens")
+                    })?;
+                    first.more = paths.collect();
+                    if first.more.len() > 3 {
+                        return Err(inputs.error("`derived` reads at most four lenses"));
+                    }
+                    first
+                } else {
+                    args.parse()?
+                };
+                if path.derive.is_some() || path.more.iter().any(|p| p.derive.is_some()) {
+                    return Err(args.error("`derived` takes lens paths, not another `derived`"));
+                }
+                args.parse::<Token![,]>()?;
+                path.derive = Some(Box::new(args.parse()?));
+                if !args.is_empty() {
+                    return Err(args.error("expected `derived(lens, |value| …)`"));
+                }
+                return Ok(path);
+            }
+        }
         let root: Ident = input.parse().map_err(|error| {
             Error::new(
                 error.span(),
@@ -185,8 +224,37 @@ impl Parse for LensPath {
                 steps.push(Step::Field(name));
             }
         }
-        Ok(Self { root, steps })
+        Ok(Self {
+            root,
+            steps,
+            derive: None,
+            more: Vec::new(),
+        })
     }
+}
+
+/// `bg: p.body` followed on a later line by `.id("x")` parses as one method chain. Calls whose
+/// `.` starts a line below the prop's name are builder calls of their own.
+fn split_trailing_calls(mut value: Expr, name: &Ident) -> (Expr, Vec<TokenStream>) {
+    let line = name.span().start().line;
+    let mut rest = Vec::new();
+    while let Expr::MethodCall(call) = &value {
+        if call.dot_token.span.start().line <= line {
+            break;
+        }
+        let syn::ExprMethodCall {
+            receiver,
+            dot_token,
+            method,
+            turbofish,
+            args,
+            ..
+        } = call.clone();
+        rest.push(quote!(#dot_token #method #turbofish (#args)));
+        value = *receiver;
+    }
+    rest.reverse();
+    (value, rest)
 }
 
 fn bind_operator(input: ParseStream) -> Result<Option<bool>> {
@@ -222,6 +290,18 @@ impl Parse for Item {
             parens.surround(&mut call, |tokens| tokens.extend(args));
             return Ok(Self::Builder(call));
         }
+        if input.peek(Token![let]) {
+            input.parse::<Token![let]>()?;
+            let name: Ident = input.parse()?;
+            if !input.peek(Token![<=]) || input.peek3(Token![>]) {
+                return Err(
+                    input.error("expected `let name <= lens;` (bound values are read-only)")
+                );
+            }
+            input.parse::<Token![<=]>()?;
+            let lens: LensPath = input.parse()?;
+            return Ok(Self::Let(name, lens));
+        }
         if input.peek(Ident) && !input.peek2(Token![::]) {
             let fork = input.fork();
             let name = fork.parse::<Ident>()?;
@@ -229,6 +309,12 @@ impl Parse for Item {
                 input.parse::<Ident>()?;
                 let two_way = bind_operator(input)?.unwrap_or(false);
                 let lens: LensPath = input.parse()?;
+                if two_way && lens.derive.is_some() {
+                    return Err(Error::new_spanned(
+                        &name,
+                        "a derived value is read-only: use `<=`",
+                    ));
+                }
                 let handler = if input.peek(kw::via) {
                     input.parse::<kw::via>()?;
                     if !two_way {
@@ -250,7 +336,8 @@ impl Parse for Item {
             if fork.peek(Token![=>]) {
                 input.parse::<Ident>()?;
                 input.parse::<Token![=>]>()?;
-                let value = Expr::parse_without_eager_brace(input)?;
+                // Struct literals are events too: `on_click => Decide { … }`.
+                let value: Expr = input.parse()?;
                 let mutate = matches!(&value, Expr::Assign(_))
                     || matches!(&value, Expr::Binary(binary) if is_compound(&binary.op));
                 return Ok(Self::Handle(
@@ -271,7 +358,10 @@ impl Parse for Item {
                         format!("expected a Rust expression for prop `{name}`: {error}"),
                     )
                 })?;
-                return Ok(Self::Builder(quote_spanned!(name.span()=> .#name(#value))));
+                let (value, rest) = split_trailing_calls(value, &name);
+                return Ok(Self::Builder(
+                    quote_spanned!(name.span()=> .#name(#value) #(#rest)*),
+                ));
             }
             if !upper(&name) && !fork.peek(token::Paren) && !fork.peek(token::Brace) {
                 input.parse::<Ident>()?;
@@ -507,65 +597,101 @@ fn control_binding(
     args: &Punctuated<Expr, Token![,]>,
     items: &[Item],
 ) -> Option<TokenStream> {
-    let name = path.segments.last()?.ident.to_string();
+    let last = path.segments.last()?;
+    let name = last.ident.to_string();
     if !name.ends_with("Control") {
         return None;
     }
-    let binds: Vec<_> = items
-        .iter()
-        .filter_map(|item| match item {
-            Item::Bind {
-                lens,
-                handler,
-                prop,
-            } => Some((prop, lens, handler.is_some())),
-            _ => None,
-        })
-        .collect();
-    let [(prop, lens, two_way)] = binds.as_slice() else {
-        if binds.len() > 1 {
-            return Some(
-                Error::new_spanned(path, "a control entity binds one value").into_compile_error(),
-            );
-        }
-        return None;
-    };
+    let error = |message: &str| Some(Error::new_spanned(path, message).into_compile_error());
     if !args.is_empty() {
-        return Some(
-            Error::new_spanned(args, "a bound control entity takes its id from `.path(…)`")
-                .into_compile_error(),
-        );
+        return error("a control entity takes its id from `.path(…)` or `.element_id(…)`");
     }
+    // Generic controls infer their value type from the binding: `SelectControl { … }`.
+    let mut path = path.clone();
+    if name == "SelectControl"
+        && let Some(last) = path.segments.last_mut()
+        && last.arguments.is_empty()
+    {
+        last.arguments = PathArguments::AngleBracketed(syn::parse_quote!(::<_>));
+    }
+    for segment in &mut path.segments {
+        if let PathArguments::AngleBracketed(arguments) = &mut segment.arguments {
+            arguments.colon2_token.get_or_insert_with(Default::default);
+        }
+    }
+    let builder = Ident::new("__guiraffe_builder", Span::mixed_site());
+    let store = store_ident();
     let mut configure = Vec::new();
+    let mut site = Vec::new();
+    let mut binds = 0;
     for item in items {
         match item {
-            Item::Builder(call) => configure.push(call.clone()),
-            Item::Bind { .. } => {}
-            Item::Child(_) | Item::Handle(..) => {
-                return Some(
-                    Error::new_spanned(
-                        path,
-                        "a bound control entity takes builder props only; edits arrive through the binding",
-                    )
-                    .into_compile_error(),
+            Item::Builder(call) => match handle_call(call) {
+                Some(handle) => site.push(quote!(.handle(#handle))),
+                None => configure.push(call.clone()),
+            },
+            Item::Bind { lens, handler, .. } => {
+                binds += 1;
+                let two_way = handler.is_some();
+                let lens = lens.expand();
+                site.push(quote!(.bind(#lens, #two_way)));
+            }
+            Item::Handle(handler, Handler::Dispatch(event)) => {
+                if handler != "on_click" {
+                    return Some(
+                        Error::new_spanned(
+                            handler,
+                            "a control entity reports activation as `on_click => Event`; values change through `<=>`",
+                        )
+                        .into_compile_error(),
+                    );
+                }
+                site.push(quote_spanned!(handler.span()=> .on_activate(
+                    move |__guiraffe_store, __guiraffe_source, __guiraffe_cx| {
+                        __guiraffe_store.dispatch_from(#event, __guiraffe_source, __guiraffe_cx);
+                    }
+                )));
+            }
+            Item::Child(_) | Item::Let(..) | Item::Handle(_, Handler::Mutate(_)) => {
+                return error(
+                    "a control entity takes builder props, `handle:`, one binding and `on_click`",
                 );
             }
         }
     }
-    let _ = prop;
-    let builder = Ident::new("__guiraffe_builder", Span::mixed_site());
-    let store = store_ident();
+    if binds > 1 {
+        return error("a control entity binds one value");
+    }
+    if site.is_empty() {
+        // Nothing bound: the plain builder expansion, built by the caller.
+        return None;
+    }
+    if SCOPE.with(|scope| scope.borrow().stores == 0) {
+        return error("a bound control entity needs an enclosing `store(…) { … }` scope");
+    }
     let id = site_id();
-    let lens = lens.expand();
     Some(
-        quote_spanned!(path.span()=> ::guiraffe_ui::__macro::bound_control::<#path, _, _>(
-            #id,
-            #store,
-            #lens,
-            #two_way,
-            move |#builder| #builder #(#configure)*,
-        )),
+        quote_spanned!(path.span()=> ::guiraffe_ui::__macro::control_site::<#path, _>(
+        #id,
+        #store,
+        move |#builder| #builder #(#configure)*,
+    ) #(#site)*),
     )
+}
+
+/// `handle: expr` in a control entity's body: the control's [`ControlHandle`].
+fn handle_call(call: &TokenStream) -> Option<TokenStream> {
+    let mut tokens = call.clone().into_iter();
+    match (tokens.next(), tokens.next(), tokens.next()) {
+        (
+            Some(proc_macro2::TokenTree::Punct(dot)),
+            Some(proc_macro2::TokenTree::Ident(name)),
+            Some(proc_macro2::TokenTree::Group(args)),
+        ) if dot.as_char() == '.' && name == "handle" && tokens.next().is_none() => {
+            Some(args.stream())
+        }
+        _ => None,
+    }
 }
 
 /// `count -= step` becomes `__guiraffe_fields.count -= step`.
@@ -655,7 +781,18 @@ impl LensPath {
                 }
             };
         }
-        lens
+        match &self.derive {
+            Some(f) if self.more.is_empty() => quote!(::guiraffe_ui::__macro::derived(#lens, #f)),
+            Some(f) => {
+                let name = Ident::new(
+                    &format!("derived{}", self.more.len() + 1),
+                    Span::call_site(),
+                );
+                let more = self.more.iter().map(LensPath::expand);
+                quote!(::guiraffe_ui::__macro::#name((#lens, #(#more,)*), #f))
+            }
+            None => lens,
+        }
     }
 }
 
@@ -670,17 +807,25 @@ fn bound_site(lenses: &[TokenStream], values: &[Ident], body: TokenStream) -> To
         .iter()
         .map(|v| quote!(::core::option::Option::Some(#v)));
     let gets = indices.map(|i| quote!(#bound.#i.get()));
-    quote!(::guiraffe_ui::__macro::bound_at(
-        #id,
-        #store,
-        (#(#lenses,)*),
-        move |#bound, #store, _, _| {
-            let (#(#somes,)*) = (#(#gets,)*) else {
-                return ::gpui_kit::IntoElement::into_any_element(::gpui_kit::Empty);
-            };
-            ::gpui_kit::IntoElement::into_any_element(#body)
-        },
-    ))
+    // Inside a store-bound row the body may read the row (`&T`): the site keeps its own copy
+    // and lends it to the body, so the closure owns what it reads.
+    let rows: Vec<Ident> = SCOPE.with(|scope| scope.borrow().items.clone());
+    quote!({
+        #(let #rows = ::core::clone::Clone::clone(#rows);)*
+        ::guiraffe_ui::__macro::bound_at(
+            #id,
+            #store,
+            (#(#lenses,)*),
+            move |#bound, #store, window, cx| {
+                let _ = (&window, &cx);
+                #(let #rows = &#rows; let _ = #rows;)*
+                let (#(#somes,)*) = (#(#gets,)*) else {
+                    return ::gpui_kit::IntoElement::into_any_element(::gpui_kit::Empty);
+                };
+                ::gpui_kit::IntoElement::into_any_element(#body)
+            },
+        )
+    })
 }
 
 fn fragment(nodes: &[Node]) -> TokenStream {
@@ -768,7 +913,9 @@ impl Node {
     /// Reject bindings outside a store scope and handlers outside their context.
     fn check(&self, store: bool) -> Result<()> {
         let lens = |lens: &LensPath, items: &[Ident], store: bool| {
-            if store || items.contains(&lens.root) {
+            if store
+                || (items.contains(&lens.root) && lens.more.iter().all(|p| items.contains(&p.root)))
+            {
                 Ok(())
             } else {
                 Err(Error::new(
@@ -788,7 +935,7 @@ impl Node {
         };
         match self {
             Self::Element(element) => element.items.iter().try_for_each(|item| match item {
-                Item::Bind { lens: path, .. } => lens(path, items, store),
+                Item::Bind { lens: path, .. } | Item::Let(_, path) => lens(path, items, store),
                 Item::Handle(name, Handler::Dispatch(_)) if !store => Err(Error::new_spanned(
                     name,
                     "`=> Event` needs an enclosing `store(…) { … }` scope",
@@ -839,7 +986,7 @@ impl Node {
     fn bound_span(&self) -> Option<Span> {
         match self {
             Self::Element(element) => element.items.iter().find_map(|item| match item {
-                Item::Bind { prop, .. } => Some(prop.span()),
+                Item::Bind { prop, .. } | Item::Let(prop, _) => Some(prop.span()),
                 Item::Child(child) => child.bound_span(),
                 _ => None,
             }),
@@ -976,6 +1123,11 @@ impl Node {
                 let built = items.iter().fold(base, |result, item| match item {
                     Item::Builder(call) => quote!(#result #call),
                     Item::Child(node) => node.apply(result),
+                    Item::Let(name, lens) => {
+                        lenses.push(lens.expand());
+                        values.push(name.clone());
+                        result
+                    }
                     Item::Bind { prop, lens, handler } => {
                         let index = syn::Index::from(lenses.len());
                         let value = Ident::new(&format!("__guiraffe_value_{}", lenses.len()), Span::mixed_site());
@@ -1090,7 +1242,10 @@ impl Node {
                 quote!(::guiraffe_ui::__macro::bound_list(
                     #store,
                     #lens,
-                    move |#item_lens, #item, #store, _, _| #body,
+                    move |#item_lens, #item, #store, window, cx| {
+                        let _ = (&window, &cx);
+                        #body
+                    },
                 ).id(#id) #mounted #height)
             }
             Self::Value(value) => value.clone(),

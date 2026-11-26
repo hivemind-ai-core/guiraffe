@@ -329,7 +329,11 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
             .and_then(|row| row.track.clips().first())
             .map(|c| c.id)
         {
-            v.set_locked(3, id, true, cx);
+            v.set_locked(
+                guiraffe_timeline::tracks_model::ClipRef::new(3, id),
+                true,
+                cx,
+            );
         }
     });
     with_options(
@@ -401,8 +405,8 @@ fn dope(_: &mut Window, cx: &mut App) -> AnyView {
     );
     view.update(cx, |view, cx| {
         view.set_focusable(true, cx);
-        view.press(2, view.axis().x(0.5));
-        view.release();
+        view.press(2, view.axis().x(0.5), cx);
+        view.release(cx);
     });
     let lock = SegmentedControl::new(["Editable", "Locked"], cx);
     let style = SegmentedControl::new(["Lock: badge", "Dimmed", "Hatched", "None"], cx);
