@@ -294,15 +294,31 @@ impl Window {
                 }
                 stack
             }),
-            text_style_stack: mem::replace(
-                &mut self.text_style_stack,
-                rebuild.text_style_stack.clone(),
-            ),
-            content_mask_stack: mem::replace(&mut self.content_mask_stack, vec![content_mask]),
-            element_offset_stack: mem::replace(
-                &mut self.element_offset_stack,
-                vec![rebuild.element_offset],
-            ),
+            text_style_stack: mem::replace(&mut self.text_style_stack, {
+                // Built into the stacks the last gap left, which `clone_from`
+                // and `clear` keep the room of: a gap is entered twice for
+                // every view built again in one.
+                let spares = &mut self.retained_state.gap_spares;
+                match spares.text_style_stack.take() {
+                    Some(mut stack) => {
+                        stack.clone_from(&rebuild.text_style_stack);
+                        stack
+                    }
+                    None => rebuild.text_style_stack.clone(),
+                }
+            }),
+            content_mask_stack: mem::replace(&mut self.content_mask_stack, {
+                let mut stack = mem::take(&mut self.retained_state.gap_spares.content_masks);
+                stack.clear();
+                stack.push(content_mask);
+                stack
+            }),
+            element_offset_stack: mem::replace(&mut self.element_offset_stack, {
+                let mut stack = mem::take(&mut self.retained_state.gap_spares.element_offsets);
+                stack.clear();
+                stack.push(rebuild.element_offset);
+                stack
+            }),
             rem_size_override_stack: mem::replace(
                 &mut self.rem_size_override_stack,
                 SmallVec::from_slice(&[rebuild.rem_size]),
@@ -314,9 +330,17 @@ impl Window {
 
     pub(crate) fn leave_gap(&mut self, inherited: Inherited) {
         self.element_id_stack = inherited.element_id_stack;
-        self.text_style_stack = inherited.text_style_stack;
-        self.content_mask_stack = inherited.content_mask_stack;
-        self.element_offset_stack = inherited.element_offset_stack;
+        let spares = &mut self.retained_state.gap_spares;
+        spares.text_style_stack = Some(mem::replace(
+            &mut self.text_style_stack,
+            inherited.text_style_stack,
+        ));
+        spares.content_masks =
+            mem::replace(&mut self.content_mask_stack, inherited.content_mask_stack);
+        spares.element_offsets = mem::replace(
+            &mut self.element_offset_stack,
+            inherited.element_offset_stack,
+        );
         self.rem_size_override_stack = inherited.rem_size_override_stack;
         self.element_opacity = inherited.element_opacity;
         crate::inherited::leave(inherited.embedder);

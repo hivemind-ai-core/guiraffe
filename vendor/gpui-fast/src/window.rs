@@ -1271,6 +1271,8 @@ pub struct Window {
     pub(crate) text_style_stack: crate::fast::text_style::TextStyleStack,
     pub(crate) fast_glyph_bounds: crate::fast::glyphs::GlyphBoundsCache,
     pub(crate) fast_layers: crate::fast::layers::WindowLayers,
+    /// See [`crate::fast::high_water`].
+    pub(crate) fast_frame_trims: crate::fast::high_water::FrameTrims,
     pub(crate) fast_composition: crate::fast::composition::WindowCompositionHandle,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -2406,6 +2408,7 @@ impl Window {
             text_style_stack: crate::fast::text_style::TextStyleStack::default(),
             fast_glyph_bounds: crate::fast::glyphs::GlyphBoundsCache::default(),
             fast_layers: crate::fast::layers::WindowLayers::default(),
+            fast_frame_trims: crate::fast::high_water::FrameTrims::default(),
             fast_composition: crate::fast::composition::WindowCompositionHandle::default(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -3842,6 +3845,7 @@ impl Window {
         }
 
         self.next_frame.clear();
+        crate::fast::high_water::trim_frames(self, cx);
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;

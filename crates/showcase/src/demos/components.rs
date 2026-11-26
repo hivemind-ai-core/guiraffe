@@ -90,6 +90,13 @@ pub fn entries() -> Vec<Entry> {
         },
         Entry {
             krate: "components",
+            name: "StepGrid",
+            summary: "Step sequencer cells: levels, accents, probability, ratchets, polymeter rows.",
+            covers: &["StepGrid"],
+            demo: step_grid,
+        },
+        Entry {
+            krate: "components",
             name: "Meter",
             summary: "Peak, RMS, hold and clip latch; gain reduction; stereo; LUFS; MeterBank for mixers.",
             covers: &["Meter", "MeterBank"],
@@ -101,6 +108,13 @@ pub fn entries() -> Vec<Entry> {
             summary: "Multi-section ring with a center label.",
             covers: &["RingProgress"],
             demo: ring,
+        },
+        Entry {
+            krate: "components",
+            name: "Knob & NumberField",
+            summary: "Parameter controls over a shared value mapping: log Hz, bipolar pan, modulation range, typed entry with units.",
+            covers: &["KnobControl", "NumberFieldControl"],
+            demo: knobs_demo,
         },
         Entry {
             krate: "components",
@@ -412,6 +426,47 @@ fn indicator(window: &mut Window, cx: &mut App) -> AnyView {
     )
 }
 
+/// A drum pattern: click to toggle, drag to paint, Alt-drag for level, arrows and Space.
+struct StepDemo(Entity<StepGrid>);
+
+impl gpui_kit::Render for StepDemo {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        column([example(
+            "Click toggles, drag paints, Alt-drag sets the level; Hat repeats every 6 steps",
+            self.0.clone(),
+        )])
+    }
+}
+
+fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
+    use guiraffe_components::step_grid::{StepDoc, step_store};
+    let rows = vec![
+        StepRow::new(1, "Kick", 16)
+            .with_color(ColorName::Red)
+            .with_cell(0, StepCell::on())
+            .with_cell(4, StepCell::on().with_level(0.7))
+            .with_cell(8, StepCell::on().flagged())
+            .with_cell(12, StepCell::on().with_ratchet(2)),
+        StepRow::new(2, "Snare", 16)
+            .with_color(ColorName::Blue)
+            .with_cell(4, StepCell::on())
+            .with_cell(12, StepCell::on())
+            .with_cell(15, StepCell::on().with_probability(0.4)),
+        StepRow::new(3, "Hat", 6)
+            .with_color(ColorName::Yellow)
+            .with_cell(0, StepCell::on().with_level(0.5))
+            .with_cell(2, StepCell::on())
+            .with_cell(4, StepCell::on().with_level(0.3)),
+        StepRow::new(4, "Clap", 16)
+            .with_color(ColorName::Grape)
+            .with_cell(14, StepCell::on().with_ratchet(4)),
+    ];
+    let store = step_store(StepDoc::new(16, 4, rows), 100, cx);
+    let grid = StepGrid::new(store, StepGridOptions::default(), cx);
+    grid.read(cx).playhead().set(Some(6));
+    cx.new(|_| StepDemo(grid)).into()
+}
+
 /// Meters with fixed levels (a host feeds them every frame; see `MeterFeed`).
 struct MeterDemo {
     meters: Vec<Entity<Meter>>,
@@ -720,6 +775,87 @@ fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
                     .child(control.clone())
                     .into_any_element(),
                 example("Events", log.clone()),
+            ])
+        },
+        window,
+        cx,
+    )
+}
+
+fn knobs_demo(window: &mut Window, cx: &mut App) -> AnyView {
+    use guiraffe_components::controls::{KnobControl, NumberFieldControl, ParamEvent};
+    use guiraffe_components::mapping::{Curve, Unit, ValueMap};
+    playground_with_update(
+        "Live Knob & NumberField",
+        &[Knob::toggle("Disabled")],
+        |window, cx| {
+            let hz = ValueMap::new(20.0, 20_000.0)
+                .curve(Curve::Log)
+                .unit(Unit::Hertz)
+                .default_to(1_000.0);
+            let cutoff = KnobControl::new()
+                .mapping(hz)
+                .label("Cutoff")
+                .diameter(48.)
+                .build(window, cx);
+            let pan = KnobControl::new()
+                .mapping(ValueMap::new(-1.0, 1.0).bipolar(true).decimals(2))
+                .label("Pan")
+                .diameter(48.)
+                .build(window, cx);
+            let depth = KnobControl::new()
+                .mapping(ValueMap::new(0.0, 1.0).unit(Unit::Percent))
+                .value(0.5)
+                .modulation(Some((0.3, 0.8)))
+                .label("Depth")
+                .diameter(48.)
+                .build(window, cx);
+            let field = NumberFieldControl::new()
+                .mapping(hz)
+                .label("Cutoff")
+                .build(window, cx);
+            let attack = NumberFieldControl::new()
+                .mapping(
+                    ValueMap::new(0.001, 10.0)
+                        .curve(Curve::Log)
+                        .unit(Unit::Seconds),
+                )
+                .value(0.01)
+                .label("Attack")
+                .build(window, cx);
+            let log = EventLog::new(cx);
+            for knob in [&cutoff, &pan, &depth] {
+                EventLog::watch::<ParamEvent, _>(&log, knob, cx);
+            }
+            EventLog::watch::<ParamEvent, _>(&log, &field, cx);
+            EventLog::watch::<ParamEvent, _>(&log, &attack, cx);
+            ([cutoff, pan, depth], [field, attack], log)
+        },
+        |(knobs, fields, _), v, cx| {
+            let disabled = v.on(0);
+            for knob in knobs {
+                knob.update(cx, |k, cx| k.set_disabled(disabled, cx));
+            }
+            for field in fields {
+                field.update(cx, |f, cx| f.set_disabled(disabled, cx));
+            }
+        },
+        |(knobs, fields, log), _, _, _| {
+            column([
+                div()
+                    .flex()
+                    .gap(px(24.))
+                    .children(knobs.iter().map(|k| k.clone().into_any_element()))
+                    .into_any_element(),
+                div()
+                    .flex()
+                    .gap(px(12.))
+                    .children(fields.iter().map(|f| f.clone().into_any_element()))
+                    .into_any_element(),
+                example(
+                    "Drag (Shift: fine), scroll, arrow keys; double-click a knob to reset; double-click a field to type 2.5k or 250 ms",
+                    log.clone(),
+                ),
             ])
         },
         window,

@@ -315,9 +315,10 @@ pub fn field<'a>(value: &'a Value, name: &'static str) -> Option<&'a Value> {
 // ---- Bound control entities (`guiraffe_components::controls`) ---------------------------
 
 use guiraffe_components::controls::{
-    ButtonBuilder, ButtonControl, ButtonEvent, CheckboxBuilder, CheckboxControl, SelectBuilder,
-    SelectControl, SelectValue, SelectedValue, SliderBuilder, SliderControl, SliderControlEvent,
-    SwitchBuilder, SwitchControl, TextInputBuilder, TextInputControl, TextInputEvent, ToggleEvent,
+    ButtonBuilder, ButtonControl, ButtonEvent, CheckboxBuilder, CheckboxControl, KnobBuilder,
+    KnobControl, NumberFieldBuilder, NumberFieldControl, ParamEvent, SelectBuilder, SelectControl,
+    SelectValue, SelectedValue, SliderBuilder, SliderControl, SliderControlEvent, SwitchBuilder,
+    SwitchControl, TextInputBuilder, TextInputControl, TextInputEvent, ToggleEvent,
 };
 use guiraffe_core::protocol::Source;
 
@@ -404,6 +405,44 @@ impl<T: SelectValue> ControlEntity for SelectControl<T> {
         builder.build(window, cx)
     }
 }
+
+macro_rules! param_entity {
+    ($control:ty, $builder:ty) => {
+        impl ControlEntity for $control {
+            type Builder = $builder;
+            fn builder() -> $builder {
+                <$control>::new()
+            }
+            fn build(
+                builder: $builder,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> gpui_kit::Entity<Self> {
+                builder.build(window, cx)
+            }
+            fn focus(&self, cx: &App) -> Option<gpui_kit::FocusHandle> {
+                Some(gpui_kit::Focusable::focus_handle(self, cx))
+            }
+        }
+
+        impl ControlBinding for $control {
+            type Value = f64;
+            type Event = ParamEvent;
+            fn initial(builder: $builder, value: &f64) -> $builder {
+                builder.value(*value)
+            }
+            fn edited(event: &ParamEvent) -> Option<(f64, Source)> {
+                let ParamEvent::Changed(value, source) = event;
+                Some((*value, *source))
+            }
+            fn host_set(&mut self, value: &f64, cx: &mut Context<Self>) {
+                self.set_value(*value, cx);
+            }
+        }
+    };
+}
+param_entity!(KnobControl, KnobBuilder);
+param_entity!(NumberFieldControl, NumberFieldBuilder);
 
 impl ControlActivation for ButtonControl {
     type Activation = ButtonEvent;

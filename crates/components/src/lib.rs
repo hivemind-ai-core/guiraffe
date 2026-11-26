@@ -29,6 +29,7 @@ pub mod highlight;
 pub mod icons;
 pub mod kbd;
 pub mod loader;
+pub mod mapping;
 pub mod meter;
 pub mod misc;
 pub mod paper;
@@ -36,6 +37,8 @@ pub mod ring;
 pub mod segmented;
 pub mod speed_dial;
 pub mod spoiler;
+pub mod step_grid;
+pub mod step_model;
 pub mod stepper;
 mod style;
 pub mod tabs;
@@ -65,6 +68,10 @@ pub use ring::{RingProgress, arc_spans};
 pub use segmented::{SegmentedControl, SegmentedEvent};
 pub use speed_dial::{DialAction, DialArc, DialLayout, SpeedDial, SpeedDialEvent};
 pub use spoiler::Spoiler;
+pub use step_grid::{
+    LevelStyle, RowId, StepCell, StepGrid, StepGridEvent, StepGridOptions, StepPlayheadFeed,
+    StepRow, StepRowHeader,
+};
 pub use stepper::{Step, StepState, Stepper, connector_complete, step_state};
 pub use tabs::{TabId, TabItem, Tabs, TabsEvent, TabsOptions};
 pub use timeline::{ItemState, Timeline, TimelineItem};
