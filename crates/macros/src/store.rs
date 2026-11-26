@@ -161,22 +161,6 @@ impl Parse for StoreDef {
     }
 }
 
-fn pascal(name: &Ident) -> Ident {
-    let mut out = String::new();
-    let mut upper = true;
-    for c in name.to_string().trim_start_matches("r#").chars() {
-        if c == '_' {
-            upper = true;
-        } else if upper {
-            out.extend(c.to_uppercase());
-            upper = false;
-        } else {
-            out.push(c);
-        }
-    }
-    Ident::new(&out, name.span())
-}
-
 /// Lens consts, the path struct and `Lensed` for a struct's named fields.
 fn lenses(vis: &Visibility, name: &Ident, fields: &[(&Ident, &Type, TokenStream)]) -> TokenStream {
     let path = format_ident!("{}Path", name);
@@ -267,24 +251,32 @@ impl StoreDef {
             .map(|(f, m)| (&f.name, &f.ty, m))
             .collect();
         let lenses = lenses(&vis, &name, &lens_fields);
-        let setters = fields.iter().map(|f| {
+        let set_ty = format_ident!("{}Set", name);
+        let setter_methods = fields.iter().map(|f| {
             let (field, ty) = (&f.name, &f.ty);
-            let event = format_ident!("Set{}", pascal(field));
             quote! {
-                #[doc = concat!("Set `", stringify!(#field), "` (validated, keyed to the field).")]
-                #[derive(Debug, Clone)]
-                #vis struct #event(pub #ty);
-
-                impl ::guiraffe_state::Event<#name> for #event {
-                    fn handle(self, fx: &mut ::guiraffe_state::Fx<'_, #name>) {
-                        fx.set_at(#name::#field, self.0);
-                    }
-                    fn undoable(&self) -> bool {
-                        ::guiraffe_state::Lens::undoable(&#name::#field)
-                    }
+                #[doc = concat!("Set `", stringify!(#field), "`: validated, keyed to the field, tagged `Source::Host`.")]
+                #vis fn #field(self, value: #ty) -> ::guiraffe_state::Set<::guiraffe_state::Field<#name, #ty>> {
+                    ::guiraffe_state::Set::host(#name::#field, value)
                 }
             }
         });
+        let setters = quote! {
+            #[doc = concat!("The `Set` events of [`", stringify!(#name), "`], one per field: `", stringify!(#name), "::set().field(value)`.")]
+            #[derive(Clone, Copy, Debug)]
+            #vis struct #set_ty;
+
+            impl #set_ty {
+                #(#setter_methods)*
+            }
+
+            impl #name {
+                /// The generated per-field `Set` events: `store.dispatch(Self::set().field(value), cx)`.
+                #vis fn set() -> #set_ty {
+                    #set_ty
+                }
+            }
+        };
         let events = events.iter().map(|event| expand_event(&vis, &name, event));
         let store_fn = quote! {
             impl #name {
@@ -309,7 +301,7 @@ impl StoreDef {
 
             #store_fn
             #lenses
-            #(#setters)*
+            #setters
             #(#events)*
         }
     }

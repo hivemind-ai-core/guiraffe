@@ -4,7 +4,7 @@
 use gpui_kit::{AppContext, px, size};
 use guiraffe_core::{GuiraffeTheme, Scheme, apply};
 use guiraffe_goldens::{
-    review::{Decide, Decision, LoadGoldens, LoadedGolden, Select, SetZoom},
+    review::{Decide, Decision, LoadGoldens, LoadedGolden, Review, Select},
     view::{ReviewApp, load},
 };
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
@@ -50,7 +50,7 @@ fn review_window_light_and_dark() {
                     cx,
                 );
                 store.dispatch_now(Select(1), cx);
-                store.dispatch_now(SetZoom(4.), cx);
+                store.dispatch_now(Review::set().zoom(4.), cx);
                 let app = cx.new(|cx| ReviewApp::new(store, window, cx));
                 guiraffe_overlays::root(app, window, cx)
             })
