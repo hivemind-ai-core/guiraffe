@@ -38,6 +38,7 @@ pub mod speed_dial;
 pub mod spoiler;
 pub mod stepper;
 mod style;
+pub mod tabs;
 pub mod timeline;
 pub mod typography;
 
@@ -65,6 +66,7 @@ pub use segmented::{SegmentedControl, SegmentedEvent};
 pub use speed_dial::{DialAction, DialArc, DialLayout, SpeedDial, SpeedDialEvent};
 pub use spoiler::Spoiler;
 pub use stepper::{Step, StepState, Stepper, connector_complete, step_state};
+pub use tabs::{TabId, TabItem, Tabs, TabsEvent, TabsOptions};
 pub use timeline::{ItemState, Timeline, TimelineItem};
 pub use typography::{Text, Title};
 
