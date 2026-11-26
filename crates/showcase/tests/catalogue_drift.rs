@@ -557,6 +557,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Golden review tool (a dogfood application, not a document widget): constructs the review window over a review store.",
     ),
     (
+        "goldens::ReviewApp::ribbon",
+        "Golden review tool (a dogfood application, not a document widget): the window's command ribbon.",
+    ),
+    (
         "goldens::ReviewApp::store",
         "Golden review tool (a dogfood application, not a document widget): the review store that holds all state.",
     ),
