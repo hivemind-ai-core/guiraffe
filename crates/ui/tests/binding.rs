@@ -74,7 +74,9 @@ impl RenderOnce for Knob {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         RENDERS.with(|r| *r.borrow_mut().entry(self.id).or_default() += 1);
         let text = format!("{} {}", self.label, self.value);
-        LABELS.with(|l| l.borrow_mut().push(text.clone()));
+        if self.id == "gain" {
+            LABELS.with(|l| l.borrow_mut().push(text.clone()));
+        }
         div().child(text)
     }
 }

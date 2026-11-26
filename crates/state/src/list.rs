@@ -7,14 +7,7 @@
 //! (uniform row height) by default and plain children when mounted. A variable-height layout
 //! (prefix sums) can drive the same [`RowViews`].
 
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    hash::Hash,
-    ops::Range,
-    panic::Location,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, hash::Hash, ops::Range, panic::Location, rc::Rc};
 
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Context, ElementId, Entity, IntoElement, ParentElement,
