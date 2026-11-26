@@ -97,10 +97,24 @@ pub fn entries() -> Vec<Entry> {
         },
         Entry {
             krate: "components",
+            name: "Meter",
+            summary: "Peak, RMS, hold and clip latch; gain reduction; stereo; LUFS; MeterBank for mixers.",
+            covers: &["Meter", "MeterBank"],
+            demo: meter,
+        },
+        Entry {
+            krate: "components",
             name: "RingProgress",
             summary: "Multi-section ring with a center label.",
             covers: &["RingProgress"],
             demo: ring,
+        },
+        Entry {
+            krate: "components",
+            name: "Knob & NumberField",
+            summary: "Parameter controls over a shared value mapping: log Hz, bipolar pan, modulation range, typed entry with units.",
+            covers: &["KnobControl", "NumberFieldControl"],
+            demo: knobs_demo,
         },
         Entry {
             krate: "components",
@@ -453,6 +467,65 @@ fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|_| StepDemo(grid)).into()
 }
 
+/// Meters with fixed levels (a host feeds them every frame; see `MeterFeed`).
+struct MeterDemo {
+    meters: Vec<Entity<Meter>>,
+    bank: Entity<MeterBank>,
+}
+
+impl gpui_kit::Render for MeterDemo {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        column([
+            example(
+                "Mono, stereo, clipped, gain reduction, horizontal with LUFS",
+                div()
+                    .flex()
+                    .gap(px(24.))
+                    .items_start()
+                    .children(self.meters.iter().cloned()),
+            ),
+            example(
+                "MeterBank: eight stereo channels in one view",
+                self.bank.clone(),
+            ),
+        ])
+    }
+}
+
+fn meter(_: &mut Window, cx: &mut App) -> AnyView {
+    let meters = vec![
+        Meter::new(MeterOptions::default(), cx),
+        Meter::new(MeterOptions::stereo(), cx),
+        Meter::new(MeterOptions::stereo(), cx),
+        Meter::new(MeterOptions::default().gain_reduction(20.), cx),
+        Meter::new(MeterOptions::stereo().horizontal().with_lufs(), cx),
+    ];
+    let feeds: Vec<_> = meters.iter().map(|m| m.read(cx).feed()).collect();
+    feeds[0].set(0, Level::new(-18., -24.));
+    feeds[1].set_stereo(Level::new(-8., -14.), Level::new(-4., -10.));
+    feeds[2].set_stereo(Level::new(0.8, -4.), Level::new(-2., -6.));
+    feeds[3].set_gain_reduction(7.);
+    feeds[4].set_stereo(Level::new(-12., -20.), Level::new(-6., -12.));
+    feeds[4].set_lufs(Some(-14.2), cx);
+    let bank = MeterBank::new(
+        8,
+        MeterOptions {
+            length: 120.,
+            thickness: 6.,
+            ..MeterOptions::stereo()
+        },
+        cx,
+    );
+    for (i, feed) in MeterBank::feeds(&bank, cx).iter().enumerate() {
+        let level = -40. + (i as f32 * 4.7) % 36.;
+        feed.set_stereo(
+            Level::new(level, level - 6.),
+            Level::new(level - 2., level - 8.),
+        );
+    }
+    cx.new(|_| MeterDemo { meters, bank }).into()
+}
+
 fn ring(window: &mut Window, cx: &mut App) -> AnyView {
     with_knobs(
         "Live RingProgress",
@@ -702,6 +775,87 @@ fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
                     .child(control.clone())
                     .into_any_element(),
                 example("Events", log.clone()),
+            ])
+        },
+        window,
+        cx,
+    )
+}
+
+fn knobs_demo(window: &mut Window, cx: &mut App) -> AnyView {
+    use guiraffe_components::controls::{KnobControl, NumberFieldControl, ParamEvent};
+    use guiraffe_components::mapping::{Curve, Unit, ValueMap};
+    playground_with_update(
+        "Live Knob & NumberField",
+        &[Knob::toggle("Disabled")],
+        |window, cx| {
+            let hz = ValueMap::new(20.0, 20_000.0)
+                .curve(Curve::Log)
+                .unit(Unit::Hertz)
+                .default_to(1_000.0);
+            let cutoff = KnobControl::new()
+                .mapping(hz)
+                .label("Cutoff")
+                .diameter(48.)
+                .build(window, cx);
+            let pan = KnobControl::new()
+                .mapping(ValueMap::new(-1.0, 1.0).bipolar(true).decimals(2))
+                .label("Pan")
+                .diameter(48.)
+                .build(window, cx);
+            let depth = KnobControl::new()
+                .mapping(ValueMap::new(0.0, 1.0).unit(Unit::Percent))
+                .value(0.5)
+                .modulation(Some((0.3, 0.8)))
+                .label("Depth")
+                .diameter(48.)
+                .build(window, cx);
+            let field = NumberFieldControl::new()
+                .mapping(hz)
+                .label("Cutoff")
+                .build(window, cx);
+            let attack = NumberFieldControl::new()
+                .mapping(
+                    ValueMap::new(0.001, 10.0)
+                        .curve(Curve::Log)
+                        .unit(Unit::Seconds),
+                )
+                .value(0.01)
+                .label("Attack")
+                .build(window, cx);
+            let log = EventLog::new(cx);
+            for knob in [&cutoff, &pan, &depth] {
+                EventLog::watch::<ParamEvent, _>(&log, knob, cx);
+            }
+            EventLog::watch::<ParamEvent, _>(&log, &field, cx);
+            EventLog::watch::<ParamEvent, _>(&log, &attack, cx);
+            ([cutoff, pan, depth], [field, attack], log)
+        },
+        |(knobs, fields, _), v, cx| {
+            let disabled = v.on(0);
+            for knob in knobs {
+                knob.update(cx, |k, cx| k.set_disabled(disabled, cx));
+            }
+            for field in fields {
+                field.update(cx, |f, cx| f.set_disabled(disabled, cx));
+            }
+        },
+        |(knobs, fields, log), _, _, _| {
+            column([
+                div()
+                    .flex()
+                    .gap(px(24.))
+                    .children(knobs.iter().map(|k| k.clone().into_any_element()))
+                    .into_any_element(),
+                div()
+                    .flex()
+                    .gap(px(12.))
+                    .children(fields.iter().map(|f| f.clone().into_any_element()))
+                    .into_any_element(),
+                example(
+                    "Drag (Shift: fine), scroll, arrow keys; double-click a knob to reset; double-click a field to type 2.5k or 250 ms",
+                    log.clone(),
+                ),
             ])
         },
         window,
