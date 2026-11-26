@@ -34,6 +34,7 @@ mod line_break;
 pub(crate) mod list_measure;
 pub(crate) mod misc;
 pub(crate) mod number_shaping;
+pub(crate) mod patch;
 pub(crate) mod path_cache;
 pub(crate) mod retained;
 pub(crate) mod rounded_clip;

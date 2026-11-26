@@ -1,5 +1,35 @@
 # Roadmap
 
+Work is tracked in [GitHub issues](https://github.com/hivemind-ai-core/guiraffe/issues), sequenced
+into [milestones](https://github.com/hivemind-ai-core/guiraffe/milestones). Each milestone is about
+a day of work followed by a night of benchmarking on a quiet machine. Passage, the DAW built on
+GUIraffe, comes first; GPU surfaces and compositing wait until the project that needs them is active.
+Unsequenced work carries the `backlog` label. The sections below give the reasoning; the issues
+are the source of truth.
+
+| Milestone | Theme |
+|---|---|
+| 0.3 | Finish 0.3: trim per-frame buffers, the quiet benchmark night, golden tool in real use, release |
+| 0.3.1 | Passage controls: Knob and NumberField, StepGrid, Tabs, overflow menus, Canvas |
+| 0.3.2 | Passage timeline and port: time ruler, scope and spectrum, clip interaction, frame stats |
+| 0.3.3 | Freeze the `ui!` binding syntax |
+| 0.4 | Our own GPUI fork, tracking gpui-fast |
+| 0.4.1 | Umbrella crate and publishing on the fork |
+| 0.5 | Real-time rendering for Passage: paint-only sinks, boundaries, several changed views |
+| 0.5.1 | Performance budgets |
+| 0.6 | Allocation-free rendering |
+| 0.7 | Compiled `ui!` bindings |
+| 0.7.1 | Compiled `ui!` lists and scheduling |
+| 0.8 | Hardening, part 1: no panics in library code, contained host-callback panics, property and model tests for stores and the bus, nightly hardening CI |
+| 0.8.1 | Hardening, part 2: component model tests, fuzzing every untrusted input, extreme-size stress, long soaks, fault injection |
+| 0.9 | GPU surfaces and compositing |
+| 0.10 | Text |
+| 0.11 | Accessibility |
+| 0.12 | Platforms |
+
+Older section numbers below (0.4 "Text, pixels and platforms", 0.5 "Compiled reactivity") predate
+this sequencing; their items now live in the milestones above.
+
 ## 0.3: One action, every input
 
 **Goal:** any control in a GUIraffe app can be addressed, observed and driven the same way from a
@@ -195,12 +225,28 @@ Candidates:
    per-frame bookkeeping.
 4. **Keyed list deltas:** keyed store writes and `imbl` snapshots give inserts, removes and moves
    directly, so list updates cost what changed, with no diffing.
-5. **Sinks that skip the view tree:** high-rate values (meters, playheads, scopes) write straight
+5. **Sinks that skip the view tree (#3):** high-rate values (meters, playheads, scopes) write straight
    into retained scene primitives.
 6. **Scheduling:** coalesce writes per frame, update visible items first, slow down high-rate
    sources, and prepare snapshots (text shaping, layout inputs) off the UI thread.
 7. **Compiled dispatch:** `ui!` resolves binding routes once, so a direct binding costs close to
    nothing instead of a bus lookup.
+8. **Allocation-free re-render (#4):** a view that does re-render allocates nothing. Use a per-frame
+   bump arena for listener closures, formatted ids and temporary vectors (elements already live
+   in GPUI's arena), interned ids instead of formatted strings, and pooled layout nodes and
+   element state. Today one re-rendered view costs about 61 allocations on gpui-fast, which is
+   most of a fed Meter's per-frame cost. Needs our fork. Depending on the 0.5 theme, this may
+   move after 0.5; 0.3's item 19 first breaks down where those allocations come from.
+9. **Layout and repaint boundaries:** regions sized by their parent, not their content (a dock
+   panel, a channel strip, a card). Inside one, a child can change shape without affecting
+   anything outside, so the retained patch also covers shape-changing rebuilds, and boundaries
+   never affect each other. `ui!` inserts them where a region has a fixed size (#2).
+10. **Several changed views per frame:** extend the retained patch from one changed view to any
+    number in separate subtrees, with cost proportional to what changed (#1).
+
+Tracked as GitHub issues under the 0.5 milestone (#1-#4, #6). For a real-time app such as
+Passage the likely order is paint-only sinks (#3), then boundaries, then several changed views,
+then allocation-free re-render; measure Passage first (#5).
 
 Rules: the builder API and plain views keep gpui-fast's behaviour as the fallback, and every fast
 path is tested against a full redraw.

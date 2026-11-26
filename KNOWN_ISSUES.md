@@ -25,6 +25,21 @@ Miri passes on the focused tests of every `imbl` consumer. A full Miri run is no
 `guiraffe-core` reports leaks after its assertions pass, the sheet proptests call `getcwd` under
 isolation, and the full sheet and UI runs did not finish.
 
+## Patched frames
+
+gpui-fast patches a frame in place when one cached view is built again in the same shape (see
+`vendor/README.md`). A patched row edit allocates 139 times, against 124 when the same row is
+drawn again unchanged. The 15 extra allocations per edit are flat in the number of rows, but they
+are not yet down to the frame's baseline. Follow-up in ROADMAP 0.3 #19, which trims GPUI's
+per-frame high-water buffers. On fallback (another shape, such as a label shaped to another number
+of glyphs), the view is built once for the patch attempt and again for the splice.
+
+Rows of a `uniform_list` are never patched. They have no rebuild handle (they cannot be built on
+their own, outside the list's layout), so the splice cannot build them alone either. A frame
+without any patchable view skips the attempt, so virtualized edits cost what they did before
+(0.24 ms, 395 allocations at 1k to 10k). Patching inside lists is a follow-up: it needs list rows
+that can be built on their own, at their place in the list's layout.
+
 ## Command ribbon
 
 Implemented in `guiraffe-commands::ribbon` (ROADMAP 0.3 #13). Not yet done:
@@ -57,6 +72,14 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 | Unchanged repaint allocations | DataUi 132, `ui!` 42, command menu 735, devtools 615, router, state and motion 6-18 | 0 |
 | Label edit among 3,000 live rows | 19-46 ms | work independent of row count |
 
+- **A view re-render costs about 61 allocations on gpui-fast, even for a view that only
+  paints.** `Meter` repaints per frame through its bar view alone (the parent never renders and an
+  idle frame allocates nothing), but each fed meter still costs that per-view overhead, because
+  GPUI has no way to repaint a retained element without rendering its view again. Mixers should use
+  `MeterBank`, which paints any number of meters in one view, so the cost is one view's per frame.
+  The fix is a paint-only repaint (a retained element repainted without re-rendering its view):
+  ROADMAP 0.5 item 5, sinks that skip the view tree, in our GPUI fork. `Meter` is its first client.
+  On upstream GPUI every frame redraws the window (about 3,000 allocations here, fed or idle).
 - **Mixed-soak RSS growth is predominantly retained allocator space in the upstream
   reproduction.** At peak, the default run gained 4,604 KiB RSS, including 4,600 KiB in
   the process heap. Glibc reported 4,777 KiB more free space and 245 KiB less in-use

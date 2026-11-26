@@ -1,8 +1,8 @@
 //! guiraffe-components: typography, surfaces, icons, feedback.
 
 use gpui_kit::{
-    AnyView, App, Entity, FontWeight, IntoElement, ParentElement, Styled, Window, assets::IconName,
-    div, px,
+    AnyView, App, AppContext, Entity, FontWeight, IntoElement, ParentElement, Styled, Window,
+    assets::IconName, div, px,
 };
 use guiraffe_components::*;
 use guiraffe_core::{ColorName, Size, Variant};
@@ -87,6 +87,13 @@ pub fn entries() -> Vec<Entry> {
             summary: "Badges pinned to a corner; removable pills.",
             covers: &["Indicator", "Pill"],
             demo: indicator,
+        },
+        Entry {
+            krate: "components",
+            name: "Meter",
+            summary: "Peak, RMS, hold and clip latch; gain reduction; stereo; LUFS; MeterBank for mixers.",
+            covers: &["Meter", "MeterBank"],
+            demo: meter,
         },
         Entry {
             krate: "components",
@@ -410,6 +417,65 @@ fn indicator(window: &mut Window, cx: &mut App) -> AnyView {
         window,
         cx,
     )
+}
+
+/// Meters with fixed levels (a host feeds them every frame; see `MeterFeed`).
+struct MeterDemo {
+    meters: Vec<Entity<Meter>>,
+    bank: Entity<MeterBank>,
+}
+
+impl gpui_kit::Render for MeterDemo {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        column([
+            example(
+                "Mono, stereo, clipped, gain reduction, horizontal with LUFS",
+                div()
+                    .flex()
+                    .gap(px(24.))
+                    .items_start()
+                    .children(self.meters.iter().cloned()),
+            ),
+            example(
+                "MeterBank: eight stereo channels in one view",
+                self.bank.clone(),
+            ),
+        ])
+    }
+}
+
+fn meter(_: &mut Window, cx: &mut App) -> AnyView {
+    let meters = vec![
+        Meter::new(MeterOptions::default(), cx),
+        Meter::new(MeterOptions::stereo(), cx),
+        Meter::new(MeterOptions::stereo(), cx),
+        Meter::new(MeterOptions::default().gain_reduction(20.), cx),
+        Meter::new(MeterOptions::stereo().horizontal().with_lufs(), cx),
+    ];
+    let feeds: Vec<_> = meters.iter().map(|m| m.read(cx).feed()).collect();
+    feeds[0].set(0, Level::new(-18., -24.));
+    feeds[1].set_stereo(Level::new(-8., -14.), Level::new(-4., -10.));
+    feeds[2].set_stereo(Level::new(0.8, -4.), Level::new(-2., -6.));
+    feeds[3].set_gain_reduction(7.);
+    feeds[4].set_stereo(Level::new(-12., -20.), Level::new(-6., -12.));
+    feeds[4].set_lufs(Some(-14.2), cx);
+    let bank = MeterBank::new(
+        8,
+        MeterOptions {
+            length: 120.,
+            thickness: 6.,
+            ..MeterOptions::stereo()
+        },
+        cx,
+    );
+    for (i, feed) in MeterBank::feeds(&bank, cx).iter().enumerate() {
+        let level = -40. + (i as f32 * 4.7) % 36.;
+        feed.set_stereo(
+            Level::new(level, level - 6.),
+            Level::new(level - 2., level - 8.),
+        );
+    }
+    cx.new(|_| MeterDemo { meters, bank }).into()
 }
 
 fn ring(window: &mut Window, cx: &mut App) -> AnyView {

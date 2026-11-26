@@ -229,7 +229,18 @@ impl EntityMap {
     pub fn clear_accessed(&mut self) {
         let accessed_entities = self.accessed_entities.get_mut();
         accessed_entities.scopes.clear();
-        accessed_entities.frame.clear();
+        // Clearing costs what the set can hold, which is what a whole frame
+        // accessed, even when a patched frame left it empty.
+        if !accessed_entities.frame.is_empty() {
+            accessed_entities.frame.clear();
+        }
+    }
+
+    /// Records the frame's accesses in `entities` from now on, giving back
+    /// the set they were recorded in: a patched frame records the few it
+    /// makes in a set of their size (see [`crate::fast::patch`]).
+    pub(crate) fn swap_accessed(&mut self, entities: &mut FxHashSet<EntityId>) {
+        mem::swap(&mut self.accessed_entities.get_mut().frame, entities);
     }
 
     pub fn push_access_scope(&mut self) {

@@ -842,6 +842,11 @@ impl WindowTextSystem {
         self.line_layout_cache.finish_frame()
     }
 
+    /// See [`LineLayoutCache::finish_patched_frame`].
+    pub(crate) fn finish_patched_frame(&self, patched: &[Range<LineLayoutIndex>]) {
+        self.line_layout_cache.finish_patched_frame(patched)
+    }
+
     /// Layout the given line of text, at the given font_size.
     /// Subsets of the line can be styled independently with the `runs` parameter.
     /// Generally, you should prefer to use [`Self::shape_line`] instead, which
