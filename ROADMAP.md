@@ -195,18 +195,28 @@ Candidates:
    per-frame bookkeeping.
 4. **Keyed list deltas:** keyed store writes and `imbl` snapshots give inserts, removes and moves
    directly, so list updates cost what changed, with no diffing.
-5. **Sinks that skip the view tree:** high-rate values (meters, playheads, scopes) write straight
+5. **Sinks that skip the view tree (#3):** high-rate values (meters, playheads, scopes) write straight
    into retained scene primitives.
 6. **Scheduling:** coalesce writes per frame, update visible items first, slow down high-rate
    sources, and prepare snapshots (text shaping, layout inputs) off the UI thread.
 7. **Compiled dispatch:** `ui!` resolves binding routes once, so a direct binding costs close to
    nothing instead of a bus lookup.
-8. **Allocation-free re-render:** a view that does re-render allocates nothing. Use a per-frame
+8. **Allocation-free re-render (#4):** a view that does re-render allocates nothing. Use a per-frame
    bump arena for listener closures, formatted ids and temporary vectors (elements already live
    in GPUI's arena), interned ids instead of formatted strings, and pooled layout nodes and
    element state. Today one re-rendered view costs about 61 allocations on gpui-fast, which is
    most of a fed Meter's per-frame cost. Needs our fork. Depending on the 0.5 theme, this may
    move after 0.5; 0.3's item 19 first breaks down where those allocations come from.
+9. **Layout and repaint boundaries:** regions sized by their parent, not their content (a dock
+   panel, a channel strip, a card). Inside one, a child can change shape without affecting
+   anything outside, so the retained patch also covers shape-changing rebuilds, and boundaries
+   never affect each other. `ui!` inserts them where a region has a fixed size (#2).
+10. **Several changed views per frame:** extend the retained patch from one changed view to any
+    number in separate subtrees, with cost proportional to what changed (#1).
+
+Tracked as GitHub issues under the 0.5 milestone (#1-#4, #6). For a real-time app such as
+Passage the likely order is paint-only sinks (#3), then boundaries, then several changed views,
+then allocation-free re-render; measure Passage first (#5).
 
 Rules: the builder API and plain views keep gpui-fast's behaviour as the fallback, and every fast
 path is tested against a full redraw.
