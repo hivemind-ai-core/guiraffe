@@ -72,6 +72,14 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 | Unchanged repaint allocations | DataUi 132, `ui!` 42, command menu 735, devtools 615, router, state and motion 6-18 | 0 |
 | Label edit among 3,000 live rows | 19-46 ms | work independent of row count |
 
+- **A view re-render costs about 61 allocations on gpui-fast, even for a view that only
+  paints.** `Meter` repaints per frame through its bar view alone (the parent never renders and an
+  idle frame allocates nothing), but each fed meter still costs that per-view overhead, because
+  GPUI has no way to repaint a retained element without rendering its view again. Mixers should use
+  `MeterBank`, which paints any number of meters in one view, so the cost is one view's per frame.
+  The fix is a paint-only repaint (a retained element repainted without re-rendering its view):
+  ROADMAP 0.5 item 5, sinks that skip the view tree, in our GPUI fork. `Meter` is its first client.
+  On upstream GPUI every frame redraws the window (about 3,000 allocations here, fed or idle).
 - **Mixed-soak RSS growth is predominantly retained allocator space in the upstream
   reproduction.** At peak, the default run gained 4,604 KiB RSS, including 4,600 KiB in
   the process heap. Glibc reported 4,777 KiB more free space and 245 KiB less in-use
