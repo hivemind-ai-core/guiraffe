@@ -121,6 +121,21 @@ impl FlowState {
         self.camera.get()
     }
     /// Subscribe to camera events on this leaf; pan/zoom events do not write the document entity.
+    /// The screen bounds of node `id` in window coordinates, as last painted. See
+    /// [`FlowViewport::node_bounds`]; subscribe to [`crate::AnchorsMoved`] on
+    /// [`Self::viewport_entity`] to follow them.
+    pub fn node_bounds(&self, id: core::NodeId, cx: &App) -> Option<Bounds<Pixels>> {
+        self.canvas.read(cx).node_bounds(id)
+    }
+    /// Where a port is on screen, as last painted. See [`FlowViewport::port_anchor`].
+    pub fn port_anchor(
+        &self,
+        node: core::NodeId,
+        port: &str,
+        cx: &App,
+    ) -> Option<crate::PortAnchor> {
+        self.canvas.read(cx).port_anchor(node, port)
+    }
     pub fn viewport_entity(&self) -> &Entity<FlowViewport> {
         &self.canvas
     }

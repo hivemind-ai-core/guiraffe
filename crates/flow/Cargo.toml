@@ -12,10 +12,12 @@ workspace = true
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
 guiraffe-flow-core.workspace = true
+guiraffe-state.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
+guiraffe-components.workspace = true
 guiraffe-test = { workspace = true, features = ["snapshot"] }
 gpui-kit = { workspace = true, features = ["test-support"] }
 

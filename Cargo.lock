@@ -3625,8 +3625,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "guiraffe-components",
  "guiraffe-core",
  "guiraffe-flow-core",
+ "guiraffe-state",
  "guiraffe-test",
  "serde_json",
 ]
@@ -3841,6 +3843,7 @@ dependencies = [
  "guiraffe-motion",
  "guiraffe-overlays",
  "guiraffe-sheet",
+ "guiraffe-state",
  "guiraffe-test",
  "guiraffe-timeline",
  "guiraffe-tray",

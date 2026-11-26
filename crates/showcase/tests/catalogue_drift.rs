@@ -1517,6 +1517,42 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "A Rust callback is required for custom validation; use the declarative connection policy for structural constraints.",
     ),
     (
+        "flow::CableLayer",
+        "A window-level overlay view the host mounts natively; cables are host data in a Store.",
+    ),
+    (
+        "flow::CableLayer::new",
+        "Native construction of the cable overlay from the host's cable Store.",
+    ),
+    (
+        "flow::CableLayer::add_flow",
+        "Registers a native flow entity whose ports cables reach.",
+    ),
+    (
+        "flow::CableLayer::endpoints",
+        "Read-only native geometry of a cable's ends as last painted.",
+    ),
+    (
+        "flow::FlowState::node_bounds",
+        "Read-only native screen geometry recorded during paint.",
+    ),
+    (
+        "flow::FlowState::port_anchor",
+        "Read-only native screen geometry recorded during paint.",
+    ),
+    (
+        "flow::FlowViewport::node_bounds",
+        "Read-only native screen geometry recorded during paint.",
+    ),
+    (
+        "flow::FlowViewport::port_anchor",
+        "Read-only native screen geometry recorded during paint.",
+    ),
+    (
+        "flow::FlowViewport::event AnchorsMoved",
+        "A once-per-frame paint notification for native overlays; documents have no screen geometry.",
+    ),
+    (
         "flow::FlowState::edit",
         "Native API for undoable edits; documents receive the changed graph through change.",
     ),

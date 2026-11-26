@@ -856,3 +856,184 @@ fn cancelling_background_layout_keeps_the_document(cx: &mut TestAppContext) {
         assert!(!state.editor.can_undo());
     });
 }
+
+/// Port anchors are where the ports are painted, at any pan and zoom (#151).
+#[gpui_kit::test]
+fn port_anchors_match_the_painted_ports_at_every_pan_and_zoom(cx: &mut TestAppContext) {
+    let (w, view) = open(cx);
+    for (pan, zoom) in [
+        ((0., 0.), 1.0),
+        ((20., 30.), 0.6),
+        ((-140., 55.), 2.0),
+        ((7.5, -3.25), 1.3),
+    ] {
+        view.update(cx, |view, cx| {
+            view.set_viewport(
+                Viewport {
+                    pan: WorldPoint::new(pan.0, pan.1),
+                    zoom,
+                },
+                cx,
+            )
+        })
+        .expect("set viewport");
+        w.update(cx, |_, window, cx| {
+            window.render_frame(cx);
+            let node = window.find(("flow-node", 1u64)).bounds();
+            let card = view.read(cx);
+            let bounds = card.node_bounds(1).expect("node bounds");
+            assert!(
+                (bounds.origin.x - node.origin.x).abs() < px(0.5)
+                    && (bounds.origin.y - node.origin.y).abs() < px(0.5)
+                    && (bounds.size.width - node.size.width).abs() < px(0.5)
+                    && (bounds.size.height - node.size.height).abs() < px(0.5),
+                "node bounds {bounds:?} against painted {node:?} at {pan:?} x{zoom}"
+            );
+            for (port, handle, side) in [
+                ("in", "handle-in", crate::core::Side::Left),
+                ("out", "handle-out", crate::core::Side::Right),
+            ] {
+                let painted = window
+                    .within(("flow-node", 1u64))
+                    .find(handle)
+                    .bounds()
+                    .center();
+                let anchor = card.port_anchor(1, port).expect("port anchor");
+                assert!(
+                    (anchor.position.x - painted.x).abs() < px(0.5)
+                        && (anchor.position.y - painted.y).abs() < px(0.5),
+                    "{port} anchor {anchor:?} against painted {painted:?} at {pan:?} x{zoom}"
+                );
+                assert_eq!(anchor.side, side);
+                assert!(anchor.visible);
+            }
+            assert_eq!(card.port_anchor(1, "nope"), None);
+            assert_eq!(card.node_bounds(99), None);
+        })
+        .expect("frame");
+    }
+    // Panned off the canvas: the position follows, flagged not visible.
+    view.update(cx, |view, cx| {
+        view.set_viewport(
+            Viewport {
+                pan: WorldPoint::new(-5_000., 0.),
+                zoom: 1.0,
+            },
+            cx,
+        )
+    })
+    .expect("set viewport");
+    w.update(cx, |_, window, cx| {
+        window.render_frame(cx);
+        let anchor = view.read(cx).port_anchor(1, "in").expect("anchor");
+        assert!(!anchor.visible, "{anchor:?}");
+        assert!(anchor.position.x < px(0.));
+    })
+    .expect("frame");
+}
+
+/// `AnchorsMoved` fires once per frame on a pan, a zoom, a node move and a layout change,
+/// and not on a repaint that moves nothing (#151).
+#[gpui_kit::test]
+fn anchors_moved_fires_on_pan_zoom_move_and_layout_only(cx: &mut TestAppContext) {
+    let (w, view) = open(cx);
+    let fired = Rc::new(Cell::new(0usize));
+    let _subscription = cx.update(|cx| {
+        let fired = fired.clone();
+        cx.subscribe(&view, move |_, _: &crate::AnchorsMoved, _| {
+            fired.set(fired.get() + 1)
+        })
+    });
+    let frame = |cx: &mut TestAppContext| {
+        w.update(cx, |_, window, cx| window.render_frame(cx))
+            .expect("frame");
+        cx.run_until_parked();
+    };
+    frame(cx);
+    let base = fired.get();
+    let expect = |cx: &mut TestAppContext, what: &str, more: usize| {
+        frame(cx);
+        assert_eq!(fired.get() - base, more, "after {what}");
+    };
+
+    view.update(cx, |_, cx| cx.notify());
+    expect(cx, "an unrelated repaint", 0);
+
+    let set = |view: &Entity<Flow>, pan: (f32, f32), zoom: f32, cx: &mut TestAppContext| {
+        view.update(cx, |view, cx| {
+            view.set_viewport(
+                Viewport {
+                    pan: WorldPoint::new(pan.0, pan.1),
+                    zoom,
+                },
+                cx,
+            )
+        })
+        .expect("set viewport");
+    };
+    set(&view, (40., 10.), 1.0, cx);
+    expect(cx, "a pan", 1);
+    set(&view, (40., 10.), 1.5, cx);
+    expect(cx, "a zoom", 2);
+    view.update(cx, |view, cx| {
+        view.edit(
+            |graph| {
+                if let Some(node) = graph.nodes.get_mut(&1) {
+                    node.pos = WorldPoint::new(100., 160.);
+                }
+                Ok(())
+            },
+            cx,
+        )
+        .expect("move")
+    });
+    expect(cx, "a node move", 3);
+    view.update(cx, |view, cx| {
+        view.edit(
+            |graph| {
+                if let Some(node) = graph.nodes.get_mut(&2) {
+                    node.size = WorldPoint::new(220., 90.);
+                }
+                Ok(())
+            },
+            cx,
+        )
+        .expect("resize")
+    });
+    expect(cx, "a layout change", 4);
+    view.update(cx, |_, cx| cx.notify());
+    expect(cx, "another unrelated repaint", 4);
+
+    // A drag: moving fires, and so does Shift locking it to its dominant axis with the
+    // pointer still, since the painted node moves back onto the axis.
+    let drag = |view: &Entity<Flow>, dominant: bool, cx: &mut TestAppContext| {
+        view.update(cx, |view, cx| {
+            let origin = WorldPoint::new(100., 160.);
+            let origins: std::sync::Arc<std::collections::BTreeMap<_, _>> =
+                std::sync::Arc::new([(1, origin)].into_iter().collect());
+            let (roots, axes) = match &view.interaction.gesture {
+                Some(crate::Gesture::Move { roots, axes, .. }) => (roots.clone(), axes.clone()),
+                _ => (origins.clone(), Default::default()),
+            };
+            let origins = match &view.interaction.gesture {
+                Some(crate::Gesture::Move { origins, .. }) => origins.clone(),
+                _ => origins,
+            };
+            view.interaction.gesture = Some(crate::Gesture::Move {
+                start: origin,
+                origins,
+                roots,
+                axes,
+                delta: WorldPoint::new(60., 20.),
+                dominant,
+            });
+            cx.notify();
+        });
+    };
+    drag(&view, false, cx);
+    expect(cx, "a drag", 5);
+    drag(&view, true, cx);
+    expect(cx, "Shift locking the drag to its dominant axis", 6);
+    drag(&view, true, cx);
+    expect(cx, "the same locked drag", 6);
+}
