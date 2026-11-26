@@ -1176,7 +1176,7 @@ impl gpui_kit::Render for StepHost {
 
 /// Allocations of a playhead frame and a toggle frame on a `rows` x `columns` grid, after
 /// warm-up, and the parent's renders across them.
-fn step_frames(rows: usize, columns: usize) -> anyhow::Result<(u64, u64, usize)> {
+fn step_frames(rows: usize, columns: usize) -> anyhow::Result<(u64, u64, u64, usize)> {
     use gpui_kit::AppContext;
     use guiraffe_components::step_grid::{
         RowId, StepAction, StepCell, StepDoc, StepGrid, StepGridOptions, StepRow, step_store,
@@ -1251,20 +1251,28 @@ fn step_frames(rows: usize, columns: usize) -> anyhow::Result<(u64, u64, usize)>
         app.run_until_parked();
     }
     let before = renders.get();
+    let (r, idle) =
+        count_allocations(|| app.update_window(window.into(), |_, w, cx| w.draw(cx).clear(cx)))?;
+    r?;
     let (r, head) = count_allocations(|| playhead(&mut app))?;
     r?;
     let (r, edit) = count_allocations(|| toggle(&mut app))?;
     r?;
-    Ok((head.allocations, edit.allocations, renders.get() - before))
+    Ok((
+        idle.allocations,
+        head.allocations,
+        edit.allocations,
+        renders.get() - before,
+    ))
 }
 
 #[test]
 fn step_grid_playhead_and_toggles_cost_a_fixed_amount_without_a_parent_render() -> anyhow::Result<()>
 {
-    let (small_head, small_edit, small_parent) = step_frames(4, 16)?;
-    let (large_head, large_edit, large_parent) = step_frames(32, 64)?;
+    let (small_idle, small_head, small_edit, small_parent) = step_frames(4, 16)?;
+    let (large_idle, large_head, large_edit, large_parent) = step_frames(64, 64)?;
     eprintln!(
-        "step grid: 4x16 playhead {small_head} toggle {small_edit}; 32x64 playhead {large_head} toggle {large_edit}"
+        "step grid: 4x16 idle {small_idle} playhead {small_head} toggle {small_edit}; 64x64 idle {large_idle} playhead {large_head} toggle {large_edit}"
     );
     if gpui_kit::GPUI_FAST {
         assert_eq!(
@@ -1278,12 +1286,17 @@ fn step_grid_playhead_and_toggles_cost_a_fixed_amount_without_a_parent_render() 
             "the playhead costs the same at any grid size"
         );
         assert!(large_head <= 96, "{large_head}");
-        // 2,048 cells against 64: one-pass paint allocates per frame, not per cell. GPUI's own
+        // 4,096 cells against 64: one-pass paint allocates per frame, not per cell. GPUI's own
         // buffers grow a little with the scene (about 70 here), far below one per added cell.
-        let added_cells = 32 * 64 - 4 * 16;
+        assert_eq!(
+            (small_idle, large_idle),
+            (0, 0),
+            "an unchanged repaint allocates nothing"
+        );
+        let added_cells = 64 * 64 - 4 * 16;
         assert!(
             large_edit.saturating_sub(small_edit) * 16 < added_cells,
-            "a toggle costs {small_edit} at 64 cells and {large_edit} at 2,048"
+            "a toggle costs {small_edit} at 64 cells and {large_edit} at 4,096"
         );
     }
     Ok(())

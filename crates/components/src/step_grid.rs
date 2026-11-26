@@ -789,9 +789,37 @@ impl StepGrid {
 
 impl Observe for StepGrid {
     type Snapshot = ControlSnapshot;
-    fn snapshot(&self, _: &App) -> ControlSnapshot {
+    /// The grid's size and cursor, and a page of cells: the cursor's row, as levels (0 for
+    /// an off cell). A client pages through rows by moving the cursor.
+    fn snapshot(&self, cx: &App) -> ControlSnapshot {
+        use guiraffe_core::widget_value::Value;
+        let doc = self.doc(cx);
+        let (r, c) = self.cursor;
+        let page: Vec<Value> = doc
+            .rows()
+            .get(r)
+            .map(|row| {
+                (0..doc.columns)
+                    .map(|col| {
+                        let cell = row.cell(col);
+                        Value::Num(if cell.on { f64::from(cell.level) } else { 0.0 })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let field = |k: &'static str, v: Value| (SharedString::new_static(k), v);
+        let record = std::collections::BTreeMap::from([
+            field("rows", Value::Num(doc.rows().len() as f64)),
+            field("columns", Value::Num(doc.columns as f64)),
+            field(
+                "row",
+                Value::Num(doc.rows().get(r).map_or(0.0, |row| row.id.0 as f64)),
+            ),
+            field("page", Value::List(page.into())),
+        ]);
         ControlSnapshot {
-            selected: Some(Rc::from([self.cursor.0, self.cursor.1].as_slice())),
+            value: Some(Value::Record(std::sync::Arc::new(record))),
+            selected: Some(Rc::from([r, c].as_slice())),
             ..Default::default()
         }
     }

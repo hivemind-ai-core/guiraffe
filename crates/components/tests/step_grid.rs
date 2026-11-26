@@ -317,3 +317,53 @@ fn step_grid_light_and_dark() {
         assert_snapshot(name, &img, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
     }
 }
+
+/// The pointer and the bus give the same document for the same edits.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn bus_drive_matches_the_pointer(cx: &mut TestAppContext) {
+    let pointer_rows = {
+        let (mut m, _) = mount(cx, true);
+        let p = m.cell(2, 1, 0.);
+        m.vcx.simulate_click(p, Modifiers::default());
+        let (a, b) = (m.cell(1, 6, 0.), m.cell(1, 10, 0.));
+        m.vcx
+            .simulate_mouse_down(a, MouseButton::Left, Modifiers::default());
+        m.vcx
+            .simulate_mouse_move(b, Some(MouseButton::Left), Modifiers::default());
+        m.vcx
+            .simulate_mouse_up(b, MouseButton::Left, Modifiers::default());
+        m.vcx.run_until_parked();
+        let changes = m.changes();
+        (m.doc(), changes)
+    };
+    let (mut m, id) = mount(cx, true);
+    let id = id.expect("registered");
+    m.vcx.update(|window, cx| {
+        for change in &pointer_rows.1 {
+            let action = match *change {
+                StepChange::CellToggled { row, column, .. } => {
+                    StepAction::ToggleCell { row, column }
+                }
+                StepChange::CellsPainted { row, from, to, on } => {
+                    StepAction::PaintCells { row, from, to, on }
+                }
+                StepChange::CellLevelChanged { row, column, level } => {
+                    StepAction::SetCellLevel { row, column, level }
+                }
+                StepChange::RowLengthChanged { row, length } => {
+                    StepAction::SetRowLength { row, length }
+                }
+            };
+            assert!(
+                ActionBus::dispatch(id, &action.to_action(), Source::Script, window, cx).is_ok()
+            );
+        }
+    });
+    assert_eq!(pointer_rows.1.len(), 2);
+    assert_eq!(m.doc(), pointer_rows.0, "same document");
+    assert_eq!(m.changes(), pointer_rows.1, "same changes");
+}
