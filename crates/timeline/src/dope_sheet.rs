@@ -888,9 +888,10 @@ impl DopeSheet {
                         value: v,
                     });
                 }
-                if repaint {
-                    cx.notify();
+                if !repaint {
+                    return None; // already selected: only the gesture starts
                 }
+                cx.notify();
                 let keys = this.derived_selection(cx);
                 return Some(DopeAction::Select { keys, add: false });
             }
