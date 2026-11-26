@@ -31,9 +31,9 @@ const TRAVEL_PER_PX: f64 = 1.0 / 200.0;
 const FINE: f64 = 0.1;
 /// A bipolar drag within this much travel of the centre snaps to it.
 const DETENT: f64 = 0.02;
-/// The knob's sweep: 270°, starting at the bottom left.
+/// The knob's sweep: 270° clockwise from the bottom left, leaving the gap at the bottom.
 const SWEEP: f32 = 0.75;
-const START: f32 = 0.375;
+const START: f32 = 0.625;
 
 /// The travel a drag reaches from `start` after `dy` pixels (up is positive), with the fine
 /// modifier and the bipolar centre detent.
@@ -153,9 +153,12 @@ impl Param {
 
     /// `Cutoff: 1.25 kHz`.
     fn accessible_label(&self) -> String {
-        let value = self.map.format(self.shown());
+        self.label_with(&self.map.format(self.shown()))
+    }
+
+    fn label_with(&self, value: &str) -> String {
         if self.label.is_empty() {
-            value
+            value.to_owned()
         } else {
             format!("{}: {value}", self.label)
         }
@@ -520,7 +523,13 @@ pub fn knob_dial(
                     window,
                 );
             }
-            pointer(bounds, travel, width.max(2.0), colors.pointer, window);
+            pointer(
+                bounds,
+                travel,
+                (width * 0.6).max(1.5),
+                colors.pointer,
+                window,
+            );
         },
     )
     .size(px(diameter))
@@ -544,12 +553,19 @@ impl Render for KnobControl {
         let wheel = this.clone();
         let down = this.clone();
         let watch = this.clone();
+        // Formatted once: the visible value, the accessible value and its label share it.
+        let text = SharedString::from(map.format(p.shown()));
+        let label: SharedString = if p.label.is_empty() {
+            text.clone()
+        } else {
+            p.label_with(&text).into()
+        };
         div()
             .id(p.identity.element())
             .track_focus(&p.focus)
             .role(Role::Slider)
-            .aria_label(p.accessible_label())
-            .aria_value(map.format(p.shown()))
+            .aria_label(label)
+            .aria_value(text.clone())
             .aria_numeric_value(p.shown())
             .aria_min_numeric_value(map.min())
             .aria_max_numeric_value(map.max())
@@ -604,7 +620,7 @@ impl Render for KnobControl {
                     .size_full(),
                 )
             }))
-            .child(map.format(p.shown()))
+            .child(text)
     }
 }
 

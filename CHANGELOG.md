@@ -4,6 +4,10 @@
 
 ### Added
 
+- `KnobControl` and `NumberFieldControl`, and `mapping::{ValueMapping, ValueMap}`, a value mapping
+  (linear/log/exp, units, typed parsing) shared with `SliderControl`. See
+  [Parameters](docs/guides/parameters.md).
+
 - Store binding (provisional): `store!`, `#[derive(Lens)]`, lenses with per-path change keys,
   `KeyedList`, and `ui!` bindings (`store(s) { … }`, `prop <= lens`, `prop <=> lens`,
   `{<= lens}`, `if <= lens`, `for row in <= list`, `on_x => Event`). See
