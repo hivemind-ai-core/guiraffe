@@ -49,6 +49,8 @@ struct LensPath {
     steps: Vec<Step>,
     /// `derived(path, |v| …)`: bind the closure's result instead of the path's value.
     derive: Option<Box<Expr>>,
+    /// `derived((path, more…), |a, b| …)`: the other inputs.
+    more: Vec<LensPath>,
 }
 
 #[derive(Clone)]
@@ -170,9 +172,24 @@ impl Parse for LensPath {
                 input.parse::<Ident>()?;
                 let args;
                 parenthesized!(args in input);
-                let mut path: LensPath = args.parse()?;
-                if path.derive.is_some() {
-                    return Err(args.error("`derived` takes a lens path, not another `derived`"));
+                let mut path: LensPath = if args.peek(token::Paren) {
+                    let inputs;
+                    parenthesized!(inputs in args);
+                    let mut paths =
+                        Punctuated::<LensPath, Token![,]>::parse_terminated(&inputs)?.into_iter();
+                    let mut first = paths.next().ok_or_else(|| {
+                        inputs.error("`derived(( … ), f)` needs at least one lens")
+                    })?;
+                    first.more = paths.collect();
+                    if first.more.len() > 3 {
+                        return Err(inputs.error("`derived` reads at most four lenses"));
+                    }
+                    first
+                } else {
+                    args.parse()?
+                };
+                if path.derive.is_some() || path.more.iter().any(|p| p.derive.is_some()) {
+                    return Err(args.error("`derived` takes lens paths, not another `derived`"));
                 }
                 args.parse::<Token![,]>()?;
                 path.derive = Some(Box::new(args.parse()?));
@@ -211,6 +228,7 @@ impl Parse for LensPath {
             root,
             steps,
             derive: None,
+            more: Vec::new(),
         })
     }
 }
@@ -764,7 +782,15 @@ impl LensPath {
             };
         }
         match &self.derive {
-            Some(f) => quote!(::guiraffe_ui::__macro::derived(#lens, #f)),
+            Some(f) if self.more.is_empty() => quote!(::guiraffe_ui::__macro::derived(#lens, #f)),
+            Some(f) => {
+                let name = Ident::new(
+                    &format!("derived{}", self.more.len() + 1),
+                    Span::call_site(),
+                );
+                let more = self.more.iter().map(LensPath::expand);
+                quote!(::guiraffe_ui::__macro::#name((#lens, #(#more,)*), #f))
+            }
             None => lens,
         }
     }
@@ -887,7 +913,9 @@ impl Node {
     /// Reject bindings outside a store scope and handlers outside their context.
     fn check(&self, store: bool) -> Result<()> {
         let lens = |lens: &LensPath, items: &[Ident], store: bool| {
-            if store || items.contains(&lens.root) {
+            if store
+                || (items.contains(&lens.root) && lens.more.iter().all(|p| items.contains(&p.root)))
+            {
                 Ok(())
             } else {
                 Err(Error::new(
