@@ -28,11 +28,13 @@ isolation, and the full sheet and UI runs did not finish.
 ## Patched frames
 
 gpui-fast patches a frame in place when one cached view is built again in the same shape (see
-`vendor/README.md`). A patched row edit allocates 139 times, against 124 when the same row is
-drawn again unchanged. The 15 extra allocations per edit are flat in the number of rows, but they
-are not yet down to the frame's baseline. Follow-up in ROADMAP 0.3 #19, which trims GPUI's
-per-frame high-water buffers. On fallback (another shape, such as a label shaped to another number
-of glyphs), the view is built once for the patch attempt and again for the splice.
+`vendor/README.md`). A patched view's re-render allocates what an unchanged redraw of it does
+(8 to 76 per view, broken down in `docs/performance.md`). A label edit through a keyed Store
+selection adds 6 to that: the Store's event and deferred flush, and the changed label's
+measurement and layout. Allocation-free re-render is #4.
+
+On fallback (another shape, such as a label shaped to another number of glyphs), the view is
+built once for the patch attempt and again for the splice (#128).
 
 Rows of a `uniform_list` are never patched. They have no rebuild handle (they cannot be built on
 their own, outside the list's layout), so the splice cannot build them alone either. A frame
@@ -79,8 +81,10 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
   space contributing. See the [30-minute measurements](docs/performance.md#mixed-soak-rss-attribution).
 - **Markdown replacement looks slow in the soak log (about 70 ms)** because the soak runs
   background parsing on the timed thread. With real threads one run peaked at 4.7 ms.
-- **GPUI frame buffers keep their peak size** until the window closes: 6-10 MB after 10,000 live
-  elements, 64-99 MiB after 100,000. Virtualized components stay far below this.
+- **GPUI frame buffers** grow to the largest frame a window draws (6-10 MB at 10,000 live elements,
+  64-99 MiB at 100,000). On gpui-fast they shrink back after 8 frames of much smaller use
+  (`docs/performance.md`, "Frame buffers after a large frame"). On upstream they keep their peak
+  until the window closes. Virtualized components stay far below this.
 - **gpui-fast rebuilds its scene for rounded overflow clips** on every changed frame. Clip
   rectangularly inside rounded shapes where it matters.
 

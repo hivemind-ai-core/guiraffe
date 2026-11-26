@@ -190,6 +190,75 @@ and Mermaid, followed by the maximum dope-sheet frame time across four mixed rep
 cycles. It exits nonzero if either backend misses any budget. For a fresh checkout,
 follow the [build instructions](../bench/README.md#mounted-component-size-sweep).
 
+## Allocations of a re-rendered view
+
+One cached view, notified and drawn again 400 times in a page of 40, on gpui-fast in the release
+profile. Every re-render goes through the patched frame. The counts are per re-render, from
+`bench/tests/rerender_sites.rs`. `scripts/rerender-sites.py` attributes them to call sites under
+valgrind's DHAT: each view runs at N and 2N re-renders, and the difference per site, divided by N,
+is what one re-render allocates there (mounting and startup cancel out).
+
+| View | release/0.3 (`b0913deb`) | Now |
+| --- | ---: | ---: |
+| Empty: one sized `div` | 29 | 8 |
+| Plain: an id, a click listener and a text label | 41 | 20 |
+| Component row: label, `Checkbox`, `Badge`, `Button` | 103 | 76 |
+| Plain view, label edited through a keyed Store selection | not measured | 26 |
+
+The 21 to 27 removed per view were framework overhead in gpui-fast's retained records and splice
+gaps, the same for every view. For the empty view:
+
+- **Shared empty lists (−13).** Every record began with fresh empty `Rc` slices for its dependency
+  lists, hovers and layout keys, plus a placeholder context (`begin_retained`, 11), and its paint
+  turned empty hover lists into new slices (`finish_retained_paint`, 2). An empty `Rc<[T]>` is an
+  allocation, so these now share per-thread empties.
+- **Reused gap stacks (−7).** Entering a splice gap, twice per patched view (prepaint and paint),
+  built a new text-style stack, content-mask stack and element-offset stack (`enter_gap`). The
+  stacks the last gap left are now reused through `clone_from` and `clear`.
+- **Patch bookkeeping (−1, more with text).** The patch copied slices of the scene's slots into new
+  `Vec`s and kept its line slots in one. The bounds-tree check for a moved layer collected nearby
+  bounds into a fresh `Vec`, which cost a text edit 2 more. All of these now use buffers kept from
+  one patch to the next, or inline storage.
+
+What remains, component row (76):
+
+| Category | Count | Call sites |
+| --- | ---: | --- |
+| Element builders | 25 | `Interactivity::new` (11, one boxed per stateful `div`); `Checkbox`, `Button` and `Badge` renders in gpui-component and gpui-base (13); the view's own `render` (1) |
+| Element ids | 20 | `smol_str::Repr::new` (18): `ElementId`s formatted from strings past the inline size, in gpui-base and gpui-component; `motion::spring` transition ids (2) |
+| Listener closures | 9 | `Window::on_mouse_event`, one boxed closure per mouse listener, from `Interactivity::paint_mouse_listeners` |
+| Retained records | 8 | `finish_retained_prepaint` (4: the record's context, layout keys, rebuild handle and dependency lists), `finish_retained_paint` (3: hover lists and dependencies), `rebuild_here` (1) |
+| Accessibility | 7 | gpui-base's `A11yDisabled` wrapper (3), `accesskit::Properties::set` (2), `Div::write_a11y_info` (2), with accessibility off |
+| Text | 5 | `SharedString::request_layout` (3, the measured text node), `TextStyleStack::resolve` (2) |
+| Patch bookkeeping | 2 | `finish_recording_claimed_keys` (the layout keys the patch claimed), `App::flush_effects` (1) |
+
+The empty view's 8 are the record (`finish_retained_prepaint` 4, `rebuild_here` 1), the root
+`div`'s `Interactivity` (1), the claimed layout keys (1) and the effect flush (1). The plain view
+adds five listener closures (down, up, move and two click phases), its render's own allocations (3),
+a second paint-record list and the text node.
+
+A label edited through a keyed Store selection allocates 6 more than the same view drawn again
+unchanged: the Store's queued event and its deferred flush (2), and measuring and laying out the
+changed label (shaping, line layout, the measured node; about 4). The other 20 are the unchanged
+redraw's. `patched_edit_allocates_an_unchanged_redraw_and_the_edit` gates that relation.
+
+Everything in the table above is per element or per component and needs element-level changes:
+an arena for listener closures and boxed `Interactivity`, interned ids, pooled records. That is
+0.5 candidate 8 (#4), which these numbers are the starting data for.
+
+### Frame buffers after a large frame
+
+GPUI's per-frame element-state map, element-state access log, tab-stop history and entity access
+log were cleared but never shrunk, so they kept the capacity of the largest frame a window drew.
+The accepted 0.2 exception put this at 6 to 10 MB after 10,000 live elements and 64 to 99 MiB
+after 100,000. gpui-fast now trims each buffer once its use has stayed under a quarter of its
+capacity for 8 frames in a row, to twice what it used in those frames (`fast/high_water.rs`).
+Buffers under 64 KiB are left alone. Steady frames, and frames that alternate between large and
+small, never trim, so unchanged repaints still allocate nothing. After a 10,000-row frame and 12
+frames of 100 rows, the element-state map goes from 1,032,192 to 16,128 bytes, the access log from
+1,310,720 to 24,000, and the tab history from 524,288 to 6,400
+(`frame_storage_shrinks_back_after_10k_rows`).
+
 ## Store vs plain label-edit A/B
 
 One unattended command measures what the Store costs on a label edit:

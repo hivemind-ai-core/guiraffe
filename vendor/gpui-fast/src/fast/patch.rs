@@ -66,6 +66,9 @@ pub(crate) struct PatchState {
     /// reason. See [`crate::fast::retained::RetainedState::rendering_since`].
     rendering_since: FxHashMap<EntityId, u64>,
     render_writes: FxHashMap<EntityId, Range<u64>>,
+    /// Room to copy a stretch of the scene's slots into, kept from one patch
+    /// to the next.
+    slots: Vec<u32>,
     pub(crate) stats: PatchStats,
 }
 
@@ -92,6 +95,7 @@ impl PatchState {
             small_accessed: false,
             rendering_since: FxHashMap::default(),
             render_writes: FxHashMap::default(),
+            slots: Vec::new(),
             stats: PatchStats::default(),
         }
     }
@@ -287,13 +291,22 @@ fn find_gap(window: &mut Window, cx: &App) -> Option<usize> {
     let mut leaves: SmallVec<[usize; 2]> = SmallVec::new();
     for &candidate in &candidates {
         let record = &records[candidate as usize];
-        // As `Window::mark_changed_retained_views_dirty` decides it, but
-        // taking every update for a change, as inside a notified view.
-        let changed = view_entity(&record.id).is_some_and(|entity| notified.contains(&entity))
+        // As `Window::mark_changed_retained_views_dirty` decides it: an
+        // update counts as a change inside a notified view.
+        let entity = view_entity(&record.id);
+        let inside_notified = !notified.is_empty()
+            && entity.is_some_and(|entity| {
+                window
+                    .rendered_frame
+                    .dispatch_tree
+                    .view_path_reversed(entity)
+                    .any(|view| notified.contains(&view))
+            });
+        let changed = entity.is_some_and(|entity| notified.contains(&entity))
             || if record.is_cached() {
                 cx.notified_dependencies_changed(&record.own_dependencies)
             } else {
-                cx.dependencies_changed(&record.own_dependencies, true)
+                cx.dependencies_changed(&record.own_dependencies, inside_notified)
             }
             || crate::fast::layers::invalidate::offset_read_changed(
                 window,
@@ -697,16 +710,19 @@ fn same_primitives(window: &mut Window, old: &OldGap) -> bool {
     if new.len() != range.len() {
         return false;
     }
-    let Some((_, insertions)) = crate::fast::scene::SceneSlots::operations(scene) else {
+    let mut insertions = std::mem::take(&mut window.retained_state.patch.slots);
+    let Some((_, all)) = crate::fast::scene::SceneSlots::operations(scene) else {
+        window.retained_state.patch.slots = insertions;
         return false;
     };
-    let insertions = insertions[range.clone()].to_vec();
+    insertions.clear();
+    insertions.extend_from_slice(&all[range.clone()]);
     let mut moved: SmallVec<[(usize, crate::Bounds<crate::ScaledPixels>); 4]> = SmallVec::new();
     let mut fits = true;
     for ((new, old), insertion) in new
         .iter()
         .zip(&scene.paint_operations[range])
-        .zip(insertions)
+        .zip(insertions.iter().copied())
     {
         let (new_bounds, old_bounds) = match (new, old) {
             (PaintOperation::Primitive(new), PaintOperation::Primitive(old)) => {
@@ -747,6 +763,7 @@ fn same_primitives(window: &mut Window, old: &OldGap) -> bool {
             scene.primitive_bounds.unpatch(insertion, bounds);
         }
     }
+    window.retained_state.patch.slots = insertions;
     fits
 }
 
@@ -759,9 +776,11 @@ fn commit(window: &mut Window, gap: usize, old: &OldGap, entity_updates: u64, cx
 
     // Primitives, each where its old one lies, at its old one's draw order.
     let scene_start = old.paint.start.scene_index;
-    let slots = crate::fast::scene::SceneSlots::operations(&mut frame.scene)
-        .map(|(slots, _)| slots[scene_start..old.paint.end.scene_index].to_vec())
-        .unwrap_or_default();
+    let mut slots = std::mem::take(&mut window.retained_state.patch.slots);
+    slots.clear();
+    if let Some((all, _)) = crate::fast::scene::SceneSlots::operations(&mut frame.scene) {
+        slots.extend_from_slice(&all[scene_start..old.paint.end.scene_index]);
+    }
     for (offset, operation) in new.scene.paint_operations.drain(..).enumerate() {
         let at = scene_start + offset;
         // A layer keeps its draw order where it moved: see `same_primitives`.
@@ -776,6 +795,10 @@ fn commit(window: &mut Window, gap: usize, old: &OldGap, entity_updates: u64, cx
         place(&mut frame.scene, slots[offset] as usize, &primitive);
         frame.scene.paint_operations[at] = PaintOperation::Primitive(primitive);
     }
+
+    window.retained_state.patch.slots = slots;
+    let new = &mut window.next_frame;
+    let frame = &mut window.rendered_frame;
 
     // Listeners and cursor styles take the old ones' places.
     let listeners = old.paint.start.mouse_listeners_index;
@@ -810,7 +833,7 @@ fn commit(window: &mut Window, gap: usize, old: &OldGap, entity_updates: u64, cx
 
     // Records, at their old ranges, which every slot kept.
     let first = gap;
-    let mut line_slots = Vec::with_capacity(2 * (old.nested + 1));
+    let mut line_slots: SmallVec<[Range<crate::text_system::LineLayoutIndex>; 2]> = SmallVec::new();
     for (offset, mut record) in new.retained.records.drain(..).enumerate() {
         let old_record = &mut frame.retained.records[first + offset];
         record.prepaint_range = old_record.prepaint_range.clone();

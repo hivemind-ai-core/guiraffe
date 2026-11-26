@@ -229,6 +229,15 @@ pub(crate) struct OpenPaint {
     pub(crate) nested: Vec<Range<usize>>,
 }
 
+/// Stacks a splice gap was drawn with, kept for the next. See
+/// [`Window::enter_gap`].
+#[derive(Default)]
+pub(crate) struct GapSpares {
+    pub(crate) text_style_stack: Option<crate::fast::text_style::TextStyleStack>,
+    pub(crate) content_masks: Vec<ContentMask<Pixels>>,
+    pub(crate) element_offsets: Vec<crate::Point<Pixels>>,
+}
+
 /// A window's state for drawing retained subtrees again, besides the records
 /// its frames hold.
 pub(crate) struct RetainedState {
@@ -283,6 +292,9 @@ pub(crate) struct RetainedState {
     /// What a patched frame compares against and looks subtrees up by. See
     /// [`crate::fast::patch`].
     pub(crate) patch: crate::fast::patch::PatchState,
+    /// The stacks the last splice gap was drawn with, for the next to be
+    /// drawn with rather than allocate. See [`Window::enter_gap`].
+    pub(crate) gap_spares: GapSpares,
 }
 
 impl RetainedState {
@@ -303,6 +315,7 @@ impl RetainedState {
             render_writes: FxHashMap::default(),
             installed_input_focus: None,
             patch: crate::fast::patch::PatchState::new(),
+            gap_spares: GapSpares::default(),
         }
     }
 
@@ -926,20 +939,14 @@ impl Window {
                 paint_range: PaintIndex::default()..PaintIndex::default(),
                 paint: PaintStatus::Unpainted,
                 nested: 0,
-                context: Rc::new(RetainedContext {
-                    composition_surface: None,
-                    bounds: Bounds::default(),
-                    content_mask: ContentMask::default(),
-                    text_style: TextStyle::default(),
-                    opacity: 1.,
-                }),
+                context: UNBUILT.with(|unbuilt| unbuilt.context.clone()),
                 dependencies: RenderDependencies::default(),
                 own_dependencies: RenderDependencies::default(),
                 render_offset_reads: None,
                 render_dependencies: None,
-                hover_dependencies: Rc::new([]),
-                own_hovers: Rc::new([]),
-                layout_keys: Rc::new([]),
+                hover_dependencies: UNBUILT.with(|unbuilt| unbuilt.hovers.clone()),
+                own_hovers: UNBUILT.with(|unbuilt| unbuilt.hovers.clone()),
+                layout_keys: UNBUILT.with(|unbuilt| unbuilt.layout_keys.clone()),
                 layout: None,
                 rebuild: None,
             });
@@ -1016,7 +1023,11 @@ impl Window {
         record.own_dependencies = dependencies.own;
         record.render_offset_reads = render_offset_reads;
         record.render_dependencies = dependencies.render;
-        record.layout_keys = layout_keys.into();
+        record.layout_keys = if layout_keys.is_empty() {
+            UNBUILT.with(|unbuilt| unbuilt.layout_keys.clone())
+        } else {
+            layout_keys.into()
+        };
         record.layout = layout;
         record.rebuild = rebuild.map(Rc::new);
         Some(index)
@@ -1081,7 +1092,11 @@ impl Window {
         if hovers_end > cursor {
             own.extend_from_slice(&self.retained_state.hover_dependencies[cursor..hovers_end]);
         }
-        let hovers: Rc<[(HitboxId, bool)]> = all.into();
+        let hovers: Rc<[(HitboxId, bool)]> = if all.is_empty() {
+            UNBUILT.with(|unbuilt| unbuilt.hovers.clone())
+        } else {
+            all.into()
+        };
         let record = &mut self.next_frame.retained.records[index];
         record.paint_range = recording.start..end;
         record.paint = PaintStatus::Painted { source: None };
@@ -1094,7 +1109,11 @@ impl Window {
             Rc::make_mut(&mut record.context).opacity = opacity;
         }
         record.hover_dependencies = hovers;
-        record.own_hovers = own.into();
+        record.own_hovers = if own.is_empty() {
+            UNBUILT.with(|unbuilt| unbuilt.hovers.clone())
+        } else {
+            own.into()
+        };
         record.dependencies = record.dependencies.union(&dependencies.all);
         record.own_dependencies = record.own_dependencies.union(&dependencies.own);
     }
@@ -1210,6 +1229,29 @@ impl Window {
                 .iter()
                 .any(|entity| notified.contains(entity))
     }
+}
+
+/// What a record holds until its subtree has been prepainted and painted,
+/// shared by every record: an `Rc` of its own is an allocation, made for
+/// every retained subtree every time it is built.
+struct Unbuilt {
+    context: Rc<RetainedContext>,
+    hovers: Rc<[(HitboxId, bool)]>,
+    layout_keys: Rc<[u64]>,
+}
+
+thread_local! {
+    static UNBUILT: Unbuilt = Unbuilt {
+        context: Rc::new(RetainedContext {
+            composition_surface: None,
+            bounds: Bounds::default(),
+            content_mask: ContentMask::default(),
+            text_style: TextStyle::default(),
+            opacity: 1.,
+        }),
+        hovers: Rc::new([]),
+        layout_keys: Rc::new([]),
+    };
 }
 
 /// Where a frame's paint stands in what gpui-fast adds to the frame: the
