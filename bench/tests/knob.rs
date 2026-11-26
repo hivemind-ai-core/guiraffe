@@ -215,3 +215,34 @@ fn a_bound_knob_updates_without_allocating() {
         Some(guiraffe_core::widget_value::Value::Num(2_006.0))
     );
 }
+
+#[test]
+fn an_unchanged_knob_repaints_for_nothing() {
+    let mut app = app();
+    let store = app.update(Synth::store);
+    let handle = app
+        .open_window(size(px(200.), px(100.)), {
+            let store = store.clone();
+            move |_, cx| cx.new(|_| Page { store })
+        })
+        .expect("window");
+    app.run_until_parked();
+    // Equal writes from the store and the host: no notification, no frame, no allocation
+    // (after one warm-up of the window update path).
+    app.update_window(handle.into(), |_, _, cx| {
+        store.set(Synth::cutoff, 1_000.0, cx)
+    })
+    .ok();
+    app.run_until_parked();
+    for _ in 0..3 {
+        let (_, counts) = count_allocations(|| {
+            app.update_window(handle.into(), |_, _, cx| {
+                store.set(Synth::cutoff, 1_000.0, cx)
+            })
+            .ok();
+            app.run_until_parked();
+        })
+        .expect("scope");
+        assert_eq!(counts.allocations, 0, "{counts:?}");
+    }
+}

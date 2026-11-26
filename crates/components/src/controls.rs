@@ -744,7 +744,7 @@ impl Space {
     fn value_of(self, map: &dyn ValueMapping, kit: f32) -> f64 {
         match self {
             Self::Value(_) => f64::from(kit),
-            Self::Travel => map.from_normal(f64::from(kit)),
+            Self::Travel => map.value_at(f64::from(kit)),
         }
     }
     /// The next value for a key or `increment`: the slider's step, or the mapping's.

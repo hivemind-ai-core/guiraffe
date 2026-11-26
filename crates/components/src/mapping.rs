@@ -10,7 +10,7 @@
 //! assert_eq!(cutoff.parse("440"), Ok(440.0));
 //! assert_eq!(cutoff.parse("2.5k"), Ok(2_500.0));
 //! // Halfway along a log knob is the geometric middle of the range.
-//! assert!((cutoff.from_normal(0.5) - 632.46).abs() < 0.01);
+//! assert!((cutoff.value_at(0.5) - 632.46).abs() < 0.01);
 //! ```
 
 use std::fmt;
@@ -79,7 +79,7 @@ pub trait ValueMapping: 'static {
     /// Travel `0..=1` for a value (clamped).
     fn to_normal(&self, value: f64) -> f64;
     /// The value at travel `0..=1` (clamped, snapped to the step).
-    fn from_normal(&self, normal: f64) -> f64;
+    fn value_at(&self, normal: f64) -> f64;
     /// One keyboard or bus step up (`fine`: a tenth of it) from `value`.
     fn step_from(&self, value: f64, up: bool, fine: bool) -> f64;
     /// Clamp and snap a value written from outside.
@@ -185,7 +185,7 @@ impl ValueMap {
         if self.min < 0.0 && self.max > 0.0 {
             0.0
         } else {
-            self.from_normal_raw(0.5)
+            self.value_at_raw(0.5)
         }
     }
 
@@ -207,7 +207,7 @@ impl ValueMap {
         }
     }
 
-    fn from_normal_raw(&self, normal: f64) -> f64 {
+    fn value_at_raw(&self, normal: f64) -> f64 {
         let n = if normal.is_nan() {
             0.0
         } else {
@@ -333,8 +333,8 @@ impl ValueMapping for ValueMap {
         .clamp(0.0, 1.0)
     }
 
-    fn from_normal(&self, normal: f64) -> f64 {
-        self.snap(self.from_normal_raw(normal))
+    fn value_at(&self, normal: f64) -> f64 {
+        self.snap(self.value_at_raw(normal))
     }
 
     fn step_from(&self, value: f64, up: bool, fine: bool) -> f64 {
@@ -344,7 +344,7 @@ impl ValueMapping for ValueMap {
             Some(step) if !fine => self.snap(value + sign * step),
             _ => {
                 let travel = if fine { 0.001 } else { 0.01 };
-                let next = self.from_normal_raw(self.to_normal(value) + sign * travel);
+                let next = self.value_at_raw(self.to_normal(value) + sign * travel);
                 let snapped = self.snap(next);
                 // A step too small for the snap still moves by one step.
                 match self.step {
@@ -443,30 +443,43 @@ mod tests {
         assert_eq!(m.to_normal(1.0), 0.0, "below the range clamps");
         assert_eq!(m.to_normal(1e9), 1.0, "above the range clamps");
         assert_eq!(m.to_normal(f64::NAN), m.to_normal(m.default_value()));
-        assert!((m.from_normal(0.0) - 20.0).abs() < 1e-9);
-        assert!((m.from_normal(1.0) - 20_000.0).abs() < 1e-6);
-        assert!((m.from_normal(-0.5) - 20.0).abs() < 1e-9);
-        assert!((m.from_normal(2.0) - 20_000.0).abs() < 1e-6);
+        assert!((m.value_at(0.0) - 20.0).abs() < 1e-9);
+        assert!((m.value_at(1.0) - 20_000.0).abs() < 1e-6);
+        assert!((m.value_at(-0.5) - 20.0).abs() < 1e-9);
+        assert!((m.value_at(2.0) - 20_000.0).abs() < 1e-6);
         // Equal travel, equal ratio: each tenth multiplies by the same factor.
-        let r1 = m.from_normal(0.2) / m.from_normal(0.1);
-        let r2 = m.from_normal(0.9) / m.from_normal(0.8);
+        let r1 = m.value_at(0.2) / m.value_at(0.1);
+        let r2 = m.value_at(0.9) / m.value_at(0.8);
         assert!((r1 - r2).abs() < 1e-9);
         for i in 0..=100 {
             let n = f64::from(i) / 100.0;
-            assert!((m.to_normal(m.from_normal(n)) - n).abs() < 1e-9, "{n}");
+            assert!((m.to_normal(m.value_at(n)) - n).abs() < 1e-9, "{n}");
         }
         // A range touching zero cannot be logarithmic and falls back to linear.
         let z = ValueMap::new(0.0, 10.0).curve(Curve::Log);
-        assert!((z.from_normal(0.5) - 5.0).abs() < 1e-9);
+        assert!((z.value_at(0.5) - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn linear_mapping_round_trips_within_a_step() {
+        let m = ValueMap::new(-10.0, 30.0).step(0.5);
+        assert_eq!(m.to_normal(-10.0), 0.0);
+        assert_eq!(m.to_normal(30.0), 1.0);
+        assert_eq!(m.value_at(0.0), -10.0);
+        assert_eq!(m.value_at(1.0), 30.0);
+        for i in 0..=80 {
+            let v = -10.0 + f64::from(i) * 0.5;
+            assert!((m.value_at(m.to_normal(v)) - v).abs() <= 0.5, "{v}");
+        }
     }
 
     #[test]
     fn exp_mapping_round_trips() {
         let m = ValueMap::new(0.0, 10.0).curve(Curve::Exp(3.0));
-        assert!((m.from_normal(0.5) - 1.25).abs() < 1e-9);
+        assert!((m.value_at(0.5) - 1.25).abs() < 1e-9);
         for i in 0..=20 {
             let n = f64::from(i) / 20.0;
-            assert!((m.to_normal(m.from_normal(n)) - n).abs() < 1e-9);
+            assert!((m.to_normal(m.value_at(n)) - n).abs() < 1e-9);
         }
     }
 
@@ -557,6 +570,10 @@ mod tests {
         assert!(up > fine && fine > 1_000.0, "{up} {fine}");
         let bipolar = ValueMap::new(-1.0, 1.0).bipolar(true);
         assert_eq!(bipolar.centre(), 0.0);
-        assert_eq!(bipolar.default_value(), 0.0, "a bipolar map defaults to its centre");
+        assert_eq!(
+            bipolar.default_value(),
+            0.0,
+            "a bipolar map defaults to its centre"
+        );
     }
 }

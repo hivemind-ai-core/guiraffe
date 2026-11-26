@@ -170,7 +170,7 @@ fn centre(map: &dyn ValueMapping) -> f64 {
     if map.min() < 0.0 && map.max() > 0.0 {
         0.0
     } else {
-        map.from_normal(0.5)
+        map.value_at(0.5)
     }
 }
 
@@ -658,7 +658,7 @@ fn knob_move(this: &WeakEntity<KnobControl>, e: &MouseMoveEvent, cx: &mut App) {
         let Some(drag) = knob.param.drag else { return };
         let dy = f64::from(drag.y - f32::from(e.position.y));
         let travel = drag_travel(drag.travel, dy, e.modifiers.shift, knob.param.detent());
-        let preview = knob.param.map.from_normal(travel);
+        let preview = knob.param.map.value_at(travel);
         if knob.param.preview != Some(preview) {
             knob.param.preview = Some(preview);
             cx.notify();
@@ -971,7 +971,7 @@ fn field_move(this: &WeakEntity<NumberFieldControl>, e: &MouseMoveEvent, cx: &mu
         let dy = f64::from(drag.y - f32::from(e.position.y))
             + f64::from(f32::from(e.position.x) - drag.x);
         let travel = drag_travel(drag.travel, dy, e.modifiers.shift, field.param.detent());
-        let preview = field.param.map.from_normal(travel);
+        let preview = field.param.map.value_at(travel);
         if field.param.preview != Some(preview) {
             field.param.preview = Some(preview);
             cx.notify();

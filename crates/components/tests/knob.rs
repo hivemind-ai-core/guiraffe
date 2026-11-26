@@ -171,7 +171,7 @@ fn a_drag_is_one_batch_and_matches_the_bus(cx: &mut TestAppContext) {
     let dragged = vcx.update(|_, cx| knob.read(cx).value());
     // 50 px up from 1 kHz: a quarter of the travel.
     let map = cutoff();
-    let expected = map.from_normal(map.to_normal(1_000.0) + 50.0 / 200.0);
+    let expected = map.value_at(map.to_normal(1_000.0) + 50.0 / 200.0);
     assert!((dragged - expected).abs() < 1e-6, "{dragged} vs {expected}");
     // The same value over the bus lands identically.
     bus(vcx, "synth/cutoff", names::SET_VALUE, Value::Num(1_000.0));
@@ -283,4 +283,34 @@ fn a_log_slider_steps_by_travel_like_a_knob(cx: &mut TestAppContext) {
         );
         assert_eq!(slider.read(cx).formatted(), knob.read(cx).formatted());
     });
+}
+
+#[gpui_kit::test]
+fn a_fine_drag_moves_a_tenth_and_the_wheel_steps(cx: &mut TestAppContext) {
+    let (knob, _, log, vcx) = mount(cx);
+    let shift = Modifiers {
+        shift: true,
+        ..Modifiers::default()
+    };
+    vcx.simulate_mouse_down(point(px(20.), px(20.)), MouseButton::Left, shift);
+    vcx.run_until_parked();
+    vcx.simulate_mouse_move(point(px(20.), px(-30.)), MouseButton::Left, shift);
+    vcx.run_until_parked();
+    vcx.simulate_mouse_up(point(px(20.), px(-30.)), MouseButton::Left, shift);
+    vcx.run_until_parked();
+    let map = cutoff();
+    let expected = map.value_at(map.to_normal(1_000.0) + 50.0 / 200.0 / 10.0);
+    let dragged = vcx.update(|_, cx| knob.read(cx).value());
+    assert!((dragged - expected).abs() < 1e-6, "{dragged} vs {expected}");
+    assert_eq!(*log.groups.borrow(), 1, "one undo step");
+    // One wheel notch up is one increment, exactly as the bus sends it.
+    vcx.simulate_event(gpui_kit::ScrollEvent {
+        position: point(px(20.), px(20.)),
+        delta: gpui_kit::ScrollDelta::Lines(point(0., 1.)),
+        ..gpui_kit::ScrollEvent::default()
+    });
+    vcx.run_until_parked();
+    let wheeled = vcx.update(|_, cx| knob.read(cx).value());
+    assert!((wheeled - map.step_from(dragged, true, false)).abs() < 1e-9);
+    assert_eq!(log.sources.borrow().last(), Some(&Source::Pointer));
 }
