@@ -451,7 +451,14 @@ mod tests {
     }
     #[test]
     fn slugs_validate_every_segment() {
-        for value in ["file.save", "editor-format", "app_open", "a", "a1.b2", "a.2b"] {
+        for value in [
+            "file.save",
+            "editor-format",
+            "app_open",
+            "a",
+            "a1.b2",
+            "a.2b",
+        ] {
             assert!(CommandId::parse(value).is_ok());
         }
         for value in ["", "A", "a b", "1a", "a..b", "a-", ".a", "é", "a/b"] {
