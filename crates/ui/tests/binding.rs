@@ -131,8 +131,6 @@ fn page(cx: &mut TestAppContext) -> (Store<Mixer>, Rc<Cell<usize>>, &mut VisualT
 #[gpui_kit::test]
 fn two_way_binding_round_trips_and_isolates_renders(cx: &mut TestAppContext) {
     let (store, page_renders, vcx) = page(cx);
-    // gpui-fast rebuilds the parent once on the first edit after mounting (KNOWN_ISSUES.md).
-    change(vcx, "gain", 11);
     let (page, gain, pan) = (page_renders.get(), renders("gain"), renders("pan"));
     assert!(gain > 0 && pan > 0);
 
@@ -177,16 +175,37 @@ fn two_way_binding_round_trips_and_isolates_renders(cx: &mut TestAppContext) {
         }
     });
     vcx.run_until_parked();
-    assert!(
-        LABELS.with(|l| l.borrow().iter().any(|label| label == "dB 100")),
-        "the bound control rendered the parent's new label"
+    assert_eq!(
+        LABELS.with(|l| l.borrow().clone()),
+        ["dB 100"],
+        "the bound control rendered the parent's new label in the parent's frame"
     );
+}
+
+#[gpui_kit::test]
+fn a_parent_render_and_a_store_write_in_one_tick_show_together(cx: &mut TestAppContext) {
+    let (store, page_renders, vcx) = page(cx);
+    let page = page_renders.get();
+    LABELS.with(|l| l.borrow_mut().clear());
+    vcx.update(|window, cx| {
+        store.set(Mixer::gain, 77, cx);
+        if let Some(Some(page)) = window.root::<Page>() {
+            page.update(cx, |page, cx| {
+                page.suffix = "dB";
+                cx.notify();
+            });
+        }
+    });
+    vcx.run_until_parked();
+    assert_eq!(page_renders.get(), page + 1);
+    // One render, in one frame, with both the parent's new prop and the store's new value:
+    // never a frame with one of them stale.
+    assert_eq!(LABELS.with(|l| l.borrow().clone()), ["dB 77"]);
 }
 
 #[gpui_kit::test]
 fn notifications_coalesce_to_one_render_per_frame(cx: &mut TestAppContext) {
     let (store, _, vcx) = page(cx);
-    change(vcx, "gain", 11);
     let gain = renders("gain");
     vcx.update(|_, cx| {
         for value in [1, 2, 3, 4] {
@@ -386,9 +405,6 @@ fn bound_lists_virtualize_and_edit_one_row(cx: &mut TestAppContext) {
         (1..=100).contains(&mounted),
         "only the viewport mounts: {mounted} of {n} rows rendered"
     );
-    // gpui-fast rebuilds the parent once on the first edit after mounting (KNOWN_ISSUES.md).
-    vcx.update(|_, cx| store.set(Pattern::steps.by_key(4).then(Step::velocity), 4, cx));
-    vcx.run_until_parked();
     let page = renders.get();
 
     // An offscreen row edit renders nothing.

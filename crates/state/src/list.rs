@@ -29,7 +29,15 @@ use crate::{
     store::Slot,
 };
 
-type BodySlot<S, L, K, T> = Rc<RefCell<Option<Rc<RowBody<S, L, K, T>>>>>;
+/// What a list's parent hands it each render (see [`Holder`]).
+pub struct ListProps<S: Clone + PartialEq + 'static, L, K: 'static, T: 'static> {
+    body: Option<Rc<RowBody<S, L, K, T>>>,
+    mode: ListMode,
+    row_height: Option<Pixels>,
+}
+
+type ListHolder<S, L, K, T> = Holder<ListView<S, L, K, T>, ListProps<S, L, K, T>>;
+type HolderRef<S, L, K, T> = WeakEntity<ListHolder<S, L, K, T>>;
 type RowBody<S, L, K, T> = dyn Fn(ByKey<L, K>, &T, &Store<S>, &mut Window, &mut App) -> AnyElement;
 
 /// How a [`BoundList`] lays out its rows.
@@ -43,11 +51,11 @@ pub enum ListMode {
 }
 
 /// The retained view for one item.
-pub struct RowView<S: Clone + PartialEq + 'static, L, K: 'static, T: 'static> {
+pub struct RowView<S: Clone + PartialEq + 'static, L, K: Clone + Hash + Eq + 'static, T: 'static> {
     store: Store<S>,
     item: ByKey<L, K>,
     value: Option<T>,
-    body: BodySlot<S, L, K, T>,
+    holder: HolderRef<S, L, K, T>,
     pending: bool,
     renders: usize,
     _watch: Option<Watch>,
@@ -76,7 +84,11 @@ where
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.pending = false;
         self.renders += 1;
-        let body = self.body.borrow().clone();
+        // Reading the holder rebuilds the row in the frame its list's parent re-renders.
+        let body = self
+            .holder
+            .upgrade()
+            .and_then(|holder| holder.read(cx).props.body.clone());
         match (body, &self.value) {
             (Some(body), Some(value)) => body(self.item, value, &self.store, window, cx),
             _ => gpui_kit::Empty.into_any_element(),
@@ -84,7 +96,7 @@ where
     }
 }
 
-struct RowSlot<S: Clone + PartialEq + 'static, L, K: 'static, T: 'static> {
+struct RowSlot<S: Clone + PartialEq + 'static, L, K: Clone + Hash + Eq + 'static, T: 'static> {
     view: WeakEntity<RowView<S, L, K, T>>,
 }
 
@@ -121,11 +133,11 @@ where
 }
 
 /// One retained row view per item key, created on demand and released when asked.
-pub struct RowViews<S: Clone + PartialEq + 'static, L, K: 'static, T: 'static> {
+pub struct RowViews<S: Clone + PartialEq + 'static, L, K: Clone + Hash + Eq + 'static, T: 'static> {
     store: Store<S>,
     list: L,
     rows: HashMap<K, Entity<RowView<S, L, K, T>>>,
-    body: BodySlot<S, L, K, T>,
+    holder: HolderRef<S, L, K, T>,
 }
 
 impl<S, L, K, T> RowViews<S, L, K, T>
@@ -135,18 +147,13 @@ where
     K: Copy + Hash + Eq + 'static,
     T: Clone + PartialEq + 'static,
 {
-    pub fn new(store: Store<S>, list: L) -> Self {
+    pub(crate) fn new(store: Store<S>, list: L, holder: HolderRef<S, L, K, T>) -> Self {
         Self {
             store,
             list,
             rows: HashMap::new(),
-            body: Rc::default(),
+            holder,
         }
-    }
-
-    /// Replace the row body (when the list's parent renders). Rows re-render lazily.
-    pub fn set_body(&self, body: Rc<RowBody<S, L, K, T>>) {
-        *self.body.borrow_mut() = Some(body);
     }
 
     /// The view for `key`, created and subscribed to its item on first use.
@@ -156,7 +163,7 @@ where
         }
         let item = self.list.by_key(key);
         let store = self.store.clone();
-        let body = self.body.clone();
+        let holder = self.holder.clone();
         let row = cx.new(|cx: &mut Context<RowView<S, L, K, T>>| {
             let value = item.get(&store.snapshot(cx)).cloned();
             let slot: Rc<dyn Slot<S>> = Rc::new(RowSlot {
@@ -169,7 +176,7 @@ where
                 store,
                 item,
                 value,
-                body,
+                holder,
                 pending: false,
                 renders: 0,
                 _watch: Some(watch),
@@ -203,7 +210,7 @@ pub struct ListView<S: Clone + PartialEq + 'static, L, K: Clone + Hash + Eq + 's
     order: imbl::Vector<K>,
     stamp: u64,
     rows: Rc<RefCell<RowViews<S, L, K, T>>>,
-    settings: Rc<Cell<(ListMode, Option<Pixels>)>>,
+    holder: HolderRef<S, L, K, T>,
     pending: bool,
     renders: usize,
     _watch: Option<Watch>,
@@ -253,10 +260,15 @@ where
             .get(state)
             .map(|list| list.order().clone())
             .unwrap_or_default();
+        let mounted = view
+            .read(cx)
+            .holder
+            .upgrade()
+            .is_some_and(|holder| holder.read(cx).props.mode == ListMode::Mounted);
         view.update(cx, |list, cx| {
             list.stamp = stamp;
             list.order = order;
-            if list.settings.get().0 == ListMode::Mounted {
+            if mounted {
                 let live: std::collections::HashSet<K> = list.order.iter().copied().collect();
                 list.rows.borrow_mut().retain(|key| live.contains(key));
             }
@@ -292,7 +304,14 @@ where
                 .into_any_element(),
             None => AnyView::from(row).into_any_element(),
         };
-        let (mode, row_height) = self.settings.get();
+        // Reading the holder rebuilds the list in the frame its parent re-renders.
+        let (mode, row_height) =
+            self.holder
+                .upgrade()
+                .map_or((ListMode::Virtual, None), |holder| {
+                    let props = &holder.read(cx).props;
+                    (props.mode, props.row_height)
+                });
         match mode {
             ListMode::Mounted => {
                 let mut rows = self.rows.borrow_mut();
@@ -435,49 +454,59 @@ where
             body,
         } = self;
         let init = store.clone();
-        let holder = window.use_keyed_state(id, cx, move |_, cx| {
-            let state = init.snapshot(cx);
-            let (order, stamp) = list
-                .get(&state)
-                .map(|l| (l.order().clone(), l.order_stamp()))
-                .unwrap_or_default();
-            let rows = Rc::new(RefCell::new(RowViews::new(init.clone(), list)));
-            let settings = Rc::new(Cell::new((mode, row_height)));
-            let view = cx.new(|cx: &mut Context<ListView<S, L, K, T>>| {
-                let slot: Rc<dyn Slot<S>> = Rc::new(ListSlot {
-                    view: cx.weak_entity(),
+        let holder = window.use_keyed_state(
+            id,
+            cx,
+            move |_, cx: &mut Context<ListHolder<S, L, K, T>>| {
+                let state = init.snapshot(cx);
+                let (order, stamp) = list
+                    .get(&state)
+                    .map(|l| (l.order().clone(), l.order_stamp()))
+                    .unwrap_or_default();
+                let weak = cx.weak_entity();
+                let rows = Rc::new(RefCell::new(RowViews::new(
+                    init.clone(),
                     list,
+                    weak.clone(),
+                )));
+                let view = cx.new(|cx: &mut Context<ListView<S, L, K, T>>| {
+                    let slot: Rc<dyn Slot<S>> = Rc::new(ListSlot {
+                        view: cx.weak_entity(),
+                        list,
+                    });
+                    let mut chain = Vec::new();
+                    list.for_each_key(&mut |k| chain.push(k));
+                    let watch = init.watch_chains(&[chain], slot, cx);
+                    ListView {
+                        order,
+                        stamp,
+                        rows,
+                        holder: weak,
+                        pending: false,
+                        renders: 0,
+                        _watch: Some(watch),
+                    }
                 });
-                let mut chain = Vec::new();
-                list.for_each_key(&mut |k| chain.push(k));
-                let watch = init.watch_chains(&[chain], slot, cx);
-                ListView {
-                    order,
-                    stamp,
-                    rows: rows.clone(),
-                    settings: settings.clone(),
-                    pending: false,
-                    renders: 0,
-                    _watch: Some(watch),
+                Holder {
+                    view,
+                    props: ListProps {
+                        body: None,
+                        mode,
+                        row_height,
+                    },
                 }
-            });
-            Holder {
-                view,
-                cell: (rows, settings),
-                fresh: Cell::new(true),
-            }
+            },
+        );
+        // The parent rendered: hand the list and its rows the new body and settings, in this
+        // frame. No notification.
+        let view = holder.update(cx, |holder, _| {
+            holder.props = ListProps {
+                body: Some(body),
+                mode,
+                row_height,
+            };
+            holder.view.clone()
         });
-        let holder = holder.read(cx);
-        let (rows, settings) = holder.cell.clone();
-        let view = holder.view.clone();
-        rows.borrow().set_body(body);
-        settings.set((mode, row_height));
-        // The parent rendered with a new row body: the list and its mounted rows render again.
-        if holder.remounted() {
-            let mut ids: Vec<_> = rows.borrow().rows.values().map(Entity::entity_id).collect();
-            ids.push(view.entity_id());
-            crate::bind::refresh_later(ids, cx);
-        }
         AnyView::from(view)
     }
 }
