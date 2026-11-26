@@ -333,5 +333,8 @@ fn the_ribbon_runs_review_commands_on_the_bus(cx: &mut TestAppContext) {
     assert_eq!(state(&app, vcx).decided(), 1);
     let log = recorder.take();
     assert_eq!(log.len(), 1, "{log:?}");
-    assert_eq!((&*log[0].path, log[0].source), (paths::ACCEPT, Source::Ribbon));
+    assert_eq!(
+        (&*log[0].path, log[0].source),
+        (paths::ACCEPT, Source::Ribbon)
+    );
 }
