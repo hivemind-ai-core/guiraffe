@@ -11,7 +11,7 @@ use std::{collections::BTreeSet, fs, path::Path};
 const EXTERNAL_SECTIONS: &[&str] = &["kit", "kit-charts"];
 
 /// Crates that are tools or harnesses, not component libraries.
-const NOT_COMPONENT_CRATES: &[&str] = &["showcase", "test", "bench", "cli", "mocket"];
+const NOT_COMPONENT_CRATES: &[&str] = &["showcase", "test", "bench", "cli", "mocket", "goldens"];
 
 fn ident_after<'a>(line: &'a str, kw: &str) -> Option<&'a str> {
     let rest = &line[line.find(kw)? + kw.len()..];
