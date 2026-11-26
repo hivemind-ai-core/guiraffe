@@ -376,6 +376,7 @@ impl Commands {
             release(old.as_str(), cx);
         }
     }
+    #[must_use = "a rejected command is not registered; handle or log the error"]
     pub fn register<F>(&self, command: Command<F>, cx: &mut App) -> Result<(), Error>
     where
         F: Fn(&Payload, &mut Window, &mut App) + 'static,
@@ -384,7 +385,16 @@ impl Commands {
     }
     /// Register a command whose handler is already built, such as [`Handler::apply`]
     /// or a [`Commands::control_command`].
+    #[must_use = "a rejected command is not registered; handle or log the error"]
     pub fn register_handler(&self, command: Command<Handler>, cx: &mut App) -> Result<(), Error> {
+        let id = command.id.clone();
+        let result = self.register_checked(command, cx);
+        if let Err(error) = &result {
+            report_rejected(&id, error);
+        }
+        result
+    }
+    fn register_checked(&self, command: Command<Handler>, cx: &mut App) -> Result<(), Error> {
         command.validate()?;
         if self.state.read(cx).catalog.lookup(&command.id).is_some() {
             return Err(Error::Duplicate(command.id.to_string()));
@@ -752,6 +762,14 @@ pub(crate) fn native_contexts(window: &Window) -> ContextStack {
 }
 /// Convenience for the application-wide default service. Window-local instances
 /// expose the same methods directly.
+/// Debug builds print every rejected registration, so a dropped `Result` stays visible.
+fn report_rejected(id: &CommandId, error: &Error) {
+    if cfg!(debug_assertions) {
+        eprintln!("guiraffe-commands: command `{id}` was NOT registered: {error}");
+    }
+}
+
+#[must_use = "a rejected command is not registered; handle or log the error"]
 pub fn register<F>(command: Command<F>, cx: &mut App) -> Result<(), Error>
 where
     F: Fn(&Payload, &mut Window, &mut App) + 'static,

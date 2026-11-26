@@ -149,6 +149,12 @@ pub trait Drive: Sized + 'static {
     /// Typed result; `()` for actions with nothing to report.
     type Output: Into<Outcome>;
     fn decode(action: &Action) -> Result<Self::Action, ActionError>;
+    /// Decode against this control's current state, for a control whose action kinds
+    /// depend on it (for example on its items). The bus calls this; it defaults to
+    /// the static [`Drive::decode`].
+    fn decode_for(&self, action: &Action) -> Result<Self::Action, ActionError> {
+        Self::decode(action)
+    }
     fn apply(
         &mut self,
         action: Self::Action,
@@ -263,9 +269,11 @@ impl<T: Observe + Drive> Endpoint for gpui_kit::WeakEntity<T> {
         cx: &mut App,
     ) -> Result<Outcome, ActionError> {
         let entity = self.upgrade().ok_or(ActionError::UnknownTarget)?;
-        let typed = T::decode(action)?;
         entity
-            .update(cx, |state, cx| state.apply(typed, window, cx))
+            .update(cx, |state, cx| {
+                let typed = state.decode_for(action)?;
+                state.apply(typed, window, cx)
+            })
             .map(Into::into)
     }
     fn snapshot(&self, cx: &App) -> Result<ControlSnapshot, ActionError> {
@@ -1064,5 +1072,62 @@ mod tests {
                 Some(Source::Ribbon),
             ]
         );
+    }
+
+    #[gpui_kit::test]
+    fn decode_for_sees_the_control_state(cx: &mut TestAppContext) {
+        // A control whose wire actions depend on its state: `select` takes an item name.
+        struct Items(Vec<&'static str>, Option<usize>);
+        impl Observe for Items {
+            type Snapshot = ControlSnapshot;
+            fn snapshot(&self, _: &App) -> ControlSnapshot {
+                ControlSnapshot::default()
+            }
+        }
+        impl Drive for Items {
+            type Action = usize;
+            type Output = ();
+            fn decode(_: &Action) -> Result<usize, ActionError> {
+                Err(ActionError::Unsupported)
+            }
+            fn decode_for(&self, action: &Action) -> Result<usize, ActionError> {
+                let Value::Str(name) = &action.payload else {
+                    return Err(ActionError::Invalid("expected an item name"));
+                };
+                self.0
+                    .iter()
+                    .position(|item| *item == name.as_ref())
+                    .ok_or(ActionError::Invalid("no such item"))
+            }
+            fn apply(
+                &mut self,
+                index: usize,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> Result<(), ActionError> {
+                self.1 = Some(index);
+                Ok(())
+            }
+        }
+        let (_, vcx) = cx.add_window_view(|_, _| Empty);
+        vcx.update(|window, cx| {
+            let entity = cx.new(|_| Items(vec!["a", "b"], None));
+            let id =
+                ActionBus::register("items", &entity, "items", Capabilities::SELECT, window, cx);
+            let pick = |name: &'static str| Action {
+                name: names::SELECT.into(),
+                payload: Value::Str(name.into()),
+            };
+            assert_eq!(
+                ActionBus::dispatch(id, &pick("b"), Source::Mcp, window, cx),
+                Ok(Outcome::EMPTY)
+            );
+            assert_eq!(entity.read(cx).1, Some(1));
+            assert_eq!(
+                ActionBus::dispatch(id, &pick("z"), Source::Mcp, window, cx),
+                Err(ActionError::Invalid("no such item"))
+            );
+            assert_eq!(entity.read(cx).1, Some(1));
+        });
     }
 }
