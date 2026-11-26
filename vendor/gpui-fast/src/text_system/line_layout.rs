@@ -497,7 +497,17 @@ pub(crate) struct WrapScratch {
 struct LineLayoutCacheState {
     previous_frame: FrameCache,
     current_frame: FrameCache,
+    /// Lines patched frames stopped using, most recent last, kept in
+    /// `previous_frame` for a while: an edit back to what a label said is
+    /// common, and would shape it again. At most [`PATCH_KEPT_LINES`]; the
+    /// next full frame lets them go as it lets go any line it did not use.
+    patch_kept: std::collections::VecDeque<Arc<CacheKey>>,
+    /// Likewise for wrapped lines.
+    patch_kept_wrapped: std::collections::VecDeque<Arc<CacheKey>>,
 }
+
+/// See [`LineLayoutCacheState::patch_kept`].
+const PATCH_KEPT_LINES: usize = 64;
 
 #[derive(Default)]
 pub(crate) struct FrameCache {
@@ -552,6 +562,7 @@ impl LineLayoutCache {
         let LineLayoutCacheState {
             previous_frame,
             current_frame,
+            ..
         } = &mut *state;
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
@@ -596,6 +607,8 @@ impl LineLayoutCache {
         let LineLayoutCacheState {
             previous_frame,
             current_frame,
+            patch_kept,
+            patch_kept_wrapped,
         } = &mut *self.state.borrow_mut();
         let same_fonts = patched.iter().all(|range| {
             range.start.font_generation == font_generation
@@ -607,6 +620,7 @@ impl LineLayoutCache {
             used: &mut Vec<Arc<K>>,
             previous: &mut FxHashMap<Arc<K>, Arc<V>>,
             current: &mut FxHashMap<Arc<K>, Arc<V>>,
+            mut stopped_using: impl FnMut(Arc<K>, &mut FxHashMap<Arc<K>, Arc<V>>),
         ) {
             let mut fresh = used.drain(..);
             'ranges: for range in ranges {
@@ -617,7 +631,7 @@ impl LineLayoutCache {
                     let old = std::mem::replace(slot, key);
                     // Only the map and this slot held it: nothing uses it now.
                     if Arc::strong_count(&old) == 2 && !current.contains_key(&old) {
-                        previous.remove(&old);
+                        stopped_using(old, previous);
                     }
                 }
             }
@@ -640,15 +654,33 @@ impl LineLayoutCache {
                 &mut current_frame.used_lines,
                 &mut previous_frame.lines,
                 &mut current_frame.lines,
+                |key, lines| {
+                    patch_kept.push_back(key);
+                    if patch_kept.len() > PATCH_KEPT_LINES
+                        && let Some(oldest) = patch_kept.pop_front()
+                        && Arc::strong_count(&oldest) == 2
+                    {
+                        lines.remove(&oldest);
+                    }
+                },
             );
             take_slots(
                 &mut previous_frame.used_wrapped_lines,
-                patched.iter().map(|range| {
-                    range.start.wrapped_lines_index..range.end.wrapped_lines_index
-                }),
+                patched
+                    .iter()
+                    .map(|range| range.start.wrapped_lines_index..range.end.wrapped_lines_index),
                 &mut current_frame.used_wrapped_lines,
                 &mut previous_frame.wrapped_lines,
                 &mut current_frame.wrapped_lines,
+                |key, wrapped_lines| {
+                    patch_kept_wrapped.push_back(key);
+                    if patch_kept_wrapped.len() > PATCH_KEPT_LINES
+                        && let Some(oldest) = patch_kept_wrapped.pop_front()
+                        && Arc::strong_count(&oldest) == 2
+                    {
+                        wrapped_lines.remove(&oldest);
+                    }
+                },
             );
         } else {
             previous_frame.lines.extend(current_frame.lines.drain());
@@ -665,7 +697,13 @@ impl LineLayoutCache {
         let LineLayoutCacheState {
             previous_frame,
             current_frame,
+            patch_kept,
+            patch_kept_wrapped,
         } = &mut *self.state.borrow_mut();
+        // A full frame lets go of what patched frames kept, as of any line it
+        // did not use.
+        patch_kept.clear();
+        patch_kept_wrapped.clear();
         crate::fast::text::carry_over_line_layouts(previous_frame, current_frame);
     }
 
@@ -773,6 +811,7 @@ impl LineLayoutCache {
         let LineLayoutCacheState {
             previous_frame,
             current_frame,
+            ..
         } = &mut *state;
         if let Some((key, layout)) = previous_frame.lines.remove_entry(key) {
             current_frame.lines.insert(key.clone(), layout.clone());
