@@ -1003,4 +1003,37 @@ fn anchors_moved_fires_on_pan_zoom_move_and_layout_only(cx: &mut TestAppContext)
     expect(cx, "a layout change", 4);
     view.update(cx, |_, cx| cx.notify());
     expect(cx, "another unrelated repaint", 4);
+
+    // A drag: moving fires, and so does Shift locking it to its dominant axis with the
+    // pointer still, since the painted node moves back onto the axis.
+    let drag = |view: &Entity<Flow>, dominant: bool, cx: &mut TestAppContext| {
+        view.update(cx, |view, cx| {
+            let origin = WorldPoint::new(100., 160.);
+            let origins: std::sync::Arc<std::collections::BTreeMap<_, _>> =
+                std::sync::Arc::new([(1, origin)].into_iter().collect());
+            let (roots, axes) = match &view.interaction.gesture {
+                Some(crate::Gesture::Move { roots, axes, .. }) => (roots.clone(), axes.clone()),
+                _ => (origins.clone(), Default::default()),
+            };
+            let origins = match &view.interaction.gesture {
+                Some(crate::Gesture::Move { origins, .. }) => origins.clone(),
+                _ => origins,
+            };
+            view.interaction.gesture = Some(crate::Gesture::Move {
+                start: origin,
+                origins,
+                roots,
+                axes,
+                delta: WorldPoint::new(60., 20.),
+                dominant,
+            });
+            cx.notify();
+        });
+    };
+    drag(&view, false, cx);
+    expect(cx, "a drag", 5);
+    drag(&view, true, cx);
+    expect(cx, "Shift locking the drag to its dominant axis", 6);
+    drag(&view, true, cx);
+    expect(cx, "the same locked drag", 6);
 }

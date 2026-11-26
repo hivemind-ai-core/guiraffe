@@ -3245,6 +3245,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
  "gpui-kit",
+ "guiraffe-geometry",
  "imbl",
  "serde_json",
  "smallvec",
@@ -3258,6 +3259,10 @@ dependencies = [
  "guiraffe-core",
  "lru",
 ]
+
+[[package]]
+name = "guiraffe-geometry"
+version = "0.1.0"
 
 [[package]]
 name = "guiraffe-icons"

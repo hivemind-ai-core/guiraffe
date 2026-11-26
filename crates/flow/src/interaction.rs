@@ -14,7 +14,12 @@ pub enum Gesture {
         start: Point,
         origins: Arc<BTreeMap<NodeId, Point>>,
         roots: Arc<BTreeMap<NodeId, Point>>,
+        /// Axis lock per moved node (its drag root's, so a group moves as one).
+        axes: Arc<BTreeMap<NodeId, AxisLock>>,
+        /// The pointer's movement in world units, before any axis lock.
         delta: Point,
+        /// Shift held: a free drag locks to the dominant axis.
+        dominant: bool,
     },
     Box {
         start: Point,
@@ -44,15 +49,17 @@ impl Gesture {
                     start: a,
                     origins: b,
                     delta: c,
+                    dominant: g,
                     ..
                 },
                 Self::Move {
                     start: d,
                     origins: e,
                     delta: f,
+                    dominant: h,
                     ..
                 },
-            ) => a == d && Arc::ptr_eq(b, e) && c == f,
+            ) => a == d && Arc::ptr_eq(b, e) && c == f && g == h,
             (
                 Self::Box {
                     start: a,
@@ -75,20 +82,53 @@ impl Gesture {
         if let Self::Move {
             origins,
             roots,
+            axes,
             delta,
+            dominant,
             ..
         } = self
         {
             let origin = *origins.get(&id)?;
-            if *delta == Point::default() {
+            let delta = Self::locked(axes, id, *delta, *dominant);
+            if delta == Point::default() {
                 return Some(origin);
             }
             let root_origin = *roots.get(&id)?;
-            let target = grid.map_or(root_origin + *delta, |g| (root_origin + *delta).snap(g));
+            let target = grid.map_or(root_origin + delta, |g| {
+                Self::snap_locked(root_origin, root_origin + delta, g)
+            });
             Some(origin + (target - root_origin))
         } else {
             None
         }
+    }
+}
+impl Gesture {
+    fn locked(
+        axes: &BTreeMap<NodeId, AxisLock>,
+        id: NodeId,
+        delta: Point,
+        dominant: bool,
+    ) -> Point {
+        let lock = drag_lock(axes.get(&id).copied().unwrap_or_default(), dominant, delta);
+        lock_point(lock, Point::default(), delta)
+    }
+    /// Snap `target` to the grid on the axes it moved along, so a locked axis keeps its
+    /// off-grid coordinate.
+    fn snap_locked(origin: Point, target: Point, grid: f32) -> Point {
+        let snapped = target.snap(grid);
+        Point::new(
+            if target.x == origin.x {
+                origin.x
+            } else {
+                snapped.x
+            },
+            if target.y == origin.y {
+                origin.y
+            } else {
+                snapped.y
+            },
+        )
     }
 }
 pub struct Interaction {
@@ -217,17 +257,21 @@ impl Interaction {
                 .editor
                 .move_positions(&positions, None)
                 .unwrap_or_default();
+            let mut axes = BTreeMap::new();
             let roots = origins
                 .iter()
                 .map(|(id, pos)| {
                     let mut root = *pos;
+                    let mut root_id = *id;
                     let mut parent = self.editor.graph().nodes.get(id).and_then(|n| n.parent);
                     while let Some(id) = parent {
                         if let Some(pos) = origins.get(&id) {
                             root = *pos;
+                            root_id = id;
                         }
                         parent = self.editor.graph().nodes.get(&id).and_then(|n| n.parent);
                     }
+                    axes.insert(*id, self.editor.graph().axis_lock_of(root_id));
                     (*id, root)
                 })
                 .collect();
@@ -235,7 +279,9 @@ impl Interaction {
                 start: screen,
                 origins: Arc::new(origins),
                 roots: Arc::new(roots),
+                axes: Arc::new(axes),
                 delta: Point::default(),
+                dominant: false,
             });
         } else if let Some(id) =
             self.editor
@@ -260,6 +306,10 @@ impl Interaction {
         }
     }
     pub fn motion(&mut self, screen: Point) {
+        self.motion_with(screen, false);
+    }
+    /// Pointer motion; `dominant` (Shift held) locks a free node drag to its dominant axis.
+    pub fn motion_with(&mut self, screen: Point, dominant: bool) {
         if !screen.finite() {
             return;
         }
@@ -271,7 +321,13 @@ impl Interaction {
                     self.viewport.pan = pan;
                 }
             }
-            Some(Gesture::Move { start, delta, .. }) => {
+            Some(Gesture::Move {
+                start,
+                delta,
+                dominant: lock,
+                ..
+            }) => {
+                *lock = dominant;
                 if *delta != Point::default() || screen.distance(*start) >= 3. {
                     *delta = (screen - *start) * (1. / self.viewport.zoom);
                 }
@@ -286,8 +342,21 @@ impl Interaction {
         validator: Option<&dyn ConnectionValidator>,
     ) -> Result<bool, FlowError> {
         match self.gesture.take() {
-            Some(Gesture::Move { origins, delta, .. }) if delta != Point::default() => {
-                let positions = origins.iter().map(|(id, p)| (*id, *p + delta)).collect();
+            Some(Gesture::Move {
+                origins,
+                axes,
+                delta,
+                dominant,
+                ..
+            }) if delta != Point::default() => {
+                let positions: BTreeMap<_, _> = origins
+                    .iter()
+                    .map(|(id, p)| (*id, *p + Gesture::locked(&axes, *id, delta, dominant)))
+                    .filter(|(id, p)| origins.get(id) != Some(p))
+                    .collect();
+                if positions.is_empty() {
+                    return Ok(false);
+                }
                 self.editor.move_nodes(&positions, self.grid)
             }
             Some(Gesture::Box {

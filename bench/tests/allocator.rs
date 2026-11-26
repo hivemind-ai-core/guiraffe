@@ -1591,3 +1591,82 @@ fn menu_sections_unchanged_repaint_allocates_nothing() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+// Flow cable styles (0.3.1 #150): an unchanged repaint of dashed or dotted edges allocates
+// no more than the same graph with solid edges
+
+struct FlowRoot(gpui_kit::Entity<guiraffe_flow::FlowState>);
+impl gpui_kit::Render for FlowRoot {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement, Styled};
+        gpui_kit::div()
+            .size_full()
+            .child(guiraffe_flow::FlowCanvas::new(&self.0))
+    }
+}
+
+fn flow_repaint_counts(
+    style: guiraffe_flow::core::StrokeStyle,
+) -> anyhow::Result<guiraffe_bench::allocator::Counts> {
+    use gpui_kit::AppContext;
+    use guiraffe_flow::core::{Edge, Graph, Node, Point};
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    let nodes = (0..40u64).map(|i| {
+        Node::new(
+            i,
+            format!("N{i}"),
+            Point::new((i % 8) as f32 * 200., (i / 8) as f32 * 120.),
+        )
+    });
+    let edges = (1..40u64).map(|i| Edge::new(i, i - 1, i));
+    let mut graph = Graph::from_parts(nodes, edges).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    graph.edge_stroke = style;
+    let window = app.open_window(
+        gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(700.)),
+        move |_, cx| {
+            guiraffe_core::init(cx);
+            let state = cx.new(|cx| {
+                guiraffe_flow::FlowState::new(graph, cx)
+                    .unwrap_or_else(|e| panic!("{e:?}"))
+                    .options(guiraffe_flow::FlowOptions {
+                        minimap: false,
+                        ..Default::default()
+                    })
+            });
+            cx.new(|_| FlowRoot(state))
+        },
+    )?;
+    let frame = |app: &mut gpui_kit::HeadlessAppContext| {
+        app.update_window(window.into(), |_, w, cx| w.draw(cx).clear(cx))
+    };
+    for _ in 0..6 {
+        frame(&mut app)?;
+        app.run_until_parked();
+    }
+    let (r, counts) = count_allocations(|| frame(&mut app))?;
+    r?;
+    Ok(counts)
+}
+
+#[test]
+fn dashed_edges_repaint_without_extra_allocations() -> anyhow::Result<()> {
+    use guiraffe_flow::core::StrokeStyle;
+    let solid = flow_repaint_counts(StrokeStyle::Solid)?;
+    let dashed = flow_repaint_counts(StrokeStyle::DASHED)?;
+    let dotted = flow_repaint_counts(StrokeStyle::DOTTED)?;
+    eprintln!("flow unchanged repaint: solid {solid:?} dashed {dashed:?} dotted {dotted:?}");
+    assert!(
+        dashed.allocations <= solid.allocations && dotted.allocations <= solid.allocations,
+        "patterned edges allocate no more than solid ones"
+    );
+    Ok(())
+}

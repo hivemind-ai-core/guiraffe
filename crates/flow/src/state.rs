@@ -332,6 +332,22 @@ impl FlowState {
         }
         Ok(changed)
     }
+    /// Move nodes to world positions as one edit (one undo step). Children follow their
+    /// parents and each node's axis lock holds, as for a pointer drag.
+    pub fn move_nodes(
+        &mut self,
+        positions: &std::collections::BTreeMap<core::NodeId, WorldPoint>,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, FlowError> {
+        let changed = self.editor.move_nodes(positions, None)?;
+        if changed {
+            self.abort_layout();
+            self.sync(cx);
+            cx.emit(FlowEvent::Changed);
+            cx.notify();
+        }
+        Ok(changed)
+    }
     pub fn undo(&mut self, cx: &mut Context<Self>) {
         let result = self.editor.undo();
         self.history_result(result, cx);

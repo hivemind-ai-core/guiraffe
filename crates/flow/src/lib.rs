@@ -3,12 +3,14 @@
 //! ```ignore
 //! ui! { FlowCanvas(&state) }
 //! ```
+mod bus;
 pub mod cables;
 mod gesture;
 mod interaction;
 mod node;
 mod paint;
 mod state;
+pub use bus::{FlowAction, FlowOutcome, action_names};
 pub use gesture::FlowGesture;
 pub use state::{FlowCanvas, FlowState};
 /// Compatibility name for the state/view host. New compositions can use FlowCanvas.
@@ -139,8 +141,10 @@ struct AnchorFrame {
     viewport: Viewport,
     /// The scene painted, by address.
     scene: usize,
-    /// A drag in progress: its origins, by address, and how far it moved.
-    drag: Option<(usize, WorldPoint)>,
+    /// A drag in progress: its origins and axis locks, by address, how far it moved,
+    /// whether Shift locks it to the dominant axis, and the snap grid. Everything the
+    /// painted drag preview follows from.
+    drag: Option<(usize, usize, WorldPoint, bool, Option<f32>)>,
 }
 
 /// Emitted, at most once per frame, when node or port positions on screen may have moved:
@@ -853,9 +857,19 @@ impl Render for FlowViewport {
         // What anchors follow from, recorded as the canvas paints (see `AnchorFrame`).
         let anchor_scene = std::sync::Arc::as_ptr(&display) as usize;
         let anchor_drag = match &self.interaction.gesture {
-            Some(Gesture::Move { origins, delta, .. }) => {
-                Some((std::sync::Arc::as_ptr(origins) as usize, *delta))
-            }
+            Some(Gesture::Move {
+                origins,
+                axes,
+                delta,
+                dominant,
+                ..
+            }) => Some((
+                std::sync::Arc::as_ptr(origins) as usize,
+                std::sync::Arc::as_ptr(axes) as usize,
+                *delta,
+                *dominant,
+                self.interaction.grid,
+            )),
             _ => None,
         };
         let anchors = self.anchors.clone();
@@ -1025,7 +1039,8 @@ impl Render for FlowViewport {
                     this.pan_minimap(event.position, cx);
                 } else if this.interaction.gesture.is_some() {
                     let before = this.stamp();
-                    this.interaction.motion(this.local(event.position));
+                    this.interaction
+                        .motion_with(this.local(event.position), event.modifiers.shift);
                     this.publish(before, cx);
                 }
             }))
@@ -1034,7 +1049,8 @@ impl Render for FlowViewport {
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
                     this.minimap_drag = false;
                     let before = this.stamp();
-                    this.interaction.motion(this.local(event.position));
+                    this.interaction
+                        .motion_with(this.local(event.position), event.modifiers.shift);
                     let result = this.interaction.release(this.validator.as_deref());
                     this.finish(result);
                     this.publish(before, cx);
@@ -1045,7 +1061,8 @@ impl Render for FlowViewport {
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
                     this.minimap_drag = false;
                     let before = this.stamp();
-                    this.interaction.motion(this.local(event.position));
+                    this.interaction
+                        .motion_with(this.local(event.position), event.modifiers.shift);
                     let result = this.interaction.release(this.validator.as_deref());
                     this.finish(result);
                     this.publish(before, cx);
