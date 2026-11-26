@@ -3,11 +3,13 @@
 //! ```ignore
 //! ui! { FlowCanvas(&state) }
 //! ```
+mod bus;
 mod gesture;
 mod interaction;
 mod node;
 mod paint;
 mod state;
+pub use bus::{FlowAction, FlowOutcome, action_names};
 pub use gesture::FlowGesture;
 pub use state::{FlowCanvas, FlowState};
 /// Compatibility name for the state/view host. New compositions can use FlowCanvas.
@@ -907,7 +909,8 @@ impl Render for FlowViewport {
                     this.pan_minimap(event.position, cx);
                 } else if this.interaction.gesture.is_some() {
                     let before = this.stamp();
-                    this.interaction.motion(this.local(event.position));
+                    this.interaction
+                        .motion_with(this.local(event.position), event.modifiers.shift);
                     this.publish(before, cx);
                 }
             }))
@@ -916,7 +919,8 @@ impl Render for FlowViewport {
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
                     this.minimap_drag = false;
                     let before = this.stamp();
-                    this.interaction.motion(this.local(event.position));
+                    this.interaction
+                        .motion_with(this.local(event.position), event.modifiers.shift);
                     let result = this.interaction.release(this.validator.as_deref());
                     this.finish(result);
                     this.publish(before, cx);
@@ -927,7 +931,8 @@ impl Render for FlowViewport {
                 cx.listener(|this, event: &MouseUpEvent, _, cx| {
                     this.minimap_drag = false;
                     let before = this.stamp();
-                    this.interaction.motion(this.local(event.position));
+                    this.interaction
+                        .motion_with(this.local(event.position), event.modifiers.shift);
                     let result = this.interaction.release(this.validator.as_deref());
                     this.finish(result);
                     this.publish(before, cx);
