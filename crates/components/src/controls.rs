@@ -681,7 +681,7 @@ impl SliderBuilder {
                     let SliderEvent::Change(SliderValue::Single(normal)) = *event else {
                         return;
                     };
-                    let value = space.from_kit(&*read, normal);
+                    let value = space.value_of(&*read, normal);
                     let routed = route_in(
                         handle,
                         &this,
@@ -741,7 +741,7 @@ impl Space {
             Self::Travel => map.to_normal(value) as f32,
         }
     }
-    fn from_kit(self, map: &dyn ValueMapping, kit: f32) -> f64 {
+    fn value_of(self, map: &dyn ValueMapping, kit: f32) -> f64 {
         match self {
             Self::Value(_) => f64::from(kit),
             Self::Travel => map.from_normal(f64::from(kit)),

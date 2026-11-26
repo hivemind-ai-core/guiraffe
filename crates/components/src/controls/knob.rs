@@ -770,17 +770,13 @@ impl NumberFieldBuilder {
                 let subscription = cx.subscribe(
                     &entry,
                     move |field: &mut NumberFieldControl, _, event: &InputEvent, cx| match event {
-                        InputEvent::PressEnter { .. } | InputEvent::Blur => {
-                            if field.editing {
-                                let this = this.clone();
-                                cx.defer(move |cx| {
-                                    handle
-                                        .update(cx, |_, window, cx| {
-                                            entry_done(&this, true, window, cx)
-                                        })
-                                        .ok();
-                                });
-                            }
+                        InputEvent::PressEnter { .. } | InputEvent::Blur if field.editing => {
+                            let this = this.clone();
+                            cx.defer(move |cx| {
+                                handle
+                                    .update(cx, |_, window, cx| entry_done(&this, true, window, cx))
+                                    .ok();
+                            });
                         }
                         _ => {}
                     },

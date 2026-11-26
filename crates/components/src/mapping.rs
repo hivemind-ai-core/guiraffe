@@ -4,7 +4,7 @@
 //! steps, reads and parses the same way in every control.
 //!
 //! ```
-//! use guiraffe_components::mapping::{Curve, Unit, ValueMap};
+//! use guiraffe_components::mapping::{Curve, Unit, ValueMap, ValueMapping};
 //! let cutoff = ValueMap::new(20.0, 20_000.0).curve(Curve::Log).unit(Unit::Hertz).default_to(1_000.0);
 //! assert_eq!(cutoff.format(1_250.0), "1.25 kHz");
 //! assert_eq!(cutoff.parse("440"), Ok(440.0));
@@ -159,8 +159,12 @@ impl ValueMap {
     }
 
     /// Centred on the middle of the range (or on 0 when the range spans it).
+    /// The default moves to the centre unless one was set.
     pub fn bipolar(mut self, bipolar: bool) -> Self {
         self.bipolar = bipolar;
+        if bipolar && self.default == self.min {
+            self.default = self.centre();
+        }
         self
     }
 
@@ -553,5 +557,6 @@ mod tests {
         assert!(up > fine && fine > 1_000.0, "{up} {fine}");
         let bipolar = ValueMap::new(-1.0, 1.0).bipolar(true);
         assert_eq!(bipolar.centre(), 0.0);
+        assert_eq!(bipolar.default_value(), 0.0, "a bipolar map defaults to its centre");
     }
 }
