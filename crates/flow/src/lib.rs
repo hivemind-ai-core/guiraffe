@@ -123,8 +123,44 @@ pub struct FlowViewport {
     order_scene: Option<std::sync::Arc<core::Scene>>,
     order_selection: Option<std::sync::Arc<std::collections::BTreeSet<core::NodeId>>>,
     last_query_ids: Vec<core::NodeId>,
+    /// What the last paint drew anchors from: see [`FlowViewport::port_anchor`].
+    anchors: Rc<Cell<Option<AnchorFrame>>>,
     #[cfg(test)]
     renders: usize,
+}
+
+/// What node and port positions on screen follow from, as the canvas last painted them:
+/// its window bounds, the camera, the scene drawn and any drag preview. When any of it
+/// changes, the anchors may have moved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AnchorFrame {
+    bounds: Bounds<Pixels>,
+    viewport: Viewport,
+    /// The scene painted, by address.
+    scene: usize,
+    /// A drag in progress: its origins, by address, and how far it moved.
+    drag: Option<(usize, WorldPoint)>,
+}
+
+/// Emitted, at most once per frame, when node or port positions on screen may have moved:
+/// a pan, a zoom, a resize of the canvas, a node move or a layout change. A repaint that
+/// moved nothing emits nothing. Query the new positions with
+/// [`FlowViewport::node_bounds`] and [`FlowViewport::port_anchor`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnchorsMoved;
+
+impl EventEmitter<AnchorsMoved> for FlowViewport {}
+
+/// Where a port is on screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PortAnchor {
+    /// The port's centre in window coordinates, where its edges start. Off the canvas for
+    /// a port scrolled out of view.
+    pub position: Point<Pixels>,
+    /// The side of its node the port is on; edges leave it along [`core::Side::direction`].
+    pub side: core::Side,
+    /// Whether the position lies on the canvas.
+    pub visible: bool,
 }
 struct Stamp {
     scene: std::sync::Arc<core::Scene>,
@@ -194,6 +230,7 @@ impl FlowViewport {
             order_scene: None,
             order_selection: None,
             last_query_ids: Vec::new(),
+            anchors: Rc::new(Cell::new(None)),
             #[cfg(test)]
             renders: 0,
         }
@@ -281,6 +318,61 @@ impl FlowViewport {
     pub fn visible_counts(&self) -> (usize, usize) {
         self.visible_counts
     }
+    /// The screen bounds of node `id` in window coordinates, as last painted: after pan and
+    /// zoom, at a dragged node's preview position. `None` for an unknown node or before the
+    /// first paint. Allocates nothing.
+    pub fn node_bounds(&self, id: core::NodeId) -> Option<Bounds<Pixels>> {
+        let frame = self.anchors.get()?;
+        let rect = self.node_rect(id)?;
+        let origin = frame.viewport.screen(rect.origin);
+        Some(Bounds {
+            origin: frame.bounds.origin + point(px(origin.x), px(origin.y)),
+            size: size(
+                px(rect.size.x * frame.viewport.zoom),
+                px(rect.size.y * frame.viewport.zoom),
+            ),
+        })
+    }
+
+    /// Where port `port` of node `node` is on screen, in window coordinates, as last painted,
+    /// from the same geometry the edges are routed from. `None` for an unknown node or port,
+    /// or before the first paint. Allocates nothing.
+    pub fn port_anchor(&self, node: core::NodeId, port: &str) -> Option<PortAnchor> {
+        let frame = self.anchors.get()?;
+        let rect = self.node_rect(node)?;
+        let graph = self.display_graph();
+        let handle = graph
+            .nodes
+            .get(&node)?
+            .handles
+            .iter()
+            .find(|handle| handle.id.as_ref() == port)?;
+        let world = frame.viewport.screen(handle.position(rect));
+        let position = frame.bounds.origin + point(px(world.x), px(world.y));
+        Some(PortAnchor {
+            position,
+            side: handle.side,
+            visible: frame.bounds.contains(&position),
+        })
+    }
+
+    /// The graph the canvas draws: a layout preview while one is shown.
+    fn display_graph(&self) -> &Graph {
+        match &self.layout_preview {
+            Some(preview) => preview.graph(),
+            None => self.interaction.editor.graph(),
+        }
+    }
+
+    /// Node `id`'s world rectangle as drawn, at a dragged node's preview position.
+    fn node_rect(&self, id: core::NodeId) -> Option<core::Rect> {
+        let node = self.display_graph().nodes.get(&id)?;
+        Some(core::Rect {
+            origin: self.interaction.preview(id).unwrap_or(node.pos),
+            size: node.size,
+        })
+    }
+
     pub fn viewport(&self) -> Viewport {
         self.interaction.viewport()
     }
@@ -757,6 +849,16 @@ impl Render for FlowViewport {
         let epoch = *self.anim_epoch.get_or_insert(now);
         let phase = (!cx.reduce_motion())
             .then(|| (now.saturating_duration_since(epoch).as_millis() % 1000) as f32 / 1000.);
+        // What anchors follow from, recorded as the canvas paints (see `AnchorFrame`).
+        let anchor_scene = std::sync::Arc::as_ptr(&display) as usize;
+        let anchor_drag = match &self.interaction.gesture {
+            Some(Gesture::Move { origins, delta, .. }) => {
+                Some((std::sync::Arc::as_ptr(origins) as usize, *delta))
+            }
+            _ => None,
+        };
+        let anchors = self.anchors.clone();
+        let anchors_owner = cx.entity().downgrade();
         let mut frame = paint::Frame::new(
             &self.interaction,
             &mut self.visible,
@@ -807,7 +909,22 @@ impl Render for FlowViewport {
                             cx.defer(move |cx| cx.notify(weak.entity_id()));
                         }
                     },
-                    move |b, _, window, _| {
+                    move |b, _, window, cx| {
+                        let painted = AnchorFrame {
+                            bounds: b,
+                            viewport,
+                            scene: anchor_scene,
+                            drag: anchor_drag,
+                        };
+                        // At most once per frame, and only when something anchors follow
+                        // from changed; an unchanged repaint compares and allocates nothing.
+                        if anchors.get() != Some(painted) {
+                            anchors.set(Some(painted));
+                            let owner = anchors_owner.clone();
+                            cx.defer(move |cx| {
+                                let _ = owner.update(cx, |_, cx| cx.emit(AnchorsMoved));
+                            });
+                        }
                         base_frame
                             .borrow_mut()
                             .paint(b, &mut meshes.borrow_mut(), window)
