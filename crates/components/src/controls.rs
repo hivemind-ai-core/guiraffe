@@ -48,6 +48,8 @@ use guiraffe_core::protocol::{
 use guiraffe_core::widget_value::Value;
 use std::rc::Rc;
 
+use crate::mapping::{ValueMap, ValueMapping};
+
 /// Identity shared by every control: its bus handle and element id base.
 #[derive(Clone, Debug)]
 struct Identity {
@@ -563,10 +565,9 @@ pub enum SliderAction {
 
 /// Builder for [`SliderControl`].
 pub struct SliderBuilder {
-    min: f32,
-    max: f32,
-    step: f32,
-    value: f32,
+    map: Rc<dyn ValueMapping>,
+    linear: Option<ValueMap>,
+    value: Option<f64>,
     label: SharedString,
     disabled: bool,
     path: Option<SharedString>,
@@ -575,11 +576,11 @@ pub struct SliderBuilder {
 
 impl Default for SliderBuilder {
     fn default() -> Self {
+        let linear = ValueMap::new(0.0, 100.0).step(1.0);
         Self {
-            min: 0.0,
-            max: 100.0,
-            step: 1.0,
-            value: 0.0,
+            map: Rc::new(linear),
+            linear: Some(linear),
+            value: None,
             label: SharedString::default(),
             disabled: false,
             path: None,
@@ -589,17 +590,34 @@ impl Default for SliderBuilder {
 }
 
 impl SliderBuilder {
-    pub fn range(mut self, min: f32, max: f32) -> Self {
-        self.min = min;
-        self.max = max;
+    /// A linear range (keeps the step). Use [`SliderBuilder::mapping`] for log, units and more.
+    pub fn range(self, min: f32, max: f32) -> Self {
+        self.linear_with(|map| {
+            let next = ValueMap::new(f64::from(min), f64::from(max));
+            match map.step_size() {
+                Some(step) => next.step(step),
+                None => next,
+            }
+        })
+    }
+    pub fn step(self, step: f32) -> Self {
+        self.linear_with(|map| map.step(f64::from(step)))
+    }
+    fn linear_with(mut self, change: impl FnOnce(ValueMap) -> ValueMap) -> Self {
+        let next = change(self.linear.unwrap_or_default());
+        self.linear = Some(next);
+        self.map = Rc::new(next);
         self
     }
-    pub fn step(mut self, step: f32) -> Self {
-        self.step = step;
+    /// The value mapping shared with knobs and number fields: range, curve, step, default,
+    /// units. Replaces `range` and `step`.
+    pub fn mapping(mut self, map: impl ValueMapping) -> Self {
+        self.map = Rc::new(map);
+        self.linear = None;
         self
     }
     pub fn value(mut self, value: f32) -> Self {
-        self.value = value;
+        self.value = Some(f64::from(value));
         self
     }
     /// Accessible name of the slider.
@@ -623,6 +641,7 @@ impl SliderBuilder {
     }
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<SliderControl> {
         let handle = window.window_handle();
+        let map = self.map;
         build(
             "slider",
             Capabilities::SET_VALUE | Capabilities::INCREMENT | Capabilities::DECREMENT,
@@ -631,23 +650,29 @@ impl SliderBuilder {
             window,
             cx,
             |identity, _, cx| {
-                let value = self.value.clamp(self.min, self.max);
+                let value = map.constrain(self.value.unwrap_or_else(|| map.default_value()));
+                // The kit slider runs in normalised travel, so every mapping (log Hz, exp
+                // times) drags the same way it does on a knob.
+                let travel_step = kit_step(&*map);
+                let start = map.to_normal(value) as f32;
                 let state = cx.new(|_| {
                     SliderState::new()
-                        .min(self.min)
-                        .max(self.max)
-                        .step(self.step)
-                        .default_value(value)
+                        .min(0.0)
+                        .max(1.0)
+                        .step(travel_step)
+                        .default_value(start)
                 });
                 let this: WeakEntity<SliderControl> = cx.entity().downgrade();
+                let read = map.clone();
                 let subscription = App::subscribe(cx, &state, move |state, event, cx| {
-                    let SliderEvent::Change(SliderValue::Single(value)) = *event else {
+                    let SliderEvent::Change(SliderValue::Single(normal)) = *event else {
                         return;
                     };
+                    let value = read.from_normal(f64::from(normal));
                     let routed = route_in(
                         handle,
                         &this,
-                        action(names::SET_VALUE, Value::Num(f64::from(value))),
+                        action(names::SET_VALUE, Value::Num(value)),
                         Source::Pointer,
                         cx,
                     );
@@ -655,7 +680,7 @@ impl SliderBuilder {
                     if routed.is_err()
                         && let Some(control) = this.upgrade()
                     {
-                        let current = control.read(cx).value;
+                        let current = control.read(cx).normal();
                         handle
                             .update(cx, |_, window, cx| {
                                 state.update(cx, |s, cx| s.set_value(current, window, cx))
@@ -667,9 +692,7 @@ impl SliderBuilder {
                     identity,
                     state,
                     value,
-                    min: self.min,
-                    max: self.max,
-                    step: self.step,
+                    map,
                     label: self.label,
                     disabled: self.disabled,
                     pending: false,
@@ -680,15 +703,25 @@ impl SliderBuilder {
     }
 }
 
-/// A single-value slider. Actions: `set_value` (num), `increment`, `decrement`.
-/// Outcome: the new value.
+/// The kit slider's step in travel: the mapping's value step on a linear range, else a
+/// hundredth of the travel.
+fn kit_step(map: &dyn ValueMapping) -> f32 {
+    let span = map.max() - map.min();
+    let one = map.step_from(map.min(), true, false) - map.min();
+    if span > 0.0 && one > 0.0 && (map.to_normal(map.min() + one) - one / span).abs() < 1e-9 {
+        (one / span) as f32
+    } else {
+        0.001
+    }
+}
+
+/// A single-value slider over a [`ValueMapping`]. Actions: `set_value` (num), `increment`,
+/// `decrement`. Outcome: the new value.
 pub struct SliderControl {
     identity: Identity,
     state: Entity<SliderState>,
-    value: f32,
-    min: f32,
-    max: f32,
-    step: f32,
+    value: f64,
+    map: Rc<dyn ValueMapping>,
     label: SharedString,
     disabled: bool,
     /// A host write the kit state has not seen yet.
@@ -702,7 +735,21 @@ impl SliderControl {
         SliderBuilder::default()
     }
     pub fn value(&self) -> f32 {
+        self.value as f32
+    }
+    /// The value at full precision.
+    pub fn value_f64(&self) -> f64 {
         self.value
+    }
+    /// The value as the mapping formats it (`1.25 kHz`).
+    pub fn formatted(&self) -> String {
+        self.map.format(self.value)
+    }
+    pub fn mapping(&self) -> &dyn ValueMapping {
+        &*self.map
+    }
+    fn normal(&self) -> f32 {
+        self.map.to_normal(self.value) as f32
     }
     /// The kit state that renders the slider and receives pointer and key input.
     pub fn state(&self) -> &Entity<SliderState> {
@@ -711,7 +758,7 @@ impl SliderControl {
     /// Host write: changes the value without emitting an event. Needs no window;
     /// the kit state follows at the next render.
     pub fn set_value(&mut self, value: f32, cx: &mut Context<Self>) {
-        let value = value.clamp(self.min, self.max);
+        let value = self.map.constrain(f64::from(value));
         if value != self.value {
             self.value = value;
             self.pending = true;
@@ -734,10 +781,10 @@ impl SliderControl {
         }
     }
     fn sync_state(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.value;
-        if self.state.read(cx).value() != SliderValue::Single(value) {
+        let normal = self.normal();
+        if self.state.read(cx).value() != SliderValue::Single(normal) {
             self.state
-                .update(cx, |state, cx| state.set_value(value, window, cx));
+                .update(cx, |state, cx| state.set_value(normal, window, cx));
         }
     }
 }
@@ -748,7 +795,7 @@ impl Observe for SliderControl {
     type Snapshot = ControlSnapshot;
     fn snapshot(&self, _: &App) -> ControlSnapshot {
         ControlSnapshot {
-            value: Some(Value::Num(f64::from(self.value))),
+            value: Some(Value::Num(self.value)),
             label: (!self.label.is_empty()).then(|| self.label.as_ref().into()),
             disabled: Some(self.disabled),
             ..ControlSnapshot::default()
@@ -775,17 +822,19 @@ impl Drive for SliderControl {
     ) -> Result<Outcome, ActionError> {
         enabled(self.disabled)?;
         let next = match action {
-            SliderAction::Set(value) => value,
-            SliderAction::Increment => self.value + self.step,
-            SliderAction::Decrement => self.value - self.step,
-        }
-        .clamp(self.min, self.max);
+            SliderAction::Set(value) => self.map.constrain(f64::from(value)),
+            SliderAction::Increment => self.map.step_from(self.value, true, false),
+            SliderAction::Decrement => self.map.step_from(self.value, false, false),
+        };
         if next != self.value {
             self.value = next;
             self.sync_state(window, cx);
-            cx.emit(SliderControlEvent::Changed(next, self.identity.source(cx)));
+            cx.emit(SliderControlEvent::Changed(
+                next as f32,
+                self.identity.source(cx),
+            ));
         }
-        Ok(Outcome(Value::Num(f64::from(next))))
+        Ok(Outcome(Value::Num(next)))
     }
 }
 
@@ -801,6 +850,9 @@ impl Render for SliderControl {
         div().id(self.identity.element()).w_full().child(slider)
     }
 }
+
+mod knob;
+pub use knob::*;
 
 // --- Text input -----------------------------------------------------------------
 
