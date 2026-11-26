@@ -172,3 +172,72 @@ fn decay_continues_after_the_host_stops_feeding(cx: &mut TestAppContext) {
         "the bars re-rendered on their own animation frame and read the silent cell"
     );
 }
+
+struct Resizable {
+    meter: Entity<Meter>,
+    length: f32,
+    renders: Rc<RefCell<usize>>,
+}
+impl Render for Resizable {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        *self.renders.borrow_mut() += 1;
+        div()
+            .w(px(60.))
+            .h(px(self.length))
+            .child(self.meter.clone())
+    }
+}
+
+#[gpui_kit::test]
+fn a_filling_meter_follows_its_container_without_parent_renders(cx: &mut TestAppContext) {
+    cx.update(guiraffe_components::init);
+    let renders = Rc::new(RefCell::new(0));
+    let r = renders.clone();
+    let (host, vcx) = cx.add_window_view(move |_, cx| Resizable {
+        meter: Meter::new(MeterOptions::stereo().fill(), cx),
+        length: 90.,
+        renders: r,
+    });
+    vcx.run_until_parked();
+    let bars = |vcx: &mut gpui_kit::VisualTestContext| {
+        f32::from(vcx.debug_bounds("meter-bars").expect("bars").size.height)
+    };
+    assert_eq!(bars(vcx), 90.);
+    vcx.update(|_, cx| {
+        host.update(cx, |h, cx| {
+            h.length = 210.;
+            cx.notify();
+        })
+    });
+    vcx.run_until_parked();
+    assert_eq!(bars(vcx), 210., "the bar fills the resized container");
+    // Filling adds no parent renders: feeding costs the parent what a fixed meter's does
+    // (none on gpui-fast; upstream re-renders ancestors of any notified view).
+    let parent_renders = |vcx: &mut gpui_kit::VisualTestContext, host: &Entity<Resizable>| {
+        let renders = vcx.update(|_, cx| host.read(cx).renders.clone());
+        let before = *renders.borrow();
+        let meter = vcx.update(|_, cx| host.read(cx).meter.clone());
+        let feed = vcx.update(|_, cx| meter.read(cx).feed());
+        for i in 0..3 {
+            vcx.update(|_, cx| {
+                feed.set_stereo(
+                    Level::new(-20.0 + i as f32, -30.0),
+                    Level::new(-18.0, -28.0),
+                );
+                feed.publish(cx);
+            });
+            vcx.run_until_parked();
+        }
+        *renders.borrow() - before
+    };
+    let filling = parent_renders(vcx, &host);
+    vcx.update(|_, cx| {
+        let fixed = Meter::new(MeterOptions::stereo(), cx);
+        host.update(cx, |h, cx| {
+            h.meter = fixed;
+            cx.notify();
+        })
+    });
+    vcx.run_until_parked();
+    assert_eq!(parent_renders(vcx, &host), filling);
+}

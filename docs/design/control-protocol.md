@@ -310,6 +310,15 @@ frames allocate the same count and bytes. `tests/protocol_controls.rs` in
 guiraffe-components drives each control by pointer or keys and over the bus,
 and checks identical events, snapshots and kit state.
 
+Workstation panels (0.3.1, #143 and #144): `ButtonControl` takes `icon`,
+`tooltip` (the accessible name of an icon-only button), `small`/`xsmall` and
+`toggled(bool)`. A latched button's click is `toggle` (also `set_value`), and it
+emits `ToggleEvent` with a window-free, non-emitting `set_toggled`; a plain
+button stays `activate`. `ToggleChipControl` is a compact toggle drawn as a
+small button for M / S / R chips. `SliderControl::vertical()` and `.length(px)`
+make a fader. `MeterOptions::fill()` makes a `Meter` or `MeterBank` take its
+parent's length along the bar, as pure layout.
+
 The menu control renders an inline item list. A popup menu, the data
 table or list (a follow-up task) and the remaining rich components adopt the
 same pattern.

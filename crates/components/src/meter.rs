@@ -22,9 +22,9 @@ use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{
     App, AppContext, Bounds, Context, Element, ElementId, Entity, EntityId, EventEmitter,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, ParentElement,
-    Pixels, Render, SharedString, Style, Styled, WeakEntity, Window, div, point, prelude::*, px,
-    relative, size,
+    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length, MouseButton,
+    ParentElement, Pixels, Render, SharedString, Style, Styled, WeakEntity, Window, div, point,
+    prelude::*, px, relative, size,
 };
 use guiraffe_core::{
     ColorName, GuiraffeTheme, Variant,
@@ -210,6 +210,9 @@ pub struct MeterOptions {
     /// Bar thickness and length in pixels.
     pub thickness: f32,
     pub length: f32,
+    /// Fill the parent along the bar instead of `length` (a track header, an inspector).
+    /// Pure layout: the meter repaints at the laid-out size, the parent never re-renders.
+    pub fill: bool,
 }
 
 impl Default for MeterOptions {
@@ -236,6 +239,7 @@ impl Default for MeterOptions {
             lufs: false,
             thickness: 10.0,
             length: 160.0,
+            fill: false,
         }
     }
 }
@@ -255,6 +259,12 @@ impl MeterOptions {
 
     pub fn gain_reduction(mut self, range_db: f32) -> Self {
         self.mode = MeterMode::GainReduction { range_db };
+        self
+    }
+
+    /// Fill the parent along the bar (see [`MeterOptions::fill`]).
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
         self
     }
 
@@ -825,6 +835,16 @@ impl Drive for Meter {
     }
 }
 
+/// Size a meter part along its bar: the fixed length, or the parent's when filling.
+fn along<T: Styled>(d: T, o: &MeterOptions) -> T {
+    match (o.fill, o.orientation == Orientation::Vertical) {
+        (false, true) => d.h(px(o.length)),
+        (false, false) => d.w(px(o.length)),
+        (true, true) => d.h_full(),
+        (true, false) => d.w_full(),
+    }
+}
+
 impl Render for Meter {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let o = &*self.options;
@@ -841,41 +861,54 @@ impl Render for Meter {
                 Meter::route_reset(&owner, Source::Pointer, window, cx);
             })
             .flex_none()
-            .when(vertical, |d| d.w(px(thick)).h(px(o.length)))
-            .when(!vertical, |d| d.w(px(o.length)).h(px(thick)))
+            .when(vertical, |d| d.w(px(thick)))
+            .when(!vertical, |d| d.h(px(thick)))
+            .map(|d| along(d, o))
             .child(self.bars.clone());
         // The scale: labels placed along the bar at their dB.
         let scale = (!o.ticks.is_empty()).then(|| {
             div()
                 .relative()
                 .flex_none()
-                .when(vertical, |d| d.w(px(22.)).h(px(o.length)))
-                .when(!vertical, |d| d.w(px(o.length)).h(px(12.)))
+                .when(vertical, |d| d.w(px(22.)))
+                .when(!vertical, |d| d.h(px(12.)))
+                .map(|d| along(d, o))
                 .text_size(px(9.))
                 .text_color(dim)
                 .children(o.ticks.iter().map(|t| {
-                    let at = o.unit(*t) * o.length;
+                    let unit = o.unit(*t);
                     let label = if *t == 0.0 {
                         "0".to_string()
                     } else {
                         format!("{t:.0}")
                     };
+                    // Placed by fraction, so a filling meter's scale follows its size.
                     div()
                         .absolute()
-                        .when(vertical, |d| d.left(px(3.)).top(px(o.length - at - 6.)))
-                        .when(!vertical, |d| d.top_0().left(px(at - 6.)))
+                        .when(vertical, |d| {
+                            d.left(px(3.)).top(relative(1.0 - unit)).mt(px(-6.))
+                        })
+                        .when(!vertical, |d| d.top_0().left(relative(unit)).ml(px(-6.)))
                         .child(label)
                 }))
         });
+        let filled = |d: gpui_kit::Div| match (o.fill, vertical) {
+            (false, _) => d,
+            (true, true) => d.h_full(),
+            (true, false) => d.w_full(),
+        };
         div()
             .flex()
             .gap(px(2.))
             .when(vertical, |d| d.flex_col())
+            .map(filled)
             .child(
                 div()
                     .flex()
                     .gap(px(2.))
                     .when(!vertical, |d| d.flex_col())
+                    .map(filled)
+                    .when(o.fill, |d| d.flex_1())
                     .child(bars)
                     .children(scale),
             )
@@ -1135,11 +1168,16 @@ impl Element for BankElement {
     ) -> (LayoutId, ()) {
         let n = self.frames.borrow().len() as f32;
         let extent = n * self.width + (n - 1.0).max(0.0) * self.gap;
+        let length: Length = if self.options.fill {
+            relative(1.).into()
+        } else {
+            px(self.options.length).into()
+        };
         let style = Style {
             size: if self.options.orientation == Orientation::Vertical {
-                size(px(extent).into(), px(self.options.length).into())
+                size(px(extent).into(), length)
             } else {
-                size(px(self.options.length).into(), px(extent).into())
+                size(length, px(extent).into())
             },
             ..Style::default()
         };
@@ -1194,7 +1232,12 @@ impl Element for BankElement {
         // A click in a meter's clip area resets that meter (one listener for the bank).
         let owner = self.owner.clone();
         let (count, width, gap) = (self.frames.borrow().len(), self.width, self.gap);
-        let (length, orientation) = (self.options.length, self.options.orientation);
+        // The laid-out length, which is the parent's when the bank fills it.
+        let orientation = self.options.orientation;
+        let length = f32::from(match orientation {
+            Orientation::Vertical => bounds.size.height,
+            Orientation::Horizontal => bounds.size.width,
+        });
         window.on_mouse_event(move |e: &gpui_kit::MouseDownEvent, phase, window, cx| {
             if phase != gpui_kit::DispatchPhase::Bubble
                 || e.button != MouseButton::Left
