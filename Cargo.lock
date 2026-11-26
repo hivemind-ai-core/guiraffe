@@ -3557,6 +3557,7 @@ dependencies = [
  "guiraffe-test",
  "image",
  "proptest",
+ "serde_json",
 ]
 
 [[package]]
