@@ -291,22 +291,13 @@ fn find_gap(window: &mut Window, cx: &App) -> Option<usize> {
     let mut leaves: SmallVec<[usize; 2]> = SmallVec::new();
     for &candidate in &candidates {
         let record = &records[candidate as usize];
-        // As `Window::mark_changed_retained_views_dirty` decides it: an
-        // update counts as a change inside a notified view.
-        let entity = view_entity(&record.id);
-        let inside_notified = !notified.is_empty()
-            && entity.is_some_and(|entity| {
-                window
-                    .rendered_frame
-                    .dispatch_tree
-                    .view_path_reversed(entity)
-                    .any(|view| notified.contains(&view))
-            });
-        let changed = entity.is_some_and(|entity| notified.contains(&entity))
+        // As `Window::mark_changed_retained_views_dirty` decides it, but
+        // taking every update for a change, as inside a notified view.
+        let changed = view_entity(&record.id).is_some_and(|entity| notified.contains(&entity))
             || if record.is_cached() {
                 cx.notified_dependencies_changed(&record.own_dependencies)
             } else {
-                cx.dependencies_changed(&record.own_dependencies, inside_notified)
+                cx.dependencies_changed(&record.own_dependencies, true)
             }
             || crate::fast::layers::invalidate::offset_read_changed(
                 window,

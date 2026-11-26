@@ -240,7 +240,9 @@ a second paint-record list and the text node.
 A label edited through a keyed Store selection allocates 6 more than the same view drawn again
 unchanged: the Store's queued event and its deferred flush (2), and measuring and laying out the
 changed label (shaping, line layout, the measured node; about 4). The other 20 are the unchanged
-redraw's. `patched_edit_allocates_an_unchanged_redraw_and_the_edit` gates that relation.
+redraw's. `patched_edit_allocates_an_unchanged_redraw_and_the_edit` gates that relation on both
+backends: 6 over the redraw on gpui-fast, and 27 on upstream, which does not patch frames (76
+against 49 in the test profile).
 
 Everything in the table above is per element or per component and needs element-level changes:
 an arena for listener closures and boxed `Interactivity`, interned ids, pooled records. That is

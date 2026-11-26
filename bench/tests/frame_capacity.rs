@@ -47,17 +47,17 @@ fn draw_rows(
 /// frames stay large or alternate, and give it back once frames have stayed
 /// small for a while (see gpui-fast's `fast::high_water`).
 fn peak_storage_is_given_back(cx: &mut gpui_kit::TestAppContext, peaks: &[usize]) {
-    let (rows, mut window) = cx.add_window_view(|_, _| KeyedRows { focus: Vec::new() });
-    let initial = draw_rows(&rows, &mut window, 100, 2);
+    let (rows, window) = cx.add_window_view(|_, _| KeyedRows { focus: Vec::new() });
+    let initial = draw_rows(&rows, window, 100, 2);
     println!(
         "rendered/next bytes per frame [element states, accesses, tab history, tab index, tab order]"
     );
     println!("initial 100: {initial:?}");
     for &peak in peaks {
-        println!("peak {peak}: {:?}", draw_rows(&rows, &mut window, peak, 2));
-        let held = draw_rows(&rows, &mut window, 100, 2);
+        println!("peak {peak}: {:?}", draw_rows(&rows, window, peak, 2));
+        let held = draw_rows(&rows, window, 100, 2);
         println!("100 just after {peak}: {held:?}");
-        let trimmed = draw_rows(&rows, &mut window, 100, 12);
+        let trimmed = draw_rows(&rows, window, 100, 12);
         println!("100 a while after {peak}: {trimmed:?}");
         for (frame, baseline) in trimmed.into_iter().zip(initial) {
             for (size, old) in frame[..3].iter().zip(&baseline[..3]) {

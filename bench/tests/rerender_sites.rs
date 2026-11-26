@@ -265,9 +265,11 @@ fn rerendered_view_allocations() {
 }
 
 /// What a label edited through a keyed Store selection allocates over the
-/// same view drawn again unchanged: the Store's event and its deferred flush,
-/// and measuring and laying out the changed label. See docs/performance.md.
-const STORE_EDIT_EXTRA: u64 = 6;
+/// same view drawn again unchanged: on gpui-fast, the Store's event and its
+/// deferred flush, and measuring and laying out the changed label. Upstream
+/// draws frames in full and does not patch them, and its edit costs 27 more in
+/// the test profile. See docs/performance.md.
+const STORE_EDIT_EXTRA: u64 = if gpui_kit::GPUI_FAST { 6 } else { 27 };
 
 /// A patched row edit allocates what an unchanged redraw of the row does,
 /// plus the edit's own [`STORE_EDIT_EXTRA`], on both backends; on gpui-fast
