@@ -100,7 +100,7 @@ impl Render for RowView {
                 .w(px(WIDTH))
                 .h(px(ROW_HEIGHT))
                 .child(div().w(px(130.)).child(self.label.clone()))
-                .child(Checkbox::new("checked").checked(id % 2 == 0))
+                .child(Checkbox::new("checked").checked(id.is_multiple_of(2)))
                 .child(
                     Badge::new()
                         .count(id)
@@ -207,7 +207,7 @@ fn measure(
         app.update_window(handle.into(), |_, _, cx| {
             if kind == Kind::Store {
                 edits.set(edits.get() + 1);
-                let label = if edits.get() % 2 == 0 {
+                let label = if edits.get().is_multiple_of(2) {
                     "Row 00003"
                 } else {
                     "Row 00004"
