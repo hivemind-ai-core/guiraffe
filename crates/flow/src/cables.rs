@@ -28,6 +28,9 @@
 //! A frame that moves no anchor allocates nothing for cables: anchors compare their place
 //! with the last one, and the layer is not drawn again. When an anchor moves, the layer
 //! draws again in time proportional to the number of cables, with one path per cable.
+//! Mount the layer as a cached view (`AnyView::cached`) so that other views drawing again
+//! do not draw it. On gpui-fast a window with a flow canvas is drawn in full, which builds
+//! cached views again, so there the layer draws on every frame (#153).
 
 use crate::core::{self, Side, StrokeStyle};
 use crate::{AnchorsMoved, FlowState};

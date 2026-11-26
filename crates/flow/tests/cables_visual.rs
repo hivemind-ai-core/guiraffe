@@ -38,7 +38,7 @@ impl Render for Patch {
                 div()
                     .w(px(120.))
                     .h_full()
-                    .bg(GuiraffeTheme::global(cx).surfaces().surface.to_hsla())
+                    .bg(GuiraffeTheme::global(cx).surfaces().body.to_hsla())
                     .flex()
                     .flex_col()
                     .justify_around()
@@ -49,7 +49,7 @@ impl Render for Patch {
             .child(div().flex_1().h_full().child(FlowCanvas::new(&self.flow)))
             .child(
                 AnyView::from(self.layer.clone())
-                    .cached(StyleRefinement::default().absolute().inset_0()),
+                    .cached(StyleRefinement::default().absolute().size_full()),
             )
     }
 }

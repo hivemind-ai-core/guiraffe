@@ -42,6 +42,11 @@ without any patchable view skips the attempt, so virtualized edits cost what the
 (0.24 ms, 395 allocations at 1k to 10k). Patching inside lists is a follow-up: it needs list rows
 that can be built on their own, at their place in the list's layout.
 
+A window that shows a flow canvas is not patched: gpui-fast draws it in full, and a full frame
+builds cached views again even when they were not notified. A flow `CableLayer` there draws its
+cables again on every frame, at a cost proportional to their number. On upstream the cached layer is
+reused and cables cost nothing on a frame that moves no anchor (#153).
+
 ## Command ribbon
 
 Implemented in `guiraffe-commands::ribbon` (ROADMAP 0.3 #13). Not yet done:

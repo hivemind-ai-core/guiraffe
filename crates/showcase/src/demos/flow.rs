@@ -45,7 +45,7 @@ pub fn entries() -> Vec<Entry> {
             krate: "flow",
             name: "Cables",
             summary: "Cables from any element to flow ports and other elements, drawn by a window-level CableLayer with the edge look: solid, dashed or dotted. Pan, zoom or move a node and they follow.",
-            covers: &["CableLayer", "CableAnchorExt", "Cables"],
+            covers: &["CableLayer"],
             demo: cables,
         },
     ]
@@ -96,7 +96,7 @@ impl Render for CablesDemo {
             )
             .child(
                 AnyView::from(self.layer.clone())
-                    .cached(StyleRefinement::default().absolute().inset_0()),
+                    .cached(StyleRefinement::default().absolute().size_full()),
             )
             .into_any_element()
     }
