@@ -75,7 +75,7 @@ impl FlowAction {
                 let mut moves = BTreeMap::new();
                 for index in 0..len {
                     let entry = nodes.list_get(index).ok_or(ActionError::Invalid("nodes"))?;
-                    let (node, to) = one_move(&entry)?;
+                    let (node, to) = one_move(entry)?;
                     moves.insert(node, to);
                 }
                 Ok(Self::MoveNodes(moves))
