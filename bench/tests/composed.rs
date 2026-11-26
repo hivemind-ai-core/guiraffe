@@ -770,6 +770,40 @@ fn patched_edit_allocations_against_the_frame_baseline() {
     }
 }
 
+/// A virtualized list's rows cannot be built on their own, so a frame of
+/// them is never patched: its edits are drawn as splices from the start,
+/// without trying and failing to patch first.
+#[test]
+fn virtualized_edits_make_no_patch_attempts() {
+    let mut app = app();
+    let probe = Probe::new(200);
+    let handle = app
+        .open_window(size(px(WIDTH), px(800.)), |window, cx| {
+            cx.new(|cx| Page::new(true, true, probe.clone(), window, cx))
+        })
+        .expect("mount virtual list");
+    app.run_until_parked();
+    let mut window = Mounted {
+        app: &mut app,
+        handle,
+    };
+    let page = window.update(|window, _| window.root::<Page>().flatten().expect("page"));
+    let store = window.update(|_, cx| page.read(cx).store.clone());
+    let renders = probe.rows[EDITED].get();
+    for label in ["Row 00004", "Row 00003", "Row 00004", "Row 00003"] {
+        row_label(&mut window, &store, EDITED, label);
+    }
+    assert_eq!(
+        probe.rows[EDITED].get(),
+        renders + 4,
+        "the row drew each edit"
+    );
+    let stats = window.update(|window, _| window.frame_patch_stats());
+    assert_eq!(stats.refused, 0, "a patch was tried: {stats:?}");
+    assert_eq!(stats.patched, 0, "{stats:?}");
+    close(window);
+}
+
 fn cpu_ns() -> u64 {
     let time = clock_gettime(ClockId::CLOCK_THREAD_CPUTIME_ID).expect("thread CPU clock");
     time.tv_sec() as u64 * 1_000_000_000 + time.tv_nsec() as u64

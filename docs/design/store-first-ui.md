@@ -311,9 +311,9 @@ were taken on a loaded one.
 
 | Backend | Mode | Rows | Before: CPU / allocs | After: CPU / allocs |
 | --- | --- | ---: | ---: | ---: |
-| fast | virtualized, visible edit | 1k / 3k / 10k | 0.253 / 0.254 / 0.259 ms; 395 | 0.241 / 0.244 / 0.243 ms; 398 |
+| fast | virtualized, visible edit | 1k / 3k / 10k | 0.253 / 0.254 / 0.259 ms; 395 | 0.30 / 0.27 / 0.27 ms; 395 |
 | fast | virtualized, offscreen edit | 1k / 3k / 10k | 1.7 / 1.7 / 1.8 µs; 3 | 1.6 / 1.8 / 1.6 µs; 3 |
-| fast | fully mounted, all visible | 1k / 3k / 10k | 10.1 / 29.7 / 62.3 ms; 185 / 191 / 196 | 0.053 / 0.097 / 0.063 ms; 138 |
+| fast | fully mounted, all visible | 1k / 3k / 10k | 10.1 / 29.7 / 62.3 ms; 185 / 191 / 196 | 0.051 / 0.051 / 0.051 ms; 132 |
 | fast | fully mounted, 800 px window | 1k / 3k / 10k | 7.0 / 21.2 / 80.9 ms; 185 / 191 / 196 | 0.061 / 0.060 / 0.056 ms; 138 |
 | upstream | virtualized, visible edit | 1k / 3k / 10k | 1.16 / 1.12 / 1.16 ms; 312 / 318 / 310 | 0.344 / 0.337 / 0.342 ms; 312 / 314 / 315 |
 | upstream | virtualized, offscreen edit | 1k / 3k / 10k | 2.7 / 2.6 / 2.4 µs; 3 | 1.5 / 1.5 / 1.5 µs; 3 |
@@ -337,8 +337,9 @@ the frame's baseline: the row's own elements, closures and records. The 15 the
 edit adds are a follow-up (`KNOWN_ISSUES.md`, ROADMAP 0.3 #19). A label edited
 back to a text it had stays cached: the line cache keeps the last 64 lines
 patched frames stopped using. Neither count grows with the number of rows. The
-virtualized path allocates 3 more than before, for the patch it tries and
-cannot make.
+virtualized path is not tried, since its rows cannot be built on their own (see
+`KNOWN_ISSUES.md`), and allocates what it did. After merging release/0.3, a
+patched edit allocates 132.
 
 Upstream (gpui-pre) keeps the documented fallback: virtualize store-bound lists
 and tables. Its virtualized edits are flat but cost about 0.34 ms, within the
@@ -355,7 +356,8 @@ clicks the patched row's checkbox and compares the tab order with a full
 redraw's. `fully_visible_row_edits_splice_the_page` asserts that edits are
 patched, allocate at most 300, and allocate the same at 100 and 400 rows.
 `patched_edit_allocations_against_the_frame_baseline` (ignored, release)
-prints the baseline comparison.
+prints the baseline comparison. `virtualized_edits_make_no_patch_attempts`
+asserts that a virtualized list never tries to patch.
 
 ## 9. What 0.3 built, and how it differs from this draft
 

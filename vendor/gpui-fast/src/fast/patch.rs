@@ -45,6 +45,10 @@ pub(crate) struct PatchState {
     last: Option<LastFrame>,
     /// Whether `index` stands for the rendered frame's records.
     indexed: bool,
+    /// Whether the rendered frame holds any view a patch could build again:
+    /// a cached view that can be built on its own. A frame of none, such as
+    /// a `uniform_list`'s rows, which have no rebuild handle, is not tried.
+    patchable: bool,
     index: PatchIndex,
     /// The frame a patch builds its view into, swapped in for the window's
     /// next frame while it does, kept from one patch to the next so that it
@@ -81,6 +85,7 @@ impl PatchState {
             enabled: std::env::var("GPUI_FRAME_PATCH").map_or(true, |value| value != "0"),
             last: None,
             indexed: false,
+            patchable: false,
             index: PatchIndex::default(),
             scratch: None,
             accessed: FxHashSet::default(),
@@ -188,6 +193,12 @@ pub(crate) fn finish_frame(window: &mut Window, cx: &mut App, start: usize, patc
     state.last = Some(last);
     if !patched {
         state.indexed = false;
+        state.patchable = window.rendered_frame.retained.records.iter().any(|record| {
+            record
+                .rebuild
+                .as_ref()
+                .is_some_and(|rebuild| rebuild.is_cached())
+        });
     }
 }
 
@@ -202,6 +213,9 @@ pub(crate) fn try_patch_frame(window: &mut Window, cx: &mut App) -> bool {
     let Some(last) = state.last else {
         return false;
     };
+    if !state.patchable {
+        return false;
+    }
     if !eligible(window, cx, last) {
         return false;
     }
