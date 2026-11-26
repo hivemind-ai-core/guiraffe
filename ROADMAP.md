@@ -201,6 +201,12 @@ Candidates:
    sources, and prepare snapshots (text shaping, layout inputs) off the UI thread.
 7. **Compiled dispatch:** `ui!` resolves binding routes once, so a direct binding costs close to
    nothing instead of a bus lookup.
+8. **Allocation-free re-render:** a view that does re-render allocates nothing. Use a per-frame
+   bump arena for listener closures, formatted ids and temporary vectors (elements already live
+   in GPUI's arena), interned ids instead of formatted strings, and pooled layout nodes and
+   element state. Today one re-rendered view costs about 61 allocations on gpui-fast, which is
+   most of a fed Meter's per-frame cost. Needs our fork. Depending on the 0.5 theme, this may
+   move after 0.5; 0.3's item 19 first breaks down where those allocations come from.
 
 Rules: the builder API and plain views keep gpui-fast's behaviour as the fallback, and every fast
 path is tested against a full redraw.
