@@ -4,7 +4,7 @@
 use gpui_kit::{AppContext, px, size};
 use guiraffe_core::{GuiraffeTheme, Scheme, apply};
 use guiraffe_goldens::{
-    review::{Decide, Decision, LoadedGolden, Select, SetGoldens, SetZoom},
+    review::{Decide, Decision, LoadGoldens, LoadedGolden, Select, SetZoom},
     view::{ReviewApp, load},
 };
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
@@ -33,7 +33,7 @@ fn review_window_light_and_dark() {
                 let (source, goldens) = guiraffe_goldens::demo();
                 let source = Arc::new(source);
                 let store = guiraffe_goldens::store(source.clone(), cx);
-                store.dispatch_now(SetGoldens(goldens.clone()), cx);
+                store.dispatch_now(LoadGoldens(goldens.clone()), cx);
                 // Loads run in the background in the app; done up front here so the first
                 // frame is complete.
                 for golden in &goldens {

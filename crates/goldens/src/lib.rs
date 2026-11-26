@@ -53,7 +53,7 @@ pub fn open(
 ) -> anyhow::Result<WindowHandle<gpui_kit::component::Root>> {
     guiraffe_commands::init(cx);
     let store = store(source, cx);
-    store.dispatch(review::SetGoldens(goldens), cx);
+    store.dispatch(review::LoadGoldens(goldens), cx);
     cx.open_window(WindowOptions::default(), move |window, cx| {
         let app = cx.new(|cx| view::ReviewApp::new(store, window, cx));
         guiraffe_overlays::root(app, window, cx)

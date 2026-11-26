@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, reason = "test assertions")]
 use crate::{
     controls::paths,
-    review::{Decision, Mode, Review, SetGoldens},
+    review::{Decision, LoadGoldens, Mode, Review},
     view::ReviewApp,
 };
 use gpui_kit::{AppContext, Entity, TestAppContext, VisualTestContext, test::TestWindowExt};
@@ -39,7 +39,7 @@ fn mount(
             cx.open_window(Default::default(), |window, cx| {
                 let store = crate::store(Arc::new(source), cx);
                 store.add_interceptor(recorder, cx);
-                store.dispatch_now(SetGoldens(goldens.unwrap_or(demo)), cx);
+                store.dispatch_now(LoadGoldens(goldens.unwrap_or(demo)), cx);
                 let view = cx.new(|cx| ReviewApp::new(store, window, cx));
                 app = Some(view.clone());
                 guiraffe_overlays::root(view, window, cx)
@@ -56,33 +56,38 @@ fn state(app: &Entity<ReviewApp>, vcx: &mut VisualTestContext) -> Arc<Review> {
 }
 
 /// The review-relevant part of the state (loaded images are compared by identity).
-fn reviewed(s: &Review) -> (usize, Vec<(String, Decision, String)>, Mode, String) {
+fn reviewed(s: &Review) -> (u32, Vec<(String, Decision, String)>, Mode, String) {
     (
         s.selected,
-        s.verdicts
+        s.goldens
             .iter()
-            .map(|(k, v)| (k.to_string(), v.decision, v.reason.to_string()))
+            .filter_map(|(_, row)| {
+                row.verdict.as_ref().map(|v| {
+                    (
+                        row.golden.path.to_string(),
+                        v.decision,
+                        v.reason.to_string(),
+                    )
+                })
+            })
             .collect(),
-        s.view.mode,
+        s.mode,
         s.reason.to_string(),
     )
 }
 
 #[gpui_kit::test]
 fn pointer_and_mcp_produce_the_same_events_and_state(cx: &mut TestAppContext) {
-    // Pointer: click a row, a view mode, Accept; type a reason; Reject.
+    // Pointer: click a row and Accept; type a reason; Reject.
     let (pointer_app, pointer_events, vcx) = mount(cx, None);
     vcx.update(|window, cx| {
         window.render_frame(cx);
         window.click(("golden-row", 2usize), cx);
-        window.click("mode-side-by-side", cx);
-        window.click("golden-accept", cx);
+        window.click(paths::ACCEPT, cx);
     });
     vcx.run_until_parked();
-    vcx.update(|window, cx| {
-        let focus = pointer_app.read(cx).list().read(cx).reason_focus(cx);
-        window.focus(&focus, cx);
-    });
+    // Keyboard: Alt+T focuses the reason field.
+    vcx.update(|window, cx| window.press("alt-t", cx));
     vcx.run_until_parked();
     vcx.simulate_input("clipped");
     vcx.run_until_parked();
@@ -91,10 +96,9 @@ fn pointer_and_mcp_produce_the_same_events_and_state(cx: &mut TestAppContext) {
         "clipped",
         "typing reaches the store"
     );
-    vcx.run_until_parked();
     vcx.update(|window, cx| {
         window.render_frame(cx);
-        window.click("golden-reject", cx);
+        window.click(paths::REJECT, cx);
     });
     vcx.run_until_parked();
     let by_pointer = state(&pointer_app, vcx);
@@ -144,14 +148,8 @@ fn pointer_and_mcp_produce_the_same_events_and_state(cx: &mut TestAppContext) {
         serde_json::json!({"control": paths::SUMMARY}),
     );
     assert!(
-        summary.contains("max_delta") && summary.contains("changed"),
+        summary.contains("max_delta") && summary.contains("commit_message"),
         "{summary}"
-    );
-    apply(
-        &mut server,
-        paths::MODE,
-        names::SET_VALUE,
-        serde_json::json!("side-by-side"),
     );
     apply(
         &mut server,
@@ -181,17 +179,20 @@ fn pointer_and_mcp_produce_the_same_events_and_state(cx: &mut TestAppContext) {
         "{after}"
     );
     drop(server);
+    vcx.run_until_parked();
     let by_mcp = state(&mcp_app, vcx);
 
     assert_eq!(reviewed(&by_mcp), reviewed(&by_pointer));
-    assert_eq!(by_mcp.verdicts.len(), 2);
+    assert_eq!(reviewed(&by_mcp).1.len(), 2);
     // Typing emits one reason edit per keystroke; MCP sets the text in one action. Edits
     // of the same field coalesce to the last, as an undo history would.
     let coalesced = |events: &Events| {
         let mut out: Vec<String> = Vec::new();
         for event in events.0.borrow().iter() {
-            if event.starts_with("SetReason")
-                && out.last().is_some_and(|last| last.starts_with("SetReason"))
+            if event.starts_with("Set(reason")
+                && out
+                    .last()
+                    .is_some_and(|last| last.starts_with("Set(reason"))
             {
                 out.pop();
             }
@@ -199,7 +200,17 @@ fn pointer_and_mcp_produce_the_same_events_and_state(cx: &mut TestAppContext) {
         }
         out
     };
-    assert_eq!(coalesced(&mcp_events), coalesced(&pointer_events));
+    // The initial load is identical in both and long; compare the rest by name and args.
+    let edits = |events: Vec<String>| -> Vec<String> {
+        events
+            .into_iter()
+            .filter(|e| !e.starts_with("LoadGoldens"))
+            .collect()
+    };
+    assert_eq!(
+        edits(coalesced(&mcp_events)),
+        edits(coalesced(&pointer_events))
+    );
     assert!(recorder.take().iter().all(|r| r.source == Source::Mcp));
 }
 
@@ -213,11 +224,19 @@ fn keyboard_only_review(cx: &mut TestAppContext) {
     ] {
         vcx.update(|window, cx| window.press(key, cx));
         vcx.run_until_parked();
+        let s = state(&app, vcx);
+        eprintln!(
+            "DIAG {key}: sel={} mode={:?} zoom={} decided={}",
+            s.selected,
+            s.mode,
+            s.zoom,
+            s.decided()
+        );
     }
     let s = state(&app, vcx);
-    assert_eq!(s.verdicts.len(), 2, "{:?}", s.verdicts);
-    assert_eq!(s.view.mode, Mode::After);
-    assert_eq!(s.view.zoom, 4.);
+    assert_eq!(s.decided(), 2);
+    assert_eq!(s.mode, Mode::After);
+    assert_eq!(s.zoom, 1.5, "two slider steps of 25%");
     let log = recorder.take();
     assert_eq!(log.len(), 8);
     assert!(log.iter().all(|r| r.source == Source::Shortcut), "{log:?}");
@@ -298,5 +317,21 @@ fn pixel_inspection_and_loads_stay_off_the_ui_thread(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let _ = window.find("pixel-readout");
     });
-    assert_eq!(state(&app, vcx).view.inspect, Some((9, 12)));
+    assert_eq!(state(&app, vcx).inspect, Some((9, 12)));
+}
+
+#[gpui_kit::test]
+fn the_ribbon_runs_review_commands_on_the_bus(cx: &mut TestAppContext) {
+    let (app, _, vcx) = mount(cx, None);
+    let recorder = Recorder::new();
+    vcx.update(|window, cx| ActionBus::add_interceptor(recorder.clone(), window, cx));
+    // Leader, then the Review category's chord for Accept.
+    for key in ["ctrl-space", "a"] {
+        vcx.update(|window, cx| window.press(key, cx));
+        vcx.run_until_parked();
+    }
+    assert_eq!(state(&app, vcx).decided(), 1);
+    let log = recorder.take();
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert_eq!((&*log[0].path, log[0].source), (paths::ACCEPT, Source::Ribbon));
 }

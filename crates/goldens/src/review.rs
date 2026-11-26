@@ -1,10 +1,11 @@
-//! Review state (one store) and its events. Pure: no GPUI types beyond the decoded images
-//! the view shows, so the reducer logic is unit-tested without a window.
+//! Review state: one `store!` store and its events. The reducer logic is unit-tested
+//! without a window.
 use crate::{
     diff::{DiffSummary, Pixels},
     discover::Golden,
 };
-use guiraffe_state::{Event, Fx};
+use gpui_kit::SharedString;
+use guiraffe_state::{Event, Fx, KeyedList, Lens as _, ListLens as _, store};
 use std::{collections::BTreeMap, sync::Arc};
 
 /// Shared payload compared by identity, so large images never get compared byte by byte.
@@ -49,14 +50,6 @@ pub enum Mode {
 
 impl Mode {
     pub const ALL: [Mode; 4] = [Mode::Before, Mode::After, Mode::Diff, Mode::SideBySide];
-    pub fn wire(self) -> &'static str {
-        match self {
-            Mode::Before => "before",
-            Mode::After => "after",
-            Mode::Diff => "diff",
-            Mode::SideBySide => "side-by-side",
-        }
-    }
     pub fn label(self) -> &'static str {
         match self {
             Mode::Before => "Before",
@@ -65,8 +58,17 @@ impl Mode {
             Mode::SideBySide => "Side by side",
         }
     }
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|mode| mode.wire() == value)
+    /// Command-id segment.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Mode::Before => "before",
+            Mode::After => "after",
+            Mode::Diff => "diff",
+            Mode::SideBySide => "side-by-side",
+        }
+    }
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|m| *m == self).unwrap_or(0)
     }
 }
 
@@ -79,58 +81,50 @@ pub enum Decision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     pub decision: Decision,
-    pub reason: Arc<str>,
+    pub reason: SharedString,
+}
+
+/// One list row. Selection and the verdict live on the row, so a store-bound row view
+/// re-renders alone when either changes.
+#[derive(Debug, Clone, PartialEq, guiraffe_state::Lens)]
+pub struct Row {
+    pub golden: Golden,
+    pub selected: bool,
+    pub verdict: Option<Verdict>,
 }
 
 pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 16.;
+pub const ZOOM_STEP: f32 = 0.25;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ViewSettings {
-    pub mode: Mode,
-    pub zoom: f32,
-    /// The inspected pixel, in image coordinates.
-    pub inspect: Option<(u32, u32)>,
-}
-
-impl Default for ViewSettings {
-    fn default() -> Self {
-        Self {
-            mode: Mode::Diff,
-            zoom: 1.,
-            inspect: None,
-        }
+store! {
+    pub Review {
+        /// Keyed by position (the list never reorders).
+        goldens: KeyedList<u32, Row> = KeyedList::new(),
+        selected: u32 = 0,
+        /// The reason typed for the next verdict.
+        reason: SharedString = SharedString::default(),
+        mode: Mode = Mode::Diff,
+        zoom: f32 = 1.0 where 0.25..=16.0,
+        /// The inspected pixel, in image coordinates.
+        inspect: Option<(u32, u32)> = None #[no_undo],
+        loaded: Arc<BTreeMap<Arc<str>, Loaded>> = Arc::default() #[no_undo],
+        /// Discovery or load errors, shown in the status line.
+        error: Option<SharedString> = None #[no_undo],
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Review {
-    pub goldens: Arc<[Golden]>,
-    pub selected: usize,
-    /// Verdicts by golden path.
-    pub verdicts: Arc<BTreeMap<Arc<str>, Verdict>>,
-    /// The reason typed for the next verdict.
-    pub reason: Arc<str>,
-    pub view: ViewSettings,
-    pub loaded: Arc<BTreeMap<Arc<str>, Loaded>>,
-    /// Discovery or load errors, shown in the status line.
-    pub error: Option<Arc<str>>,
 }
 
 impl Review {
-    pub fn current(&self) -> Option<&Golden> {
-        self.goldens.get(self.selected)
+    pub fn current(&self) -> Option<&Row> {
+        self.goldens.get(&self.selected)
     }
     pub fn current_loaded(&self) -> Option<&Loaded> {
-        self.loaded.get(&self.current()?.path)
-    }
-    pub fn verdict(&self, golden: &Golden) -> Option<&Verdict> {
-        self.verdicts.get(&golden.path)
+        self.loaded.get(&self.current()?.golden.path)
     }
     pub fn decided(&self) -> usize {
         self.goldens
             .iter()
-            .filter(|g| self.verdicts.contains_key(&g.path))
+            .filter(|(_, row)| row.verdict.is_some())
             .count()
     }
 
@@ -140,24 +134,23 @@ impl Review {
         let mut accepted = Vec::new();
         let mut rejected = Vec::new();
         let mut open = Vec::new();
-        for golden in self.goldens.iter() {
-            let line = |verdict: &Verdict| {
-                let what = format!(
-                    "{} ({}, {})",
-                    golden.name,
-                    golden.backend.label(),
-                    golden.change.label()
-                );
-                if verdict.reason.is_empty() {
-                    what
-                } else {
-                    format!("{what}: {}", verdict.reason)
+        for (_, row) in self.goldens.iter() {
+            let g = &row.golden;
+            let what = format!("{} ({}, {})", g.name, g.backend.label(), g.change.label());
+            match &row.verdict {
+                Some(v) => {
+                    let line = if v.reason.is_empty() {
+                        what
+                    } else {
+                        format!("{what}: {}", v.reason)
+                    };
+                    if v.decision == Decision::Accept {
+                        accepted.push(line)
+                    } else {
+                        rejected.push(line)
+                    }
                 }
-            };
-            match self.verdict(golden) {
-                Some(v) if v.decision == Decision::Accept => accepted.push(line(v)),
-                Some(v) => rejected.push(line(v)),
-                None => open.push(format!("{} ({})", golden.name, golden.backend.label())),
+                None => open.push(format!("{} ({})", g.name, g.backend.label())),
             }
         }
         let mut out = format!(
@@ -196,41 +189,64 @@ fn request_load(fx: &mut Fx<'_, Review>) {
     ]
     .into_iter()
     .flatten()
-    .filter_map(|i| s.goldens.get(i))
-    .filter(|g| !s.loaded.contains_key(&g.path))
-    .cloned()
+    .filter_map(|k| s.goldens.get(&k))
+    .filter(|row| !s.loaded.contains_key(&row.golden.path))
+    .map(|row| row.golden.clone())
     .collect();
     if !wanted.is_empty() {
         fx.effect(LoadRequest(wanted));
     }
 }
 
+/// Move the selection to `key`: two row writes and the selection field.
+fn select(fx: &mut Fx<'_, Review>, key: u32) {
+    let old = fx.state().selected;
+    if !fx.state().goldens.contains(&key) {
+        return;
+    }
+    if old != key {
+        fx.set_at(Review::goldens.by_key(old).then(Row::selected), false);
+        fx.set_at(Review::goldens.by_key(key).then(Row::selected), true);
+        fx.set_at(Review::selected, key);
+        fx.set_at(Review::inspect, None);
+    }
+    request_load(fx);
+}
+
 #[derive(Debug)]
-pub struct SetGoldens(pub Vec<Golden>);
-impl Event<Review> for SetGoldens {
+pub struct LoadGoldens(pub Vec<Golden>);
+impl Event<Review> for LoadGoldens {
     fn handle(self, fx: &mut Fx<'_, Review>) {
         fx.update(|s| {
-            s.goldens = self.0.into();
+            s.goldens = self
+                .0
+                .into_iter()
+                .enumerate()
+                .map(|(i, golden)| {
+                    (
+                        i as u32,
+                        Row {
+                            golden,
+                            selected: i == 0,
+                            verdict: None,
+                        },
+                    )
+                })
+                .collect();
             s.selected = 0;
-            s.view.inspect = None;
+            s.inspect = None;
         });
         request_load(fx);
     }
 }
 
+/// Select a golden by key (its position).
 #[derive(Debug)]
-pub struct Select(pub usize);
+pub struct Select(pub u32);
 impl Event<Review> for Select {
     fn handle(self, fx: &mut Fx<'_, Review>) {
-        let len = fx.state().goldens.len();
-        let index = self.0.min(len.saturating_sub(1));
-        if index != fx.state().selected {
-            fx.update(|s| {
-                s.selected = index;
-                s.view.inspect = None;
-            });
-        }
-        request_load(fx);
+        let last = (fx.state().goldens.len() as u32).saturating_sub(1);
+        select(fx, self.0.min(last));
     }
 }
 
@@ -238,39 +254,8 @@ impl Event<Review> for Select {
 pub struct Step(pub i64);
 impl Event<Review> for Step {
     fn handle(self, fx: &mut Fx<'_, Review>) {
-        let target = (fx.state().selected as i64 + self.0).max(0) as usize;
+        let target = (i64::from(fx.state().selected) + self.0).max(0) as u32;
         Select(target).handle(fx);
-    }
-}
-
-#[derive(Debug)]
-pub struct SetMode(pub Mode);
-impl Event<Review> for SetMode {
-    fn handle(self, fx: &mut Fx<'_, Review>) {
-        fx.set_field(self.0, |s| &s.view.mode, |s, v| s.view.mode = v);
-    }
-}
-
-#[derive(Debug)]
-pub struct SetZoom(pub f32);
-impl Event<Review> for SetZoom {
-    fn handle(self, fx: &mut Fx<'_, Review>) {
-        let zoom = if self.0.is_finite() {
-            self.0.clamp(MIN_ZOOM, MAX_ZOOM)
-        } else {
-            1.
-        };
-        fx.set_field(zoom, |s| &s.view.zoom, |s, v| s.view.zoom = v);
-    }
-}
-
-/// Zoom in or out by one power-of-two step.
-#[derive(Debug)]
-pub struct ZoomStep(pub i32);
-impl Event<Review> for ZoomStep {
-    fn handle(self, fx: &mut Fx<'_, Review>) {
-        let zoom = fx.state().view.zoom * 2f32.powi(self.0);
-        SetZoom(zoom).handle(fx);
     }
 }
 
@@ -278,15 +263,7 @@ impl Event<Review> for ZoomStep {
 pub struct Inspect(pub Option<(u32, u32)>);
 impl Event<Review> for Inspect {
     fn handle(self, fx: &mut Fx<'_, Review>) {
-        fx.set_field(self.0, |s| &s.view.inspect, |s, v| s.view.inspect = v);
-    }
-}
-
-#[derive(Debug)]
-pub struct SetReason(pub Arc<str>);
-impl Event<Review> for SetReason {
-    fn handle(self, fx: &mut Fx<'_, Review>) {
-        fx.set_field(self.0, |s| &s.reason, |s, v| s.reason = v);
+        fx.set_at(Review::inspect, self.0);
     }
 }
 
@@ -295,33 +272,32 @@ impl Event<Review> for SetReason {
 #[derive(Debug)]
 pub struct Decide {
     pub decision: Decision,
-    pub reason: Option<Arc<str>>,
+    pub reason: Option<SharedString>,
 }
 impl Event<Review> for Decide {
     fn handle(self, fx: &mut Fx<'_, Review>) {
-        let Some(path) = fx.state().current().map(|g| g.path.clone()) else {
+        let key = fx.state().selected;
+        if !fx.state().goldens.contains(&key) {
             return;
-        };
+        }
         let reason = self.reason.unwrap_or_else(|| fx.state().reason.clone());
-        fx.update(|s| {
-            Arc::make_mut(&mut s.verdicts).insert(
-                path,
-                Verdict {
-                    decision: self.decision,
-                    reason,
-                },
-            );
-            s.reason = "".into();
-            let len = s.goldens.len();
-            if let Some(next) = (1..len)
-                .map(|offset| (s.selected + offset) % len)
-                .find(|&i| !s.verdicts.contains_key(&s.goldens[i].path))
-            {
-                s.selected = next;
-                s.view.inspect = None;
-            }
-        });
-        request_load(fx);
+        fx.set_at(
+            Review::goldens.by_key(key).then(Row::verdict),
+            Some(Verdict {
+                decision: self.decision,
+                reason,
+            }),
+        );
+        fx.set_at(Review::reason, SharedString::default());
+        let s = fx.state();
+        let len = s.goldens.len() as u32;
+        let next = (1..len)
+            .map(|offset| (key + offset) % len)
+            .find(|k| s.goldens.get(k).is_some_and(|row| row.verdict.is_none()));
+        match next {
+            Some(next) => select(fx, next),
+            None => request_load(fx),
+        }
     }
 }
 
@@ -329,9 +305,9 @@ impl Event<Review> for Decide {
 pub struct LoadedGolden(pub Arc<str>, pub Loaded);
 impl Event<Review> for LoadedGolden {
     fn handle(self, fx: &mut Fx<'_, Review>) {
-        fx.update(|s| {
-            Arc::make_mut(&mut s.loaded).insert(self.0, self.1);
-        });
+        let mut loaded = (*fx.state().loaded).clone();
+        loaded.insert(self.0, self.1);
+        fx.set_at(Review::loaded, Arc::new(loaded));
     }
     fn undoable(&self) -> bool {
         false
@@ -339,10 +315,10 @@ impl Event<Review> for LoadedGolden {
 }
 
 #[derive(Debug)]
-pub struct Failed(pub Arc<str>);
+pub struct Failed(pub SharedString);
 impl Event<Review> for Failed {
     fn handle(self, fx: &mut Fx<'_, Review>) {
-        fx.update(|s| s.error = Some(self.0));
+        fx.set_at(Review::error, Some(self.0));
     }
     fn undoable(&self) -> bool {
         false
@@ -374,10 +350,18 @@ mod tests {
             .collect()
     }
 
+    fn selected_rows(s: &Review) -> Vec<u32> {
+        s.goldens
+            .iter()
+            .filter(|(_, r)| r.selected)
+            .map(|(k, _)| *k)
+            .collect()
+    }
+
     #[test]
     fn decide_records_reason_and_moves_to_the_next_undecided() {
         let mut engine = Engine::new(Review::default());
-        run(&mut engine, SetGoldens(goldens()));
+        run(&mut engine, LoadGoldens(goldens()));
         run(&mut engine, SetReason("font hinting".into()));
         run(
             &mut engine,
@@ -388,10 +372,12 @@ mod tests {
         );
         let s = engine.state().clone();
         assert_eq!(s.selected, 1);
+        assert_eq!(selected_rows(&s), [1], "exactly one row is selected");
         assert_eq!(&*s.reason, "");
         assert_eq!(
-            s.verdicts
-                .get("c/tests/snapshots/upstream/a-dark.png")
+            s.goldens
+                .get(&0)
+                .and_then(|r| r.verdict.as_ref())
                 .map(|v| &*v.reason),
             Some("font hinting")
         );
@@ -429,22 +415,19 @@ mod tests {
     }
 
     #[test]
-    fn navigation_zoom_and_mode_clamp() {
+    fn navigation_and_zoom_clamp() {
         let mut engine = Engine::new(Review::default());
         run(&mut engine, Step(1));
         assert_eq!(engine.state().selected, 0, "empty list stays put");
-        run(&mut engine, SetGoldens(goldens()));
+        run(&mut engine, LoadGoldens(goldens()));
         run(&mut engine, Step(-5));
         assert_eq!(engine.state().selected, 0);
         run(&mut engine, Select(99));
         assert_eq!(engine.state().selected, 2);
-        run(&mut engine, ZoomStep(10));
-        assert_eq!(engine.state().view.zoom, MAX_ZOOM);
-        run(&mut engine, SetZoom(f32::NAN));
-        assert_eq!(engine.state().view.zoom, 1.);
-        run(&mut engine, SetMode(Mode::SideBySide));
-        assert_eq!(Mode::parse("side-by-side"), Some(engine.state().view.mode));
-        assert!(Mode::parse("sideways").is_none());
+        assert_eq!(selected_rows(engine.state()), [2]);
+        run(&mut engine, SetZoom(99.));
+        assert_eq!(engine.state().zoom, MAX_ZOOM, "the store clamps");
+        assert_eq!(Mode::SideBySide.index(), 3);
         let summary = engine.state().commit_summary();
         assert!(
             summary.contains("0 accepted, 0 rejected, 3 undecided"),
