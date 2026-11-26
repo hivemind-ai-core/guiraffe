@@ -29,6 +29,7 @@ pub mod highlight;
 pub mod icons;
 pub mod kbd;
 pub mod loader;
+pub mod meter;
 pub mod misc;
 pub mod paper;
 pub mod ring;
@@ -53,6 +54,10 @@ pub use highlight::{Highlight, Mark, highlight_ranges};
 pub use icons::{ActionIcon, ThemeIcon, close_button};
 pub use kbd::{KbdGroup, KbdSeparator};
 pub use loader::{Loader, LoaderType};
+pub use meter::{
+    Ballistics, ChannelState, ClipReset, Level, Meter, MeterFeed, MeterMode, MeterOptions,
+    MeterZone, Orientation,
+};
 pub use misc::{Blockquote, Indicator, IndicatorPosition, Pill};
 pub use paper::{Card, CardSection, Paper};
 pub use ring::{RingProgress, arc_spans};
