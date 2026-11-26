@@ -1168,7 +1168,7 @@ impl Render for TracksView {
             let view = view.clone();
             move |window: &mut Window, cx: &mut App| {
                 let Some(entity) = view.upgrade() else { return };
-                if let Some(action) = entity.update(cx, |this, cx| f(this, cx)) {
+                if let Some(action) = entity.update(cx, f) {
                     route(&view, action, Source::Keyboard, false, window, cx).ok();
                 }
             }

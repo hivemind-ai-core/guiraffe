@@ -176,7 +176,7 @@ impl Track {
     /// Split clip `id` at `t`; returns the new right-hand clip id.
     pub fn split(&mut self, id: u32, t: f64) -> Option<u32> {
         let i = self.find(id)?;
-        let c = self.clips[i].clone();
+        let c = self.clips[i];
         if !(t > c.start + MIN_LEN && t < c.end() - MIN_LEN) {
             return None;
         }
