@@ -437,21 +437,19 @@ fn cached_label_updates_and_selector_scaling() {
 }
 
 /// The page's focused input writes its state as it is drawn, state the page
-/// read as it rendered. Those writes are the page's own, so a row edit draws
-/// the page from last frame around the row instead of rendering it again.
+/// read as it rendered. Those writes are the page's own, so a row edit leaves
+/// the page as it was drawn: on gpui-fast the row is patched into last frame,
+/// allocating as much at 400 rows as at 100.
 #[test]
 fn fully_visible_row_edits_splice_the_page() {
     let mut app = app();
     let small = fully_visible_edit_allocations(&mut app, 100);
     let large = fully_visible_edit_allocations(&mut app, 400);
     if gpui_kit::GPUI_FAST {
-        // Unchanged rows are copied as ranges: an edit allocates for the
-        // edited row and the frame, not for every row.
+        // The edited row is patched into last frame: an edit allocates for
+        // that row alone, whatever the number of rows.
         assert!(large <= 300, "{large} allocations per edit at 400 rows");
-        assert!(
-            large <= small + 16,
-            "edit allocations grow with rows: {small} at 100, {large} at 400"
-        );
+        assert_eq!(small, large, "edit allocations grow with rows");
     }
 }
 
@@ -503,7 +501,14 @@ fn fully_visible_edit_allocations(app: &mut HeadlessAppContext, n: usize) -> u64
         "a keyed edit runs one selector"
     );
     if gpui_kit::GPUI_FAST {
-        assert_eq!(probe.root.get(), root, "the page was spliced");
+        assert_eq!(probe.root.get(), root, "the page was not rendered again");
+        assert!(
+            window
+                .update(|window, _| window.frame_patch_stats())
+                .patched
+                >= 5,
+            "the edits were patched"
+        );
     }
     close(window);
     percentile(&mut allocations, 50)
@@ -682,6 +687,53 @@ fn patched_rows_hit_test_and_tab_like_a_full_redraw() {
     window.update(|window, _| window.refresh());
     assert_eq!(patched, tab_order(&mut window));
     close(window);
+}
+
+/// Allocations of a patched row edit next to those of the same row drawn
+/// again unchanged (notified without new data), the frame's baseline, at 1k
+/// and 3k rows.
+#[test]
+#[ignore = "release measurement; run explicitly with --ignored --nocapture"]
+fn patched_edit_allocations_against_the_frame_baseline() {
+    let mut app = app();
+    for n in [1000, 3000] {
+        let probe = Probe::new(n);
+        let (page, mut window) = mount_all_visible(&mut app, n, probe.clone());
+        let store = window.update(|_, cx| page.read(cx).store.clone());
+        let row = window.update(|_, cx| match &page.read(cx).rows {
+            Rows::Cached(rows) => rows[EDITED].clone(),
+            _ => unreachable!("a page of cached rows"),
+        });
+        for label in ["Row 00004", "Row 00003", "Row 00004"] {
+            row_label(&mut window, &store, EDITED, label);
+        }
+        let mut edits = Vec::new();
+        let mut baseline = Vec::new();
+        for i in 0..21 {
+            let label = if i % 2 == 0 { "Row 00003" } else { "Row 00004" };
+            edits.push(
+                count_allocations(|| row_label(&mut window, &store, EDITED, label))
+                    .expect("allocation scope")
+                    .1
+                    .allocations,
+            );
+            baseline.push(
+                count_allocations(|| window.update(|_, cx| row.update(cx, |_, cx| cx.notify())))
+                    .expect("allocation scope")
+                    .1
+                    .allocations,
+            );
+        }
+        let stats = window.update(|window, _| window.frame_patch_stats());
+        println!(
+            "rows={n} edit_allocs={} baseline_allocs={} patched={} refused={}",
+            percentile(&mut edits, 50),
+            percentile(&mut baseline, 50),
+            stats.patched,
+            stats.refused
+        );
+        close(window);
+    }
 }
 
 fn cpu_ns() -> u64 {
@@ -982,12 +1034,15 @@ fn run_phase_sweep(virtualized: bool) {
                     allocations.push(counts.allocations);
                 }
             }
+            let stats = window.update(|window, _| window.frame_patch_stats());
             println!(
-                "rows={n} mounted={mounted_count} edited={edited} virtual={virtualized} all_visible={all_visible} median_ns total={} through_flush={} after_flush={} allocs={}",
+                "rows={n} mounted={mounted_count} edited={edited} virtual={virtualized} all_visible={all_visible} median_ns total={} through_flush={} after_flush={} allocs={} patched={} refused={}",
                 percentile(&mut totals, 50),
                 percentile(&mut flushes, 50),
                 percentile(&mut frames, 50),
-                percentile(&mut allocations, 50)
+                percentile(&mut allocations, 50),
+                stats.patched,
+                stats.refused
             );
         }
         close(window);

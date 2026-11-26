@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Gate gpui-fast's release edit instruction counts: virtualized visible and offscreen edits
-stay flat from 1k to 10k rows; fully mounted edits splice the page and stay under a ceiling."""
+"""Gate gpui-fast's release edit instruction counts: virtualized visible and offscreen edits,
+and edits of a list with every row mounted, stay flat from 1k to 10k rows."""
 
 import argparse
 import json
@@ -61,14 +61,17 @@ def main():
             counts = [measure(binary, Path(directory), edit, n) for n in (1000, 3000, 10000)]
             print(f"{edit}: Ir for three changed frames at 1k/3k/10k = {counts}", flush=True)
             failed |= max(counts[1:]) * 100 > counts[0] * 102
-        # Seven measured frames (four warm-up, three samples) per run. Before the
-        # page was spliced a fully mounted frame cost 28.7M at 1k and 85.0M at 3k.
+        # Every row mounted and visible: gpui-fast patches the edited row into
+        # last frame, so the frame is as flat as a virtualized one. Seven
+        # measured frames (four warm-up, three samples) per run; a patched
+        # frame cost 139k Ir at 1k and 3k when this was gated, against 28.7M
+        # and 85.0M for the splice it replaced.
         counts = [measure(binary, Path(directory), "visible", n, mounted=True) // 7
-                  for n in (1000, 3000)]
-        print(f"fully mounted: Ir per changed frame at 1k/3k = {counts}", flush=True)
-        failed |= counts[0] > 14_000_000 or counts[1] > 42_000_000
+                  for n in (1000, 3000, 10000)]
+        print(f"fully mounted: Ir per changed frame at 1k/3k/10k = {counts}", flush=True)
+        failed |= max(counts[1:]) * 100 > counts[0] * 102 or counts[0] > 200_000
     if failed:
-        raise SystemExit("Changed-frame instructions exceed the 2% virtualized scaling or the fully mounted ceiling")
+        raise SystemExit("Changed-frame instructions exceed the 2% scaling budget or 200k Ir per fully mounted frame")
 
 
 if __name__ == "__main__":

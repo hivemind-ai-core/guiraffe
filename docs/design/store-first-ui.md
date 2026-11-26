@@ -274,3 +274,77 @@ the page is spliced, with at most 300 allocations per edit and growth of at most
 16 from 100 to 400 rows. The splice regression reproduces only in release
 builds; the debug test profile splices either way. `crates/state/tests/keyed.rs`
 covers keyed routing, equal writes, unkeyed writes, undo, batching and release.
+
+### Patched frames: fully mounted edits within budget on gpui-fast
+
+The splice above still copied every unchanged row into a new frame and
+sorted the scene again, so its cost grew with the number of primitives.
+gpui-fast now patches the rendered frame in place: when exactly one cached
+view has to be built again, it is built into a small scratch frame. If it
+comes out the same shape as it was drawn, its primitives, listeners, dispatch
+nodes, element states and records take the old ones' places in last frame.
+Same shape means the same primitive kinds under the same clips, the same
+hitbox ids and bounds, dispatch nodes, tab stops, cursor styles and
+element-state accesses. Nothing else is copied, re-sorted or cleared. The
+scene stays sorted because every primitive keeps its draw order. A layer whose
+bounds moved, such as a label's text run, keeps its order only where the bounds
+tree proves a full redraw gives the same orders. The hitboxes, tab order and
+dispatch indices stand as they are. Finding the view is O(changed): an entity
+change log, an index of the records by what they read, and epochs for globals
+and state versions.
+
+Everything else falls back to the splice: more than one view to build, a view
+that is not cached, a changed pointer, focus, scroll, layer, drag, prompt,
+accessibility or composition surface, or a view that came out another shape.
+Changed geometry, or text shaped to another number of glyphs, is another shape.
+On fallback the view is built a second time. `uniform_list` rows cannot be
+built on their own (they have no rebuild handle), so virtualized edits stay on
+the existing path. The patch is in `vendor/gpui-fast/src/fast/patch.rs`; see
+`vendor/README.md`.
+
+Release profile, the `composed` sweeps as above: one row label edited per frame
+(same length), median of 31 samples (11 for the 800 px fully mounted runs), CPU
+on the calling thread, allocations per edit. "Before" is `9f7840b9`, the merged
+splice step; "after" is this branch. Upstream's code path did not change. Its
+"after" column is a re-measurement on a quieter host, and the earlier figures
+were taken on a loaded one.
+
+| Backend | Mode | Rows | Before: CPU / allocs | After: CPU / allocs |
+| --- | --- | ---: | ---: | ---: |
+| fast | virtualized, visible edit | 1k / 3k / 10k | 0.253 / 0.254 / 0.259 ms; 395 | 0.241 / 0.244 / 0.243 ms; 398 |
+| fast | virtualized, offscreen edit | 1k / 3k / 10k | 1.7 / 1.7 / 1.8 µs; 3 | 1.6 / 1.8 / 1.6 µs; 3 |
+| fast | fully mounted, all visible | 1k / 3k / 10k | 10.1 / 29.7 / 62.3 ms; 185 / 191 / 196 | 0.053 / 0.097 / 0.063 ms; 138 |
+| fast | fully mounted, 800 px window | 1k / 3k / 10k | 7.0 / 21.2 / 80.9 ms; 185 / 191 / 196 | 0.061 / 0.060 / 0.056 ms; 138 |
+| upstream | virtualized, visible edit | 1k / 3k / 10k | 1.16 / 1.12 / 1.16 ms; 312 / 318 / 310 | 0.344 / 0.337 / 0.342 ms; 312 / 314 / 315 |
+| upstream | virtualized, offscreen edit | 1k / 3k / 10k | 2.7 / 2.6 / 2.4 µs; 3 | 1.5 / 1.5 / 1.5 µs; 3 |
+| upstream | fully mounted, 800 px window | 1k / 3k / 10k | 12.7 / 41.1 / 147.5 ms; 1,300 / 3,300 / 10,300 | 6.7 / 19.8 / 75.3 ms; 1,300 / 3,300 / 10,300 |
+
+Callgrind, gpui-fast, fully mounted and all visible, per changed frame: 139,411
+Ir at 1k and 139,617 at 3k (before: 12.63M and 38.33M). The 10k figure is
+gated by `scripts/label-scaling.py`. CPU differences under about 0.05 ms are
+host noise; the instruction counts are flat.
+
+Allocations: a patched edit allocates 139 against 124 for the same row drawn
+again unchanged (notified without new data), at 1k and 3k alike. Those 124 are
+the frame's baseline: the row's own elements, closures and records. The 15 the
+edit adds are consistent with shaping the changed label, whose old line the
+cache drops (unconfirmed). Neither count grows with the number of rows. The
+virtualized path allocates 3 more than before, for the patch it tries and
+cannot make.
+
+Upstream (gpui-pre) keeps the documented fallback: virtualize store-bound lists
+and tables. Its virtualized edits are flat but cost about 0.34 ms, within the
+budget on this host. Fully mounted lists of thousands of rows remain outside the
+budget on upstream.
+
+Gates: `scripts/label-scaling.py` holds virtualized visible and offscreen
+edits, and fully mounted edits, within 2% from 1k to 10k. It also holds fully
+mounted frames to at most 200k Ir. `patched_row_edits_match_a_full_redraw`
+compares the patched frame's fingerprint with a full redraw's: scene, hitboxes,
+dispatch tree, tab stops, listeners, cursors and element states. It also checks
+that a longer label falls back. `patched_rows_hit_test_and_tab_like_a_full_redraw`
+clicks the patched row's checkbox and compares the tab order with a full
+redraw's. `fully_visible_row_edits_splice_the_page` asserts that edits are
+patched, allocate at most 300, and allocate the same at 100 and 400 rows.
+`patched_edit_allocations_against_the_frame_baseline` (ignored, release)
+prints the baseline comparison.

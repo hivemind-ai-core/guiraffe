@@ -43,11 +43,25 @@ pub(crate) struct PatchState {
     /// frame.
     pub(crate) enabled: bool,
     last: Option<LastFrame>,
-    index: Option<PatchIndex>,
+    /// Whether `index` stands for the rendered frame's records.
+    indexed: bool,
+    index: PatchIndex,
     /// The frame a patch builds its view into, swapped in for the window's
     /// next frame while it does, kept from one patch to the next so that it
     /// stays as small as a view and costs little to clear.
     scratch: Option<crate::window::Frame>,
+    /// Of the two sets the entities accessed are recorded in, a whole
+    /// frame's and a patch's, the one not in use. A draw records into the
+    /// small one until it is known to draw a frame in full, for the same
+    /// reason. See [`use_small_accessed_set`].
+    accessed: FxHashSet<EntityId>,
+    /// Whether the small set is the one in use.
+    small_accessed: bool,
+    /// What the patch records where the views it renders began to render,
+    /// and what they wrote, in place of the window's maps, for the same
+    /// reason. See [`crate::fast::retained::RetainedState::rendering_since`].
+    rendering_since: FxHashMap<EntityId, u64>,
+    render_writes: FxHashMap<EntityId, Range<u64>>,
     pub(crate) stats: PatchStats,
 }
 
@@ -66,8 +80,13 @@ impl PatchState {
         PatchState {
             enabled: std::env::var("GPUI_FRAME_PATCH").map_or(true, |value| value != "0"),
             last: None,
-            index: None,
+            indexed: false,
+            index: PatchIndex::default(),
             scratch: None,
+            accessed: FxHashSet::default(),
+            small_accessed: false,
+            rendering_since: FxHashMap::default(),
+            render_writes: FxHashMap::default(),
             stats: PatchStats::default(),
         }
     }
@@ -102,7 +121,9 @@ impl LastFrame {
 /// The records of the frame a patch draws on, looked up by what they read
 /// and by the view they stand for. Built the first time a frame is patched
 /// and kept while frames are patched, since a patch leaves the records where
-/// they are.
+/// they are. Built again into the room it had, so that a frame that tries to
+/// patch and cannot allocates nothing for it.
+#[derive(Default)]
 struct PatchIndex {
     /// The records that read each entity themselves.
     readers: FxHashMap<EntityId, SmallVec<[u32; 2]>>,
@@ -110,15 +131,23 @@ struct PatchIndex {
     views: FxHashMap<EntityId, u32>,
     /// The record each one is nested in, `u32::MAX` for those nested in none.
     parents: Vec<u32>,
+    /// Room for the records open while it is built, each with the last
+    /// record nested in it.
+    open: Vec<(u32, usize)>,
 }
 
 impl PatchIndex {
-    fn build(records: &[crate::fast::retained::RetainedSubtree]) -> Self {
-        let mut readers: FxHashMap<EntityId, SmallVec<[u32; 2]>> = FxHashMap::default();
-        let mut views = FxHashMap::default();
-        let mut parents = Vec::with_capacity(records.len());
-        // The records open at each point, with the last record nested in each.
-        let mut open: Vec<(u32, usize)> = Vec::new();
+    fn build(&mut self, records: &[crate::fast::retained::RetainedSubtree]) {
+        let PatchIndex {
+            readers,
+            views,
+            parents,
+            open,
+        } = self;
+        readers.clear();
+        views.clear();
+        parents.clear();
+        open.clear();
         for (index, record) in records.iter().enumerate() {
             while open.last().is_some_and(|&(_, last)| index > last) {
                 open.pop();
@@ -134,11 +163,6 @@ impl PatchIndex {
                     readers.push(index as u32);
                 }
             }
-        }
-        PatchIndex {
-            readers,
-            views,
-            parents,
         }
     }
 
@@ -163,7 +187,7 @@ pub(crate) fn finish_frame(window: &mut Window, cx: &mut App, start: usize, patc
     let state = &mut window.retained_state.patch;
     state.last = Some(last);
     if !patched {
-        state.index = None;
+        state.indexed = false;
     }
 }
 
@@ -218,25 +242,19 @@ fn eligible(window: &mut Window, cx: &App, last: LastFrame) -> bool {
 /// read something that changed, or was notified, and every dirty view is it
 /// or a view around it.
 fn find_gap(window: &mut Window, cx: &App) -> Option<usize> {
-    let changes: SmallVec<[EntityId; 16]> = cx
-        .entities
-        .access_log
-        .patch_log
-        .entries()?
-        .iter()
-        .copied()
-        .collect();
-    if window.retained_state.patch.index.is_none() {
-        window.retained_state.patch.index =
-            Some(PatchIndex::build(&window.rendered_frame.retained.records));
+    let changes = cx.entities.access_log.patch_log.entries()?;
+    let state = &mut window.retained_state.patch;
+    if !state.indexed {
+        state.index.build(&window.rendered_frame.retained.records);
+        state.indexed = true;
     }
-    let index = window.retained_state.patch.index.as_ref()?;
+    let index = &window.retained_state.patch.index;
     let records = &window.rendered_frame.retained.records;
     let notified = &window.retained_state.notified_entities;
     let drawn_views = &window.rendered_frame.dispatch_tree.view_node_ids;
 
     let mut candidates: SmallVec<[u32; 8]> = SmallVec::new();
-    for entity in &changes {
+    for entity in changes {
         if let Some(readers) = index.readers.get(entity) {
             candidates.extend_from_slice(readers);
         }
@@ -285,7 +303,7 @@ fn find_gap(window: &mut Window, cx: &App) -> Option<usize> {
         return None;
     };
 
-    let mut around: FxHashSet<EntityId> = index
+    let mut around: SmallVec<[EntityId; 8]> = index
         .ancestors(gap)
         .filter_map(|ancestor| view_entity(&records[ancestor].id))
         .collect();
@@ -317,6 +335,8 @@ fn patch_gap(window: &mut Window, gap: usize, cx: &mut App) -> bool {
         .unwrap_or_else(|| Window::new_patch_frame(cx));
     std::mem::swap(&mut window.next_frame, &mut scratch);
     window.global_ids.begin_patch();
+    swap_render_maps(window);
+    window.layout_engine.as_mut().unwrap().begin_patched_frame();
     let claims = window.record_claimed_layout_keys();
     if let Some(entity) = view_entity(&old.id) {
         window.dirty_views.insert(entity);
@@ -329,26 +349,60 @@ fn patch_gap(window: &mut Window, gap: usize, cx: &mut App) -> bool {
     let patched = built && same_shape(window, gap, &old);
     if patched {
         commit(window, gap, &old, entity_updates, cx);
-        window
-            .layout_engine
-            .as_mut()
-            .unwrap()
-            .finish_patched_frame(&claimed);
-    } else {
-        crate::fast::layout::give_back_patched_claims(
-            window.layout_engine.as_mut().unwrap(),
-            &claimed,
-            false,
-        );
+    }
+    window
+        .layout_engine
+        .as_mut()
+        .unwrap()
+        .end_patched_frame(&claimed, patched);
+    if !patched {
         // The states the view took go back for the frame to take again.
-        let states = std::mem::take(&mut window.next_frame.element_states);
-        window.rendered_frame.element_states.extend(states);
+        window
+            .rendered_frame
+            .element_states
+            .extend(window.next_frame.element_states.drain());
+    }
+    swap_render_maps(window);
+    let state = &mut window.retained_state;
+    if patched {
+        state.patch.rendering_since.clear();
+        state.patch.render_writes.clear();
+    } else {
+        state
+            .rendering_since
+            .extend(state.patch.rendering_since.drain());
+        state
+            .render_writes
+            .extend(state.patch.render_writes.drain());
     }
     window.global_ids.end_patch(patched);
     window.next_frame.clear();
     std::mem::swap(&mut window.next_frame, &mut scratch);
     window.retained_state.patch.scratch = Some(scratch);
     patched
+}
+
+/// Records the entities accessed from now on in the small set a patch uses
+/// (`small`), or in the set a whole frame's go into, which then takes what
+/// the small one holds.
+pub(crate) fn use_small_accessed_set(window: &mut Window, cx: &mut App, small: bool) {
+    let state = &mut window.retained_state.patch;
+    if state.small_accessed == small {
+        return;
+    }
+    cx.entities.swap_accessed(&mut state.accessed);
+    state.small_accessed = small;
+    if !small {
+        cx.entities.extend_accessed(state.accessed.drain());
+    }
+}
+
+/// Swaps the window's maps of where views began to render, and what they
+/// wrote, with the patch's. See [`PatchState::rendering_since`].
+fn swap_render_maps(window: &mut Window) {
+    let state = &mut window.retained_state;
+    std::mem::swap(&mut state.rendering_since, &mut state.patch.rendering_since);
+    std::mem::swap(&mut state.render_writes, &mut state.patch.render_writes);
 }
 
 /// What last frame drew of the view to patch, and where.
@@ -366,7 +420,7 @@ impl OldGap {
         let frame = &window.rendered_frame;
         let record = &frame.retained.records[gap];
         let (prepaint, paint) = (&record.prepaint_range, &record.paint_range);
-        let index = window.retained_state.patch.index.as_ref()?;
+        let index = &window.retained_state.patch.index;
         let can = record
             .rebuild
             .as_ref()
@@ -764,8 +818,8 @@ fn commit(window: &mut Window, gap: usize, old: &OldGap, entity_updates: u64, cx
 
     // The views around it are up to date with everything written and
     // updated so far: what changed in them is the view patched.
-    let index = window.retained_state.patch.index.as_ref();
-    for ancestor in index.into_iter().flat_map(|index| index.ancestors(gap)) {
+    let index = &window.retained_state.patch.index;
+    for ancestor in index.ancestors(gap) {
         let record = &mut window.rendered_frame.retained.records[ancestor];
         let mut dependencies = record.dependencies.written_up_to(writes_now);
         dependencies.updates = entity_updates;

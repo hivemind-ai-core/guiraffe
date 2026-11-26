@@ -3771,9 +3771,14 @@ impl Window {
             }
         }
         let patch_log_start = cx.entities.access_log.patch_log.len();
+        // Until the frame is known to be drawn in full, what it accesses goes
+        // into a set of a patch's size: clearing the set a whole frame's
+        // accesses went into costs what it can hold, on every frame.
+        crate::fast::patch::use_small_accessed_set(self, cx, true);
         if !cx.mode.skip_drawing() && crate::fast::patch::try_patch_frame(self, cx) {
             return self.finish_patched_draw(cx, arena_scope, patch_log_start);
         }
+        crate::fast::patch::use_small_accessed_set(self, cx, false);
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
             #[cfg(feature = "profiler")]
@@ -3951,6 +3956,8 @@ impl Window {
         }
         // The window still draws everything it drew; what the patch read is
         // added to it.
+        // The small set the patch's accesses went into stays in place for
+        // the next frame, empty.
         let entities = cx.entities.take_accessed();
         crate::fast::tracked_entities::add_entities_accessed(
             cx,
@@ -3959,6 +3966,7 @@ impl Window {
             &entities,
         );
         cx.entities.restore_accessed(entities);
+        cx.entities.clear_accessed();
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);

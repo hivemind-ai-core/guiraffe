@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use collections::FxHashSet;
-use std::{fmt::Debug, ops::Range};
+use std::{fmt::Debug, mem, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -36,6 +36,10 @@ pub struct TaffyLayoutEngine {
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     pub(crate) absolute_outer_origins: crate::fast::layout_bounds::LayoutIdMap<Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
+    /// What a patched frame records its computed layouts in, in place of
+    /// `computed_layouts`, which is as large as a whole frame, so that the
+    /// patch does not clear it. See [`crate::fast::patch`].
+    computed_spare: FxHashSet<LayoutId>,
     pub(crate) layout_bounds_scratch_space: Vec<LayoutId>,
 }
 
@@ -51,16 +55,29 @@ impl TaffyLayoutEngine {
             absolute_layout_bounds: crate::fast::layout_bounds::LayoutIdMap::default(),
             absolute_outer_origins: crate::fast::layout_bounds::LayoutIdMap::default(),
             computed_layouts: FxHashSet::default(),
+            computed_spare: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
     }
 
-    /// Ends a patched frame: see [`crate::fast::layout::give_back_patched_claims`].
-    pub(crate) fn finish_patched_frame(&mut self, keys: &[u64]) {
-        crate::fast::layout::give_back_patched_claims(self, keys, true);
-        self.absolute_layout_bounds.clear();
-        self.absolute_outer_origins.clear();
-        self.computed_layouts.clear();
+    /// Begins a patched frame. See [`crate::fast::patch`].
+    pub(crate) fn begin_patched_frame(&mut self) {
+        mem::swap(&mut self.computed_layouts, &mut self.computed_spare);
+    }
+
+    /// Ends a patched frame, kept if `patched`, given back the claims it made
+    /// on `keys`: see [`crate::fast::layout::give_back_patched_claims`].
+    /// Otherwise the frame is drawn after all, with what it computed so far.
+    pub(crate) fn end_patched_frame(&mut self, keys: &[u64], patched: bool) {
+        crate::fast::layout::give_back_patched_claims(self, keys, patched);
+        mem::swap(&mut self.computed_layouts, &mut self.computed_spare);
+        if patched {
+            self.absolute_layout_bounds.clear();
+            self.absolute_outer_origins.clear();
+            self.computed_spare.clear();
+        } else {
+            self.computed_layouts.extend(self.computed_spare.drain());
+        }
     }
 
     pub fn clear(&mut self) {

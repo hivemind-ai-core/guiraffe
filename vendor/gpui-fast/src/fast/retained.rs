@@ -1385,8 +1385,14 @@ pub(crate) fn finish_retained_frame(window: &mut Window) {
         mem::take(&mut window.retained_state.subtrees_dirty_next_frame);
     window.retained_state.hover_dependencies.clear();
     window.retained_state.hover_reads.get_mut().clear();
-    window.retained_state.rendering_since.clear();
-    window.retained_state.render_writes.clear();
+    // Clearing a map costs what it can hold, as many views as a whole frame
+    // rendered, even when a patched frame left it empty.
+    if !window.retained_state.rendering_since.is_empty() {
+        window.retained_state.rendering_since.clear();
+    }
+    if !window.retained_state.render_writes.is_empty() {
+        window.retained_state.render_writes.clear();
+    }
     window.next_frame.retained.finish_frame();
     crate::fast::layers::paint::finish_frame(window);
     crate::fast::layers::finish_frame(window);
