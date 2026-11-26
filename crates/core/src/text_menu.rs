@@ -24,6 +24,9 @@ pub struct TextMenuItem {
     pub label: SharedString,
     pub enabled: bool,
     pub handler: TextMenuHandler,
+    /// A section label: a non-interactive heading over the entries after it, skipped by
+    /// keyboard navigation (see [`crate::menu_section`]).
+    pub section: bool,
 }
 
 impl TextMenuItem {
@@ -35,6 +38,17 @@ impl TextMenuItem {
             label: label.into(),
             enabled: true,
             handler: Rc::new(handler),
+            section: false,
+        }
+    }
+
+    /// A section label over the entries that follow it.
+    pub fn section(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+            enabled: false,
+            handler: Rc::new(|_, _| {}),
+            section: true,
         }
     }
 
@@ -84,11 +98,13 @@ impl TextMenuSpec {
                 label: COPY.into(),
                 enabled: self.has_selection,
                 handler: self.copy.clone(),
+                section: false,
             }),
             Some(TextMenuItem {
                 label: SELECT_ALL.into(),
                 enabled: true,
                 handler: self.select_all.clone(),
+                section: false,
             }),
         ];
         if !self.extra.is_empty() {
@@ -125,6 +141,9 @@ struct Inner {
     /// The element id of this view's menu layer, built once: the view renders
     /// it again on every frame, and the id never changes.
     layer_id: Option<gpui_kit::ElementId>,
+    /// The scoped section style where the owner last rendered the menu layer. A menu opens
+    /// from an event handler, outside the owner's style scope, so the scope is noted here.
+    scope: Option<crate::MenuSectionId>,
 }
 
 /// One open-or-closed context menu, owned by a text surface. Cheap to clone.
@@ -157,6 +176,7 @@ impl TextMenu {
                 o.items
                     .iter()
                     .flatten()
+                    .filter(|i| !i.section)
                     .map(|i| (i.label.clone(), i.enabled))
                     .collect()
             })
@@ -170,7 +190,7 @@ impl TextMenu {
             o.items
                 .iter()
                 .flatten()
-                .find(|i| i.label.as_ref() == label && i.enabled)
+                .find(|i| i.label.as_ref() == label && i.enabled && !i.section)
                 .map(|i| i.handler.clone())
         });
         let Some(handler) = handler else {
@@ -195,11 +215,20 @@ impl TextMenu {
         let items = spec.items();
         let restore_focus = restore.clone();
         let built = items.clone();
+        let scoped = self
+            .inner
+            .borrow()
+            .scope
+            .and_then(crate::menu_section::registered);
         let menu = PopupMenu::build(window, cx, move |mut menu, _, _| {
             menu = menu.action_context(restore.clone()).min_w(px(160.));
+            if let Some(style) = &scoped {
+                menu = menu.section_style(style.clone());
+            }
             for item in &built {
                 menu = match item {
                     None => menu.separator(),
+                    Some(item) if item.section => menu.label(item.label.clone()),
                     Some(item) => {
                         let handler = item.handler.clone();
                         menu.item(
@@ -244,6 +273,10 @@ impl TextMenu {
 
     /// The deferred popup layer while open; place it as a child of the owner's root.
     pub fn element(&self) -> Option<AnyElement> {
+        let scope = crate::StyleContext::current().menu_section;
+        if self.inner.borrow().scope != scope {
+            self.inner.borrow_mut().scope = scope;
+        }
         let inner = self.inner.borrow();
         let open = inner.open.as_ref()?;
         Some(

@@ -69,6 +69,8 @@ pub struct StyleContext {
     /// Inside a focus scope (form): non-text controls join Tab navigation (API conventions §12.3).
     /// Outside one they never take keyboard focus.
     pub keyboard_nav: bool,
+    /// Scoped menu section style ([`crate::menu_section`]); `None` uses the theme's.
+    pub menu_section: Option<crate::menu_section::MenuSectionId>,
 }
 
 impl Default for StyleContext {
@@ -79,6 +81,7 @@ impl Default for StyleContext {
             surface: SurfaceKind::Body,
             emphasis: Emphasis::Default,
             keyboard_nav: false,
+            menu_section: None,
         }
     }
 }
@@ -145,7 +148,7 @@ impl StyleContext {
 
     /// The context as one word, `0` for the default (what the backend captures when nothing
     /// is inherited).
-    fn to_word(self) -> u64 {
+    pub(crate) fn to_word(self) -> u64 {
         let density = match self.density {
             Density::Comfortable => 0,
             Density::Compact => 1,
@@ -167,11 +170,16 @@ impl StyleContext {
             Emphasis::Default => 0,
             Emphasis::Quiet => 1,
         };
-        density | size << 2 | surface << 5 | emphasis << 7 | u64::from(self.keyboard_nav) << 8
+        density
+            | size << 2
+            | surface << 5
+            | emphasis << 7
+            | u64::from(self.keyboard_nav) << 8
+            | u64::from(self.menu_section.map_or(0, |id| id.0)) << 9
     }
 
     /// The context [`StyleContext::to_word`] gave `word`; unknown bits read as the default.
-    fn from_word(word: u64) -> Self {
+    pub(crate) fn from_word(word: u64) -> Self {
         let d = StyleContext::default();
         StyleContext {
             density: match word & 0b11 {
@@ -196,6 +204,10 @@ impl StyleContext {
                 _ => d.emphasis,
             },
             keyboard_nav: word >> 8 & 1 == 1,
+            menu_section: match (word >> 9 & 0xffff) as u16 {
+                0 => None,
+                n => Some(crate::menu_section::MenuSectionId(n)),
+            },
         }
     }
 }
@@ -227,6 +239,7 @@ pub struct StylePatch {
     pub surface: Option<SurfaceKind>,
     pub emphasis: Option<Emphasis>,
     pub keyboard_nav: Option<bool>,
+    pub menu_section: Option<crate::menu_section::MenuSectionId>,
 }
 
 impl StylePatch {
@@ -237,6 +250,7 @@ impl StylePatch {
             surface: None,
             emphasis: None,
             keyboard_nav: None,
+            menu_section: None,
         }
     }
     pub const fn density(mut self, v: Density) -> Self {
@@ -259,6 +273,11 @@ impl StylePatch {
         self.keyboard_nav = Some(v);
         self
     }
+    /// Restyle menu section labels in this scope (see [`crate::menu_section`]).
+    pub const fn menu_section(mut self, v: crate::menu_section::MenuSectionId) -> Self {
+        self.menu_section = Some(v);
+        self
+    }
     /// Apply on top of `base`.
     pub fn apply(self, base: StyleContext) -> StyleContext {
         StyleContext {
@@ -267,6 +286,7 @@ impl StylePatch {
             surface: self.surface.unwrap_or(base.surface),
             emphasis: self.emphasis.unwrap_or(base.emphasis),
             keyboard_nav: self.keyboard_nav.unwrap_or(base.keyboard_nav),
+            menu_section: self.menu_section.or(base.menu_section),
         }
     }
 }
@@ -447,6 +467,7 @@ mod tests {
                                 surface,
                                 emphasis,
                                 keyboard_nav,
+                                menu_section: None,
                             };
                             let w = c.to_word();
                             assert!(seen.insert(w), "{c:?} has its own word");

@@ -13,6 +13,7 @@
 pub mod color;
 pub mod context;
 pub mod control;
+pub mod menu_section;
 pub mod palette;
 pub mod text_menu;
 pub mod theme;
@@ -31,6 +32,9 @@ pub use control::{
     focus_ring, keyed_focus, release_focus_within, ring_visible,
 };
 pub use kit_bridge::{KitColors, kit_size};
+pub use menu_section::{
+    MenuSectionAlign, MenuSectionId, MenuSectionStyle, RegisterMenuSection, set_menu_section_styles,
+};
 pub use palette::{ColorName, Shade};
 pub use state::{Contrast, DragPreviewColors, StateColors, StateKind, contrast_checks};
 pub use text_menu::{TextMenu, TextMenuItem, TextMenuSpec};

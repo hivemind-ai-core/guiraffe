@@ -1531,3 +1531,63 @@ fn tabs_unchanged_repaint_allocates_nothing() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+// Menu section labels (0.3.1 #149): an unchanged repaint of a menu with sections allocates
+// nothing
+
+struct MenuRoot(gpui_kit::Entity<gpui_kit::component::menu::PopupMenu>);
+impl gpui_kit::Render for MenuRoot {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement, Styled};
+        gpui_kit::div().size_full().child(self.0.clone())
+    }
+}
+
+#[test]
+fn menu_sections_unchanged_repaint_allocates_nothing() -> anyhow::Result<()> {
+    use gpui_kit::AppContext;
+    use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    let window = app.open_window(
+        gpui_kit::size(gpui_kit::px(400.), gpui_kit::px(600.)),
+        |window, cx| {
+            guiraffe_components::init(cx);
+            let menu = PopupMenu::build(window, cx, |mut menu, _, _| {
+                for section in ["Edit", "View", "Window"] {
+                    menu = menu.label(section);
+                    for i in 0..4 {
+                        menu = menu.item(PopupMenuItem::new(format!("{section} {i}")));
+                    }
+                }
+                menu
+            });
+            cx.new(|_| MenuRoot(menu))
+        },
+    )?;
+    let frame = |app: &mut gpui_kit::HeadlessAppContext| {
+        app.update_window(window.into(), |_, w, cx| w.draw(cx).clear(cx))
+    };
+    for _ in 0..6 {
+        frame(&mut app)?;
+        app.run_until_parked();
+    }
+    let (r, counts) = count_allocations(|| frame(&mut app))?;
+    r?;
+    eprintln!("menu sections unchanged repaint {counts:?}");
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(
+            counts.allocations, 0,
+            "an unchanged repaint allocates nothing"
+        );
+    }
+    Ok(())
+}

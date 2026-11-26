@@ -5,12 +5,17 @@ mod context_menu;
 mod dropdown_menu;
 mod menu_item;
 mod popup_menu;
+mod section_style;
 
 pub use app_menu_bar::AppMenuBar;
 pub use context_menu::{ContextMenu, ContextMenuExt, ContextMenuState};
 pub use dropdown_menu::DropdownMenu;
 pub(crate) use menu_item::MenuItemElement;
 pub use popup_menu::{PopupMenu, PopupMenuItem};
+pub use section_style::{
+    MenuSectionAlign, MenuSectionHook, MenuSectionStyle, MenuSectionStyles, ResolvedMenuSection,
+    resolve_menu_section, set_menu_section_hook,
+};
 
 pub(crate) fn init(cx: &mut App) {
     app_menu_bar::init(cx);

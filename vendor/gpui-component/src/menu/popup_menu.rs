@@ -338,6 +338,9 @@ pub struct PopupMenu {
     /// content mask, so the items container's `overflow_y_scroll` clip never
     /// reaches it, while the scroll offset is still baked into its anchor.
     priority: usize,
+    /// Section label style for this menu (GUIraffe patch); falls back to the
+    /// scoped hook, the per-theme global and theme defaults.
+    section_style: Option<super::MenuSectionStyle>,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -365,6 +368,7 @@ impl PopupMenu {
             size: Size::default(),
             submenu_anchor: (Anchor::TopLeft, Pixels::ZERO),
             priority: gpui_base::POPUP_PRIORITY,
+            section_style: None,
             _subscriptions: vec![],
         }
     }
@@ -374,7 +378,24 @@ impl PopupMenu {
         cx: &mut App,
         f: impl FnOnce(Self, &mut Window, &mut Context<PopupMenu>) -> Self,
     ) -> Entity<Self> {
-        cx.new(|cx| f(Self::new(cx), window, cx))
+        // Capture the scoped section style where the menu is built: a menu
+        // renders in a deferred layer, outside its trigger's style scope.
+        let scoped = super::section_style::scoped(cx);
+        cx.new(|cx| {
+            let mut menu = Self::new(cx);
+            menu.section_style = scoped;
+            f(menu, window, cx)
+        })
+    }
+
+    /// Override how this menu's section labels look. Unset fields fall back
+    /// to the scoped style, the per-theme global and theme defaults.
+    pub fn section_style(mut self, style: super::MenuSectionStyle) -> Self {
+        self.section_style = Some(match self.section_style.take() {
+            Some(base) => style.or(&base),
+            None => style,
+        });
+        self
     }
 
     /// Set the focus handle of Entity to handle actions.
@@ -733,9 +754,14 @@ impl PopupMenu {
         let submenu = PopupMenu::build(window, cx, f);
         let parent_menu = cx.entity().downgrade();
         let parent_priority = self.priority;
+        let parent_section = self.section_style.clone();
         submenu.update(cx, |view, _| {
             view.parent_menu = Some(parent_menu);
             view.priority = parent_priority + 1;
+            view.section_style = match (view.section_style.take(), parent_section) {
+                (Some(own), Some(parent)) => Some(own.or(&parent)),
+                (own, parent) => own.or(parent),
+            };
         });
 
         self.menu_items.push(
@@ -1380,14 +1406,32 @@ impl PopupMenu {
                 .border_b(px(2.))
                 .border_color(cx.theme().border)
                 .disabled(true),
-            PopupMenuItem::Label(label) => this.disabled(true).cursor_default().child(
-                h_flex()
+            PopupMenuItem::Label(label) => {
+                let section = super::resolve_menu_section(self.section_style.as_ref(), cx);
+                this.disabled(true)
                     .cursor_default()
-                    .items_center()
-                    .gap_x_1()
-                    .children(Self::render_icon(has_left_icon, false, None, window, cx))
-                    .child(div().flex_1().child(label.clone())),
-            ),
+                    .p_0()
+                    .mx_neg_1()
+                    .my_0p5()
+                    .rounded_none()
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .cursor_default()
+                            .px(INNER_PADDING)
+                            .py(section.padding_y)
+                            .bg(section.background)
+                            .text_color(section.color)
+                            .font_family(section.font_family)
+                            .text_xs()
+                            .map(|this| match section.align {
+                                super::MenuSectionAlign::Start => this.justify_start(),
+                                super::MenuSectionAlign::Center => this.justify_center(),
+                                super::MenuSectionAlign::End => this.justify_end(),
+                            })
+                            .child(label.clone()),
+                    )
+            }
             PopupMenuItem::ElementItem {
                 render,
                 icon,
