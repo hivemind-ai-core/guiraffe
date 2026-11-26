@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+guiraffe-geometry = { workspace = true, features = ["serde"] }
 imbl = { version = "7.0", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true

@@ -1,5 +1,5 @@
 //! Serializable document. Validate untrusted/deserialized documents before use.
-use crate::{Point, Rect};
+use crate::{AxisLock, Point, Rect, StrokeStyle};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, OnceLock};
@@ -248,6 +248,9 @@ pub struct Node {
     pub selected: bool,
     pub draggable: bool,
     pub handles: Handles,
+    /// Axis lock for moves of this node; `None` uses the graph's [`Graph::axis_lock`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub axis_lock: Option<AxisLock>,
 }
 impl Node {
     pub fn new(id: NodeId, label: impl Into<String>, pos: Point) -> Self {
@@ -261,6 +264,7 @@ impl Node {
             selected: false,
             draggable: true,
             handles: Handles::defaults(),
+            axis_lock: None,
         }
     }
     /// Coordinates are absolute world coordinates, including for children.
@@ -314,6 +318,10 @@ pub struct Edge {
     pub animated: bool,
     pub marker_start: Marker,
     pub marker_end: Marker,
+    /// Line pattern (moving along the edge when [`Edge::animated`]); `None` uses the graph's
+    /// [`Graph::edge_stroke`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<StrokeStyle>,
 }
 impl Edge {
     pub fn new(id: EdgeId, source: NodeId, target: NodeId) -> Self {
@@ -326,6 +334,7 @@ impl Edge {
             animated: false,
             marker_start: Marker::None,
             marker_end: Marker::ArrowClosed,
+            stroke: None,
         }
     }
 }
@@ -336,6 +345,25 @@ pub struct Graph {
     /// High-water mark; never rewound by undo, serialized even after edge deletion.
     #[serde(default)]
     pub edge_id_high_water: EdgeId,
+    /// Default axis lock for node moves (a node's own [`Node::axis_lock`] wins).
+    #[serde(default)]
+    pub axis_lock: AxisLock,
+    /// Default line pattern for edges (an edge's own [`Edge::stroke`] wins).
+    #[serde(default)]
+    pub edge_stroke: StrokeStyle,
+}
+impl Graph {
+    /// The axis lock that applies to moving `node`.
+    pub fn axis_lock_of(&self, node: NodeId) -> AxisLock {
+        self.nodes
+            .get(&node)
+            .and_then(|n| n.axis_lock)
+            .unwrap_or(self.axis_lock)
+    }
+    /// The line pattern `edge` is painted with.
+    pub fn stroke_of(&self, edge: &Edge) -> StrokeStyle {
+        edge.stroke.unwrap_or(self.edge_stroke)
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlowError {

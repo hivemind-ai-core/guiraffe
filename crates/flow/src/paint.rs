@@ -3,7 +3,8 @@ use crate::{Background, Gesture, Interaction};
 use gpui_kit::{Bounds, Path, PathBuilder, PathVertex, Pixels, Window, fill, point, px};
 use guiraffe_core::{GuiraffeTheme, Rgb, Surfaces};
 use guiraffe_flow_core::{
-    EdgeId, EdgePath, Marker, Node, Point as WorldPoint, Rect, Scene, Viewport, Visible,
+    EdgeId, EdgePath, Marker, Node, Point as WorldPoint, Rect, Scene, StrokeStyle, Viewport,
+    Visible,
 };
 use std::{
     borrow::Cow,
@@ -28,8 +29,8 @@ struct EdgeMesh {
     vertices: Box<[EdgeVertex]>,
 }
 impl EdgeMesh {
-    fn new(route: &EdgePath) -> Option<Self> {
-        mesh(route).map(Self::from_path)
+    fn new(route: &EdgePath, style: StrokeStyle) -> Option<Self> {
+        mesh(route, style, 0.).map(Self::from_path)
     }
 
     fn from_path(path: Path<Pixels>) -> Self {
@@ -60,6 +61,7 @@ type MeshKey = (EdgeId, i8);
 
 struct DeferredMesh {
     route: Arc<EdgePath>,
+    style: StrokeStyle,
     mesh: Option<EdgeMesh>,
     bytes: usize,
     touched: u64,
@@ -81,8 +83,21 @@ impl DeferredMeshCache {
         }
     }
 
-    fn get(&mut self, scene: &Scene, id: EdgeId, zoom: f32, area: Rect) -> Option<&DeferredMesh> {
+    fn get(
+        &mut self,
+        scene: &Scene,
+        id: EdgeId,
+        zoom: f32,
+        area: Rect,
+        style: StrokeStyle,
+    ) -> Option<&DeferredMesh> {
         let key = (id, (zoom.log2() * 2.).floor() as i8);
+        if self.entries.get(&key).is_some_and(|e| e.style != style)
+            && let Some(stale) = self.entries.remove(&key)
+        {
+            self.recency.remove(&(stale.touched, key));
+            self.bytes -= stale.bytes;
+        }
         if self.entries.contains_key(&key) {
             let existing = self.entries.get_mut(&key)?;
             if !existing.route.bounds.intersects(area) {
@@ -100,7 +115,7 @@ impl DeferredMeshCache {
         if !route.bounds.intersects(area) {
             return None;
         }
-        let mesh = mesh_at_zoom(&route, key.1).map(EdgeMesh::from_path);
+        let mesh = mesh_at_zoom(&route, key.1, style).map(EdgeMesh::from_path);
         let bytes = route.points.capacity() * std::mem::size_of::<WorldPoint>()
             + mesh.as_ref().map_or(0, EdgeMesh::bytes);
         while self.entries.len() >= DEFERRED_MESH_ENTRIES
@@ -116,6 +131,7 @@ impl DeferredMeshCache {
             key,
             DeferredMesh {
                 route,
+                style,
                 mesh,
                 bytes,
                 touched: self.frame,
@@ -127,7 +143,7 @@ impl DeferredMeshCache {
 
 #[derive(Default)]
 pub(crate) struct MeshCache {
-    entries: BTreeMap<EdgeId, (Arc<EdgePath>, EdgeMesh)>,
+    entries: BTreeMap<EdgeId, (Arc<EdgePath>, StrokeStyle, EdgeMesh)>,
     deferred: DeferredMeshCache,
     deferred_scene: Weak<Scene>,
     pub edge_buffer: Vec<EdgeId>,
@@ -159,7 +175,16 @@ impl MeshCache {
                 self.deferred_scene = current;
             }
             self.deferred.begin_frame();
-            edges.retain(|id| self.deferred.get(scene, *id, viewport.zoom, area).is_some());
+            let graph = scene.graph();
+            edges.retain(|id| {
+                let style = graph
+                    .edges
+                    .get(id)
+                    .map_or(StrokeStyle::Solid, |edge| graph.stroke_of(edge));
+                self.deferred
+                    .get(scene, *id, viewport.zoom, area, style)
+                    .is_some()
+            });
         }
     }
 
@@ -177,17 +202,17 @@ impl MeshCache {
         if scene.has_deferred_edges() {
             self.deferred = DeferredMeshCache::default();
         }
-        self.entries.retain(|id, (route, _)| {
+        self.entries.retain(|id, (route, _, _)| {
             scene
                 .paths()
                 .get(id)
                 .is_some_and(|next| Arc::ptr_eq(route, next))
         });
-        self.mesh_bytes = self.entries.values().map(|(_, path)| path.bytes()).sum();
+        self.mesh_bytes = self.entries.values().map(|(_, _, path)| path.bytes()).sum();
     }
     fn begin_edges(&mut self, viewport: (Viewport, gpui_kit::Size<Pixels>), visible: &[EdgeId]) {
         if self.admission_limited && self.last_mesh_viewport != Some(viewport) {
-            self.entries.retain(|id, (_, path)| {
+            self.entries.retain(|id, (_, _, path)| {
                 if visible.binary_search(id).is_ok() {
                     return true;
                 }
@@ -198,14 +223,19 @@ impl MeshCache {
         }
         self.last_mesh_viewport = Some(viewport);
     }
-    fn get(&mut self, id: EdgeId, route: &Arc<EdgePath>) -> Option<Cow<'_, EdgeMesh>> {
+    fn get(
+        &mut self,
+        id: EdgeId,
+        route: &Arc<EdgePath>,
+        style: StrokeStyle,
+    ) -> Option<Cow<'_, EdgeMesh>> {
         if self
             .entries
             .get(&id)
-            .is_none_or(|(old, _)| !Arc::ptr_eq(old, route))
+            .is_none_or(|(old, old_style, _)| !Arc::ptr_eq(old, route) || *old_style != style)
         {
-            let path = EdgeMesh::new(route)?;
-            if let Some((_, old)) = self.entries.remove(&id) {
+            let path = EdgeMesh::new(route, style)?;
+            if let Some((_, _, old)) = self.entries.remove(&id) {
                 self.mesh_bytes -= old.bytes();
             }
             self.misses += 1;
@@ -217,9 +247,11 @@ impl MeshCache {
                 return Some(Cow::Owned(path));
             }
             self.mesh_bytes += bytes;
-            self.entries.insert(id, (route.clone(), path));
+            self.entries.insert(id, (route.clone(), style, path));
         }
-        self.entries.get(&id).map(|(_, path)| Cow::Borrowed(path))
+        self.entries
+            .get(&id)
+            .map(|(_, _, path)| Cow::Borrowed(path))
     }
 }
 #[derive(Default)]
@@ -325,11 +357,13 @@ fn minimap_mesh<'a>(
     path
 }
 
-fn mesh(route: &EdgePath) -> Option<Path<Pixels>> {
-    stroke(route.points.iter().copied())
+/// The edge's mesh in world space. A dash pattern is laid out in world units, so it scales
+/// with the zoom like the line; `offset` moves it along the edge (animation).
+fn mesh(route: &EdgePath, style: StrokeStyle, offset: f32) -> Option<Path<Pixels>> {
+    stroke(route.points.iter().copied(), style, offset)
 }
 
-fn mesh_at_zoom(route: &EdgePath, bucket: i8) -> Option<Path<Pixels>> {
+fn mesh_at_zoom(route: &EdgePath, bucket: i8, style: StrokeStyle) -> Option<Path<Pixels>> {
     // At every scale in this half-octave band the simplified centreline
     // stays within an eighth of a pixel of the exact route. Picking, labels
     // and arrowheads continue to use the exact points.
@@ -337,7 +371,7 @@ fn mesh_at_zoom(route: &EdgePath, bucket: i8) -> Option<Path<Pixels>> {
     let points = route.points.as_slice();
     let mut marked = [false; MAX_ROUTE_SAMPLES];
     let Some(keep) = marked.get_mut(..points.len()) else {
-        return mesh(route);
+        return mesh(route, style, 0.);
     };
     let max_zoom = 2_f32.powf((f32::from(bucket) + 1.) * 0.5);
     mark_stroke_samples(points, keep, (0.125 / max_zoom).powi(2));
@@ -346,6 +380,8 @@ fn mesh_at_zoom(route: &EdgePath, bucket: i8) -> Option<Path<Pixels>> {
             .iter()
             .zip(keep)
             .filter_map(|(point, keep)| (*keep).then_some(*point)),
+        style,
+        0.,
     )
 }
 
@@ -391,7 +427,40 @@ fn mark_stroke_samples(points: &[WorldPoint], marked: &mut [bool], error_squared
     }
 }
 
-fn stroke(points: impl IntoIterator<Item = WorldPoint>) -> Option<Path<Pixels>> {
+fn stroke(
+    points: impl IntoIterator<Item = WorldPoint>,
+    style: StrokeStyle,
+    offset: f32,
+) -> Option<Path<Pixels>> {
+    let Some(pattern) = style.pattern(EDGE_STROKE, 1.) else {
+        return solid_stroke(points);
+    };
+    let mut builder = PathBuilder::stroke(px(EDGE_STROKE));
+    let mut any = false;
+    let mut scratch = Vec::new();
+    guiraffe_flow_core::dashes(
+        points.into_iter().map(|p| (p.x, p.y)),
+        pattern,
+        offset,
+        &mut scratch,
+        |dash| {
+            let mut dash = dash.iter();
+            if let Some(&(x, y)) = dash.next() {
+                builder.move_to(point(px(x), px(y)));
+                for &(x, y) in dash {
+                    builder.line_to(point(px(x), px(y)));
+                }
+                any = true;
+            }
+        },
+    );
+    if !any {
+        return None;
+    }
+    builder.build().ok()
+}
+
+fn solid_stroke(points: impl IntoIterator<Item = WorldPoint>) -> Option<Path<Pixels>> {
     let mut points = points.into_iter();
     let mut builder = PathBuilder::stroke(px(EDGE_STROKE));
     builder.move_to(pixel(points.next()?));
@@ -574,22 +643,36 @@ impl Frame {
             };
             let from = self.preview(edge.source.node);
             let to = self.preview(edge.target.node);
-            if from.is_some() || to.is_some() {
-                if let Ok(route) = EdgePath::new(graph, edge, from, to)
-                    && let Some(path) = EdgeMesh::new(&route)
+            let style = graph.stroke_of(edge);
+            // A moving pattern is rebuilt each animation frame; reduced motion (no phase)
+            // keeps it still and cached like any other edge.
+            let moving = match (edge.animated, self.phase, style.pattern(EDGE_STROKE, 1.)) {
+                (true, Some(t), Some((on, off))) => Some(-t * (on + off) * 4.),
+                _ => None,
+            };
+            if from.is_some() || to.is_some() || moving.is_some() {
+                let route = if from.is_some() || to.is_some() {
+                    EdgePath::new(graph, edge, from, to).ok().map(Arc::new)
+                } else {
+                    self.scene.edge_route(*id)
+                };
+                if let Some(route) = route
+                    && let Some(path) =
+                        mesh(&route, style, moving.unwrap_or(0.)).map(EdgeMesh::from_path)
                 {
                     append_transformed(output, &path, self.viewport, bounds.origin);
                 }
             } else if deferred {
-                if let Some(route) = cache
-                    .deferred
-                    .get(&self.scene, *id, self.viewport.zoom, area)
+                if let Some(route) =
+                    cache
+                        .deferred
+                        .get(&self.scene, *id, self.viewport.zoom, area, style)
                     && let Some(path) = &route.mesh
                 {
                     append_transformed(output, path, self.viewport, bounds.origin);
                 }
             } else if let Some(route) = self.scene.paths().get(id)
-                && let Some(path) = cache.get(*id, route)
+                && let Some(path) = cache.get(*id, route, style)
             {
                 append_transformed(output, &path, self.viewport, bounds.origin);
             }
@@ -627,10 +710,13 @@ impl Frame {
                 };
                 std::borrow::Cow::Owned(route)
             } else if deferred {
-                let Some(route) = cache
-                    .deferred
-                    .get(&self.scene, *id, self.viewport.zoom, area)
-                else {
+                let Some(route) = cache.deferred.get(
+                    &self.scene,
+                    *id,
+                    self.viewport.zoom,
+                    area,
+                    graph.stroke_of(edge),
+                ) else {
                     continue;
                 };
                 std::borrow::Cow::Borrowed(route.route.as_ref())
@@ -651,6 +737,11 @@ impl Frame {
             if edge.animated
                 && let Some(t) = self.phase
             {
+                if graph.stroke_of(edge) != StrokeStyle::Solid {
+                    // The pattern itself moves; no bead.
+                    window.request_animation_frame();
+                    continue;
+                }
                 let i = (t * (route.points.len().saturating_sub(1)) as f32) as usize;
                 if let Some(p) = route.points.get(i) {
                     closed.paint(window, self.accent);
@@ -1019,27 +1110,41 @@ mod tests {
         .expect("graph");
         let route = Arc::new(EdgePath::new(&graph, &graph.edges[&1], None, None).expect("route"));
         let mut cache = MeshCache::default();
-        let vertices = cache.get(1, &route).expect("mesh").vertices.len();
+        let vertices = cache
+            .get(1, &route, StrokeStyle::Solid)
+            .expect("mesh")
+            .vertices
+            .len();
         assert!(vertices > 0);
         assert_eq!(cache.misses, 1);
-        cache.get(1, &route).expect("cached");
+        cache.get(1, &route, StrokeStyle::Solid).expect("cached");
         assert_eq!(cache.misses, 1);
         for id in 2..2200 {
-            cache.get(id, &route).expect("mesh");
+            cache.get(id, &route, StrokeStyle::Solid).expect("mesh");
             assert_eq!(cache.entries.len(), id as usize);
         }
         for id in 2200..(MAX_EDGE_MESHES as u64 + 100) {
-            cache.get(id, &route).expect("uncached meshes still paint");
+            cache
+                .get(id, &route, StrokeStyle::Solid)
+                .expect("uncached meshes still paint");
         }
         assert!(cache.admission_limited);
         assert!(cache.entries.len() < MAX_EDGE_MESHES);
         assert!(cache.mesh_bytes <= MAX_EDGE_MESH_BYTES);
         assert!(
-            cache.mesh_bytes + cache.get(1, &route).expect("mesh").bytes() > MAX_EDGE_MESH_BYTES
+            cache.mesh_bytes
+                + cache
+                    .get(1, &route, StrokeStyle::Solid)
+                    .expect("mesh")
+                    .bytes()
+                > MAX_EDGE_MESH_BYTES
         );
         cache.begin_edges((Viewport::default(), gpui_kit::Size::default()), &[1]);
         assert_eq!(cache.entries.len(), 1);
-        let retained = cache.get(1, &route).expect("retained").bytes();
+        let retained = cache
+            .get(1, &route, StrokeStyle::Solid)
+            .expect("retained")
+            .bytes();
         assert_eq!(cache.mesh_bytes, retained);
         cache.clear();
         assert_eq!(cache.mesh_bytes, 0);
@@ -1061,7 +1166,7 @@ mod tests {
         let mut cache = MeshCache::default();
 
         for id in 0..=MAX_EDGE_MESHES as EdgeId {
-            cache.get(id, &route).expect("mesh");
+            cache.get(id, &route, StrokeStyle::Solid).expect("mesh");
         }
 
         assert_eq!(cache.entries.len(), MAX_EDGE_MESHES);
@@ -1098,20 +1203,24 @@ mod tests {
         let area = Rect::new(0., 0., 800., 600.);
         for id in 0..3_000 {
             cache.begin_frame();
-            cache.get(&scene, 0, 1.25, area).expect("recurring edge");
-            cache.get(&scene, id, 1., area).expect("new edge");
+            cache
+                .get(&scene, 0, 1.25, area, StrokeStyle::Solid)
+                .expect("recurring edge");
+            cache
+                .get(&scene, id, 1., area, StrokeStyle::Solid)
+                .expect("new edge");
             assert!(cache.entries.len() <= DEFERRED_MESH_ENTRIES);
             assert!(cache.bytes <= DEFERRED_MESH_BYTES);
         }
         assert!(cache.entries.contains_key(&(0, 0)));
         assert!(!cache.entries.contains_key(&(1, 0)));
         let shared = cache
-            .get(&scene, 0, 1., area)
+            .get(&scene, 0, 1., area, StrokeStyle::Solid)
             .expect("base zoom")
             .route
             .clone();
         let bucket = cache
-            .get(&scene, 0, 2., area)
+            .get(&scene, 0, 2., area, StrokeStyle::Solid)
             .expect("next bucket")
             .route
             .clone();
@@ -1175,7 +1284,7 @@ mod tests {
             cache.begin_edges((viewport, size), &visible);
             let misses_before = cache.misses;
             for id in visible {
-                cache.get(id, &route).expect("mesh");
+                cache.get(id, &route, StrokeStyle::Solid).expect("mesh");
             }
             if frame % 15 >= 2 {
                 assert_eq!(cache.misses, misses_before);
@@ -1196,7 +1305,7 @@ mod tests {
         )
         .expect("graph");
         let route = Arc::new(EdgePath::new(&graph, &graph.edges[&1], None, None).expect("route"));
-        let cached = mesh(&route).expect("mesh");
+        let cached = mesh(&route, StrokeStyle::Solid, 0.).expect("mesh");
         let viewport = Viewport {
             pan: WorldPoint::new(-150., 200.),
             zoom: 2.,
@@ -1411,11 +1520,11 @@ mod tests {
             Arc::new(EdgePath::new(&graph, &Edge::new(1, 1, 2), None, None).expect("route"));
         let mut cache = MeshCache::default();
         for id in 0..3000 {
-            cache.get(id, &route).expect("mesh");
+            cache.get(id, &route, StrokeStyle::Solid).expect("mesh");
         }
         cache.misses = 0;
         for id in 0..3000 {
-            cache.get(id, &route).expect("mesh");
+            cache.get(id, &route, StrokeStyle::Solid).expect("mesh");
         }
         assert_eq!(cache.misses, 0);
     }
@@ -1644,7 +1753,7 @@ mod tests {
         )
         .expect("graph");
         let route = EdgePath::new(&graph, &Edge::new(1, 1, 2), None, None).expect("route");
-        let source = mesh(&route).expect("mesh");
+        let source = mesh(&route, StrokeStyle::Solid, 0.).expect("mesh");
         let viewport = Viewport {
             pan: WorldPoint::new(-100., 50.),
             zoom: 1.5,

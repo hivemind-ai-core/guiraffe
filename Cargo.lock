@@ -3566,6 +3566,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
  "gpui-kit",
+ "guiraffe-geometry",
  "imbl",
  "serde_json",
  "smallvec",
@@ -3634,6 +3635,7 @@ dependencies = [
 name = "guiraffe-flow-core"
 version = "0.1.0"
 dependencies = [
+ "guiraffe-geometry",
  "imbl",
  "proptest",
  "serde",
@@ -3658,6 +3660,13 @@ dependencies = [
  "guiraffe-state",
  "guiraffe-test",
  "guiraffe-windows",
+]
+
+[[package]]
+name = "guiraffe-geometry"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

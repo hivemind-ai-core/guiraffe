@@ -1,7 +1,7 @@
 //! Atomic edits and bounded, structurally shared document history.
 use crate::{
-    ConnectionPolicy, ConnectionValidator, Edge, EdgeId, Endpoint, FlowError, Graph, Node, NodeId,
-    Point, Rect, Scene,
+    AxisLock, ConnectionPolicy, ConnectionValidator, Edge, EdgeId, Endpoint, FlowError, Graph,
+    Node, NodeId, Point, Rect, Scene,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -496,7 +496,24 @@ impl Editor {
             if inherited {
                 continue;
             }
-            let destination = grid.map_or(*pos, |g| pos.snap(g));
+            // The node's axis lock holds for every caller (pointer, bus, host); the grid snaps
+            // only the axes it may move along.
+            let locked = lock_point(self.graph().axis_lock_of(*id), n.pos, *pos);
+            let destination = grid.map_or(locked, |g| {
+                let snapped = locked.snap(g);
+                Point::new(
+                    if locked.x == n.pos.x {
+                        n.pos.x
+                    } else {
+                        snapped.x
+                    },
+                    if locked.y == n.pos.y {
+                        n.pos.y
+                    } else {
+                        snapped.y
+                    },
+                )
+            });
             let delta = destination - n.pos;
             result.insert(*id, destination);
             let mut stack = self.scene.children(*id).to_vec();
@@ -559,4 +576,20 @@ impl Editor {
         }
         self.commit(graph, false)
     }
+}
+
+fn geo(p: Point) -> guiraffe_geometry::Point {
+    guiraffe_geometry::Point::new(p.x, p.y)
+}
+
+/// [`guiraffe_geometry::apply`] on this crate's points.
+pub fn lock_point(lock: AxisLock, from: Point, to: Point) -> Point {
+    let p = guiraffe_geometry::apply(lock, geo(from), geo(to));
+    Point::new(p.x, p.y)
+}
+
+/// The lock for a drag of `delta`: `lock`, or the dominant-axis lock when unlocked and the
+/// modifier is held.
+pub fn drag_lock(lock: AxisLock, modifier: bool, delta: Point) -> AxisLock {
+    lock.with_modifier(modifier, geo(Point::default()), geo(delta))
 }
