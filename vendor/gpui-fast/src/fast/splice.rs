@@ -136,15 +136,15 @@ impl Window {
 /// way its element would be inside the view around it.
 pub(crate) struct Gap {
     /// Its record in the last frame.
-    record: usize,
-    global_id: GlobalElementId,
-    view: ViewElement<AnyView>,
-    layout: ViewLayoutState,
+    pub(crate) record: usize,
+    pub(crate) global_id: GlobalElementId,
+    pub(crate) view: ViewElement<AnyView>,
+    pub(crate) layout: ViewLayoutState,
     layout_id: LayoutId,
     /// Where a cached view nested in a cached view is drawn: it is laid out on
     /// its own, at the bounds it had, not at a node of the view around it.
-    bounds: Option<Bounds<Pixels>>,
-    layout_key: u64,
+    pub(crate) bounds: Option<Bounds<Pixels>>,
+    pub(crate) layout_key: u64,
     /// The layout nodes it claimed.
     claimed: Vec<u64>,
     /// The element states it used and what it read while its layout was
@@ -157,7 +157,7 @@ pub(crate) struct Gap {
 }
 
 impl Gap {
-    fn element_id(&self) -> ElementId {
+    pub(crate) fn element_id(&self) -> ElementId {
         self.global_id
             .ids
             .last()
@@ -264,7 +264,7 @@ impl SplicedPrepaint {
 
 /// What the window inherits at some point of the element tree, set aside while
 /// a nested view is built where it was.
-struct Inherited {
+pub(crate) struct Inherited {
     element_id_stack: crate::window::ElementIdStack,
     text_style_stack: TextStyleStack,
     content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -278,7 +278,7 @@ struct Inherited {
 impl Window {
     /// Puts the window where the view with id `id` was drawn last frame,
     /// returning what to put back with [`Window::leave_gap`].
-    fn enter_gap(
+    pub(crate) fn enter_gap(
         &mut self,
         id: &GlobalElementId,
         rebuild: &Rebuild,
@@ -312,7 +312,7 @@ impl Window {
         }
     }
 
-    fn leave_gap(&mut self, inherited: Inherited) {
+    pub(crate) fn leave_gap(&mut self, inherited: Inherited) {
         self.element_id_stack = inherited.element_id_stack;
         self.text_style_stack = inherited.text_style_stack;
         self.content_mask_stack = inherited.content_mask_stack;
@@ -594,7 +594,7 @@ impl Window {
 
     /// The cached view last frame's record `record` stands for, to be built
     /// again where it was, at the bounds it had.
-    fn cached_gap(&mut self, record: usize, cx: &mut App) -> Option<Gap> {
+    pub(crate) fn cached_gap(&mut self, record: usize, cx: &mut App) -> Option<Gap> {
         let nested = &self.rendered_frame.retained.records[record];
         let rebuild = nested.rebuild.clone()?;
         let previous_layout = nested.layout.clone();

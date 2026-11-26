@@ -58,9 +58,11 @@ fn sort_by_draw_order<T: Clone>(
     items: &mut Vec<T>,
     permutation: &mut Permutation,
     gathered: &mut Vec<T>,
+    slots: &mut Vec<u32>,
     draw_order: impl Fn(&T) -> DrawOrder,
 ) {
     if items.len() < 2 {
+        identity_slots(slots, items.len());
         return;
     }
     let mut max = 0;
@@ -73,6 +75,7 @@ fn sort_by_draw_order<T: Clone>(
         max = max.max(order);
     }
     if sorted {
+        identity_slots(slots, items.len());
         return;
     }
     let Permutation {
@@ -112,6 +115,7 @@ fn sort_by_draw_order<T: Clone>(
             *next += 1;
         }
     }
+    inverse_slots(slots, order);
     gather(items, order, gathered);
 }
 
@@ -127,9 +131,11 @@ fn sort_sprites<T: Clone>(
     items: &mut Vec<T>,
     permutation: &mut Permutation,
     gathered: &mut Vec<T>,
+    slots: &mut Vec<u32>,
     key: impl Fn(&T) -> (DrawOrder, u32, u32),
 ) {
     if items.len() < 2 {
+        identity_slots(slots, items.len());
         return;
     }
     let Permutation {
@@ -144,12 +150,118 @@ fn sort_sprites<T: Clone>(
             | index as u128
     }));
     if wide_keys.is_sorted() {
+        identity_slots(slots, items.len());
         return;
     }
     wide_keys.sort_unstable();
     order.clear();
     order.extend(wide_keys.iter().map(|&key| key as u32));
+    inverse_slots(slots, order);
     gather(items, order, gathered);
+}
+
+/// Where each of `len` primitives left in the order they came in lies.
+fn identity_slots(slots: &mut Vec<u32>, len: usize) {
+    slots.clear();
+    slots.extend(0..len as u32);
+}
+
+/// Where each primitive lies once the one at `order[i]` is put at place `i`.
+fn inverse_slots(slots: &mut Vec<u32>, order: &[u32]) {
+    slots.clear();
+    slots.resize(order.len(), 0);
+    for (place, &index) in order.iter().enumerate() {
+        slots[index as usize] = place as u32;
+    }
+}
+
+/// Where each primitive of a finished scene lies in its kind's list, for a
+/// patched frame to overwrite one where it lies (see [`crate::fast::patch`]).
+#[derive(Default)]
+pub(crate) struct SceneSlots {
+    /// For each kind of primitive, in the order of [`Scene::insert_primitive`]'s
+    /// kinds, where the primitive inserted `i`th went.
+    kinds: [Vec<u32>; 8],
+    /// For each paint operation, where its primitive lies in its kind's list,
+    /// worked out when a patch first needs it. `u32::MAX` for operations that
+    /// are not primitives.
+    operations: Vec<u32>,
+    /// For each paint operation, which insertion into the scene's bounds
+    /// tree it made: a layer, or a primitive outside any layer, which takes
+    /// its draw order from the tree. `u32::MAX` for the others: a primitive
+    /// in a layer takes the layer's.
+    insertions: Vec<u32>,
+    /// Whether `kinds` stands for the scene: it was put in order by
+    /// [`sort_in_drawing_order`], without rounded clip groups that rewrite it.
+    valid: bool,
+}
+
+impl SceneSlots {
+    pub(crate) fn clear(&mut self) {
+        self.valid = false;
+        self.operations.clear();
+        self.insertions.clear();
+    }
+
+    /// Where the primitive of each paint operation lies in its kind's list,
+    /// and which insertion into the bounds tree it made (see
+    /// [`SceneSlots::insertions`]), or `None` if the scene was not put in
+    /// order in a way that tells.
+    pub(crate) fn operations(scene: &mut Scene) -> Option<(&[u32], &[u32])> {
+        let slots = &mut scene.fast_slots;
+        if !slots.valid {
+            return None;
+        }
+        if slots.operations.len() != scene.paint_operations.len() {
+            let mut counts = [0usize; 8];
+            let (mut inserted, mut depth) = (0u32, 0usize);
+            slots.operations.clear();
+            slots.insertions.clear();
+            for operation in &scene.paint_operations {
+                let (slot, insertion) = match operation {
+                    crate::PaintOperation::Primitive(primitive) => {
+                        let kind = primitive_kind(primitive);
+                        let slot = slots.kinds[kind].get(counts[kind]).copied();
+                        counts[kind] += 1;
+                        let insertion = if depth == 0 {
+                            inserted += 1;
+                            inserted - 1
+                        } else {
+                            u32::MAX
+                        };
+                        (slot?, insertion)
+                    }
+                    crate::PaintOperation::StartLayer(_) => {
+                        depth += 1;
+                        inserted += 1;
+                        (u32::MAX, inserted - 1)
+                    }
+                    crate::PaintOperation::EndLayer => {
+                        depth = depth.saturating_sub(1);
+                        (u32::MAX, u32::MAX)
+                    }
+                    crate::PaintOperation::FastRoundedClip(_) => (u32::MAX, u32::MAX),
+                };
+                slots.operations.push(slot);
+                slots.insertions.push(insertion);
+            }
+        }
+        Some((&slots.operations, &slots.insertions))
+    }
+}
+
+/// The index of `primitive`'s kind among [`SceneSlots::kinds`].
+pub(crate) fn primitive_kind(primitive: &crate::Primitive) -> usize {
+    match primitive {
+        crate::Primitive::Shadow(_) => 0,
+        crate::Primitive::Quad(_) => 1,
+        crate::Primitive::Path(_) => 2,
+        crate::Primitive::Underline(_) => 3,
+        crate::Primitive::MonochromeSprite(_) => 4,
+        crate::Primitive::SubpixelSprite(_) => 5,
+        crate::Primitive::PolychromeSprite(_) => 6,
+        crate::Primitive::Surface(_) => 7,
+    }
 }
 
 /// Puts the item at `order[i]` at place `i`.
@@ -175,7 +287,7 @@ impl Scene {
     /// scenes can be compared by: each primitive with its bounds, clip, colours
     /// and ordering, and each layer's bounds. Atlas tiles are left out, since
     /// two windows need not place the same glyph in the same tile.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn describe(&self) -> Vec<String> {
         let mut lines = Vec::new();
         for operation in &self.paint_operations {
@@ -230,24 +342,34 @@ impl Scene {
 /// numbers from zero, would interleave them.
 #[inline]
 pub(crate) fn sort_in_drawing_order(scene: &mut Scene) {
+    let clip_scopes = !scene.fast_rounded_clip.scopes.is_empty();
     crate::fast::rounded_clip_scene::compile(scene);
     let scratch = &mut scene.sort_scratch;
+    let slots = &mut scene.fast_slots;
+    slots.operations.clear();
+    slots.insertions.clear();
+    // Rounded clip groups rewrite the scene into nested ones; its primitives
+    // are then not where its paint operations say.
+    slots.valid = !clip_scopes;
+    let kinds = &mut slots.kinds;
     macro_rules! sort {
-        ($field:ident, $order:expr) => {
+        ($field:ident, $kind:expr, $order:expr) => {
             sort_by_draw_order(
                 &mut scene.$field,
                 &mut scratch.permutation,
                 &mut scratch.$field,
+                &mut kinds[$kind],
                 $order,
             )
         };
     }
     macro_rules! sort_sprites {
-        ($field:ident) => {
+        ($field:ident, $kind:expr) => {
             sort_sprites(
                 &mut scene.$field,
                 &mut scratch.permutation,
                 &mut scratch.$field,
+                &mut kinds[$kind],
                 |sprite| {
                     (
                         sprite.order,
@@ -258,14 +380,14 @@ pub(crate) fn sort_in_drawing_order(scene: &mut Scene) {
             )
         };
     }
-    sort!(shadows, |shadow: &Shadow| shadow.order);
-    sort!(quads, |quad: &Quad| quad.order);
-    sort!(paths, |path: &Path<ScaledPixels>| path.order);
-    sort!(underlines, |underline: &Underline| underline.order);
-    sort_sprites!(monochrome_sprites);
-    sort_sprites!(subpixel_sprites);
-    sort_sprites!(polychrome_sprites);
-    sort!(surfaces, |surface: &PaintSurface| surface.order);
+    sort!(shadows, 0, |shadow: &Shadow| shadow.order);
+    sort!(quads, 1, |quad: &Quad| quad.order);
+    sort!(paths, 2, |path: &Path<ScaledPixels>| path.order);
+    sort!(underlines, 3, |underline: &Underline| underline.order);
+    sort_sprites!(monochrome_sprites, 4);
+    sort_sprites!(subpixel_sprites, 5);
+    sort_sprites!(polychrome_sprites, 6);
+    sort!(surfaces, 7, |surface: &PaintSurface| surface.order);
 }
 
 #[cfg(test)]
@@ -329,9 +451,13 @@ mod tests {
             let mut expected = case.clone();
             expected.sort_by_key(|item| item.order);
             let mut sorted = case.clone();
-            sort_by_draw_order(&mut sorted, &mut permutation, &mut gathered, |item| {
-                item.order
-            });
+            sort_by_draw_order(
+                &mut sorted,
+                &mut permutation,
+                &mut gathered,
+                &mut Vec::new(),
+                |item| item.order,
+            );
             assert_eq!(sorted, expected, "sorting {case:?}");
         }
     }
@@ -345,9 +471,13 @@ mod tests {
             let mut permutation = Permutation::default();
             let in_order = case.is_sorted_by_key(|item| item.order);
             let greatest = case.iter().map(|item| item.order).max().unwrap_or(0) as usize;
-            sort_by_draw_order(&mut case, &mut permutation, &mut gathered, |item| {
-                item.order
-            });
+            sort_by_draw_order(
+                &mut case,
+                &mut permutation,
+                &mut gathered,
+                &mut Vec::new(),
+                |item| item.order,
+            );
             let (counts, keys) = (permutation.counts.len(), permutation.keys.len());
             if in_order {
                 assert_eq!((counts, keys), (0, 0), "sorting what is in order");
@@ -377,16 +507,24 @@ mod tests {
         };
         let widest = (2 * MAX_ORDERS_PER_PRIMITIVE) as DrawOrder;
         let mut sorted = vec![item(widest, 0), item(0, 1)];
-        sort_by_draw_order(&mut sorted, &mut permutation, &mut gathered, |item| {
-            item.order
-        });
+        sort_by_draw_order(
+            &mut sorted,
+            &mut permutation,
+            &mut gathered,
+            &mut Vec::new(),
+            |item| item.order,
+        );
         assert_eq!(sorted, [item(0, 1), item(widest, 0)]);
         assert_eq!(permutation.counts.len(), widest as usize + 1);
 
         let mut sorted = vec![item(widest + 1, 0), item(0, 1)];
-        sort_by_draw_order(&mut sorted, &mut permutation, &mut gathered, |item| {
-            item.order
-        });
+        sort_by_draw_order(
+            &mut sorted,
+            &mut permutation,
+            &mut gathered,
+            &mut Vec::new(),
+            |item| item.order,
+        );
         assert_eq!(sorted, [item(0, 1), item(widest + 1, 0)]);
         assert_eq!(permutation.keys.len(), 2);
     }
@@ -400,13 +538,21 @@ mod tests {
             let mut expected = case.clone();
             expected.sort_by_key(|item| (item.order, item.texture, item.tile));
             let mut sorted = case.clone();
-            sort_sprites(&mut sorted, &mut permutation, &mut gathered, |item| {
-                (item.order, item.texture, item.tile)
-            });
+            sort_sprites(
+                &mut sorted,
+                &mut permutation,
+                &mut gathered,
+                &mut Vec::new(),
+                |item| (item.order, item.texture, item.tile),
+            );
             assert_eq!(sorted, expected, "sorting {case:?}");
-            sort_sprites(&mut sorted, &mut permutation, &mut gathered, |item| {
-                (item.order, item.texture, item.tile)
-            });
+            sort_sprites(
+                &mut sorted,
+                &mut permutation,
+                &mut gathered,
+                &mut Vec::new(),
+                |item| (item.order, item.texture, item.tile),
+            );
             assert_eq!(sorted, expected, "sorting {case:?} again");
         }
     }
@@ -427,9 +573,13 @@ mod tests {
             item(0, 0, u32::MAX, 2),
             item(0, 0, 0, 3),
         ];
-        sort_sprites(&mut sorted, &mut permutation, &mut gathered, |item| {
-            (item.order, item.texture, item.tile)
-        });
+        sort_sprites(
+            &mut sorted,
+            &mut permutation,
+            &mut gathered,
+            &mut Vec::new(),
+            |item| (item.order, item.texture, item.tile),
+        );
         let painted: Vec<usize> = sorted.iter().map(|item| item.painted).collect();
         assert_eq!(painted, [3, 2, 1, 0]);
     }

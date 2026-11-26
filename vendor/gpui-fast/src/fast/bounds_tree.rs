@@ -63,6 +63,101 @@ where
     /// How many more bounds replaying may compare against, over every search
     /// it makes, before the tree is built instead.
     replay_search_budget: usize,
+    /// `recorded` by the cells each bounds reaches into, for a patched frame
+    /// to find what a moved bounds meets (see [`BoundsTree::patch`]). Built
+    /// when one first asks, and dropped when the tree is cleared.
+    patch_cells: Option<PatchCells>,
+}
+
+/// The side of a [`PatchCells`] cell. Coarser than the grid's: a patch asks
+/// about a few bounds, and the cells are built for every bounds of a frame.
+const PATCH_CELL_SIZE: f64 = 256.;
+
+/// The most cells [`PatchCells`] spans along either axis, and the most a
+/// bounds is listed in before it is kept with those every search meets.
+const PATCH_MAX_CELLS: usize = 4096;
+const PATCH_MAX_CELLS_PER_BOUNDS: usize = 64;
+
+/// Recorded bounds, by index, listed in each cell they reach into. Bounds too
+/// large to list cell by cell, or without area, are met by every search.
+#[derive(Debug, Default)]
+struct PatchCells {
+    columns: usize,
+    rows: usize,
+    cells: Vec<Vec<u32>>,
+    everywhere: Vec<u32>,
+}
+
+impl PatchCells {
+    fn span(start: f64, end: f64, cells: usize) -> (usize, usize) {
+        let at = |coordinate: f64| {
+            ((coordinate / PATCH_CELL_SIZE) as isize).clamp(0, cells as isize - 1) as usize
+        };
+        (at(start), at(end))
+    }
+
+    /// The cells `bounds` reaches into, or `None` if it is met everywhere.
+    fn cells_of<U: Clone + Debug + Default + PartialEq + Add<U, Output = U> + Into<f64>>(
+        &self,
+        bounds: &Bounds<U>,
+    ) -> Option<((usize, usize), (usize, usize))> {
+        let left: f64 = bounds.origin.x.clone().into();
+        let top: f64 = bounds.origin.y.clone().into();
+        let right: f64 = (bounds.origin.x.clone() + bounds.size.width.clone()).into();
+        let bottom: f64 = (bounds.origin.y.clone() + bounds.size.height.clone()).into();
+        if !(right > left && bottom > top) {
+            return None;
+        }
+        let columns = Self::span(left, right, self.columns);
+        let rows = Self::span(top, bottom, self.rows);
+        ((columns.1 - columns.0 + 1) * (rows.1 - rows.0 + 1) <= PATCH_MAX_CELLS_PER_BOUNDS)
+            .then_some((columns, rows))
+    }
+
+    fn add<U: Clone + Debug + Default + PartialEq + Add<U, Output = U> + Into<f64>>(
+        &mut self,
+        index: u32,
+        bounds: &Bounds<U>,
+    ) {
+        match self.cells_of(bounds) {
+            Some(((left, right), (top, bottom))) => {
+                for row in top..=bottom {
+                    for column in left..=right {
+                        let cell = &mut self.cells[row * self.columns + column];
+                        if !cell.contains(&index) {
+                            cell.push(index);
+                        }
+                    }
+                }
+            }
+            None => {
+                if !self.everywhere.contains(&index) {
+                    self.everywhere.push(index);
+                }
+            }
+        }
+    }
+
+    /// Every index listed where `bounds` reaches, with repeats.
+    fn near<U: Clone + Debug + Default + PartialEq + Add<U, Output = U> + Into<f64>>(
+        &self,
+        bounds: &Bounds<U>,
+        into: &mut Vec<u32>,
+    ) {
+        into.extend_from_slice(&self.everywhere);
+        match self.cells_of(bounds) {
+            Some(((left, right), (top, bottom))) => {
+                for row in top..=bottom {
+                    for column in left..=right {
+                        into.extend_from_slice(&self.cells[row * self.columns + column]);
+                    }
+                }
+            }
+            // Bounds met everywhere are never searched for: see
+            // `BoundsTree::patch`.
+            None => {}
+        }
+    }
 }
 
 /// The grid a [`BoundsTree`] keeps its bounds in. Cell `(column, row)`
@@ -436,6 +531,100 @@ where
         self.replaying = true;
         self.changed.clear();
         self.replay_search_budget = REPLAY_SEARCH_BUDGET;
+        self.patch_cells = None;
+    }
+
+    /// For a patched frame (see [`crate::fast::patch`]): moves the bounds
+    /// inserted `index`th since the tree was cleared to `bounds`, if every
+    /// ordering inserting them all again would hand out stays as it is: the
+    /// bounds meets exactly the earlier bounds the ordering it has makes it
+    /// one greater than, and no later bounds meets it now that did not meet
+    /// it before, or the other way around. Returns whether it moved it; if
+    /// not, nothing changed.
+    pub(crate) fn patch(&mut self, index: usize, bounds: Bounds<U>) -> bool {
+        let Some((old, ordering)) = self.recorded.get(index).cloned() else {
+            return false;
+        };
+        if old == bounds {
+            return true;
+        }
+        if self.patch_cells.is_none() {
+            self.build_patch_cells();
+        }
+        let Some(cells) = self.patch_cells.as_ref() else {
+            return false;
+        };
+        // Bounds met everywhere could meet anything: what they meet is not
+        // looked up.
+        if cells.cells_of(&bounds).is_none() || cells.cells_of(&old).is_none() {
+            return false;
+        }
+        let mut near = Vec::new();
+        cells.near(&bounds, &mut near);
+        cells.near(&old, &mut near);
+        near.sort_unstable();
+        near.dedup();
+        let mut greatest_before = 0;
+        for other in near {
+            let other = other as usize;
+            if other == index {
+                continue;
+            }
+            let (other_bounds, other_ordering) = &self.recorded[other];
+            let meets_new = other_bounds.intersects(&bounds);
+            if other < index {
+                if meets_new {
+                    greatest_before = greatest_before.max(*other_ordering);
+                }
+            } else if meets_new != other_bounds.intersects(&old) {
+                return false;
+            }
+        }
+        if greatest_before + 1 != ordering {
+            return false;
+        }
+        self.recorded[index].0 = bounds.clone();
+        if let Some(cells) = self.patch_cells.as_mut() {
+            cells.add(index as u32, &bounds);
+        }
+        true
+    }
+
+    /// Moves the bounds inserted `index`th back to `bounds`, undoing a
+    /// [`Self::patch`] of a patched frame that was drawn in full after all.
+    pub(crate) fn unpatch(&mut self, index: usize, bounds: Bounds<U>) {
+        if let Some(entry) = self.recorded.get_mut(index) {
+            entry.0 = bounds;
+        }
+    }
+
+    fn build_patch_cells(&mut self) {
+        let mut right: f64 = 0.;
+        let mut bottom: f64 = 0.;
+        for (bounds, _) in &self.recorded {
+            let r: f64 = (bounds.origin.x.clone() + bounds.size.width.clone()).into();
+            let b: f64 = (bounds.origin.y.clone() + bounds.size.height.clone()).into();
+            if r.is_finite() {
+                right = right.max(r);
+            }
+            if b.is_finite() {
+                bottom = bottom.max(b);
+            }
+        }
+        let needed = |end: f64| {
+            ((end / PATCH_CELL_SIZE).ceil() as isize).clamp(1, PATCH_MAX_CELLS as isize) as usize
+        };
+        let (columns, rows) = (needed(right), needed(bottom));
+        let mut cells = PatchCells {
+            columns,
+            rows,
+            cells: vec![Vec::new(); columns * rows],
+            everywhere: Vec::new(),
+        };
+        for (index, (bounds, _)) in self.recorded.iter().enumerate() {
+            cells.add(index as u32, bounds);
+        }
+        self.patch_cells = Some(cells);
     }
 
     /// Clears the tree and forgets what was inserted before, so the next fill
@@ -598,6 +787,7 @@ where
             max: None,
             recorded: Vec::new(),
             previous: Vec::new(),
+            patch_cells: None,
             replaying: false,
             changed: ChangedBounds {
                 bounds: Vec::new(),

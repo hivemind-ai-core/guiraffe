@@ -123,6 +123,11 @@ struct PaintedContainer {
 const FORGET_AFTER_FRAMES: u64 = 120;
 
 impl ScrollLog {
+    /// Whether anything scrolled since the last frame.
+    pub(crate) fn any_scrolled(&self) -> bool {
+        !self.scrolled_sources.is_empty()
+    }
+
     /// The scroll containers painted lately.
     #[cfg(test)]
     pub(crate) fn containers(&self) -> impl Iterator<Item = &GlobalElementId> {

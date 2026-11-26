@@ -104,6 +104,11 @@ impl<T: Clone> Clone for LazyVec<T> {
 }
 
 impl<T> LazyVec<T> {
+    /// How many items it holds.
+    pub(crate) fn len(&self) -> usize {
+        self.0.as_ref().map_or(0, |items| items.len())
+    }
+
     pub(crate) fn push(&mut self, item: T) {
         self.0.get_or_insert_with(Default::default).push(item);
     }

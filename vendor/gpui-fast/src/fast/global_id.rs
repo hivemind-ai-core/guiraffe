@@ -22,6 +22,10 @@ pub(crate) fn current(window: &mut crate::Window) -> GlobalElementId {
 pub(crate) struct GlobalIdCache {
     previous: FxHashMap<u64, GlobalElementId>,
     current: FxHashMap<u64, GlobalElementId>,
+    /// What a patched frame hands ids out into, in place of `current`, which
+    /// is as large as a whole frame, so that the patch does not clear it.
+    /// See [`crate::fast::patch`].
+    spare: FxHashMap<u64, GlobalElementId>,
 }
 
 impl GlobalIdCache {
@@ -40,6 +44,25 @@ impl GlobalIdCache {
         };
         self.current.insert(hash, id.clone());
         id
+    }
+
+    /// Begins a patched frame, which hands out ids for the view it builds
+    /// while last frame's stay as they are. See [`crate::fast::patch`].
+    pub(crate) fn begin_patch(&mut self) {
+        mem::swap(&mut self.current, &mut self.spare);
+    }
+
+    /// Ends a patched frame. If it was kept (`patched`), the ids it handed
+    /// out join last frame's, which it patched; otherwise the frame is drawn
+    /// after all and they are this frame's.
+    pub(crate) fn end_patch(&mut self, patched: bool) {
+        mem::swap(&mut self.current, &mut self.spare);
+        let ids = if patched {
+            &mut self.previous
+        } else {
+            &mut self.current
+        };
+        ids.extend(self.spare.drain());
     }
 
     /// Keeps this frame's ids for the next one to find, and forgets the

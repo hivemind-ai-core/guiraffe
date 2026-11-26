@@ -1339,6 +1339,16 @@ pub(crate) fn begin_overlay(window: &mut Window) {
 /// Carries the surface switches last frame made within `range` into the
 /// frame being drawn, as [`Window::reuse_paint`] replays its scene, and
 /// leaves painting on the surface it was on before.
+/// Whether the window composites no native surfaces, so that what `frame`
+/// painted all went to the base and overlay surfaces, and no input of it is
+/// owned by another surface. A frame being drawn that switched surfaces at
+/// all (`drawn`) does not count either.
+pub(crate) fn no_surfaces(window: &Window, frame: &crate::window::Frame, drawn: bool) -> bool {
+    window.fast_composition.0.borrow().platform_surfaces.is_empty()
+        && frame.fast_composition_input.owners.is_empty()
+        && (!drawn || frame.fast_composition_starts.0.is_empty())
+}
+
 pub(crate) fn reuse_starts(window: &mut Window, range: &Range<PaintIndex>) {
     let scenes = range.start.scene_index..range.end.scene_index;
     let starts = &window.rendered_frame.fast_composition_starts.0;
