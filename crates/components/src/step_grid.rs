@@ -863,6 +863,7 @@ impl Render for StepGrid {
             .id("step-grid")
             .track_focus(&self.focus)
             .key_context("StepGrid")
+            .text_color(theme.surfaces().text.to_hsla())
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 if let Some((action, batch)) = this.key(e, cx) {
                     let view = cx.weak_entity();
