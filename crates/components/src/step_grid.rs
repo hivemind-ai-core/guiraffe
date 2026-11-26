@@ -388,6 +388,30 @@ paint_element!(CellsElement, |this, bounds, window| {
     }
 });
 
+/// The bar numbers over the columns: renders only when the column count or grouping changes.
+struct StepRuler {
+    columns: usize,
+    group: usize,
+    step: f32,
+}
+
+impl Render for StepRuler {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dim = GuiraffeTheme::global(cx).surfaces().dimmed.to_hsla();
+        let group = self.group.max(1);
+        div()
+            .relative()
+            .size_full()
+            .text_color(dim)
+            .children((0..self.columns).step_by(group).map(|c| {
+                div()
+                    .absolute()
+                    .left(px(c as f32 * self.step))
+                    .child(SharedString::from((c / group + 1).to_string()))
+            }))
+    }
+}
+
 /// The header column: re-renders only when names, colours, lengths or flags change.
 struct StepHeaders {
     doc: StepDoc,
@@ -490,6 +514,7 @@ pub struct StepGrid {
     headers: Entity<StepHeaders>,
     header_key: u64,
     playhead: Entity<StepPlayhead>,
+    ruler: Entity<StepRuler>,
     feed: StepPlayheadFeed,
     colors: Option<(GuiraffeTheme, CellColors)>,
     inks: Rc<std::cell::RefCell<Vec<Hsla>>>,
@@ -561,12 +586,18 @@ impl StepGrid {
                 column,
                 view: playhead.entity_id(),
             };
+            let ruler = cx.new(|_| StepRuler {
+                columns: first.columns,
+                group: first.group,
+                step: options.cell + options.gap,
+            });
             Self {
                 store,
                 doc,
                 header_key: header_key(&first),
                 headers,
                 playhead,
+                ruler,
                 feed,
                 options,
                 colors: None,
@@ -804,6 +835,13 @@ impl Render for StepGrid {
                 cx.notify();
             });
         }
+        let (columns, group) = (doc.columns, doc.group);
+        self.ruler.update(cx, |r, cx| {
+            if (r.columns, r.group) != (columns, group) {
+                (r.columns, r.group) = (columns, group);
+                cx.notify();
+            }
+        });
         let theme = GuiraffeTheme::global(cx);
         let colors = match &self.colors {
             Some((seen, c)) if seen == theme => *c,
@@ -845,7 +883,6 @@ impl Render for StepGrid {
         let width = doc.columns as f32 * step - o.gap;
         let height = doc.rows().len() as f32 * step - o.gap;
         let ruler_h = 16.0;
-        let dim = theme.surfaces().dimmed.to_hsla();
         let focused = self.focus.is_focused(window);
         let origin = self.cells_origin.clone();
         let cells = CellsElement {
@@ -858,7 +895,6 @@ impl Render for StepGrid {
             preview: self.preview(),
             cursor: focused.then_some(self.cursor),
         };
-        let group = doc.group.max(1);
         div()
             .id("step-grid")
             .track_focus(&self.focus)
@@ -881,18 +917,8 @@ impl Render for StepGrid {
                     .flex()
                     .child(div().w(px(o.header_width)).flex_none())
                     .child(
-                        // The ruler: bar numbers at each group.
-                        div()
-                            .relative()
-                            .w(px(width))
-                            .h(px(ruler_h))
-                            .text_color(dim)
-                            .children((0..doc.columns).step_by(group).map(|c| {
-                                div()
-                                    .absolute()
-                                    .left(px(c as f32 * step))
-                                    .child(SharedString::from((c / group + 1).to_string()))
-                            })),
+                        // The ruler: bar numbers at each group, in its own view.
+                        div().w(px(width)).h(px(ruler_h)).child(self.ruler.clone()),
                     ),
             )
             .child(

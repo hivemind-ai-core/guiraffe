@@ -90,6 +90,13 @@ pub fn entries() -> Vec<Entry> {
         },
         Entry {
             krate: "components",
+            name: "StepGrid",
+            summary: "Step sequencer cells: levels, accents, probability, ratchets, polymeter rows.",
+            covers: &["StepGrid"],
+            demo: step_grid,
+        },
+        Entry {
+            krate: "components",
             name: "RingProgress",
             summary: "Multi-section ring with a center label.",
             covers: &["RingProgress"],
@@ -403,6 +410,47 @@ fn indicator(window: &mut Window, cx: &mut App) -> AnyView {
         window,
         cx,
     )
+}
+
+/// A drum pattern: click to toggle, drag to paint, Alt-drag for level, arrows and Space.
+struct StepDemo(Entity<StepGrid>);
+
+impl gpui_kit::Render for StepDemo {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        column([example(
+            "Click toggles, drag paints, Alt-drag sets the level; Hat repeats every 6 steps",
+            self.0.clone(),
+        )])
+    }
+}
+
+fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
+    use guiraffe_components::step_grid::{StepDoc, step_store};
+    let rows = vec![
+        StepRow::new(1, "Kick", 16)
+            .with_color(ColorName::Red)
+            .with_cell(0, StepCell::on())
+            .with_cell(4, StepCell::on().with_level(0.7))
+            .with_cell(8, StepCell::on().flagged())
+            .with_cell(12, StepCell::on().with_ratchet(2)),
+        StepRow::new(2, "Snare", 16)
+            .with_color(ColorName::Blue)
+            .with_cell(4, StepCell::on())
+            .with_cell(12, StepCell::on())
+            .with_cell(15, StepCell::on().with_probability(0.4)),
+        StepRow::new(3, "Hat", 6)
+            .with_color(ColorName::Yellow)
+            .with_cell(0, StepCell::on().with_level(0.5))
+            .with_cell(2, StepCell::on())
+            .with_cell(4, StepCell::on().with_level(0.3)),
+        StepRow::new(4, "Clap", 16)
+            .with_color(ColorName::Grape)
+            .with_cell(14, StepCell::on().with_ratchet(4)),
+    ];
+    let store = step_store(StepDoc::new(16, 4, rows), 100, cx);
+    let grid = StepGrid::new(store, StepGridOptions::default(), cx);
+    grid.read(cx).playhead().set(Some(6));
+    cx.new(|_| StepDemo(grid)).into()
 }
 
 fn ring(window: &mut Window, cx: &mut App) -> AnyView {
