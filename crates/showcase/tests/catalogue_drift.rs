@@ -809,6 +809,62 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Finishes the active native input gesture.",
     ),
     (
+        "timeline::DopeSheet::with_store",
+        "Store-backed constructor for Rust hosts; documents construct from props.",
+    ),
+    (
+        "timeline::DopeSheet::register",
+        "Registers the sheet on the action bus; a Rust host concern.",
+    ),
+    (
+        "timeline::DopeSheet::control_id",
+        "Bus identity for Rust hosts.",
+    ),
+    (
+        "timeline::DopeSheet::store",
+        "Store state for Rust hosts; documents pass channels as a prop.",
+    ),
+    (
+        "timeline::DopeSheet::doc",
+        "Store state for Rust hosts; documents pass channels as a prop.",
+    ),
+    (
+        "timeline::DopeSheet::perform",
+        "Applies a typed action for Rust hosts and bus clients.",
+    ),
+    (
+        "timeline::DopeSheet::selected_keys",
+        "Read-only selection for Rust hosts; documents receive selection-change.",
+    ),
+    (
+        "timeline::DopeSheet::set_value_formatter",
+        "A value formatter trait implementation is application-owned Rust code.",
+    ),
+    (
+        "timeline::DopeSheet::set_expanded",
+        "The rendered channel header expands curve lanes.",
+    ),
+    (
+        "timeline::DopeSheet::set_show_segments",
+        "A Rust host display option; documents always show segments.",
+    ),
+    (
+        "timeline::DopeSheet::seek",
+        "The rendered ruler handles seeking; documents set the playhead prop.",
+    ),
+    (
+        "timeline::DopeSheet::playhead",
+        "Read-only playhead for Rust hosts; documents set the playhead prop.",
+    ),
+    (
+        "timeline::DopeSheet::cursor_row",
+        "Read-only keyboard cursor for Rust hosts.",
+    ),
+    (
+        "timeline::DopeSheet::event Seek",
+        "Rust hosts observe seeks; documents set the playhead prop.",
+    ),
+    (
         "timeline::BarCurveView::draw_to",
         "Native pointer gesture. Documents supply bar values and receive indexed changes.",
     ),
@@ -1368,7 +1424,13 @@ fn covered(surface: &str) -> bool {
             ("timeline::TracksView", "Seek") => "seek",
             ("timeline::GanttView", "Rescheduled") => "reschedule",
             ("timeline::GanttView", "Resized") => "resize",
-            ("timeline::DopeSheet", "KeyRetimed") => "key-retime",
+            ("timeline::DopeSheet", "KeysRetimed") => "key-retime",
+            ("timeline::DopeSheet", "SelectionChanged") => "selection-change",
+            (
+                "timeline::DopeSheet",
+                "KeyInserted" | "KeysRemoved" | "KeysDuplicated" | "KeyValueChanged"
+                | "SegmentInterpChanged" | "SegmentBent" | "SpanToggled" | "CurveEdited",
+            ) => "change",
             ("timeline::DopeSheet", "ChannelChanged") => "channel-change",
             ("components::SpeedDial", "Open") => "change",
             ("components::SpeedDial", "Action") => "action",
