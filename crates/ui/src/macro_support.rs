@@ -520,6 +520,8 @@ impl<C: ControlEntity> ControlHandle<C> {
 }
 
 type Setup<C, S> = Box<dyn FnOnce(&gpui_kit::Entity<C>, &Store<S>, &mut App) -> SetupParts<C>>;
+type Seed<C, S> =
+    Box<dyn FnOnce(<C as ControlEntity>::Builder, &S) -> <C as ControlEntity>::Builder>;
 type Configure<C> = Box<dyn FnOnce(<C as ControlEntity>::Builder) -> <C as ControlEntity>::Builder>;
 
 /// What a site keeps alive, and how its first render seeds the builder.
@@ -543,7 +545,7 @@ pub struct ControlSite<C: ControlEntity, S: Clone + PartialEq + 'static> {
     id: ElementId,
     store: Store<S>,
     configure: Configure<C>,
-    initial: Vec<Box<dyn FnOnce(C::Builder, &S) -> C::Builder>>,
+    initial: Vec<Seed<C, S>>,
     setup: Vec<Setup<C, S>>,
     handle: Option<ControlHandle<C>>,
 }
