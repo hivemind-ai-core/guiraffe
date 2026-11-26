@@ -1155,3 +1155,81 @@ fn dope_segments_add_no_frame_allocations() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+// Meter (0.3.1 #4): fed every frame, only the bars repaint
+
+struct MeterWall {
+    meters: Vec<gpui_kit::Entity<guiraffe_components::Meter>>,
+    renders: std::rc::Rc<std::cell::Cell<usize>>,
+}
+impl gpui_kit::Render for MeterWall {
+    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement, Styled};
+        self.renders.set(self.renders.get() + 1);
+        gpui_kit::div().flex().flex_wrap().children(self.meters.iter().cloned())
+    }
+}
+
+#[test]
+fn meters_fed_every_frame_allocate_nothing_and_never_render_their_parent() -> anyhow::Result<()> {
+    use gpui_kit::AppContext;
+    use guiraffe_components::{Level, Meter, MeterOptions};
+    const N: usize = 32;
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    let renders = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut feeds = Vec::new();
+    let counter = renders.clone();
+    let window = app.open_window(gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(800.)), |_, cx| {
+        guiraffe_components::init(cx);
+        let meters: Vec<_> = (0..N)
+            .map(|i| {
+                let options = if i % 2 == 0 { MeterOptions::stereo() } else { MeterOptions::default().with_lufs() };
+                Meter::new(options, cx)
+            })
+            .collect();
+        feeds = meters.iter().map(|m| m.read(cx).feed()).collect();
+        cx.new(|_| MeterWall { meters, renders: counter })
+    })?;
+    let mut tick = 0u32;
+    let mut frame = |app: &mut gpui_kit::HeadlessAppContext, feed: bool| {
+        tick += 1;
+        app.update_window(window.into(), |_, w, cx| {
+            if feed {
+                for (i, f) in feeds.iter().enumerate() {
+                    let wobble = ((tick as usize + i * 7) % 24) as f32;
+                    f.set_stereo(Level::new(-30.0 + wobble, -36.0 + wobble), Level::new(-28.0 + wobble, -34.0));
+                    f.publish(cx);
+                }
+            }
+            w.draw(cx).clear(cx)
+        })
+    };
+    for _ in 0..8 {
+        frame(&mut app, true)?;
+        app.run_until_parked();
+    }
+    let parent_before = renders.get();
+    let (idle, idle_counts) = count_allocations(|| frame(&mut app, false))?;
+    idle?;
+    let (fed, counts) = count_allocations(|| frame(&mut app, true))?;
+    fed?;
+    let (fed_again, again) = count_allocations(|| frame(&mut app, true))?;
+    fed_again?;
+    eprintln!("{N} meters: idle frame {idle_counts:?}, fed frames {counts:?} {again:?}");
+    if gpui_kit::GPUI_FAST {
+        assert_eq!(renders.get(), parent_before, "the meters' parent never renders");
+        assert_eq!(counts.allocations, 0, "a fed frame allocates nothing");
+        assert_eq!(again.allocations, 0);
+    } else {
+        // Upstream GPUI re-renders the ancestors of a notified view (KNOWN_ISSUES); the
+        // meters' own work is still allocation-free, so the frame costs what an idle frame
+        // with a re-rendered parent does, and does not grow from frame to frame.
+        assert_eq!(counts.allocations, again.allocations);
+    }
+    Ok(())
+}

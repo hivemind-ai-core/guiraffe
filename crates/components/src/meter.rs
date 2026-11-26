@@ -284,6 +284,9 @@ impl MeterOptions {
 /// allocation per write.
 struct MeterCell {
     levels: [Cell<Level>; 2],
+    /// Set by every write, cleared by the bars' render: a fed meter needs no animation
+    /// frame of its own.
+    written: Cell<bool>,
     gain_reduction: Cell<f32>,
     lufs: Cell<Option<f32>>,
 }
@@ -301,6 +304,7 @@ impl MeterFeed {
     pub fn set(&self, channel: usize, level: Level) {
         if let Some(c) = self.cell.levels.get(channel) {
             c.set(level);
+            self.cell.written.set(true);
         }
     }
 
@@ -312,6 +316,7 @@ impl MeterFeed {
     /// Gain reduction in dB (positive).
     pub fn set_gain_reduction(&self, db: f32) {
         self.cell.gain_reduction.set(db);
+        self.cell.written.set(true);
     }
 
     /// Integrated loudness for the readout, or `None` to clear it. The readout repaints only
@@ -343,6 +348,16 @@ pub struct MeterBars {
     states: [ChannelState; 2],
     /// Time zero for the ballistics.
     epoch: std::time::Instant,
+    /// Theme colors resolved for the current theme: zones, clip, gain reduction, track.
+    colors: Option<(GuiraffeTheme, Colors)>,
+}
+
+#[derive(Clone, Copy)]
+struct Colors {
+    zones: [(f32, Hsla); 4],
+    clip: Hsla,
+    gr: Hsla,
+    track: Hsla,
 }
 
 /// What the bar canvas paints this frame (copied into the paint closure; no allocation).
@@ -404,29 +419,42 @@ impl Render for MeterBars {
             frame.clipped |= state.clipped;
             animating |= state.animating(now, options.floor_db, &b);
         }
-        if animating && !cx.reduce_motion() {
+        // A fed meter is notified every frame; only a meter left to decay asks for its own.
+        let fed = self.cell.written.replace(false);
+        if animating && !fed && !cx.reduce_motion() {
             window.request_animation_frame();
         }
         let theme = GuiraffeTheme::global(cx);
-        let color = |c: ColorName| theme.variant(Some(c), Variant::Filled).background.to_hsla();
-        let track = theme.surfaces().border.to_hsla();
-        let zones: [(f32, Hsla); 4] = {
-            let mut out = [(f32::INFINITY, color(options.clip_color)); 4];
-            for (slot, z) in out.iter_mut().zip(options.zones.iter().take(3)) {
-                *slot = (z.below_db, color(z.color));
+        let colors = match &self.colors {
+            Some((seen, colors)) if seen == theme => *colors,
+            _ => {
+                let colors = resolve_colors(theme, options);
+                self.colors = Some((theme.clone(), colors));
+                colors
             }
-            out
         };
-        let clip = color(options.clip_color);
-        let gr = color(ColorName::Orange);
         BarsElement {
             options: self.options.clone(),
             frame,
-            zones,
-            clip,
-            gr,
-            track,
+            zones: colors.zones,
+            clip: colors.clip,
+            gr: colors.gr,
+            track: colors.track,
         }
+    }
+}
+
+fn resolve_colors(theme: &GuiraffeTheme, options: &MeterOptions) -> Colors {
+    let color = |c: ColorName| theme.variant(Some(c), Variant::Filled).background.to_hsla();
+    let mut zones = [(f32::INFINITY, color(options.clip_color)); 4];
+    for (slot, z) in zones.iter_mut().zip(options.zones.iter().take(3)) {
+        *slot = (z.below_db, color(z.color));
+    }
+    Colors {
+        zones,
+        clip: color(options.clip_color),
+        gr: color(ColorName::Orange),
+        track: theme.surfaces().border.to_hsla(),
     }
 }
 
@@ -651,6 +679,7 @@ impl Meter {
             let options = Rc::new(options);
             let cell = Rc::new(MeterCell {
                 levels: [Cell::new(Level::SILENT), Cell::new(Level::SILENT)],
+                written: Cell::new(false),
                 gain_reduction: Cell::new(0.0),
                 lufs: Cell::new(None),
             });
@@ -660,6 +689,7 @@ impl Meter {
                 options: options.clone(),
                 states: [ChannelState::default(); 2],
                 epoch,
+                colors: None,
             });
             let lufs = options.lufs.then(|| {
                 cx.new(|_| LufsLabel {
