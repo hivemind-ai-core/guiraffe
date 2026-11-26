@@ -13,8 +13,15 @@ and adapt to Kit 0.9.1. Keep the prototype's tests as the behavioural reference.
 
 ## 2. What it is
 
-A keyboard-first command bar that slides in above the status bar (not a modal, not an Office
+A keyboard-first command bar that appears above the status bar (not a modal, not an Office
 tab-strip ribbon):
+
+- **Placement** (`RibbonProps::placement`). `Overlay`, the default, draws the open bar in a
+  deferred layer that grows upward from a zero-height slot where `CommandRibbon::when_open` is
+  placed. It takes no layout space, so the content above never resizes or moves when the ribbon
+  opens or closes, and a status bar below the slot stays visible. `Slotted` takes layout space
+  instead, and the content above shrinks while the ribbon is open. DataUi documents use `Slotted`,
+  because a document places its own ribbon.
 
 - Toggled by a leader key (default Ctrl+Space) or a centred status-bar button.
 - The root level shows **category columns** in registration order: Global, then the current
@@ -23,7 +30,11 @@ tab-strip ribbon):
   fixed height with a reserved icon slot, a chord key and a label; submenu entries show a marker.
   Parent and Root buttons share the first category header.
 - **Chord navigation**: typing an entry's key activates it (`t` → `e` descends two levels);
-  Backspace goes up one level, Escape to root and then closes, the leader closes from anywhere.
+  Backspace goes up one level. Escape discards a partial chord or prompt and returns to the root,
+  and never closes: at the root it does nothing. The leader closes from any depth, mid-chord
+  included. The only ways to close are the leader and the status-bar button. A held leader toggles
+  once (the auto-repeat guard). The transitions are `Navigator::key(RibbonKey, prompting) ->
+  KeyOutcome`, unit-tested without a window.
   Clicking works the same. A leaf closes the bar and runs, or opens a parameter prompt.
 - **Parameters**: required text, static choices and host-provided dynamic choices with stable
   ids; a valid selection fills a target automatically, otherwise the bar prompts. A draft never
@@ -52,7 +63,7 @@ tab-strip ribbon):
 ## 4. Builder and DataUi
 
 `CommandRibbon::new(&commands)` with props: leader key, rows per column, row height, placement
-(above status bar / bottom / top), show icons, show shortcuts, animate open/close, max columns
+(overlay or slotted; top and animation in #117), show icons, show shortcuts, animate open/close, max columns
 before horizontal scroll. Available through the DataUi catalogue and `ui!`.
 
 ## 5. Performance

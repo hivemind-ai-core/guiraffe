@@ -104,6 +104,13 @@ pub fn entries() -> Vec<Entry> {
         },
         Entry {
             krate: "components",
+            name: "Tabs",
+            summary: "Themed tabs keyed by id: icons, badges, closable tabs, roving keyboard focus.",
+            covers: &["Tabs"],
+            demo: tabs_demo,
+        },
+        Entry {
+            krate: "components",
             name: "RingProgress",
             summary: "Multi-section ring with a center label.",
             covers: &["RingProgress"],
@@ -524,6 +531,37 @@ fn meter(_: &mut Window, cx: &mut App) -> AnyView {
         );
     }
     cx.new(|_| MeterDemo { meters, bank }).into()
+}
+
+/// An editor's tab row: click or arrows and Enter select; the x, Delete or Ctrl+W closes.
+struct TabsDemo(Entity<Tabs>, Entity<EventLog>);
+
+impl gpui_kit::Render for TabsDemo {
+    fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+        column([
+            example(
+                "Icons, badges and closable tabs",
+                div().w(px(640.)).child(self.0.clone()),
+            ),
+            example("Events", self.1.clone()),
+        ])
+    }
+}
+
+fn tabs_demo(_: &mut Window, cx: &mut App) -> AnyView {
+    use guiraffe_components::tabs::{TabsDoc, tabs_store};
+    let doc = TabsDoc::new(vec![
+        TabItem::new(1, "Arrange").icon(IconName::PanelLeft),
+        TabItem::new(2, "Mixer").icon(IconName::Settings).badge("3"),
+        TabItem::new(3, "Piano roll").closable(),
+        TabItem::new(4, "Browser").icon(IconName::Folder).closable(),
+        TabItem::new(5, "Locked").disabled(true),
+    ]);
+    let store = tabs_store(doc, cx);
+    let tabs = Tabs::new(store, TabsOptions::default(), cx);
+    let log = EventLog::new(cx);
+    EventLog::watch::<TabsEvent, _>(&log, &tabs, cx);
+    cx.new(|_| TabsDemo(tabs, log)).into()
 }
 
 fn ring(window: &mut Window, cx: &mut App) -> AnyView {

@@ -27,13 +27,13 @@ mod overrides;
 mod view;
 
 pub use model::{
-    Item, NavError, Navigator, RibbonCategory, RibbonEntry, RibbonError, RibbonLayout, RibbonMenu,
-    RibbonModel, RibbonTarget, Section, Step,
+    Item, KeyOutcome, NavError, Navigator, RibbonCategory, RibbonEntry, RibbonError, RibbonKey,
+    RibbonLayout, RibbonMenu, RibbonModel, RibbonTarget, Section, Step,
 };
 pub use overrides::{Loaded, MAX_OVERRIDE_BYTES, OverrideFile, Overrides};
 pub use view::{
-    CommandRibbon, RIBBON_CONTEXT, RIBBON_LEADER, RibbonButton, RibbonEvent, RibbonProps,
-    RibbonState, ribbon_scope,
+    CommandRibbon, RIBBON_CONTEXT, RIBBON_LEADER, RibbonButton, RibbonEvent, RibbonPlacement,
+    RibbonProps, RibbonState, ribbon_scope,
 };
 
 /// Ribbon entries for every payload-free shared action of the controls registered on this

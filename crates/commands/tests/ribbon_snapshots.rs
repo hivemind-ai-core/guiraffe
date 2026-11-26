@@ -7,7 +7,7 @@ use guiraffe_commands::{
     Command, CommandId, Commands, ContextStack, Keybinding, Payload, When, WhenContext,
     ribbon::{
         CommandRibbon, RibbonButton, RibbonCategory, RibbonEntry, RibbonLayout, RibbonMenu,
-        RibbonModel, RibbonState, ribbon_scope,
+        RibbonModel, RibbonPlacement, RibbonProps, RibbonState, ribbon_scope,
     },
 };
 use guiraffe_core::{GuiraffeTheme, Scheme, Size, apply};
@@ -16,6 +16,8 @@ use std::{collections::BTreeMap, rc::Rc, sync::Arc};
 
 struct Scene {
     ribbon: Entity<RibbonState>,
+    /// Fill the content to the bottom, so an overlay visibly covers it.
+    lines: usize,
 }
 impl Render for Scene {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -30,8 +32,12 @@ impl Render for Scene {
             .child(
                 div()
                     .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
                     .p(px(Size::Md.spacing()))
-                    .child("document.rs"),
+                    .child("document.rs")
+                    // Lines down to the bottom, so the overlay visibly covers content.
+                    .children((1..=self.lines).map(|n| format!("{n:>3}  let line_{n} = {n};"))),
             )
             .children(CommandRibbon::when_open(&self.ribbon, cx))
             .child(
@@ -82,9 +88,40 @@ fn layout() -> RibbonLayout {
 
 #[test]
 fn ribbon_in_both_schemes() {
+    // The slotted layout, as before overlay mode.
+    for scheme in [Scheme::Light, Scheme::Dark] {
+        let name = if scheme == Scheme::Light {
+            "ribbon-light"
+        } else {
+            "ribbon-dark"
+        };
+        capture(scheme, RibbonPlacement::Slotted, &[], name);
+    }
+}
+
+#[test]
+fn overlay_ribbon_at_the_root_and_nested_in_both_schemes() {
+    for (scheme, theme) in [(Scheme::Light, "light"), (Scheme::Dark, "dark")] {
+        capture(
+            scheme,
+            RibbonPlacement::Overlay,
+            &[],
+            &format!("ribbon-overlay-root-{theme}"),
+        );
+        capture(
+            scheme,
+            RibbonPlacement::Overlay,
+            &["f"],
+            &format!("ribbon-overlay-nested-{theme}"),
+        );
+    }
+}
+
+/// Open the ribbon with `placement`, press `keys`, and compare a screenshot with `name`.
+fn capture(scheme: Scheme, placement: RibbonPlacement, keys: &[&str], name: &str) {
     let config = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
         .update_from_env();
-    for scheme in [Scheme::Light, Scheme::Dark] {
+    {
         let text = gpui_kit::platform::current_platform(true).text_system();
         let mut cx = HeadlessAppContext::with_platform(
             text,
@@ -142,14 +179,29 @@ fn ribbon_in_both_schemes() {
                             .expect("model"),
                     )
                 };
-                let ribbon = cx.new(|cx| RibbonState::new(&commands, model, window, cx));
+                let ribbon = cx.new(|cx| {
+                    RibbonState::new(&commands, model, window, cx).props(RibbonProps {
+                        placement,
+                        ..RibbonProps::default()
+                    })
+                });
                 *out.borrow_mut() = Some(ribbon.clone());
-                cx.new(|_| Scene { ribbon })
+                let lines = if placement == RibbonPlacement::Overlay {
+                    14
+                } else {
+                    0
+                };
+                cx.new(|_| Scene { ribbon, lines })
             })
             .expect("headless window");
         let ribbon = slot.borrow_mut().take().expect("ribbon");
         cx.update_window(window.into(), |_, window, cx| {
-            ribbon.update(cx, |state, cx| state.open(window, cx));
+            ribbon.update(cx, |state, cx| {
+                state.open(window, cx);
+                for key in keys {
+                    state.press(key, false, window, cx);
+                }
+            });
         })
         .expect("open");
         for _ in 0..4 {
@@ -161,15 +213,6 @@ fn ribbon_in_both_schemes() {
             cx.run_until_parked();
         }
         let image = cx.capture_screenshot(window.into()).expect("capture");
-        assert_snapshot(
-            if scheme == Scheme::Light {
-                "ribbon-light"
-            } else {
-                "ribbon-dark"
-            },
-            &image,
-            &config,
-        )
-        .unwrap_or_else(|e| panic!("{e:#}"));
+        assert_snapshot(name, &image, &config).unwrap_or_else(|e| panic!("{e:#}"));
     }
 }

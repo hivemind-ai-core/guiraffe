@@ -24,7 +24,7 @@ pub fn entries() -> Vec<Entry> {
     vec![Entry {
         krate: "commands",
         name: "Command ribbon",
-        summary: "A keyboard-first command bar above the status bar. Ctrl+Space opens it; type an entry's key to descend or run, Backspace goes up, Escape goes to the root and then closes. Categories follow the page and the selection; disabled commands explain why.",
+        summary: "A keyboard-first command bar above the status bar. Ctrl+Space opens it; type an entry's key to descend or run, Backspace goes up, Escape returns to the root (it never closes), and Ctrl+Space closes from anywhere. The open bar overlays the page, so nothing moves. Categories follow the page and the selection; disabled commands explain why.",
         covers: &["CommandRibbon", "RibbonButton", "RibbonState"],
         demo: ribbon,
     }]
@@ -290,7 +290,7 @@ impl Render for RibbonDemo {
             );
         column([
             example(
-                "Ctrl+Space or the status-bar button: f s saves, v w toggles wrap, Backspace goes up, Escape to root and close",
+                "Ctrl+Space or the status-bar button: f s saves, v w toggles wrap, Backspace goes up, Escape to the root, Ctrl+Space closes",
                 app,
             ),
             example("Event log", self.log.clone()),

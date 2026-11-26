@@ -61,6 +61,8 @@ pub(crate) fn register(cx: &mut App) {
                     DocumentRibbon {
                         key: node.state_id(),
                         props: RibbonProps {
+                            // A document places its ribbon itself.
+                            placement: crate::ribbon::RibbonPlacement::Slotted,
                             rows_per_column: count(0).unwrap_or(defaults.rows_per_column),
                             show_icons: node.prop(1).as_bool().unwrap_or(true),
                             show_shortcuts: node.prop(2).as_bool().unwrap_or(true),
