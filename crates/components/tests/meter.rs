@@ -77,7 +77,10 @@ fn meters_light_and_dark() {
     }
 }
 
-#[cfg_attr(not(debug_assertions), ignore = "GPUI records debug bounds in debug builds")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
 #[gpui_kit::test]
 fn the_clip_latch_resets_by_click_and_by_bus_action(cx: &mut TestAppContext) {
     cx.update(guiraffe_components::init);
@@ -101,13 +104,19 @@ fn the_clip_latch_resets_by_click_and_by_bus_action(cx: &mut TestAppContext) {
             feed.publish(cx);
         });
         vcx.run_until_parked();
-        assert!(vcx.update(|_, cx| meter.read(cx).clipped(cx)), "latched at 0 dBFS");
+        assert!(
+            vcx.update(|_, cx| meter.read(cx).clipped(cx)),
+            "latched at 0 dBFS"
+        );
     };
     clip(vcx);
     let bars = vcx.debug_bounds("meter-bars").expect("bars");
     vcx.simulate_click(bars.center(), Default::default());
     vcx.run_until_parked();
-    assert!(!vcx.update(|_, cx| meter.read(cx).clipped(cx)), "a click resets");
+    assert!(
+        !vcx.update(|_, cx| meter.read(cx).clipped(cx)),
+        "a click resets"
+    );
     assert_eq!(*resets.borrow(), 1);
 
     clip(vcx);
@@ -119,7 +128,10 @@ fn the_clip_latch_resets_by_click_and_by_bus_action(cx: &mut TestAppContext) {
         };
         assert!(ActionBus::dispatch(id, &action, Source::Shortcut, window, cx).is_ok());
     });
-    assert!(!vcx.update(|_, cx| meter.read(cx).clipped(cx)), "the bus resets");
+    assert!(
+        !vcx.update(|_, cx| meter.read(cx).clipped(cx)),
+        "the bus resets"
+    );
     assert_eq!(*resets.borrow(), 2);
     let _ = MouseButton::Left;
 }
@@ -149,7 +161,8 @@ fn decay_continues_after_the_host_stops_feeding(cx: &mut TestAppContext) {
     };
     let start = peak(vcx);
     // No more publishes: the bars ask for animation frames themselves.
-    vcx.executor().advance_clock(std::time::Duration::from_millis(500));
+    vcx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
     vcx.update(|window, cx| {
         window.simulate_next_frame(cx);
     });

@@ -55,8 +55,8 @@ pub use icons::{ActionIcon, ThemeIcon, close_button};
 pub use kbd::{KbdGroup, KbdSeparator};
 pub use loader::{Loader, LoaderType};
 pub use meter::{
-    Ballistics, ChannelState, ClipReset, Level, Meter, MeterFeed, MeterMode, MeterOptions,
-    MeterZone, Orientation,
+    Ballistics, ChannelState, ClipReset, Level, Meter, MeterBank, MeterFeed, MeterMode,
+    MeterOptions, MeterZone, Orientation,
 };
 pub use misc::{Blockquote, Indicator, IndicatorPosition, Pill};
 pub use paper::{Card, CardSection, Paper};

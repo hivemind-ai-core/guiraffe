@@ -399,26 +399,8 @@ impl MeterBars {
 impl Render for MeterBars {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let options = &*self.options;
-        let b = options.ballistics;
         let now = self.now(cx);
-        let mut frame = Frame {
-            channels: options.channels.clamp(1, 2),
-            peaks: [f32::NEG_INFINITY; 2],
-            holds: [f32::NEG_INFINITY; 2],
-            rms: [f32::NEG_INFINITY; 2],
-            clipped: false,
-            gain_reduction: self.cell.gain_reduction.get(),
-        };
-        let mut animating = false;
-        for i in 0..frame.channels {
-            let state = self.states[i].advance(self.cell.levels[i].get(), now, &b);
-            self.states[i] = state;
-            frame.peaks[i] = state.peak_at(now, &b);
-            frame.holds[i] = state.hold_at(now, &b);
-            frame.rms[i] = state.rms;
-            frame.clipped |= state.clipped;
-            animating |= state.animating(now, options.floor_db, &b);
-        }
+        let (frame, animating) = advance(&self.cell, options, &mut self.states, now);
         // A fed meter is notified every frame; only a meter left to decay asks for its own.
         let fed = self.cell.written.replace(false);
         if animating && !fed && !cx.reduce_motion() {
@@ -442,6 +424,45 @@ impl Render for MeterBars {
             track: colors.track,
         }
     }
+}
+
+/// Take a meter's latest input at `now`: the frame to paint and whether a decay is still
+/// moving.
+fn advance(
+    cell: &MeterCell,
+    options: &MeterOptions,
+    states: &mut [ChannelState; 2],
+    now: f64,
+) -> (Frame, bool) {
+    let b = options.ballistics;
+    let mut frame = Frame {
+        channels: options.channels.clamp(1, 2),
+        peaks: [f32::NEG_INFINITY; 2],
+        holds: [f32::NEG_INFINITY; 2],
+        rms: [f32::NEG_INFINITY; 2],
+        clipped: false,
+        gain_reduction: cell.gain_reduction.get(),
+    };
+    let mut animating = false;
+    for i in 0..frame.channels {
+        let state = states[i].advance(cell.levels[i].get(), now, &b);
+        states[i] = state;
+        frame.peaks[i] = state.peak_at(now, &b);
+        frame.holds[i] = state.hold_at(now, &b);
+        frame.rms[i] = state.rms;
+        frame.clipped |= state.clipped;
+        animating |= state.animating(now, options.floor_db, &b);
+    }
+    (frame, animating)
+}
+
+fn new_cell() -> Rc<MeterCell> {
+    Rc::new(MeterCell {
+        levels: [Cell::new(Level::SILENT), Cell::new(Level::SILENT)],
+        written: Cell::new(false),
+        gain_reduction: Cell::new(0.0),
+        lufs: Cell::new(None),
+    })
 }
 
 fn resolve_colors(theme: &GuiraffeTheme, options: &MeterOptions) -> Colors {
@@ -677,12 +698,7 @@ impl Meter {
     pub fn new(options: MeterOptions, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let options = Rc::new(options);
-            let cell = Rc::new(MeterCell {
-                levels: [Cell::new(Level::SILENT), Cell::new(Level::SILENT)],
-                written: Cell::new(false),
-                gain_reduction: Cell::new(0.0),
-                lufs: Cell::new(None),
-            });
+            let cell = new_cell();
             let epoch = cx.background_executor().now();
             let bars = cx.new(|_| MeterBars {
                 cell: cell.clone(),
@@ -856,6 +872,275 @@ impl Render for Meter {
                     .children(scale),
             )
             .children(self.lufs.clone())
+    }
+}
+
+/// Many meters in one view: a mixer's worth of meters costs one view's repaint per frame,
+/// whatever their number. Each meter has its own [`MeterFeed`]; publishing any of them
+/// repaints the bank once. The documented choice for mixers. Meters share one
+/// [`MeterOptions`] (without scale labels or LUFS readouts) and sit side by side.
+pub struct MeterBank {
+    options: Rc<MeterOptions>,
+    cells: Vec<Rc<MeterCell>>,
+    states: Vec<[ChannelState; 2]>,
+    /// Reused every render: no allocation per frame.
+    frames: Rc<std::cell::RefCell<Vec<Frame>>>,
+    epoch: std::time::Instant,
+    colors: Option<(GuiraffeTheme, Colors)>,
+    gap: f32,
+    id: Option<ControlId>,
+}
+
+impl EventEmitter<ClipReset> for MeterBank {}
+
+impl MeterBank {
+    /// `count` meters drawn with `options`.
+    pub fn new(count: usize, options: MeterOptions, cx: &mut App) -> Entity<Self> {
+        let epoch = cx.background_executor().now();
+        cx.new(|_| Self {
+            options: Rc::new(options),
+            cells: (0..count).map(|_| new_cell()).collect(),
+            states: vec![[ChannelState::default(); 2]; count],
+            frames: Rc::new(std::cell::RefCell::new(Vec::with_capacity(count))),
+            epoch,
+            colors: None,
+            gap: 6.0,
+            id: None,
+        })
+    }
+
+    /// Meter `index`'s feed.
+    pub fn feed(&self, index: usize, cx: &Context<Self>) -> Option<MeterFeed> {
+        Some(MeterFeed {
+            cell: self.cells.get(index)?.clone(),
+            bars: cx.entity_id(),
+            lufs: None,
+        })
+    }
+
+    /// Every meter's feed, in order.
+    pub fn feeds(view: &Entity<Self>, cx: &App) -> Vec<MeterFeed> {
+        let bank = view.read(cx);
+        bank.cells
+            .iter()
+            .map(|cell| MeterFeed {
+                cell: cell.clone(),
+                bars: view.entity_id(),
+                lufs: None,
+            })
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// Whether meter `index`'s clip latch is set.
+    pub fn clipped(&self, index: usize) -> bool {
+        self.states
+            .get(index)
+            .is_some_and(|s| s.iter().any(|c| c.clipped))
+    }
+
+    /// Reset meter `index`'s clip latch, or every meter's with `None` (a user action).
+    pub fn reset_clip(&mut self, index: Option<usize>, cx: &mut Context<Self>) -> bool {
+        let mut reset = false;
+        for (i, states) in self.states.iter_mut().enumerate() {
+            if index.is_none_or(|n| n == i) {
+                for s in states.iter_mut() {
+                    reset |= s.clipped;
+                    s.reset_clip();
+                }
+            }
+        }
+        if reset {
+            cx.emit(ClipReset);
+            cx.notify();
+        }
+        reset
+    }
+
+    /// Register on the bus: `reset_clip` with a meter index (a number), or `null` for all.
+    pub fn register(view: &Entity<Self>, path: &str, window: &Window, cx: &mut App) -> ControlId {
+        let id = ActionBus::register(path, view, "meter-bank", Capabilities::ACTIVATE, window, cx);
+        view.update(cx, |m, _| m.id = Some(id));
+        id
+    }
+
+    fn width(&self) -> f32 {
+        let lanes = self.options.channels.clamp(1, 2) as f32;
+        self.options.thickness * lanes + 2.0 * (lanes - 1.0)
+    }
+}
+
+impl Observe for MeterBank {
+    type Snapshot = ControlSnapshot;
+    fn snapshot(&self, _: &App) -> ControlSnapshot {
+        let clipped: Vec<usize> = (0..self.len()).filter(|i| self.clipped(*i)).collect();
+        ControlSnapshot {
+            selected: Some(clipped.into()),
+            ..Default::default()
+        }
+    }
+}
+
+impl Drive for MeterBank {
+    type Action = Option<usize>;
+    type Output = ();
+    fn decode(action: &Action) -> Result<Option<usize>, ActionError> {
+        if action.name.as_ref() != RESET_CLIP {
+            return Err(ActionError::Unsupported);
+        }
+        match &action.payload {
+            Value::Null => Ok(None),
+            Value::Num(n) if *n >= 0.0 && n.fract() == 0.0 => Ok(Some(*n as usize)),
+            _ => Err(ActionError::Invalid("meter index")),
+        }
+    }
+    fn apply(
+        &mut self,
+        index: Option<usize>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ActionError> {
+        self.reset_clip(index, cx);
+        Ok(())
+    }
+}
+
+impl Render for MeterBank {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = cx
+            .background_executor()
+            .now()
+            .saturating_duration_since(self.epoch)
+            .as_secs_f64();
+        let mut animating = false;
+        let mut fed = false;
+        {
+            let mut frames = self.frames.borrow_mut();
+            frames.clear();
+            for (cell, states) in self.cells.iter().zip(self.states.iter_mut()) {
+                let (frame, moving) = advance(cell, &self.options, states, now);
+                frames.push(frame);
+                animating |= moving;
+                fed |= cell.written.replace(false);
+            }
+        }
+        if animating && !fed && !cx.reduce_motion() {
+            window.request_animation_frame();
+        }
+        let theme = GuiraffeTheme::global(cx);
+        let colors = match &self.colors {
+            Some((seen, colors)) if seen == theme => *colors,
+            _ => {
+                let colors = resolve_colors(theme, &self.options);
+                self.colors = Some((theme.clone(), colors));
+                colors
+            }
+        };
+        BankElement {
+            options: self.options.clone(),
+            frames: self.frames.clone(),
+            colors,
+            width: self.width(),
+            gap: self.gap,
+        }
+    }
+}
+
+/// All of a bank's meters as one element.
+struct BankElement {
+    options: Rc<MeterOptions>,
+    frames: Rc<std::cell::RefCell<Vec<Frame>>>,
+    colors: Colors,
+    width: f32,
+    gap: f32,
+}
+
+impl IntoElement for BankElement {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for BankElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let n = self.frames.borrow().len() as f32;
+        let extent = n * self.width + (n - 1.0).max(0.0) * self.gap;
+        let mut style = Style::default();
+        style.size = if self.options.orientation == Orientation::Vertical {
+            size(px(extent).into(), px(self.options.length).into())
+        } else {
+            size(px(self.options.length).into(), px(extent).into())
+        };
+        (window.request_layout(style, [], cx), ())
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        _: &mut App,
+    ) {
+        let vertical = self.options.orientation == Orientation::Vertical;
+        let step = self.width + self.gap;
+        for (i, frame) in self.frames.borrow().iter().enumerate() {
+            let offset = i as f32 * step;
+            let origin = if vertical {
+                bounds.origin + point(px(offset), px(0.))
+            } else {
+                bounds.origin + point(px(0.), px(offset))
+            };
+            let extent = if vertical {
+                size(px(self.width), bounds.size.height)
+            } else {
+                size(bounds.size.width, px(self.width))
+            };
+            let c = self.colors;
+            paint(
+                Bounds::new(origin, extent),
+                &self.options,
+                *frame,
+                c.zones,
+                c.clip,
+                c.gr,
+                c.track,
+                window,
+            );
+        }
     }
 }
 
