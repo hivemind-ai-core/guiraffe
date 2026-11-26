@@ -20,6 +20,8 @@ struct Host {
     ribbon: Entity<RibbonState>,
     commands: Commands,
     focus: FocusHandle,
+    /// The content's bounds at its last paint.
+    content: Rc<std::cell::Cell<Option<Bounds<gpui_kit::Pixels>>>>,
 }
 impl Render for Host {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -34,7 +36,17 @@ impl Render for Host {
                         .key_context("Editor")
                         .track_focus(&self.focus)
                         .size_full()
-                        .child("content"),
+                        .relative()
+                        .child("content")
+                        .child({
+                            let content = self.content.clone();
+                            gpui_kit::canvas(
+                                move |bounds, _, _| content.set(Some(bounds)),
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        }),
                 ),
             )
             .children(CommandRibbon::when_open(&self.ribbon, cx))
@@ -132,13 +144,14 @@ struct Opened {
     commands: Commands,
     focus: FocusHandle,
     log: Log,
+    content: Rc<std::cell::Cell<Option<Bounds<gpui_kit::Pixels>>>>,
 }
 
 fn open(cx: &mut TestAppContext, host_context: &str) -> Opened {
     cx.update(init);
     let log: Log = Rc::default();
     let host_context = host_context.to_owned();
-    let (window, ribbon, commands, focus) = cx.update(|cx| {
+    let (window, ribbon, commands, focus, content) = cx.update(|cx| {
         let commands = Commands::new(cx);
         register(&commands, &log, cx);
         let mut contexts = crate::ContextStack::default();
@@ -152,6 +165,8 @@ fn open(cx: &mut TestAppContext, host_context: &str) -> Opened {
         };
         let slot = Rc::new(RefCell::new(None));
         let out = slot.clone();
+        let content: Rc<std::cell::Cell<Option<Bounds<gpui_kit::Pixels>>>> = Rc::default();
+        let content_out = content.clone();
         let service = commands.clone();
         let window = cx
             .open_window(
@@ -171,13 +186,14 @@ fn open(cx: &mut TestAppContext, host_context: &str) -> Opened {
                         ribbon,
                         commands: service,
                         focus,
+                        content: content_out,
                     });
                     guiraffe_overlays::root(host, window, cx)
                 },
             )
             .expect("window");
         let (ribbon, focus) = slot.borrow_mut().take().expect("built");
-        (window, ribbon, commands, focus)
+        (window, ribbon, commands, focus, content)
     });
     Opened {
         window,
@@ -185,6 +201,7 @@ fn open(cx: &mut TestAppContext, host_context: &str) -> Opened {
         commands,
         focus,
         log,
+        content,
     }
 }
 
@@ -238,6 +255,12 @@ fn content_focused(cx: &mut TestAppContext, o: &Opened) -> bool {
     })
     .expect("focus")
 }
+/// Another key after the leader: the interceptor only sees key-downs, so this is how the
+/// ribbon learns the leader was released once its bar is gone. Without it, a leader within
+/// the auto-repeat window counts as the held key repeating.
+fn release_leader(cx: &mut TestAppContext, o: &Opened) {
+    press(cx, o, "shift");
+}
 fn log(o: &Opened) -> Vec<String> {
     o.log.borrow().clone()
 }
@@ -270,7 +293,9 @@ fn leader_and_button_toggle_and_closing_restores_focus(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-fn chords_descend_backspace_goes_up_and_escape_goes_to_root_then_closes(cx: &mut TestAppContext) {
+fn chords_descend_backspace_goes_up_and_escape_goes_to_root_but_never_closes(
+    cx: &mut TestAppContext,
+) {
     let o = open(cx, "Workspace");
     press(cx, &o, "ctrl-space");
     press(cx, &o, "t");
@@ -286,14 +311,22 @@ fn chords_descend_backspace_goes_up_and_escape_goes_to_root_then_closes(cx: &mut
     press(cx, &o, "escape");
     assert_eq!(cx.update(|cx| o.ribbon.read(cx).depth()), 0);
     assert!(is_open(cx, &o));
+    // Escape at the root does nothing: close is the leader or the status-bar button.
     press(cx, &o, "escape");
-    assert!(!is_open(cx, &o));
-    assert!(content_focused(cx, &o));
+    assert!(is_open(cx, &o));
+    assert_eq!(cx.update(|cx| o.ribbon.read(cx).depth()), 0);
+    // Backspace pops one level at a time.
+    press(cx, &o, "t");
+    press(cx, &o, "e");
+    press(cx, &o, "backspace");
+    assert_eq!(
+        cx.update(|cx| o.ribbon.read(cx).breadcrumbs().join("/")),
+        "Commands/Text"
+    );
     // The leader closes from any depth.
     press(cx, &o, "ctrl-space");
-    press(cx, &o, "t");
-    press(cx, &o, "ctrl-space");
     assert!(!is_open(cx, &o));
+    assert!(content_focused(cx, &o));
 }
 
 #[gpui_kit::test]
@@ -432,6 +465,13 @@ fn prompts_collect_dynamic_targets_and_text_and_valid_selection_fills_itself(
     press(cx, &o, "escape");
     assert!(is_open(cx, &o));
     assert!(cx.update(|cx| o.ribbon.read(cx).prompting().is_none()));
+    // The leader closes mid-chord too, with a prompt open.
+    press(cx, &o, "n");
+    assert!(cx.update(|cx| o.ribbon.read(cx).prompting().is_some()));
+    press(cx, &o, "ctrl-space");
+    assert!(!is_open(cx, &o));
+    release_leader(cx, &o);
+    press(cx, &o, "ctrl-space");
     press(cx, &o, "n");
     cx.update_window(o.window.into(), |_, window, cx| window.input("Notes", cx))
         .expect("type");
@@ -472,8 +512,9 @@ fn held_keys_repeat_navigation_but_never_execution(cx: &mut TestAppContext) {
     );
     held(cx, &o, "backspace");
     assert_eq!(cx.update(|cx| o.ribbon.read(cx).depth()), 0);
-    press(cx, &o, "escape");
+    press(cx, &o, "ctrl-space");
     assert!(!is_open(cx, &o));
+    release_leader(cx, &o);
     // An auto-repeating leader toggles once.
     held(cx, &o, "ctrl-space");
     held(cx, &o, "ctrl-space");
@@ -575,4 +616,57 @@ fn action_entries_drive_controls_through_the_bus_as_ribbon(cx: &mut TestAppConte
     assert!(!is_open(cx, &o));
     assert!(cx.update(|cx| bold.read(cx).0));
     assert_eq!(*sources.0.borrow(), [protocol::Source::Ribbon]);
+}
+
+fn content_bounds(cx: &mut TestAppContext, o: &Opened) -> Bounds<gpui_kit::Pixels> {
+    cx.update_window(o.window.into(), |_, window, cx| window.render_frame(cx))
+        .expect("frame");
+    cx.run_until_parked();
+    o.content.get().expect("content painted")
+}
+
+#[gpui_kit::test]
+fn overlay_opening_and_closing_never_moves_the_content(cx: &mut TestAppContext) {
+    let o = open(cx, "Workspace");
+    let closed = content_bounds(cx, &o);
+    press(cx, &o, "ctrl-space");
+    assert!(
+        visible(cx, &o, "ribbon-entry-save"),
+        "the overlay draws the bar"
+    );
+    assert_eq!(
+        content_bounds(cx, &o),
+        closed,
+        "open: the content keeps its bounds"
+    );
+    press(cx, &o, "t");
+    assert_eq!(
+        content_bounds(cx, &o),
+        closed,
+        "nested: the content keeps its bounds"
+    );
+    press(cx, &o, "ctrl-space");
+    assert_eq!(content_bounds(cx, &o), closed, "closed again");
+
+    // Slotted placement takes layout space: the content shrinks while open.
+    cx.update(|cx| {
+        o.ribbon.update(cx, |ribbon, cx| {
+            ribbon.set_props(
+                RibbonProps {
+                    placement: RibbonPlacement::Slotted,
+                    ..RibbonProps::default()
+                },
+                cx,
+            )
+        })
+    });
+    release_leader(cx, &o);
+    press(cx, &o, "ctrl-space");
+    let slotted = content_bounds(cx, &o);
+    assert!(
+        slotted.size.height < closed.size.height,
+        "{slotted:?} vs {closed:?}"
+    );
+    press(cx, &o, "ctrl-space");
+    assert_eq!(content_bounds(cx, &o), closed);
 }

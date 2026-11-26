@@ -41,6 +41,7 @@ pub mod step_grid;
 pub mod step_model;
 pub mod stepper;
 mod style;
+pub mod tabs;
 pub mod timeline;
 pub mod typography;
 
@@ -72,6 +73,7 @@ pub use step_grid::{
     StepRow, StepRowHeader,
 };
 pub use stepper::{Step, StepState, Stepper, connector_complete, step_state};
+pub use tabs::{TabId, TabItem, Tabs, TabsEvent, TabsOptions};
 pub use timeline::{ItemState, Timeline, TimelineItem};
 pub use typography::{Text, Title};
 

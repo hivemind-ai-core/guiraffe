@@ -113,6 +113,10 @@ fn kind(surface: &str) -> Option<&'static str> {
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
     (
+        "commands::RibbonProps::field placement",
+        "A document places its own ribbon, so DataUi ribbons are always slotted; overlay is for app roots.",
+    ),
+    (
         "components::fn knob_dial",
         "The painted dial of a knob, shared with the unbound-cost gate; documents use the knob.",
     ),
@@ -315,6 +319,58 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "components::MeterOptions::field zones",
         "Real-time audio meter fed by the host per frame through MeterFeed; documents cannot feed levels.",
+    ),
+    (
+        "components::Tabs",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::doc",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::event Closed",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::event Selected",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::focus_for_snapshot",
+        "Test hook that shows the focus ring in snapshots; not part of the document surface.",
+    ),
+    (
+        "components::Tabs::focused_tab",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::new",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::perform",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::register",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::selected",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::set_hidden",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::store",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::TabsOptions::field trailing",
+        "Overflow hook for a host-built trailing element (reserved for #19); documents cannot pass closures.",
     ),
     (
         "state::Bound",
