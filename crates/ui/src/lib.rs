@@ -73,6 +73,9 @@ pub use guiraffe_macros::store;
 /// Stores, lenses and binding, re-exported so `ui!` users need one dependency.
 pub use guiraffe_state as state;
 
+/// A handle to a control entity `ui!` mounted (`handle: …` in its body).
+pub use crate::__macro::ControlHandle;
+
 /// Declarative UI authoring imports.
 pub mod prelude {
     pub use crate::{component, store, ui};

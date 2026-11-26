@@ -51,3 +51,5 @@ Catalogue 1.2.0 snapshot `9cfca66b723596b0` adds crate-owned views and controls,
 Catalogue 1.3.0 snapshot `f02fd1904da6e29f` adds the `sheet` kind, PropertyGrid and Stack `animate-layout`, and ActionIcon `toggled` and `tooltip`.
 Catalogue 1.4.0 snapshot `32f852d2b157035f` adds the `calendar` kind.
 Catalogue 1.4.0 snapshot `bcbe38d18d3993d0` adds the `command-ribbon` kind.
+Catalogue 1.4.0 snapshot `762e8e6453dbd752` adds `tracks-view` track `id` and `height` fields and the `header` prop.
+Catalogue 1.4.0 snapshot `b411d15c62b969b8` adds `trackId` (the track key) to the `tracks-view` clip-change payload.

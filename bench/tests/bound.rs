@@ -15,7 +15,7 @@ use gpui_kit::{
     div, px, size,
 };
 use guiraffe_bench::allocator::{CountingAllocator, count_allocations};
-use guiraffe_state::{Event, Fx, KeyedList, Lens as _, ListLens, Store, store};
+use guiraffe_state::{Event, Fx, KeyedList, Lens as _, Store, store};
 use guiraffe_ui::ui;
 use nix::time::{ClockId, clock_gettime};
 

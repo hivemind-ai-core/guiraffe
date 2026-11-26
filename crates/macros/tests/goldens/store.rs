@@ -90,48 +90,58 @@ impl ::guiraffe_state::Lensed for Settings {
         SettingsPath(lens)
     }
 }
-#[doc = concat!("Set `", stringify!(theme), "` (validated, keyed to the field).")]
-#[derive(Debug, Clone)]
-pub struct SetTheme(pub Theme);
-impl ::guiraffe_state::Event<Settings> for SetTheme {
-    fn handle(self, fx: &mut ::guiraffe_state::Fx<'_, Settings>) {
-        fx.set_at(Settings::theme, self.0);
+#[doc = concat!(
+    "The `Set` events of [`", stringify!(Settings), "`], one per field: `",
+    stringify!(Settings), "::set().field(value)`."
+)]
+#[derive(Clone, Copy, Debug)]
+pub struct SettingsSet;
+impl SettingsSet {
+    #[doc = concat!(
+        "Set `", stringify!(theme),
+        "`: validated, keyed to the field, tagged `Source::Host`."
+    )]
+    pub fn theme(
+        self,
+        value: Theme,
+    ) -> ::guiraffe_state::Set<::guiraffe_state::Field<Settings, Theme>> {
+        ::guiraffe_state::Set::host(Settings::theme, value)
     }
-    fn undoable(&self) -> bool {
-        ::guiraffe_state::Lens::undoable(&Settings::theme)
+    #[doc = concat!(
+        "Set `", stringify!(font_size),
+        "`: validated, keyed to the field, tagged `Source::Host`."
+    )]
+    pub fn font_size(
+        self,
+        value: f32,
+    ) -> ::guiraffe_state::Set<::guiraffe_state::Field<Settings, f32>> {
+        ::guiraffe_state::Set::host(Settings::font_size, value)
+    }
+    #[doc = concat!(
+        "Set `", stringify!(recent),
+        "`: validated, keyed to the field, tagged `Source::Host`."
+    )]
+    pub fn recent(
+        self,
+        value: Vec<PathBuf>,
+    ) -> ::guiraffe_state::Set<::guiraffe_state::Field<Settings, Vec<PathBuf>>> {
+        ::guiraffe_state::Set::host(Settings::recent, value)
+    }
+    #[doc = concat!(
+        "Set `", stringify!(draft),
+        "`: validated, keyed to the field, tagged `Source::Host`."
+    )]
+    pub fn draft(
+        self,
+        value: Draft,
+    ) -> ::guiraffe_state::Set<::guiraffe_state::Field<Settings, Draft>> {
+        ::guiraffe_state::Set::host(Settings::draft, value)
     }
 }
-#[doc = concat!("Set `", stringify!(font_size), "` (validated, keyed to the field).")]
-#[derive(Debug, Clone)]
-pub struct SetFontSize(pub f32);
-impl ::guiraffe_state::Event<Settings> for SetFontSize {
-    fn handle(self, fx: &mut ::guiraffe_state::Fx<'_, Settings>) {
-        fx.set_at(Settings::font_size, self.0);
-    }
-    fn undoable(&self) -> bool {
-        ::guiraffe_state::Lens::undoable(&Settings::font_size)
-    }
-}
-#[doc = concat!("Set `", stringify!(recent), "` (validated, keyed to the field).")]
-#[derive(Debug, Clone)]
-pub struct SetRecent(pub Vec<PathBuf>);
-impl ::guiraffe_state::Event<Settings> for SetRecent {
-    fn handle(self, fx: &mut ::guiraffe_state::Fx<'_, Settings>) {
-        fx.set_at(Settings::recent, self.0);
-    }
-    fn undoable(&self) -> bool {
-        ::guiraffe_state::Lens::undoable(&Settings::recent)
-    }
-}
-#[doc = concat!("Set `", stringify!(draft), "` (validated, keyed to the field).")]
-#[derive(Debug, Clone)]
-pub struct SetDraft(pub Draft);
-impl ::guiraffe_state::Event<Settings> for SetDraft {
-    fn handle(self, fx: &mut ::guiraffe_state::Fx<'_, Settings>) {
-        fx.set_at(Settings::draft, self.0);
-    }
-    fn undoable(&self) -> bool {
-        ::guiraffe_state::Lens::undoable(&Settings::draft)
+impl Settings {
+    /// The generated per-field `Set` events: `store.dispatch(Self::set().field(value), cx)`.
+    pub fn set() -> SettingsSet {
+        SettingsSet
     }
 }
 #[derive(Debug)]

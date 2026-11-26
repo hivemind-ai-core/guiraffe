@@ -7,7 +7,9 @@ use crate::{
     controls::{self, paths},
     diff::{self, Pixels},
     discover::{Golden, Source},
-    review::{Decide, Decision, LoadRequest, Loaded, LoadedGolden, Mode, Review, Row, Shared},
+    review::{
+        Decide, Decision, Export, LoadRequest, Loaded, LoadedGolden, Mode, Review, Row, Shared,
+    },
 };
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -24,7 +26,7 @@ use guiraffe_commands::{
     },
 };
 use guiraffe_components::controls::{
-    ButtonControl, ButtonEvent, SelectControl, SliderControl, TextInputControl, TextInputEvent,
+    ButtonControl, SelectControl, SliderControl, TextInputControl,
 };
 use guiraffe_core::{
     GuiraffeTheme,
@@ -35,7 +37,7 @@ use guiraffe_dnd::dock::{
     DockArea, DockDragOverlay, DockPlacement, DockablePanel, Panel, PanelEvent, panel_handle,
 };
 use guiraffe_state::{Selected, Store};
-use guiraffe_ui::ui;
+use guiraffe_ui::{ControlHandle, ui};
 use std::{cell::Cell, rc::Rc, sync::Arc};
 /// GPU-ready images of a loaded golden (BGRA, built off the UI thread).
 pub struct Images {
@@ -93,6 +95,9 @@ pub fn load(source: &dyn Source, golden: &Golden) -> anyhow::Result<Loaded> {
 
 /// Run load requests on the background executor and feed results into the store.
 pub fn install_loader(store: &Store<Review>, source: Arc<dyn Source>, cx: &mut App) {
+    store.on_effect(cx, |crate::review::CopySummary(summary), _, cx| {
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(summary));
+    });
     store.on_effect(cx, move |LoadRequest(goldens), store, cx| {
         let weak = store.downgrade();
         for golden in goldens {
@@ -120,7 +125,7 @@ pub fn install_loader(store: &Store<Review>, source: Arc<dyn Source>, cx: &mut A
     });
 }
 
-/// Theme colours a view captures for its bound rows (row bodies get no `cx`).
+/// Theme colours, read where they are drawn so a theme change reaches every view.
 #[derive(Clone, Copy)]
 struct Palette {
     body: Hsla,
@@ -140,27 +145,8 @@ fn palette(cx: &App) -> Palette {
     }
 }
 
-/// A protocol button on the bus at `path`; activation (pointer, keyboard, shortcut,
-/// Spotlight, ribbon, MCP) runs `on_activate` once.
-fn button(
-    path: &'static str,
-    label: &'static str,
-    window: &mut Window,
-    cx: &mut App,
-    on_activate: impl Fn(&mut App) + 'static,
-) -> (Entity<ButtonControl>, Subscription) {
-    let button = ButtonControl::new()
-        .label(label)
-        .path(path)
-        .build(window, cx);
-    let subscription = cx.subscribe(&button, move |_, event: &ButtonEvent, cx| {
-        let ButtonEvent::Activated(_) = event;
-        on_activate(cx);
-    });
-    (button, subscription)
-}
-
-fn row_view(key: u32, row: &Row, p: Palette) -> AnyElement {
+fn row_view(key: u32, row: &Row, selected: bool, cx: &App) -> AnyElement {
+    let p = palette(cx);
     let mark = match row.verdict.as_ref().map(|v| v.decision) {
         Some(Decision::Accept) => "✓",
         Some(Decision::Reject) => "✗",
@@ -177,7 +163,7 @@ fn row_view(key: u32, row: &Row, p: Palette) -> AnyElement {
         .items_center()
         .gap(px(8.))
         .text_color(p.text)
-        .when(row.selected, |row| row.bg(p.primary.opacity(0.18)))
+        .when(selected, |row| row.bg(p.primary.opacity(0.18)))
         .on_click(move |_, window, cx| {
             controls::dispatch(
                 paths::LIST,
@@ -210,101 +196,32 @@ pub struct ListPanel {
     store: Store<Review>,
     focus: FocusHandle,
     status: Selected<(usize, usize, Option<SharedString>)>,
-    buttons: [Entity<ButtonControl>; 3],
-    _activations: [Subscription; 3],
-    /// Bound by hand rather than in `ui!`: a `ui!`-built control has no handle, so it could
-    /// not be focused for keyboard-only review (API feedback).
-    reason: Entity<TextInputControl>,
-    reason_text: Selected<Option<SharedString>>,
-    mirrored: SharedString,
-    _typed: Subscription,
+    /// The reason field, mounted by `ui!`: keyboard-only review focuses it (Alt+T).
+    reason: ControlHandle<TextInputControl>,
 }
 
 impl ListPanel {
-    fn new(store: &Store<Review>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(store: &Store<Review>, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let status = store.select(cx, |s: &Review| {
             (s.decided(), s.goldens.len(), s.error.clone())
         });
-        let decide = |decision| {
-            let store = store.downgrade();
-            move |cx: &mut App| {
-                if let Some(store) = store.upgrade() {
-                    store.dispatch_now(
-                        Decide {
-                            decision,
-                            reason: None,
-                        },
-                        cx,
-                    );
-                }
-            }
-        };
-        let exported = store.downgrade();
-        let (accept, a) = button(
-            paths::ACCEPT,
-            "Accept",
-            window,
-            cx,
-            decide(Decision::Accept),
-        );
-        let (reject, r) = button(
-            paths::REJECT,
-            "Reject",
-            window,
-            cx,
-            decide(Decision::Reject),
-        );
-        let (export, e) = button(paths::EXPORT, "Export", window, cx, move |cx| {
-            if let Some(store) = exported.upgrade() {
-                let summary = store.state(cx).commit_summary();
-                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(summary));
-            }
-        });
-        let reason = TextInputControl::new()
-            .path(paths::REASON)
-            .placeholder("Reason (optional)")
-            .build(window, cx);
-        let typed = {
-            let store = store.downgrade();
-            cx.subscribe(&reason, move |_, _, event: &TextInputEvent, cx| {
-                let TextInputEvent::Changed(text, source) = event;
-                if let Some(store) = store.upgrade() {
-                    store.set_from(Review::reason, text.clone(), *source, cx);
-                }
-            })
-        };
-        let reason_text = store.select_lens(Review::reason, cx);
         Self {
             store: store.clone(),
             focus: cx.focus_handle(),
             status,
-            buttons: [accept, reject, export],
-            _activations: [a, r, e],
-            reason,
-            reason_text,
-            mirrored: SharedString::default(),
-            _typed: typed,
+            reason: ControlHandle::new(),
         }
     }
     /// The reason field's focus handle (keyboard-only review: Alt+T focuses it).
     pub fn reason_focus(&self, cx: &App) -> FocusHandle {
-        self.reason.read(cx).input().read(cx).focus_handle(cx)
+        self.reason
+            .focus_handle(cx)
+            .unwrap_or_else(|| self.focus.clone())
     }
 }
 
 impl Render for ListPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Store -> field, only when the store changed (a verdict clears it, MCP sets it).
-        // The setter does not emit, so this never echoes back as an edit.
-        let wanted = self.reason_text.get(cx).clone().unwrap_or_default();
-        if wanted != self.mirrored {
-            self.mirrored = wanted.clone();
-            if *self.reason.read(cx).value() != wanted {
-                self.reason
-                    .update(cx, |field, cx| field.set_value(wanted, cx));
-            }
-        }
-        let reason = self.reason.clone();
         let p = palette(cx);
         let (decided, total, error) = self.status.get(cx).clone();
         let status = match error {
@@ -312,8 +229,8 @@ impl Render for ListPanel {
             None => format!("{decided}/{total} reviewed"),
         };
         let store = self.store.clone();
-        let [accept, reject, export] = self.buttons.clone();
         let focus = self.focus.clone();
+        let reason = self.reason.clone();
         ui! {
             div {
                 .id("golden-list-panel")
@@ -327,23 +244,43 @@ impl Render for ListPanel {
                     border_color: p.border
                     {status}
                 }
-                div {
-                    flex_1
-                    store(store) {
+                store(store) {
+                    div {
+                        flex_1
                         for (key, row) in <= goldens, row_height: px(ROW_HEIGHT) {
-                            {row_view(key, row, p)}
+                            div {
+                                let selected <= derived(selected, move |s| *s == key);
+                                {row_view(key, row, *selected, cx)}
+                            }
                         }
                     }
-                }
-                div {
-                    p: px(8.)  gap: px(6.)  flex flex_col  border_t_1
-                    border_color: p.border
-                    view(reason)
                     div {
-                        flex  gap: px(6.)
-                        view(accept)
-                        view(reject)
-                        view(export)
+                        p: px(8.)  gap: px(6.)  flex flex_col  border_t_1
+                        border_color: p.border
+                        TextInputControl {
+                            value <=> reason
+                            .path(paths::REASON)
+                            .placeholder("Reason (optional)")
+                            handle: reason
+                        }
+                        div {
+                            flex  gap: px(6.)
+                            ButtonControl {
+                                .label("Accept")
+                                .path(paths::ACCEPT)
+                                on_click => Decide { decision: Decision::Accept, reason: None }
+                            }
+                            ButtonControl {
+                                .label("Reject")
+                                .path(paths::REJECT)
+                                on_click => Decide { decision: Decision::Reject, reason: None }
+                            }
+                            ButtonControl {
+                                .label("Export")
+                                .path(paths::EXPORT)
+                                on_click => Export
+                            }
+                        }
                     }
                 }
             }
@@ -538,7 +475,7 @@ impl Render for ComparePanel {
                 div {
                     flex items_center  gap: px(8.)
                     store(store) {
-                        SelectControl::<Mode> {
+                        SelectControl {
                             value <=> mode
                             .path(paths::MODE)
                             .label("View")
@@ -566,7 +503,10 @@ impl Render for ComparePanel {
                     .test_support()
                     flex_1 overflow_scroll relative
                     .on_mouse_down(MouseButton::Left, inspect_at)
-                    div { flex; gap: px(8.); .children(images) }
+                    div {
+                        flex gap: px(8.)
+                        .children(images)
+                    }
                     {canvas(move |b, _, _| paint_bounds.set(Some(b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full()}
                 }
             }

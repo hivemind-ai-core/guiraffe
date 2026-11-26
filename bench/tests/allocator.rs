@@ -1007,11 +1007,11 @@ fn tracks_repaint(painter: bool, mixed: bool) -> anyhow::Result<guiraffe_bench::
                     }
                     // 30 + 50 per pair keeps the same rows in view as 40 + 40.
                     let h = if mixed { [30., 50.][t % 2] } else { 40. };
-                    TrackRow::new(format!("Track {t}"), track).with_height(h)
+                    TrackRow::new(t as u64, format!("Track {t}"), track).with_height(h)
                 })
                 .collect();
             let store = tracks_store(TracksModel::new(rows), 100, cx);
-            store.dispatch_now(SetSelection(Some(ClipRef { track: 1, clip: 3 })), cx);
+            store.dispatch_now(SetSelection(Some(ClipRef::new(1, 3))), cx);
             let view = TracksView::with_store(store, TimeFormat::Seconds, 40., cx);
             if painter {
                 view.update(cx, |v, cx| {

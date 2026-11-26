@@ -31,7 +31,7 @@ use guiraffe_core::{
 use guiraffe_state::{Selected, Store};
 
 pub use crate::tracks_model::{
-    ClipEdit, ClipRef, DEFAULT_TRACK_HEIGHT, Follow, RowLayout, TrackRow, TrackUpdate,
+    ClipEdit, ClipRef, DEFAULT_TRACK_HEIGHT, Follow, RowLayout, TrackId, TrackRow, TrackUpdate,
     TracksAction, TracksChange, TracksModel, ViewRange, tracks_store,
 };
 use crate::{
@@ -58,16 +58,16 @@ pub use crate::edit::EDGE_GRAB;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TracksEvent {
     ClipChanged {
-        track: usize,
+        track: TrackId,
         clip: u32,
         edit: ClipEdit,
     },
     TrackResized {
-        track: usize,
+        track: TrackId,
         height: f32,
     },
     SelectionChanged {
-        selected: Option<(usize, u32)>,
+        selected: Option<ClipRef>,
     },
     Seek(f64),
 }
@@ -82,7 +82,7 @@ impl From<TracksChange> for TracksEvent {
             },
             TracksChange::TrackResized { track, height } => Self::TrackResized { track, height },
             TracksChange::SelectionChanged { selection } => Self::SelectionChanged {
-                selected: selection.map(|s| (s.track, s.clip)),
+                selected: selection,
             },
             TracksChange::Seek { time } => Self::Seek(time),
         }
@@ -170,7 +170,7 @@ enum Drag {
         grab: Grab,
     },
     Resize {
-        track: usize,
+        track: TrackId,
         from_y: f32,
         from_h: f32,
     },
@@ -194,7 +194,8 @@ pub struct TracksView {
     pending_fit: Option<(f64, f64)>,
     resize: ResizeEdges,
     /// Clips that cannot be moved or resized, by (track, clip id).
-    pub(crate) locked: std::collections::HashSet<(usize, u32)>,
+    /// Clips that cannot be moved or resized, by stable key (they survive track moves).
+    pub(crate) locked: std::collections::HashSet<ClipRef>,
     /// When false, nothing can be edited (seek still works).
     editable: bool,
     resizable: bool,
@@ -360,9 +361,10 @@ impl TracksView {
         self.model(cx).rows()
     }
 
-    /// The selected clip `(track, clip id)`.
+    /// The selected clip as `(display position, clip id)`; see [`TracksModel::selection`]
+    /// for its stable [`ClipRef`].
     pub fn selected(&self, cx: &App) -> Option<(usize, u32)> {
-        self.model(cx).selection.map(|s| (s.track, s.clip))
+        self.model(cx).selected_index()
     }
 
     pub fn playhead(&self, cx: &App) -> f64 {
@@ -381,7 +383,11 @@ impl TracksView {
     /// Host write of the selection (no event).
     pub fn select(&mut self, sel: Option<(usize, u32)>, cx: &mut Context<Self>) {
         self.store.dispatch_now(
-            SetSelection(sel.map(|(track, clip)| ClipRef { track, clip })),
+            SetSelection(
+                sel.and_then(|(track, clip)| {
+                    Some(ClipRef::new(self.model(cx).row(track)?.id, clip))
+                }),
+            ),
             cx,
         );
     }
@@ -394,7 +400,8 @@ impl TracksView {
         cx: &mut Context<Self>,
     ) -> Result<Option<TracksChange>, ActionError> {
         if let TracksAction::MoveClip { clip, .. } | TracksAction::TrimClip { clip, .. } = action
-            && (!self.editable || self.locked.contains(&(clip.track, clip.clip)))
+            && (!self.editable
+                || self.model(cx).row_by_id(clip.track).is_some() && self.locked.contains(&clip))
         {
             return Err(ActionError::Disabled);
         }
@@ -438,6 +445,11 @@ impl TracksView {
     pub fn selection_style(&self, cx: &App) -> SelectionStyle {
         self.selection_style
             .unwrap_or_else(|| SelectionStyle::themed(GuiraffeTheme::global(cx)))
+    }
+
+    /// Whether the header column is hidden.
+    pub fn header_hidden(&self) -> bool {
+        matches!(self.header, HeaderMode::Hidden)
     }
 
     pub fn set_header(&mut self, header: HeaderMode, cx: &mut Context<Self>) {
@@ -511,9 +523,10 @@ impl TracksView {
     fn select_step_action(&self, dir: i32, cx: &App) -> Option<TracksAction> {
         let model = self.model(cx);
         let rows = model.rows();
-        let current = model
-            .selection
-            .and_then(|s| Some((s.track, rows.get(s.track)?.track.index_of(s.clip)?)));
+        let current = model.selection.and_then(|s| {
+            let row = model.index_of(s.track)?;
+            Some((row, rows[row].track.index_of(s.clip)?))
+        });
         let next = if dir < 0 {
             match current {
                 Some((row, index)) if index > 0 => Some((row, index - 1)),
@@ -540,7 +553,7 @@ impl TracksView {
         };
         (next != current).then(|| {
             TracksAction::Select(next.map(|(row, index)| ClipRef {
-                track: row,
+                track: rows[row].id,
                 clip: rows[row].track.clips()[index].id,
             }))
         })
@@ -594,17 +607,18 @@ impl TracksView {
     /// Start a drag; returns the selection action to route, if the press hit a clip.
     fn press_item(&mut self, track: usize, x: f64, cx: &App) -> Option<TracksAction> {
         let model = self.model(cx);
+        let id = model.row(track)?.id;
         let hit = model.row(track).and_then(|row| {
             hit_index(&row.track, &self.surface.axis, x, ResizeEdges::None)
                 .map(|(index, _)| row.track.clips()[index].id)
         });
         self.preview = None;
         self.drag = self.grab(track, x, cx).map(|(clip, grab)| Drag::Clip {
-            clip: ClipRef { track, clip },
+            clip: ClipRef::new(id, clip),
             grab,
         });
         let selection = model.selection;
-        hit.map(|clip| ClipRef { track, clip })
+        hit.map(|clip| ClipRef::new(id, clip))
             .filter(|at| selection != Some(*at))
             .map(|at| TracksAction::Select(Some(at)))
     }
@@ -619,7 +633,7 @@ impl TracksView {
         }
         self.preview = None;
         self.drag = Some(Drag::Resize {
-            track,
+            track: row.id,
             from_y: y,
             from_h: row.height,
         });
@@ -633,7 +647,7 @@ impl TracksView {
         }
         let row = self.model(cx).row(track)?;
         hit(&row.track, &self.surface.axis, x, self.resize)
-            .filter(|(clip, _)| !self.locked.contains(&(track, *clip)))
+            .filter(|(clip, _)| !self.locked.contains(&ClipRef::new(row.id, *clip)))
     }
 
     /// Which clip edges resize (default: both).
@@ -642,20 +656,21 @@ impl TracksView {
         cx.notify();
     }
 
-    /// Lock or unlock one clip's position and size.
-    pub fn set_locked(&mut self, track: usize, clip: u32, locked: bool, cx: &mut Context<Self>) {
+    /// Lock or unlock one clip's position and size, by its stable key. The lock stays with
+    /// the clip when its track moves.
+    pub fn set_locked(&mut self, clip: ClipRef, locked: bool, cx: &mut Context<Self>) {
         let changed = if locked {
-            self.locked.insert((track, clip))
+            self.locked.insert(clip)
         } else {
-            self.locked.remove(&(track, clip))
+            self.locked.remove(&clip)
         };
         if changed {
             cx.notify();
         }
     }
 
-    pub fn is_locked(&self, track: usize, clip: u32) -> bool {
-        self.locked.contains(&(track, clip))
+    pub fn is_locked(&self, clip: ClipRef) -> bool {
+        self.locked.contains(&clip)
     }
 
     /// Allow or forbid all edits (a global lock).
@@ -810,19 +825,22 @@ impl TracksView {
     }
 
     /// The clip as the active preview would leave it.
-    fn shown(&self, track: usize, clip: &Clip, model: &TracksModel) -> Clip {
+    fn shown(&self, row: usize, clip: &Clip, model: &TracksModel) -> Clip {
+        let Some(track) = model.row(row).map(|r| r.id) else {
+            return *clip;
+        };
         let preview = match self.preview {
             Some(TracksAction::MoveClip { clip: at, start })
                 if at.track == track && at.clip == clip.id =>
             {
-                model.row(track).and_then(|r| r.track.moved(clip.id, start))
+                model.row(row).and_then(|r| r.track.moved(clip.id, start))
             }
             Some(TracksAction::TrimClip {
                 clip: at,
                 edge,
                 time,
             }) if at.track == track && at.clip == clip.id => model
-                .row(track)
+                .row(row)
                 .and_then(|r| r.track.trimmed(clip.id, edge, time)),
             _ => None,
         };
@@ -837,8 +855,8 @@ impl Observe for TracksView {
         ControlSnapshot {
             value: Some(Value::Num(model.playhead)),
             selected: model
-                .selection
-                .map(|s| Rc::from([s.track, s.clip as usize].as_slice())),
+                .selected_index()
+                .map(|(row, clip)| Rc::from([row, clip as usize].as_slice())),
             disabled: Some(!self.editable),
             ..Default::default()
         }
@@ -1010,7 +1028,7 @@ impl TracksView {
             return None;
         }
         let scroll = self.scroll_y;
-        let selected_track = model.selection.map(|s| s.track);
+        let selected_track = model.selected_index().map(|s| s.0);
         let column = div()
             .id("tracks-header")
             .relative()
@@ -1052,7 +1070,8 @@ impl TracksView {
                 .children(rows.filter_map(|i| {
                     let row = model.rows().get(i)?;
                     let first = row.track.clips().first().map(|c| c.id);
-                    let locked = first.is_some_and(|id| self.is_locked(i, id));
+                    let key = row.id;
+                    let locked = first.is_some_and(|id| self.is_locked(ClipRef::new(key, id)));
                     Some(
                         cell(i)
                             .px(px(8.))
@@ -1072,11 +1091,11 @@ impl TracksView {
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let ids: Vec<_> = this
                                             .model(cx)
-                                            .row(i)
+                                            .row_by_id(key)
                                             .map(|r| r.track.clips().iter().map(|c| c.id).collect())
                                             .unwrap_or_default();
                                         for id in ids {
-                                            this.set_locked(i, id, !locked, cx);
+                                            this.set_locked(ClipRef::new(key, id), !locked, cx);
                                         }
                                     })),
                             ))
@@ -1101,13 +1120,15 @@ impl Render for TracksView {
             .selection_style
             .unwrap_or_else(|| SelectionStyle::themed(t));
         let model = self.model(cx).clone();
-        let selected = model.selection.map(|s| (s.track, s.clip));
+        let selected = model.selected_index();
         let accessibility = window.is_a11y_active();
         let view = cx.weak_entity();
 
         // Row layout: a prefix sum over heights, with a resize preview applied.
         let resizing = match self.preview {
-            Some(TracksAction::ResizeTrack { track, height }) => Some((track, height)),
+            Some(TracksAction::ResizeTrack { track, height }) => {
+                model.index_of(track).map(|i| (i, height))
+            }
             _ => None,
         };
         self.layout.rebuild(
@@ -1311,7 +1332,7 @@ impl Render for TracksView {
                                                 if !overview(track, &axis) {
                                                     if editable && canvas_clips(track, &axis) {
                                                         for clip in crate::visible(track.clips(), &axis, |c| c.start, |c| c.end()) {
-                                                            if selected == Some((row, clip.id)) || view.locked.contains(&(row, clip.id)) {
+                                                            if selected == Some((row, clip.id)) || view.locked.contains(&ClipRef::new(r.id, clip.id)) {
                                                                 continue;
                                                             }
                                                             let shown = view.shown(row, clip, model);
@@ -1334,7 +1355,7 @@ impl Render for TracksView {
                                                 };
                                                 let mut run = None;
                                                 for (column, clip) in overview_columns(track, axis) {
-                                                    let style = if view.locked.contains(&(row, clip)) {
+                                                    let style = if view.locked.contains(&ClipRef::new(r.id, clip)) {
                                                         item_style
                                                     } else if !editable {
                                                         global_style
@@ -1380,15 +1401,16 @@ impl Render for TracksView {
                                 };
                                 let detailed_canvas = !overview_row && !accessibility && editable && canvas_clips(tr, &axis);
                                 let name = &r.name;
+                                let key = r.id;
                                 let model = &model;
                                 clips
                                     .iter()
-                                    .filter(move |clip| !detailed_canvas || selected == Some((i, clip.id)) || locked.contains(&(i, clip.id)))
+                                    .filter(move |clip| !detailed_canvas || selected == Some((i, clip.id)) || locked.contains(&ClipRef::new(key, clip.id)))
                                     .map(move |c| {
                                         let shown = this.shown(i, c, model);
                                         let (x0, x1) = (axis.x(shown.start) as f32, axis.x(shown.end()) as f32);
                                         let on = selected == Some((i, c.id));
-                                        let is_locked = !editable || locked.contains(&(i, c.id));
+                                        let is_locked = !editable || locked.contains(&ClipRef::new(key, c.id));
                                         div()
                                             .id(clip_element_id(i, c.id))
                                             .test_support()
@@ -1410,7 +1432,7 @@ impl Render for TracksView {
                                             .bg(clip_v.background.to_hsla())
                                             .border_color(clip_v.foreground.to_hsla())
                                             .when(is_locked, |el| {
-                                                if locked.contains(&(i, c.id)) {
+                                                if locked.contains(&ClipRef::new(key, c.id)) {
                                                     item_style.decorate(el, t)
                                                 } else {
                                                     global_style.decorate(el, t)
@@ -1564,10 +1586,10 @@ mod tests {
             *events,
             [
                 TracksEvent::SelectionChanged {
-                    selected: Some((0, 1))
+                    selected: Some(ClipRef::new(0, 1))
                 },
                 TracksEvent::ClipChanged {
-                    track: 0,
+                    track: TrackId(0),
                     clip: 1,
                     edit: ClipEdit::Move
                 },
@@ -1639,15 +1661,12 @@ mod tests {
             v.release(cx);
             let c = v.tracks(cx)[0].track.clips()[0];
             assert_eq!((c.start, c.end(), c.source_offset), (1.5, 3.0, 0.5));
-            v.set_locked(0, first, true, cx);
+            v.set_locked(ClipRef::new(0, first), true, cx);
             assert!(v.grab(0, a.x(2.0), cx).is_none());
             assert_eq!(
                 v.perform(
                     TracksAction::MoveClip {
-                        clip: ClipRef {
-                            track: 0,
-                            clip: first
-                        },
+                        clip: ClipRef::new(0, first),
                         start: 2.0
                     },
                     cx
@@ -1655,7 +1674,7 @@ mod tests {
                 Err(ActionError::Disabled),
                 "a locked clip refuses bus edits too"
             );
-            v.set_locked(0, first, false, cx);
+            v.set_locked(ClipRef::new(0, first), false, cx);
             v.set_resize_edges(ResizeEdges::End, cx);
             assert!(
                 matches!(v.grab(0, a.x(1.5) + 1.0, cx), Some((_, Grab::Move { .. }))),

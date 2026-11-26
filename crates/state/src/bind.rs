@@ -26,6 +26,18 @@ pub struct Set<L: Lens> {
     pub undoable: bool,
 }
 
+impl<L: Lens> Set<L> {
+    /// A host write (`Source::Host`), recorded for undo unless the lens says otherwise.
+    pub fn host(lens: L, value: L::Target) -> Self {
+        Self {
+            lens,
+            value,
+            source: Source::Host,
+            undoable: lens.undoable(),
+        }
+    }
+}
+
 impl<L: Lens> fmt::Debug for Set<L>
 where
     L::Target: fmt::Debug,
@@ -79,6 +91,11 @@ impl<S, E: Event<S>> Event<S> for Sourced<E> {
 }
 
 impl<S: Clone + PartialEq + 'static> Store<S> {
+    /// Dispatch an event tagged with `source`, as a control's typed event reports it.
+    pub fn dispatch_from(&self, event: impl Event<S>, source: Source, cx: &mut App) {
+        self.dispatch_now(Sourced { event, source }, cx);
+    }
+
     /// Dispatch an event a control raised (`ui!`'s `on_x => Event`), tagged with the bus
     /// source while a control applies a bus action and [`Source::Pointer`] otherwise.
     pub fn dispatch_from_control(&self, event: impl Event<S>, cx: &mut App) {
@@ -214,53 +231,121 @@ where
 /// A live store registration. Dropping it unsubscribes.
 pub struct Watch(#[allow(dead_code)] Vec<Rc<dyn Any>>);
 
-/// One bound value: a lens and the value the control last saw.
-pub struct Bind<L: Lens> {
-    lens: L,
-    value: Option<L::Target>,
+/// What a binding reads: a lens, or a value derived from one ([`derived`]).
+pub trait BindSource: 'static {
+    type Root: 'static;
+    type Value: Clone + PartialEq + 'static;
+    /// Whether the value differs from `cached`.
+    fn changed(&self, root: &Self::Root, cached: Option<&Self::Value>) -> bool;
+    /// Refresh `cached`, reusing its buffers where the type allows.
+    fn store(&self, root: &Self::Root, cached: &mut Option<Self::Value>);
+    /// The change keys the value depends on (a lens's chain).
+    fn for_each_key(&self, f: &mut dyn FnMut(u64));
 }
 
-impl<L: Lens> Bind<L>
+impl<L: Lens> BindSource for L
 where
     L::Target: Clone + PartialEq,
 {
-    fn new(lens: L, state: &L::Root) -> Self {
-        Self {
-            lens,
-            value: lens.get(state).cloned(),
+    type Root = L::Root;
+    type Value = L::Target;
+    #[inline]
+    fn changed(&self, root: &L::Root, cached: Option<&L::Target>) -> bool {
+        // By reference: no clone unless it changed.
+        self.get(root) != cached
+    }
+    fn store(&self, root: &L::Root, cached: &mut Option<L::Target>) {
+        match (cached.as_mut(), self.get(root)) {
+            (Some(old), Some(value)) if old != value => old.clone_from(value),
+            (Some(_), Some(_)) => {}
+            (_, value) => *cached = value.cloned(),
         }
     }
+    fn for_each_key(&self, f: &mut dyn FnMut(u64)) {
+        Lens::for_each_key(self, f);
+    }
+}
 
-    /// The current value; `None` while the lens reads nothing (a removed item).
-    pub fn get(&self) -> Option<&L::Target> {
+/// A value computed from what `lens` reads, as `ui!`'s `<= derived(lens, |v| …)` binds it.
+/// It is recomputed only when a write marks the lens's path, and a control is notified only
+/// when the result changed, coalesced like any binding. `f` must not depend on anything
+/// else that changes.
+pub struct Derived<L, F> {
+    lens: L,
+    f: F,
+}
+
+/// Bind a value derived from a lens: `derived(Review::selected, move |s| *s == key)`.
+pub fn derived<L, F, T>(lens: L, f: F) -> Derived<L, F>
+where
+    L: Lens,
+    F: Fn(&L::Target) -> T + 'static,
+    T: Clone + PartialEq + 'static,
+{
+    Derived { lens, f }
+}
+
+impl<L, F, T> BindSource for Derived<L, F>
+where
+    L: Lens,
+    F: Fn(&L::Target) -> T + 'static,
+    T: Clone + PartialEq + 'static,
+{
+    type Root = L::Root;
+    type Value = T;
+    #[inline]
+    fn changed(&self, root: &L::Root, cached: Option<&T>) -> bool {
+        match (self.lens.get(root), cached) {
+            (Some(input), Some(cached)) => (self.f)(input) != *cached,
+            (None, None) => false,
+            _ => true,
+        }
+    }
+    fn store(&self, root: &L::Root, cached: &mut Option<T>) {
+        *cached = self.lens.get(root).map(&self.f);
+    }
+    fn for_each_key(&self, f: &mut dyn FnMut(u64)) {
+        self.lens.for_each_key(f);
+    }
+}
+
+/// One bound value: its source and the value the control last saw.
+pub struct Bind<B: BindSource> {
+    source: B,
+    value: Option<B::Value>,
+}
+
+impl<B: BindSource> Bind<B> {
+    fn new(source: B, state: &B::Root) -> Self {
+        let mut value = None;
+        source.store(state, &mut value);
+        Self { source, value }
+    }
+
+    /// The current value; `None` while the source reads nothing (a removed item).
+    pub fn get(&self) -> Option<&B::Value> {
         self.value.as_ref()
     }
 
-    pub fn lens(&self) -> L {
-        self.lens
+    fn changed(&self, state: &B::Root) -> bool {
+        self.source.changed(state, self.value.as_ref())
     }
 
-    fn changed(&self, state: &L::Root) -> bool {
-        self.lens.get(state) != self.value.as_ref()
-    }
-
-    fn update(&mut self, state: &L::Root) {
-        if let Some(value) = self.lens.get(state) {
-            // `clone_from` reuses the old value's buffers where the type allows it.
-            match &mut self.value {
-                Some(old) if old != value => old.clone_from(value),
-                Some(_) => {}
-                None => self.value = Some(value.clone()),
-            }
-        } else {
-            self.value = None;
-        }
+    fn update(&mut self, state: &B::Root) {
+        self.source.store(state, &mut self.value);
     }
 
     fn chain(&self) -> Vec<u64> {
         let mut chain = Vec::new();
-        self.lens.for_each_key(&mut |key| chain.push(key));
+        self.source.for_each_key(&mut |key| chain.push(key));
         chain
+    }
+}
+
+impl<L: Lens + BindSource> Bind<L> {
+    /// The lens, for a two-way binding's write.
+    pub fn lens(&self) -> L {
+        self.source
     }
 }
 
@@ -279,8 +364,7 @@ pub trait Bindings<S>: 'static {
 
 macro_rules! tuples {
     ($($name:ident $index:tt),+) => {
-        impl<S: 'static, $($name: Lens<Root = S>),+> Lenses<S> for ($($name,)+)
-        where $($name::Target: Clone + PartialEq),+
+        impl<S: 'static, $($name: BindSource<Root = S>),+> Lenses<S> for ($($name,)+)
         {
             type Bound = ($(Bind<$name>,)+);
             fn bind(self, state: &S) -> Self::Bound {
@@ -288,8 +372,7 @@ macro_rules! tuples {
             }
         }
 
-        impl<S: 'static, $($name: Lens<Root = S>),+> Bindings<S> for ($(Bind<$name>,)+)
-        where $($name::Target: Clone + PartialEq),+
+        impl<S: 'static, $($name: BindSource<Root = S>),+> Bindings<S> for ($(Bind<$name>,)+)
         {
             #[inline]
             fn changed(&self, state: &S) -> bool {
