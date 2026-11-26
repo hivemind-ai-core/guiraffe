@@ -635,10 +635,19 @@ pub(crate) struct EntityAccessLog {
 
 /// The entities changed, updated or written, in order and with repeats, up
 /// to [`PatchLog::CAPACITY`] of them. Past that, it only knows it is full.
-#[derive(Default)]
+/// Its room is taken once, up front, so that logging never allocates.
 pub(crate) struct PatchLog {
     entries: Vec<EntityId>,
     full: bool,
+}
+
+impl Default for PatchLog {
+    fn default() -> Self {
+        PatchLog {
+            entries: Vec::with_capacity(Self::CAPACITY),
+            full: false,
+        }
+    }
 }
 
 impl PatchLog {
