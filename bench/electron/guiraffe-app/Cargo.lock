@@ -3246,6 +3246,7 @@ dependencies = [
  "gpui-kit",
  "imbl",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]
@@ -3262,6 +3263,15 @@ name = "guiraffe-icons"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+]
+
+[[package]]
+name = "guiraffe-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3303,6 +3313,9 @@ name = "guiraffe-state"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-macros",
+ "imbl",
 ]
 
 [[package]]

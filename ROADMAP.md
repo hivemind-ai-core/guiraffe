@@ -50,19 +50,18 @@ proportion to what changed.
 | # | Item | Notes |
 |---|---|---|
 | 12 | Keymap, Spotlight, DataUi, MCP, scripts and replay on the bus. Toast actions too | Replaces simulated clicks. In-app toasts have no action button today, so Undo has to live elsewhere; a toast action is a bus action |
-| 13 | Command ribbon | [Design](docs/design/command-ribbon.md). The one new component, and the bus's first real client |
+| 13 | Command ribbon | [Design](docs/design/command-ribbon.md). The one new component, and the bus's first real client. Core landed in `guiraffe-commands::ribbon`; open parts in KNOWN_ISSUES |
 | 14 | Multi-window docking | Pop out, dock back, restore layout. Control ids survive the move. Spike cross-window drag early |
 | 15 | The dogfood tool | Start with item 9, so it shapes the API |
 
-### P3: release quality (cut first)
+### P3: release quality
 
 | # | Item | Notes |
 |---|---|---|
-| 16 | `guiraffe` umbrella crate and one supported way to consume the vendored patches | Copying a patch table is the worst part of adoption today |
-| 17 | Compile-only CI for macOS and Windows | No hardware needed. Makes platform claims checkable |
-| 18 | Startup study | Phase breakdown, floor against an empty GPUI window, cheap wins |
+| 16 | `guiraffe` umbrella crate and one supported way to consume the vendored patches | If time allows; otherwise the first 0.4 item |
 | 19 | Trim GPUI's per-frame high-water buffers | Accepted 0.2 exception. Falls out of item 8 |
-| 20 | Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext workaround, make Kit's skeleton respect reduced motion | Many are probably fixed already. The skeleton is a small accessibility fix in vendored GPUI Kit |
+
+Items 17, 18 and 20 are deferred until after 0.4 (decided on 2026-11-25; see "After 0.4").
 
 ### Added for 0.3
 
@@ -88,7 +87,7 @@ CI, the umbrella crate, compile-only platform CI and the process rules above.
 
 **Goal:** Passage, a DAW built on GUIraffe, can drop its hand-built controls and its own undo
 stack. Requested on 2026-11-25 against rev `716d957e`. Starts after 0.3 and comes before
-any 0.4 work. Passage moves to 0.3 when 0.3 ships, so every item is built on the 0.3 design,
+any 0.4 work. Reread the requests in `../daw/docs/guiraffe-requests/` when it starts: the list may have changed. Passage moves to 0.3 when 0.3 ships, so every item is built on the 0.3 design,
 not on the 0.2 shapes the requests sketch.
 
 How the 0.3 design changes the requests:
@@ -118,7 +117,7 @@ How the 0.3 design changes the requests:
 | # | Item | Notes |
 |---|---|---|
 | 1 | `DopeSheet` authoring: insert and remove keys, value channels with segment interpolation (Constant, Linear, Bezier, eases), toggle channels, `ChannelCurve::value_at`, expand a row into a `CurveView` lane | The dope sheet and `CurveView` bind the same store slice. Actions: `InsertKey`, `RemoveKeys`, `SetKeyValue`, `SetSegmentInterp`, `BendSegment`, `ToggleSpan`. `value_at` is pure, matches the drawn segment, and is usable off the UI thread. Includes a keyboard-only flow |
-| 2 | `TracksView`: per-track height and resizing, a clip painter, a themed selection style, move vs trim, end trim past the content | Heights and selection are store state. Actions: `ResizeTrack`, `MoveClip`, `TrimClip`, `Select`. Row layout becomes a prefix sum; hit testing uses binary search. The clip painter only paints, from a snapshot of the clip. 60 fps with 64 tracks × 200 clips |
+| 2 | `TracksView`: per-track height and resizing, a clip painter, a themed selection style, move vs trim, end trim past the content, and a header column that can be hidden or replaced (`HeaderMode`) | Heights and selection are store state. Actions: `ResizeTrack`, `MoveClip`, `TrimClip`, `Select`. Row layout becomes a prefix sum; hit testing uses binary search. The clip painter only paints, from a snapshot of the clip. 60 fps with 64 tracks × 200 clips |
 | 3 | Playhead, follow mode and view range as store state; in-place track updates | Replaces `set_playhead`/`set_view`/`update_tracks`: the host writes the store, and the view diffs |
 | 4 | `Meter`: peak, RMS, peak hold, clip latch, dB zones from theme tokens, gain reduction, stereo, LUFS slot | Level is a sink. Clip reset is an action. Zero allocation per frame |
 | 5 | `Knob` and a `NumberField` with units, scrub, typed entry and log mapping | One value-mapping trait shared with `Slider`. Standard `SetValue`/`Increment`/`Decrement` actions, so every parameter is bindable to shortcuts and the ribbon |
@@ -126,6 +125,7 @@ How the 0.3 design changes the requests:
 | 7 | Time ruler with a loop range, locators and `TimeFormat::Musical` | The loop range and locators are store state with `SetRange`/`MoveLocator` actions. Shared by the piano roll and the arrangement |
 | 8 | `ScopeLayer` and `SpectrumLayer` presets for `PlotSurface` | Sample buffers come in through sinks. Min/max per pixel column; log-frequency and dB axes |
 | 9 | `Canvas` helper: local coordinates, hover, drag gestures, cursor, virtual accessible items | Virtual items register control ids and snapshots, so custom editors are drivable and accessible |
+| 10 | GUIraffe `Tabs`: themed, keyboard-navigable, optional icons, badges and closable tabs | Replaces Kit's `TabBar` in Passage's editor pane. Tab switching is a `Select` action on the bus |
 
 Requests: `../daw/docs/guiraffe-requests/`. Items 2 and 3 change `TracksView`, which the 0.3
 performance work also touches, so they start after it merges. If a 0.3 API turns out unable to
@@ -134,8 +134,18 @@ express one of these items, fix the API before 0.3 freezes rather than working a
 
 ## 0.4: Text, pixels and platforms
 
-Candidates, in likely order:
+Candidates, in likely order. Item 0 comes first, after 0.3.1 has landed what Passage needs.
 
+0. **Our own GPUI fork and the umbrella crate.** Fork `gpui-fast` into a crate we publish on
+   crates.io. The name is open: `gpui-faster` and `guiraffe-gpui` are free; avoid `gpui-warp`,
+   which collides with Warp's own Rust UI framework. Its package keeps the `gpui` crate name, so
+   GPUI Kit and macros resolve unchanged. We track `gpui-fast` releases and it tracks Zed:
+   GUIraffe's changes live in their own module, as gpui-fast keeps its additions in `fast/`, so a
+   sync stays a merge, with a script and a gate per release. The patches in `vendor/README.md`
+   become commits in the fork. Drop the upstream GPUI backend from the gates and keep one frozen
+   upstream measurement in `docs/performance.md` as a baseline. Ship the `guiraffe` umbrella crate
+   on top (0.3 item 16, if 0.3 didn't ship it), so apps depend on one crate and copy no patch
+   table. Check Longbridge's release cadence first: syncing is our job from then on.
 1. **Text:** evaluate Parley against GPUI's text system, then rich text editing with IME,
    accessibility text ranges and selection across virtualized content.
 2. **Accessibility:** an incremental tree fed by the control registry, its measured cost, and
@@ -147,7 +157,8 @@ Candidates, in likely order:
    already reserves a surface pipeline that draws nothing today. Pulsar's WGPUI
    (`wgpu_surface`) shows the approach; we patch our GPUI rather than adopt that fork.
    gpui-fast's `ExternalGpu` composition layer is the alternative for video.
-4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io. Decide
+4. **Platforms:** test and support macOS and Windows on hardware; publish to crates.io. In the
+   fork, decide
    whether macOS and Windows draw with the wgpu renderer that Linux and the web use (wgpu runs on
    Metal and Direct3D 12) instead of GPUI's native Metal and Direct3D 11 renderers. One renderer
    would carry gpui-fast's renderer work and GPU surfaces everywhere; measure startup, frame
@@ -160,3 +171,46 @@ Candidates, in likely order:
 7. The items moved from 0.3 above.
 
 Mobile is out of scope until the desktop platforms are supported.
+
+## 0.5: Compiled reactivity
+
+**Goal:** a typical store-and-`ui!` app costs, per change, only what that change touches, and
+beats the same app written for plain gpui-fast. In 0.3 the Store's share of a label edit is
+already small and flat (1-20 µs of about 250 µs). What remains is rendering, which only our own
+GPUI fork (0.4) can change.
+
+Passage, the DAW built on GUIraffe, is the real-world stress test: a complex UI with dense
+timelines, meters, step grids and many windows. Each item is measured on Passage as well as on
+the composed benchmarks, and against a plain gpui-fast version of the same workload (the
+store-vs-plain A/B bench added in 0.3).
+
+Candidates:
+
+1. **Fine-grained updates instead of re-rendering:** `ui!` knows at compile time which element
+   property reads which lens, so a write patches that element in place without running a render
+   function (Solid-style rather than React-style). Builds on the retained-element step from 0.3.
+2. **Change kinds known statically:** paint-only bindings (colour, value, progress) skip layout
+   and hit testing; only text and geometry bindings pay for shaping and layout.
+3. **Static subtrees from `ui!`:** subtrees with no bindings are built once and kept, with no
+   per-frame bookkeeping.
+4. **Keyed list deltas:** keyed store writes and `imbl` snapshots give inserts, removes and moves
+   directly, so list updates cost what changed, with no diffing.
+5. **Sinks that skip the view tree:** high-rate values (meters, playheads, scopes) write straight
+   into retained scene primitives.
+6. **Scheduling:** coalesce writes per frame, update visible items first, slow down high-rate
+   sources, and prepare snapshots (text shaping, layout inputs) off the UI thread.
+7. **Compiled dispatch:** `ui!` resolves binding routes once, so a direct binding costs close to
+   nothing instead of a bus lookup.
+
+Rules: the builder API and plain views keep gpui-fast's behaviour as the fallback, and every fast
+path is tested against a full redraw.
+
+## After 0.4
+
+Deferred from 0.3 P3:
+
+- Compile-only CI for macOS and Windows (was 0.3 item 17). Can't be done yet.
+- Startup study (was 0.3 item 18): phase breakdown, floor against an empty GPUI window, cheap
+  wins. Nice to have; can be done any time.
+- Re-test and close the 0.1 and 0.2 visual bug reports, remove the date-picker StyleContext
+  workaround, make Kit's skeleton respect reduced motion (was 0.3 item 20).

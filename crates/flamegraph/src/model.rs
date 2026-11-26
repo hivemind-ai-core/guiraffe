@@ -433,6 +433,25 @@ impl FlameLayout {
         search: Option<&Search>,
         mut visit: impl FnMut(Segment),
     ) {
+        self.visit_indexed_row(depth, domain, width, search, |single, x, highlighted| {
+            visit(Segment {
+                id: single.map(|(_, index)| self.source.frame(index).id),
+                x,
+                highlighted,
+            });
+        });
+    }
+
+    // Carry the row offset and source index through the paint traversal so a
+    // renderer can address per-row data without a round trip through FrameId.
+    pub(crate) fn visit_indexed_row(
+        &self,
+        depth: usize,
+        domain: Range<f64>,
+        width: f64,
+        search: Option<&Search>,
+        mut visit: impl FnMut(Option<(usize, usize)>, Range<f64>, bool),
+    ) {
         let Some(row) = self.rows.get(depth) else {
             return;
         };
@@ -454,8 +473,12 @@ impl FlameLayout {
                 let bucket_end = domain.start + (x.floor() + 2.) / scale;
                 end = skip_bucket(row, end, bucket_end);
             }
-            let range_end = pixel(row.get(end - 1).map_or(span.right, |last| last.right))
-                .max((x + 1.).min(width));
+            let last = if end == cursor + 1 {
+                right
+            } else {
+                pixel(row.get(end - 1).map_or(span.right, |last| last.right))
+            };
+            let range_end = last.max((x + 1.).min(width));
             let highlighted = search.is_some_and(|search| {
                 let Some(matches) = search.rows.get(depth) else {
                     return false;
@@ -464,14 +487,31 @@ impl FlameLayout {
                     < matches.partition_point(|&offset| offset < end)
             });
             if range_end > x {
-                visit(Segment {
-                    id: (end == cursor + 1).then(|| self.source.frame(span.index).id),
-                    x: x..range_end,
+                visit(
+                    (end == cursor + 1).then_some((cursor, span.index)),
+                    x..range_end,
                     highlighted,
-                });
+                );
             }
             cursor = end;
         }
+    }
+
+    pub(crate) fn source_frame(&self, index: usize) -> Frame<'_> {
+        self.source.frame(index)
+    }
+
+    pub(crate) fn has_dense_unlabelled_row(
+        &self,
+        depth: usize,
+        domain: &Range<f64>,
+        width: f64,
+    ) -> bool {
+        self.rows.get(depth).is_some_and(|row| {
+            row.spans.len >= 48
+                && row.widest * width / (domain.end - domain.start) < 32.
+                && row.overview(domain, width).is_none()
+        })
     }
 
     /// Coalesce touching aggregate spans with the same paint style. Hit testing

@@ -80,3 +80,5 @@ coordinates use zero-based lines and byte columns with a half-open end. Omit
 
 In Rust, pass an application-owned handle to the same viewer with
 `ui! { CodeViewer(&handle) }`.
+
+When loading a UTF-8 file of known byte length, call `CodeDocument::read_exact(reader, length)` on the indexing worker. It reads directly into the document's shared allocation, validates UTF-8 and builds the index. Passing an existing `Arc<str>` to `new` also shares its bytes. Converting a full-size `String` to `Arc<str>` temporarily retains both source buffers.

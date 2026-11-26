@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+### Added
+
+- Store binding (provisional): `store!`, `#[derive(Lens)]`, lenses with per-path change keys,
+  `KeyedList`, and `ui!` bindings (`store(s) { … }`, `prop <= lens`, `prop <=> lens`,
+  `{<= lens}`, `if <= lens`, `for row in <= list`, `on_x => Event`). See
+  [Stores and binding](docs/guides/stores.md).
+- `#[component(stateful)]`: components with their own state, registered on the action bus.
+- `Event::source` and `EventRecord::source`; `ActionBus::current_source`.
+
+### Changed
+
+- `EventRecord` has a `source` field. Code that builds an `EventRecord` must set it.
+
 ## 0.2.0 (unreleased)
 
 ### Added
@@ -35,3 +50,4 @@ Catalogue 1.1.0 snapshot `135f06ec7e53a9cb` adds invalid text-input and select s
 Catalogue 1.2.0 snapshot `9cfca66b723596b0` adds crate-owned views and controls, plus more properties and events on existing components (including the Spotlight command bar, picker, input-wrapper and event-timeline kinds, and PropertyGrid editing options).
 Catalogue 1.3.0 snapshot `f02fd1904da6e29f` adds the `sheet` kind, PropertyGrid and Stack `animate-layout`, and ActionIcon `toggled` and `tooltip`.
 Catalogue 1.4.0 snapshot `32f852d2b157035f` adds the `calendar` kind.
+Catalogue 1.4.0 snapshot `bcbe38d18d3993d0` adds the `command-ribbon` kind.

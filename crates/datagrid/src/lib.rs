@@ -16,6 +16,7 @@
 pub mod columns;
 pub mod model;
 pub mod order;
+pub use model::undo::HistoryLimits;
 pub use model::{clipboard as tsv, selection};
 pub mod source;
 pub mod window;

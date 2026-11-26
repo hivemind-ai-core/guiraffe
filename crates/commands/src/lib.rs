@@ -30,13 +30,19 @@ mod document;
 mod widget_specs;
 
 pub mod context;
+pub mod control;
+pub use control::ControlAction;
 mod error;
 pub mod keybinding;
 pub mod model;
+pub mod params;
+pub mod ribbon;
 pub use context::{Context as WhenContext, ContextStack, When};
 pub use error::Error;
 pub use keybinding::{Keybinding, Platform};
 pub use model::{Bindings, Command, CommandId, Conflict, PrefixConflict, Registry};
+pub use params::{Choice, Choices, Draft, Param, ParamKind};
+pub use ribbon::{CommandRibbon, RibbonButton, RibbonState, ribbon_scope};
 
 mod menu;
 mod service;

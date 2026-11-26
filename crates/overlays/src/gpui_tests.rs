@@ -1242,3 +1242,86 @@ fn removed_modal_opener_restores_focus_to_the_window(cx: &mut TestAppContext) {
     })
     .expect("window");
 }
+#[gpui_kit::test]
+fn toast_action_button_dispatches_a_bus_action_and_dismisses(cx: &mut TestAppContext) {
+    use guiraffe_core::protocol::{
+        Action, ActionBus, ActionError, Capabilities, ControlSnapshot, Drive, Observe, Recorder,
+        Source, names,
+    };
+    struct Undo(u32);
+    impl Observe for Undo {
+        type Snapshot = ControlSnapshot;
+        fn snapshot(&self, _: &gpui_kit::App) -> ControlSnapshot {
+            ControlSnapshot::default()
+        }
+    }
+    impl Drive for Undo {
+        type Action = ();
+        type Output = ();
+        fn decode(action: &Action) -> Result<(), ActionError> {
+            (action.name == names::ACTIVATE)
+                .then_some(())
+                .ok_or(ActionError::Unsupported)
+        }
+        fn apply(
+            &mut self,
+            _: (),
+            _: &mut Window,
+            _: &mut Context<Self>,
+        ) -> Result<(), ActionError> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+    cx.update(init);
+    let handle = open(cx);
+    let recorder = Recorder::new();
+    let undo = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let undo = cx.new(|_| Undo(0));
+            ActionBus::register(
+                "edit/undo",
+                &undo,
+                "button",
+                Capabilities::ACTIVATE,
+                window,
+                cx,
+            );
+            ActionBus::add_interceptor(recorder.clone(), window, cx);
+            let action = Action {
+                name: names::ACTIVATE.into(),
+                payload: guiraffe_core::widget_value::Value::Null,
+            };
+            OverlayHost::notify(
+                window,
+                cx,
+                Toast::new(ToastId(7), "Deleted 3 rows").action("Undo", "edit/undo", action),
+            )
+            .expect("toast");
+            window.render_frame(cx);
+            undo
+        })
+        .expect("show");
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("guiraffe-toast-action", 7_u64), cx);
+    })
+    .expect("click");
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert_eq!(undo.read(cx).0, 1, "the action ran once");
+        let host = OverlayHost::entity(window, cx).expect("host");
+        assert!(
+            host.read(cx).toasts().visible().is_empty(),
+            "the toast was dismissed"
+        );
+    })
+    .expect("window");
+    let log = recorder.take();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+        (log[0].path.as_ref(), log[0].source),
+        ("edit/undo", Source::Pointer)
+    );
+}

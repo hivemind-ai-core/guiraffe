@@ -9,8 +9,10 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+image = { version = "0.25", default-features = false }
 gpui-kit.workspace = true
 guiraffe-core.workspace = true
+guiraffe-state.workspace = true
 
 [dev-dependencies]
 proptest = "1"
@@ -19,4 +21,4 @@ guiraffe-test = { workspace = true, features = ["snapshot", "render", "layout"] 
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
-gpui-fast = ["gpui-kit/gpui-fast"]
+gpui-fast = ["gpui-kit/gpui-fast", "guiraffe-state/gpui-fast"]

@@ -115,6 +115,25 @@ One per-window bus: `bus.dispatch(target, action, source, cx)` where `source` is
 - The inspect/drive API gains `query(id) → snapshot` and `apply(id, action)`. Simulated input
   stays for tests that exercise hit-testing and focus; agents and scripts use actions.
 
+Status (0.3 item 12):
+
+- Commands: `Handler::apply(path, action)` is the declarative binding. Any registered control
+  action is the command `control.<path>.<action>` (command ids accept `/`), resolved on the bus
+  only when invoked; `Commands::control_command` builds one titled from the control's label for
+  a shortcut or ribbon entry, and Spotlight lists every control action when it opens (none are
+  enumerated or allocated before). Keymap runs dispatch as `Shortcut`, the palette as
+  `Spotlight`, menus as `Pointer`, programmatic `execute` as `Host`.
+- DataUi: `DataUi::register(host, path, window, cx)` makes the host a control; each document
+  event is an action named after the event. Pointer input dispatches with `Source::DataUi`.
+  Events inside repeated rows still dispatch directly: row identity is not addressable yet.
+- Inspect/drive and MCP: `Action::Apply { control, action }` and `Call::Query { control }`;
+  MCP tools `query` and `apply`. Applies are `Source::Script` from scripts and the socket, and
+  `Source::Mcp` from MCP tool calls.
+- `Recorder` is the recording interceptor (by path, batches kept as groups); `replay` dispatches
+  a recording with `Source::Replay`, which is never recorded again.
+- Toasts: `Toast::action(label, control, action)` adds a button that dispatches the action with
+  `Source::Pointer` and dismisses the toast.
+
 ## 7. Store binding
 
 - `guiraffe-state`'s `Store<S>` becomes the canonical binding layer. A control prop can be bound
@@ -212,7 +231,85 @@ checks and recorders can read the store. They cannot mutate it during dispatch.
 `ActionBus::dispatch_batch(id, actions, source, ..)` applies a run of actions to
 one target as a `Group`. Interceptors see `begin_group`, each action's
 `before`/`after`, then `end_group`. The batch stops at the first rejected
-action. Store history (phase 4) maps one group to one undo step, so a
-drag-paint of N cells undoes at once. A single `dispatch` is its own step. Dispatch has an allocation gate of zero
+action. It returns a `Batch`: the applied outcomes in order as `Outcomes`,
+a `SmallVec` that holds up to eight inline, and a `BatchError` with the index
+and error if it stopped early. `into_result` turns it into a `Result`. Store history maps one group to one undo step, so a
+drag-paint of N cells undoes at once. A single `dispatch` is its own step.
+
+How: `dispatch_batch` marks itself open in an app global (`ActionBus::open_batch`
+returns its serial), with no interceptor, so a single `dispatch` keeps the
+hook-free path. A `Store` with history checks the mark on each write. On the first
+write in a batch it processes earlier events outside the group and calls
+`Engine::begin_undo_group`. The next write or flush after the batch processes the
+batch's events, then ends the group. Only stores the batch writes to open a group.
+Nested batches share the outermost one's serial, so they are one step, and
+consecutive batches are separate steps. A rejected action stops the batch: the
+applied prefix is one step and undoes whole. Undo limits (`HistoryLimits`:
+`max_steps`, optional `max_weight`) drop a group as a unit. Outside a batch the
+check is a global lookup and a compare, with no allocation
+(`bench/tests/allocator.rs`). Dispatch has an allocation gate of zero
 (`bench/tests/allocator.rs`) and a Callgrind ceiling of 3,000 instructions
-(`bench/benches/instructions.rs`; 2,111 measured with no interceptors), which excludes path lookup.
+(`bench/benches/instructions.rs`; 2,121 measured with no interceptors), which excludes path lookup. A batch of
+eight allocates nothing and has a 8,000 instruction ceiling (6,407 measured).
+
+## Adopted controls (item 10)
+
+`guiraffe_components::controls` holds opt-in control entities: `ButtonControl`,
+`CheckboxControl`, `SwitchControl`, `SliderControl`, `TextInputControl`,
+`SelectControl`, `TabsControl` and `MenuControl`. The kit builders stay
+untouched and remain the default for a control with no id or binding, so an
+unbound kit control costs what it did in 0.2.
+
+Each control has the same constructor surface, which `ui!` can lower to:
+
+- `XControl::new()` returns a builder that takes the kit's props (`label`,
+  `checked`, `range`, `options`, ...).
+- `.path(p)` registers the control on the window's bus at build time. No path
+  means no registration. `.element_id(name)` names an unregistered control's
+  element.
+- `.build(window, cx)` returns `Entity<XControl>`.
+- `control → store`: subscribe to its typed event (`ButtonEvent`,
+  `ToggleEvent`, `SliderControlEvent`, `TextInputEvent`, `SelectionEvent`,
+  `MenuEvent`).
+- `store → control`: host setters (`set_checked`, `set_value`, `set_selected`,
+  `set_selected_value`) write state without emitting, so a store write never
+  echoes as a user action. They take only `&mut Context`, so a Store watch can
+  call them during its flush without a window. Kit state that needs a window
+  (slider, input, select) follows at the control's next render. Host writes
+  allocate nothing (`control_host_setters_allocate_nothing`).
+- One-way host setters: `set_disabled` and `set_label` on every control whose
+  kit widget takes them (the label is the accessible name on slider and select;
+  `set_placeholder` on the text input). Tabs and menu items are fixed at build.
+- `SelectControl<T>` selects typed values. `SelectControl::typed([(value,
+  label), ..])` binds a store enum directly. `set_selected_value(&T)` and the
+  `SelectedValue<T>` event carry the value; the index-based `SelectionEvent`
+  and `select` action stay. `SelectControl::new().options(labels)` is the
+  `SharedString` case.
+
+The control's own pointer and keyboard handlers build the erased action a bus
+client would send. A registered control dispatches it with `Source::Pointer`
+or `Source::Keyboard`, so interceptors see and can veto physical input. An
+unregistered control applies it directly. Both run the same `Drive::apply`.
+Where the kit state owns the input (slider drag and arrow keys, typing, the
+select list), the kit's change event is routed the same way, and a rejected
+action restores the kit state.
+
+Every typed event carries the edit's `Source`, captured inside `apply` from
+`ActionBus::current_source()`. An unregistered control's own pointer or key
+input reports `Pointer` or `Keyboard`, and a host calling `apply` directly
+reports `Host`. A binding can therefore tag a store write as `Mcp` even though
+GPUI delivers the event after the dispatch returns.
+
+Payloads: `set_value` takes a `Bool`, `Num` or `Str` matching the control.
+`select` and a menu's `activate` take a `Num` index. `increment` and
+`decrement` take `Null`. Outcomes carry the new state.
+
+`bench/tests/allocator.rs` mounts 1,000 controls of every kind twice, once
+registered by path and once with the same text as an element id. Steady
+frames allocate the same count and bytes. `tests/protocol_controls.rs` in
+guiraffe-components drives each control by pointer or keys and over the bus,
+and checks identical events, snapshots and kit state.
+
+The menu control renders an inline item list. A popup menu, the data
+table or list (a follow-up task) and the remaining rich components adopt the
+same pattern.

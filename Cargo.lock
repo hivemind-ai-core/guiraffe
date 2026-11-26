@@ -3416,6 +3416,7 @@ dependencies = [
  "guiraffe-charts",
  "guiraffe-chat",
  "guiraffe-code",
+ "guiraffe-commands",
  "guiraffe-components",
  "guiraffe-core",
  "guiraffe-datagrid",
@@ -3541,6 +3542,7 @@ dependencies = [
  "guiraffe-test",
  "schemars",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -3564,6 +3566,7 @@ dependencies = [
  "gpui-kit",
  "imbl",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]
@@ -3609,6 +3612,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "image",
  "proptest",
 ]
 
@@ -3822,7 +3826,10 @@ name = "guiraffe-state"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "guiraffe-core",
+ "guiraffe-macros",
  "guiraffe-test",
+ "imbl",
 ]
 
 [[package]]
@@ -3846,6 +3853,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "guiraffe-core",
+ "guiraffe-state",
  "guiraffe-test",
  "image",
  "proptest",
@@ -3900,6 +3908,7 @@ dependencies = [
  "guiraffe-mermaid",
  "guiraffe-overlays",
  "guiraffe-sheet",
+ "guiraffe-state",
  "guiraffe-test",
  "guiraffe-timeline",
  "guiraffe-tree",

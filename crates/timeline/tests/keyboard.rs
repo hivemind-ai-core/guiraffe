@@ -9,6 +9,7 @@ use gpui_kit::{
     test::{TestQueryExt, TestWindowExt},
 };
 use guiraffe_core::focus_scope;
+#[cfg(debug_assertions)]
 use guiraffe_test::layout::{assert_same_bounds, capture};
 use guiraffe_timeline::{GanttView, Task, TimeFormat, Track, TracksView, tracks_view};
 
@@ -98,8 +99,11 @@ fn keyboard_focus_next(vcx: &mut VisualTestContext) {
 fn gantt_keyboard_moves_and_resizes_the_selected_task(cx: &mut TestAppContext) {
     let (host, vcx) = mount(cx);
     let gantt = host.read_with(vcx, |h, _| h.gantt.clone());
-    let sels = ["gantt-box", "tracks-box"];
-    let base = capture(vcx, &sels);
+    #[cfg(debug_assertions)]
+    let geometry = {
+        let selectors = ["gantt-box", "tracks-box"];
+        (selectors, capture(vcx, &selectors))
+    };
     let input = host.read_with(vcx, |h, cx| h.input.focus_handle(cx));
     vcx.update(|w, cx| w.focus(&input, cx));
     // Click a bar: selects it, keeps the input focused.
@@ -110,13 +114,16 @@ fn gantt_keyboard_moves_and_resizes_the_selected_task(cx: &mut TestAppContext) {
     assert_eq!(gantt.read_with(vcx, |g, _| g.selected()), Some(1));
     keyboard_focus_next(vcx);
     assert!(vcx.update(|w, cx| gantt.read(cx).focus_handle(cx).is_focused(w)));
-    assert!(vcx.debug_bounds("focus-ring").is_some());
-    assert_same_bounds(
-        vcx,
-        &sels,
-        &base,
-        "the Gantt view is focused and a bar selected",
-    );
+    #[cfg(debug_assertions)]
+    {
+        assert!(vcx.debug_bounds("focus-ring").is_some());
+        assert_same_bounds(
+            vcx,
+            &geometry.0,
+            &geometry.1,
+            "the Gantt view is focused and a bar selected",
+        );
+    }
     let span = |vcx: &mut VisualTestContext| {
         gantt.read_with(vcx, |g, _| {
             let s = g.schedule().as_ref().ok().and_then(|m| m.get(&1)).copied();
@@ -144,8 +151,8 @@ fn tracks_keyboard_moves_and_trims_the_selected_clip(cx: &mut TestAppContext) {
     let tracks = host.read_with(vcx, |h, _| h.tracks.clone());
     vcx.update(|_, cx| tracks.update(cx, |t, cx| t.set_focusable(Some(true), cx)));
     let clip = |vcx: &mut VisualTestContext| {
-        tracks.read_with(vcx, |t, _| {
-            let c = &t.tracks()[0].1.clips()[0];
+        tracks.read_with(vcx, |t, cx| {
+            let c = &t.tracks(cx)[0].track.clips()[0];
             (c.start, c.end())
         })
     };
@@ -154,7 +161,7 @@ fn tracks_keyboard_moves_and_trims_the_selected_clip(cx: &mut TestAppContext) {
         w.click(tracks_view::clip_element_id(0, 1), cx);
         assert!(tracks.read(cx).focus_handle(cx).is_focused(w));
     });
-    assert_eq!(tracks.read_with(vcx, |t, _| t.selected()), Some((0, 1)));
+    assert_eq!(tracks.read_with(vcx, |t, cx| t.selected(cx)), Some((0, 1)));
     vcx.simulate_keystrokes("right");
     assert_eq!(clip(vcx), (1.5, 3.5));
     vcx.simulate_keystrokes("shift-left");

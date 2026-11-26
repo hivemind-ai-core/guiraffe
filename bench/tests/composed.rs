@@ -141,9 +141,17 @@ fn row(id: usize, data: &Row, store: &Store<State>) -> impl IntoElement + use<> 
         )
 }
 
+/// The A/B baseline: rows in a plain entity, edited directly, no Store write.
+struct PlainRows(Vec<Row>);
+
+enum RowData {
+    Store(Selected<Row>),
+    Plain(Entity<PlainRows>),
+}
+
 struct RowView {
     id: usize,
-    data: Selected<Row>,
+    data: RowData,
     store: Store<State>,
     render: RenderCounter,
 }
@@ -152,8 +160,30 @@ impl Render for RowView {
     #[inline(never)]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.render.hit();
-        row(self.id, self.data.get(cx), &self.store)
+        let data = match &self.data {
+            RowData::Store(selected) => selected.get(cx),
+            RowData::Plain(rows) => &rows.read(cx).0[self.id],
+        };
+        row(self.id, data, &self.store)
     }
+}
+
+fn row_view(
+    id: usize,
+    store: &Store<State>,
+    plain: Option<&Entity<PlainRows>>,
+    probe: &Probe,
+    cx: &mut App,
+) -> Entity<RowView> {
+    cx.new(|cx| RowView {
+        id,
+        data: match plain {
+            Some(rows) => RowData::Plain(rows.clone()),
+            None => RowData::Store(select_row(store, id, probe, cx)),
+        },
+        store: store.clone(),
+        render: probe.rows[id].clone(),
+    })
 }
 
 enum Rows {
@@ -164,6 +194,7 @@ enum Rows {
 
 struct Page {
     store: Store<State>,
+    plain: Option<Entity<PlainRows>>,
     half: Selected<bool>,
     rows: Rows,
     input: Entity<InputState>,
@@ -178,13 +209,26 @@ impl Page {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let rows = (0..probe.rows.len())
+        Self::with_variant(cached, virtualized, false, probe, window, cx)
+    }
+
+    /// `plain` holds the rows in a plain entity instead of the Store (A/B variant B).
+    fn with_variant(
+        cached: bool,
+        virtualized: bool,
+        plain: bool,
+        probe: Probe,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let rows: Vec<Row> = (0..probe.rows.len())
             .map(|id| Row {
                 label: format!("Row {id:05}").into(),
                 checked: id % 2 == 0,
                 badge: id % 9 + 1,
             })
             .collect();
+        let plain = plain.then(|| cx.new(|_| PlainRows(rows.clone())));
         let store = Store::new(State { rows, half: false }, cx);
         let half = store.select(cx, |state| state.half);
         let rows = if virtualized {
@@ -195,14 +239,7 @@ impl Page {
                     .rows
                     .iter()
                     .enumerate()
-                    .map(|(id, render)| {
-                        cx.new(|cx| RowView {
-                            id,
-                            data: select_row(&store, id, &probe, cx),
-                            store: store.clone(),
-                            render: render.clone(),
-                        })
-                    })
+                    .map(|(id, _)| row_view(id, &store, plain.as_ref(), &probe, cx))
                     .collect(),
             )
         } else {
@@ -215,6 +252,7 @@ impl Page {
         Self {
             rows,
             store,
+            plain,
             half,
             input: cx.new(|cx| InputState::new(window, cx)),
             probe,
@@ -237,6 +275,7 @@ impl Render for Page {
                 let mounted = mounted.clone();
                 let probe = self.probe.clone();
                 let store = self.store.clone();
+                let plain = self.plain.clone();
                 page.child(
                     gpui_kit::uniform_list(
                         "bound-rows",
@@ -255,12 +294,7 @@ impl Render for Page {
                                 .map(|position| {
                                     let id = position * stride;
                                     let entity = mounted.entry(id).or_insert_with(|| {
-                                        cx.new(|cx| RowView {
-                                            id,
-                                            data: select_row(&store, id, &probe, cx),
-                                            store: store.clone(),
-                                            render: probe.rows[id].clone(),
-                                        })
+                                        row_view(id, &store, plain.as_ref(), &probe, cx)
                                     });
                                     AnyView::from(entity.clone()).cached(
                                         StyleRefinement::default().w(px(WIDTH)).h(px(ROW_HEIGHT)),
@@ -942,6 +976,9 @@ fn virtualized_label_phase_sweep() {
 }
 
 fn run_phase_sweep(virtualized: bool) {
+    // COMPOSED_VARIANT=plain runs the A/B baseline: the same rows in a plain entity.
+    let plain = std::env::var("COMPOSED_VARIANT").is_ok_and(|v| v == "plain");
+    let variant = if plain { "plain" } else { "store" };
     let mut app = app();
     for n in [1000, 3000, 10_000] {
         if std::env::var("COMPOSED_PHASE_ROWS")
@@ -953,7 +990,7 @@ fn run_phase_sweep(virtualized: bool) {
         }
         let probe = Probe::new(n);
         let all_visible = !virtualized && std::env::var_os("COMPOSED_ALL_VISIBLE").is_some();
-        let (page, mut window) = if virtualized || all_visible {
+        let (page, mut window) = if virtualized || all_visible || plain {
             let height = if all_visible {
                 (n + 1) as f32 * ROW_HEIGHT
             } else {
@@ -961,7 +998,9 @@ fn run_phase_sweep(virtualized: bool) {
             };
             let handle = app
                 .open_window(size(px(WIDTH), px(height)), |window, cx| {
-                    cx.new(|cx| Page::new(true, virtualized, probe.clone(), window, cx))
+                    cx.new(|cx| {
+                        Page::with_variant(true, virtualized, plain, probe.clone(), window, cx)
+                    })
                 })
                 .expect("mount virtual list");
             app.run_until_parked();
@@ -1016,9 +1055,9 @@ fn run_phase_sweep(virtualized: bool) {
                 let label = if i % 2 == 0 { "Row 00004" } else { "Row 00003" }.into();
                 let ((start, end), counts) = count_allocations(|| {
                     if i >= 4 {
-                        measured_label_frame(&mut window, &store, edited, label, marker)
+                        measured_label_frame(&mut window, &page, &store, edited, label, marker)
                     } else {
-                        label_frame(&mut window, &store, edited, label, marker)
+                        label_frame(&mut window, &page, &store, edited, label, marker)
                     }
                 })
                 .expect("count complete frame");
@@ -1036,7 +1075,7 @@ fn run_phase_sweep(virtualized: bool) {
             }
             let stats = window.update(|window, _| window.frame_patch_stats());
             println!(
-                "rows={n} mounted={mounted_count} edited={edited} virtual={virtualized} all_visible={all_visible} median_ns total={} through_flush={} after_flush={} allocs={} patched={} refused={}",
+                "variant={variant} rows={n} mounted={mounted_count} edited={edited} virtual={virtualized} all_visible={all_visible} median_ns total={} through_flush={} after_flush={} allocs={} patched={} refused={}",
                 percentile(&mut totals, 50),
                 percentile(&mut flushes, 50),
                 percentile(&mut frames, 50),
@@ -1053,17 +1092,19 @@ fn run_phase_sweep(virtualized: bool) {
 #[inline(never)]
 fn measured_label_frame(
     window: &mut Mounted<'_>,
+    page: &Entity<Page>,
     store: &Store<State>,
     edited: usize,
     label: SharedString,
     marker: Rc<Cell<u64>>,
 ) -> (u64, u64) {
-    label_frame(window, store, edited, label, marker)
+    label_frame(window, page, store, edited, label, marker)
 }
 
 #[inline(always)]
 fn label_frame(
     window: &mut Mounted<'_>,
+    page: &Entity<Page>,
     store: &Store<State>,
     edited: usize,
     label: SharedString,
@@ -1071,7 +1112,25 @@ fn label_frame(
 ) -> (u64, u64) {
     let start = cpu_ns();
     window.update(|_, cx| {
-        store.dispatch(Change::RowLabel(edited, label), cx);
+        let (plain, view) = {
+            let page = page.read(cx);
+            let view = match &page.rows {
+                Rows::Virtual(mounted) => mounted.borrow().get(&edited).cloned(),
+                Rows::Cached(rows) => rows.get(edited).cloned(),
+                Rows::Inline(_) => None,
+            };
+            (page.plain.clone(), view)
+        };
+        match plain {
+            // Variant B: write the row and notify only its view, if mounted.
+            Some(rows) => {
+                rows.update(cx, |rows, _| rows.0[edited].label = label);
+                if let Some(view) = view {
+                    view.update(cx, |_, cx| cx.notify());
+                }
+            }
+            None => store.dispatch(Change::RowLabel(edited, label), cx),
+        }
         cx.defer(move |_| marker.set(cpu_ns()));
     });
     (start, cpu_ns())

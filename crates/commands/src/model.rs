@@ -3,6 +3,7 @@ use crate::{
     Error,
     context::{ContextStack, When},
     keybinding::{Keybinding, Platform},
+    params::Param,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -18,7 +19,8 @@ impl CommandId {
     pub fn parse(value: &str) -> Result<Self, Error> {
         let mut segment_start = true;
         for c in value.chars() {
-            if matches!(c, '.' | '-' | '_') {
+            // `/` separates control-path segments, only in `control.<path>.<action>` ids.
+            if matches!(c, '.' | '-' | '_') || (c == '/' && value.starts_with("control.")) {
                 if segment_start {
                     return Err(Error::InvalidId(value.into()));
                 }
@@ -69,6 +71,10 @@ pub struct Command<Run = ()> {
     pub keybinding: Option<Keybinding>,
     pub when: When,
     pub enabled: bool,
+    /// Shown by the ribbon and menus when the command is disabled.
+    pub disabled_reason: Option<String>,
+    /// Required arguments, filled from context, a prompt or the caller, in order.
+    pub params: Vec<Param>,
     pub run: Run,
 }
 impl<Run> Command<Run> {
@@ -81,6 +87,8 @@ impl<Run> Command<Run> {
             keybinding: None,
             when: When::always(),
             enabled: true,
+            disabled_reason: None,
+            params: Vec::new(),
             run,
         }
     }
@@ -104,11 +112,31 @@ impl<Run> Command<Run> {
         self.enabled = value;
         self
     }
+    /// Why the command is disabled, shown instead of running it.
+    pub fn disabled_reason(mut self, value: impl Into<String>) -> Self {
+        self.disabled_reason = Some(value.into());
+        self
+    }
+    /// Append a required argument; see [`Param`].
+    pub fn param(mut self, value: Param) -> Self {
+        self.params.push(value);
+        self
+    }
     pub fn validate(&self) -> Result<(), Error> {
         if self.title.trim().is_empty() {
-            Err(Error::EmptyTitle)
+            return Err(Error::EmptyTitle);
+        }
+        crate::params::validate_schema(&self.params)
+            .map_err(|reason| Error::InvalidParameter(format!("{}: {reason}", self.id)))
+    }
+    /// The reason this command cannot run in `contexts`, or `None` when it can.
+    pub fn unavailable_reason(&self, contexts: &ContextStack) -> Option<&str> {
+        if !self.enabled {
+            Some(self.disabled_reason.as_deref().unwrap_or("Disabled"))
+        } else if !self.when.matches(contexts) {
+            Some("Not available here")
         } else {
-            Ok(())
+            None
         }
     }
     pub fn map_run<Other>(self, f: impl FnOnce(Run) -> Other) -> Command<Other> {
@@ -120,6 +148,8 @@ impl<Run> Command<Run> {
             keybinding: self.keybinding,
             when: self.when,
             enabled: self.enabled,
+            disabled_reason: self.disabled_reason,
+            params: self.params,
             run: f(self.run),
         }
     }

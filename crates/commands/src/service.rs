@@ -1,6 +1,7 @@
 use crate::{Command, CommandId, ContextStack, Error, Keybinding, Platform, model};
 use gpui_kit::{App, AppContext, BorrowAppContext, Entity, Global, KeyBinding, Window};
 use guiraffe_core::keys;
+use guiraffe_core::protocol::{Action, Source};
 use std::{cell::OnceCell, collections::HashMap, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,24 +9,78 @@ pub enum InvocationSource {
     Keyboard,
     Menu,
     Spotlight,
+    Ribbon,
     Programmatic,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Payload {
     pub id: CommandId,
     pub source: InvocationSource,
+    /// Validated arguments, one per declared parameter (empty for parameterless commands).
+    pub args: std::collections::BTreeMap<String, String>,
+}
+impl Payload {
+    pub fn arg(&self, id: &str) -> Option<&str> {
+        self.args.get(id).map(String::as_str)
+    }
+}
+impl From<InvocationSource> for Source {
+    fn from(source: InvocationSource) -> Self {
+        match source {
+            InvocationSource::Keyboard => Source::Shortcut,
+            InvocationSource::Spotlight => Source::Spotlight,
+            InvocationSource::Ribbon => Source::Ribbon,
+            InvocationSource::Menu => Source::Pointer,
+            InvocationSource::Programmatic => Source::Host,
+        }
+    }
 }
 type Run = dyn Fn(&Payload, &mut Window, &mut App);
+/// What a command does: a closure, or a declarative "apply action X to control Y".
 #[derive(Clone)]
-pub struct Handler(Rc<Run>);
+pub struct Handler(HandlerKind);
+#[derive(Clone)]
+enum HandlerKind {
+    Run(Rc<Run>),
+    Apply(Rc<crate::control::ControlAction>),
+}
 impl Handler {
     pub fn new(f: impl Fn(&Payload, &mut Window, &mut App) + 'static) -> Self {
-        Self(Rc::new(f))
+        Self(HandlerKind::Run(Rc::new(f)))
+    }
+    /// Apply `action` to the control at `path` on the window's action bus. The source is
+    /// the invocation's: [`Source::Shortcut`] from the keymap, [`Source::Spotlight`] from
+    /// the palette. No closure, so the binding is data (serialisable, inspectable).
+    pub fn apply(path: impl Into<gpui_kit::SharedString>, action: Action) -> Self {
+        Self(HandlerKind::Apply(Rc::new(crate::control::ControlAction {
+            path: path.into(),
+            action,
+        })))
+    }
+    /// The declarative target, when this handler is one.
+    pub fn control_action(&self) -> Option<&crate::control::ControlAction> {
+        match &self.0 {
+            HandlerKind::Apply(apply) => Some(apply),
+            HandlerKind::Run(_) => None,
+        }
+    }
+    fn invoke(&self, payload: &Payload, window: &mut Window, cx: &mut App) -> Result<(), Error> {
+        match &self.0 {
+            HandlerKind::Run(run) => {
+                run(payload, window, cx);
+                Ok(())
+            }
+            HandlerKind::Apply(apply) => apply.dispatch(payload.source.into(), window, cx),
+        }
     }
 }
 impl PartialEq for Handler {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        match (&self.0, &other.0) {
+            (HandlerKind::Run(a), HandlerKind::Run(b)) => Rc::ptr_eq(a, b),
+            (HandlerKind::Apply(a), HandlerKind::Apply(b)) => a == b,
+            _ => false,
+        }
     }
 }
 impl Eq for Handler {}
@@ -325,13 +380,17 @@ impl Commands {
     where
         F: Fn(&Payload, &mut Window, &mut App) + 'static,
     {
+        self.register_handler(command.map_run(Handler::new), cx)
+    }
+    /// Register a command whose handler is already built, such as [`Handler::apply`]
+    /// or a [`Commands::control_command`].
+    pub fn register_handler(&self, command: Command<Handler>, cx: &mut App) -> Result<(), Error> {
         command.validate()?;
         if self.state.read(cx).catalog.lookup(&command.id).is_some() {
             return Err(Error::Duplicate(command.id.to_string()));
         }
         let new = resolved(&command.keybinding, self.platform(cx));
         let native = self.prepare(&new, cx)?;
-        let command = command.map_run(Handler::new);
         self.state.update(cx, |state, _| {
             state.catalog.register(command)?;
             state.changed();
@@ -465,32 +524,60 @@ impl Commands {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), Error> {
+        self.execute_with(
+            id,
+            Default::default(),
+            &crate::Choices::default(),
+            contexts,
+            source,
+            window,
+            cx,
+        )
+    }
+    /// As [`Self::execute`] with arguments, revalidated against the command's parameters and
+    /// `choices` immediately before the handler runs. A command with parameters cannot run
+    /// without complete, valid arguments from any entry point.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_with(
+        &self,
+        id: &CommandId,
+        args: std::collections::BTreeMap<String, String>,
+        choices: &crate::Choices,
+        contexts: &ContextStack,
+        source: InvocationSource,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), Error> {
         // Release the registry borrow before calling user code. A handler may
         // register/unregister commands or invoke another command reentrantly.
         let handler = {
-            let command = self
-                .state
-                .read(cx)
-                .catalog
-                .lookup(id)
-                .ok_or_else(|| Error::NotFound(id.to_string()))?;
+            let Some(command) = self.state.read(cx).catalog.lookup(id) else {
+                // Every registered control action is a command without being registered:
+                // `control.<path>.<action>` resolves on the bus only when invoked.
+                return match crate::control::ControlAction::parse(id.as_str()) {
+                    Some(apply) => apply.dispatch(source.into(), window, cx),
+                    None => Err(Error::NotFound(id.to_string())),
+                };
+            };
             if !command.enabled {
                 return Err(Error::Disabled(id.to_string()));
             }
             if !command.when.matches(contexts) {
                 return Err(Error::Inactive(id.to_string()));
             }
+            crate::params::validate(command, &args, choices)
+                .map_err(|reason| Error::InvalidArguments(format!("{id}: {reason}")))?;
             command.run.clone()
         };
-        (handler.0)(
+        handler.invoke(
             &Payload {
                 id: id.clone(),
                 source,
+                args,
             },
             window,
             cx,
-        );
-        Ok(())
+        )
     }
     pub(crate) fn dispatch_binding(
         &self,
@@ -588,8 +675,19 @@ impl Commands {
         let origin = native_contexts(window);
         let mut contexts = self.state.read(cx).contexts.clone();
         contexts.extend(&origin);
-        let actions = self.spotlight_actions(&contexts, cx);
+        // Control actions are enumerated only now, when the palette opens (no idle cost).
+        let mut controls = crate::control::spotlight_actions(window, cx);
+        // A control action already registered as a command (for its shortcut) is listed once.
+        controls.retain(|action| {
+            CommandId::parse(&action.id)
+                .ok()
+                .is_none_or(|id| self.state.read(cx).catalog.lookup(&id).is_none())
+        });
+        let controls = Rc::new(controls);
+        let mut actions = self.spotlight_actions(&contexts, cx);
+        actions.extend(controls.iter().cloned());
         let recents = self.state.read(cx).spotlight_recents.clone();
+        let live_controls = controls.clone();
         let weak = self.state.downgrade();
         let recorded = self.state.downgrade();
         let observed = self.state.clone();
@@ -602,7 +700,8 @@ impl Commands {
                     let service = Commands { state };
                     let mut contexts = service.state.read(cx).contexts.clone();
                     contexts.extend(&live_origin);
-                    let actions = service.spotlight_actions(&contexts, cx);
+                    let mut actions = service.spotlight_actions(&contexts, cx);
+                    actions.extend(live_controls.iter().cloned());
                     palette.set_actions(actions, cx);
                 },
             )
@@ -621,7 +720,12 @@ impl Commands {
                 .actions(actions)
                 .recents(recents)
                 .on_activate(move |value, window, cx| {
-                    let (Some(state), Ok(id)) = (weak.upgrade(), CommandId::parse(value)) else {
+                    let Some(state) = weak.upgrade() else { return };
+                    let Ok(id) = CommandId::parse(value) else {
+                        // A control path that is not a valid slug still runs on the bus.
+                        if let Some(apply) = crate::control::ControlAction::parse(value) {
+                            let _ = apply.dispatch(Source::Spotlight, window, cx);
+                        }
                         return;
                     };
                     let service = Commands { state };
@@ -635,7 +739,7 @@ impl Commands {
         Ok(palette)
     }
 }
-fn native_contexts(window: &Window) -> ContextStack {
+pub(crate) fn native_contexts(window: &Window) -> ContextStack {
     let mut result = ContextStack::default();
     for context in window.context_stack() {
         let mut frame = crate::WhenContext::default();

@@ -376,7 +376,7 @@ fn main() -> Result<()> {
     let component = args
         .first()
         .map(String::as_str)
-        .ok_or("usage: soak <mixed|grid|sheet|code|empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
+        .ok_or("usage: soak <mixed|grid|sheet|code|empty|flow|timeline|chart-line|chart-scatter|chart-stream|gantt|gantt-fan-out|gantt-chain|tracks|tracks-painter|curve-editor|bar-editor|flamegraph|tree|property-grid|markdown|mermaid|chat|code-annotations> [--short] [--no-minimap]")?;
     if std::env::var_os("SOAK_WARM_REPAINT").is_some() {
         if !warm_repaint::enabled() {
             return Err("warm repaint requires --features warm-repaint-probe".into());
@@ -435,6 +435,9 @@ fn run_component(component: &str, short: bool, no_minimap: bool) -> Result<()> {
         }
         "tracks" => {
             mounted::tracks(|frame| result = sample(frame, mount_started.elapsed(), short))?
+        }
+        "tracks-painter" => {
+            mounted::tracks_painter(|frame| result = sample(frame, mount_started.elapsed(), short))?
         }
         "curve-editor" => {
             mounted::curve_editor(|frame| result = sample(frame, mount_started.elapsed(), short))?
@@ -587,20 +590,36 @@ fn limit_sample(
     mount: Duration,
     stream: bool,
 ) -> Result<()> {
+    use nix::time::{ClockId, clock_gettime};
+
+    let cpu_clock = std::env::var_os("SOAK_FRAME_CPU").map(|_| ClockId::CLOCK_THREAD_CPUTIME_ID);
+    let mut cpu_times = Vec::new();
     let mut times = Vec::with_capacity(120);
     // Limits can stop after a mount failure. Baseline sweeps need the frame data at every size.
     if mount <= Duration::from_millis(200) || std::env::var_os("SOAK_BASELINE_SWEEP").is_some() {
         for index in 0..128 {
+            let cpu_start = cpu_clock.map(clock_gettime).transpose()?;
             let start = Instant::now();
             frame(index)?;
             let elapsed = start.elapsed();
             if index >= 8 {
                 times.push(elapsed.as_micros());
+                if let (Some(clock), Some(start)) = (cpu_clock, cpu_start) {
+                    let delta = clock_gettime(clock)? - start;
+                    cpu_times.push(Duration::from(delta).as_micros());
+                }
             }
             if stream {
                 std::thread::sleep(Duration::from_micros(8_334).saturating_sub(elapsed));
             }
         }
+    }
+    if !cpu_times.is_empty() {
+        cpu_times.sort_unstable();
+        println!(
+            "frame_thread_cpu_p99_us={}",
+            cpu_times[(cpu_times.len() * 99).div_ceil(100) - 1]
+        );
     }
     limit_report(mount, times)
 }
@@ -669,8 +688,41 @@ mod mounted {
             let model = SheetModel::from_cells(1_000_000, 1000, cells);
             cx.new(|cx| SheetState::new(model, cx))
         })?;
+        #[cfg(test)]
+        if std::env::var("GUIRAFFE_MOUNTED_RSS_TEST_SCENARIO").as_deref() == Ok("sheet") {
+            for seed in [0, 1] {
+                if seed != 0 {
+                    window.update(|_, cx| {
+                        sheet.update(cx, |state, cx| {
+                            state.edit([(CellPos::default(), Cell::new(seed.to_string()))], cx);
+                        })
+                    });
+                }
+                let deadline = Instant::now() + Duration::from_secs(120);
+                while window.update(|_, cx| {
+                    sheet
+                        .read(cx)
+                        .calculation()
+                        .and_then(|c| c.value(CellPos::new(count, 0)))
+                        != Some(Ok((count + seed) as f64))
+                }) {
+                    if Instant::now() >= deadline {
+                        return Err("formula chain did not finish".into());
+                    }
+                    settle(&mut window);
+                    std::thread::sleep(Duration::from_millis(8));
+                }
+            }
+        }
         let at = point(px(380.), px(310.));
         let elapsed = mount_started.elapsed();
+        if std::env::var_os("SOAK_LIMIT_PROBE").is_some() {
+            // Two coordinates and the UTF-8 formula text in each input record.
+            let raw = (1..=count.min(999_999))
+                .map(|row| std::mem::size_of::<CellPos>() + row.ilog10() as usize + 5)
+                .sum();
+            raw_bytes(raw);
+        }
         run(
             &mut |frame| {
                 if frame.is_multiple_of(16) {
@@ -1121,7 +1173,7 @@ mod mounted {
                             let view = view.read(cx);
                             let axis = view.axis();
                             let mid = axis.t(axis.width * 0.5);
-                            let clips = view.tracks().get(track)?.1.clips();
+                            let clips = view.tracks(cx).get(track)?.track.clips();
                             let first = clips.partition_point(|clip| clip.end() <= axis.start);
                             let end = clips.partition_point(|clip| clip.start < axis.end());
                             let visible = clips.get(first..end)?;
@@ -1137,7 +1189,7 @@ mod mounted {
                     let at =
                         track_body.origin + point(px(x as f32), px((track as f32 + 0.5) * TRACK_H));
                     window.simulate_click(at, Modifiers::default());
-                    let selected = window.update(|_, cx| view.read(cx).selected());
+                    let selected = window.update(|_, cx| view.read(cx).selected(cx));
                     if selected != Some((track, clip_id)) {
                         return Err(format!(
                             "tracks selection expected ({track}, {clip_id}), got {selected:?}"
@@ -1149,6 +1201,89 @@ mod mounted {
                     &mut window,
                     body + point(px(((i * 37) % 400) as f32), px(((i * 13) % 300) as f32)),
                 ),
+            }
+            finish_replay_frame(&mut window);
+            Ok(())
+        });
+        Ok(())
+    }
+
+    /// Paints `RECTS` note rectangles inside every visible clip, from the clip snapshot.
+    struct NotePainter;
+    const RECTS: usize = 16;
+    impl guiraffe_timeline::ClipPainter for NotePainter {
+        fn paint(
+            &self,
+            clip: &guiraffe_timeline::ClipPaint<'_>,
+            window: &mut gpui_kit::Window,
+            _: &gpui_kit::App,
+        ) {
+            let b = clip.bounds;
+            let w = f32::from(b.size.width) / RECTS as f32;
+            let h = f32::from(b.size.height) / 12.0;
+            for k in 0..RECTS {
+                let pitch = (k * 7 + clip.clip.id as usize) % 12;
+                window.paint_quad(gpui_kit::fill(
+                    gpui_kit::Bounds::new(
+                        b.origin + point(px(k as f32 * w), px(pitch as f32 * h)),
+                        gpui_kit::size(px((w - 1.0).max(1.0)), px(h.max(1.0))),
+                    ),
+                    gpui_kit::rgb(0x33_66_cc),
+                ));
+            }
+        }
+    }
+
+    /// Tracks with a clip painter: 64 tracks of 200 clips (12,800), 16 rectangles painted
+    /// inside each visible clip, mixed row heights. The 60 fps gate (16 ms p99).
+    pub fn tracks_painter(run: impl FnOnce(Frame)) -> Result<()> {
+        use guiraffe_timeline::{
+            TimeFormat, Track, TracksView,
+            tracks_model::{TrackRow, TracksModel, tracks_store},
+        };
+        let per_track = scaled(200);
+        let rows = (0..64)
+            .map(|t| {
+                let mut track = Track::default();
+                for k in 0..per_track {
+                    track.insert(k as f64 * 2. + (t % 4) as f64 * 0.25, 1.5);
+                }
+                TrackRow::new(format!("Track {t}"), track).with_height([40., 64., 96.][t % 3])
+            })
+            .collect();
+        let length = per_track as f64 * 2. + 1.;
+        let (mut window, view) = mount("tracks_painter_soak", guiraffe_timeline::init, |_, cx| {
+            let store = tracks_store(TracksModel::new(rows), 100, cx);
+            let view = TracksView::with_store(store, TimeFormat::Seconds, length, cx);
+            view.update(cx, |v, cx| {
+                v.set_clip_painter(Some(std::rc::Rc::new(NotePainter)), cx);
+                v.set_resizable_tracks(true, cx);
+            });
+            view
+        })?;
+        let root = require(&mut window, "tracks")?;
+        let track_body = require(&mut window, "tracks-body")?;
+        let body = root.origin + point(root.size.width * 0.55, root.size.height * 0.4);
+        run(&mut |i| {
+            match i % 4 {
+                0 => wheel(&mut window, body, 30. * sign(i, 64), 0., false),
+                1 => {
+                    let dy = if sign(i, 32) > 0. { ZOOM_IN } else { ZOOM_OUT };
+                    wheel(&mut window, body, 0., dy, true)
+                }
+                2 => wheel(&mut window, body, 0., 40. * sign(i, 48), false),
+                _ => {
+                    let y = window.update(|_, cx| {
+                        let view = view.read(cx);
+                        let layout = view.layout();
+                        let row = (i / 4) % layout.len().max(1);
+                        layout.top(row) + layout.height(row) * 0.5 - view.scroll_y()
+                    });
+                    hover(
+                        &mut window,
+                        track_body.origin + point(px(((i * 37) % 400) as f32), px(y.max(1.))),
+                    )
+                }
             }
             finish_replay_frame(&mut window);
             Ok(())
@@ -1996,6 +2131,11 @@ mod mounted {
             if let Ok(scenario) = std::env::var(SCENARIO) {
                 match scenario.as_str() {
                     "empty" => empty(|_| {}).expect("mount baseline"),
+                    "sheet" => {
+                        super::sheet(Instant::now(), |_, _| {}).expect("calculate 100k formulas")
+                    }
+                    "code" => super::mixed::run_data("code", Instant::now(), |_, _| {})
+                        .expect("load 10M lines"),
                     "chat" => chat(|_| {}).expect("mount 100k chat history"),
                     "markdown" => markdown(Instant::now(), |frame, _| {
                         for index in 0..64 {
@@ -2042,6 +2182,24 @@ mod mounted {
                 delta <= budget,
                 "loaded {loaded} KiB, baseline {baseline} KiB, delta {delta} KiB, budget {budget} KiB"
             );
+        }
+
+        #[test]
+        fn sheet_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget("mounted::tests::sheet_rss_budget", "sheet", 100_000 * 32);
+            }
+        }
+
+        #[test]
+        fn code_load_rss_budget() {
+            if !run_rss_child() {
+                assert_rss_budget(
+                    "mounted::tests::code_load_rss_budget",
+                    "code",
+                    10_000_000 * 20 - 1,
+                );
+            }
         }
 
         #[test]

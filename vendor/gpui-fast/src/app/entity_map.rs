@@ -158,7 +158,9 @@ impl EntityMap {
             .get_mut()
             .innermost()
             .insert(slot.entity_id);
-        crate::fast::dependencies::note_access(self, slot.entity_id);
+        // Modified for GUIraffe: creating an entity is not reading it. A view that creates a
+        // child view as it renders read nothing the child holds, so the child's later changes
+        // must not build the creator again; reads through the handle still record as usual.
 
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));

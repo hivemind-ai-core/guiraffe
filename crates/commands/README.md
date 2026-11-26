@@ -42,3 +42,16 @@ The crate supplies an in-app menu and metadata access for future adapters. Platf
 ## Validation
 
 `cargo test -p guiraffe-commands` exercises pure parsing/resolution, GPUI interaction and render invalidation, and light/dark menu snapshots. Repeat with `--features gpui-kit/gpui-fast`. Clippy runs with `--all-targets -- -D warnings` on both backends. Snapshot fixtures use the real asset source and four forced frames before capture, with separate upstream and gpui-fast goldens.
+
+## Command ribbon
+
+`ribbon` adds a keyboard-first command bar over the same registry. Build a `RibbonLayout` (menus of
+categories of entries that run a command, open a submenu or apply a control action through the
+action bus), compile it once with `RibbonModel::build` (ids, references, cycles and chord
+collisions are validated), and create one `RibbonState` per window. Use `ribbon_scope` as the window's root,
+add `.children(CommandRibbon::when_open(&ribbon, cx))` above the status bar and put
+`RibbonButton` in it; a closed ribbon adds no element and no per-frame work. Ctrl+Space
+toggles; an entry's key descends or runs, Backspace goes up, Escape goes to the root and then
+closes. Commands with `Param`s prompt for text or choices (dynamic choices come from
+`RibbonState::set_choices`) and run with `InvocationSource::Ribbon`; action entries dispatch with
+`Source::Ribbon`. `ribbon::OverrideFile` persists shortcut and chord overrides atomically.

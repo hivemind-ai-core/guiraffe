@@ -324,9 +324,9 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
     v.update(cx, |v, cx| {
         v.set_focusable(Some(true), cx);
         if let Some(id) = v
-            .tracks()
+            .tracks(cx)
             .get(3)
-            .and_then(|(_, t)| t.clips().first())
+            .and_then(|row| row.track.clips().first())
             .map(|c| c.id)
         {
             v.set_locked(3, id, true, cx);

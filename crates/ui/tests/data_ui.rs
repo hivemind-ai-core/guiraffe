@@ -2846,3 +2846,51 @@ fn ui_macro_accepts_sheet_builders() {
     }
     let _ = example;
 }
+
+/// Pointer input in a registered document and a script action by path produce the same
+/// logic run and the same view data, and both pass through bus interceptors.
+#[gpui_kit::test]
+fn registered_document_events_flow_over_the_action_bus(cx: &mut TestAppContext) {
+    use guiraffe_core::protocol::{Action, ActionBus, Recorder, Source};
+    let (ui, vcx) = mount(cx, &doc());
+    let recorder = Recorder::new();
+    let id = vcx.update(|window, cx| {
+        ActionBus::add_interceptor(recorder.clone(), window, cx);
+        DataUi::register(&ui, "inbox/doc", window, cx)
+    });
+    let center = vcx
+        .debug_bounds("refresh")
+        .map(|b| b.center())
+        .unwrap_or_else(|| panic!("button addressable by its document id"));
+    vcx.simulate_click(center, gpui_kit::Modifiers::default());
+    vcx.run_until_parked();
+    assert_eq!(status(&ui, vcx), "refreshed 1×");
+    vcx.update(|window, cx| {
+        let action = Action {
+            name: "refresh".into(),
+            payload: guiraffe_core::widget_value::Value::Null,
+        };
+        assert!(ActionBus::dispatch(id, &action, Source::Script, window, cx).is_ok());
+        let unknown = Action {
+            name: "nope".into(),
+            payload: guiraffe_core::widget_value::Value::Null,
+        };
+        assert!(ActionBus::dispatch(id, &unknown, Source::Script, window, cx).is_err());
+    });
+    vcx.run_until_parked();
+    assert_eq!(status(&ui, vcx), "refreshed 2×");
+    let log = recorder.take();
+    assert_eq!(
+        log.iter()
+            .map(|r| (
+                r.path.as_ref().to_owned(),
+                r.action.name.to_string(),
+                r.source
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("inbox/doc".to_owned(), "refresh".to_owned(), Source::DataUi),
+            ("inbox/doc".to_owned(), "refresh".to_owned(), Source::Script),
+        ]
+    );
+}

@@ -155,6 +155,34 @@ Use `--short` for two 10-second windows with absolute limits disabled for CI.
 The runner measures headless dispatch and CPU paint and reads `/proc/self/smaps_rollup`.
 The production audits identify which native and streaming coverage is still missing.
 
+### Mounted component size sweep
+
+On Linux, build the release soak executable for each backend in its own target directory.
+Run the sweep on a quiet host with both executables as arguments.
+
+```sh
+CARGO_TARGET_DIR=target/sweep-up cargo build --locked --release -p guiraffe-bench --example soak
+CARGO_TARGET_DIR=target/sweep-fast cargo build --locked --release -p guiraffe-bench --example soak --features gpui-fast
+python3 scripts/component-sweep.py target/sweep-{up,fast}/release/examples/soak
+```
+
+The sweep checks FlameGraph frame counts, clips per track across 100 tracks, keys per
+channel across 100 dope-sheet channels, and Mermaid node counts. It checks a 200 ms
+mount and 8 ms p99 at every size, then checks the dope sheet's maximum frame time over
+four complete mixed-soak cycles against 8 ms. The frame replay prints zero samples when
+mount already exceeds budget. UI-thread CPU p99 is diagnostic and excludes scheduler
+waits and work on other threads. The exit status follows the wall-clock budgets.
+
+Use the same executables to run the load-independent cold timeline instruction gate.
+It counts the first timeline tab switch, hover and settled draw in the mixed replay.
+The chart receives 500 new samples on that activation and retains 10,000 samples.
+Callgrind collects only inside the activation. The budgets are 17 million instructions
+on upstream and 24 million on fast, in that argument order. A missing count fails the gate.
+
+```sh
+scripts/cold-timeline-instructions.sh target/sweep-{up,fast}/release/examples/soak
+```
+
 ### Mounted DataGrid and CodeViewer frames
 
 Run the dedicated instruction suite with Valgrind and
@@ -201,3 +229,8 @@ The mounted Linux allocator tests run with the bench suite and can be run
 directly with `cargo test -p guiraffe-bench --example soak`. Repeat with
 `--features gpui-fast` to exercise the second backend. Each fixture checks
 eight consecutive draws after warm-up.
+
+`ribbon_open`, `ribbon_navigate` and `ribbon_filter` (Callgrind only) measure the command ribbon at
+application scale: 2,000 commands in 200 categories (`src/ribbon.rs`). They project the root,
+descend two chords, and reproject after a context change hides half a menu. Each has a hard
+instruction ceiling about 1.5x over its measured count.

@@ -19,6 +19,12 @@ pub enum Error {
     Inactive(String),
     #[error("native keybinding rejected: {0}")]
     NativeBinding(String),
+    #[error("invalid command parameter: {0}")]
+    InvalidParameter(String),
+    #[error("missing or invalid arguments: {0}")]
+    InvalidArguments(String),
+    #[error("control action rejected: {0}")]
+    Action(String),
     #[error("commands service is not initialized")]
     NotInitialized,
 }

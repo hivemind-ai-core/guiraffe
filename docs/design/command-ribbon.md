@@ -1,6 +1,7 @@
 # Command ribbon
 
-Status: draft for 0.3, not implemented (see the [roadmap](../../ROADMAP.md)). New component in `guiraffe-commands`.
+Status: implemented in `guiraffe-commands::ribbon` for 0.3, except the parts listed under
+"Command ribbon" in [KNOWN_ISSUES](../../KNOWN_ISSUES.md). See the [roadmap](../../ROADMAP.md).
 
 ## 1. Source
 
