@@ -89,6 +89,8 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 
 ## Components
 
+- `guiraffe-goldens` zooms images with GPUI's linear sampling, so magnified goldens blur; the pixel readout stays exact. GPUI's `img` has no nearest-neighbour option. Add one in our GPUI fork (0.4).
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select
