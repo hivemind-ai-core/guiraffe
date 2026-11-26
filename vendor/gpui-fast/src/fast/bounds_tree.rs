@@ -67,6 +67,9 @@ where
     /// to find what a moved bounds meets (see [`BoundsTree::patch`]). Built
     /// when one first asks, and dropped when the tree is cleared.
     patch_cells: Option<PatchCells>,
+    /// Room for what a patched bounds may meet, kept from one patch to the
+    /// next.
+    patch_near: Vec<u32>,
 }
 
 /// The side of a [`PatchCells`] cell. Coarser than the grid's: a patch asks
@@ -559,13 +562,15 @@ where
         if cells.cells_of(&bounds).is_none() || cells.cells_of(&old).is_none() {
             return false;
         }
-        let mut near = Vec::new();
+        let mut near = std::mem::take(&mut self.patch_near);
+        near.clear();
         cells.near(&bounds, &mut near);
         cells.near(&old, &mut near);
         near.sort_unstable();
         near.dedup();
         let mut greatest_before = 0;
-        for other in near {
+        let mut holds = true;
+        for &other in &near {
             let other = other as usize;
             if other == index {
                 continue;
@@ -577,10 +582,12 @@ where
                     greatest_before = greatest_before.max(*other_ordering);
                 }
             } else if meets_new != other_bounds.intersects(&old) {
-                return false;
+                holds = false;
+                break;
             }
         }
-        if greatest_before + 1 != ordering {
+        self.patch_near = near;
+        if !holds || greatest_before + 1 != ordering {
             return false;
         }
         self.recorded[index].0 = bounds.clone();
@@ -788,6 +795,7 @@ where
             recorded: Vec::new(),
             previous: Vec::new(),
             patch_cells: None,
+            patch_near: Vec::new(),
             replaying: false,
             changed: ChangedBounds {
                 bounds: Vec::new(),

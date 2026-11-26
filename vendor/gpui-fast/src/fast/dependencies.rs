@@ -631,6 +631,9 @@ pub(crate) struct EntityAccessLog {
     /// (and while it drew), for a patched frame to find the subtrees that
     /// read them without walking all of them. See [`crate::fast::patch`].
     pub(crate) patch_log: PatchLog,
+    /// The most `access_log` held since the last frame was drawn in full,
+    /// for [`crate::fast::high_water`] to trim it by.
+    frame_peak: usize,
 }
 
 /// The entities changed, updated or written, in order and with repeats, up
@@ -683,6 +686,18 @@ impl PatchLog {
 }
 
 impl EntityAccessLog {
+    /// The most the log held since this was last asked, and what it can hold.
+    pub(crate) fn take_frame_use(&mut self) -> (usize, usize) {
+        let peak = std::mem::take(&mut self.frame_peak);
+        (peak, self.access_log.borrow().capacity())
+    }
+
+    /// Gives back what the log holds room for beyond `capacity`. See
+    /// [`crate::fast::high_water`].
+    pub(crate) fn trim_access_log(&mut self, capacity: usize) {
+        self.access_log.borrow_mut().shrink_to(capacity);
+    }
+
     pub(crate) fn update_generation(&self) -> u64 {
         self.update_generation
     }
@@ -786,12 +801,15 @@ impl EntityMap {
         let EntityAccessLog {
             access_log,
             recordings,
+            frame_peak,
             ..
         } = &mut self.access_log;
         let open = recordings.get() - 1;
         recordings.set(open);
         if open == 0 {
-            access_log.borrow_mut().clear();
+            let mut log = access_log.borrow_mut();
+            *frame_peak = (*frame_peak).max(log.len());
+            log.clear();
         }
         self.mark_access_boundary();
     }
@@ -1079,7 +1097,7 @@ fn outside<'a, T: Clone>(
 /// What a retained subtree read while it was built: the entities it accessed
 /// and the globals it read, as of a global generation. While none of them has
 /// changed, building the subtree again would build the same thing.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct RenderDependencies {
     pub(crate) entities: Rc<[EntityId]>,
     pub(crate) globals: Rc<[TypeId]>,
@@ -1095,6 +1113,28 @@ pub(crate) struct RenderDependencies {
     pub(crate) updates: u64,
     /// Where in the write generation it was built. See [`Writes`].
     pub(crate) writes: Writes,
+}
+
+thread_local! {
+    /// The empty lists every [`RenderDependencies`] starts with, shared: an
+    /// empty `Rc` slice of its own is an allocation, made for every retained
+    /// subtree every time it is built.
+    static NO_DEPENDENCIES: (Rc<[EntityId]>, Rc<[TypeId]>, Rc<[(StateVersion, u64)]>) =
+        (Rc::from([]), Rc::from([]), Rc::from([]));
+}
+
+impl Default for RenderDependencies {
+    fn default() -> Self {
+        NO_DEPENDENCIES.with(|(entities, globals, states)| RenderDependencies {
+            entities: entities.clone(),
+            globals: globals.clone(),
+            states: states.clone(),
+            offset_reads: Default::default(),
+            generation: 0,
+            updates: 0,
+            writes: Writes::default(),
+        })
+    }
 }
 
 /// A counter that state shared outside of entities — a scroll handle, a list
