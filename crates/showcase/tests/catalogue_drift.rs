@@ -113,6 +113,10 @@ fn kind(surface: &str) -> Option<&'static str> {
 // Exceptions deliberately name the owner and method. A new API must be classified explicitly.
 const IMPERATIVE: &[(&str, &str)] = &[
     (
+        "commands::RibbonProps::field placement",
+        "A document places its own ribbon, so DataUi ribbons are always slotted; overlay is for app roots.",
+    ),
+    (
         "components::fn knob_dial",
         "The painted dial of a knob, shared with the unbound-cost gate; documents use the knob.",
     ),
