@@ -401,9 +401,8 @@ impl Render for MeterBars {
         let options = &*self.options;
         let now = self.now(cx);
         let (frame, animating) = advance(&self.cell, options, &mut self.states, now);
-        // A fed meter is notified every frame; only a meter left to decay asks for its own.
-        let fed = self.cell.written.replace(false);
-        if animating && !fed && !cx.reduce_motion() {
+        // Keep the decay moving after the host stops publishing.
+        if animating && !cx.reduce_motion() {
             window.request_animation_frame();
         }
         let theme = GuiraffeTheme::global(cx);
@@ -426,8 +425,9 @@ impl Render for MeterBars {
     }
 }
 
-/// Take a meter's latest input at `now`: the frame to paint and whether a decay is still
-/// moving.
+/// Take a meter's input at `now`: the frame to paint and whether a decay is still moving.
+/// Input is taken once: with nothing written since the last render, the peak falls and the
+/// RMS stays (a stale reading never latches the clip again).
 fn advance(
     cell: &MeterCell,
     options: &MeterOptions,
@@ -444,8 +444,14 @@ fn advance(
         gain_reduction: cell.gain_reduction.get(),
     };
     let mut animating = false;
+    let fresh = cell.written.replace(false);
     for i in 0..frame.channels {
-        let state = states[i].advance(cell.levels[i].get(), now, &b);
+        let input = if fresh {
+            cell.levels[i].get()
+        } else {
+            Level::new(f32::NEG_INFINITY, f32::NAN)
+        };
+        let state = states[i].advance(input, now, &b);
         states[i] = state;
         frame.peaks[i] = state.peak_at(now, &b);
         frame.holds[i] = state.hold_at(now, &b);
@@ -1020,7 +1026,6 @@ impl Render for MeterBank {
             .saturating_duration_since(self.epoch)
             .as_secs_f64();
         let mut animating = false;
-        let mut fed = false;
         {
             let mut frames = self.frames.borrow_mut();
             frames.clear();
@@ -1028,10 +1033,9 @@ impl Render for MeterBank {
                 let (frame, moving) = advance(cell, &self.options, states, now);
                 frames.push(frame);
                 animating |= moving;
-                fed |= cell.written.replace(false);
             }
         }
-        if animating && !fed && !cx.reduce_motion() {
+        if animating && !cx.reduce_motion() {
             window.request_animation_frame();
         }
         let theme = GuiraffeTheme::global(cx);
