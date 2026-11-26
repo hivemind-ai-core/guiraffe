@@ -1045,7 +1045,7 @@ fn dope_channel_schema_with_depth(depth: usize) -> Value {
                 "properties":{
                     "time":{"type":"number"},
                     "value":{"type":"number"},
-                    "interpolation":{"enum":["constant","linear","bezier"]}
+                    "interpolation":{"enum":["constant","linear","bezier","ease-in","ease-out","ease-in-out"]}
                 }
             }},
             "group":{"type":"boolean"},
@@ -1114,7 +1114,7 @@ pub fn curve_series_schema() -> Value {
                 "type":"object","additionalProperties":false,"required":["time","value"],
                 "properties":{
                     "time":{"type":"number"},"value":{"type":"number"},
-                    "interpolation":{"enum":["constant","linear","bezier"]},
+                    "interpolation":{"enum":["constant","linear","bezier","ease-in","ease-out","ease-in-out"]},
                     "inHandle":handle,"outHandle":handle
                 }
             }}

@@ -40,11 +40,10 @@ fn index(value: f64) -> Option<usize> {
 }
 
 fn parse_key(value: &Value) -> Option<Key> {
-    let interpolation = match field(value, "interpolation").as_str() {
-        Some("constant") => Interp::Constant,
-        Some("bezier") => Interp::Bezier,
-        _ => Interp::Linear,
-    };
+    let interpolation = field(value, "interpolation")
+        .as_str()
+        .and_then(Interp::from_name)
+        .unwrap_or(Interp::Linear);
     let mut key = Key::new(
         field(value, "time").as_f64()?,
         field(value, "value").as_f64()?,
@@ -97,11 +96,7 @@ fn series_value(series: &CurveSeries) -> Value {
         .keys()
         .iter()
         .map(|key| {
-            let interpolation = match key.interp {
-                Interp::Constant => "constant",
-                Interp::Linear => "linear",
-                Interp::Bezier => "bezier",
-            };
+            let interpolation = key.interp.name();
             record([
                 ("time", key.t.into()),
                 ("value", key.v.into()),
@@ -195,7 +190,7 @@ impl RenderOnce for CurveDocument {
                 |state: &mut CurveDocumentState, view, event, window, cx| {
                     let index = match event {
                         CurveEvent::KeyMoved { .. } => 0,
-                        CurveEvent::Changed => 1,
+                        CurveEvent::Changed | CurveEvent::Released => 1,
                         CurveEvent::SelectionChanged => 2,
                     };
                     if let Some(handler) = state.handlers[index].clone() {
@@ -206,7 +201,7 @@ impl RenderOnce for CurveDocument {
                                 ("time", t.into()),
                                 ("value", v.into()),
                             ]),
-                            CurveEvent::Changed => Value::List(
+                            CurveEvent::Changed | CurveEvent::Released => Value::List(
                                 view.curves()
                                     .iter()
                                     .map(series_value)

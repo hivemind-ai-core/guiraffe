@@ -76,7 +76,10 @@ impl Channel {
                     match k.interp {
                         crate::Interp::Constant => KeyShape::Square,
                         crate::Interp::Linear => KeyShape::Diamond,
-                        crate::Interp::Bezier => KeyShape::Circle,
+                        crate::Interp::Bezier
+                        | crate::Interp::EaseIn
+                        | crate::Interp::EaseOut
+                        | crate::Interp::EaseInOut => KeyShape::Circle,
                     },
                 );
             }
