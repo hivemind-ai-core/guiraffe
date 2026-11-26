@@ -188,6 +188,8 @@ pub struct DopeSheet {
         ),
     >,
     readout: String,
+    /// Paint value segments and toggle bars (on by default).
+    segments: bool,
 }
 impl EventEmitter<DopeEvent> for DopeSheet {}
 impl Focusable for DopeSheet {
@@ -407,6 +409,7 @@ impl DopeSheet {
                 formatter: None,
                 lanes: Default::default(),
                 readout: String::new(),
+                segments: true,
             };
             sheet.sync(cx);
             sheet
@@ -547,6 +550,14 @@ impl DopeSheet {
     /// The selected keys, as stable references.
     pub fn selected_keys(&self, cx: &App) -> Vec<KeyRef> {
         self.doc(cx).selection.iter().copied().collect()
+    }
+
+    /// Show or hide value segments and toggle bars (keys always show).
+    pub fn set_show_segments(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.segments != on {
+            self.segments = on;
+            cx.notify();
+        }
     }
 
     /// Format values with `formatter` instead of each channel's [`NumberFormat`].
@@ -2047,7 +2058,7 @@ fn segment_canvas(
                         hl.a = 0.08;
                         quad(0., top, axis.width, f64::from(ROW_H), hl, window);
                     }
-                    if !c.visible || c.group {
+                    if !c.visible || c.group || !sheet.segments {
                         continue;
                     }
                     let color = if c.muted { muted } else { ink };
@@ -2095,7 +2106,10 @@ fn segment_canvas(
                                     fill.a = 0.3;
                                     let y = y_of(a.v);
                                     let (l, r) = (x0.max(0.), x1.min(axis.width));
+                                    // A hold: a solid line at the value over a light fill,
+                                    // so a hold at the bottom of the range still shows.
                                     quad(l, y, r - l, top + inset + span - y, fill, window);
+                                    quad(l, y - 1.5, r - l, 3., color, window);
                                     continue;
                                 }
                                 // A sampled mini-curve: one short column per 2 px, joined.
