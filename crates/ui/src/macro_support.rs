@@ -315,10 +315,10 @@ pub fn field<'a>(value: &'a Value, name: &'static str) -> Option<&'a Value> {
 // ---- Bound control entities (`guiraffe_components::controls`) ---------------------------
 
 use guiraffe_components::controls::{
-    KnobBuilder, KnobControl, NumberFieldBuilder, NumberFieldControl, ParamEvent,
-    ButtonBuilder, ButtonControl, ButtonEvent, CheckboxBuilder, CheckboxControl, SelectBuilder,
-    SelectControl, SelectValue, SelectedValue, SliderBuilder, SliderControl, SliderControlEvent,
-    SwitchBuilder, SwitchControl, TextInputBuilder, TextInputControl, TextInputEvent, ToggleEvent,
+    ButtonBuilder, ButtonControl, ButtonEvent, CheckboxBuilder, CheckboxControl, KnobBuilder,
+    KnobControl, NumberFieldBuilder, NumberFieldControl, ParamEvent, SelectBuilder, SelectControl,
+    SelectValue, SelectedValue, SliderBuilder, SliderControl, SliderControlEvent, SwitchBuilder,
+    SwitchControl, TextInputBuilder, TextInputControl, TextInputEvent, ToggleEvent,
 };
 use guiraffe_core::protocol::Source;
 
@@ -413,7 +413,11 @@ macro_rules! param_entity {
             fn builder() -> $builder {
                 <$control>::new()
             }
-            fn build(builder: $builder, window: &mut Window, cx: &mut App) -> gpui_kit::Entity<Self> {
+            fn build(
+                builder: $builder,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> gpui_kit::Entity<Self> {
                 builder.build(window, cx)
             }
             fn focus(&self, cx: &App) -> Option<gpui_kit::FocusHandle> {
