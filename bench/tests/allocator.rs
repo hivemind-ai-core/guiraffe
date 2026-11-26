@@ -941,3 +941,116 @@ fn control_host_setters_allocate_nothing() -> anyhow::Result<()> {
     assert_eq!(counts.allocations, 0, "host writes: {counts:?}");
     Ok(())
 }
+
+// TracksView 0.3.1: painter, mixed heights and selection
+
+struct Notes;
+impl guiraffe_timeline::ClipPainter for Notes {
+    fn paint(
+        &self,
+        clip: &guiraffe_timeline::ClipPaint<'_>,
+        window: &mut gpui_kit::Window,
+        _: &gpui_kit::App,
+    ) {
+        let b = clip.bounds;
+        for k in 0..16 {
+            window.paint_quad(gpui_kit::fill(
+                gpui_kit::Bounds::new(
+                    b.origin
+                        + gpui_kit::point(
+                            gpui_kit::px(k as f32 * 3.),
+                            gpui_kit::px((k % 12) as f32),
+                        ),
+                    gpui_kit::size(gpui_kit::px(2.), gpui_kit::px(1.)),
+                ),
+                gpui_kit::rgb(0x33_66_cc),
+            ));
+        }
+    }
+}
+
+struct TracksRoot(gpui_kit::Entity<guiraffe_timeline::TracksView>);
+impl gpui_kit::Render for TracksRoot {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement, Styled};
+        gpui_kit::div().size_full().child(self.0.clone())
+    }
+}
+
+/// Allocations of one repaint of a 64 x 200 TracksView after a notify.
+fn tracks_repaint(painter: bool, mixed: bool) -> anyhow::Result<guiraffe_bench::allocator::Counts> {
+    use gpui_kit::AppContext;
+    use guiraffe_timeline::{
+        TimeFormat, Track, TracksView,
+        tracks_model::{ClipRef, SetSelection, TrackRow, TracksModel, tracks_store},
+    };
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    let mut handle = None;
+    let window = app.open_window(
+        gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(800.)),
+        |_, cx| {
+            guiraffe_timeline::init(cx);
+            let rows = (0..64)
+                .map(|t| {
+                    let mut track = Track::default();
+                    for k in 0..200 {
+                        track.insert(k as f64 * 2. + (t % 4) as f64 * 0.25, 1.5);
+                    }
+                    // 30 + 50 per pair keeps the same rows in view as 40 + 40.
+                    let h = if mixed { [30., 50.][t % 2] } else { 40. };
+                    TrackRow::new(format!("Track {t}"), track).with_height(h)
+                })
+                .collect();
+            let store = tracks_store(TracksModel::new(rows), 100, cx);
+            store.dispatch_now(SetSelection(Some(ClipRef { track: 1, clip: 3 })), cx);
+            let view = TracksView::with_store(store, TimeFormat::Seconds, 40., cx);
+            if painter {
+                view.update(cx, |v, cx| {
+                    v.set_clip_painter(Some(std::rc::Rc::new(Notes)), cx)
+                });
+            }
+            handle = Some(view.clone());
+            cx.new(|_| TracksRoot(view))
+        },
+    )?;
+    let view = handle.ok_or_else(|| anyhow::anyhow!("no view"))?;
+    let frame = |app: &mut gpui_kit::HeadlessAppContext| {
+        app.update_window(window.into(), |_, w, cx| {
+            view.update(cx, |_, cx| cx.notify());
+            w.draw(cx).clear(cx)
+        })
+    };
+    for _ in 0..6 {
+        frame(&mut app)?;
+        app.run_until_parked();
+    }
+    let (result, counts) = count_allocations(|| frame(&mut app))?;
+    result?;
+    Ok(counts)
+}
+
+#[test]
+fn tracks_painter_heights_and_selection_add_no_frame_allocations() -> anyhow::Result<()> {
+    let plain = tracks_repaint(false, false)?;
+    let painted = tracks_repaint(true, false)?;
+    let mixed = tracks_repaint(true, true)?;
+    eprintln!("tracks repaint: plain {plain:?}, painter {painted:?}, mixed heights {mixed:?}");
+    assert_eq!(
+        painted.allocations, plain.allocations,
+        "the clip painter allocates nothing"
+    );
+    assert_eq!(
+        mixed.allocations, plain.allocations,
+        "variable heights allocate nothing"
+    );
+    Ok(())
+}

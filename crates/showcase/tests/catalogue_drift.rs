@@ -977,6 +977,90 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "The rendered clip handles pointer interaction.",
     ),
     (
+        "timeline::TracksView::cancel_drag",
+        "The rendered view ends its own drags.",
+    ),
+    (
+        "timeline::TracksView::control_id",
+        "Bus identity for Rust hosts; documents drive the view through its props.",
+    ),
+    (
+        "timeline::TracksView::drag_resize_to",
+        "The rendered row edge handles pointer resizing.",
+    ),
+    (
+        "timeline::TracksView::press_resize",
+        "The rendered row edge handles pointer resizing.",
+    ),
+    (
+        "timeline::TracksView::event SelectionChanged",
+        "Rust hosts observe it; documents bind the selected prop.",
+    ),
+    (
+        "timeline::TracksView::event TrackResized",
+        "Track heights are store state for Rust hosts; documents do not set heights yet.",
+    ),
+    (
+        "timeline::TracksView::fit",
+        "Documents refit through the length prop.",
+    ),
+    (
+        "timeline::TracksView::layout",
+        "Computed row geometry for Rust callers.",
+    ),
+    (
+        "timeline::TracksView::model",
+        "Store state for Rust hosts; documents pass tracks as a prop.",
+    ),
+    (
+        "timeline::TracksView::store",
+        "Store state for Rust hosts; documents pass tracks as a prop.",
+    ),
+    (
+        "timeline::TracksView::with_store",
+        "Store-backed constructor for Rust hosts; documents construct from props.",
+    ),
+    (
+        "timeline::TracksView::perform",
+        "Applies a typed action for Rust hosts and bus clients.",
+    ),
+    (
+        "timeline::TracksView::register",
+        "Registers the view on the action bus; a Rust host concern.",
+    ),
+    (
+        "timeline::TracksView::scroll_y",
+        "Read-only row scroll for Rust hosts.",
+    ),
+    (
+        "timeline::TracksView::set_scroll_y",
+        "The rendered view scrolls its own rows.",
+    ),
+    (
+        "timeline::TracksView::selection_style",
+        "Read-only effective style for Rust hosts.",
+    ),
+    (
+        "timeline::TracksView::set_selection_style",
+        "Theme-derived by default; an override is application Rust code.",
+    ),
+    (
+        "timeline::TracksView::set_clip_painter",
+        "A clip painter trait implementation is application-owned Rust code.",
+    ),
+    (
+        "timeline::TracksView::set_header",
+        "A custom header renderer is application-owned Rust code.",
+    ),
+    (
+        "timeline::TracksView::set_resizable_tracks",
+        "Track heights are store state for Rust hosts; documents do not resize tracks yet.",
+    ),
+    (
+        "timeline::TracksView::track_height",
+        "Read-only store state for Rust hosts.",
+    ),
+    (
         "dnd::SortableBoard::drag_overlay",
         "A Rust host can mount an explicit overlay entity. Document boards mount their own drag layer.",
     ),

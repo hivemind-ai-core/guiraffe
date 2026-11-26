@@ -189,3 +189,49 @@ The sweep checks mount time and interaction p99 for FlameGraph, Tracks, the dope
 and Mermaid, followed by the maximum dope-sheet frame time across four mixed replay
 cycles. It exits nonzero if either backend misses any budget. For a fresh checkout,
 follow the [build instructions](../bench/README.md#mounted-component-size-sweep).
+
+## Store vs plain label-edit A/B
+
+One unattended command measures what the Store costs on a label edit:
+
+```sh
+python3 scripts/label-scaling.py --ab
+```
+
+In this workspace, run it through the build-slot wrapper:
+`/home/dan/orca/anteater-cargo.sh python3 scripts/label-scaling.py --ab`.
+
+It builds the release `composed` test for upstream and gpui-fast in
+`target/label-ab-*`. Each backend runs the label-edit sweep at 1k, 3k and 10k
+rows: virtualized with a visible and an offscreen edit, and fully mounted with
+a visible edit. Variant A (store) is the keyed Store write. Variant B (plain)
+keeps the same rows in a plain entity and notifies only the edited row's view.
+The two variants share the same row view and page.
+
+Instructions per edit come from Callgrind, over three measured edits. CPU and
+allocations are per-edit medians over 31 native edits. Each line prints both
+variants and the store's share, `(store - plain) / store`. The JSON report goes
+to `target/label-ab.json`. The run fails when store instructions per edit
+exceed plain by more than 2% of plain plus 4,000 instructions
+(`LABEL_AB_TOLERANCE`, `LABEL_AB_FIXED_IR`). The keyed write is a fixed cost
+of about 3,300 instructions and two allocations. On an offscreen edit plain does
+almost nothing, so a ratio alone would fail. Only instructions are gated,
+because CPU time depends on host load. Upstream fully mounted at 10k rows costs
+about 150G instructions per edit, so that case reports CPU and allocations only
+(`LABEL_AB_SKIP_IR`).
+
+Provisional numbers from 2026-11-25 on a busy host, per edit, store vs plain:
+
+| Backend | Layout | Edit | Rows | Store Ir | Plain Ir | Store share of Ir | Allocations |
+|---|---|---|---:|---:|---:|---:|---|
+| gpui-fast | virtualized | visible | 1k / 3k | 1.565M | 1.550M | 1.0% | 395 vs 393 |
+| gpui-fast | virtualized | offscreen | 1k / 3k | 5,371 | 2,087 to 2,100 | 61% | 3 vs 1 |
+| gpui-fast | mounted | visible | 1k | 29.47M | 29.12M | 1.2% | 185 vs 183 |
+| gpui-fast | mounted | visible | 3k | 89.21M | 88.28M | 1.0% | 191 vs 189 |
+| upstream | virtualized | visible | 1k / 3k | 4.001M | 3.983M | 0.5% | 312 vs 310 |
+| upstream | virtualized | offscreen | 1k / 3k | 4,879 | 1,926 | 60% | 3 vs 1 |
+| upstream | mounted | visible | 1k | 1.578G | 1.577G | 0.0% | 1,300 vs 1,298 |
+| upstream | mounted | visible | 3k | 13.475G | 13.474G | 0.0% | 3,300 vs 3,298 |
+
+CPU medians on that host were too noisy to compare. The quiet run replaces this table.
+`LABEL_AB_ROWS=1000,3000` shortens the sweep.

@@ -334,6 +334,26 @@ both backends in every gate run:
 - an insert at 10k rows allocates at most 64 times in its flush and repaints only the viewport;
 - an unbound `ui!` page with 1k controls allocates exactly what the builder page does.
 
+### Timing: the first edit and parent re-renders
+
+Two timing defects were fixed before the syntax freezes.
+
+- **The first edit after mount rebuilt the parent (gpui-fast).** `EntityMap::insert` recorded
+  an access for every entity created while a view rendered. A parent that mounts a bound
+  control creates the control's view as it renders, so it depended on that view until it next
+  rebuilt, and the control's first notification rebuilt the parent. Creating an entity no
+  longer counts as reading it (vendored gpui-fast, see `vendor/README.md`). The first edit
+  after mount renders one row and not the page. A row's first edit, once the window is drawn,
+  allocates what a steady edit does (`bench/tests/bound.rs`). The window's very first spliced
+  frame still grows GPUI's own frame buffers once.
+- **A parent re-render reached bound children a frame late.** The body for a bound site now
+  lives in its keyed element state (`Holder`). The parent writes it as it renders and the
+  control's view reads it as it renders. gpui-fast builds a reader of an entity written while
+  drawing again in the same frame. The parent depends only on the holder, never on the view
+  the Store notifies. No deferred notification is left, and nothing allocates beyond the new
+  body closure. A parent re-render and a store write in one tick render once, with both values
+  (`a_parent_render_and_a_store_write_in_one_tick_show_together`).
+
 ### Passage (0.3.1) against the binding layer
 
 | Passage need | How the binding layer expresses it | Gap |

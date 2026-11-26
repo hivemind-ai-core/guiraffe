@@ -212,9 +212,28 @@ fn bound_label_edit(window: &mut Mounted<'_>, store: &Store<Table>, row: u64, la
 }
 
 /// Allocations of a whole visible-row edit frame and of the binding update alone.
-fn edit_costs(app: &mut HeadlessAppContext, n: u64) -> (u64, u64, usize) {
+fn edit_costs(app: &mut HeadlessAppContext, n: u64) -> (u64, u64, usize, FirstEdit) {
     let (store, mut window) = mount(app, n, false);
-    for i in 0..4 {
+    // The first edit after mount, counted on its own: it must cost what later edits cost.
+    let page = PAGE_RENDERS.with(Cell::get);
+    let first_rows = row_renders();
+    let update = window.update(|_, cx| {
+        count_allocations(|| {
+            store.set(Table::rows.by_key(EDITED).then(Row::label), label(0), cx);
+        })
+        .expect("allocation scope")
+        .1
+    });
+    window.app.run_until_parked();
+    let first = FirstEdit {
+        update: update.allocations,
+        allocations: 0,
+        steady: 0,
+        fresh_rows: 0,
+        page_renders: PAGE_RENDERS.with(Cell::get) - page,
+        row_renders: row_renders() - first_rows,
+    };
+    for i in 1..4 {
         bound_label_edit(&mut window, &store, EDITED, label(i));
         window.app.run_until_parked();
     }
@@ -236,10 +255,45 @@ fn edit_costs(app: &mut HeadlessAppContext, n: u64) -> (u64, u64, usize) {
         frames.push(counts.allocations);
     }
     let rows = row_renders() - rows;
+    // A steady edit as one scope (update plus frame), and the first edit of a row nobody has
+    // edited yet, once the window's frame buffers are warm: the binding layer adds nothing to
+    // a site's first edit.
+    let (_, steady) = count_allocations(|| {
+        bound_label_edit(&mut window, &store, EDITED, label(7));
+        window.app.run_until_parked();
+    })
+    .expect("allocation scope");
+    let fresh_rows = row_renders();
+    // A label already shaped elsewhere, so text shaping does not count. The window draws the
+    // edit as its update returns, so the scope covers update and frame.
+    let (_, fresh) = count_allocations(|| {
+        bound_label_edit(&mut window, &store, EDITED + 2, label(0));
+        window.app.run_until_parked();
+    })
+    .expect("allocation scope");
+    let fresh_rows = row_renders() - fresh_rows;
     close(window);
     frames.sort_unstable();
     updates.sort_unstable();
-    (updates[3], frames[3], rows)
+    let first = FirstEdit {
+        steady: steady.allocations,
+        allocations: fresh.allocations,
+        fresh_rows,
+        ..first
+    };
+    (updates[3], frames[3], rows, first)
+}
+
+#[derive(Debug)]
+struct FirstEdit {
+    /// The first edit's Store-side work (dispatch, flush, compare, notify).
+    update: u64,
+    /// A never-edited row's first edit, update plus frame.
+    allocations: u64,
+    fresh_rows: usize,
+    steady: u64,
+    page_renders: usize,
+    row_renders: usize,
 }
 
 #[test]
@@ -247,7 +301,20 @@ fn steady_state_binding_updates_allocate_nothing_and_stay_flat() {
     let mut app = app();
     let mut frames = Vec::new();
     for n in [1_000, 3_000, 10_000] {
-        let (update, frame, rows) = edit_costs(&mut app, n);
+        let (update, frame, rows, first) = edit_costs(&mut app, n);
+        if gpui_kit::GPUI_FAST {
+            // The first edit after mount renders one row and not the page.
+            assert_eq!(first.page_renders, 0, "first edit at {n} rows: {first:?}");
+            assert_eq!(first.row_renders, 1, "first edit at {n} rows: {first:?}");
+            // A row's first edit costs a steady edit; the binding layer adds nothing.
+            assert_eq!(first.fresh_rows, 1, "first edit at {n} rows: {first:?}");
+            assert!(
+                first.allocations <= first.steady + 8,
+                "first edit at {n} rows: {first:?}"
+            );
+        }
+        // The first edit's Store-side work is as small as any edit's.
+        assert!(first.update <= 8, "first edit at {n} rows: {first:?}");
         assert_eq!(
             update, 0,
             "binding update at {n} rows allocated {update} times"

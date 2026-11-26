@@ -151,8 +151,8 @@ fn tracks_keyboard_moves_and_trims_the_selected_clip(cx: &mut TestAppContext) {
     let tracks = host.read_with(vcx, |h, _| h.tracks.clone());
     vcx.update(|_, cx| tracks.update(cx, |t, cx| t.set_focusable(Some(true), cx)));
     let clip = |vcx: &mut VisualTestContext| {
-        tracks.read_with(vcx, |t, _| {
-            let c = &t.tracks()[0].1.clips()[0];
+        tracks.read_with(vcx, |t, cx| {
+            let c = &t.tracks(cx)[0].track.clips()[0];
             (c.start, c.end())
         })
     };
@@ -161,7 +161,7 @@ fn tracks_keyboard_moves_and_trims_the_selected_clip(cx: &mut TestAppContext) {
         w.click(tracks_view::clip_element_id(0, 1), cx);
         assert!(tracks.read(cx).focus_handle(cx).is_focused(w));
     });
-    assert_eq!(tracks.read_with(vcx, |t, _| t.selected()), Some((0, 1)));
+    assert_eq!(tracks.read_with(vcx, |t, cx| t.selected(cx)), Some((0, 1)));
     vcx.simulate_keystrokes("right");
     assert_eq!(clip(vcx), (1.5, 3.5));
     vcx.simulate_keystrokes("shift-left");
