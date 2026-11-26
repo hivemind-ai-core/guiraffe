@@ -1,0 +1,15 @@
+[package]
+name = "guiraffe-geometry"
+description = "GPUI-free geometry shared by GUIraffe crates: points and drag axis locks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
