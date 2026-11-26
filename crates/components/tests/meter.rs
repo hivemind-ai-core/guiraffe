@@ -56,7 +56,7 @@ fn meters_light_and_dark() {
             .unwrap_or_else(|e| panic!("{e}"))
             .with_setup(guiraffe_components::init);
         let img = s
-            .render(size(px(420.), px(220.)), move |_, cx| {
+            .render(size(px(520.), px(220.)), move |_, cx| {
                 apply(
                     GuiraffeTheme {
                         scheme,
@@ -154,10 +154,7 @@ fn decay_continues_after_the_host_stops_feeding(cx: &mut TestAppContext) {
     vcx.run_until_parked();
     feed.set(0, Level::SILENT);
     let peak = |vcx: &mut gpui_kit::VisualTestContext| {
-        vcx.update(|_, cx| {
-            let bars = meter.read(cx).bars().read(cx);
-            bars.states()[0]
-        })
+        vcx.update(|_, cx| meter.read(cx).channel_states(cx)[0])
     };
     let start = peak(vcx);
     // No more publishes: the bars ask for animation frames themselves.

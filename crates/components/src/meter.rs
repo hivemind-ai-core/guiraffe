@@ -342,7 +342,7 @@ pub struct ClipReset;
 
 /// The bar view: reads the cell, advances the ballistics and paints. The only part of a
 /// meter that renders per frame.
-pub struct MeterBars {
+pub(crate) struct MeterBars {
     cell: Rc<MeterCell>,
     options: Rc<MeterOptions>,
     states: [ChannelState; 2],
@@ -391,7 +391,7 @@ impl MeterBars {
         was
     }
 
-    pub fn states(&self) -> &[ChannelState; 2] {
+    pub(crate) fn states(&self) -> &[ChannelState; 2] {
         &self.states
     }
 }
@@ -666,7 +666,7 @@ fn paint(
 }
 
 /// The LUFS readout: renders only when its value changes.
-pub struct LufsLabel {
+pub(crate) struct LufsLabel {
     cell: Rc<MeterCell>,
     shown: Option<f32>,
     text: SharedString,
@@ -746,9 +746,9 @@ impl Meter {
         &self.options
     }
 
-    /// The bar view (for tests and render counts).
-    pub fn bars(&self) -> &Entity<MeterBars> {
-        &self.bars
+    /// Each channel's displayed state as of the last repaint.
+    pub fn channel_states(&self, cx: &App) -> [ChannelState; 2] {
+        *self.bars.read(cx).states()
     }
 
     /// Whether the clip latch is set.
