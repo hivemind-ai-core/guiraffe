@@ -1054,3 +1054,104 @@ fn tracks_painter_heights_and_selection_add_no_frame_allocations() -> anyhow::Re
     );
     Ok(())
 }
+
+// DopeSheet 0.3.1: value and toggle segments
+
+struct DopeRoot(gpui_kit::Entity<guiraffe_timeline::DopeSheet>);
+impl gpui_kit::Render for DopeRoot {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::{ParentElement, Styled};
+        gpui_kit::div().size_full().child(self.0.clone())
+    }
+}
+
+/// Allocations of one repaint of 40 value and 40 toggle channels (200 keys each).
+fn dope_repaint(segments: bool) -> anyhow::Result<guiraffe_bench::allocator::Counts> {
+    use gpui_kit::AppContext;
+    use guiraffe_timeline::{
+        Interp, TimeFormat,
+        dope_store::{DopeChannel, DopeDoc, DopeKey, KeyId, ValueBounds, dope_store},
+    };
+    let text = gpui_kit::platform::current_platform(true).text_system();
+    let mut app = gpui_kit::HeadlessAppContext::with_platform(
+        text,
+        std::sync::Arc::new(gpui_kit::assets::Assets),
+        || Ok(None),
+    );
+    let mut handle = None;
+    let window = app.open_window(
+        gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(800.)),
+        |_, cx| {
+            guiraffe_timeline::init(cx);
+            let interps = [
+                Interp::Constant,
+                Interp::Linear,
+                Interp::Bezier,
+                Interp::EaseInOut,
+            ];
+            let mut channels = Vec::new();
+            for c in 0..40u64 {
+                let keys = (0..200u64)
+                    .map(|k| {
+                        DopeKey::new(
+                            k + 1,
+                            k as f64 * 0.5,
+                            ((k * 7 + c) % 10) as f64,
+                            interps[(k % 4) as usize],
+                        )
+                    })
+                    .collect();
+                channels.push(DopeChannel::value(
+                    c * 2,
+                    format!("Value {c}"),
+                    keys,
+                    ValueBounds::new(0., 10.),
+                ));
+                let switches = (0..200u64)
+                    .map(|k| (KeyId(k + 1), k as f64 * 0.5, k % 2 == 0))
+                    .collect();
+                channels.push(DopeChannel::toggle(
+                    c * 2 + 1,
+                    format!("Toggle {c}"),
+                    switches,
+                ));
+            }
+            let store = dope_store(DopeDoc::new(channels), 100, cx);
+            let sheet =
+                guiraffe_timeline::DopeSheet::with_store(store, TimeFormat::Seconds, 30., cx);
+            sheet.update(cx, |s, cx| s.set_show_segments(segments, cx));
+            handle = Some(sheet.clone());
+            cx.new(|_| DopeRoot(sheet))
+        },
+    )?;
+    let view = handle.ok_or_else(|| anyhow::anyhow!("no view"))?;
+    let frame = |app: &mut gpui_kit::HeadlessAppContext| {
+        app.update_window(window.into(), |_, w, cx| {
+            view.update(cx, |_, cx| cx.notify());
+            w.draw(cx).clear(cx)
+        })
+    };
+    for _ in 0..6 {
+        frame(&mut app)?;
+        app.run_until_parked();
+    }
+    let (result, counts) = count_allocations(|| frame(&mut app))?;
+    result?;
+    Ok(counts)
+}
+
+#[test]
+fn dope_segments_add_no_frame_allocations() -> anyhow::Result<()> {
+    let keys_only = dope_repaint(false)?;
+    let segments = dope_repaint(true)?;
+    eprintln!("dope repaint: keys only {keys_only:?}, with segments {segments:?}");
+    assert_eq!(
+        segments.allocations, keys_only.allocations,
+        "segments and bars allocate nothing"
+    );
+    Ok(())
+}

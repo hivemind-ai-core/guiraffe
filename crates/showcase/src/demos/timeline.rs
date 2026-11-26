@@ -405,8 +405,8 @@ fn dope(_: &mut Window, cx: &mut App) -> AnyView {
     );
     view.update(cx, |view, cx| {
         view.set_focusable(true, cx);
-        view.press(2, view.axis().x(0.5));
-        view.release();
+        view.press(2, view.axis().x(0.5), cx);
+        view.release(cx);
     });
     let lock = SegmentedControl::new(["Editable", "Locked"], cx);
     let style = SegmentedControl::new(["Lock: badge", "Dimmed", "Hatched", "None"], cx);

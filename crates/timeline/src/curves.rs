@@ -1,11 +1,87 @@
 //! Keyframe curves for dope sheets and curve editors: keys with constant, linear or bezier
 //! interpolation (bezier uses per-key tangent handles in (time, value) space).
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Interp {
     Constant,
+    #[default]
     Linear,
     Bezier,
+    /// Starts slow: `u²`.
+    EaseIn,
+    /// Ends slow: `1 - (1 - u)²`.
+    EaseOut,
+    /// Slow at both ends: `3u² - 2u³`.
+    EaseInOut,
+}
+
+impl Interp {
+    /// Every mode, in the order a "next interpolation" shortcut cycles through.
+    pub const ALL: [Interp; 6] = [
+        Interp::Constant,
+        Interp::Linear,
+        Interp::Bezier,
+        Interp::EaseIn,
+        Interp::EaseOut,
+        Interp::EaseInOut,
+    ];
+
+    /// The wire name used by documents and bus actions.
+    pub fn name(self) -> &'static str {
+        match self {
+            Interp::Constant => "constant",
+            Interp::Linear => "linear",
+            Interp::Bezier => "bezier",
+            Interp::EaseIn => "ease-in",
+            Interp::EaseOut => "ease-out",
+            Interp::EaseInOut => "ease-in-out",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Interp> {
+        Interp::ALL.into_iter().find(|i| i.name() == name)
+    }
+
+    /// The next mode in [`Interp::ALL`].
+    pub fn next(self) -> Interp {
+        let i = Interp::ALL.iter().position(|m| *m == self).unwrap_or(0);
+        Interp::ALL[(i + 1) % Interp::ALL.len()]
+    }
+}
+
+/// Value of the segment from `a` to `b` at time `t` (`a.t <= t <= b.t`), by `a`'s mode.
+/// The single definition every view draws and [`Curve::eval`] samples.
+pub fn segment_value(a: &Key, b: &Key, t: f64) -> f64 {
+    let span = b.t - a.t;
+    if span.is_nan() || span <= 0.0 {
+        return a.v;
+    }
+    let u = ((t - a.t) / span).clamp(0.0, 1.0);
+    let lerp = |w: f64| a.v + (b.v - a.v) * w;
+    match a.interp {
+        Interp::Constant => a.v,
+        Interp::Linear => lerp(u),
+        Interp::Bezier => bezier_segment(*a, *b, t),
+        Interp::EaseIn => lerp(u * u),
+        Interp::EaseOut => lerp(1.0 - (1.0 - u) * (1.0 - u)),
+        Interp::EaseInOut => lerp(u * u * (3.0 - 2.0 * u)),
+    }
+}
+
+/// Value at `t` over keys sorted by time, read through `key` (held before the first and
+/// after the last key; 0 when empty). Pure: safe to call off the UI thread.
+pub fn eval_keys<T>(keys: &[T], key: impl Fn(&T) -> &Key, t: f64) -> f64 {
+    let (Some(first), Some(last)) = (keys.first().map(&key), keys.last().map(&key)) else {
+        return 0.0;
+    };
+    if t.is_nan() || t <= first.t {
+        return first.v;
+    }
+    if t >= last.t {
+        return last.v;
+    }
+    let i = keys.partition_point(|k| key(k).t <= t).saturating_sub(1);
+    segment_value(key(&keys[i]), key(&keys[i + 1]), t)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -241,22 +317,7 @@ impl Curve {
     }
     /// Value at time `t` (held before the first and after the last key; 0 if empty).
     pub fn eval(&self, t: f64) -> f64 {
-        let (Some(first), Some(last)) = (self.keys.first(), self.keys.last()) else {
-            return 0.0;
-        };
-        if t.is_nan() || t <= first.t {
-            return first.v;
-        }
-        if t >= last.t {
-            return last.v;
-        }
-        let i = self.keys.partition_point(|k| k.t <= t).saturating_sub(1);
-        let (a, b) = (self.keys[i], self.keys[i + 1]);
-        match a.interp {
-            Interp::Constant => a.v,
-            Interp::Linear => a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t),
-            Interp::Bezier => bezier_segment(a, b, t),
-        }
+        eval_keys(&self.keys, |k| k, t)
     }
 }
 
@@ -290,6 +351,21 @@ fn bezier_segment(a: Key, b: Key, t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eases_hit_their_ends_and_shape_the_middle() {
+        let a = |interp| Key::new(0.0, 0.0, interp);
+        let b = Key::new(1.0, 10.0, Interp::Linear);
+        for interp in [Interp::EaseIn, Interp::EaseOut, Interp::EaseInOut] {
+            assert_eq!(segment_value(&a(interp), &b, 0.0), 0.0);
+            assert!((segment_value(&a(interp), &b, 1.0) - 10.0).abs() < 1e-12);
+        }
+        assert!((segment_value(&a(Interp::EaseIn), &b, 0.5) - 2.5).abs() < 1e-12);
+        assert!((segment_value(&a(Interp::EaseOut), &b, 0.5) - 7.5).abs() < 1e-12);
+        assert!((segment_value(&a(Interp::EaseInOut), &b, 0.5) - 5.0).abs() < 1e-12);
+        assert_eq!(Interp::from_name("ease-in-out"), Some(Interp::EaseInOut));
+        assert_eq!(Interp::EaseInOut.next(), Interp::Constant);
+    }
 
     #[test]
     fn interpolation_modes() {

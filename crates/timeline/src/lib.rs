@@ -91,6 +91,7 @@ mod locks;
 pub use locks::LockStyle;
 
 pub mod dope_model;
+pub mod dope_store;
 pub use dope_model::{ChannelRow, DopeModel};
 pub use dope_sheet::KeyShape;
 

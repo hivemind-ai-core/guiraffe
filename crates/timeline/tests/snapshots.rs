@@ -102,9 +102,9 @@ fn timeline_views_light_and_dark() {
                     2.0,
                     cx,
                 );
-                dope.update(cx, |v, _| {
-                    v.press(1, v.axis().x(0.5));
-                    v.release();
+                dope.update(cx, |v, cx| {
+                    v.press(1, v.axis().x(0.5), cx);
+                    v.release(cx);
                 });
                 let mut c = Curve::default();
                 let mut key = Key::new(0.0, 0.0, Interp::Bezier);
