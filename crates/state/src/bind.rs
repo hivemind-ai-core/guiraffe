@@ -239,8 +239,14 @@ pub trait BindSource: 'static {
     fn changed(&self, root: &Self::Root, cached: Option<&Self::Value>) -> bool;
     /// Refresh `cached`, reusing its buffers where the type allows.
     fn store(&self, root: &Self::Root, cached: &mut Option<Self::Value>);
-    /// The change keys the value depends on (a lens's chain).
-    fn for_each_key(&self, f: &mut dyn FnMut(u64));
+    /// The key chains the value depends on: one per lens it reads.
+    fn chains(&self, out: &mut Vec<Vec<u64>>);
+}
+
+fn chain_of<L: Lens>(lens: &L) -> Vec<u64> {
+    let mut chain = Vec::new();
+    lens.for_each_key(&mut |key| chain.push(key));
+    chain
 }
 
 impl<L: Lens> BindSource for L
@@ -261,8 +267,8 @@ where
             (_, value) => *cached = value.cloned(),
         }
     }
-    fn for_each_key(&self, f: &mut dyn FnMut(u64)) {
-        Lens::for_each_key(self, f);
+    fn chains(&self, out: &mut Vec<Vec<u64>>) {
+        out.push(chain_of(self));
     }
 }
 
@@ -304,10 +310,63 @@ where
     fn store(&self, root: &L::Root, cached: &mut Option<T>) {
         *cached = self.lens.get(root).map(&self.f);
     }
-    fn for_each_key(&self, f: &mut dyn FnMut(u64)) {
-        self.lens.for_each_key(f);
+    fn chains(&self, out: &mut Vec<Vec<u64>>) {
+        out.push(chain_of(&self.lens));
     }
 }
+
+/// A value computed from several lenses of one store, as `ui!`'s
+/// `<= derived((a, b), |a, b| …)` binds it. Built by [`derived2`], [`derived3`] and
+/// [`derived4`]. It is recomputed only when a write marks one of the inputs' paths, and a
+/// control is notified only when the result changed. Reading an input never clones it.
+pub struct DerivedN<I, F> {
+    inputs: I,
+    f: F,
+}
+
+macro_rules! derived_n {
+    ($name:ident; $($input:ident $index:tt $value:ident),+) => {
+        /// Bind a value computed from several lenses (see [`DerivedN`]).
+        pub fn $name<S: 'static, $($input,)+ F, T>(inputs: ($($input,)+), f: F) -> DerivedN<($($input,)+), F>
+        where
+            $($input: Lens<Root = S>,)+
+            F: Fn($(&$input::Target),+) -> T + 'static,
+            T: Clone + PartialEq + 'static,
+        {
+            DerivedN { inputs, f }
+        }
+
+        impl<S: 'static, $($input,)+ F, T> BindSource for DerivedN<($($input,)+), F>
+        where
+            $($input: Lens<Root = S>,)+
+            F: Fn($(&$input::Target),+) -> T + 'static,
+            T: Clone + PartialEq + 'static,
+        {
+            type Root = S;
+            type Value = T;
+            #[inline]
+            fn changed(&self, root: &S, cached: Option<&T>) -> bool {
+                let ($(Some($value),)+) = ($(self.inputs.$index.get(root),)+) else {
+                    return cached.is_some();
+                };
+                cached.is_none_or(|cached| (self.f)($($value),+) != *cached)
+            }
+            fn store(&self, root: &S, cached: &mut Option<T>) {
+                *cached = match ($(self.inputs.$index.get(root),)+) {
+                    ($(Some($value),)+) => Some((self.f)($($value),+)),
+                    _ => None,
+                };
+            }
+            fn chains(&self, out: &mut Vec<Vec<u64>>) {
+                $(out.push(chain_of(&self.inputs.$index));)+
+            }
+        }
+    };
+}
+
+derived_n!(derived2; A 0 a, B 1 b);
+derived_n!(derived3; A 0 a, B 1 b, C 2 c);
+derived_n!(derived4; A 0 a, B 1 b, C 2 c, D 3 d);
 
 /// One bound value: its source and the value the control last saw.
 pub struct Bind<B: BindSource> {
@@ -335,10 +394,8 @@ impl<B: BindSource> Bind<B> {
         self.source.store(state, &mut self.value);
     }
 
-    fn chain(&self) -> Vec<u64> {
-        let mut chain = Vec::new();
-        self.source.for_each_key(&mut |key| chain.push(key));
-        chain
+    fn chains(&self, out: &mut Vec<Vec<u64>>) {
+        self.source.chains(out);
     }
 }
 
@@ -382,7 +439,9 @@ macro_rules! tuples {
                 $(self.$index.update(state);)+
             }
             fn chains(&self) -> Vec<Vec<u64>> {
-                vec![$(self.$index.chain()),+]
+                let mut chains = Vec::new();
+                $(self.$index.chains(&mut chains);)+
+                chains
             }
         }
     };

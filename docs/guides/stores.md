@@ -104,6 +104,7 @@ ui! {
 | `for row in <= list { … }` | A store-bound list (see below). `for (key, row) in …` also binds the key. |
 | `on_x => Event(args)` | Dispatch an event into the store. |
 | `prop <= derived(lens, \|v\| …)` | One-way, through a function of the lens's value. |
+| `prop <= derived((a, b), \|a, b\| …)` | One-way, through a function of up to four lenses' values. |
 | `let name <= source;` | Bind a value (a lens or `derived(…)`) for the rest of the element: `name` is `&T`. |
 
 `derived(lens, f)` is recomputed only when a write marks the lens's path, and the element is
@@ -121,6 +122,19 @@ for (key, row) in <= goldens, row_height: px(28.) {
 
 Moving the selection then renders the two rows whose result changed. Each mounted row only
 compares.
+
+With several inputs, the function takes a reference to each, and the value is recomputed when
+a write marks any input's path:
+
+```rust
+let loaded <= derived((selected, goldens, loaded), |s, g, l| {
+    g.get(s).and_then(|row| l.get(&row.golden.path)).cloned()
+});
+```
+
+Reading the inputs never clones them. A recompute that yields an equal value notifies
+nothing, and the update allocates only what the function itself allocates (gated in
+`guiraffe-bench` with a two-input `usize`).
 
 Bound bodies, row bodies included, run with `window` and `cx` in scope (`&mut Window`,
 `&mut App`), so they read the theme and other globals live instead of capturing a copy.
@@ -260,6 +274,20 @@ elements in `ui!` keep their 0.2 expansion. Give the ones a test reads `.id(..)`
 the element in an observer, which changes its type and costs a record per element. Doing that
 for every element would break the rule that an unbound control costs what it did in 0.2.
 
+## What stays a closure
+
+Everything in the golden review tool is in `ui!` and the store. A few things are still Rust
+closures or builder calls inside `ui!`, because they aren't store state:
+
+- **Bus actions that aren't store events.** The compare panel's "Pop out" and "Dock back"
+  buttons ask its dock control to move (`OPEN`/`CLOSE` on the panel's bus path). A row click
+  sends `SELECT` to the list control, so pointer and keyboard selection share one path. These
+  are `.on_click(closure)`, since `on_x => Event` dispatches into a store.
+- **Pointer geometry.** Pixel inspection maps a click to image coordinates using the bounds
+  from the last paint, which a `canvas` records. Layout bounds are not store state.
+- **Images.** Decoded pixels and GPU images are built off the UI thread and kept in the store
+  behind `Shared` (compared by identity), and the element tree shows them with `img(..)`.
+
 ## Writing props
 
 A prop value is a Rust expression, so on one line `gap: px(8.) .children(xs)` reads as
@@ -273,11 +301,14 @@ div {
 }
 ```
 
+A flag directly before a braced child reads as an element: `div { text_xs {label} }` calls
+`text_xs { label }`. End the flag with `;` (`text_xs; {label}`). This is `ui!` v1 grammar and
+stays as it is.
+
 `by_key` and `then` are inherent on lenses: paths need no trait imports.
 
 ## Not yet
 
 - The `shortcut:`, `spotlight:` and `ribbon:` props from the design, and `bind!`.
-- `derived` over several lenses. Derive from a common parent lens.
 - Positional `.at(i)` lenses. Use `by_key`.
 - Generic and tuple structs in `#[derive(Lens)]`.

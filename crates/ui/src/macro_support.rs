@@ -321,7 +321,7 @@ use guiraffe_components::controls::{
 };
 use guiraffe_core::protocol::Source;
 
-pub use guiraffe_state::derived;
+pub use guiraffe_state::{derived, derived2, derived3, derived4};
 
 /// A protocol control entity `ui!` can mount: how to start and finish its builder, and
 /// which focus handle keyboard focus goes to.

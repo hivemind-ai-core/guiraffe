@@ -15,8 +15,11 @@ use gpui_kit::{
     AnyElement, App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
     Hsla, ImageSource, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
     Pixels as Px, Render, RenderImage, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, TestSupportExt, Window, canvas, component::dock::BasePanel, div, img,
-    prelude::FluentBuilder, px,
+    Subscription, TestSupportExt, Window, canvas,
+    component::{button::Button, dock::BasePanel},
+    div, img,
+    prelude::FluentBuilder,
+    px,
 };
 use guiraffe_commands::{
     Command, CommandId, CommandScope, Commands, Handler, Keybinding,
@@ -153,40 +156,38 @@ fn row_view(key: u32, row: &Row, selected: bool, cx: &App) -> AnyElement {
         None => "·",
     };
     let g = &row.golden;
-    div()
-        .id(("golden-row", key as usize))
-        .test_support()
-        .w_full()
-        .h(px(ROW_HEIGHT))
-        .px(px(8.))
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .text_color(p.text)
-        .when(selected, |row| row.bg(p.primary.opacity(0.18)))
-        .on_click(move |_, window, cx| {
-            controls::dispatch(
-                paths::LIST,
-                names::SELECT,
-                Value::Num(f64::from(key)),
-                window,
-                cx,
-            )
-        })
-        .child(div().w(px(14.)).child(mark))
-        .child(
-            div()
-                .flex_1()
-                .overflow_hidden()
-                .child(SharedString::from(g.name.to_string())),
+    let name = SharedString::from(g.name.to_string());
+    let detail = format!(
+        "{} · {} · {}",
+        g.backend.label(),
+        g.theme.label(),
+        g.change.label()
+    );
+    // A row click is a bus action on the list control, so pointer and keyboard selection
+    // take the same path.
+    let select = move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+        controls::dispatch(
+            paths::LIST,
+            names::SELECT,
+            Value::Num(f64::from(key)),
+            window,
+            cx,
         )
-        .child(div().text_xs().child(format!(
-            "{} · {} · {}",
-            g.backend.label(),
-            g.theme.label(),
-            g.change.label()
-        )))
-        .into_any_element()
+    };
+    ui! {
+        div {
+            .id(("golden-row", key as usize))
+            .test_support()
+            w_full  h: px(ROW_HEIGHT)  px: px(8.)  flex items_center  gap: px(8.)
+            text_color: p.text
+            .when(selected, |row| row.bg(p.primary.opacity(0.18)))
+            .on_click(select)
+            div { w: px(14.)  {mark} }
+            div { flex_1 overflow_hidden; {name} }
+            div { text_xs; {detail} }
+        }
+    }
+    .into_any_element()
 }
 
 pub const ROW_HEIGHT: f32 = 28.;
@@ -300,39 +301,20 @@ impl BasePanel for ListPanel {
 }
 impl Panel for ListPanel {}
 
-/// What the compare panel reads: mode, zoom, inspected pixel, the golden and its load.
-type CompareView = (
-    Mode,
-    f32,
-    Option<(u32, u32)>,
-    Option<Golden>,
-    Option<Loaded>,
-);
-
 /// The compare panel: view mode, zoom, summary, the images and pixel inspection. Detachable.
+/// Everything it shows is bound in `ui!`; the panel itself never renders on a store change.
 pub struct ComparePanel {
     store: Store<Review>,
     focus: FocusHandle,
-    view: Selected<CompareView>,
     /// The image area's bounds from the last paint, for pointer-to-pixel mapping.
     bounds: Rc<Cell<Option<Bounds<Px>>>>,
 }
 
 impl ComparePanel {
     fn new(store: &Store<Review>, cx: &mut Context<Self>) -> Self {
-        let view = store.select(cx, |s: &Review| {
-            (
-                s.mode,
-                s.zoom,
-                s.inspect,
-                s.current().map(|row| row.golden.clone()),
-                s.current_loaded().cloned(),
-            )
-        });
         Self {
             store: store.clone(),
             focus: cx.focus_handle(),
-            view,
             bounds: Rc::default(),
         }
     }
@@ -353,19 +335,22 @@ fn picture(
 ) -> AnyElement {
     let (w, h) = (size.0 as f32 * zoom, size.1 as f32 * zoom);
     match image {
-        Some(image) => img(ImageSource::Render(image.clone()))
-            .id(id)
-            .w(px(w))
-            .h(px(h))
-            .into_any_element(),
-        None => div()
-            .id(id)
-            .w(px(w.max(80.)))
-            .h(px(h.max(40.)))
-            .border_1()
-            .border_color(border)
-            .child("absent")
-            .into_any_element(),
+        Some(image) => ui! {
+            img(ImageSource::Render(image.clone())) {
+                .id(id)
+                w: px(w)  h: px(h)
+            }
+        }
+        .into_any_element(),
+        None => ui! {
+            div {
+                .id(id)
+                w: px(w.max(80.))  h: px(h.max(40.))  border_1
+                border_color: border
+                "absent"
+            }
+        }
+        .into_any_element(),
     }
 }
 
@@ -395,74 +380,106 @@ fn summary_text(golden: Option<&Golden>, loaded: Option<&Loaded>) -> String {
     }
 }
 
+/// The summary, the pixel readout and the images for the current view.
+fn compare_body(
+    mode: Mode,
+    zoom: f32,
+    inspect: Option<(u32, u32)>,
+    golden: Option<&Golden>,
+    loaded: Option<&Loaded>,
+    bounds: &Rc<Cell<Option<Bounds<Px>>>>,
+    cx: &App,
+) -> AnyElement {
+    let p = palette(cx);
+    let summary = summary_text(golden, loaded);
+    let readout = match (inspect, loaded) {
+        (Some((x, y)), Some(l)) => format!(
+            "pixel ({x}, {y}) · before {} · after {}",
+            pixel_text(l.before.as_ref().and_then(|p| p.get(x, y))),
+            pixel_text(l.after.as_ref().and_then(|p| p.get(x, y))),
+        ),
+        _ => "click an image to inspect a pixel".into(),
+    };
+    let images: Vec<AnyElement> = match loaded {
+        None => Vec::new(),
+        Some(l) => {
+            let i = &l.images;
+            let (b, a) = (l.summary.before, l.summary.after);
+            let union = (b.0.max(a.0), b.1.max(a.1));
+            match mode {
+                Mode::Before => vec![picture(
+                    i.before.as_ref(),
+                    b,
+                    zoom,
+                    p.border,
+                    "image-before",
+                )],
+                Mode::After => vec![picture(i.after.as_ref(), a, zoom, p.border, "image-after")],
+                Mode::Diff => vec![picture(
+                    i.heat.as_ref(),
+                    union,
+                    zoom,
+                    p.border,
+                    "image-diff",
+                )],
+                Mode::SideBySide => vec![
+                    picture(i.before.as_ref(), b, zoom, p.border, "image-before"),
+                    picture(i.after.as_ref(), a, zoom, p.border, "image-after"),
+                ],
+            }
+        }
+    };
+    let at = bounds.clone();
+    let paint_bounds = bounds.clone();
+    let inspect_at = move |e: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+        if let Some(b) = at.get() {
+            let x = f32::from(e.position.x - b.origin.x) / zoom;
+            let y = f32::from(e.position.y - b.origin.y) / zoom;
+            if x >= 0. && y >= 0. {
+                let at = Value::List(Arc::from([
+                    Value::Num(f64::from(x.floor())),
+                    Value::Num(f64::from(y.floor())),
+                ]));
+                controls::dispatch(paths::INSPECT, names::SET_VALUE, at, window, cx);
+            }
+        }
+    };
+    let record = move |b, _: &mut Window, _: &mut App| paint_bounds.set(Some(b));
+    ui! {
+        div {
+            flex_1 flex flex_col  gap: px(6.)
+            div { .id("diff-summary") .test_support() {summary} }
+            div { .id("pixel-readout") .test_support() {readout} }
+            div {
+                .id("compare-images")
+                .test_support()
+                flex_1 overflow_scroll relative
+                .on_mouse_down(MouseButton::Left, inspect_at)
+                div {
+                    flex gap: px(8.)
+                    .children(images)
+                }
+                canvas(record, |_, _, _, _| {}) {
+                    absolute top_0 left_0 size_full
+                }
+            }
+        }
+    }
+    .into_any_element()
+}
+
+/// Ask the compare panel's dock control to pop out or dock back (a bus action on the panel,
+/// not a store event).
+fn dock(action: &'static str) -> impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, window, cx| controls::dispatch(paths::COMPARE, action, Value::Null, window, cx)
+}
+
 impl Render for ComparePanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let (mode, zoom, inspect, golden, loaded) = self.view.get(cx).clone();
-        let summary = summary_text(golden.as_ref(), loaded.as_ref());
-        let readout = match (inspect, &loaded) {
-            (Some((x, y)), Some(l)) => format!(
-                "pixel ({x}, {y}) · before {} · after {}",
-                pixel_text(l.before.as_ref().and_then(|p| p.get(x, y))),
-                pixel_text(l.after.as_ref().and_then(|p| p.get(x, y))),
-            ),
-            _ => "click an image to inspect a pixel".into(),
-        };
-        let images: Vec<AnyElement> = match &loaded {
-            None => Vec::new(),
-            Some(l) => {
-                let i = &l.images;
-                let (b, a) = (l.summary.before, l.summary.after);
-                let union = (b.0.max(a.0), b.1.max(a.1));
-                match mode {
-                    Mode::Before => vec![picture(
-                        i.before.as_ref(),
-                        b,
-                        zoom,
-                        p.border,
-                        "image-before",
-                    )],
-                    Mode::After => {
-                        vec![picture(i.after.as_ref(), a, zoom, p.border, "image-after")]
-                    }
-                    Mode::Diff => vec![picture(
-                        i.heat.as_ref(),
-                        union,
-                        zoom,
-                        p.border,
-                        "image-diff",
-                    )],
-                    Mode::SideBySide => vec![
-                        picture(i.before.as_ref(), b, zoom, p.border, "image-before"),
-                        picture(i.after.as_ref(), a, zoom, p.border, "image-after"),
-                    ],
-                }
-            }
-        };
-        let bounds = self.bounds.clone();
-        let paint_bounds = self.bounds.clone();
-        let inspect_at = move |e: &MouseDownEvent, window: &mut Window, cx: &mut App| {
-            if let Some(b) = bounds.get() {
-                let x = f32::from(e.position.x - b.origin.x) / zoom;
-                let y = f32::from(e.position.y - b.origin.y) / zoom;
-                if x >= 0. && y >= 0. {
-                    let at = Value::List(Arc::from([
-                        Value::Num(f64::from(x.floor())),
-                        Value::Num(f64::from(y.floor())),
-                    ]));
-                    controls::dispatch(paths::INSPECT, names::SET_VALUE, at, window, cx);
-                }
-            }
-        };
-        let pop = |id: &'static str, label: &'static str, action: &'static str| {
-            gpui_kit::component::button::Button::new(id)
-                .label(label)
-                .on_click(move |_, window, cx| {
-                    controls::dispatch(paths::COMPARE, action, Value::Null, window, cx)
-                })
-        };
         let store = self.store.clone();
         let focus = self.focus.clone();
+        let bounds = self.bounds.clone();
         let modes = Mode::ALL.map(|m| (m, m.label()));
         ui! {
             div {
@@ -472,9 +489,9 @@ impl Render for ComparePanel {
                 size_full flex flex_col  gap: px(6.)  p: px(8.)  text_sm
                 bg: p.body
                 text_color: p.text
-                div {
-                    flex items_center  gap: px(8.)
-                    store(store) {
+                store(store) {
+                    div {
+                        flex items_center  gap: px(8.)
                         SelectControl {
                             value <=> mode
                             .path(paths::MODE)
@@ -491,23 +508,27 @@ impl Render for ComparePanel {
                                 .step(crate::review::ZOOM_STEP)
                             }
                         }
+                        {<= derived(zoom, |z| format!("{:.0}%", z * 100.))}
+                        Button("compare-pop-out") {
+                            label: "Pop out"
+                            .on_click(dock(names::OPEN))
+                        }
+                        Button("compare-dock-back") {
+                            label: "Dock back"
+                            .on_click(dock(names::CLOSE))
+                        }
                     }
-                    {format!("{:.0}%", zoom * 100.)}
-                    {pop("compare-pop-out", "Pop out", names::OPEN)}
-                    {pop("compare-dock-back", "Dock back", names::CLOSE)}
-                }
-                div { .id("diff-summary") .test_support() {summary} }
-                div { .id("pixel-readout") .test_support() {readout} }
-                div {
-                    .id("compare-images")
-                    .test_support()
-                    flex_1 overflow_scroll relative
-                    .on_mouse_down(MouseButton::Left, inspect_at)
                     div {
-                        flex gap: px(8.)
-                        .children(images)
+                        let mode <= mode;
+                        let zoom <= zoom;
+                        let inspect <= inspect;
+                        let golden <= derived((selected, goldens), |s, g| g.get(s).map(|r| r.golden.clone()));
+                        let loaded <= derived((selected, goldens, loaded), |s, g, l| {
+                            g.get(s).and_then(|r| l.get(&r.golden.path)).cloned()
+                        });
+                        flex_1 flex flex_col;
+                        {compare_body(*mode, *zoom, *inspect, golden.as_ref(), loaded.as_ref(), &bounds, cx)}
                     }
-                    {canvas(move |b, _, _| paint_bounds.set(Some(b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full()}
                 }
             }
         }
