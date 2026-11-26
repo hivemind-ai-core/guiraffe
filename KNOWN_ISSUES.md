@@ -25,6 +25,15 @@ Miri passes on the focused tests of every `imbl` consumer. A full Miri run is no
 `guiraffe-core` reports leaks after its assertions pass, the sheet proptests call `getcwd` under
 isolation, and the full sheet and UI runs did not finish.
 
+## Patched frames
+
+gpui-fast patches a frame in place when one cached view is built again in the same shape (see
+`vendor/README.md`). A patched row edit allocates 139 times, against 124 when the same row is
+drawn again unchanged. The 15 extra allocations per edit are flat in the number of rows, but they
+are not yet down to the frame's baseline. Follow-up in ROADMAP 0.3 #19, which trims GPUI's
+per-frame high-water buffers. On fallback (another shape, such as a label shaped to another number
+of glyphs), the view is built once for the patch attempt and again for the splice.
+
 ## Command ribbon
 
 Implemented in `guiraffe-commands::ribbon` (ROADMAP 0.3 #13). Not yet done:

@@ -319,16 +319,24 @@ were taken on a loaded one.
 | upstream | virtualized, offscreen edit | 1k / 3k / 10k | 2.7 / 2.6 / 2.4 µs; 3 | 1.5 / 1.5 / 1.5 µs; 3 |
 | upstream | fully mounted, 800 px window | 1k / 3k / 10k | 12.7 / 41.1 / 147.5 ms; 1,300 / 3,300 / 10,300 | 6.7 / 19.8 / 75.3 ms; 1,300 / 3,300 / 10,300 |
 
-Callgrind, gpui-fast, fully mounted and all visible, per changed frame: 139,411
-Ir at 1k and 139,617 at 3k (before: 12.63M and 38.33M). The 10k figure is
-gated by `scripts/label-scaling.py`. CPU differences under about 0.05 ms are
+Callgrind, gpui-fast, fully mounted and all visible, per changed frame:
+
+| Rows | Before (splice) | After (patched) |
+| ---: | ---: | ---: |
+| 1k | 12.63M Ir | 139k Ir |
+| 3k | 38.33M Ir | 138k Ir |
+| 10k | not measured (≈62 ms) | 138k Ir |
+
+The 10k "before" run took over 30 minutes under Callgrind and was not finished.
+`scripts/label-scaling.py` gates the 1k/3k/10k flatness. CPU differences under about 0.05 ms are
 host noise; the instruction counts are flat.
 
-Allocations: a patched edit allocates 139 against 124 for the same row drawn
+Allocations: a patched edit allocates 138–139 against 124 for the same row drawn
 again unchanged (notified without new data), at 1k and 3k alike. Those 124 are
 the frame's baseline: the row's own elements, closures and records. The 15 the
-edit adds are consistent with shaping the changed label, whose old line the
-cache drops (unconfirmed). Neither count grows with the number of rows. The
+edit adds are a follow-up (`KNOWN_ISSUES.md`, ROADMAP 0.3 #19). A label edited
+back to a text it had stays cached: the line cache keeps the last 64 lines
+patched frames stopped using. Neither count grows with the number of rows. The
 virtualized path allocates 3 more than before, for the patch it tries and
 cannot make.
 
