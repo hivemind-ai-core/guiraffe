@@ -384,6 +384,54 @@ pub(crate) fn write_keys<L: Lens>(lens: &L, mut f: impl FnMut(u64, bool)) {
     lens.for_each_key(&mut |key| f(key, key == leaf));
 }
 
+// Inherent forms of `then` and `by_key`, so paths read the same without importing `Lens` or
+// `ListLens` (`Project::clips.by_key(7).then(Clip::start)`).
+
+impl<S: 'static, T: 'static> Field<S, T> {
+    /// Follow `next` from this field.
+    pub fn then<N: Lens<Root = T>>(self, next: N) -> Compose<Self, N> {
+        Compose {
+            outer: self,
+            inner: next,
+        }
+    }
+}
+
+impl<S: 'static, K: Copy + Hash + Eq + 'static, T: Clone + 'static> Field<S, KeyedList<K, T>> {
+    /// The item with this key. Stable across inserts, removes and moves.
+    pub fn by_key(self, key: K) -> ByKey<Self, K> {
+        ByKey { list: self, key }
+    }
+}
+
+impl<L: Copy + 'static, K: Copy + 'static> ByKey<L, K> {
+    /// Follow `next` from this item.
+    pub fn then<N>(self, next: N) -> Compose<Self, N>
+    where
+        Self: Lens,
+        N: Lens<Root = <Self as Lens>::Target>,
+    {
+        Compose {
+            outer: self,
+            inner: next,
+        }
+    }
+}
+
+impl<A: Copy + 'static, B: Copy + 'static> Compose<A, B> {
+    /// Follow `next` from this path.
+    pub fn then<N>(self, next: N) -> Compose<Self, N>
+    where
+        Self: Lens,
+        N: Lens<Root = <Self as Lens>::Target>,
+    {
+        Compose {
+            outer: self,
+            inner: next,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

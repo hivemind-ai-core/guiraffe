@@ -10,8 +10,7 @@ use std::{
 
 use gpui_kit::{Context, IntoElement, Render, TestAppContext, Window, div};
 use guiraffe_state::{
-    Event, EventRecord, Fx, Interceptor, KeyedList, Lens, ListLens, Selected, Source, Store,
-    UndoEvent, store,
+    Event, EventRecord, Fx, Interceptor, KeyedList, Lens, Selected, Source, Store, UndoEvent, store,
 };
 
 #[derive(Clone, Debug, PartialEq, guiraffe_state::Lens)]
@@ -210,7 +209,7 @@ fn writes_carry_their_source_and_respect_validation_and_undo(cx: &mut TestAppCon
         assert_eq!(store.state(cx).tempo, 300.0, "clamped by `where`");
         store.set_from(Project::even, 3, Source::Mcp, cx);
         assert_eq!(store.state(cx).even, 0, "rejected by the predicate");
-        store.dispatch_now(SetEven(4), cx);
+        store.dispatch_now(Project::set().even(4), cx);
         assert_eq!(store.state(cx).even, 4);
         store.set(Project::scroll, 40, cx);
         store.set_from_control(Project::title, 9, cx);

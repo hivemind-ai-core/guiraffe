@@ -82,9 +82,10 @@ fn build<T: Observe + Drive + Render + Identified>(
     make: impl FnOnce(Identity, &mut Window, &mut Context<T>) -> T,
 ) -> Entity<T> {
     let entity = cx.new(|cx| {
-        let base = path
-            .clone()
-            .or(name)
+        // An explicit element id names the element even when a path registers the control,
+        // so tests can find it by either.
+        let base = name
+            .or_else(|| path.clone())
             .unwrap_or_else(|| format!("{kind}-{}", cx.entity_id().as_u64()).into());
         make(
             Identity {
@@ -238,7 +239,7 @@ impl ButtonBuilder {
         self.path = Some(path.into());
         self
     }
-    /// Element id for an unregistered control (a path also names the element).
+    /// Element id. Without it, the path (if any) names the element; with both, this wins.
     pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
         self
@@ -391,7 +392,7 @@ macro_rules! toggle_control {
                 self.path = Some(path.into());
                 self
             }
-            /// Element id for an unregistered control (a path also names the element).
+            /// Element id. Without it, the path (if any) names the element; with both, this wins.
             pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
                 self.name = Some(name.into());
                 self
@@ -597,7 +598,7 @@ impl SliderBuilder {
         self.path = Some(path.into());
         self
     }
-    /// Element id for an unregistered control (a path also names the element).
+    /// Element id. Without it, the path (if any) names the element; with both, this wins.
     pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
         self
@@ -826,7 +827,7 @@ impl TextInputBuilder {
         self.path = Some(path.into());
         self
     }
-    /// Element id for an unregistered control (a path also names the element).
+    /// Element id. Without it, the path (if any) names the element; with both, this wins.
     pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
         self
@@ -1113,7 +1114,7 @@ impl<T: SelectValue> SelectBuilder<T> {
         self.path = Some(path.into());
         self
     }
-    /// Element id for an unregistered control (a path also names the element).
+    /// Element id. Without it, the path (if any) names the element; with both, this wins.
     pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
         self
@@ -1379,7 +1380,7 @@ impl TabsBuilder {
         self.path = Some(path.into());
         self
     }
-    /// Element id for an unregistered control (a path also names the element).
+    /// Element id. Without it, the path (if any) names the element; with both, this wins.
     pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
         self
@@ -1526,7 +1527,7 @@ impl MenuBuilder {
         self.path = Some(path.into());
         self
     }
-    /// Element id for an unregistered control (a path also names the element).
+    /// Element id. Without it, the path (if any) names the element; with both, this wins.
     pub fn element_id(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
         self

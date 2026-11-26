@@ -5,7 +5,7 @@ use crate::{
     discover::Golden,
 };
 use gpui_kit::SharedString;
-use guiraffe_state::{Event, Fx, KeyedList, Lens as _, ListLens as _, store};
+use guiraffe_state::{Event, Fx, KeyedList, store};
 use std::{collections::BTreeMap, sync::Arc};
 
 /// Shared payload compared by identity, so large images never get compared byte by byte.
@@ -84,12 +84,11 @@ pub struct Verdict {
     pub reason: SharedString,
 }
 
-/// One list row. Selection and the verdict live on the row, so a store-bound row view
-/// re-renders alone when either changes.
+/// One list row. The verdict lives on the row, so a store-bound row view re-renders alone
+/// when it changes. Rows read the selection through a derived binding.
 #[derive(Debug, Clone, PartialEq, guiraffe_state::Lens)]
 pub struct Row {
     pub golden: Golden,
-    pub selected: bool,
     pub verdict: Option<Verdict>,
 }
 
@@ -198,15 +197,14 @@ fn request_load(fx: &mut Fx<'_, Review>) {
     }
 }
 
-/// Move the selection to `key`: two row writes and the selection field.
+/// Move the selection to `key`: one field write. Only the two rows whose derived selection
+/// changed render again.
 fn select(fx: &mut Fx<'_, Review>, key: u32) {
     let old = fx.state().selected;
     if !fx.state().goldens.contains(&key) {
         return;
     }
     if old != key {
-        fx.set_at(Review::goldens.by_key(old).then(Row::selected), false);
-        fx.set_at(Review::goldens.by_key(key).then(Row::selected), true);
         fx.set_at(Review::selected, key);
         fx.set_at(Review::inspect, None);
     }
@@ -227,7 +225,6 @@ impl Event<Review> for LoadGoldens {
                         i as u32,
                         Row {
                             golden,
-                            selected: i == 0,
                             verdict: None,
                         },
                     )
@@ -264,6 +261,24 @@ pub struct Inspect(pub Option<(u32, u32)>);
 impl Event<Review> for Inspect {
     fn handle(self, fx: &mut Fx<'_, Review>) {
         fx.set_at(Review::inspect, self.0);
+    }
+}
+
+/// Effect: put the commit-message summary on the clipboard.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CopySummary(pub String);
+
+/// Export the verdicts: the summary goes to the clipboard (an effect, so the handler stays
+/// pure and testable without a window).
+#[derive(Debug)]
+pub struct Export;
+impl Event<Review> for Export {
+    fn handle(self, fx: &mut Fx<'_, Review>) {
+        let summary = fx.state().commit_summary();
+        fx.effect(CopySummary(summary));
+    }
+    fn undoable(&self) -> bool {
+        false
     }
 }
 
@@ -352,9 +367,9 @@ mod tests {
 
     fn selected_rows(s: &Review) -> Vec<u32> {
         s.goldens
-            .iter()
-            .filter(|(_, r)| r.selected)
-            .map(|(k, _)| *k)
+            .keys()
+            .filter(|k| **k == s.selected)
+            .copied()
             .collect()
     }
 
@@ -362,7 +377,7 @@ mod tests {
     fn decide_records_reason_and_moves_to_the_next_undecided() {
         let mut engine = Engine::new(Review::default());
         run(&mut engine, LoadGoldens(goldens()));
-        run(&mut engine, SetReason("font hinting".into()));
+        run(&mut engine, Review::set().reason("font hinting".into()));
         run(
             &mut engine,
             Decide {
@@ -425,7 +440,7 @@ mod tests {
         run(&mut engine, Select(99));
         assert_eq!(engine.state().selected, 2);
         assert_eq!(selected_rows(engine.state()), [2]);
-        run(&mut engine, SetZoom(99.));
+        run(&mut engine, Review::set().zoom(99.));
         assert_eq!(engine.state().zoom, MAX_ZOOM, "the store clamps");
         assert_eq!(Mode::SideBySide.index(), 3);
         let summary = engine.state().commit_summary();
