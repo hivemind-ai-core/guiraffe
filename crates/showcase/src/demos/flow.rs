@@ -6,8 +6,11 @@ use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Context, Entity, IntoElement, ParentElement,
     SharedString, Styled, Window, div, px,
 };
-use guiraffe_components::Text;
+use gpui_kit::{Render, StyleRefinement};
+use guiraffe_components::{Text, controls::KnobControl};
 use guiraffe_core::ColorName;
+use guiraffe_flow::cables::{Cable, CableAnchorExt, CableEnd, CableLayer, Cables};
+use guiraffe_flow::core::{Side, StrokeStyle};
 use guiraffe_flow::{
     Background, FlowCanvas, FlowEvent, FlowOptions, FlowState,
     core::{
@@ -15,6 +18,7 @@ use guiraffe_flow::{
         LayoutEngine, LayoutOptions, LayoutRouting, Node, Point,
     },
 };
+use guiraffe_state::Store;
 
 use super::column;
 use crate::catalog::Entry;
@@ -37,7 +41,123 @@ pub fn entries() -> Vec<Entry> {
             covers: &["FlowState", "FlowCanvas"],
             demo: auto_layout,
         },
+        Entry {
+            krate: "flow",
+            name: "Cables",
+            summary: "Cables from any element to flow ports and other elements, drawn by a window-level CableLayer with the edge look: solid, dashed or dotted. Pan, zoom or move a node and they follow.",
+            covers: &["CableLayer", "CableAnchorExt", "Cables"],
+            demo: cables,
+        },
     ]
+}
+
+/// Two knobs in a side panel wired to a small flow, and a cable between the knobs.
+struct CablesDemo {
+    flow: Option<Entity<FlowState>>,
+    knobs: [Entity<KnobControl>; 2],
+    layer: Entity<CableLayer>,
+}
+
+impl Render for CablesDemo {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let Some(flow) = &self.flow else {
+            return Text::new("Graph failed to build").into_any_element();
+        };
+        let knob = |id: &'static str, knob: &Entity<KnobControl>| {
+            div()
+                .size(px(56.))
+                .child(knob.clone())
+                .cable_anchor(id)
+                .side(Side::Right)
+        };
+        div()
+            .relative()
+            .h(px(300.))
+            .flex()
+            .flex_row()
+            .gap_4()
+            .child(
+                div()
+                    .w(px(120.))
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .justify_around()
+                    .items_center()
+                    .child(knob("cables/cutoff", &self.knobs[0]))
+                    .child(knob("cables/resonance", &self.knobs[1])),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden()
+                    .child(FlowCanvas::new(flow)),
+            )
+            .child(
+                AnyView::from(self.layer.clone())
+                    .cached(StyleRefinement::default().absolute().inset_0()),
+            )
+            .into_any_element()
+    }
+}
+
+fn cables(window: &mut Window, cx: &mut App) -> AnyView {
+    let flow = Graph::from_parts(
+        [
+            Node::new(1, "Filter", Point::new(40., 50.)),
+            Node::new(2, "Output", Point::new(260., 150.)),
+        ],
+        [Edge::new(1, 1, 2)],
+    )
+    .ok()
+    .and_then(|graph| {
+        let editor = guiraffe_flow::core::Editor::new(graph).ok()?;
+        Some(cx.new(|cx| {
+            FlowState::from_editor(editor, cx).options(FlowOptions {
+                minimap: false,
+                toolbar: false,
+                fit_on_init: false,
+                ..FlowOptions::default()
+            })
+        }))
+    });
+    let mut seeded = Cables::new();
+    let cables = [
+        Cable::new(
+            CableEnd::element("cables/cutoff"),
+            CableEnd::port("graph", 1, "in"),
+        ),
+        Cable::new(
+            CableEnd::element("cables/resonance"),
+            CableEnd::port("graph", 2, "in"),
+        )
+        .style(StrokeStyle::DASHED),
+        Cable::new(
+            CableEnd::element("cables/cutoff"),
+            CableEnd::element("cables/resonance"),
+        )
+        .style(StrokeStyle::DOTTED),
+    ];
+    for (id, cable) in cables.into_iter().enumerate() {
+        seeded.push(id as u64, cable);
+    }
+    let store = Store::new(seeded, cx);
+    let knobs = [
+        KnobControl::new().label("Cutoff").build(window, cx),
+        KnobControl::new().label("Res").build(window, cx),
+    ];
+    cx.new(|cx| {
+        let layer = cx.new(|cx| {
+            let mut layer = CableLayer::new(&store, cx);
+            if let Some(flow) = &flow {
+                layer.add_flow("graph", flow, cx);
+            }
+            layer
+        });
+        CablesDemo { flow, knobs, layer }
+    })
+    .into()
 }
 
 fn graph() -> Result<Graph, guiraffe_flow::core::FlowError> {

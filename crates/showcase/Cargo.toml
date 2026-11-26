@@ -25,6 +25,7 @@ guiraffe-sheet.workspace = true
 guiraffe-dnd.workspace = true
 guiraffe-chat.workspace = true
 guiraffe-flow.workspace = true
+guiraffe-state.workspace = true
 guiraffe-inputs.workspace = true
 chrono.workspace = true
 guiraffe-markdown = { workspace = true, features = ["mermaid", "syntect"] }

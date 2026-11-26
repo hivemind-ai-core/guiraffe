@@ -472,15 +472,26 @@ const BEZIER_WEIGHTS: [[f32; 4]; BEZIER_SEGMENTS + 1] = {
 };
 
 pub(crate) fn bezier(from: Point, outward: Point, to: Point, inward: Point) -> Vec<Point> {
+    cable_curve(from, outward, to, inward).collect()
+}
+
+/// The points of the curve an edge or a cable takes from `from`, leaving along `outward`,
+/// to `to`, arriving against `inward` (unit directions, such as [`Side::direction`](crate::Side::direction)).
+/// Edges and cables share it, so both bend alike. Allocates nothing.
+pub fn cable_curve(
+    from: Point,
+    outward: Point,
+    to: Point,
+    inward: Point,
+) -> impl ExactSizeIterator<Item = Point> + Clone {
     let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
     let c1 = from + outward * distance;
     let c2 = to + inward * distance;
     BEZIER_WEIGHTS
         .iter()
-        .map(|&[start_weight, c1_weight, c2_weight, end_weight]| {
+        .map(move |&[start_weight, c1_weight, c2_weight, end_weight]| {
             from * start_weight + c1 * c1_weight + c2 * c2_weight + to * end_weight
         })
-        .collect()
 }
 
 fn midpoint(points: &[Point]) -> Point {

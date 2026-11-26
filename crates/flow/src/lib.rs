@@ -3,6 +3,7 @@
 //! ```ignore
 //! ui! { FlowCanvas(&state) }
 //! ```
+pub mod cables;
 mod gesture;
 mod interaction;
 mod node;
