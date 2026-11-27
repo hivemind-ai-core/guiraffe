@@ -242,6 +242,23 @@ fn surfaces(window: &mut Window, cx: &mut App) -> AnyView {
                     ),
                 ),
                 example(
+                    "Surface ladder: body, raised and a sunken well (Paper::surface)",
+                    div().flex().gap(px(16.)).children(
+                        [
+                            (guiraffe_core::SurfaceKind::Body, "Body"),
+                            (guiraffe_core::SurfaceKind::Raised, "Raised"),
+                            (guiraffe_core::SurfaceKind::Sunken, "Sunken well"),
+                        ]
+                        .map(|(kind, label)| {
+                            Paper::new()
+                                .surface(kind)
+                                .with_border(kind == guiraffe_core::SurfaceKind::Body)
+                                .p(Size::Md)
+                                .child(Text::new(label).size(Size::Sm))
+                        }),
+                    ),
+                ),
+                example(
                     "Paper p_0: flush content",
                     div().w(px(320.)).child(
                         Paper::new()

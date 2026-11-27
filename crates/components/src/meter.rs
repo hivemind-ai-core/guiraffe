@@ -27,11 +27,12 @@ use gpui_kit::{
     prelude::*, px, relative, size,
 };
 use guiraffe_core::{
-    ColorName, GuiraffeTheme, Variant,
+    ColorName, GuiraffeTheme, Rgb, Scheme,
     protocol::{
         Action, ActionBus, ActionError, Capabilities, ControlId, ControlSnapshot, Drive, Observe,
         Source,
     },
+    readable_shade,
     widget_value::Value,
 };
 
@@ -183,11 +184,47 @@ pub enum MeterMode {
 }
 
 /// A colour band of the scale: levels below `below_db` use `color` (a theme color name).
+///
+/// By default the zone paints the shade of `color` nearest the theme's filled shade that
+/// clears 3:1 on the meter's well (WCAG 1.4.11). `shade_light`/`shade_dark` pick exact
+/// shades per scheme, and `rgb` an exact colour; both are used as given.
+///
+/// Yellow has no shade that clears 3:1 on a light well (its darkest is 2.3:1 on gray 3), so
+/// the default middle zone is orange; a yellow zone in the light scheme stays below 3:1.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeterZone {
     pub below_db: f32,
     pub color: ColorName,
+    pub shade_light: Option<u8>,
+    pub shade_dark: Option<u8>,
+    pub rgb: Option<Rgb>,
 }
+
+impl MeterZone {
+    pub const fn new(below_db: f32, color: ColorName) -> Self {
+        Self {
+            below_db,
+            color,
+            shade_light: None,
+            shade_dark: None,
+            rgb: None,
+        }
+    }
+    /// Exact shades of `color` per scheme.
+    pub const fn shades(mut self, light: u8, dark: u8) -> Self {
+        self.shade_light = Some(light);
+        self.shade_dark = Some(dark);
+        self
+    }
+    /// An exact colour in both schemes.
+    pub const fn rgb(mut self, rgb: Rgb) -> Self {
+        self.rgb = Some(rgb);
+        self
+    }
+}
+
+/// The minimum contrast of a meter's ink on its well (WCAG 1.4.11, non-text indicators).
+pub const METER_INK_CONTRAST: f32 = 3.0;
 
 /// Everything about a meter except its levels.
 #[derive(Debug, Clone, PartialEq)]
@@ -202,6 +239,8 @@ pub struct MeterOptions {
     /// Bands from the bottom up; levels above the last band use `clip_color`.
     pub zones: Vec<MeterZone>,
     pub clip_color: ColorName,
+    /// The track behind the bars; `None` uses the theme's sunken surface.
+    pub well: Option<Rgb>,
     pub ballistics: Ballistics,
     /// dB marks drawn beside the bars (empty: no scale).
     pub ticks: Vec<f32>,
@@ -224,16 +263,11 @@ impl Default for MeterOptions {
             floor_db: -60.0,
             ceiling_db: 6.0,
             zones: vec![
-                MeterZone {
-                    below_db: -6.0,
-                    color: ColorName::Green,
-                },
-                MeterZone {
-                    below_db: 0.0,
-                    color: ColorName::Yellow,
-                },
+                MeterZone::new(-6.0, ColorName::Green),
+                MeterZone::new(0.0, ColorName::Orange),
             ],
             clip_color: ColorName::Red,
+            well: None,
             ballistics: Ballistics::default(),
             ticks: vec![0.0, -6.0, -12.0, -24.0, -48.0],
             lufs: false,
@@ -481,17 +515,41 @@ fn new_cell() -> Rc<MeterCell> {
     })
 }
 
+/// The meter's well: `MeterOptions::well`, else the theme's sunken surface.
+pub fn meter_well(theme: &GuiraffeTheme, options: &MeterOptions) -> Rgb {
+    options.well.unwrap_or_else(|| theme.surfaces().sunken)
+}
+
+/// The colour a zone paints on `well` (see [`MeterZone`]).
+pub fn zone_color(theme: &GuiraffeTheme, zone: &MeterZone, well: Rgb) -> Rgb {
+    let shade = match theme.scheme {
+        Scheme::Light => zone.shade_light,
+        Scheme::Dark => zone.shade_dark,
+    };
+    match (zone.rgb, shade) {
+        (Some(rgb), _) => rgb,
+        (None, Some(shade)) => zone.color.shade(shade),
+        (None, None) => readable(theme, zone.color, well),
+    }
+}
+
+fn readable(theme: &GuiraffeTheme, color: ColorName, well: Rgb) -> Rgb {
+    let preferred = theme.resolve_ctx().filled_shade();
+    readable_shade(color, preferred, well, METER_INK_CONTRAST)
+}
+
 fn resolve_colors(theme: &GuiraffeTheme, options: &MeterOptions) -> Colors {
-    let color = |c: ColorName| theme.variant(Some(c), Variant::Filled).background.to_hsla();
-    let mut zones = [(f32::INFINITY, color(options.clip_color)); 4];
+    let well = meter_well(theme, options);
+    let clip = readable(theme, options.clip_color, well).to_hsla();
+    let mut zones = [(f32::INFINITY, clip); 4];
     for (slot, z) in zones.iter_mut().zip(options.zones.iter().take(3)) {
-        *slot = (z.below_db, color(z.color));
+        *slot = (z.below_db, zone_color(theme, z, well).to_hsla());
     }
     Colors {
         zones,
-        clip: color(options.clip_color),
-        gr: color(ColorName::Orange),
-        track: theme.surfaces().border.to_hsla(),
+        clip,
+        gr: readable(theme, ColorName::Orange, well).to_hsla(),
+        track: well.to_hsla(),
     }
 }
 
@@ -1258,6 +1316,67 @@ impl Element for BankElement {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_zones_clear_3_to_1_on_their_well_in_both_schemes() {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let theme = GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            };
+            let options = MeterOptions::default();
+            let well = super::meter_well(&theme, &options);
+            assert_eq!(
+                well,
+                theme.surfaces().sunken,
+                "the default well is the sunken surface"
+            );
+            for zone in &options.zones {
+                let ink = super::zone_color(&theme, zone, well);
+                assert!(
+                    ink.contrast(well) >= super::METER_INK_CONTRAST,
+                    "{scheme:?} {:?}: {:.2}:1",
+                    zone.color,
+                    ink.contrast(well)
+                );
+            }
+            let clip = super::zone_color(
+                &theme,
+                &MeterZone::new(f32::INFINITY, options.clip_color),
+                well,
+            );
+            assert!(
+                clip.contrast(well) >= super::METER_INK_CONTRAST,
+                "{scheme:?} clip"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_zone_shades_and_colours_are_used_as_given() {
+        let theme = GuiraffeTheme::default();
+        let well = Rgb::WHITE;
+        let shaded = MeterZone::new(0.0, ColorName::Green).shades(8, 4);
+        assert_eq!(
+            super::zone_color(&theme, &shaded, well),
+            ColorName::Green.shade(8)
+        );
+        let dark = GuiraffeTheme {
+            scheme: Scheme::Dark,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::zone_color(&dark, &shaded, well),
+            ColorName::Green.shade(4)
+        );
+        let exact = MeterZone::new(0.0, ColorName::Green).rgb(Rgb::hex(0x123456));
+        assert_eq!(super::zone_color(&dark, &exact, well), Rgb::hex(0x123456));
+        let custom = MeterOptions {
+            well: Some(Rgb::BLACK),
+            ..Default::default()
+        };
+        assert_eq!(super::meter_well(&theme, &custom), Rgb::BLACK);
+    }
+
     use super::*;
 
     fn b() -> Ballistics {
@@ -1356,7 +1475,7 @@ mod tests {
     fn zones_and_units() {
         let o = MeterOptions::default();
         assert_eq!(o.zone(-20.0), ColorName::Green);
-        assert_eq!(o.zone(-3.0), ColorName::Yellow);
+        assert_eq!(o.zone(-3.0), ColorName::Orange);
         assert_eq!(o.zone(0.0), ColorName::Red, "at clip");
         assert_eq!(o.unit(-60.0), 0.0);
         assert_eq!(o.unit(6.0), 1.0);
