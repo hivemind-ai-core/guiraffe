@@ -255,12 +255,6 @@ fn content_focused(cx: &mut TestAppContext, o: &Opened) -> bool {
     })
     .expect("focus")
 }
-/// Another key after the leader: the interceptor only sees key-downs, so this is how the
-/// ribbon learns the leader was released once its bar is gone. Without it, a leader within
-/// the auto-repeat window counts as the held key repeating.
-fn release_leader(cx: &mut TestAppContext, o: &Opened) {
-    press(cx, o, "shift");
-}
 fn log(o: &Opened) -> Vec<String> {
     o.log.borrow().clone()
 }
@@ -470,7 +464,6 @@ fn prompts_collect_dynamic_targets_and_text_and_valid_selection_fills_itself(
     assert!(cx.update(|cx| o.ribbon.read(cx).prompting().is_some()));
     press(cx, &o, "ctrl-space");
     assert!(!is_open(cx, &o));
-    release_leader(cx, &o);
     press(cx, &o, "ctrl-space");
     press(cx, &o, "n");
     cx.update_window(o.window.into(), |_, window, cx| window.input("Notes", cx))
@@ -514,12 +507,17 @@ fn held_keys_repeat_navigation_but_never_execution(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|cx| o.ribbon.read(cx).depth()), 0);
     press(cx, &o, "ctrl-space");
     assert!(!is_open(cx, &o));
-    release_leader(cx, &o);
-    // An auto-repeating leader toggles once.
+    // A held leader toggles once: the first press opens, its auto-repeats do nothing.
+    press(cx, &o, "ctrl-space");
     held(cx, &o, "ctrl-space");
     held(cx, &o, "ctrl-space");
     held(cx, &o, "ctrl-space");
     assert!(is_open(cx, &o));
+    // Held while open, the same: it closes once.
+    press(cx, &o, "ctrl-space");
+    held(cx, &o, "ctrl-space");
+    held(cx, &o, "ctrl-space");
+    assert!(!is_open(cx, &o));
     assert!(log(&o).is_empty());
 }
 
@@ -660,7 +658,6 @@ fn overlay_opening_and_closing_never_moves_the_content(cx: &mut TestAppContext) 
             )
         })
     });
-    release_leader(cx, &o);
     press(cx, &o, "ctrl-space");
     let slotted = content_bounds(cx, &o);
     assert!(
@@ -669,4 +666,17 @@ fn overlay_opening_and_closing_never_moves_the_content(cx: &mut TestAppContext) 
     );
     press(cx, &o, "ctrl-space");
     assert_eq!(content_bounds(cx, &o), closed);
+}
+
+/// Passage #393 / GUIraffe #148: the leader's key-up after closing goes to the host, never to
+/// the bar, and every press must still toggle, however quickly.
+#[gpui_kit::test]
+fn the_leader_toggles_on_every_press(cx: &mut TestAppContext) {
+    let o = open(cx, "Workspace");
+    let mut states = Vec::new();
+    for _ in 0..4 {
+        press(cx, &o, "ctrl-space");
+        states.push(is_open(cx, &o));
+    }
+    assert_eq!(states, [true, false, true, false]);
 }

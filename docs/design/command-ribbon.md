@@ -33,7 +33,8 @@ tab-strip ribbon):
   Backspace goes up one level. Escape discards a partial chord or prompt and returns to the root,
   and never closes: at the root it does nothing. The leader closes from any depth, mid-chord
   included. The only ways to close are the leader and the status-bar button. A held leader toggles
-  once (the auto-repeat guard). The transitions are `Navigator::key(RibbonKey, prompting) ->
+  once: its auto-repeats (`KeyDownEvent::is_held`, read through
+  `Window::is_dispatching_held_key`) are ignored, and every new press toggles however quickly. The transitions are `Navigator::key(RibbonKey, prompting) ->
   KeyOutcome`, unit-tested without a window.
   Clicking works the same. A leaf closes the bar and runs, or opens a parameter prompt.
 - **Parameters**: required text, static choices and host-provided dynamic choices with stable
