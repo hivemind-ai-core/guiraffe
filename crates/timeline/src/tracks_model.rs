@@ -942,12 +942,15 @@ mod tests {
         let mut m = model();
         let a = ClipRef::new(10, 1);
         let b = ClipRef::new(20, 1);
-        let action = TracksAction::SelectMany([b,a,b,ClipRef::new(40,1)].into());
-        assert_eq!(TracksAction::decode(&action.to_action()), Ok(action.clone()));
+        let action = TracksAction::SelectMany([b, a, b, ClipRef::new(40, 1)].into());
+        assert_eq!(
+            TracksAction::decode(&action.to_action()),
+            Ok(action.clone())
+        );
         assert!(m.apply(action.clone()).is_some());
-        assert_eq!(m.selected_clips().collect::<Vec<_>>(), [b,a]);
+        assert_eq!(m.selected_clips().collect::<Vec<_>>(), [b, a]);
         assert!(m.apply(action).is_none());
-        m.update_tracks(vec![TrackUpdate::new(10,"A",track(&[(1.,2.)]))]);
+        m.update_tracks(vec![TrackUpdate::new(10, "A", track(&[(1., 2.)]))]);
         assert_eq!(m.selected_clips().collect::<Vec<_>>(), [a]);
         assert!(m.apply(TracksAction::Select(None)).is_some());
         assert_eq!(m.selected_clips().next(), None);
