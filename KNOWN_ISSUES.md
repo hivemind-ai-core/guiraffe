@@ -122,6 +122,12 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 
 - `guiraffe-goldens` zooms images with GPUI's linear sampling, so magnified goldens blur; the pixel readout stays exact. GPUI's `img` has no nearest-neighbour option. Add one in our GPUI fork (0.4).
 
+### Tabs
+
+- Sizes cover the Xs/Sm/Md scale (Lg and Xl clamp to Md). Tabs has no built-in overflow
+  yet: it waits for the shared overflow row (#19), which will drive `set_hidden` and the
+  `trailing` slot. Until then hosts that overflow keep their own scroll container.
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select

@@ -10,6 +10,11 @@
 //! Keyboard (roving focus): Left/Right move between tabs, Home/End jump, Enter/Space select,
 //! Delete or Ctrl+W closes a closable tab.
 //!
+//! Size ([`TabsOptions::size`], the shared Xs/Sm/Md scale; Sm is the default) and variant
+//! ([`TabsVariant`]: an underlined row or a compact pill/segmented row) set the hierarchy
+//! between primary and secondary rows. Hosts change both with [`Tabs::set_size`] and
+//! [`Tabs::set_variant`]; keyboard and bus behaviour are the same for every look.
+//!
 //! Overflow is not handled here: [`Tabs::set_hidden`] keeps tabs out of the row and
 //! [`TabsOptions::trailing`] renders a slot after the visible tabs. A shared overflow row
 //! (issue 19) drives both.
@@ -23,7 +28,7 @@ use gpui_kit::{
     assets::IconName, component::Icon, div, prelude::*, px,
 };
 use guiraffe_core::{
-    GuiraffeTheme, StateKind, Variant,
+    GuiraffeTheme, Size, StateKind, Variant,
     protocol::{
         Action, ActionBus, ActionError, Capabilities, ControlId, ControlSnapshot, Drive, Observe,
         Outcome, Source, names,
@@ -308,10 +313,71 @@ pub enum TabsEvent {
 /// Renders the slot after the visible tabs (the overflow hook).
 pub type TabsTrailing = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
-#[derive(Clone, Default)]
+/// The row's look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TabsVariant {
+    /// Tabs on a baseline; the selected one has an accent underline (primary rows).
+    #[default]
+    Underline,
+    /// A compact segmented row: tabs on a recessed track, the selected one a raised pill
+    /// (secondary rows such as tool modes).
+    Pill,
+}
+
+/// Pixel metrics of one size, derived from the shared size tokens.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabMetrics {
+    pub height: f32,
+    pub pad_x: f32,
+    pub gap: f32,
+    pub font: f32,
+    pub icon: f32,
+    pub badge_font: f32,
+}
+
+/// Metrics for `size`; sizes above Md are clamped to Md (the issue's Xs/Sm/Md scale).
+/// Sm reproduces the original row (32 px high, 12 px padding, 13 px text).
+pub fn tab_metrics(size: Size) -> TabMetrics {
+    let size = size.min(Size::Md);
+    let pad_x = size.spacing();
+    TabMetrics {
+        height: size.control_height() - 4.,
+        pad_x,
+        gap: pad_x / 2.,
+        font: size.font_size() - 1.,
+        icon: size.icon_size() + 2.,
+        badge_font: size.font_size() - 4.,
+    }
+}
+
+#[derive(Clone)]
 pub struct TabsOptions {
     /// Rendered after the last visible tab; an overflow row puts its "…" menu here.
     pub trailing: Option<TabsTrailing>,
+    /// Xs, Sm (default) or Md.
+    pub size: Size,
+    pub variant: TabsVariant,
+}
+
+impl Default for TabsOptions {
+    fn default() -> Self {
+        Self {
+            trailing: None,
+            size: Size::Sm,
+            variant: TabsVariant::Underline,
+        }
+    }
+}
+
+impl TabsOptions {
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+    pub fn variant(mut self, variant: TabsVariant) -> Self {
+        self.variant = variant;
+        self
+    }
 }
 
 /// The tab row.
@@ -406,6 +472,30 @@ impl Tabs {
     /// The tab with keyboard focus.
     pub fn focused_tab(&self) -> Option<TabId> {
         self.focused
+    }
+
+    /// Change the size (window-free host write); notifies only on a change.
+    pub fn set_size(&mut self, size: Size, cx: &mut Context<Self>) {
+        if self.options.size != size {
+            self.options.size = size;
+            cx.notify();
+        }
+    }
+
+    /// Change the variant (window-free host write); notifies only on a change.
+    pub fn set_variant(&mut self, variant: TabsVariant, cx: &mut Context<Self>) {
+        if self.options.variant != variant {
+            self.options.variant = variant;
+            cx.notify();
+        }
+    }
+
+    pub fn size(&self) -> Size {
+        self.options.size
+    }
+
+    pub fn variant(&self) -> TabsVariant {
+        self.options.variant
     }
 
     /// Keep these tabs out of the row (an overflow row lists them in its menu). They stay
@@ -558,6 +648,13 @@ impl Render for Tabs {
         let ring_on = self.force_ring || guiraffe_core::ring_visible(&self.focus, window);
         let badge_bg = theme.variant(None, Variant::Light).background.to_hsla();
         let badge_fg = theme.variant(None, Variant::Light).foreground.to_hsla();
+        let m = tab_metrics(self.options.size);
+        let pill = self.options.variant == TabsVariant::Pill;
+        let raised = s.raised.to_hsla();
+        let radius = theme.default_radius.radius();
+        // Pills sit inside the track's padding, so they are a little shorter than the row.
+        let inset = if pill { (m.gap / 3.).max(2.) } else { 0. };
+        let tab_height = m.height - 2. * inset;
         let view = cx.weak_entity();
         let tabs = self.visible(&doc).map(|tab| {
             let selected = doc.selected == Some(tab.id);
@@ -578,10 +675,17 @@ impl Render for Tabs {
                 .relative()
                 .flex()
                 .items_center()
-                .gap(px(6.))
-                .h(px(32.))
-                .px(px(12.))
-                .rounded_t(px(4.))
+                .gap(px(m.gap))
+                .h(px(tab_height))
+                .px(px(m.pad_x))
+                .map(|d| {
+                    if pill {
+                        d.rounded(px(radius))
+                    } else {
+                        d.rounded_t(px(radius))
+                    }
+                })
+                .when(pill && selected, |d| d.bg(raised))
                 .text_color(if tab.disabled {
                     disabled
                 } else if selected {
@@ -596,14 +700,16 @@ impl Render for Tabs {
                         .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                         .on_click(select)
                 })
-                .when_some(tab.icon, |d, icon| d.child(Icon::new(icon).size_4()))
+                .when_some(tab.icon, |d, icon| {
+                    d.child(Icon::new(icon).size(px(m.icon)))
+                })
                 .child(tab.label.clone())
                 .when_some(tab.badge.clone(), |d, badge| {
                     d.child(
                         div()
                             .px(px(6.))
                             .rounded(px(8.))
-                            .text_size(px(10.))
+                            .text_size(px(m.badge_font))
                             .bg(badge_bg)
                             .text_color(badge_fg)
                             .child(badge),
@@ -627,11 +733,12 @@ impl Render for Tabs {
                                 cx.stop_propagation();
                                 route(&view, TabsAction::Close(id), Source::Pointer, window, cx)
                             })
-                            .child(Icon::new(IconName::Close).size_3()),
+                            .child(Icon::new(IconName::Close).size(px(m.icon - 4.))),
                     )
                 })
-                // Selection: an accent underline (a shape cue, not colour alone).
-                .when(selected, |d| {
+                // Underline selection: an accent underline (a shape cue, not colour alone);
+                // pill selection is the raised chip plus the semibold label.
+                .when(selected && !pill, |d| {
                     d.child(
                         div()
                             .absolute()
@@ -648,7 +755,13 @@ impl Render for Tabs {
                         div()
                             .absolute()
                             .inset_0()
-                            .rounded_t(px(4.))
+                            .map(|r| {
+                                if pill {
+                                    r.rounded(px(radius))
+                                } else {
+                                    r.rounded_t(px(radius))
+                                }
+                            })
                             .border_1()
                             .border_color(ring),
                     )
@@ -672,10 +785,20 @@ impl Render for Tabs {
                 }
             })
             .flex()
-            .items_end()
-            .border_b_1()
-            .border_color(s.border.to_hsla())
-            .text_size(px(13.))
+            .map(|row| {
+                if pill {
+                    row.items_center()
+                        .gap(px(inset))
+                        .p(px(inset))
+                        .rounded(px(radius + inset))
+                        .bg(s.track.to_hsla())
+                } else {
+                    row.items_end()
+                        .border_b_1()
+                        .border_color(s.border.to_hsla())
+                }
+            })
+            .text_size(px(m.font))
             .children(tabs)
             .children(trailing)
     }
@@ -759,6 +882,17 @@ mod tests {
         assert_eq!(d.selected, Some(TabId(4)));
         assert!(d.set_tabs(vec![TabItem::new(7, "New"), TabItem::new(7, "Dup")]));
         assert_eq!((d.tabs().len(), d.selected), (1, Some(TabId(7))));
+    }
+
+    #[test]
+    fn sm_metrics_reproduce_the_original_row_and_sizes_are_ordered() {
+        let sm = tab_metrics(Size::Sm);
+        assert_eq!((sm.height, sm.pad_x, sm.font), (32., 12., 13.));
+        let (xs, md) = (tab_metrics(Size::Xs), tab_metrics(Size::Md));
+        assert!(xs.height < sm.height && sm.height < md.height);
+        assert!(xs.font < sm.font && sm.font < md.font);
+        assert_eq!(tab_metrics(Size::Xl), md, "clamped to the Xs/Sm/Md scale");
+        assert_eq!(TabsOptions::default().size, Size::Sm);
     }
 
     #[test]
