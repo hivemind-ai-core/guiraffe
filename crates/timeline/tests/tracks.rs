@@ -807,3 +807,57 @@ fn clip_locks_follow_the_track_key(cx: &mut TestAppContext) {
     });
     assert_eq!(m.model().clip(free).map(|c| c.start), Some(1.5));
 }
+
+#[gpui_kit::test]
+fn context_menu_selects_clip_and_reports_window_position(cx: &mut TestAppContext) {
+    let mut m = mount(cx, 4, true);
+    let at = ClipRef::new(
+        101,
+        m.model().row(1).expect("second row").track.clips()[0].id,
+    );
+    let pointer = m.at(1.75, 92.);
+    m.vcx
+        .update(|_, cx| m.view.update(cx, |v, cx| v.set_focusable(Some(true), cx)));
+    m.vcx
+        .simulate_mouse_down(pointer, MouseButton::Right, Default::default());
+    m.vcx
+        .simulate_mouse_up(pointer, MouseButton::Right, Default::default());
+    m.vcx.run_until_parked();
+    assert_eq!(m.model().selection, Some(at));
+    assert_eq!(
+        *m.events.borrow(),
+        [
+            TracksEvent::SelectionChanged { selected: Some(at) },
+            TracksEvent::ContextMenu {
+                track: at.track,
+                clip: at.clip,
+                position: pointer,
+                source: Source::Pointer
+            },
+        ]
+    );
+    let center = m.at(2., 100.);
+    for key in ["menu", "shift-f10"] {
+        m.events.borrow_mut().clear();
+        m.vcx.simulate_keystrokes(key);
+        assert_eq!(
+            *m.events.borrow(),
+            [TracksEvent::ContextMenu {
+                track: at.track,
+                clip: at.clip,
+                position: center,
+                source: Source::Keyboard,
+            }]
+        );
+    }
+    m.events.borrow_mut().clear();
+    for empty in [m.at(4., 92.), m.at(1.75, 41.)] {
+        m.vcx
+            .simulate_mouse_down(empty, MouseButton::Right, Default::default());
+        m.vcx
+            .simulate_mouse_up(empty, MouseButton::Right, Default::default());
+    }
+    m.vcx.run_until_parked();
+    assert!(m.events.borrow().is_empty());
+    assert_eq!(m.model().selection, Some(at));
+}

@@ -38,8 +38,8 @@ use crate::{
     axis::{Axis, TimeFormat, label},
     clips::{Clip, Edge, Track},
     edit::{
-        EndEarlier, EndLater, KEY_CONTEXT, MoveEarlier, MoveLater, Nudge, SelectNextItem,
-        SelectPrevItem, StartEarlier, StartLater, key_step,
+        EndEarlier, EndLater, MoveEarlier, MoveLater, Nudge, SelectNextItem, SelectPrevItem,
+        StartEarlier, StartLater, key_step,
     },
     tracks_model::{ApplyAction, SetSelection, SetViewport},
 };
@@ -68,6 +68,13 @@ pub enum TracksEvent {
     },
     SelectionChanged {
         selected: Option<ClipRef>,
+    },
+    /// Open the host menu for this clip at a point in window coordinates.
+    ContextMenu {
+        track: TrackId,
+        clip: u32,
+        position: gpui_kit::Point<Pixels>,
+        source: Source,
     },
     Seek(f64),
 }
@@ -953,7 +960,95 @@ fn clip_rect(
     )
 }
 
+/// Pick only the painted clip body, excluding the vertical gutters between clips.
+fn menu_clip(row: &TrackRow, axis: &Axis, x: f64, row_y: f32) -> Option<ClipRef> {
+    if row_y < CLIP_INSET || row_y >= row.height - CLIP_INSET {
+        return None;
+    }
+    let (clip, _) = hit(&row.track, axis, x, ResizeEdges::None)?;
+    Some(ClipRef::new(row.id, clip))
+}
+
 impl TracksView {
+    fn pointer_menu(
+        view: &WeakEntity<Self>,
+        e: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(entity) = view.upgrade() else { return };
+        let this = entity.read(cx);
+        let (x, y) = this.local(e.position);
+        let Some(index) = this.layout.row_at(y + this.scroll_y) else {
+            return;
+        };
+        let Some(row) = this.model(cx).row(index) else {
+            return;
+        };
+        let row_y = y + this.scroll_y - this.layout.top(index);
+        let Some(at) = menu_clip(row, &this.surface.axis, x, row_y) else {
+            return;
+        };
+        window.prevent_default();
+        if this.focusable == Some(true) {
+            this.focus.clone().focus(window, cx);
+        }
+        if entity.read(cx).model(cx).selection != Some(at)
+            && route(
+                view,
+                TracksAction::Select(Some(at)),
+                Source::Pointer,
+                false,
+                window,
+                cx,
+            )
+            .is_err()
+        {
+            return;
+        }
+        entity.update(cx, |this, cx| {
+            if this.store.state(cx).selection == Some(at) {
+                cx.emit(TracksEvent::ContextMenu {
+                    track: at.track,
+                    clip: at.clip,
+                    position: e.position,
+                    source: Source::Pointer,
+                });
+            }
+        });
+    }
+
+    fn keyboard_menu(&self, cx: &mut Context<Self>) {
+        let model = self.model(cx);
+        let Some(at) = model.selection else { return };
+        let Some(index) = model.index_of(at.track) else {
+            return;
+        };
+        let Some(row) = model.row(index) else { return };
+        let Some(clip) = row.track.clip(at.clip) else {
+            return;
+        };
+        let body = self.body.get();
+        let center = clip_rect(
+            body.origin,
+            &self.surface.axis,
+            clip,
+            self.layout.top(index) - self.scroll_y,
+            row.height,
+        )
+        .center();
+        let position = gpui_kit::point(
+            center.x.clamp(body.left(), body.right()),
+            center.y.clamp(body.top(), body.bottom()),
+        );
+        cx.emit(TracksEvent::ContextMenu {
+            track: at.track,
+            clip: at.clip,
+            position,
+            source: Source::Keyboard,
+        });
+    }
+
     fn mouse_down(view: &WeakEntity<Self>, e: &MouseDownEvent, window: &mut Window, cx: &mut App) {
         // Claim focus only for a clicked item in an explicitly opted-in editor.
         window.prevent_default();
@@ -1208,7 +1303,8 @@ impl Render for TracksView {
             .role(Role::ListBox)
             .aria_label("Tracks")
             .track_focus(&this.focus.clone().tab_stop(tab))
-            .key_context(KEY_CONTEXT)
+            .key_context("GrTimelineEdit GrTracks")
+            .on_action(cx.listener(|this, _: &crate::edit::OpenClipMenu, _, cx| this.keyboard_menu(cx)))
             .on_action(key!(MoveEarlier, |v, cx| v.nudge_action(Nudge::Move, -1.0, cx)))
             .on_action(key!(MoveLater, |v, cx| v.nudge_action(Nudge::Move, 1.0, cx)))
             .on_action(key!(EndEarlier, |v, cx| v.nudge_action(Nudge::End, -1.0, cx)))
@@ -1284,6 +1380,10 @@ impl Render for TracksView {
                                 move |e: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                                     Self::mouse_down(&view, e, window, cx)
                                 }
+                            })
+                            .on_mouse_down(MouseButton::Right, {
+                                let view = view.clone();
+                                move |e, window, cx| Self::pointer_menu(&view, e, window, cx)
                             })
                             .on_mouse_move({
                                 let view = view.clone();
@@ -1533,6 +1633,16 @@ mod tests {
             }
             assert_eq!(overview_columns(&track, axis).count(), 100);
         }
+    }
+
+    #[test]
+    fn menu_hit_excludes_clip_gutters_and_time_gaps() {
+        let row = TrackRow::new(101, "Drums", track()).with_height(40.);
+        let at = ClipRef::new(row.id, row.track.clips()[0].id);
+        assert_eq!(menu_clip(&row, &axis(), 200., 4.), Some(at));
+        assert_eq!(menu_clip(&row, &axis(), 200., 3.), None);
+        assert_eq!(menu_clip(&row, &axis(), 200., 36.), None);
+        assert_eq!(menu_clip(&row, &axis(), 400., 20.), None);
     }
 
     #[test]

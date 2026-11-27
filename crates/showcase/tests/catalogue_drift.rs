@@ -1349,6 +1349,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "The rendered row edge handles pointer resizing.",
     ),
     (
+        "timeline::TracksView::event ContextMenu",
+        "Rust hosts open their own popup at this window position; the timeline document adapter exposes no clip menu.",
+    ),
+    (
         "timeline::TracksView::event SelectionChanged",
         "Rust hosts observe it; documents bind the selected prop.",
     ),

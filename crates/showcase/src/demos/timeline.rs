@@ -40,7 +40,7 @@ pub fn entries() -> Vec<Entry> {
         Entry {
             krate: "timeline",
             name: "Track timeline",
-            summary: "DAW-style clip tracks: drag to move, drag edges to trim, click the ruler to seek; clips never overlap.",
+            summary: "Drag clips to move or trim them. Right-click a clip to see its context-menu request in the event log.",
             covers: &["TracksView"],
             demo: tracks,
         },
@@ -340,7 +340,7 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
         v,
         "Four tracks, 0.25s snap (vocals locked)",
         220.,
-        "Select a clip. ←/→ move, Shift+←/→ trim the end, and Alt+←/→ trim the start.",
+        "←/→ move a clip. Shift+←/→ trim its end. Alt+←/→ trim its start. Menu or Shift+F10 requests its menu.",
         cx,
     )
     .into()
