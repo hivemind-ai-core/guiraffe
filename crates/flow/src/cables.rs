@@ -86,9 +86,30 @@ pub struct Cable {
     /// A theme palette colour, shaded for the scheme like a coloured flow edge; `None` is
     /// the dimmed colour of an idle edge.
     pub color: Option<ColorName>,
+    /// Caps on how far the curve's handles reach from each end; see [`Cable::handle`].
+    pub handles: core::HandleCaps,
 }
 
 impl Cable {
+    /// Caps both handles at `len` pixels, so the cable turns within about `len` of each end
+    /// (by default a handle reaches `min(0.4 × distance + 24, 300)`).
+    pub fn handle(mut self, len: f32) -> Self {
+        self.handles = core::HandleCaps {
+            from: Some(len),
+            to: Some(len),
+        };
+        self
+    }
+    /// Caps the handle at the `from` end.
+    pub fn from_handle(mut self, len: f32) -> Self {
+        self.handles.from = Some(len);
+        self
+    }
+    /// Caps the handle at the `to` end.
+    pub fn to_handle(mut self, len: f32) -> Self {
+        self.handles.to = Some(len);
+        self
+    }
     /// A solid cable from `from` to `to`.
     pub fn new(from: CableEnd, to: CableEnd) -> Self {
         Self {
@@ -96,6 +117,7 @@ impl Cable {
             to,
             style: StrokeStyle::Solid,
             color: None,
+            handles: core::HandleCaps::default(),
         }
     }
     pub fn color(mut self, color: ColorName) -> Self {
@@ -513,11 +535,12 @@ impl Render for CableLayer {
                         continue;
                     }
                     let at = |p: Point<Pixels>| core::Point::new(p.x.as_f32(), p.y.as_f32());
-                    let curve = core::cable_curve(
+                    let curve = core::cable_curve_capped(
                         at(from.position),
                         outward(&from, &to),
                         at(to.position),
                         outward(&to, &from),
+                        cable.handles,
                     );
                     let mut builder = PathBuilder::stroke(px(CABLE_STROKE));
                     match cable.style.pattern(CABLE_STROKE, 1.) {
