@@ -290,11 +290,18 @@ pub struct KnobBuilder {
     param: ParamBuilder,
     diameter: Option<f32>,
     modulation: Option<(f64, f64)>,
+    compact: bool,
 }
 
 param_builder!(KnobBuilder);
 
 impl KnobBuilder {
+    /// The dial only, for dense rows: the value shows in the tooltip and above the dial while
+    /// dragging. The accessible value is unchanged.
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
+        self
+    }
     /// Outer diameter in pixels (default 40).
     pub fn diameter(mut self, px: f32) -> Self {
         self.diameter = px.is_finite().then(|| px.clamp(16.0, 400.0));
@@ -327,6 +334,7 @@ impl KnobBuilder {
                 param: make_param(self.param, identity, cx),
                 diameter: self.diameter.unwrap_or(40.0),
                 modulation: self.modulation,
+                compact: self.compact,
             },
         )
     }
@@ -342,6 +350,7 @@ pub struct KnobControl {
     param: Param,
     diameter: f32,
     modulation: Option<(f64, f64)>,
+    compact: bool,
 }
 
 impl Identified for KnobControl {
@@ -379,6 +388,14 @@ impl KnobControl {
         if self.param.set(value) {
             cx.notify();
         }
+    }
+    /// Whether the knob shows the dial only.
+    pub fn is_compact(&self) -> bool {
+        self.compact
+    }
+    /// Whether a drag is under way (a compact knob shows its value then).
+    pub fn dragging(&self) -> bool {
+        self.param.drag.is_some()
     }
     /// Host write: the modulation range, in value units.
     pub fn set_modulation(&mut self, range: Option<(f64, f64)>, cx: &mut Context<Self>) {
@@ -559,6 +576,7 @@ impl Render for KnobControl {
         let s = surfaces(cx);
         let dial = knob_dial(travel, detent, modulation, self.diameter, cx);
         let dragging = p.drag.is_some();
+        let compact = self.compact;
         let fine_keys = this.clone();
         let wheel = this.clone();
         let down = this.clone();
@@ -606,6 +624,12 @@ impl Render for KnobControl {
             .on_key_down(move |e: &KeyDownEvent, window, cx| {
                 param_key(&fine_keys, e, window, cx);
             })
+            .when(self.compact, |el| {
+                let tip = text.clone();
+                el.tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+                })
+            })
             .child(div().relative().child(dial).when(dragging, |el| {
                 // While dragging, follow the pointer anywhere in the window.
                 el.child(
@@ -630,10 +654,30 @@ impl Render for KnobControl {
                     .size_full(),
                 )
             }))
-            .child(text)
+            .map(|el| match (compact, dragging) {
+                // Compact: the value floats above the dial while dragging, without layout.
+                (true, true) => el.relative().child(
+                    div()
+                        .id("knob-drag-readout")
+                        .absolute()
+                        .bottom_full()
+                        .mb_1()
+                        .px_1()
+                        .rounded_sm()
+                        .bg(hsla(s.surface))
+                        .border_1()
+                        .border_color(hsla(s.border))
+                        .whitespace_nowrap()
+                        .test_support()
+                        .child(text),
+                ),
+                (true, false) => el,
+                (false, _) => el.child(text),
+            })
     }
 }
 
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::prelude::FluentBuilder;
 
 fn knob_down(
@@ -757,14 +801,36 @@ impl ParamOwner for KnobControl {
 // --- NumberField --------------------------------------------------------------------
 
 /// Builder for [`NumberFieldControl`].
-#[derive(Default)]
 pub struct NumberFieldBuilder {
     param: ParamBuilder,
+    reset_to: Option<f64>,
+    size: guiraffe_core::Size,
+}
+
+impl Default for NumberFieldBuilder {
+    fn default() -> Self {
+        Self {
+            param: ParamBuilder::default(),
+            reset_to: None,
+            size: guiraffe_core::Size::Sm,
+        }
+    }
 }
 
 param_builder!(NumberFieldBuilder);
 
 impl NumberFieldBuilder {
+    /// The value an Alt- or Ctrl-click resets to. Without it the field has no reset gesture.
+    /// (Double-click and Enter open typed entry, so reset takes a modifier click.)
+    pub fn default_value(mut self, value: f64) -> Self {
+        self.reset_to = Some(value);
+        self
+    }
+    /// The shared control size: `Xs` for compact toolbars, `Sm` (the default), `Md`.
+    pub fn size(mut self, size: guiraffe_core::Size) -> Self {
+        self.size = size;
+        self
+    }
     /// Build the control, registering its path (if any) in `window`.
     pub fn build(self, window: &mut Window, cx: &mut App) -> Entity<NumberFieldControl> {
         self.build_with(Some(window), cx)
@@ -789,8 +855,12 @@ impl NumberFieldBuilder {
                 let (entry, subscription) = window
                     .map(|window| new_entry(&identity.window, window, cx))
                     .unzip();
+                let param = make_param(self.param, identity, cx);
+                let reset_to = self.reset_to.map(|v| param.map.constrain(v));
                 NumberFieldControl {
-                    param: make_param(self.param, identity, cx),
+                    param,
+                    reset_to,
+                    size: self.size,
                     entry,
                     editing: false,
                     error: None,
@@ -807,6 +877,8 @@ impl NumberFieldBuilder {
 /// `250 ms` and `C#4` all work where the unit allows.
 pub struct NumberFieldControl {
     param: Param,
+    reset_to: Option<f64>,
+    size: guiraffe_core::Size,
     /// `None` until typed entry first opens, for a control built without a window.
     entry: Option<Entity<InputState>>,
     editing: bool,
@@ -879,6 +951,13 @@ impl NumberFieldControl {
     }
     pub fn element_id(&self) -> ElementId {
         self.param.identity.element()
+    }
+    /// The value the reset gesture returns to, if any.
+    pub fn reset_value(&self) -> Option<f64> {
+        self.reset_to
+    }
+    pub fn size(&self) -> guiraffe_core::Size {
+        self.size
     }
     /// Whether typed entry is open.
     pub fn editing(&self) -> bool {
@@ -1064,18 +1143,23 @@ impl Render for NumberFieldControl {
             .aria_numeric_value(p.shown())
             .aria_min_numeric_value(map.min())
             .aria_max_numeric_value(map.max())
-            .min_w(px(64.))
-            .px_2()
-            .py_1()
+            .min_w(px(self.size.control_height() * 2.))
+            .h(px(self.size.control_height()))
+            .flex()
+            .items_center()
+            .px(px(self.size.spacing()))
             .rounded_sm()
             .border_1()
             .border_color(border)
-            .text_sm()
+            .text_size(px(self.size.font_size()))
             .text_color(hsla(s.text));
         if self.editing
             && let Some(entry) = &self.entry
         {
-            return base.child(Input::new(entry)).into_any_element();
+            return base
+                .child(Input::new(entry))
+                .test_support()
+                .into_any_element();
         }
         let dragging = p.drag.is_some();
         let down = this.clone();
@@ -1091,6 +1175,16 @@ impl Render for NumberFieldControl {
                     if e.click_count >= 2 {
                         field.param.drag = None;
                         field.begin_entry(window, cx);
+                        return;
+                    }
+                    // Alt- or Ctrl-click resets: a set_value through the bus, one undo step.
+                    if (e.modifiers.alt || e.modifiers.control)
+                        && let Some(value) = field.reset_to
+                    {
+                        let this = cx.weak_entity();
+                        window.defer(cx, move |window, cx| {
+                            commit(&this, value, Source::Pointer, false, window, cx);
+                        });
                         return;
                     }
                     window.focus(&field.param.focus, cx);
@@ -1136,6 +1230,7 @@ impl Render for NumberFieldControl {
                 )
             })
             .child(text)
+            .test_support()
             .into_any_element()
     }
 }

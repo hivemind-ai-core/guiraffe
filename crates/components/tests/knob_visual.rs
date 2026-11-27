@@ -109,3 +109,64 @@ fn knobs_and_number_fields_light_and_dark() {
         assert_snapshot(name, &image, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
     }
 }
+
+fn render_compact(scheme: Scheme) -> image::RgbaImage {
+    let mut snap = Snapshotter::new().unwrap().with_setup(move |cx| {
+        guiraffe_components::init(cx);
+        apply(
+            GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+    snap.render(size(px(360.), px(140.)), |window, cx| {
+        let levels: Vec<AnyView> = [0.2, 0.5, 0.8, 1.0]
+            .into_iter()
+            .map(|v| {
+                KnobControl::new()
+                    .mapping(ValueMap::new(0.0, 1.0).unit(Unit::Percent))
+                    .value(v)
+                    .compact(true)
+                    .diameter(28.)
+                    .build(window, cx)
+                    .into()
+            })
+            .collect();
+        let sizes: Vec<AnyView> = [
+            guiraffe_core::Size::Xs,
+            guiraffe_core::Size::Sm,
+            guiraffe_core::Size::Md,
+        ]
+        .into_iter()
+        .map(|size| {
+            NumberFieldControl::new()
+                .mapping(
+                    ValueMap::new(0.001, 10.0)
+                        .curve(Curve::Log)
+                        .unit(Unit::Seconds),
+                )
+                .value(0.25)
+                .size(size)
+                .build(window, cx)
+                .into()
+        })
+        .collect();
+        cx.new(|_| Panel(levels, sizes))
+    })
+    .unwrap()
+}
+
+#[test]
+fn compact_knobs_and_number_field_sizes_light_and_dark() {
+    let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for (scheme, name) in [
+        (Scheme::Light, "knobs-compact-light"),
+        (Scheme::Dark, "knobs-compact-dark"),
+    ] {
+        let image = render_compact(scheme);
+        assert_snapshot(name, &image, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
+    }
+}

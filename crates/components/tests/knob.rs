@@ -2,6 +2,7 @@
 //! entry parses through the mapping, host writes never emit, and a log slider steps by travel.
 use std::{cell::RefCell, rc::Rc};
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AnyView, App, Context, Entity, IntoElement, Modifiers, MouseButton, ParentElement, Render,
     Styled, TestAppContext, VisualTestContext, Window, div, point, px,
@@ -313,4 +314,141 @@ fn a_fine_drag_moves_a_tenth_and_the_wheel_steps(cx: &mut TestAppContext) {
     let wheeled = vcx.update(|_, cx| knob.read(cx).value());
     assert!((wheeled - map.step_from(dragged, true, false)).abs() < 1e-9);
     assert_eq!(log.sources.borrow().last(), Some(&Source::Pointer));
+}
+
+/// A window with only `views`, each in a 60 px column from the top left.
+fn mount_alone<T: 'static>(
+    cx: &mut TestAppContext,
+    make: impl FnOnce(&mut Window, &mut App) -> Entity<T>,
+) -> (Entity<T>, Rc<Log>, &mut VisualTestContext)
+where
+    Entity<T>: Into<AnyView>,
+{
+    cx.update(guiraffe_components::init);
+    let mut built = None;
+    let (_, vcx) = cx.add_window_view(|window, cx| {
+        let control = make(window, cx);
+        built = Some(control.clone());
+        Host(vec![control.into()])
+    });
+    let control = built.expect("built");
+    let log = Rc::new(Log::default());
+    vcx.update(|window, cx| ActionBus::add_interceptor(log.clone(), window, cx));
+    vcx.run_until_parked();
+    (control, log, vcx)
+}
+
+#[gpui_kit::test]
+fn a_modifier_click_resets_a_number_field_like_the_bus(cx: &mut TestAppContext) {
+    let (field, log, vcx) = mount_alone(cx, |window, cx| {
+        NumberFieldControl::new()
+            .mapping(cutoff())
+            .default_value(440.0)
+            .path("synth/field")
+            .build(window, cx)
+    });
+    let seen = events(vcx, &field);
+    bus(vcx, "synth/field", names::SET_VALUE, Value::Num(5_000.0));
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    vcx.simulate_mouse_down(point(px(10.), px(10.)), MouseButton::Left, alt);
+    vcx.simulate_mouse_up(point(px(10.), px(10.)), MouseButton::Left, alt);
+    vcx.run_until_parked();
+    assert_eq!(vcx.update(|_, cx| field.read(cx).value()), 440.0);
+    assert!(
+        !vcx.update(|_, cx| field.read(cx).editing()),
+        "a reset is not typed entry"
+    );
+    // The reset is a plain set_value on the bus: the same events as a bus client's.
+    let pointer = seen.borrow().last().copied();
+    bus(vcx, "synth/field", names::SET_VALUE, Value::Num(5_000.0));
+    bus(vcx, "synth/field", names::SET_VALUE, Value::Num(440.0));
+    assert_eq!(pointer, Some(ParamEvent::Changed(440.0, Source::Pointer)));
+    assert_eq!(
+        seen.borrow().last(),
+        Some(&ParamEvent::Changed(440.0, Source::Mcp))
+    );
+    assert_eq!(
+        log.sources.borrow()[1],
+        Source::Pointer,
+        "the reset went through the bus"
+    );
+
+    // Without a default there is no reset gesture: a modifier click starts a scrub instead.
+    let (plain, _, vcx) = mount_alone(cx, |window, cx| {
+        NumberFieldControl::new()
+            .mapping(cutoff())
+            .value(5_000.0)
+            .build(window, cx)
+    });
+    let ctrl = Modifiers {
+        control: true,
+        ..Modifiers::default()
+    };
+    vcx.simulate_mouse_down(point(px(10.), px(10.)), MouseButton::Left, ctrl);
+    vcx.simulate_mouse_up(point(px(10.), px(10.)), MouseButton::Left, ctrl);
+    vcx.run_until_parked();
+    assert_eq!(vcx.update(|_, cx| plain.read(cx).value()), 5_000.0);
+}
+
+#[gpui_kit::test]
+fn number_field_sizes_follow_the_shared_scale(cx: &mut TestAppContext) {
+    use guiraffe_core::Size;
+    for size in [Size::Xs, Size::Sm, Size::Md] {
+        let (field, _, vcx) = mount_alone(cx, |window, cx| {
+            NumberFieldControl::new()
+                .mapping(cutoff())
+                .size(size)
+                .build(window, cx)
+        });
+        let bounds = vcx.update(|window, cx| {
+            window.render_frame(cx);
+            let id = field.read(cx).element_id();
+            gpui_kit::test::TestWindowExt::try_find(window, id).map(|e| e.bounds())
+        });
+        let height = bounds.map(|b| f32::from(b.size.height));
+        assert_eq!(height, Some(size.control_height()), "{size:?}");
+    }
+}
+
+#[gpui_kit::test]
+fn a_compact_knob_shows_its_value_only_while_dragging(cx: &mut TestAppContext) {
+    let (knob, _, vcx) = mount_alone(cx, |window, cx| {
+        KnobControl::new()
+            .mapping(cutoff())
+            .label("Cutoff")
+            .compact(true)
+            .path("synth/compact")
+            .build(window, cx)
+    });
+    let readout = |vcx: &mut VisualTestContext| {
+        vcx.update(|window, cx| {
+            window.render_frame(cx);
+            gpui_kit::test::TestWindowExt::try_find(
+                window,
+                gpui_kit::SharedString::from("knob-drag-readout"),
+            )
+            .is_some()
+        })
+    };
+    assert!(!readout(vcx), "the dial only");
+    let none = Modifiers::default();
+    vcx.simulate_mouse_down(point(px(20.), px(20.)), MouseButton::Left, none);
+    vcx.run_until_parked();
+    vcx.simulate_mouse_move(point(px(20.), px(0.)), MouseButton::Left, none);
+    vcx.run_until_parked();
+    assert!(vcx.update(|_, cx| knob.read(cx).dragging()));
+    assert!(readout(vcx), "the value shows while dragging");
+    vcx.simulate_mouse_up(point(px(20.), px(0.)), MouseButton::Left, none);
+    vcx.run_until_parked();
+    assert!(!readout(vcx));
+    // The accessible value with units is unchanged.
+    vcx.update(|window, cx| {
+        let id = ControlId::lookup("synth/compact", cx).expect("registered");
+        let snapshot = ActionBus::query(id, window, cx).expect("snapshot");
+        let expected = format!("Cutoff: {}", knob.read(cx).formatted());
+        assert_eq!(snapshot.label.as_deref(), Some(expected.as_str()));
+    });
 }
