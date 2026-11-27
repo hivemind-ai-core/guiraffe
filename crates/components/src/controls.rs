@@ -1374,6 +1374,9 @@ impl Render for SliderControl {
     }
 }
 
+mod cycle;
+pub use cycle::*;
+
 mod knob;
 pub use knob::*;
 
@@ -2379,6 +2382,3 @@ mod tests {
         assert!(num_payload(&act(names::SET_VALUE, Value::Num(f64::INFINITY))).is_err());
     }
 }
-
-mod cycle;
-pub use cycle::*;
