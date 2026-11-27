@@ -1687,6 +1687,7 @@ const IMPERATIVE: &[(&str, &str)] = &[
 const PROTOCOL_CONTROLS: &[&str] = &[
     "components::ButtonControl",
     "components::ToggleChipControl",
+    "components::CycleControl",
     "components::CheckboxControl",
     "components::SwitchControl",
     "components::SliderControl",
