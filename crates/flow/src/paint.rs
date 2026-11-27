@@ -152,7 +152,8 @@ pub(crate) struct MeshCache {
     last_mesh_viewport: Option<(Viewport, gpui_kit::Size<Pixels>)>,
     pub misses: usize,
     pub timings: (u128, u128, u128),
-    batch_capacity: (usize, usize),
+    /// Vertices each edge batch held last frame: normal, selected, then one per palette colour.
+    batch_capacity: [usize; EDGE_BATCHES],
     #[cfg(test)]
     pub batches: usize,
     #[cfg(test)]
@@ -280,9 +281,12 @@ impl ClosedMarkers {
     }
 }
 
+/// Edge batches: normal, selected, and one per palette colour.
+const EDGE_BATCHES: usize = 2 + guiraffe_core::ColorName::ALL.len();
 struct GridMesh {
     size: WorldPoint,
     step: f32,
+    dot: f32,
     background: Background,
     path: Path<Pixels>,
 }
@@ -543,6 +547,12 @@ pub(crate) struct Frame {
     accent: Rgb,
     selected: Arc<BTreeSet<u64>>,
     selected_edges: Arc<BTreeSet<u64>>,
+    /// Theme palette colours for coloured edges.
+    palette: crate::ink::Palette,
+    /// The background grid's colour, dot size and step (`None` follows the snap grid).
+    grid_ink: Rgb,
+    grid_dot: f32,
+    grid_step: Option<f32>,
     /// Animated-edge phase in [0, 1); `None` disables edge animation (reduced motion).
     phase: Option<f32>,
 }
@@ -568,8 +578,23 @@ impl Frame {
             accent: theme.primary_color(),
             selected: i.editor.selected_nodes_shared(),
             selected_edges: i.editor.selected_edges_shared(),
+            palette: crate::ink::palette(theme),
+            grid_ink: theme.surfaces().border,
+            grid_dot: crate::GridStyle::DOT,
+            grid_step: None,
             phase,
         }
+    }
+    /// Paints the background grid in `style`.
+    pub(crate) fn with_grid_style(mut self, style: crate::GridStyle) -> Self {
+        if let Some(color) = style.color {
+            self.grid_ink = self.palette[crate::ink::slot(crate::ink::hue(color))];
+        }
+        if style.dot.is_finite() && style.dot > 0. {
+            self.grid_dot = style.dot;
+        }
+        self.grid_step = style.step.filter(|s| s.is_finite() && *s > 0.);
+        self
     }
     pub(crate) fn with_viewport(mut self, viewport: Viewport) -> Self {
         self.viewport = viewport;
@@ -627,20 +652,23 @@ impl Frame {
             .expand(12. / self.viewport.zoom);
         let graph = self.scene.graph();
         // GPUI takes ownership of submitted vertices. Batch by colour, so its
-        // ownership boundary requires one allocation per batch, not per edge.
-        let mut normal = Path::new(bounds.origin);
-        let mut selected = Path::new(bounds.origin);
-        normal.vertices.reserve_exact(cache.batch_capacity.0);
-        selected.vertices.reserve_exact(cache.batch_capacity.1);
+        // ownership boundary requires one allocation per colour in use, not per edge.
+        let mut batches: [Path<Pixels>; EDGE_BATCHES] = std::array::from_fn(|slot| {
+            let mut batch = Path::new(bounds.origin);
+            batch.vertices.reserve_exact(cache.batch_capacity[slot]);
+            batch
+        });
         for id in &self.edges {
             let Some(edge) = graph.edges.get(id) else {
                 continue;
             };
-            let output = if self.selected_edges.contains(id) {
-                &mut selected
+            // A selected edge is drawn in the accent whatever its colour.
+            let slot = if self.selected_edges.contains(id) {
+                1
             } else {
-                &mut normal
+                edge.color.map_or(0, |hue| crate::ink::slot(hue) + 2)
             };
+            let output = &mut batches[slot];
             let from = self.preview(edge.source.node);
             let to = self.preview(edge.target.node);
             let style = graph.stroke_of(edge);
@@ -677,14 +705,20 @@ impl Frame {
                 append_transformed(output, &path, self.viewport, bounds.origin);
             }
         }
-        cache.batch_capacity = (normal.vertices.len(), selected.vertices.len());
+        cache.batch_capacity = std::array::from_fn(|slot| batches[slot].vertices.len());
         #[cfg(test)]
         {
-            cache.batches = usize::from(!normal.vertices.is_empty())
-                + usize::from(!selected.vertices.is_empty());
+            cache.batches = batches.iter().filter(|b| !b.vertices.is_empty()).count();
         }
+        // Selected last, so it lies over the edges it crosses.
+        let [normal, selected, colours @ ..] = batches;
         if !normal.vertices.is_empty() {
             window.paint_path(normal, self.surfaces.dimmed.to_hsla());
+        }
+        for (batch, ink) in colours.into_iter().zip(self.palette) {
+            if !batch.vertices.is_empty() {
+                window.paint_path(batch, ink.to_hsla());
+            }
         }
         if !selected.vertices.is_empty() {
             window.paint_path(selected, self.accent.to_hsla());
@@ -696,8 +730,13 @@ impl Frame {
             let Some(edge) = graph.edges.get(id) else {
                 continue;
             };
-            if edge.marker_start == Marker::None
-                && edge.marker_end == Marker::None
+            let (marker_start, marker_end) = if graph.hide_markers {
+                (Marker::None, Marker::None)
+            } else {
+                (edge.marker_start, edge.marker_end)
+            };
+            if marker_start == Marker::None
+                && marker_end == Marker::None
                 && !(edge.animated && self.phase.is_some())
             {
                 continue;
@@ -728,8 +767,8 @@ impl Frame {
             };
             self.markers(
                 &route,
-                edge.marker_start,
-                edge.marker_end,
+                marker_start,
+                marker_end,
                 bounds,
                 &mut closed,
                 window,
@@ -771,14 +810,16 @@ impl Frame {
         if self.background == Background::None {
             return;
         }
-        let raw = self.grid.filter(|g| g.is_finite()).unwrap_or(20.);
+        let raw = self
+            .grid_step
+            .or(self.grid.filter(|g| g.is_finite()))
+            .unwrap_or(20.);
+        let dot = self.grid_dot;
         let step = (raw.max(8.) * self.viewport.zoom).max(16.);
         let size = WorldPoint::new(b.size.width.as_f32(), b.size.height.as_f32());
-        if cache
-            .grid
-            .as_ref()
-            .is_none_or(|g| g.size != size || g.step != step || g.background != self.background)
-        {
+        if cache.grid.as_ref().is_none_or(|g| {
+            g.size != size || g.step != step || g.dot != dot || g.background != self.background
+        }) {
             let mut path = Path::new(pixel(WorldPoint::new(-step, -step)));
             let mut x = -step;
             while x < size.x + step {
@@ -791,7 +832,7 @@ impl Frame {
                             rectangle(&mut path, Rect::new(x - 3., y - 0.3, 6., 0.6));
                             rectangle(&mut path, Rect::new(x - 0.3, y - 3., 0.6, 6.));
                         } else {
-                            rectangle(&mut path, Rect::new(x - 0.6, y - 0.6, 1.2, 1.2));
+                            rectangle(&mut path, Rect::new(x - dot * 0.5, y - dot * 0.5, dot, dot));
                         }
                         y += step;
                     }
@@ -808,6 +849,7 @@ impl Frame {
             cache.grid = Some(GridMesh {
                 size,
                 step,
+                dot,
                 background: self.background,
                 path,
             });
@@ -822,7 +864,7 @@ impl Frame {
                 Viewport { pan, zoom: 1. },
                 b.origin,
                 window,
-                self.surfaces.border,
+                self.grid_ink,
             );
         }
     }
@@ -1386,7 +1428,7 @@ mod tests {
                 counts.push(view.read_with(cx, |view, _| {
                     assert!(!view.interaction.editor.scene().index_pending());
                     let meshes = view.meshes.borrow();
-                    assert!(meshes.batch_capacity.0 > 0);
+                    assert!(meshes.batch_capacity[0] > 0);
                     eprintln!(
                         "{node_count} nodes, pan={pan}, zoom={zoom}: {} BVH visits",
                         view.visible.visited

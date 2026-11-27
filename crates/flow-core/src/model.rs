@@ -212,12 +212,97 @@ pub enum HandleKind {
     Source,
     Target,
 }
+/// A theme palette colour, by the palette's names (`guiraffe_core::ColorName`); one byte, so
+/// colouring edges and ports costs a document nothing. Flow shades it for the scheme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Hue {
+    Dark,
+    Gray,
+    Red,
+    Pink,
+    Grape,
+    Violet,
+    Indigo,
+    Blue,
+    Cyan,
+    Teal,
+    Green,
+    Lime,
+    Yellow,
+    Orange,
+}
+impl Hue {
+    pub const ALL: [Hue; 14] = [
+        Self::Dark,
+        Self::Gray,
+        Self::Red,
+        Self::Pink,
+        Self::Grape,
+        Self::Violet,
+        Self::Indigo,
+        Self::Blue,
+        Self::Cyan,
+        Self::Teal,
+        Self::Green,
+        Self::Lime,
+        Self::Yellow,
+        Self::Orange,
+    ];
+    /// The palette name, as `guiraffe_core::ColorName::name` spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Gray => "gray",
+            Self::Red => "red",
+            Self::Pink => "pink",
+            Self::Grape => "grape",
+            Self::Violet => "violet",
+            Self::Indigo => "indigo",
+            Self::Blue => "blue",
+            Self::Cyan => "cyan",
+            Self::Teal => "teal",
+            Self::Green => "green",
+            Self::Lime => "lime",
+            Self::Yellow => "yellow",
+            Self::Orange => "orange",
+        }
+    }
+    /// The hue a palette name names, ignoring case.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|hue| hue.name().eq_ignore_ascii_case(name))
+    }
+}
+/// How a port is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortRing {
+    /// A filled dot.
+    #[default]
+    Dot,
+    /// A ring, hollow until the port is connected or hovered, then filled.
+    Ring,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Handle {
     pub id: Name,
     pub kind: HandleKind,
     pub side: Side,
     pub offset: f32,
+    /// A theme palette colour, shaded for the scheme; `None` uses the theme's accent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Hue>,
+    /// Dot or ring.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub ring: PortRing,
+    /// Shown when the pointer rests on the port, such as its channel layout or range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tooltip: Option<Name>,
+}
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 impl Handle {
     pub fn new(id: impl Into<Name>, kind: HandleKind, side: Side) -> Self {
@@ -226,7 +311,23 @@ impl Handle {
             kind,
             side,
             offset: 0.5,
+            color: None,
+            ring: PortRing::Dot,
+            tooltip: None,
         }
+    }
+    /// This port in a theme palette colour (see [`Handle::color`]).
+    pub fn with_color(mut self, color: Hue) -> Self {
+        self.color = Some(color);
+        self
+    }
+    pub fn with_ring(mut self, ring: PortRing) -> Self {
+        self.ring = ring;
+        self
+    }
+    pub fn with_tooltip(mut self, tooltip: impl Into<Name>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
     }
     pub fn position(&self, rect: Rect) -> Point {
         match self.side {
@@ -251,6 +352,21 @@ pub struct Node {
     /// Axis lock for moves of this node; `None` uses the graph's [`Graph::axis_lock`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub axis_lock: Option<AxisLock>,
+    /// The frame Flow draws around the node's renderer.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub frame: NodeFrame,
+}
+/// The frame Flow draws around a node: a surface fill and a border (accent when selected).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeFrame {
+    /// Corners of the theme's default radius.
+    #[default]
+    Rounded,
+    /// Fully rounded ends, for terminals and small nodes.
+    Pill,
+    /// No frame: the renderer draws the whole node. Selection is shown by the renderer.
+    None,
 }
 impl Node {
     pub fn new(id: NodeId, label: impl Into<String>, pos: Point) -> Self {
@@ -265,6 +381,7 @@ impl Node {
             draggable: true,
             handles: Handles::defaults(),
             axis_lock: None,
+            frame: NodeFrame::Rounded,
         }
     }
     /// Coordinates are absolute world coordinates, including for children.
@@ -322,6 +439,10 @@ pub struct Edge {
     /// [`Graph::edge_stroke`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<StrokeStyle>,
+    /// A theme palette colour; `None` is the theme's dimmed edge colour. A selected edge is
+    /// drawn in the accent whatever its colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Hue>,
 }
 impl Edge {
     pub fn new(id: EdgeId, source: NodeId, target: NodeId) -> Self {
@@ -335,6 +456,7 @@ impl Edge {
             marker_start: Marker::None,
             marker_end: Marker::ArrowClosed,
             stroke: None,
+            color: None,
         }
     }
 }
@@ -351,6 +473,10 @@ pub struct Graph {
     /// Default line pattern for edges (an edge's own [`Edge::stroke`] wins).
     #[serde(default)]
     pub edge_stroke: StrokeStyle,
+    /// Draw no edge markers, whatever each edge's [`Edge::marker_start`] and
+    /// [`Edge::marker_end`] say: for graphs whose direction is plain from their ports.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_markers: bool,
 }
 impl Graph {
     /// The axis lock that applies to moving `node`.

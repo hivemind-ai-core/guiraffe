@@ -139,7 +139,7 @@ fn event_payload(event: &FlowEvent, state: &FlowState) -> Value {
             .ok()
             .and_then(|value| Value::item_from_json(&value).ok())
             .unwrap_or_default(),
-        FlowEvent::SelectionChanged => record([
+        FlowEvent::SelectionChanged { .. } => record([
             (
                 "nodes",
                 Value::List(
@@ -196,6 +196,7 @@ impl FlowDocument {
                     Some("none") => Background::None,
                     _ => Background::Dots,
                 },
+                grid: crate::GridStyle::default(),
                 minimap: flag(2, true),
                 controls: flag(3, true),
                 toolbar: flag(4, true),
@@ -244,7 +245,7 @@ fn mount_flow(
         |state: &mut FlowDocumentState, owner, event, window, cx| {
             let index = match event {
                 FlowEvent::Changed => 0,
-                FlowEvent::SelectionChanged => 1,
+                FlowEvent::SelectionChanged { .. } => 1,
                 FlowEvent::ViewportChanged(_) => 2,
                 FlowEvent::Error(_) => 3,
             };

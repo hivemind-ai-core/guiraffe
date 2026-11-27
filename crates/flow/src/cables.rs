@@ -35,7 +35,7 @@
 use crate::core::{self, Side, StrokeStyle};
 use crate::{AnchorsMoved, FlowState};
 use gpui_kit::{prelude::*, *};
-use guiraffe_core::GuiraffeTheme;
+use guiraffe_core::{ColorName, GuiraffeTheme};
 use guiraffe_state::{Event, Fx, KeyedList, Selected, Store};
 use std::collections::HashMap;
 
@@ -83,6 +83,9 @@ pub struct Cable {
     pub from: CableEnd,
     pub to: CableEnd,
     pub style: StrokeStyle,
+    /// A theme palette colour, shaded for the scheme like a coloured flow edge; `None` is
+    /// the dimmed colour of an idle edge.
+    pub color: Option<ColorName>,
 }
 
 impl Cable {
@@ -92,7 +95,12 @@ impl Cable {
             from,
             to,
             style: StrokeStyle::Solid,
+            color: None,
         }
+    }
+    pub fn color(mut self, color: ColorName) -> Self {
+        self.color = Some(color);
+        self
     }
     pub fn style(mut self, style: StrokeStyle) -> Self {
         self.style = style;
@@ -480,7 +488,13 @@ impl Render for CableLayer {
         let cables = self.cables.get(cx).clone();
         let flows = self.flows.clone();
         let scratch = self.scratch.clone();
-        let color = GuiraffeTheme::global(cx).surfaces().dimmed.to_hsla();
+        let theme = GuiraffeTheme::global(cx);
+        let dimmed = theme.surfaces().dimmed;
+        // Resolved only when a cable is coloured.
+        let palette = cables
+            .iter()
+            .any(|(_, cable)| cable.color.is_some())
+            .then(|| crate::ink::palette(theme));
         canvas(
             |_, _, _| {},
             move |_, (), window, cx| {
@@ -531,8 +545,15 @@ impl Render for CableLayer {
                             },
                         ),
                     }
+                    let ink = palette
+                        .as_ref()
+                        .zip(cable.color)
+                        .and_then(|(palette, c)| {
+                            crate::ink::resolve(palette, Some(crate::ink::hue(c)))
+                        })
+                        .unwrap_or(dimmed);
                     if let Ok(path) = builder.build() {
-                        window.paint_path(path, color);
+                        window.paint_path(path, ink.to_hsla());
                     }
                 }
             },

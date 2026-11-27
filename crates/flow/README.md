@@ -111,6 +111,35 @@ can redraw ancestors for a child change, whereas gpui-fast isolates these leaves
 - `Changed` / `SelectionChanged` are currently emitted on both the model and the viewport entity:
   subscribe to one of them (follow-up: emit on the model only).
 
+### Paint styles
+
+Colours are theme palette names (`"teal"`, `"orange"`: `guiraffe_core::ColorName`), shaded per
+scheme to keep 3:1 against the canvas, so typed edges and ports stay distinct in both schemes.
+
+- `Edge::color` colours an idle edge (the default is the dimmed edge colour); a selected edge is
+  drawn in the accent whatever its colour. It combines with `Edge::stroke` (solid, dashed,
+  dotted). Edges batch by colour: one vertex buffer per colour in use, none per edge.
+- `Handle::color`, `Handle::ring` (`PortRing::Dot`, or `Ring`: hollow until connected or
+  hovered, then filled) and `Handle::tooltip`. A ring keeps the dot's hit target and anchor.
+  Connection state is shown for a node's first 64 ports.
+- `Node::frame`: `NodeFrame::Rounded` (default), `Pill`, or `None`, for a renderer that draws the
+  whole node; with `None` the renderer shows selection itself (`Node::selected`).
+- `Graph::hide_markers` draws no edge markers, for graphs whose direction is plain from their
+  ports.
+- `FlowOptions::grid`: `GridStyle { color, step, dot }`; the step follows the snap grid by
+  default.
+- Cables: `Cable::color` (see `cables`).
+
+### Selection by id
+
+`FlowState::set_selection(nodes, edges, source, cx)` sets the selection of a mounted flow to
+exactly these ids (unknown ids are ignored), for a host that keeps another view, such as a rack
+or an inspector, in step. The current selection again is a no-op and emits nothing. Positions,
+the viewport, keyboard focus and undo history are untouched. `FlowEvent::SelectionChanged`
+carries the `Source`: `Pointer` or `Keyboard` for canvas input, the caller's for
+`set_selection`, the dispatch's for the bus `select` action (`{nodes: [...], edges: [...]}`,
+`FlowAction::Select`).
+
 ### Auto-layout
 
 Call `FlowState::arrange(engine, options, duration, cx)` to compute geometry on
