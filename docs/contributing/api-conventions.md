@@ -57,6 +57,13 @@ A Component never hides an `Entity` inside itself. When something needs state, i
 
 - No color or pixel constants in widget code. Everything comes from `GuiraffeTheme`: palettes,
   `Size` scales, the `Variant` resolver, `Surfaces`, shadow and motion tokens.
+- Surfaces form a per-scheme ladder (`GuiraffeTheme::surfaces_light` / `surfaces_dark`:
+  body, surface, raised, sunken, border). Adjacent levels differ by at least 1.08:1
+  (`SURFACE_STEP`). Paint a region's level with `Surfaces::of(SurfaceKind)`; wells, recessed
+  fields, meter tracks and plot backgrounds are `Sunken`.
+- Coloured ink on a surface (meter zones, plot lines) uses `readable_shade(color, preferred,
+  background, 3.0)`: the nearest shade that clears 3:1 (WCAG 1.4.11), so a family never
+  vanishes on a light or dark well. Exact per-scheme shades and `Rgb`s stay available.
 - Widgets implement `Styled` so callers can always override styles last.
 - Per-component theme defaults (`theme.defaults::<Button>()`) are data and can be serialized.
 - Light and dark schemes are both first-class. Every widget has a visual snapshot in both (§10).

@@ -4,7 +4,7 @@ use gpui_kit::{
     AnyElement, App, IntoElement, ParentElement, RenderOnce, StyleRefinement, Window, div,
     prelude::*, px,
 };
-use guiraffe_core::Size;
+use guiraffe_core::{Size, SurfaceKind};
 
 use crate::style::{hsla, radius, refine, shadows, surfaces};
 
@@ -17,6 +17,8 @@ pub struct Paper {
     padding: Option<Size>,
     no_padding: bool,
     with_border: bool,
+    /// The level of the surface ladder this paper paints (body by default).
+    surface: SurfaceKind,
     children: Vec<AnyElement>,
 }
 
@@ -35,6 +37,7 @@ impl Paper {
             padding: None,
             no_padding: false,
             with_border: false,
+            surface: SurfaceKind::Body,
             children: Vec::new(),
         }
     }
@@ -44,6 +47,12 @@ impl Paper {
     /// No padding (content that bleeds to the edge, e.g. a table).
     pub fn p_0(mut self) -> Self {
         self.no_padding = true;
+        self
+    }
+    /// Paint a level of the theme's surface ladder: `Sunken` for wells and recessed areas,
+    /// `Raised` for popover-like cards.
+    pub fn surface(mut self, kind: SurfaceKind) -> Self {
+        self.surface = kind;
         self
     }
 }
@@ -68,7 +77,7 @@ impl RenderOnce for Paper {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let s = surfaces(cx);
         let el = div()
-            .bg(hsla(s.body))
+            .bg(hsla(s.of(self.surface)))
             .rounded(radius(self.radius, cx))
             .text_color(hsla(s.text))
             .when(!self.no_padding, |el| el.p(px(pad_for(self.padding))))

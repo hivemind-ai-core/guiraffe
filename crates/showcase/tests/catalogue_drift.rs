@@ -269,6 +269,14 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Real-time audio meter fed by the host per frame through MeterFeed; documents cannot feed levels.",
     ),
     (
+        "components::MeterOptions::field well",
+        "Real-time audio meter fed by the host per frame through MeterFeed; documents cannot feed levels.",
+    ),
+    (
+        "components::Paper::surface",
+        "Rust builder taking a SurfaceKind; a document picks the surface through the card recipe.",
+    ),
+    (
         "components::MeterOptions::field ballistics",
         "Real-time audio meter fed by the host per frame through MeterFeed; documents cannot feed levels.",
     ),

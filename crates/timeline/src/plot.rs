@@ -4,32 +4,75 @@ use gpui_kit::{
     AnyElement, Bounds, IntoElement, ParentElement, PathBuilder, Pixels, Styled, canvas, div,
     point, px, size,
 };
-use guiraffe_core::{ColorName, GuiraffeTheme, StateKind, Variant};
+use guiraffe_core::{
+    ColorName, GuiraffeTheme, Rgb, Scheme, StateKind, SurfaceKind, Variant, readable_shade,
+};
 use std::{ops::Range, rc::Rc};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Ink {
     Border,
+    /// Minor grid lines: the border colour, darkened or lightened until it clears
+    /// [`GRID_CONTRAST`] on the plot's surface.
     Minor,
     Text,
     Dimmed,
+    /// The theme's primary colour, at the nearest shade that clears [`INK_CONTRAST`].
     Accent,
     Selection,
     SelectionText,
     LabelBackground,
+    /// Alternating bands: a neutral that clears [`STRIPE_CONTRAST`] on the plot's surface.
     Stripe,
+    /// A palette family at the nearest shade to the filled one that clears [`INK_CONTRAST`]
+    /// on the plot's surface.
     Color(ColorName),
+    /// Exact shades of a family per scheme: `(color, light, dark)`.
+    Shade(ColorName, u8, u8),
+    /// An exact colour in both schemes.
+    Rgb(Rgb),
 }
+
+/// Lines and marks that carry data: 3:1 (WCAG 1.4.11).
+pub const INK_CONTRAST: f32 = 3.0;
+/// Grid lines: visible, but well below data ink.
+pub const GRID_CONTRAST: f32 = 1.25;
+/// Alternating bands: the smallest step that still reads as a band.
+pub const STRIPE_CONTRAST: f32 = 1.08;
+
 impl Ink {
-    fn color(self, theme: &GuiraffeTheme) -> gpui_kit::Hsla {
+    /// The colour this ink paints on `background` (the plot's surface).
+    pub fn resolve(self, theme: &GuiraffeTheme, background: Rgb) -> Rgb {
         let s = theme.surfaces();
+        let neutral = match theme.scheme {
+            Scheme::Light => ColorName::Gray,
+            Scheme::Dark => ColorName::Dark,
+        };
+        let index_of = |rgb: Rgb, fallback: u8| {
+            neutral
+                .shades()
+                .iter()
+                .position(|shade| *shade == rgb)
+                .and_then(|i| u8::try_from(i).ok())
+                .unwrap_or(fallback)
+        };
+        let filled = theme.resolve_ctx().filled_shade();
         match self {
             Self::Border => s.border,
             Self::LabelBackground => s.body,
-            Self::Minor | Self::Stripe => s.surface,
+            Self::Minor => {
+                if s.border.contrast(background) >= GRID_CONTRAST {
+                    s.border
+                } else {
+                    readable_shade(neutral, index_of(s.border, 3), background, GRID_CONTRAST)
+                }
+            }
+            Self::Stripe => {
+                readable_shade(neutral, index_of(s.surface, 1), background, STRIPE_CONTRAST)
+            }
             Self::Text => s.text,
             Self::Dimmed => s.dimmed,
-            Self::Accent => theme.variant(None, Variant::Filled).background,
+            Self::Accent => readable_shade(theme.primary, filled, background, INK_CONTRAST),
             Self::SelectionText => {
                 theme
                     .state(StateKind::Selected, Variant::Filled, None)
@@ -40,9 +83,16 @@ impl Ink {
                     .state(StateKind::Selected, Variant::Filled, None)
                     .background
             }
-            Self::Color(c) => theme.variant(Some(c), Variant::Filled).background,
+            Self::Color(c) => readable_shade(c, filled, background, INK_CONTRAST),
+            Self::Shade(c, light, dark) => c.shade(match theme.scheme {
+                Scheme::Light => light,
+                Scheme::Dark => dark,
+            }),
+            Self::Rgb(rgb) => rgb,
         }
-        .to_hsla()
+    }
+    fn color(self, theme: &GuiraffeTheme, background: Rgb) -> gpui_kit::Hsla {
+        self.resolve(theme, background).to_hsla()
     }
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -338,6 +388,9 @@ impl Layer for BackgroundBands {
 pub struct PlotSurface {
     pub axis: Axis,
     pub range: Option<ValueRange>,
+    /// The surface the plot is drawn on (it paints no background of its own). Inks are
+    /// resolved against it, so grids and data stay readable on a sunken well.
+    pub surface: SurfaceKind,
     layers: Rc<Vec<Rc<dyn Layer>>>,
 }
 impl PlotSurface {
@@ -345,6 +398,7 @@ impl PlotSurface {
         Self {
             axis,
             range: None,
+            surface: SurfaceKind::Body,
             layers: Rc::new(Vec::new()),
         }
     }
@@ -394,6 +448,7 @@ impl PlotSurface {
     pub fn value_labels(&self, theme: GuiraffeTheme) -> AnyElement {
         let mut labels = Self::new(self.axis);
         labels.range = self.range;
+        labels.surface = self.surface;
         labels.add_layer(ValueLabels);
         labels.element(theme, false, 1., 0.)
     }
@@ -405,6 +460,7 @@ impl PlotSurface {
         row_offset: f64,
     ) -> AnyElement {
         let plot = self.clone();
+        let background = theme.surfaces().of(self.surface);
         div()
             .absolute()
             .size_full()
@@ -438,7 +494,7 @@ impl PlotSurface {
                                     path.move_to(at(from.0, from.1));
                                     path.line_to(at(to.0, to.1));
                                     if let Ok(path) = path.build() {
-                                        window.paint_path(path, ink.color(&theme));
+                                        window.paint_path(path, ink.color(&theme, background));
                                     }
                                 }
                                 Primitive::Rect { x, y, w, h, ink } => {
@@ -447,11 +503,11 @@ impl PlotSurface {
                                             at(x, y),
                                             size(px(w.max(0.) as f32), px(h.max(0.) as f32)),
                                         ),
-                                        ink.color(&theme),
+                                        ink.color(&theme, background),
                                     ));
                                 }
                                 Primitive::Text { x, y, text, ink } => {
-                                    let color = ink.color(&theme);
+                                    let color = ink.color(&theme, background);
                                     let shaped = window.text_system().shape_line(
                                         text.clone().into(),
                                         px(11.),
@@ -507,6 +563,53 @@ pub(crate) fn append_diamond(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grid_and_default_inks_are_readable_on_every_surface_in_both_schemes() {
+        use guiraffe_core::{GuiraffeTheme, Scheme, SurfaceKind};
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let theme = GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            };
+            let s = theme.surfaces();
+            for kind in [SurfaceKind::Body, SurfaceKind::Raised, SurfaceKind::Sunken] {
+                let bg = s.of(kind);
+                let check = |ink: super::Ink, min: f32| {
+                    let c = ink.resolve(&theme, bg).contrast(bg);
+                    assert!(c >= min, "{scheme:?} {kind:?} {ink:?}: {c:.2}:1 < {min}");
+                };
+                check(super::Ink::Minor, super::GRID_CONTRAST);
+                check(super::Ink::Stripe, super::STRIPE_CONTRAST);
+                check(super::Ink::Accent, super::INK_CONTRAST);
+                for family in guiraffe_core::ColorName::ALL {
+                    if !matches!(
+                        family,
+                        guiraffe_core::ColorName::Dark | guiraffe_core::ColorName::Gray
+                    ) {
+                        check(super::Ink::Color(family), super::INK_CONTRAST);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exact_inks_are_used_as_given() {
+        use guiraffe_core::{ColorName, GuiraffeTheme, Rgb, Scheme};
+        let light = GuiraffeTheme::default();
+        let dark = GuiraffeTheme {
+            scheme: Scheme::Dark,
+            ..Default::default()
+        };
+        let ink = super::Ink::Shade(ColorName::Teal, 8, 4);
+        assert_eq!(ink.resolve(&light, Rgb::WHITE), ColorName::Teal.shade(8));
+        assert_eq!(ink.resolve(&dark, Rgb::WHITE), ColorName::Teal.shade(4));
+        assert_eq!(
+            super::Ink::Rgb(Rgb::hex(0xabcdef)).resolve(&dark, Rgb::BLACK),
+            Rgb::hex(0xabcdef)
+        );
+    }
+
     use super::*;
     #[test]
     fn layers_are_ordered_culled_and_share_navigation() {
