@@ -175,10 +175,19 @@ impl Surfaces {
     }
 }
 
+/// How far a chosen shade must clear a contrast minimum: above `f32` noise in
+/// [`Rgb::contrast`], far below anything visible.
+pub const CONTRAST_MARGIN: f32 = 0.01;
+
 /// The shade of `color` nearest to `preferred` that clears `min` contrast on `background`,
 /// searching away from the background's lightness first. Falls back to the family's
 /// highest-contrast shade when none clears `min`.
+///
+/// A shade must clear `min` by [`CONTRAST_MARGIN`], so a pair that sits on the threshold
+/// (yellow 9 on white is 3.0006:1 in `f32`) never passes or fails on float noise: the search
+/// moves to the next shade instead, or falls back when the family has none.
 pub fn readable_shade(color: ColorName, preferred: u8, background: Rgb, min: f32) -> Rgb {
+    let min = min + CONTRAST_MARGIN;
     let shades = color.shades();
     let preferred = usize::from(preferred.min(9));
     // On a light background darker (higher) shades gain contrast; on a dark one, lighter.
@@ -233,6 +242,14 @@ impl GuiraffeTheme {
         self.primary.shade(shade)
     }
 
+    /// The scheme's surface ladder.
+    pub fn surface_shades(&self) -> &SurfaceShades {
+        match self.scheme {
+            Scheme::Light => &self.surfaces_light,
+            Scheme::Dark => &self.surfaces_dark,
+        }
+    }
+
     /// The highlight of the active item in a menu, dropdown or select list: the item under
     /// the pointer and the item the arrow keys moved to are one highlight. Returns the fill and
     /// the text on it. The fill is the primary colour at the shade nearest the theme's own
@@ -261,14 +278,6 @@ impl GuiraffeTheme {
             })
             .unwrap_or((self.primary, self.primary.shade(base)));
         (fill, crate::variant::filled_foreground(color, fill))
-    }
-
-    /// The scheme's surface ladder.
-    pub fn surface_shades(&self) -> &SurfaceShades {
-        match self.scheme {
-            Scheme::Light => &self.surfaces_light,
-            Scheme::Dark => &self.surfaces_dark,
-        }
     }
 
     pub fn surfaces(&self) -> Surfaces {

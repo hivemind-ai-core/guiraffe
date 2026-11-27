@@ -41,8 +41,8 @@ pub use palette::{ColorName, Shade};
 pub use state::{Contrast, DragPreviewColors, StateColors, StateKind, contrast_checks};
 pub use text_menu::{TextMenu, TextMenuItem, TextMenuSpec};
 pub use theme::{
-    GuiraffeTheme, Recipes, SURFACE_STEP, Scheme, SurfaceShades, Surfaces, apply, readable_shade,
-    set_scheme,
+    CONTRAST_MARGIN, GuiraffeTheme, Recipes, SURFACE_STEP, Scheme, SurfaceShades, Surfaces, apply,
+    readable_shade, set_scheme,
 };
 pub use tokens::{ShadowLayer, Size, shadow};
 pub use variant::{Variant, VariantColors};
