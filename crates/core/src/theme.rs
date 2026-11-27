@@ -61,12 +61,12 @@ impl SurfaceShades {
         sunken: Rgb::hex(0xdee2e6),
         border: Rgb::hex(0xdee2e6),
     };
-    /// Dark default: dark 7 body, dark 6 panels, dark 5 raised, dark 8 wells.
+    /// Dark default: dark 7 body, dark 6 panels, dark 5 raised, dark 9 wells.
     pub const DARK: Self = Self {
         body: Rgb::hex(0x242424),
         surface: Rgb::hex(0x2e2e2e),
         raised: Rgb::hex(0x3b3b3b),
-        sunken: Rgb::hex(0x1f1f1f),
+        sunken: Rgb::hex(0x141414),
         border: Rgb::hex(0x424242),
     };
     /// The adjacent pairs that must separate, with their names (for tests and audits).
@@ -497,10 +497,10 @@ mod surface_tests {
     #[test]
     fn readable_shade_walks_to_the_nearest_passing_shade() {
         let white = Rgb::WHITE;
-        // Yellow 6 fails 3:1 on white; the nearest darker passing shade is chosen.
-        let pick = readable_shade(ColorName::Yellow, 6, white, 3.0);
+        // Orange 6 fails 3:1 on white; the nearest darker passing shade is chosen.
+        let pick = readable_shade(ColorName::Orange, 6, white, 3.0);
         assert!(pick.contrast(white) >= 3.0);
-        assert_ne!(pick, ColorName::Yellow.shade(6));
+        assert_ne!(pick, ColorName::Orange.shade(6));
         // A passing preferred shade is kept.
         assert_eq!(
             readable_shade(ColorName::Blue, 8, white, 3.0),
