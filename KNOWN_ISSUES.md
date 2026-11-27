@@ -134,6 +134,15 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
   yet: it waits for the shared overflow row (#19), which will drive `set_hidden` and the
   `trailing` slot. Until then hosts that overflow keep their own scroll container.
 
+### Flow
+
+- A ring port shows whether it is connected for a node's first 64 ports; later ports stay hollow
+  until hovered.
+- Edge, port and cable colours keep 3:1 against the canvas in both schemes, but there is no
+  separate high-contrast mode, and hues are told apart by colour alone (pair them with a stroke
+  pattern or a tooltip where that matters).
+- A node with `NodeFrame::None` shows no selection unless its renderer draws it.
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select

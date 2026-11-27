@@ -6,6 +6,7 @@
 mod bus;
 pub mod cables;
 mod gesture;
+mod ink;
 mod interaction;
 mod node;
 mod paint;
@@ -19,7 +20,7 @@ pub type Flow = FlowState;
 mod tests;
 use core::{ConnectionValidator, FlowError, Graph, Node, Point as WorldPoint, Viewport, Visible};
 use gpui_kit::{prelude::*, *};
-use guiraffe_core::{ColorName, GuiraffeTheme, Size};
+use guiraffe_core::{ColorName, GuiraffeTheme, Size, protocol::Source};
 pub use guiraffe_flow_core as core;
 pub use interaction::{Gesture, Interaction};
 use std::collections::BTreeMap;
@@ -66,9 +67,34 @@ pub enum Background {
     Cross,
     None,
 }
+/// How the background grid is drawn (#160).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GridStyle {
+    /// A theme palette colour; `None` is the theme's border colour.
+    pub color: Option<ColorName>,
+    /// The grid step in world units; `None` follows the snap grid (20 without one).
+    pub step: Option<f32>,
+    /// The size of a dot of [`Background::Dots`], in pixels.
+    pub dot: f32,
+}
+impl GridStyle {
+    /// The default dot size.
+    pub const DOT: f32 = 1.2;
+}
+impl Default for GridStyle {
+    fn default() -> Self {
+        Self {
+            color: None,
+            step: None,
+            dot: Self::DOT,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlowOptions {
     pub background: Background,
+    /// The background grid's colour, step and dot size.
+    pub grid: GridStyle,
     pub minimap: bool,
     pub controls: bool,
     pub toolbar: bool,
@@ -80,6 +106,7 @@ impl Default for FlowOptions {
     fn default() -> Self {
         Self {
             background: Background::Dots,
+            grid: GridStyle::default(),
             minimap: true,
             controls: true,
             toolbar: true,
@@ -91,7 +118,12 @@ impl Default for FlowOptions {
 #[derive(Clone, Debug)]
 pub enum FlowEvent {
     Changed,
-    SelectionChanged,
+    /// The selected nodes or edges changed, by `source`: [`Source::Pointer`] or
+    /// [`Source::Keyboard`] for input on the canvas, the caller's for
+    /// [`FlowState::set_selection`], the dispatch's for the bus `select` action.
+    SelectionChanged {
+        source: Source,
+    },
     ViewportChanged(Viewport),
     Error(FlowError),
 }
@@ -118,6 +150,8 @@ pub struct FlowViewport {
     first_fit: Rc<Cell<bool>>,
     index_job: Option<(std::sync::Arc<core::Scene>, core::LayoutCancellation)>,
     camera_explicit: Cell<bool>,
+    /// The source a selection change in [`FlowViewport::publish`] is tagged with.
+    selection_source: Source,
     minimap_drag: bool,
     config: Rc<RefCell<Option<state::Config>>>,
     theme_cache: Option<Rc<GuiraffeTheme>>,
@@ -227,6 +261,7 @@ impl FlowViewport {
             first_fit: Rc::new(Cell::new(true)),
             index_job: None,
             camera_explicit: Cell::new(false),
+            selection_source: Source::Pointer,
             minimap_drag: false,
             config: Rc::new(RefCell::new(None)),
             theme_cache: None,
@@ -432,8 +467,9 @@ impl FlowViewport {
                 .sync(self.interaction.editor.scene());
             cx.emit(FlowEvent::Changed);
         }
+        let source = self.selection_source;
         if selection {
-            cx.emit(FlowEvent::SelectionChanged);
+            cx.emit(FlowEvent::SelectionChanged { source });
         }
         if viewport {
             cx.emit(FlowEvent::ViewportChanged(self.viewport()));
@@ -456,7 +492,7 @@ impl FlowViewport {
                     cx.emit(FlowEvent::Changed);
                 }
                 if selection {
-                    cx.emit(FlowEvent::SelectionChanged);
+                    cx.emit(FlowEvent::SelectionChanged { source });
                 }
                 cx.notify();
             });
@@ -487,18 +523,60 @@ impl FlowViewport {
             let revision = self.interaction.editor.scene().node_revision(*id);
             let selected = self.interaction.editor.is_selected(*id);
             let zoom = self.viewport().zoom;
+            let connected = node::connected_ports(self.interaction.editor.scene(), node);
             let old = card.read(cx);
-            if old.revision != revision || old.node.selected != selected || old.zoom != zoom {
+            if old.revision != revision
+                || old.node.selected != selected
+                || old.zoom != zoom
+                || old.connected != connected
+            {
                 card.update(cx, |card, cx| {
                     if card.revision != revision {
                         card.node = node.clone();
                         card.revision = revision;
                     }
+                    card.connected = connected;
                     card.node.selected = selected;
                     card.zoom = zoom;
                     cx.notify();
                 });
             }
+        }
+    }
+    /// Sets the selection to exactly these nodes and edges, by `source`; ids not in the
+    /// graph are ignored. Returns whether it changed: the current selection again is a no-op
+    /// and emits nothing. Positions, the viewport, keyboard focus, a gesture in progress and
+    /// undo history are left as they are.
+    pub fn set_selection(
+        &mut self,
+        nodes: impl IntoIterator<Item = core::NodeId>,
+        edges: impl IntoIterator<Item = core::EdgeId>,
+        source: Source,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let before = self.stamp();
+        let changed = self.interaction.editor.set_selection(nodes, edges);
+        self.selection_source = source;
+        self.publish(before, cx);
+        self.selection_source = Source::Pointer;
+        changed
+    }
+    /// [`FlowViewport::set_selection`] from the model, which mirrors the change itself.
+    pub(crate) fn adopt_selection(
+        &mut self,
+        nodes: &std::collections::BTreeSet<core::NodeId>,
+        edges: &std::collections::BTreeSet<core::EdgeId>,
+        source: Source,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .interaction
+            .editor
+            .set_selection(nodes.iter().copied(), edges.iter().copied())
+        {
+            self.refresh_cards(cx);
+            cx.emit(FlowEvent::SelectionChanged { source });
+            cx.notify();
         }
     }
     pub fn set_viewport(
@@ -769,9 +847,11 @@ impl Render for FlowViewport {
                 if node.selected != selected {
                     rendered.to_mut().selected = selected;
                 }
+                let connected = node::connected_ports(self.interaction.editor.scene(), &rendered);
                 nodes.push(
                     node::render_card(
                         &rendered,
+                        connected,
                         viewport.zoom,
                         self.renderer.as_ref(),
                         Some(style),
@@ -789,6 +869,7 @@ impl Render for FlowViewport {
                         n.selected = selected;
                         n
                     },
+                    connected: node::connected_ports(self.interaction.editor.scene(), node),
                     revision,
                     zoom: viewport.zoom,
                     renderer: self.renderer.clone(),
@@ -881,7 +962,8 @@ impl Render for FlowViewport {
             self.options.minimap,
             &theme,
             phase,
-        );
+        )
+        .with_grid_style(self.options.grid);
         frame.overview = overview;
         let frame = Rc::new(RefCell::new(
             frame.with_scene(display).with_viewport(viewport),
@@ -1094,7 +1176,9 @@ impl Render for FlowViewport {
                 if event.keystroke.key == "escape" {
                     this.minimap_drag = false;
                 }
+                this.selection_source = Source::Keyboard;
                 this.key(event, cx);
+                this.selection_source = Source::Pointer;
             }));
         if self.options.controls {
             root = root.child(self.controls(cx));

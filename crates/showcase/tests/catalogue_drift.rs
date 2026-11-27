@@ -1617,6 +1617,22 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "A once-per-frame paint notification for native overlays; documents have no screen geometry.",
     ),
     (
+        "flow::FlowOptions::field grid",
+        "Native grid styling (colour, step, dot size); documents keep the background choice.",
+    ),
+    (
+        "flow::FlowState::can_undo",
+        "Read-only native history state.",
+    ),
+    (
+        "flow::FlowState::set_selection",
+        "Native selection by id for hosts that sync another view; documents select with the bus select action.",
+    ),
+    (
+        "flow::FlowViewport::set_selection",
+        "Native selection by id on the canvas leaf; documents select with the bus select action.",
+    ),
+    (
         "flow::FlowState::edit",
         "Native API for undoable edits; documents receive the changed graph through change.",
     ),

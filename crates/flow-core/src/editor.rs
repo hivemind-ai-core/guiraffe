@@ -401,6 +401,35 @@ impl Editor {
             self.selected_edges = Arc::new(BTreeSet::new());
         }
     }
+    /// Sets the selection to exactly these nodes and edges, ignoring ids not in the graph.
+    /// Returns whether it changed; the current selection again is a no-op. Selection is not
+    /// part of the graph, so it never enters undo history.
+    pub fn set_selection(
+        &mut self,
+        nodes: impl IntoIterator<Item = NodeId>,
+        edges: impl IntoIterator<Item = EdgeId>,
+    ) -> bool {
+        let graph = self.graph();
+        let nodes: BTreeSet<NodeId> = nodes
+            .into_iter()
+            .filter(|id| graph.nodes.contains_key(id))
+            .collect();
+        let edges: BTreeSet<EdgeId> = edges
+            .into_iter()
+            .filter(|id| graph.edges.contains_key(id))
+            .collect();
+        let mut changed = false;
+        if *self.selected != nodes {
+            self.selected = Arc::new(nodes);
+            self.refresh_order();
+            changed = true;
+        }
+        if *self.selected_edges != edges {
+            self.selected_edges = Arc::new(edges);
+            changed = true;
+        }
+        changed
+    }
     pub fn toggle(&mut self, id: NodeId) {
         if self.graph().nodes.contains_key(&id) {
             let selection = Arc::make_mut(&mut self.selected);
