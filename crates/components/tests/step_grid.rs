@@ -11,8 +11,9 @@ use guiraffe_components::step_grid::{
     StepGridOptions, StepRow, step_store,
 };
 use guiraffe_core::{
-    ColorName, GuiraffeTheme, Scheme, apply,
+    ColorName, FocusIndicator, FocusPolicy, GuiraffeTheme, Scheme, apply,
     protocol::{ActionBus, Source},
+    set_app_focus_policy,
 };
 use guiraffe_state::Store;
 use guiraffe_test::snapshot::{SnapshotConfig, Snapshotter, assert_snapshot};
@@ -94,13 +95,28 @@ fn mount(
     cx: &mut TestAppContext,
     register: bool,
 ) -> (Mounted<'_>, Option<guiraffe_core::protocol::ControlId>) {
+    mount_with(cx, register, FocusPolicy::INHERIT)
+}
+
+fn mount_with(
+    cx: &mut TestAppContext,
+    register: bool,
+    focus: FocusPolicy,
+) -> (Mounted<'_>, Option<guiraffe_core::protocol::ControlId>) {
     cx.update(guiraffe_components::init);
     let mut parts = None;
     let events = Rc::new(RefCell::new(Vec::new()));
     let ev = events.clone();
     let (_, vcx) = cx.add_window_view(|window, cx| {
         let store = step_store(doc(), 50, cx);
-        let grid = StepGrid::new(store.clone(), StepGridOptions::default(), cx);
+        let grid = StepGrid::new(
+            store.clone(),
+            StepGridOptions {
+                focus,
+                ..Default::default()
+            },
+            cx,
+        );
         let id = register.then(|| StepGrid::register(&grid, "drums", window, cx));
         cx.subscribe(&grid, move |_, _, e: &StepGridEvent, _| {
             ev.borrow_mut().push(*e)
@@ -366,4 +382,94 @@ fn bus_drive_matches_the_pointer(cx: &mut TestAppContext) {
     assert_eq!(pointer_rows.1.len(), 2);
     assert_eq!(m.doc(), pointer_rows.0, "same document");
     assert_eq!(m.changes(), pointer_rows.1, "same changes");
+}
+
+/// Focus policy (#162): every app x component combination of pointer focus, with pointer
+/// edits and bus actions working when the grid declines focus.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn focus_policy_combinations(cx: &mut TestAppContext) {
+    use gpui_kit::Focusable as _;
+    let off = FocusPolicy::INHERIT.pointer(false);
+    let on = FocusPolicy::INHERIT.pointer(true);
+    for (app, grid, focuses) in [
+        (FocusPolicy::INHERIT, FocusPolicy::INHERIT, true),
+        (off, FocusPolicy::INHERIT, false),
+        (off, on, true),
+        (FocusPolicy::INHERIT, off, false),
+        (on, off, false),
+        (FocusPolicy::MOUSE_FIRST, FocusPolicy::INHERIT, false),
+        (FocusPolicy::MOUSE_FIRST, FocusPolicy::KEYBOARD_FIRST, true),
+    ] {
+        let mut cx = TestAppContext::single();
+        cx.update(|cx| set_app_focus_policy(app, cx));
+        let (mut m, id) = mount_with(&mut cx, true, grid);
+        let p = m.cell(1, 3, 0.);
+        m.vcx.simulate_click(p, Modifiers::default());
+        m.vcx.run_until_parked();
+        assert!(m.on(20, 3), "{app:?}/{grid:?}: a click toggles either way");
+        let focused = m
+            .vcx
+            .update(|window, cx| m.grid.read(cx).focus_handle(cx).is_focused(window));
+        assert_eq!(focused, focuses, "{app:?}/{grid:?}");
+        let id = id.expect("registered");
+        let toggled = m.vcx.update(|window, cx| {
+            ActionBus::dispatch(
+                id,
+                &StepAction::ToggleCell {
+                    row: RowId(30),
+                    column: 1,
+                }
+                .to_action(),
+                Source::Script,
+                window,
+                cx,
+            )
+            .is_ok()
+        });
+        assert!(toggled && m.on(30, 1), "{app:?}/{grid:?}: the bus works");
+    }
+    let _ = cx;
+}
+
+/// With pointer focus off and keyboard focus on, the keyboard cursor still works once the
+/// grid is focused (by Tab or the host), and a Keyboard indicator hides it for pointer focus.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn keyboard_focus_works_with_pointer_focus_off(cx: &mut TestAppContext) {
+    use gpui_kit::Focusable as _;
+    let (mut m, _) = mount_with(cx, true, FocusPolicy::MOUSE_FIRST);
+    let resolved = m.vcx.update(|_, cx| m.grid.read(cx).resolved_focus(cx));
+    assert!(!resolved.pointer && resolved.tab);
+    assert_eq!(resolved.indicator, FocusIndicator::Keyboard);
+    m.vcx.update(|window, cx| window.focus_next(cx));
+    m.vcx.run_until_parked();
+    let focused = m
+        .vcx
+        .update(|window, cx| m.grid.read(cx).focus_handle(cx).is_focused(window));
+    assert!(focused, "Tab reaches the grid");
+    m.vcx.simulate_keystrokes("down right space");
+    m.vcx.run_until_parked();
+    assert_eq!(m.vcx.update(|_, cx| m.grid.read(cx).cursor()), (1, 1));
+    assert!(m.on(20, 1), "space toggles the cursor's cell");
+    // Pointer-only: not a Tab stop.
+    m.vcx.update(|window, cx| {
+        window.blur(cx);
+        m.grid.update(cx, |g, cx| {
+            g.set_focus_policy(FocusPolicy::POINTER_ONLY, cx)
+        })
+    });
+    m.vcx.run_until_parked();
+    m.vcx.update(|window, cx| window.focus_next(cx));
+    m.vcx.run_until_parked();
+    let focused = m
+        .vcx
+        .update(|window, cx| m.grid.read(cx).focus_handle(cx).is_focused(window));
+    assert!(!focused, "a pointer-only grid leaves the tab order");
 }

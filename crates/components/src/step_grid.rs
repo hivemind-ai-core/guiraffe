@@ -18,7 +18,7 @@ use gpui_kit::{
     Styled, WeakEntity, Window, div, point, px, relative, size,
 };
 use guiraffe_core::{
-    ColorName, GuiraffeTheme, Variant,
+    ColorName, FocusIndicator, FocusPolicy, GuiraffeTheme, ResolvedFocus, Variant,
     protocol::{
         Action, ActionBus, ActionError, Capabilities, ControlId, ControlSnapshot, Drive, Observe,
         Outcome, Source,
@@ -77,6 +77,10 @@ pub struct StepGridOptions {
     pub level_style: LevelStyle,
     /// `None`: the built-in header (colour chip, name, length).
     pub header: Option<StepHeaderRenderer>,
+    /// How the grid takes focus, over the app default ([`guiraffe_core::set_app_focus_policy`]).
+    /// Built in: a press focuses, a Tab stop only inside a `focus_scope`, the keyboard cursor
+    /// shows whenever focused. Pointer edits and bus actions work with pointer focus off.
+    pub focus: FocusPolicy,
 }
 
 impl Default for StepGridOptions {
@@ -87,6 +91,7 @@ impl Default for StepGridOptions {
             header_width: 120.0,
             level_style: LevelStyle::Height,
             header: None,
+            focus: FocusPolicy::INHERIT,
         }
     }
 }
@@ -522,6 +527,7 @@ pub struct StepGrid {
     cursor: (usize, usize),
     cells_origin: Rc<Cell<Point<Pixels>>>,
     focus: FocusHandle,
+    focus_policy: FocusPolicy,
     id: Option<ControlId>,
 }
 
@@ -569,6 +575,7 @@ impl StepGrid {
     pub fn new(store: Store<StepDoc>, options: StepGridOptions, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let doc = store.select(cx, |d: &StepDoc| d.clone());
+            let focus_policy = options.focus;
             let options = Rc::new(options);
             let first = doc.get(cx).clone();
             let headers = cx.new(|_| StepHeaders {
@@ -606,6 +613,7 @@ impl StepGrid {
                 cursor: (0, 0),
                 cells_origin: Rc::default(),
                 focus: cx.focus_handle(),
+                focus_policy,
                 id: None,
             }
         })
@@ -627,6 +635,31 @@ impl StepGrid {
     }
 
     /// The current-column highlight's feed.
+    /// Host write: the grid's focus policy. Needs no window.
+    pub fn set_focus_policy(&mut self, policy: FocusPolicy, cx: &mut Context<Self>) {
+        if policy != self.focus_policy {
+            self.focus_policy = policy;
+            cx.notify();
+        }
+    }
+
+    /// The grid's own focus policy (before the app default).
+    pub fn focus_policy(&self) -> FocusPolicy {
+        self.focus_policy
+    }
+
+    /// The policy in effect now: the grid's, over the app default, over the built-in.
+    pub fn resolved_focus(&self, cx: &App) -> ResolvedFocus {
+        self.focus_policy.resolve_in(
+            ResolvedFocus {
+                pointer: true,
+                tab: guiraffe_core::tab_stop(None),
+                indicator: FocusIndicator::Focused,
+            },
+            cx,
+        )
+    }
+
     pub fn playhead(&self) -> StepPlayheadFeed {
         self.feed.clone()
     }
@@ -911,7 +944,11 @@ impl Render for StepGrid {
         let width = doc.columns as f32 * step - o.gap;
         let height = doc.rows().len() as f32 * step - o.gap;
         let ruler_h = 16.0;
-        let focused = self.focus.is_focused(window);
+        let policy = self.resolved_focus(cx);
+        let focused = policy.indicator_visible(
+            self.focus.is_focused(window),
+            window.last_input_was_keyboard(),
+        );
         let origin = self.cells_origin.clone();
         let cells = CellsElement {
             doc: doc.clone(),
@@ -925,7 +962,7 @@ impl Render for StepGrid {
         };
         div()
             .id("step-grid")
-            .track_focus(&self.focus)
+            .track_focus(&self.focus.clone().tab_stop(policy.tab))
             .key_context("StepGrid")
             .text_color(theme.surfaces().text.to_hsla())
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
@@ -968,7 +1005,12 @@ impl Render for StepGrid {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, e: &MouseDownEvent, window, cx| {
-                                    this.focus.focus(window, cx);
+                                    if this.resolved_focus(cx).pointer {
+                                        this.focus.focus(window, cx);
+                                    } else {
+                                        // Keep focus where it is (the workspace).
+                                        window.prevent_default();
+                                    }
                                     this.mouse_down(e, cx);
                                 }),
                             )
