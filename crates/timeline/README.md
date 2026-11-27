@@ -61,3 +61,9 @@ view.update(cx, |view, cx| {
 `BarCurve::new(n, min, max)` stores N bounded values; `set_steps(Some(n))` quantizes to N intervals and `bipolar=true` draws around zero. `draw(from, to)` fills every intervening bar in either direction and returns the changed index range. `BarCurveView` emits `BarEvent` for pointer drawing, and `from_curve`/`to_curve` sample between finite time endpoints. Render captures share the values; edits copy on write if a previous frame retains them.
 
 See `examples/plot_layers.rs` and the five showcase timeline entries.
+
+Subscribe to `TracksEvent::ContextMenu { track, clip, position, source }` to open a
+host menu. A secondary click selects the clip first and supplies the pointer position
+in window coordinates. Empty space leaves selection alone. In a focused TracksView,
+the Menu key and Shift+F10 use the selected clip's center, clamped to the visible
+tracks body when scrolled out of view. With no selection these keys do nothing.
