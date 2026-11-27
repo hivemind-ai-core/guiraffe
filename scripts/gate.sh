@@ -10,7 +10,10 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 LOG=target/gate-logs; mkdir -p "$LOG"
 # Gate builds are one-shot: incremental caches cost ~15 GB per worktree for little reuse.
 export CARGO_INCREMENTAL=0
-UP="env CARGO_TARGET_DIR=target/gate-up"; FAST="env CARGO_TARGET_DIR=target/gate-fast"
+# GATE_WRAPPER (optional) runs each cargo step, e.g. a host's build-slot script, so a slot is held
+# per step rather than for the whole gate.
+W=${GATE_WRAPPER:-}
+UP="env CARGO_TARGET_DIR=target/gate-up $W"; FAST="env CARGO_TARGET_DIR=target/gate-fast $W"
 T="--workspace --no-fail-fast --lib --bins --tests"
 CRATES=$(cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c "import json,sys;print(' '.join(p['name'] for p in json.load(sys.stdin)['packages'] if any('lib' in t['kind'] or 'proc-macro' in t['kind'] for t in p['targets'])))")
 fail=0
