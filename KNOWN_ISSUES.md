@@ -122,6 +122,15 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 
 - `guiraffe-goldens` zooms images with GPUI's linear sampling, so magnified goldens blur; the pixel readout stays exact. GPUI's `img` has no nearest-neighbour option. Add one in our GPUI fork (0.4).
 
+### Flow
+
+- A ring port shows whether it is connected for a node's first 64 ports; later ports stay hollow
+  until hovered.
+- Edge, port and cable colours keep 3:1 against the canvas in both schemes, but there is no
+  separate high-contrast mode, and hues are told apart by colour alone (pair them with a stroke
+  pattern or a tooltip where that matters).
+- A node with `NodeFrame::None` shows no selection unless its renderer draws it.
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select
