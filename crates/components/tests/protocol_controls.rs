@@ -927,3 +927,94 @@ fn vertical_slider_steps_and_bus_like_horizontal(cx: &mut TestAppContext) {
         "the fader's length bounds the track: {h}"
     );
 }
+
+#[gpui_kit::test]
+fn cycle_routes_pointer_keyboard_and_bus_through_the_same_transition(cx: &mut TestAppContext) {
+    use gpui_kit::{Modifiers, MouseButton, point};
+    cx.update(guiraffe_components::init);
+    let cycle = cx.update(|cx| {
+        CycleControl::new()
+            .options(["4", "8", "16"].map(|v| CycleOption::new(v, v)))
+            .element_id("resolution")
+            .path("grid/resolution")
+            .build_later(cx)
+    });
+    let (_, vcx) = cx.add_window_view(|_, _| Host(vec![cycle.clone().into()]));
+    vcx.run_until_parked();
+    let log = record::<_, CycleEvent>(vcx, &cycle);
+    click(vcx, &cycle, CycleControl::element_id);
+    let pos = point(px(8.), px(8.));
+    vcx.simulate_mouse_down(pos, MouseButton::Right, Modifiers::default());
+    vcx.simulate_mouse_up(pos, MouseButton::Right, Modifiers::default());
+    vcx.update(|window, cx| window.focus_next(cx));
+    vcx.simulate_keystrokes("space");
+    let path = "grid/resolution";
+    assert_eq!(
+        bus(vcx, path, names::PREVIOUS, Value::Null),
+        Ok(Outcome(Value::Str("4".into())))
+    );
+    assert_eq!(
+        bus(vcx, path, names::SET_VALUE, Value::Str("16".into())),
+        Ok(Outcome(Value::Str("16".into())))
+    );
+    assert_eq!(
+        bus(vcx, path, names::NEXT, Value::Null),
+        Ok(Outcome(Value::Str("4".into())))
+    );
+    vcx.update(|_, cx| {
+        cycle.update(cx, |cycle, cx| {
+            assert!(cycle.set_value("8", cx).is_ok());
+            cycle.set_disabled(true, cx);
+        })
+    });
+    assert_eq!(
+        bus(vcx, path, names::NEXT, Value::Null),
+        Err(ActionError::Disabled)
+    );
+    assert_eq!(
+        *log.borrow(),
+        [
+            ("8", Source::Pointer),
+            ("4", Source::Pointer),
+            ("8", Source::Keyboard),
+            ("4", Source::Mcp),
+            ("16", Source::Mcp),
+            ("4", Source::Mcp)
+        ]
+        .map(|(v, s)| CycleEvent::Changed(v.into(), s))
+    );
+}
+
+#[gpui_kit::test]
+fn cycle_toolbar_labels_meet_contrast_in_both_schemes(cx: &mut TestAppContext) {
+    use gpui_kit::component::ActiveTheme;
+    use guiraffe_core::{GuiraffeTheme, Rgb, Scheme};
+    fn rgb(color: gpui_kit::Hsla) -> Rgb {
+        let c = color.to_rgb();
+        Rgb {
+            r: (255. * c.r).round() as u8,
+            g: (255. * c.g).round() as u8,
+            b: (255. * c.b).round() as u8,
+            a: (255. * c.a).round() as u8,
+        }
+    }
+    cx.update(guiraffe_components::init);
+    cx.update(|cx| {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let theme = GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            };
+            let surface = theme.surfaces().body;
+            guiraffe_core::apply(theme, cx);
+            let kit = cx.theme();
+            for (label, background) in [
+                (kit.button_foreground, rgb(kit.button).over(surface)),
+                (kit.secondary_foreground, surface),
+            ] {
+                let ratio = rgb(label).over(background).contrast(background);
+                assert!(ratio >= 4.5, "{scheme:?} label contrast {ratio}");
+            }
+        }
+    });
+}
