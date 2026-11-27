@@ -82,7 +82,8 @@ gpui_kit::actions!(
         StartEarlier,
         StartLater,
         SelectPrevItem,
-        SelectNextItem
+        SelectNextItem,
+        OpenClipMenu
     ]
 );
 
@@ -97,6 +98,8 @@ pub fn init(cx: &mut gpui_kit::App) {
     use gpui_kit::KeyBinding;
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
+        KeyBinding::new("menu", OpenClipMenu, Some("GrTracks")),
+        KeyBinding::new("shift-f10", OpenClipMenu, Some("GrTracks")),
         KeyBinding::new("left", MoveEarlier, c),
         KeyBinding::new("right", MoveLater, c),
         KeyBinding::new("shift-left", EndEarlier, c),
