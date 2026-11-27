@@ -1,4 +1,5 @@
-//! The flow canvas on the control bus: `move_node` and `move_nodes` domain actions.
+//! The flow canvas on the control bus: `move_node` and `move_nodes` domain actions, and the
+//! shared `select` action, which sets the selection by node and edge id.
 //!
 //! Both go through the editor's move, so each node's [`core::AxisLock`] holds exactly as it
 //! does for a pointer drag. `move_nodes` moves several nodes as one edit (one undo step).
@@ -8,7 +9,7 @@ use gpui_kit::{App, Context, Entity, SharedString, Window};
 use guiraffe_core::{
     protocol::{
         Action, ActionBus, ActionError, Capabilities, ControlId, ControlSnapshot, Drive, Observe,
-        Outcome,
+        Outcome, Source,
     },
     widget_value::Value,
 };
@@ -22,6 +23,9 @@ pub mod action_names {
     pub const MOVE_NODE: &str = "move_node";
     /// `{nodes: [{node, x, y}, ...]}`: move several nodes as one edit.
     pub const MOVE_NODES: &str = "move_nodes";
+    /// `{nodes: [id, ...], edges: [id, ...]}`: set the selection (either list may be
+    /// omitted, for none). The shared `select` name.
+    pub const SELECT: &str = guiraffe_core::protocol::names::SELECT;
 }
 
 /// A typed flow action.
@@ -29,6 +33,11 @@ pub mod action_names {
 pub enum FlowAction {
     /// Move nodes to world positions; children follow their parents.
     MoveNodes(BTreeMap<core::NodeId, WorldPoint>),
+    /// Select exactly these nodes and edges.
+    Select {
+        nodes: Vec<core::NodeId>,
+        edges: Vec<core::EdgeId>,
+    },
 }
 
 impl FlowAction {
@@ -39,7 +48,18 @@ impl FlowAction {
 
     /// The erased form a bus client sends.
     pub fn to_action(&self) -> Action {
-        let Self::MoveNodes(moves) = self;
+        let moves = match self {
+            Self::MoveNodes(moves) => moves,
+            Self::Select { nodes, edges } => {
+                let ids = |ids: &[u64]| {
+                    Value::List(ids.iter().map(|id| Value::Num(*id as f64)).collect())
+                };
+                return Action {
+                    name: SharedString::new_static(action_names::SELECT),
+                    payload: record(&[("nodes", ids(nodes)), ("edges", ids(edges))]),
+                };
+            }
+        };
         let entry = |(node, to): (&core::NodeId, &WorldPoint)| {
             record(&[
                 ("node", Value::Num(*node as f64)),
@@ -80,6 +100,10 @@ impl FlowAction {
                 }
                 Ok(Self::MoveNodes(moves))
             }
+            action_names::SELECT => Ok(Self::Select {
+                nodes: ids(&action.payload, "nodes")?,
+                edges: ids(&action.payload, "edges")?,
+            }),
             _ => Err(ActionError::Unsupported),
         }
     }
@@ -100,6 +124,24 @@ fn num(value: &Value, name: &'static str) -> Result<f64, ActionError> {
         .as_f64()
         .filter(|v| v.is_finite())
         .ok_or(ActionError::Invalid(name))
+}
+
+/// A list of ids at `name`; absent or null is none.
+fn ids(value: &Value, name: &'static str) -> Result<Vec<u64>, ActionError> {
+    let list = value.field(&[SharedString::new_static(name)]);
+    if matches!(list, Value::Null) {
+        return Ok(Vec::new());
+    }
+    let len = list.list_len().ok_or(ActionError::Invalid(name))?;
+    (0..len)
+        .map(|index| {
+            list.list_get(index)
+                .and_then(Value::as_f64)
+                .filter(|id| *id >= 0.0 && id.fract() == 0.0 && *id <= 9_007_199_254_740_992.0)
+                .map(|id| id as u64)
+                .ok_or(ActionError::Invalid(name))
+        })
+        .collect()
 }
 
 fn one_move(value: &Value) -> Result<(core::NodeId, WorldPoint), ActionError> {
@@ -136,7 +178,13 @@ impl FlowState {
         action: FlowAction,
         cx: &mut Context<Self>,
     ) -> Result<bool, ActionError> {
-        let FlowAction::MoveNodes(moves) = action;
+        let moves = match action {
+            FlowAction::MoveNodes(moves) => moves,
+            FlowAction::Select { nodes, edges } => {
+                let source = ActionBus::current_source(cx).unwrap_or(Source::Host);
+                return Ok(self.set_selection(nodes, edges, source, cx));
+            }
+        };
         for id in moves.keys() {
             if !self.graph().nodes.contains_key(id) {
                 return Err(ActionError::Invalid("node"));
@@ -193,6 +241,23 @@ mod tests {
         ]));
         assert_eq!(many.to_action().name.as_ref(), action_names::MOVE_NODES);
         assert_eq!(FlowAction::decode(&many.to_action()), Ok(many));
+        let select = FlowAction::Select {
+            nodes: vec![1, 3],
+            edges: vec![2],
+        };
+        assert_eq!(select.to_action().name.as_ref(), "select");
+        assert_eq!(FlowAction::decode(&select.to_action()), Ok(select));
+        let none = Action {
+            name: action_names::SELECT.into(),
+            payload: Value::Null,
+        };
+        assert_eq!(
+            FlowAction::decode(&none),
+            Ok(FlowAction::Select {
+                nodes: vec![],
+                edges: vec![],
+            })
+        );
     }
 
     #[test]

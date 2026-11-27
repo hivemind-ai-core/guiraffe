@@ -13,8 +13,8 @@ pub use dropdown_menu::DropdownMenu;
 pub(crate) use menu_item::MenuItemElement;
 pub use popup_menu::{PopupMenu, PopupMenuItem};
 pub use section_style::{
-    MenuSectionAlign, MenuSectionHook, MenuSectionStyle, MenuSectionStyles, ResolvedMenuSection,
-    resolve_menu_section, set_menu_section_hook,
+    MenuHighlight, MenuSectionAlign, MenuSectionHook, MenuSectionStyle, MenuSectionStyles, ResolvedMenuSection,
+    menu_highlight, resolve_menu_section, set_menu_section_hook,
 };
 
 pub(crate) fn init(cx: &mut App) {

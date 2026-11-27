@@ -119,8 +119,8 @@ pub fn entries() -> Vec<Entry> {
         Entry {
             krate: "components",
             name: "Panel controls",
-            summary: "Workstation panels on the bus: icon and latched buttons, M / S / R toggle chips, a vertical fader, meters that fill their container.",
-            covers: &["ToggleChipControl"],
+            summary: "Workstation panels on the bus: grid resolution cycle, icon and latched buttons, M / S / R toggle chips, a vertical fader, meters that fill their container.",
+            covers: &["ToggleChipControl", "CycleControl"],
             demo: panel_controls,
         },
         Entry {
@@ -238,6 +238,23 @@ fn surfaces(window: &mut Window, cx: &mut App) -> AnyView {
                                 .shadow(s)
                                 .p(Size::Md)
                                 .child(Text::new(format!("{s:?}")).size(Size::Sm))
+                        }),
+                    ),
+                ),
+                example(
+                    "Surface ladder: body, raised and a sunken well (Paper::surface)",
+                    div().flex().gap(px(16.)).children(
+                        [
+                            (guiraffe_core::SurfaceKind::Body, "Body"),
+                            (guiraffe_core::SurfaceKind::Raised, "Raised"),
+                            (guiraffe_core::SurfaceKind::Sunken, "Sunken well"),
+                        ]
+                        .map(|(kind, label)| {
+                            Paper::new()
+                                .surface(kind)
+                                .with_border(kind == guiraffe_core::SurfaceKind::Body)
+                                .p(Size::Md)
+                                .child(Text::new(label).size(Size::Sm))
                         }),
                     ),
                 ),
@@ -446,14 +463,18 @@ struct StepDemo(Entity<StepGrid>);
 impl gpui_kit::Render for StepDemo {
     fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
         column([example(
-            "Click toggles, drag paints, Alt-drag sets the level; Hat repeats every 6 steps",
+            "Click toggles, drag paints, Alt-drag sets the level, Shift-click cycles accent and ghost, Ctrl-drag nudges; Hat repeats every 6 steps, Clap is muted, the dashed Snare cells are a draft",
             self.0.clone(),
         )])
     }
 }
 
 fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
-    use guiraffe_components::step_grid::{StepDoc, step_store};
+    use guiraffe_components::step_grid::{RulerLabel, SetGhosts, StepDoc, step_store};
+    let mut clap = StepRow::new(4, "Clap (muted)", 16)
+        .with_color(ColorName::Grape)
+        .with_cell(14, StepCell::on().with_ratchet(4));
+    clap.muted = true;
     let rows = vec![
         StepRow::new(1, "Kick", 16)
             .with_color(ColorName::Red)
@@ -463,28 +484,52 @@ fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
             .with_cell(12, StepCell::on().with_ratchet(2)),
         StepRow::new(2, "Snare", 16)
             .with_color(ColorName::Blue)
-            .with_cell(4, StepCell::on())
-            .with_cell(12, StepCell::on())
+            .with_cell(4, StepCell::on().with_flam())
+            .with_cell(7, StepCell::on().ghost_note().with_level(0.6))
+            .with_cell(12, StepCell::on().with_offset(0.25))
             .with_cell(15, StepCell::on().with_probability(0.4)),
         StepRow::new(3, "Hat", 6)
             .with_color(ColorName::Yellow)
             .with_cell(0, StepCell::on().with_level(0.5))
             .with_cell(2, StepCell::on())
             .with_cell(4, StepCell::on().with_level(0.3)),
-        StepRow::new(4, "Clap", 16)
-            .with_color(ColorName::Grape)
-            .with_cell(14, StepCell::on().with_ratchet(4)),
+        clap,
     ];
     let store = step_store(StepDoc::new(16, 4, rows), 100, cx);
-    // Mouse-first: a click edits without taking focus; Tab reaches the keyboard cursor.
-    let grid = StepGrid::new(
-        store,
-        StepGridOptions {
-            focus: guiraffe_core::FocusPolicy::MOUSE_FIRST,
-            ..Default::default()
+    // A proposed Snare pattern, drawn dashed until applied (`apply_ghosts` on the bus).
+    store.dispatch(
+        SetGhosts {
+            row: guiraffe_components::RowId(2),
+            cells: Some(
+                (0..16)
+                    .map(|c| {
+                        if c % 8 == 6 {
+                            StepCell::on()
+                        } else {
+                            StepCell::default()
+                        }
+                    })
+                    .collect(),
+            ),
         },
         cx,
     );
+    let options = StepGridOptions {
+        group_gap: 6.,
+        // Bold bar numbers, step-in-bar numbers between.
+        ruler_label: Some(std::rc::Rc::new(|c| {
+            Some(RulerLabel {
+                text: if c % 4 == 0 { c / 4 + 1 } else { c % 4 + 1 }
+                    .to_string()
+                    .into(),
+                strong: c % 4 == 0,
+            })
+        })),
+        // Mouse-first: a click edits without taking focus; Tab reaches the keyboard cursor.
+        focus: guiraffe_core::FocusPolicy::MOUSE_FIRST,
+        ..StepGridOptions::default()
+    };
+    let grid = StepGrid::new(store, options, cx);
     grid.read(cx).playhead().set(Some(6));
     cx.new(|_| StepDemo(grid)).into()
 }
@@ -582,7 +627,8 @@ impl gpui_kit::Render for PanelDemo {
 }
 
 /// An editor's tab row: click or arrows and Enter select; the x, Delete or Ctrl+W closes.
-struct TabsDemo(Entity<Tabs>, Entity<EventLog>);
+/// Below it, a secondary Xs underline row and a compact Sm pill row (tool modes).
+struct TabsDemo(Entity<Tabs>, Entity<EventLog>, Entity<Tabs>, Entity<Tabs>);
 
 impl gpui_kit::Render for TabsDemo {
     fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
@@ -590,6 +636,14 @@ impl gpui_kit::Render for TabsDemo {
             example(
                 "Icons, badges and closable tabs",
                 div().w(px(640.)).child(self.0.clone()),
+            ),
+            example(
+                "Secondary row: size Xs, underline (device chain)",
+                div().w(px(640.)).child(self.2.clone()),
+            ),
+            example(
+                "Pill variant: a compact segmented row (pattern tools)",
+                div().flex().child(self.3.clone()),
             ),
             example("Events", self.1.clone()),
         ])
@@ -599,12 +653,23 @@ impl gpui_kit::Render for TabsDemo {
 fn panel_controls(window: &mut Window, cx: &mut App) -> AnyView {
     use gpui_kit::component::IconName;
     use guiraffe_components::controls::{
-        ButtonControl, ButtonVariant, SliderControl, ToggleChipControl,
+        ButtonControl, ButtonVariant, CycleControl, CycleOption, SliderControl, ToggleChipControl,
     };
     let button = |b: guiraffe_components::controls::ButtonBuilder,
                   window: &mut Window,
                   cx: &mut App| { AnyView::from(b.small().build(window, cx)) };
     let transport = vec![
+        CycleControl::new()
+            .options(
+                [("4", "1/4"), ("8", "1/8"), ("16", "1/16")]
+                    .map(|(value, label)| CycleOption::new(value, label)),
+            )
+            .value("8")
+            .small()
+            .variant(ButtonVariant::Ghost)
+            .tooltip("Click for next, right-click for previous")
+            .build(window, cx)
+            .into(),
         button(
             ButtonControl::new().icon(IconName::Play).tooltip("Play"),
             window,
@@ -707,7 +772,30 @@ fn tabs_demo(_: &mut Window, cx: &mut App) -> AnyView {
     let tabs = Tabs::new(store, TabsOptions::default(), cx);
     let log = EventLog::new(cx);
     EventLog::watch::<TabsEvent, _>(&log, &tabs, cx);
-    cx.new(|_| TabsDemo(tabs, log)).into()
+    let chain = TabsDoc::new(vec![
+        TabItem::new(1, "EQ"),
+        TabItem::new(2, "Compressor"),
+        TabItem::new(3, "Reverb").closable(),
+    ]);
+    let chain = Tabs::new(
+        tabs_store(chain, cx),
+        TabsOptions::default().size(guiraffe_core::Size::Xs),
+        cx,
+    );
+    let tools = TabsDoc::new(vec![
+        TabItem::new(1, "Draw"),
+        TabItem::new(2, "Select"),
+        TabItem::new(3, "Erase"),
+        TabItem::new(4, "Slice"),
+    ]);
+    let tools = Tabs::new(
+        tabs_store(tools, cx),
+        TabsOptions::default().variant(TabsVariant::Pill),
+        cx,
+    );
+    EventLog::watch::<TabsEvent, _>(&log, &chain, cx);
+    EventLog::watch::<TabsEvent, _>(&log, &tools, cx);
+    cx.new(|_| TabsDemo(tabs, log, chain, tools)).into()
 }
 
 fn ring(window: &mut Window, cx: &mut App) -> AnyView {

@@ -319,6 +319,14 @@ small button for M / S / R chips. `SliderControl::vertical()` and `.length(px)`
 make a fader. `MeterOptions::fill()` makes a `Meter` or `MeterBank` take its
 parent's length along the bar, as pure layout.
 
+`CycleControl` displays one label from an ordered list of `CycleOption` values.
+Click, Enter, and Space advance. Right-click reverses. Both directions wrap.
+The bus accepts `next` and `previous` with a null payload, and `set_value`
+with a string matching an option's wire value. A change emits
+`CycleEvent::Changed(value, source)`. The window-free host setter is silent.
+An empty list is disabled. A singleton stays selected without emitting.
+The first option supplies the fallback when the initial value is absent.
+
 The menu control renders an inline item list. A popup menu, the data
 table or list (a follow-up task) and the remaining rich components adopt the
 same pattern.

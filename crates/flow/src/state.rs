@@ -136,6 +136,10 @@ impl FlowState {
     ) -> Option<crate::PortAnchor> {
         self.canvas.read(cx).port_anchor(node, port)
     }
+    /// Whether there is an edit to undo. Selection is not an edit.
+    pub fn can_undo(&self) -> bool {
+        self.editor.can_undo()
+    }
     pub fn viewport_entity(&self) -> &Entity<FlowViewport> {
         &self.canvas
     }
@@ -331,6 +335,29 @@ impl FlowState {
             cx.notify();
         }
         Ok(changed)
+    }
+    /// Sets the selection to exactly these nodes and edges, by `source` (`Source::Host`
+    /// when the app itself does it); ids not in the graph are ignored. Returns whether it
+    /// changed: the current selection again is a no-op and emits nothing. Positions, the
+    /// viewport, keyboard focus and undo history are left as they are.
+    pub fn set_selection(
+        &mut self,
+        nodes: impl IntoIterator<Item = core::NodeId>,
+        edges: impl IntoIterator<Item = core::EdgeId>,
+        source: guiraffe_core::protocol::Source,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.editor.set_selection(nodes, edges) {
+            return false;
+        }
+        let nodes = self.editor.selected_nodes_shared();
+        let edges = self.editor.selected_edges_shared();
+        self.canvas.update(cx, |leaf, cx| {
+            leaf.adopt_selection(&nodes, &edges, source, cx)
+        });
+        cx.emit(FlowEvent::SelectionChanged { source });
+        cx.notify();
+        true
     }
     /// Move nodes to world positions as one edit (one undo step). Children follow their
     /// parents and each node's axis lock holds, as for a pointer drag.

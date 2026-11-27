@@ -59,6 +59,18 @@ impl Snapshotter {
         size: Size<Pixels>,
         build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> Result<RgbaImage> {
+        self.render_after(size, build, |_, _| {})
+    }
+
+    /// [`Self::render`], running `interact` after the first frame (hover an element, press a
+    /// key) and capturing once the window has settled.
+    pub fn render_after<V: Render + 'static>(
+        &mut self,
+        size: Size<Pixels>,
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+        interact: impl FnOnce(&mut Window, &mut App),
+    ) -> Result<RgbaImage> {
+        let mut interact = Some(interact);
         let text = gpui_kit::platform::current_platform(true).text_system();
         let mut cx = HeadlessAppContext::with_platform(
             text,
@@ -77,6 +89,10 @@ impl Snapshotter {
                 let _ = window.draw(cx);
             })?;
             cx.run_until_parked();
+            if let Some(interact) = interact.take() {
+                cx.update_window(window.into(), |_, window, cx| interact(window, cx))?;
+                cx.run_until_parked();
+            }
         }
         cx.capture_screenshot(window.into())
             .context("capture (is a wgpu adapter available?)")

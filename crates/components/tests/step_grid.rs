@@ -7,8 +7,8 @@ use gpui_kit::{
     Render, Styled, TestAppContext, VisualTestContext, Window, div, point, px, size,
 };
 use guiraffe_components::step_grid::{
-    RowId, SetRows, StepAction, StepCell, StepChange, StepDoc, StepGrid, StepGridEvent,
-    StepGridOptions, StepRow, step_store,
+    LevelGesture, RowId, RulerLabel, SetColumns, SetGhosts, SetRows, StepAction, StepCell,
+    StepChange, StepDoc, StepFlag, StepGrid, StepGridEvent, StepGridOptions, StepRow, step_store,
 };
 use guiraffe_core::{
     ColorName, FocusIndicator, FocusPolicy, GuiraffeTheme, Scheme, apply,
@@ -63,12 +63,8 @@ struct Mounted<'a> {
 impl Mounted<'_> {
     fn cell(&mut self, row: usize, column: usize, dy: f32) -> Point<Pixels> {
         let b = self.vcx.debug_bounds("step-cells").expect("cells");
-        let step = 22.0 + 2.0;
-        b.origin
-            + point(
-                px(column as f32 * step + 11.),
-                px(row as f32 * step + 11. + dy),
-            )
+        let g = self.vcx.update(|_, cx| self.grid.read(cx).geometry());
+        b.origin + point(px(g.x(column) + 11.), px(g.y(row) + 11. + dy))
     }
     fn doc(&mut self) -> StepDoc {
         self.vcx
@@ -95,13 +91,13 @@ fn mount(
     cx: &mut TestAppContext,
     register: bool,
 ) -> (Mounted<'_>, Option<guiraffe_core::protocol::ControlId>) {
-    mount_with(cx, register, FocusPolicy::INHERIT)
+    mount_with(cx, register, StepGridOptions::default())
 }
 
 fn mount_with(
     cx: &mut TestAppContext,
     register: bool,
-    focus: FocusPolicy,
+    options: StepGridOptions,
 ) -> (Mounted<'_>, Option<guiraffe_core::protocol::ControlId>) {
     cx.update(guiraffe_components::init);
     let mut parts = None;
@@ -109,14 +105,7 @@ fn mount_with(
     let ev = events.clone();
     let (_, vcx) = cx.add_window_view(|window, cx| {
         let store = step_store(doc(), 50, cx);
-        let grid = StepGrid::new(
-            store.clone(),
-            StepGridOptions {
-                focus,
-                ..Default::default()
-            },
-            cx,
-        );
+        let grid = StepGrid::new(store.clone(), options, cx);
         let id = register.then(|| StepGrid::register(&grid, "drums", window, cx));
         cx.subscribe(&grid, move |_, _, e: &StepGridEvent, _| {
             ev.borrow_mut().push(*e)
@@ -373,6 +362,20 @@ fn bus_drive_matches_the_pointer(cx: &mut TestAppContext) {
                 StepChange::RowLengthChanged { row, length } => {
                     StepAction::SetRowLength { row, length }
                 }
+                StepChange::FlagCycled { row, column, .. } => StepAction::CycleFlag { row, column },
+                StepChange::OffsetChanged {
+                    row,
+                    column,
+                    offset,
+                } => StepAction::SetOffset {
+                    row,
+                    column,
+                    offset,
+                },
+                StepChange::FlamChanged { row, column, flam } => {
+                    StepAction::SetFlam { row, column, flam }
+                }
+                StepChange::GhostsApplied { row } => StepAction::ApplyGhosts { row },
             };
             assert!(
                 ActionBus::dispatch(id, &action.to_action(), Source::Script, window, cx).is_ok()
@@ -382,6 +385,356 @@ fn bus_drive_matches_the_pointer(cx: &mut TestAppContext) {
     assert_eq!(pointer_rows.1.len(), 2);
     assert_eq!(m.doc(), pointer_rows.0, "same document");
     assert_eq!(m.changes(), pointer_rows.1, "same changes");
+}
+
+fn cell_of(m: &mut Mounted<'_>, row: u64, column: usize) -> StepCell {
+    m.doc()
+        .row(RowId(row))
+        .map(|r| r.cell(column))
+        .unwrap_or_default()
+}
+
+fn modifiers(f: impl FnOnce(&mut Modifiers)) -> Modifiers {
+    let mut m = Modifiers::default();
+    f(&mut m);
+    m
+}
+
+/// Shift-click cycles emphasis, Ctrl-drag sets micro-timing; the bus gives the same result.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn modifier_gestures_by_pointer_and_bus(cx: &mut TestAppContext) {
+    let pointer = {
+        let (mut m, _) = mount(cx, true);
+        let shift = modifiers(|m| m.shift = true);
+        let p = m.cell(0, 0, 0.);
+        m.vcx.simulate_click(p, shift);
+        m.vcx.run_until_parked();
+        assert_eq!(cell_of(&mut m, 10, 0).emphasis(), StepFlag::Accent);
+        assert!(cell_of(&mut m, 10, 0).on, "shift-click does not toggle");
+        let ctrl = modifiers(|m| m.control = true);
+        let (a, b) = (m.cell(0, 4, 0.), m.cell(0, 4, 0.) + point(px(5.5), px(0.)));
+        m.vcx.simulate_mouse_down(a, MouseButton::Left, ctrl);
+        m.vcx.simulate_mouse_move(b, Some(MouseButton::Left), ctrl);
+        m.vcx.simulate_mouse_up(b, MouseButton::Left, ctrl);
+        m.vcx.run_until_parked();
+        assert!((cell_of(&mut m, 10, 4).offset - 0.25).abs() < 1e-4);
+        (m.doc(), m.changes())
+    };
+    assert_eq!(
+        pointer.1,
+        [
+            StepChange::FlagCycled {
+                row: RowId(10),
+                column: 0,
+                flag: StepFlag::Accent
+            },
+            StepChange::OffsetChanged {
+                row: RowId(10),
+                column: 4,
+                offset: 0.25
+            },
+        ]
+    );
+    let (mut m, id) = mount(cx, true);
+    let id = id.expect("registered");
+    m.vcx.update(|window, cx| {
+        for a in [
+            StepAction::CycleFlag {
+                row: RowId(10),
+                column: 0,
+            },
+            StepAction::SetOffset {
+                row: RowId(10),
+                column: 4,
+                offset: 0.25,
+            },
+        ] {
+            assert!(ActionBus::dispatch(id, &a.to_action(), Source::Mcp, window, cx).is_ok());
+        }
+    });
+    assert_eq!(m.doc(), pointer.0);
+    assert_eq!(m.changes(), pointer.1);
+}
+
+/// The host hook sees every press first and can take it.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn the_press_hook_can_handle_a_press(cx: &mut TestAppContext) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let log = seen.clone();
+    let options = StepGridOptions {
+        on_press: Some(Rc::new(move |press, _, _| {
+            log.borrow_mut()
+                .push((press.row, press.column, press.modifiers.platform));
+            press.modifiers.platform
+        })),
+        ..StepGridOptions::default()
+    };
+    let (mut m, _) = mount_with(cx, true, options);
+    let tool = modifiers(|m| m.platform = true);
+    let p = m.cell(1, 2, 0.);
+    m.vcx.simulate_click(p, tool);
+    m.vcx.run_until_parked();
+    assert!(!m.on(20, 2), "the host took it");
+    m.vcx.simulate_click(p, Modifiers::default());
+    m.vcx.run_until_parked();
+    assert!(m.on(20, 2), "not taken: the grid toggles");
+    assert_eq!(
+        *seen.borrow(),
+        [(RowId(20), 2, true), (RowId(20), 2, false)]
+    );
+}
+
+/// With `LevelGesture::Absolute` an Alt-click sets the level from the press height.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn absolute_level_is_set_by_the_press_height(cx: &mut TestAppContext) {
+    let options = StepGridOptions {
+        level_gesture: LevelGesture::Absolute,
+        ..StepGridOptions::default()
+    };
+    let (mut m, _) = mount_with(cx, true, options);
+    let alt = modifiers(|m| m.alt = true);
+    // 5.5 px below the cell's top: three quarters up.
+    let p = m.cell(1, 7, -5.5);
+    m.vcx.simulate_click(p, alt);
+    m.vcx.run_until_parked();
+    let cell = cell_of(&mut m, 20, 7);
+    assert!(cell.on && (cell.level - 0.75).abs() < 0.01, "{cell:?}");
+}
+
+/// A drag commits when the button comes up outside the cells, or when a move arrives
+/// with the button already up.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn a_drag_released_outside_the_cells_commits(cx: &mut TestAppContext) {
+    let (mut m, _) = mount(cx, true);
+    let (a, b) = (m.cell(1, 5, 0.), m.cell(1, 8, 0.));
+    let outside = m.cell(1, 8, 200.);
+    m.vcx
+        .simulate_mouse_down(a, MouseButton::Left, Modifiers::default());
+    m.vcx
+        .simulate_mouse_move(b, Some(MouseButton::Left), Modifiers::default());
+    m.vcx
+        .simulate_mouse_move(outside, Some(MouseButton::Left), Modifiers::default());
+    m.vcx
+        .simulate_mouse_up(outside, MouseButton::Left, Modifiers::default());
+    m.vcx.run_until_parked();
+    assert!((5..=8).all(|c| m.on(20, c)), "committed on release outside");
+    // The button comes up where the grid can't see it: the next move commits.
+    let (a, b) = (m.cell(0, 13, 0.), m.cell(0, 15, 0.));
+    m.vcx
+        .simulate_mouse_down(a, MouseButton::Left, Modifiers::default());
+    m.vcx
+        .simulate_mouse_move(b, Some(MouseButton::Left), Modifiers::default());
+    m.vcx.simulate_mouse_move(b, None, Modifiers::default());
+    m.vcx.run_until_parked();
+    assert!((13..=15).all(|c| m.on(10, c)));
+    assert_eq!(m.changes().len(), 2);
+}
+
+/// Hover events, group gaps in hit-testing, and the cells' bounds.
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "GPUI records debug bounds in debug builds"
+)]
+#[gpui_kit::test]
+fn hover_group_gaps_and_cells_bounds(cx: &mut TestAppContext) {
+    let options = StepGridOptions {
+        group_gap: 8.0,
+        ..StepGridOptions::default()
+    };
+    let (mut m, _) = mount_with(cx, true, options);
+    let bounds = m.vcx.update(|_, cx| m.grid.read(cx).cells_bounds());
+    assert_eq!(Some(bounds), m.vcx.debug_bounds("step-cells"));
+    // Column 4 starts a new group: 8 px further right than without gaps.
+    let g = m.vcx.update(|_, cx| m.grid.read(cx).geometry());
+    assert_eq!(g.x(4), 4.0 * 24.0 + 8.0);
+    let p = m.cell(1, 5, 0.);
+    m.vcx.simulate_click(p, Modifiers::default());
+    m.vcx.run_until_parked();
+    assert!(
+        m.on(20, 5),
+        "the click lands on column 5 past the group gap"
+    );
+    let hovers = |m: &Mounted<'_>| -> Vec<Option<(RowId, usize)>> {
+        m.events
+            .borrow()
+            .iter()
+            .filter_map(|e| match e {
+                StepGridEvent::Hover(h) => Some(*h),
+                _ => None,
+            })
+            .collect()
+    };
+    let before = hovers(&m).len();
+    let over = m.cell(2, 9, 0.);
+    m.vcx.simulate_mouse_move(over, None, Modifiers::default());
+    m.vcx.simulate_mouse_move(over, None, Modifiers::default());
+    let away = m.cell(2, 9, 300.);
+    m.vcx.simulate_mouse_move(away, None, Modifiers::default());
+    m.vcx.run_until_parked();
+    assert_eq!(
+        hovers(&m)[before..],
+        [Some((RowId(30), 9)), None],
+        "one event per change"
+    );
+}
+
+/// Host writes: ghost cells and column changes round-trip without events; applying the
+/// ghosts over the bus is one user edit.
+#[gpui_kit::test]
+fn ghosts_and_columns_by_store_and_bus(cx: &mut TestAppContext) {
+    let (mut m, id) = mount(cx, true);
+    let id = id.expect("registered");
+    let draft = vec![
+        StepCell::default(),
+        StepCell::on(),
+        StepCell::on().ghost_note(),
+    ];
+    m.vcx.update(|_, cx| {
+        m.store.dispatch(
+            SetGhosts {
+                row: RowId(30),
+                cells: Some(draft.clone()),
+            },
+            cx,
+        );
+        m.store.dispatch(
+            SetColumns {
+                columns: 32,
+                group: 8,
+            },
+            cx,
+        );
+    });
+    m.vcx.run_until_parked();
+    let doc = m.doc();
+    assert_eq!(doc.ghosts(RowId(30)), Some(draft.as_slice()));
+    assert_eq!((doc.columns, doc.group), (32, 8));
+    assert!(m.changes().is_empty(), "host writes never echo");
+    m.vcx.update(|window, cx| {
+        let apply = StepAction::ApplyGhosts { row: RowId(30) }.to_action();
+        assert!(ActionBus::dispatch(id, &apply, Source::Mcp, window, cx).is_ok());
+    });
+    assert!(m.on(30, 1) && !m.on(30, 0) && cell_of(&mut m, 30, 2).soft);
+    assert_eq!(m.doc().ghosts(RowId(30)), None);
+    assert_eq!(m.changes(), [StepChange::GhostsApplied { row: RowId(30) }]);
+    m.vcx.update(|_, cx| {
+        m.store.dispatch(
+            SetColumns {
+                columns: 8,
+                group: 4,
+            },
+            cx,
+        )
+    });
+    m.vcx.run_until_parked();
+    assert!(m.doc().rows().iter().all(|r| r.length <= 8));
+}
+
+/// A drum-editor grid: group gaps, bar and step ruler labels, offset ticks, flams, ghost
+/// notes, a ghost layer, and a muted row while another is soloed.
+#[test]
+fn step_grid_drum_editor_light_and_dark() {
+    let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for scheme in [Scheme::Light, Scheme::Dark] {
+        let mut s = Snapshotter::new()
+            .unwrap_or_else(|e| panic!("{e}"))
+            .with_setup(guiraffe_components::init);
+        let img = s
+            .render(size(px(600.), px(170.)), move |_, cx| {
+                apply(
+                    GuiraffeTheme {
+                        scheme,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                let mut snare = StepRow::new(20, "Snare", 16)
+                    .with_color(ColorName::Blue)
+                    .with_cell(4, StepCell::on().with_flam())
+                    .with_cell(7, StepCell::on().ghost_note().with_level(0.5))
+                    .with_cell(12, StepCell::on().with_offset(0.3));
+                snare.soloed = true;
+                let mut hat = StepRow::new(30, "Hat", 16)
+                    .with_color(ColorName::Yellow)
+                    .with_cell(2, StepCell::on())
+                    .with_cell(6, StepCell::on());
+                hat.muted = true;
+                let doc = StepDoc::new(
+                    16,
+                    4,
+                    vec![
+                        StepRow::new(10, "Kick", 16)
+                            .with_color(ColorName::Red)
+                            .with_cell(0, StepCell::on().flagged())
+                            .with_cell(5, StepCell::on().with_offset(-0.25))
+                            .with_cell(8, StepCell::on()),
+                        snare,
+                        hat,
+                    ],
+                );
+                let store = step_store(doc, 10, cx);
+                store.dispatch(
+                    SetGhosts {
+                        row: RowId(10),
+                        cells: Some(
+                            (0..16)
+                                .map(|c| {
+                                    if c % 4 == 2 {
+                                        StepCell::on()
+                                    } else {
+                                        StepCell::default()
+                                    }
+                                })
+                                .collect(),
+                        ),
+                    },
+                    cx,
+                );
+                let options = StepGridOptions {
+                    group_gap: 6.0,
+                    ruler_label: Some(Rc::new(|c| {
+                        Some(if c % 4 == 0 {
+                            RulerLabel {
+                                text: (c / 4 + 1).to_string().into(),
+                                strong: true,
+                            }
+                        } else {
+                            RulerLabel {
+                                text: (c % 4 + 1).to_string().into(),
+                                strong: false,
+                            }
+                        })
+                    })),
+                    ..StepGridOptions::default()
+                };
+                let grid = StepGrid::new(store, options, cx);
+                cx.new(|_| Root(grid))
+            })
+            .unwrap_or_else(|e| panic!("{e:#}"));
+        let name = if scheme == Scheme::Light {
+            "step-grid-drum-light"
+        } else {
+            "step-grid-drum-dark"
+        };
+        assert_snapshot(name, &img, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
+    }
 }
 
 /// Focus policy (#162): every app x component combination of pointer focus, with pointer
@@ -406,7 +759,14 @@ fn focus_policy_combinations(cx: &mut TestAppContext) {
     ] {
         let mut cx = TestAppContext::single();
         cx.update(|cx| set_app_focus_policy(app, cx));
-        let (mut m, id) = mount_with(&mut cx, true, grid);
+        let (mut m, id) = mount_with(
+            &mut cx,
+            true,
+            StepGridOptions {
+                focus: grid,
+                ..Default::default()
+            },
+        );
         let p = m.cell(1, 3, 0.);
         m.vcx.simulate_click(p, Modifiers::default());
         m.vcx.run_until_parked();
@@ -444,7 +804,14 @@ fn focus_policy_combinations(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn keyboard_focus_works_with_pointer_focus_off(cx: &mut TestAppContext) {
     use gpui_kit::Focusable as _;
-    let (mut m, _) = mount_with(cx, true, FocusPolicy::MOUSE_FIRST);
+    let (mut m, _) = mount_with(
+        cx,
+        true,
+        StepGridOptions {
+            focus: FocusPolicy::MOUSE_FIRST,
+            ..Default::default()
+        },
+    );
     let resolved = m.vcx.update(|_, cx| m.grid.read(cx).resolved_focus(cx));
     assert!(!resolved.pointer && resolved.tab);
     assert_eq!(resolved.indicator, FocusIndicator::Keyboard);

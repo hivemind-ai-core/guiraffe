@@ -328,6 +328,15 @@ pub fn contrast_checks(t: &GuiraffeTheme) -> Vec<ContrastCheck> {
     }
     let d = t.state(StateKind::Dimmed, Variant::Default, None);
     push("Dimmed text".into(), d.foreground, d.background, TEXT_MIN);
+    // Menus, dropdowns and select lists: the hovered or keyboard-highlighted item.
+    let (highlight, highlight_text) = t.menu_highlight();
+    push("Menu highlight".into(), highlight, s.raised, NON_TEXT_MIN);
+    push(
+        "Menu highlight text".into(),
+        highlight_text,
+        highlight,
+        TEXT_MIN,
+    );
     let f = t.state(StateKind::FocusRing, Variant::Default, None);
     push("Focus ring".into(), f.border, s.body, NON_TEXT_MIN);
     // The semantic surfaces of Kit follow the same rules as the primary: the
