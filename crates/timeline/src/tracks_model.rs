@@ -10,7 +10,11 @@
 //! - **Undo** covers track content and heights (see [`tracks_store`]); selection, playhead
 //!   and view changes are not undoable.
 
-use std::{collections::BTreeMap, ops::Range, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+    sync::Arc,
+};
 
 use gpui_kit::{App, SharedString};
 use guiraffe_core::{
@@ -77,7 +81,7 @@ impl TrackRow {
 }
 
 /// A clip by track key and clip id (both stable; never positions).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ClipRef {
     pub track: TrackId,
     pub clip: u32,
@@ -200,6 +204,7 @@ impl RowLayout {
 pub struct TracksModel {
     rows: Arc<Vec<Arc<TrackRow>>>,
     pub selection: Option<ClipRef>,
+    additional: Arc<BTreeSet<ClipRef>>,
     pub playhead: f64,
     pub follow: Follow,
     /// `None` until the view fits the initial range.
@@ -222,6 +227,8 @@ impl PartialEq for TracksModel {
                     .zip(other.rows.iter())
                     .all(|(a, b)| Arc::ptr_eq(a, b) || a == b));
         rows && self.selection == other.selection
+            && (Arc::ptr_eq(&self.additional, &other.additional)
+                || self.additional == other.additional)
             && self.playhead == other.playhead
             && self.follow == other.follow
             && self.view == other.view
@@ -241,6 +248,7 @@ impl TracksModel {
         Self {
             rows: Arc::new(rows.into_iter().map(Arc::new).collect()),
             selection: None,
+            additional: Default::default(),
             playhead: 0.0,
             follow: Follow::Off,
             view: None,
@@ -283,6 +291,73 @@ impl TracksModel {
         self.row_by_id(at.track)?.track.clip(at.clip)
     }
 
+    /// Selected stable clip keys, with the primary keyboard target first.
+    pub fn selected_clips(&self) -> impl Iterator<Item = ClipRef> + '_ {
+        self.selection
+            .into_iter()
+            .chain(self.additional.iter().copied())
+    }
+
+    pub fn is_selected(&self, clip: ClipRef) -> bool {
+        self.selection == Some(clip) || self.additional.contains(&clip)
+    }
+
+    pub(crate) fn selected_on(&self, track: TrackId) -> impl Iterator<Item = ClipRef> + '_ {
+        let range = ClipRef::new(track, 0)..=ClipRef::new(track, u32::MAX);
+        self.selection
+            .filter(|at| at.track == track)
+            .into_iter()
+            .chain(self.additional.range(range).copied())
+    }
+
+    fn replace_selection(
+        &mut self,
+        clips: impl IntoIterator<Item = ClipRef>,
+    ) -> Option<TracksChange> {
+        let mut requested = clips.into_iter();
+        let first = requested.next();
+        let second = requested.next();
+        // The common single-click path probes just one clip. For a marquee, scan
+        // each requested row once instead of doing a linear ID lookup per clip.
+        let mut members = BTreeSet::new();
+        let selection = if second.is_none() {
+            first.filter(|at| self.clip(*at).is_some())
+        } else {
+            let ordered: Vec<_> = first.into_iter().chain(second).chain(requested).collect();
+            let wanted: BTreeSet<_> = ordered.iter().copied().collect();
+            for row in self.rows() {
+                if wanted
+                    .range(ClipRef::new(row.id, 0)..=ClipRef::new(row.id, u32::MAX))
+                    .next()
+                    .is_none()
+                {
+                    continue;
+                }
+                members.extend(
+                    row.track
+                        .clips()
+                        .iter()
+                        .map(|c| ClipRef::new(row.id, c.id))
+                        .filter(|at| wanted.contains(at)),
+                );
+            }
+            ordered.into_iter().find(|at| members.contains(at))
+        };
+        if let Some(at) = selection {
+            members.remove(&at);
+        }
+        let additional = members;
+        if self.selection == selection && *self.additional == additional {
+            return None;
+        }
+        self.selection = selection;
+        self.additional = Arc::new(additional);
+        Some(TracksChange::SelectionChanged { selection })
+    }
+    fn prune_selection(&mut self) {
+        let remaining: Vec<_> = self.selected_clips().collect();
+        self.replace_selection(remaining);
+    }
     /// The selection as a display position and clip id.
     pub fn selected_index(&self) -> Option<(usize, u32)> {
         let s = self.selection?;
@@ -330,9 +405,7 @@ impl TracksModel {
             .collect();
         drop(old);
         self.rows = Arc::new(rows);
-        if self.selection.is_some_and(|s| self.clip(s).is_none()) {
-            self.selection = None;
-        }
+        self.prune_selection();
         true
     }
 
@@ -359,13 +432,8 @@ impl TracksModel {
                     .trimmed(clip.clip, edge, time)?;
                 self.set_clip(clip, next, ClipEdit::Trim(edge))
             }
-            TracksAction::Select(selection) => {
-                let selection = selection.filter(|s| self.clip(*s).is_some());
-                (self.selection != selection).then(|| {
-                    self.selection = selection;
-                    TracksChange::SelectionChanged { selection }
-                })
-            }
+            TracksAction::Select(selection) => self.replace_selection(selection),
+            TracksAction::SelectMany(clips) => self.replace_selection(clips.iter().copied()),
             TracksAction::Seek(time) => {
                 let time = self.clamp_time(time)?;
                 (self.playhead != time).then(|| {
@@ -491,12 +559,18 @@ impl TrackUpdate {
 
 /// A user edit: what pointer, keyboard and bus clients send. Erased form: see
 /// [`TracksAction::decode`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TracksAction {
     /// Set a track's row height (clamped).
-    ResizeTrack { track: TrackId, height: f32 },
+    ResizeTrack {
+        track: TrackId,
+        height: f32,
+    },
     /// Move a clip to start at `start` (clamped by its neighbours).
-    MoveClip { clip: ClipRef, start: f64 },
+    MoveClip {
+        clip: ClipRef,
+        start: f64,
+    },
     /// Move one edge of a clip to `time`. The end may extend past the clip's content.
     TrimClip {
         clip: ClipRef,
@@ -505,6 +579,7 @@ pub enum TracksAction {
     },
     /// Select a clip, or clear the selection.
     Select(Option<ClipRef>),
+    SelectMany(Arc<[ClipRef]>),
     /// Move the playhead.
     Seek(f64),
 }
@@ -599,9 +674,9 @@ fn clip_fields(at: ClipRef) -> [(&'static str, Value); 2] {
 
 impl TracksAction {
     /// The erased form a bus client sends.
-    pub fn to_action(self) -> Action {
+    pub fn to_action(&self) -> Action {
         use action_names::*;
-        let (name, payload) = match self {
+        let (name, payload) = match self.clone() {
             Self::ResizeTrack { track, height } => (
                 RESIZE_TRACK,
                 record(&[
@@ -625,6 +700,10 @@ impl TracksAction {
                     ]),
                 )
             }
+            Self::SelectMany(clips) => (
+                SELECT,
+                Value::List(clips.iter().map(|at| record(&clip_fields(*at))).collect()),
+            ),
             Self::Select(None) => (SELECT, Value::Null),
             Self::Select(Some(at)) => (SELECT, record(&clip_fields(at))),
             Self::Seek(time) => (SEEK, record(&[("time", Value::Num(time))])),
@@ -658,7 +737,12 @@ impl TracksAction {
                 time: num(p, "time")?,
             },
             SELECT if *p == Value::Null => Self::Select(None),
-            SELECT => Self::Select(Some(clip_ref(p)?)),
+            SELECT => match p {
+                Value::List(items) => {
+                    Self::SelectMany(items.iter().map(clip_ref).collect::<Result<_, _>>()?)
+                }
+                _ => Self::Select(Some(clip_ref(p)?)),
+            },
             SEEK => Self::Seek(match p.as_f64() {
                 Some(t) if t.is_finite() => t,
                 _ => num(p, "time")?,
@@ -720,9 +804,7 @@ pub fn tracks_store(
         |m: &TracksModel| Arc::clone(&m.rows),
         |m: &mut TracksModel, rows| {
             m.rows = rows;
-            if m.selection.is_some_and(|s| m.clip(s).is_none()) {
-                m.selection = None;
-            }
+            m.prune_selection();
         },
         cx,
     );
@@ -730,7 +812,7 @@ pub fn tracks_store(
 }
 
 /// Apply a user action to the store (undoable unless it is a selection or a seek).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ApplyAction(pub TracksAction);
 
 impl Event<TracksModel> for ApplyAction {
@@ -816,7 +898,11 @@ host_event!(
 host_event!(
     /// Host write: the selection.
     SetSelection(Option<ClipRef>),
-    |m, selection| m.selection = selection.filter(|s| m.clip(*s).is_some())
+    |m, selection| {m.replace_selection(selection); }
+);
+host_event!(
+    /// Replace the full selection without an edit event.
+    SetSelectionMany(Arc<[ClipRef]>), |m, clips| { m.replace_selection(clips.iter().copied()); }
 );
 host_event!(
     /// The view's own layout and navigation writes (width, wheel zoom and pan).
@@ -849,6 +935,22 @@ mod tests {
             TrackRow::new(20, "B", track(&[(0.0, 1.0)])).with_height(100.0),
             TrackRow::new(30, "C", track(&[])).with_height(25.0),
         ])
+    }
+
+    #[test]
+    fn selection_set_deduplicates_valid_keys_and_survives_row_replacement() {
+        let mut m = model();
+        let a = ClipRef::new(10, 1);
+        let b = ClipRef::new(20, 1);
+        let action = TracksAction::SelectMany([b,a,b,ClipRef::new(40,1)].into());
+        assert_eq!(TracksAction::decode(&action.to_action()), Ok(action.clone()));
+        assert!(m.apply(action.clone()).is_some());
+        assert_eq!(m.selected_clips().collect::<Vec<_>>(), [b,a]);
+        assert!(m.apply(action).is_none());
+        m.update_tracks(vec![TrackUpdate::new(10,"A",track(&[(1.,2.)]))]);
+        assert_eq!(m.selected_clips().collect::<Vec<_>>(), [a]);
+        assert!(m.apply(TracksAction::Select(None)).is_some());
+        assert_eq!(m.selected_clips().next(), None);
     }
 
     #[test]
