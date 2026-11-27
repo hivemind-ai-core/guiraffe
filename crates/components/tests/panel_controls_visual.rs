@@ -61,17 +61,6 @@ fn render(scheme: Scheme) -> image::RgbaImage {
     });
     snap.render(size(px(360.), px(176.)), |window, cx| {
         let transport: Vec<AnyView> = vec![
-            CycleControl::new()
-                .options(
-                    [("4", "1/4"), ("8", "1/8"), ("16", "1/16")]
-                        .map(|(value, label)| CycleOption::new(value, label)),
-                )
-                .value("8")
-                .small()
-                .variant(ButtonVariant::Ghost)
-                .tooltip("Click for next, right-click for previous")
-                .build(window, cx)
-                .into(),
             ButtonControl::new()
                 .icon(IconName::Play)
                 .tooltip("Play")
@@ -105,7 +94,7 @@ fn render(scheme: Scheme) -> image::RgbaImage {
                 .build(window, cx)
                 .into(),
         ];
-        let chips: Vec<AnyView> = [
+        let mut chips: Vec<AnyView> = [
             ("M", true, ButtonVariant::Warning),
             ("S", false, ButtonVariant::Primary),
             ("R", true, ButtonVariant::Danger),
@@ -120,6 +109,19 @@ fn render(scheme: Scheme) -> image::RgbaImage {
                 .into()
         })
         .collect();
+        chips.push(
+            CycleControl::new()
+                .options(
+                    [("4", "1/4"), ("8", "1/8"), ("16", "1/16")]
+                        .map(|(value, label)| CycleOption::new(value, label)),
+                )
+                .value("8")
+                .small()
+                .variant(ButtonVariant::Ghost)
+                .tooltip("Click for next, right-click for previous")
+                .build(window, cx)
+                .into(),
+        );
         let fader = SliderControl::new()
             .range(0.0, 1.0)
             .step(0.01)
