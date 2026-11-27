@@ -29,8 +29,6 @@ use std::rc::Rc;
 pub const RIBBON_LEADER: &str = "ctrl-space";
 /// Key context of [`RibbonScope`]: the leader works while focus is inside it.
 pub const RIBBON_CONTEXT: &str = "GrRibbon";
-/// Leader events closer together than this, with no key-up seen in between, are auto-repeat.
-const LEADER_REPEAT: std::time::Duration = std::time::Duration::from_millis(600);
 
 /// Ribbon props: data, so they serialize for DataUi and `ui!`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -161,10 +159,6 @@ pub struct RibbonState {
     restore: Option<FocusHandle>,
     /// The leader keystroke, matched by this window's keystroke interceptor.
     leader: gpui_kit::Keystroke,
-    /// Set by the leader; cleared by a key-up in the open bar or by any other keystroke.
-    /// With `last_leader`, an auto-repeating leader never toggles twice.
-    leader_down: bool,
-    last_leader: Option<std::time::Instant>,
     window: gpui_kit::WindowId,
     _leader: Subscription,
     /// Parsed once: building a key context per frame would allocate.
@@ -203,9 +197,6 @@ impl RibbonState {
             let is_leader = event.keystroke.modifiers == state.leader.modifiers
                 && event.keystroke.key == state.leader.key;
             if !is_leader {
-                if state.leader_down {
-                    ribbon.update(cx, |state, _| state.leader_down = false);
-                }
                 return;
             }
             if !event
@@ -215,7 +206,10 @@ impl RibbonState {
             {
                 return;
             }
-            ribbon.update(cx, |state, cx| state.leader_pressed(window, cx));
+            // An auto-repeating (held) leader never toggles again; every new press does, however
+            // quickly it follows the last one and wherever its key-up went.
+            let held = window.is_dispatching_held_key();
+            ribbon.update(cx, |state, cx| state.leader_pressed(held, window, cx));
             cx.stop_propagation();
         });
         // The registry changing (enable, rebind, host contexts) reprojects an open ribbon only.
@@ -240,8 +234,6 @@ impl RibbonState {
             focus: cx.focus_handle(),
             restore: None,
             leader: default_leader(cx),
-            leader_down: false,
-            last_leader: None,
             window: window_id,
             _leader: leader,
             bar_context: gpui_kit::KeyContext::parse("GrRibbonBar").unwrap_or_default(),
@@ -406,17 +398,10 @@ impl RibbonState {
 
     /// The leader: opens, or closes from any depth (mid-chord too), except for auto-repeat
     /// while the leader is held.
-    fn leader_pressed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let now = std::time::Instant::now();
-        let repeat = self.leader_down
-            && self
-                .last_leader
-                .is_some_and(|last| now.duration_since(last) < LEADER_REPEAT);
-        self.last_leader = Some(now);
-        if repeat {
+    fn leader_pressed(&mut self, held: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if held {
             return;
         }
-        self.leader_down = true;
         if self.open {
             let _ = self.nav.key(RibbonKey::Leader, self.prompt.is_some());
             self.close(window, cx);
@@ -794,7 +779,6 @@ impl CommandRibbon {
         let column_width = height * 11.;
         let key_handler = self.state.clone();
         let escape_handler = self.state.clone();
-        let up_handler = self.state.clone();
         let mut bar = div()
             .id("command-ribbon")
             .track_focus(&state.focus)
@@ -815,11 +799,6 @@ impl CommandRibbon {
                 if event.keystroke.key == "escape" && escape_handler.read(cx).prompt.is_some() {
                     escape_handler.update(cx, |state, cx| state.escape(window, cx));
                     cx.stop_propagation();
-                }
-            })
-            .on_key_up(move |_, _, cx| {
-                if up_handler.read(cx).leader_down {
-                    up_handler.update(cx, |state, _| state.leader_down = false);
                 }
             })
             .on_key_down(move |event: &KeyDownEvent, window, cx| {

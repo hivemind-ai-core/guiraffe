@@ -1272,6 +1272,8 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
+    /// Whether the key event being dispatched is an auto-repeat (modified for GUIraffe).
+    pub(crate) dispatching_held_key: bool,
     focus_listeners: SingleSubscriberSet<AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SingleSubscriberSet<AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -2399,6 +2401,7 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
+            dispatching_held_key: false,
             focus_listeners: SingleSubscriberSet::new(),
             focus_lost_listeners: SingleSubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
@@ -2829,6 +2832,13 @@ impl Window {
                 cx,
             )
         });
+    }
+
+    /// Whether the key event being dispatched is an auto-repeat of a held key. Keystroke
+    /// interceptors and observers, which receive a [`KeystrokeEvent`] without it, read it here
+    /// (modified for GUIraffe).
+    pub fn is_dispatching_held_key(&self) -> bool {
+        self.dispatching_held_key
     }
 
     pub(crate) fn dispatch_keystroke_interceptors(
@@ -6417,6 +6427,10 @@ impl Window {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
+        // Modified for GUIraffe: keystroke interceptors and observers can tell auto-repeat.
+        self.dispatching_held_key = event
+            .downcast_ref::<KeyDownEvent>()
+            .is_some_and(|event| event.is_held);
         if self.invalidator.is_dirty() {
             self.draw(cx).clear(cx);
         }
