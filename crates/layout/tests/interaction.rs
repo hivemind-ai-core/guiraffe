@@ -170,6 +170,73 @@ struct ThreePaneHarness {
     state: Entity<SplitterState>,
 }
 
+struct ArrangementSplit {
+    state: Entity<SplitterState>,
+    height: Pixels,
+}
+
+impl Render for ArrangementSplit {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(400.)).h(self.height).child(
+            Splitter::new(&self.state)
+                .axis(guiraffe_layout::SplitterAxis::Vertical)
+                .fixed_pane(0)
+                .first_size(px(150.))
+                .first(div().size_full().debug_selector(|| "arrangement".into()))
+                .second(div().size_full().debug_selector(|| "editor".into())),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn fixed_pane_keeps_its_dragged_height_when_the_container_resizes(cx: &mut TestAppContext) {
+    cx.update(guiraffe_layout::init);
+    let state = cx.update(SplitterState::new);
+    let (split, cx) = cx.add_window_view(|_, _| ArrangementSplit {
+        state,
+        height: px(400.),
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let bottom = cx
+        .debug_bounds("arrangement")
+        .expect("arrangement")
+        .bottom();
+    cx.update(|window, cx| {
+        window.drag(
+            point(px(80.), bottom - px(2.)),
+            point(px(80.), bottom + px(40.)),
+            cx,
+        )
+    });
+    assert_eq!(
+        cx.debug_bounds("arrangement")
+            .expect("arrangement")
+            .size
+            .height,
+        px(190.)
+    );
+    for height in [500., 350.] {
+        cx.update(|window, cx| {
+            split.update(cx, |split, cx| {
+                split.height = px(height);
+                cx.notify();
+            });
+            window.render_frame(cx);
+        });
+        assert_eq!(
+            cx.debug_bounds("arrangement")
+                .expect("arrangement")
+                .size
+                .height,
+            px(190.)
+        );
+        assert_eq!(
+            cx.debug_bounds("editor").expect("editor").size.height,
+            px(height - 190.)
+        );
+    }
+}
+
 impl Render for ThreePaneHarness {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().w(px(400.)).h(px(200.)).child(

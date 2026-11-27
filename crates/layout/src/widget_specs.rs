@@ -104,6 +104,15 @@ pub static SPLITTER: WidgetSpec = WidgetSpec {
             required: false,
             token_backed: false,
         },
+        PropSpec {
+            name: "fixed-pane",
+            type_name: "integer",
+            default_json: "null",
+            accepted: &[],
+            range: Some((0.0, u32::MAX as f64)),
+            required: false,
+            token_backed: false,
+        },
     ],
     accepts_children: true,
     events: &[EventSpec {
