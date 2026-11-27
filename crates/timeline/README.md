@@ -62,7 +62,7 @@ view.update(cx, |view, cx| {
 
 See `examples/plot_layers.rs` and the five showcase timeline entries.
 
-Subscribe to `TracksEvent::ContextMenu { track, clip, position, source }` to open a
+In a Rust host, subscribe to `TracksEvent::ContextMenu { track, clip, position, source }` to open a
 host menu. A secondary click selects the clip first and supplies the pointer position
 in window coordinates. Empty space leaves selection alone. In a focused TracksView,
 the Menu key and Shift+F10 use the selected clip's center, clamped to the visible
