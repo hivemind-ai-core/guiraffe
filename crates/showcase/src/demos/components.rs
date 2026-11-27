@@ -119,8 +119,8 @@ pub fn entries() -> Vec<Entry> {
         Entry {
             krate: "components",
             name: "Panel controls",
-            summary: "Workstation panels on the bus: icon and latched buttons, M / S / R toggle chips, a vertical fader, meters that fill their container.",
-            covers: &["ToggleChipControl"],
+            summary: "Workstation panels on the bus: grid resolution cycle, icon and latched buttons, M / S / R toggle chips, a vertical fader, meters that fill their container.",
+            covers: &["ToggleChipControl", "CycleControl"],
             demo: panel_controls,
         },
         Entry {
@@ -651,12 +651,23 @@ impl gpui_kit::Render for TabsDemo {
 fn panel_controls(window: &mut Window, cx: &mut App) -> AnyView {
     use gpui_kit::component::IconName;
     use guiraffe_components::controls::{
-        ButtonControl, ButtonVariant, SliderControl, ToggleChipControl,
+        ButtonControl, ButtonVariant, CycleControl, CycleOption, SliderControl, ToggleChipControl,
     };
     let button = |b: guiraffe_components::controls::ButtonBuilder,
                   window: &mut Window,
                   cx: &mut App| { AnyView::from(b.small().build(window, cx)) };
     let transport = vec![
+        CycleControl::new()
+            .options(
+                [("4", "1/4"), ("8", "1/8"), ("16", "1/16")]
+                    .map(|(value, label)| CycleOption::new(value, label)),
+            )
+            .value("8")
+            .small()
+            .variant(ButtonVariant::Ghost)
+            .tooltip("Click for next, right-click for previous")
+            .build(window, cx)
+            .into(),
         button(
             ButtonControl::new().icon(IconName::Play).tooltip("Play"),
             window,
