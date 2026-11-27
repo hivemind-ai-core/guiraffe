@@ -243,14 +243,10 @@ impl Render for CycleControl {
         if let Some(option) = self.options.get(self.index) {
             button = button
                 .label(option.label.clone())
-                .aria_description(option.description.clone());
+                .accessibility_label(option.description.clone());
         }
         if let Some(tooltip) = &self.tooltip {
-            let text = self.options.get(self.index).map_or_else(
-                || tooltip.clone(),
-                |option| format!("{} — {}", option.description, tooltip).into(),
-            );
-            button = button.tooltip(text);
+            button = button.tooltip(tooltip.clone());
         }
         let this = cx.entity().downgrade();
         if !self.disabled && !self.options.is_empty() {

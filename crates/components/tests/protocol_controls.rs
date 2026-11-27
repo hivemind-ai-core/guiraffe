@@ -947,7 +947,17 @@ fn cycle_routes_pointer_keyboard_and_bus_through_the_same_transition(cx: &mut Te
     vcx.simulate_mouse_down(pos, MouseButton::Right, Modifiers::default());
     vcx.simulate_mouse_up(pos, MouseButton::Right, Modifiers::default());
     vcx.update(|window, cx| window.focus_next(cx));
-    vcx.simulate_keystrokes("space");
+    vcx.update(|window, cx| {
+        assert!(window.focused(cx).is_some());
+        window.draw(cx).clear(cx);
+    });
+    let key = gpui_kit::Keystroke::parse("space").expect("space key");
+    vcx.simulate_event(gpui_kit::KeyDownEvent {
+        keystroke: key.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    vcx.simulate_event(gpui_kit::KeyUpEvent { keystroke: key });
     let path = "grid/resolution";
     assert_eq!(
         bus(vcx, path, names::PREVIOUS, Value::Null),
