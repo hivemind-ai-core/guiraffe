@@ -67,6 +67,8 @@ let knob = KnobControl::new()
 - `modulation` draws an outer arc over a range in value units. `set_modulation` updates it.
 - The element is a slider with a numeric value, min, max and the formatted text. Its bus
   snapshot's label is `Cutoff: 1.25 kHz`.
+- `.compact(true)` shows the dial only, for dense rows such as per-track levels. The value
+  appears in the tooltip, and above the dial while dragging. The accessible value is unchanged.
 
 ## NumberFieldControl
 
@@ -77,6 +79,12 @@ let field = NumberFieldControl::new().mapping(cutoff).label("Cutoff").build(wind
 It shows the formatted value. Drag up or right to scrub (Shift for fine). The arrow keys
 step. Double-click or Enter opens typed entry, which parses through the mapping. Enter
 commits. Text that doesn't parse keeps entry open, with `error()` saying why.
+
+- `.default_value(v)` gives the field a reset: Alt- or Ctrl-click sets it back to `v`.
+  (Double-click is typed entry here, so a reset takes a modifier click.) The reset is a
+  `set_value` on the bus, so it is one undo step and interceptors see it like any other edit.
+- `.size(Size::Xs | Sm | Md)` follows the shared control scale: height, padding and text size.
+  `Sm` is the default, and `Xs` fits compact toolbars.
 
 ## On the bus and in `ui!`
 
