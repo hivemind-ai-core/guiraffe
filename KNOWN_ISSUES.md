@@ -154,3 +154,12 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 - A tray double-click also delivers its first click as `Click`.
 - Minimize-to-tray closes and later reopens the window, because Wayland has no hidden state.
   Provide a Quit item.
+
+## StepGrid
+
+- Undo covers the rows only. Undoing `apply_ghosts` restores the cells but not the ghost
+  layer, and `SetColumns` and `SetGhosts` are host writes outside history.
+- The keyboard toggles and inspects. Emphasis, micro-timing and flams have no keys yet; use the
+  pointer gestures or the bus actions.
+- The press hook (`StepGridOptions::on_press`) sees left presses only, and only on a cell.
+  Shift-click and Ctrl-drag act on lit cells; on an off cell they toggle it like a plain click.
