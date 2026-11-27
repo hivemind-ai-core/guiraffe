@@ -136,7 +136,10 @@ fn keyboard_and_bus_steps_agree(cx: &mut TestAppContext) {
     let sources: Vec<_> = seen
         .borrow()
         .iter()
-        .map(|ParamEvent::Changed(_, s)| *s)
+        .filter_map(|e| match e {
+            ParamEvent::Changed(_, s) => Some(*s),
+            _ => None,
+        })
         .collect();
     assert_eq!(sources, [Source::Keyboard, Source::Mcp, Source::Mcp]);
     assert_eq!(
