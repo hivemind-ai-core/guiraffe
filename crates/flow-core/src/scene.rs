@@ -484,9 +484,39 @@ pub fn cable_curve(
     to: Point,
     inward: Point,
 ) -> impl ExactSizeIterator<Item = Point> + Clone {
-    let distance = from.distance(to).mul_add(0.4, 24.).min(300.);
-    let c1 = from + outward * distance;
-    let c2 = to + inward * distance;
+    cable_curve_capped(from, outward, to, inward, HandleCaps::default())
+}
+
+/// Caps on how far a curve's control points reach from each end (its bezier handles), for
+/// a cable that should turn soon after it leaves, such as one into a side anchor. `None`
+/// keeps the default reach, `min(0.4 × distance + 24, 300)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HandleCaps {
+    pub from: Option<f32>,
+    pub to: Option<f32>,
+}
+
+/// The default handle reach for ends `distance` apart, capped by `cap` (ignored unless
+/// finite and not negative).
+pub fn handle_length(distance: f32, cap: Option<f32>) -> f32 {
+    let reach = distance.mul_add(0.4, 24.).min(300.);
+    match cap {
+        Some(cap) if cap.is_finite() && cap >= 0. => reach.min(cap),
+        _ => reach,
+    }
+}
+
+/// [`cable_curve`] with its handles capped by `caps`.
+pub fn cable_curve_capped(
+    from: Point,
+    outward: Point,
+    to: Point,
+    inward: Point,
+    caps: HandleCaps,
+) -> impl ExactSizeIterator<Item = Point> + Clone {
+    let distance = from.distance(to);
+    let c1 = from + outward * handle_length(distance, caps.from);
+    let c2 = to + inward * handle_length(distance, caps.to);
     BEZIER_WEIGHTS
         .iter()
         .map(move |&[start_weight, c1_weight, c2_weight, end_weight]| {
@@ -1232,6 +1262,58 @@ mod review_2_tests {
 #[cfg(test)]
 mod feedback_tests {
     use super::*;
+    #[test]
+    fn handle_caps_shorten_only_the_capped_end() {
+        // 1000 apart: the default reach is the 300 maximum.
+        assert_eq!(handle_length(1000., None), 300.);
+        assert_eq!(handle_length(1000., Some(32.)), 32.);
+        // A cap above the default changes nothing; a bad cap is ignored.
+        assert_eq!(handle_length(100., Some(500.)), 64.);
+        assert_eq!(handle_length(100., Some(f32::NAN)), 64.);
+        assert_eq!(handle_length(100., Some(-1.)), 64.);
+
+        let (from, to) = (Point::new(0., 0.), Point::new(1000., 400.));
+        let (right, up) = (Point::new(1., 0.), Point::new(0., -1.));
+        let plain: Vec<_> = cable_curve(from, right, to, up).collect();
+        let uncapped: Vec<_> =
+            cable_curve_capped(from, right, to, up, HandleCaps::default()).collect();
+        assert_eq!(plain, uncapped, "no caps is the default curve");
+        let capped: Vec<_> = cable_curve_capped(
+            from,
+            right,
+            to,
+            up,
+            HandleCaps {
+                from: Some(32.),
+                to: None,
+            },
+        )
+        .collect();
+        assert_eq!(capped.first(), plain.first());
+        assert_eq!(capped.last(), plain.last());
+        // With a short handle the curve leaves the start less far along its outward
+        // direction, so it turns sooner: compare the first sample after the start.
+        assert!(
+            capped[1].x < plain[1].x,
+            "{:?} vs {:?}",
+            capped[1],
+            plain[1]
+        );
+        let both: Vec<_> = cable_curve_capped(
+            from,
+            right,
+            to,
+            up,
+            HandleCaps {
+                from: Some(32.),
+                to: Some(32.),
+            },
+        )
+        .collect();
+        // The capped end-handle pulls the last approach in less from above.
+        let n = both.len() - 2;
+        assert!(both[n].y > capped[n].y, "{:?} vs {:?}", both[n], capped[n]);
+    }
     #[test]
     fn precomputed_bezier_weights_keep_the_sample_positions() {
         let from = Point::new(-128., 240.);
