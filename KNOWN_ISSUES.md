@@ -122,6 +122,12 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 
 - `guiraffe-goldens` zooms images with GPUI's linear sampling, so magnified goldens blur; the pixel readout stays exact. GPUI's `img` has no nearest-neighbour option. Add one in our GPUI fork (0.4).
 
+### Theme and meters
+
+- No yellow shade clears 3:1 on a light surface (yellow 9 is 2.3:1 on the gray 3 well), so the
+  meter's default middle zone is orange. A yellow meter zone or plot ink in the light scheme
+  stays below 3:1; pick another family or an exact `Rgb`.
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select
