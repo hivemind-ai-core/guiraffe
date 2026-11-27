@@ -52,3 +52,37 @@ fn keyboard_navigation_skips_section_labels(cx: &mut TestAppContext) {
     vcx.simulate_keystrokes("down down down enter");
     assert_eq!(*log.borrow(), vec!["Zoom in"]);
 }
+
+/// Issue 156: the item under the pointer is the highlighted item, the same one the arrow keys
+/// move, so Enter picks what the pointer shows.
+#[gpui_kit::test]
+fn the_pointer_moves_the_one_highlight(cx: &mut TestAppContext) {
+    use gpui_kit::{ElementId, test::TestWindowExt};
+    cx.update(guiraffe_components::init);
+    let log = Log::default();
+    let l = log.clone();
+    let mut built = None;
+    let (_, vcx) = cx.add_window_view(|window, cx| {
+        let menu = menu(window, cx, l);
+        built = Some(menu.clone());
+        Host { menu }
+    });
+    let menu = built.unwrap_or_else(|| panic!("menu"));
+    vcx.update(|window, cx| menu.focus_handle(cx).focus(window, cx));
+    vcx.run_until_parked();
+    // Items: 0 "Edit" label, 1 Cut, 2 Copy, 3 separator, 4 "View" label, 5 Zoom in.
+    vcx.update(|window, cx| window.hover(ElementId::Integer(5), cx));
+    vcx.run_until_parked();
+    vcx.simulate_keystrokes("enter");
+    assert_eq!(
+        *log.borrow(),
+        vec!["Zoom in"],
+        "Enter picks the hovered item"
+    );
+    log.borrow_mut().clear();
+    vcx.update(|window, cx| window.hover(ElementId::Integer(1), cx));
+    vcx.run_until_parked();
+    // The keys carry on from the hovered item: one highlight, not two.
+    vcx.simulate_keystrokes("down enter");
+    assert_eq!(*log.borrow(), vec!["Copy"]);
+}

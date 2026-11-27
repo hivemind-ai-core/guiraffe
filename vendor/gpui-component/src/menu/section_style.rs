@@ -86,6 +86,27 @@ pub struct ResolvedMenuSection {
     pub padding_y: Pixels,
 }
 
+/// The highlight of the active item in menus and select lists (GUIraffe patch): the item
+/// under the pointer and the keyboard's item are one highlight. Set as a global by the
+/// embedder; without it Kit uses its accent tokens.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MenuHighlight {
+    pub background: Hsla,
+    pub foreground: Hsla,
+}
+
+impl Global for MenuHighlight {}
+
+/// The active-item highlight in effect: the [`MenuHighlight`] global, else Kit's accent.
+pub fn menu_highlight(cx: &App) -> MenuHighlight {
+    cx.try_global::<MenuHighlight>()
+        .copied()
+        .unwrap_or_else(|| MenuHighlight {
+            background: cx.theme().tokens.accent.into(),
+            foreground: cx.theme().accent_foreground,
+        })
+}
+
 /// Returns the embedder's scoped override for the menu currently rendering.
 pub type MenuSectionHook = fn(&App) -> Option<MenuSectionStyle>;
 
