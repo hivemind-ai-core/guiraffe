@@ -340,7 +340,7 @@ fn tracks(_: &mut Window, cx: &mut App) -> AnyView {
         v,
         "Four tracks, 0.25s snap (vocals locked)",
         220.,
-        "Select a clip. ←/→ move, Shift+←/→ trim the end, and Alt+←/→ trim the start. Right-click or press the Menu key or Shift+F10 to log a menu request.",
+        "←/→ move a clip. Shift+←/→ trim its end. Alt+←/→ trim its start. Menu or Shift+F10 requests its menu.",
         cx,
     )
     .into()
