@@ -405,6 +405,30 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
     ),
     (
+        "components::Tabs::set_size",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::set_variant",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::size",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::variant",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::TabsOptions::field size",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::TabsOptions::field variant",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
         "components::TabsOptions::field trailing",
         "Overflow hook for a host-built trailing element (reserved for #19); documents cannot pass closures.",
     ),

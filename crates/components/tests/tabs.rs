@@ -9,10 +9,10 @@ use gpui_kit::{
 };
 use guiraffe_components::tabs::{
     SetSelected, SetTabs, TabId, TabItem, Tabs, TabsAction, TabsDoc, TabsEvent, TabsOptions,
-    tab_close_id, tab_element_id, tabs_store,
+    TabsVariant, tab_close_id, tab_element_id, tabs_store,
 };
 use guiraffe_core::{
-    GuiraffeTheme, Scheme, apply,
+    GuiraffeTheme, Scheme, Size, apply,
     protocol::{ActionBus, ControlId, Source},
 };
 use guiraffe_state::Store;
@@ -53,13 +53,17 @@ struct Mounted<'a> {
 }
 
 fn mount(cx: &mut TestAppContext) -> Mounted<'_> {
+    mount_with(cx, TabsOptions::default())
+}
+
+fn mount_with(cx: &mut TestAppContext, options: TabsOptions) -> Mounted<'_> {
     cx.update(guiraffe_components::init);
     let events = Rc::new(RefCell::new(Vec::new()));
     let ev = events.clone();
     let mut parts = None;
     let (_, vcx) = cx.add_window_view(|window, cx| {
         let store = tabs_store(doc(), cx);
-        let tabs = Tabs::new(store.clone(), TabsOptions::default(), cx);
+        let tabs = Tabs::new(store.clone(), options, cx);
         let id = Tabs::register(&tabs, "editor/tabs", window, cx);
         cx.subscribe(&tabs, move |_, _, e: &TabsEvent, _| {
             ev.borrow_mut().push(*e)
@@ -82,38 +86,94 @@ fn mount(cx: &mut TestAppContext) -> Mounted<'_> {
 
 #[gpui_kit::test]
 fn click_key_and_bus_select_alike(cx: &mut TestAppContext) {
-    let click = {
-        let m = mount(cx);
-        m.vcx.update(|w, cx| w.click(tab_element_id(TabId(3)), cx));
-        m.vcx.run_until_parked();
-        m.events.take()
+    // Every size and variant behaves the same: the look never changes the keyboard or the bus.
+    for options in [
+        TabsOptions::default(),
+        TabsOptions::default()
+            .size(Size::Xs)
+            .variant(TabsVariant::Pill),
+        TabsOptions::default().size(Size::Md),
+    ] {
+        let click = {
+            let m = mount_with(cx, options.clone());
+            m.vcx.update(|w, cx| w.click(tab_element_id(TabId(3)), cx));
+            m.vcx.run_until_parked();
+            m.events.take()
+        };
+        let key = {
+            let m = mount_with(cx, options.clone());
+            m.vcx.update(|window, cx| {
+                let handle = gpui_kit::Focusable::focus_handle(m.tabs.read(cx), cx);
+                handle.focus(window, cx);
+            });
+            m.vcx.simulate_keystrokes("right right enter");
+            m.events.take()
+        };
+        let bus = {
+            let m = mount_with(cx, options.clone());
+            m.vcx.update(|window, cx| {
+                ActionBus::dispatch(
+                    m.id,
+                    &TabsAction::Select(TabId(3)).to_action(),
+                    Source::Script,
+                    window,
+                    cx,
+                )
+                .ok();
+            });
+            m.events.take()
+        };
+        assert_eq!(click, [TabsEvent::Selected(TabId(3))]);
+        assert_eq!(key, click, "arrows move focus, Enter selects");
+        assert_eq!(bus, click);
+    }
+}
+
+#[gpui_kit::test]
+fn size_and_variant_setters_restyle_without_events_or_redundant_notifies(cx: &mut TestAppContext) {
+    let m = mount(cx);
+    let notified = Rc::new(std::cell::Cell::new(0));
+    let count = notified.clone();
+    let tabs = m.tabs.clone();
+    m.vcx.update(|_, cx| {
+        cx.observe(&tabs, move |_, _| count.set(count.get() + 1))
+            .detach();
+    });
+    let height = |vcx: &mut VisualTestContext| {
+        vcx.update(|w, cx| {
+            w.render_frame(cx);
+            f32::from(w.find(tab_element_id(TabId(1))).bounds().size.height)
+        })
     };
-    let key = {
-        let m = mount(cx);
-        m.vcx.update(|window, cx| {
-            let handle = gpui_kit::Focusable::focus_handle(m.tabs.read(cx), cx);
-            handle.focus(window, cx);
-        });
-        m.vcx.simulate_keystrokes("right right enter");
-        m.events.take()
-    };
-    let bus = {
-        let m = mount(cx);
-        m.vcx.update(|window, cx| {
-            ActionBus::dispatch(
-                m.id,
-                &TabsAction::Select(TabId(3)).to_action(),
-                Source::Script,
-                window,
-                cx,
-            )
-            .ok();
-        });
-        m.events.take()
-    };
-    assert_eq!(click, [TabsEvent::Selected(TabId(3))]);
-    assert_eq!(key, click, "arrows move focus, Enter selects");
-    assert_eq!(bus, click);
+    let sm = height(m.vcx);
+    assert_eq!(sm, 32.);
+    m.vcx.update(|_, cx| {
+        tabs.update(cx, |t, cx| {
+            t.set_size(Size::Sm, cx);
+            t.set_variant(TabsVariant::Underline, cx);
+        })
+    });
+    assert_eq!(notified.get(), 0, "unchanged look: no notify");
+    m.vcx.update(|_, cx| {
+        tabs.update(cx, |t, cx| {
+            t.set_size(Size::Xs, cx);
+            t.set_variant(TabsVariant::Pill, cx);
+        })
+    });
+    assert_eq!(
+        notified.get(),
+        1,
+        "both changes in one update: one observer call"
+    );
+    assert_eq!(
+        m.vcx
+            .update(|_, cx| (tabs.read(cx).size(), tabs.read(cx).variant())),
+        (Size::Xs, TabsVariant::Pill)
+    );
+    m.vcx.run_until_parked();
+    // Xs row (26 px) minus the pill track's inset on both sides.
+    assert!(height(m.vcx) < sm);
+    assert!(m.events.borrow().is_empty(), "host writes never echo");
 }
 
 #[gpui_kit::test]
@@ -202,6 +262,62 @@ fn tabs_light_and_dark() {
             "tabs-light"
         } else {
             "tabs-dark"
+        };
+        assert_snapshot(name, &img, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
+    }
+}
+
+/// Every size (Xs, Sm, Md) in both variants, stacked, in both themes.
+struct Gallery(Vec<Entity<Tabs>>);
+impl Render for Gallery {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = GuiraffeTheme::global(cx).surfaces();
+        div()
+            .size_full()
+            .bg(s.body.to_hsla())
+            .text_color(s.text.to_hsla())
+            .p(px(12.))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(10.))
+            .children(self.0.iter().cloned())
+    }
+}
+
+#[test]
+fn tab_sizes_and_variants_light_and_dark() {
+    let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for scheme in [Scheme::Light, Scheme::Dark] {
+        let mut s = Snapshotter::new()
+            .unwrap_or_else(|e| panic!("{e}"))
+            .with_setup(guiraffe_components::init);
+        let img = s
+            .render(size(px(640.), px(300.)), move |_, cx| {
+                apply(
+                    GuiraffeTheme {
+                        scheme,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                let mut rows = Vec::new();
+                for variant in [TabsVariant::Underline, TabsVariant::Pill] {
+                    for size in [Size::Xs, Size::Sm, Size::Md] {
+                        let store = tabs_store(doc(), cx);
+                        store.dispatch_now(SetSelected(TabId(2)), cx);
+                        let options = TabsOptions::default().size(size).variant(variant);
+                        rows.push(Tabs::new(store, options, cx));
+                    }
+                }
+                cx.new(|_| Gallery(rows))
+            })
+            .unwrap_or_else(|e| panic!("{e:#}"));
+        let name = if scheme == Scheme::Light {
+            "tabs-variants-light"
+        } else {
+            "tabs-variants-dark"
         };
         assert_snapshot(name, &img, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
     }

@@ -625,7 +625,8 @@ impl gpui_kit::Render for PanelDemo {
 }
 
 /// An editor's tab row: click or arrows and Enter select; the x, Delete or Ctrl+W closes.
-struct TabsDemo(Entity<Tabs>, Entity<EventLog>);
+/// Below it, a secondary Xs underline row and a compact Sm pill row (tool modes).
+struct TabsDemo(Entity<Tabs>, Entity<EventLog>, Entity<Tabs>, Entity<Tabs>);
 
 impl gpui_kit::Render for TabsDemo {
     fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
@@ -633,6 +634,14 @@ impl gpui_kit::Render for TabsDemo {
             example(
                 "Icons, badges and closable tabs",
                 div().w(px(640.)).child(self.0.clone()),
+            ),
+            example(
+                "Secondary row: size Xs, underline (device chain)",
+                div().w(px(640.)).child(self.2.clone()),
+            ),
+            example(
+                "Pill variant: a compact segmented row (pattern tools)",
+                div().flex().child(self.3.clone()),
             ),
             example("Events", self.1.clone()),
         ])
@@ -750,7 +759,30 @@ fn tabs_demo(_: &mut Window, cx: &mut App) -> AnyView {
     let tabs = Tabs::new(store, TabsOptions::default(), cx);
     let log = EventLog::new(cx);
     EventLog::watch::<TabsEvent, _>(&log, &tabs, cx);
-    cx.new(|_| TabsDemo(tabs, log)).into()
+    let chain = TabsDoc::new(vec![
+        TabItem::new(1, "EQ"),
+        TabItem::new(2, "Compressor"),
+        TabItem::new(3, "Reverb").closable(),
+    ]);
+    let chain = Tabs::new(
+        tabs_store(chain, cx),
+        TabsOptions::default().size(guiraffe_core::Size::Xs),
+        cx,
+    );
+    let tools = TabsDoc::new(vec![
+        TabItem::new(1, "Draw"),
+        TabItem::new(2, "Select"),
+        TabItem::new(3, "Erase"),
+        TabItem::new(4, "Slice"),
+    ]);
+    let tools = Tabs::new(
+        tabs_store(tools, cx),
+        TabsOptions::default().variant(TabsVariant::Pill),
+        cx,
+    );
+    EventLog::watch::<TabsEvent, _>(&log, &chain, cx);
+    EventLog::watch::<TabsEvent, _>(&log, &tools, cx);
+    cx.new(|_| TabsDemo(tabs, log, chain, tools)).into()
 }
 
 fn ring(window: &mut Window, cx: &mut App) -> AnyView {

@@ -128,6 +128,12 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
   meter's default middle zone is orange. A yellow meter zone or plot ink in the light scheme
   stays below 3:1; pick another family or an exact `Rgb`.
 
+### Tabs
+
+- Sizes cover the Xs/Sm/Md scale (Lg and Xl clamp to Md). Tabs has no built-in overflow
+  yet: it waits for the shared overflow row (#19), which will drive `set_hidden` and the
+  `trailing` slot. Until then hosts that overflow keep their own scroll container.
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select
