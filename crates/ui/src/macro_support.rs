@@ -433,8 +433,10 @@ macro_rules! param_entity {
                 builder.value(*value)
             }
             fn edited(event: &ParamEvent) -> Option<(f64, Source)> {
-                let ParamEvent::Changed(value, source) = event;
-                Some((*value, *source))
+                match event {
+                    ParamEvent::Changed(value, source) => Some((*value, *source)),
+                    _ => None,
+                }
             }
             fn host_set(&mut self, value: &f64, cx: &mut Context<Self>) {
                 self.set_value(*value, cx);

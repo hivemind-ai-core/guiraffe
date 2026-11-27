@@ -13,6 +13,7 @@
 pub mod color;
 pub mod context;
 pub mod control;
+pub mod focus_policy;
 pub mod menu_section;
 pub mod palette;
 pub mod text_menu;
@@ -30,6 +31,9 @@ pub use context::{
 pub use control::{
     A11yDisabled, A11yDisabledExt, Press, PressColors, PressableExt, RING_OFFSET, RING_WIDTH,
     focus_ring, keyed_focus, release_focus_within, ring_visible,
+};
+pub use focus_policy::{
+    FocusIndicator, FocusOpt, FocusPolicy, ResolvedFocus, app_focus_policy, set_app_focus_policy,
 };
 /// The drag axis lock, shared with GPUI-free crates (see `guiraffe-geometry`).
 pub use guiraffe_geometry::{AxisLock, apply as apply_axis_lock};

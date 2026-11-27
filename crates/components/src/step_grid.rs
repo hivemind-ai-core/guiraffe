@@ -19,7 +19,7 @@ use gpui_kit::{
     prelude::FluentBuilder, px, relative, size,
 };
 use guiraffe_core::{
-    ColorName, GuiraffeTheme, Variant,
+    ColorName, FocusIndicator, FocusPolicy, GuiraffeTheme, ResolvedFocus, Variant,
     protocol::{
         Action, ActionBus, ActionError, Capabilities, ControlId, ControlSnapshot, Drive, Observe,
         Outcome, Source,
@@ -210,6 +210,10 @@ pub struct StepGridOptions {
     pub level_style: LevelStyle,
     /// `None`: the built-in header (colour chip, name, length).
     pub header: Option<StepHeaderRenderer>,
+    /// How the grid takes focus, over the app default ([`guiraffe_core::set_app_focus_policy`]).
+    /// Built in: a press focuses, a Tab stop only inside a `focus_scope`, the keyboard cursor
+    /// shows whenever focused. Pointer edits and bus actions work with pointer focus off.
+    pub focus: FocusPolicy,
     /// Extra space after every `group` columns (0: none). Hit-testing includes it.
     pub group_gap: f32,
     pub level_gesture: LevelGesture,
@@ -227,6 +231,7 @@ impl Default for StepGridOptions {
             header_width: 120.0,
             level_style: LevelStyle::Height,
             header: None,
+            focus: FocusPolicy::INHERIT,
             group_gap: 0.0,
             level_gesture: LevelGesture::Relative,
             ruler_label: None,
@@ -773,6 +778,7 @@ pub struct StepGrid {
     geometry: Rc<Cell<StepGeometry>>,
     hovered: Option<(RowId, usize)>,
     focus: FocusHandle,
+    focus_policy: FocusPolicy,
     id: Option<ControlId>,
 }
 
@@ -820,6 +826,7 @@ impl StepGrid {
     pub fn new(store: Store<StepDoc>, options: StepGridOptions, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let doc = store.select(cx, |d: &StepDoc| d.clone());
+            let focus_policy = options.focus;
             let options = Rc::new(options);
             let first = doc.get(cx).clone();
             let headers = cx.new(|_| StepHeaders {
@@ -864,6 +871,7 @@ impl StepGrid {
                 geometry,
                 hovered: None,
                 focus: cx.focus_handle(),
+                focus_policy,
                 id: None,
             }
         })
@@ -885,6 +893,31 @@ impl StepGrid {
     }
 
     /// The current-column highlight's feed.
+    /// Host write: the grid's focus policy. Needs no window.
+    pub fn set_focus_policy(&mut self, policy: FocusPolicy, cx: &mut Context<Self>) {
+        if policy != self.focus_policy {
+            self.focus_policy = policy;
+            cx.notify();
+        }
+    }
+
+    /// The grid's own focus policy (before the app default).
+    pub fn focus_policy(&self) -> FocusPolicy {
+        self.focus_policy
+    }
+
+    /// The policy in effect now: the grid's, over the app default, over the built-in.
+    pub fn resolved_focus(&self, cx: &App) -> ResolvedFocus {
+        self.focus_policy.resolve_in(
+            ResolvedFocus {
+                pointer: true,
+                tab: guiraffe_core::tab_stop(None),
+                indicator: FocusIndicator::Focused,
+            },
+            cx,
+        )
+    }
+
     pub fn playhead(&self) -> StepPlayheadFeed {
         self.feed.clone()
     }
@@ -1296,7 +1329,11 @@ impl Render for StepGrid {
         let width = geometry.width(doc.columns);
         let height = (geometry.y(doc.rows().len()) - o.gap).max(0.0);
         let ruler_h = RULER_HEIGHT;
-        let focused = self.focus.is_focused(window);
+        let policy = self.resolved_focus(cx);
+        let focused = policy.indicator_visible(
+            self.focus.is_focused(window),
+            window.last_input_was_keyboard(),
+        );
         let cells_bounds = self.cells_bounds.clone();
         let cells = CellsElement {
             doc: doc.clone(),
@@ -1309,7 +1346,7 @@ impl Render for StepGrid {
         };
         div()
             .id("step-grid")
-            .track_focus(&self.focus)
+            .track_focus(&self.focus.clone().tab_stop(policy.tab))
             .key_context("StepGrid")
             .text_color(theme.surfaces().text.to_hsla())
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
@@ -1356,6 +1393,11 @@ impl Render for StepGrid {
                                 let hook = o.on_press.clone();
                                 move |e: &MouseDownEvent, window, cx| {
                                     let Some(grid) = view.upgrade() else { return };
+                                    let take_focus = grid.read(cx).resolved_focus(cx).pointer;
+                                    if !take_focus {
+                                        // Keep focus where it is (the workspace).
+                                        window.prevent_default();
+                                    }
                                     let press = grid.read(cx).press_at(e, cx);
                                     if let (Some(hook), Some(press)) = (&hook, press)
                                         && hook(&press, window, cx)
@@ -1363,7 +1405,9 @@ impl Render for StepGrid {
                                         return;
                                     }
                                     grid.update(cx, |this, cx| {
-                                        this.focus.focus(window, cx);
+                                        if take_focus {
+                                            this.focus.focus(window, cx);
+                                        }
                                         this.mouse_down(e, cx);
                                     });
                                 }

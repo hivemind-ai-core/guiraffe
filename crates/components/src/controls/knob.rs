@@ -64,10 +64,158 @@ pub fn value_span(travel: f64, centre: Option<f64>) -> (f64, f64) {
     }
 }
 
-/// Emitted when a knob or number field commits a value.
+/// One modulation route shown on a knob: the span it sweeps in normalised travel (0–1), in
+/// the source's colour. Arcs draw as thin rings outside the value arc, stacked outwards in
+/// order (index 0 innermost); events name an arc by that index.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModArc {
+    pub from: f64,
+    pub to: f64,
+    /// A theme-resolved colour (the source's identity colour).
+    pub color: Hsla,
+    /// The host's route id, for its own lookup (`KnobControl::modulation_arcs()[arc].id`).
+    pub id: Option<ElementId>,
+    /// Shown while the pointer is over the arc (`Envelope 2 → depth 0.40`).
+    pub tooltip: Option<SharedString>,
+}
+
+impl ModArc {
+    pub fn new(from: f64, to: f64, color: Hsla) -> Self {
+        Self {
+            from,
+            to,
+            color,
+            id: None,
+            tooltip: None,
+        }
+    }
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+    pub fn tooltip(mut self, tip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tip.into());
+        self
+    }
+    /// `(lo, hi)`, clamped to travel and ordered.
+    pub fn span(&self) -> (f64, f64) {
+        let (a, b) = (self.from.clamp(0.0, 1.0), self.to.clamp(0.0, 1.0));
+        (a.min(b), a.max(b))
+    }
+}
+
+/// Ring layout of a knob dial of `diameter` px: the value arc, then the modulation rings
+/// stacked outwards. The first rings fit in the dial's margin; more paint past its box
+/// (without changing layout).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DialGeometry {
+    pub diameter: f32,
+}
+
+impl DialGeometry {
+    pub fn new(diameter: f32) -> Self {
+        Self { diameter }
+    }
+    /// Value arc and track stroke width.
+    pub fn width(&self) -> f32 {
+        (self.diameter / 10.0).max(2.0)
+    }
+    /// Radius of the value arc's centreline.
+    pub fn value_radius(&self) -> f32 {
+        self.diameter / 2.0 - self.width() * 1.5 - 1.0
+    }
+    /// Modulation ring stroke width.
+    pub fn ring_width(&self) -> f32 {
+        (self.width() / 3.0).max(1.5)
+    }
+    /// Centre-to-centre distance between rings.
+    pub fn ring_pitch(&self) -> f32 {
+        self.ring_width() + 1.0
+    }
+    /// Radius of ring `i`'s centreline.
+    pub fn ring_radius(&self, i: usize) -> f32 {
+        self.value_radius()
+            + self.width() / 2.0
+            + 1.0
+            + self.ring_width() / 2.0
+            + i as f32 * self.ring_pitch()
+    }
+    /// How far from a ring's centreline a press still hits it: its own lane, so rings never
+    /// steal each other's presses. The outermost ring also takes [`OUTER_SLACK`] px outwards.
+    pub fn ring_hit(&self) -> f32 {
+        self.ring_pitch() / 2.0
+    }
+}
+
+/// The travel (0–1) at a point `(dx, dy)` px from the dial centre (y down), or `None` in the
+/// gap at the bottom.
+pub fn travel_at(dx: f32, dy: f32) -> Option<f64> {
+    let turns = dx.atan2(-dy) / std::f32::consts::TAU;
+    let t = f64::from((turns - START).rem_euclid(1.0) / SWEEP);
+    (t <= 1.0).then_some(t)
+}
+
+/// Extra px outside the outermost ring that still hit it.
+pub const OUTER_SLACK: f32 = 2.0;
+
+/// Travel slack when hit-testing an arc's span, so zero-depth arcs stay reachable.
+const SPAN_SLACK: f64 = 0.03;
+
+/// The modulation arc under `(dx, dy)` px from the dial centre: the nearest ring within
+/// [`DialGeometry::ring_hit`] whose span covers the pointer's angle.
+pub fn mod_arc_at(geometry: DialGeometry, arcs: &[ModArc], dx: f32, dy: f32) -> Option<usize> {
+    let t = travel_at(dx, dy)?;
+    let r = dx.hypot(dy);
+    let hit = geometry.ring_hit();
+    arcs.iter()
+        .enumerate()
+        .filter_map(|(i, arc)| {
+            let (lo, hi) = arc.span();
+            let d = r - geometry.ring_radius(i);
+            let reach = if i + 1 == arcs.len() && d > 0.0 {
+                hit + OUTER_SLACK
+            } else {
+                hit
+            };
+            let off = d.abs();
+            (off <= reach && t >= lo - SPAN_SLACK && t <= hi + SPAN_SLACK).then_some((i, off))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// The depth change, in travel, of an arc drag moving `dy` px (up is positive).
+pub fn mod_depth_delta(dy: f64, fine: bool) -> f64 {
+    dy * if fine {
+        TRAVEL_PER_PX * FINE
+    } else {
+        TRAVEL_PER_PX
+    }
+}
+
+/// Emitted when a knob or number field commits a value, or (knob) a modulation arc is
+/// dragged or right-clicked.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ParamEvent {
     Changed(f64, Source),
+    /// Alt- or Ctrl-drag on arc `arc`: change its depth by `delta_normal` travel since the
+    /// previous `ModDepth` (Shift for fine). The knob's value drag does not start.
+    ModDepth {
+        arc: usize,
+        delta_normal: f64,
+        source: Source,
+    },
+    /// The arc drag ended (one undo step for the host).
+    ModDepthEnd {
+        arc: usize,
+        source: Source,
+    },
+    /// Right-click on arc `arc` (to remove the route, say), at a window position.
+    ModContext {
+        arc: usize,
+        position: gpui_kit::Point<Pixels>,
+        source: Source,
+    },
 }
 
 /// Typed actions of a knob or number field.
@@ -290,6 +438,8 @@ pub struct KnobBuilder {
     param: ParamBuilder,
     diameter: Option<f32>,
     modulation: Option<(f64, f64)>,
+    arcs: Vec<ModArc>,
+    ink: Option<Hsla>,
     compact: bool,
 }
 
@@ -310,6 +460,16 @@ impl KnobBuilder {
     /// A modulation range drawn as an outer arc, in value units.
     pub fn modulation(mut self, range: Option<(f64, f64)>) -> Self {
         self.modulation = range;
+        self
+    }
+    /// Per-route modulation arcs (see [`ModArc`]).
+    pub fn modulation_arcs(mut self, arcs: Vec<ModArc>) -> Self {
+        self.arcs = arcs;
+        self
+    }
+    /// A theme-resolved colour for the value arc (the theme accent when `None`).
+    pub fn value_ink(mut self, ink: Option<Hsla>) -> Self {
+        self.ink = ink;
         self
     }
     /// Build the control, registering its path (if any) in `window`.
@@ -334,6 +494,11 @@ impl KnobBuilder {
                 param: make_param(self.param, identity, cx),
                 diameter: self.diameter.unwrap_or(40.0),
                 modulation: self.modulation,
+                arcs: (!self.arcs.is_empty()).then(|| Rc::from(self.arcs)),
+                ink: self.ink,
+                hovered: None,
+                mod_drag: None,
+                live: None,
                 compact: self.compact,
             },
         )
@@ -350,7 +515,84 @@ pub struct KnobControl {
     param: Param,
     diameter: f32,
     modulation: Option<(f64, f64)>,
+    arcs: Option<Rc<[ModArc]>>,
+    ink: Option<Hsla>,
+    hovered: Option<usize>,
+    mod_drag: Option<ModDrag>,
+    live: Option<KnobLiveFeed>,
     compact: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ModDrag {
+    arc: usize,
+    y: f32,
+}
+
+/// The host's handle for a knob's live-value marker: set the effective value and publish,
+/// and only the marker repaints (no knob or parent render). Get it with
+/// [`KnobControl::live_feed`].
+#[derive(Clone)]
+pub struct KnobLiveFeed {
+    travel: Rc<std::cell::Cell<Option<f64>>>,
+    map: Rc<dyn ValueMapping>,
+    view: gpui_kit::EntityId,
+    marker: Entity<KnobLive>,
+}
+
+impl KnobLiveFeed {
+    /// Set the live value in parameter units (`None` hides the marker).
+    pub fn set(&self, value: Option<f64>) {
+        self.travel.set(
+            value
+                .filter(|v| v.is_finite())
+                .map(|v| self.map.to_normal(v)),
+        );
+    }
+    /// The marker's travel now.
+    pub fn travel(&self) -> Option<f64> {
+        self.travel.get()
+    }
+    /// Repaint the marker, and only the marker.
+    pub fn publish(&self, cx: &mut App) {
+        cx.notify(self.view);
+    }
+}
+
+/// The live marker view: one dot on the value arc's radius.
+struct KnobLive {
+    travel: Rc<std::cell::Cell<Option<f64>>>,
+    diameter: f32,
+}
+
+impl Render for KnobLive {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let travel = self.travel.get();
+        let g = DialGeometry::new(self.diameter);
+        let s = surfaces(cx);
+        let (dot, halo) = (hsla(s.text), hsla(s.body));
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let Some(t) = travel else { return };
+                let a = knob_angle(t) * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+                let c = bounds.center();
+                let r = g.value_radius();
+                let at = point(c.x + px(r * a.cos()), c.y + px(r * a.sin()));
+                let size = (g.width() * 0.6).max(2.0);
+                for (s, color) in [(size + 1.0, halo), (size, dot)] {
+                    window.paint_quad(
+                        gpui_kit::fill(
+                            Bounds::centered_at(at, gpui_kit::size(px(s * 2.0), px(s * 2.0))),
+                            color,
+                        )
+                        .corner_radii(px(s)),
+                    );
+                }
+            },
+        )
+        .size(px(self.diameter))
+    }
 }
 
 impl Identified for KnobControl {
@@ -403,6 +645,67 @@ impl KnobControl {
             self.modulation = range;
             cx.notify();
         }
+    }
+    /// Host write: the per-route modulation arcs. Needs no window.
+    pub fn set_modulation_arcs(&mut self, arcs: Vec<ModArc>, cx: &mut Context<Self>) {
+        if self.arcs.as_deref().unwrap_or(&[]) == arcs.as_slice() {
+            return;
+        }
+        let len = arcs.len();
+        self.arcs = (!arcs.is_empty()).then(|| Rc::from(arcs));
+        self.hovered = self.hovered.filter(|&i| i < len);
+        if self.mod_drag.is_some_and(|d| d.arc >= len) {
+            self.mod_drag = None;
+        }
+        cx.notify();
+    }
+    /// The modulation arcs shown now.
+    pub fn modulation_arcs(&self) -> &[ModArc] {
+        self.arcs.as_deref().unwrap_or(&[])
+    }
+    /// The arc under the pointer, if any.
+    pub fn hovered_arc(&self) -> Option<usize> {
+        self.hovered
+    }
+    /// Host write: the value arc's colour (`None`: the theme accent). Needs no window.
+    pub fn set_value_ink(&mut self, ink: Option<Hsla>, cx: &mut Context<Self>) {
+        if ink != self.ink {
+            self.ink = ink;
+            cx.notify();
+        }
+    }
+    /// The live-value marker's feed, made on first use. Writes through it repaint only the
+    /// marker. Needs no window.
+    pub fn live_feed(&mut self, cx: &mut Context<Self>) -> KnobLiveFeed {
+        if let Some(feed) = &self.live {
+            return feed.clone();
+        }
+        let travel = Rc::new(std::cell::Cell::new(None));
+        let diameter = self.diameter;
+        let marker = cx.new(|_| KnobLive {
+            travel: travel.clone(),
+            diameter,
+        });
+        let feed = KnobLiveFeed {
+            travel,
+            map: self.param.map.clone(),
+            view: marker.entity_id(),
+            marker,
+        };
+        self.live = Some(feed.clone());
+        cx.notify();
+        feed
+    }
+    /// Host write: the live (post-modulation) value in parameter units, `None` to hide the
+    /// marker. Repaints only the marker; for per-frame telemetry keep the
+    /// [`KnobControl::live_feed`] and call `set` + `publish`. Needs no window.
+    pub fn set_live(&mut self, value: Option<f64>, cx: &mut Context<Self>) {
+        if self.live.is_none() && value.is_none() {
+            return;
+        }
+        let feed = self.live_feed(cx);
+        feed.set(value);
+        feed.publish(cx);
     }
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
         if disabled != self.param.disabled {
@@ -496,6 +799,113 @@ fn arc(
     }
 }
 
+/// Paint the modulation rings and listen for arc presses, drags and hovers. The listeners
+/// hit-test the rings' own geometry, since outer rings paint past the dial's box.
+fn paint_rings(bounds: Bounds<Pixels>, g: DialGeometry, rings: &Rings, window: &mut Window) {
+    let half = g.diameter / 2.0;
+    for (i, a) in rings.arcs.iter().enumerate() {
+        let (mut lo, mut hi) = a.span();
+        if hi - lo < 0.01 {
+            // A zero-depth route still shows as a tick.
+            let mid = (lo + hi) / 2.0;
+            (lo, hi) = ((mid - 0.005).max(0.0), (mid + 0.005).min(1.0));
+        }
+        let w = if rings.hovered == Some(i) {
+            g.ring_width() + 1.0
+        } else {
+            g.ring_width()
+        };
+        let inset = half - g.ring_radius(i) - w / 2.0;
+        arc(bounds, inset, w, lo, hi, a.color, window);
+    }
+    let centre = bounds.center();
+    let offset =
+        move |p: gpui_kit::Point<Pixels>| (f32::from(p.x - centre.x), f32::from(p.y - centre.y));
+    let (arcs, knob) = (rings.arcs.clone(), rings.knob.clone());
+    window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
+        if phase != DispatchPhase::Capture {
+            return;
+        }
+        let (dx, dy) = offset(e.position);
+        let Some(i) = mod_arc_at(g, &arcs, dx, dy) else {
+            return;
+        };
+        let Some(entity) = knob.upgrade() else { return };
+        let handled = entity.update(cx, |k, cx| {
+            if k.param.disabled {
+                return false;
+            }
+            match e.button {
+                MouseButton::Right => {
+                    cx.emit(ParamEvent::ModContext {
+                        arc: i,
+                        position: e.position,
+                        source: Source::Pointer,
+                    });
+                    true
+                }
+                MouseButton::Left if e.modifiers.alt || e.modifiers.control => {
+                    k.mod_drag = Some(ModDrag {
+                        arc: i,
+                        y: f32::from(e.position.y),
+                    });
+                    cx.notify();
+                    true
+                }
+                _ => false,
+            }
+        });
+        if handled {
+            window.prevent_default();
+            cx.stop_propagation();
+        }
+    });
+    let (arcs, knob) = (rings.arcs.clone(), rings.knob.clone());
+    window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| {
+        if phase != DispatchPhase::Bubble {
+            return;
+        }
+        let Some(entity) = knob.upgrade() else { return };
+        entity.update(cx, |k, cx| {
+            if let Some(drag) = k.mod_drag {
+                let y = f32::from(e.position.y);
+                let delta = mod_depth_delta(f64::from(drag.y - y), e.modifiers.shift);
+                if delta != 0.0 {
+                    k.mod_drag = Some(ModDrag { y, ..drag });
+                    cx.emit(ParamEvent::ModDepth {
+                        arc: drag.arc,
+                        delta_normal: delta,
+                        source: Source::Pointer,
+                    });
+                }
+                return;
+            }
+            let (dx, dy) = offset(e.position);
+            let hovered = mod_arc_at(g, &arcs, dx, dy);
+            if hovered != k.hovered {
+                k.hovered = hovered;
+                cx.notify();
+            }
+        });
+    });
+    let knob = rings.knob.clone();
+    window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
+        if phase != DispatchPhase::Bubble || e.button != MouseButton::Left {
+            return;
+        }
+        let Some(entity) = knob.upgrade() else { return };
+        entity.update(cx, |k, cx| {
+            if let Some(drag) = k.mod_drag.take() {
+                cx.emit(ParamEvent::ModDepthEnd {
+                    arc: drag.arc,
+                    source: Source::Pointer,
+                });
+                cx.notify();
+            }
+        });
+    });
+}
+
 fn pointer(bounds: Bounds<Pixels>, travel: f64, width: f32, color: Hsla, window: &mut Window) {
     let c = bounds.center();
     let r = f32::from(bounds.size.width.min(bounds.size.height)) / 2.0;
@@ -523,21 +933,44 @@ pub fn knob_dial(
     diameter: f32,
     cx: &App,
 ) -> impl IntoElement + use<> {
+    dial(travel, centre, modulation, diameter, None, None, cx)
+}
+
+/// Modulation rings and their pointer handling, painted with the dial.
+struct Rings {
+    arcs: Rc<[ModArc]>,
+    hovered: Option<usize>,
+    knob: WeakEntity<KnobControl>,
+}
+
+fn dial(
+    travel: f64,
+    centre: Option<f64>,
+    modulation: Option<(f64, f64)>,
+    diameter: f32,
+    ink: Option<Hsla>,
+    rings: Option<Rings>,
+    cx: &App,
+) -> impl IntoElement + use<> {
     let s = surfaces(cx);
     let primary = GuiraffeTheme::global(cx).primary_color().to_hsla();
     let colors = KnobColors {
         track: hsla(s.track),
-        value: primary,
+        value: ink.unwrap_or(primary),
         modulation: primary.opacity(0.45),
         pointer: hsla(s.text),
     };
-    let width = (diameter / 10.0).max(2.0);
+    let g = DialGeometry::new(diameter);
+    let width = g.width();
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
             arc(bounds, width + 1.0, width, 0.0, 1.0, colors.track, window);
             let (from, to) = value_span(travel, centre);
             arc(bounds, width + 1.0, width, from, to, colors.value, window);
+            if let Some(rings) = &rings {
+                paint_rings(bounds, g, rings, window);
+            }
             if let Some((lo, hi)) = modulation {
                 arc(
                     bounds,
@@ -574,7 +1007,24 @@ impl Render for KnobControl {
         let this = cx.weak_entity();
         let handle = window.window_handle();
         let s = surfaces(cx);
-        let dial = knob_dial(travel, detent, modulation, self.diameter, cx);
+        let rings = self.arcs.clone().map(|arcs| Rings {
+            arcs,
+            hovered: self.hovered,
+            knob: this.clone(),
+        });
+        let dial = dial(
+            travel,
+            detent,
+            modulation,
+            self.diameter,
+            self.ink,
+            rings,
+            cx,
+        );
+        let live = self.live.as_ref().map(|l| l.marker.clone());
+        let arc_tip = self
+            .hovered
+            .and_then(|i| self.arcs.as_ref()?.get(i)?.tooltip.clone());
         let dragging = p.drag.is_some();
         let compact = self.compact;
         let fine_keys = this.clone();
@@ -630,30 +1080,62 @@ impl Render for KnobControl {
                     gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
                 })
             })
-            .child(div().relative().child(dial).when(dragging, |el| {
-                // While dragging, follow the pointer anywhere in the window.
-                el.child(
-                    canvas(
-                        |_, _, _| (),
-                        move |_, _, window, _| {
-                            let moves = watch.clone();
-                            window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| {
-                                if phase == DispatchPhase::Bubble {
-                                    knob_move(&moves, e, cx);
-                                }
-                            });
-                            let ups = watch.clone();
-                            window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
-                                if phase == DispatchPhase::Bubble && e.button == MouseButton::Left {
-                                    drag_release(&ups, handle, window, cx);
-                                }
-                            });
-                        },
-                    )
-                    .absolute()
-                    .size_full(),
-                )
-            }))
+            .child(
+                div()
+                    .relative()
+                    .child(dial)
+                    .when_some(live, |el, live| {
+                        el.child(div().absolute().top_0().left_0().child(live))
+                    })
+                    .when_some(arc_tip, |el, tip| {
+                        el.child(
+                            div()
+                                .id("knob-arc-tip")
+                                .debug_selector(|| "knob-arc-tip".into())
+                                .absolute()
+                                .bottom_full()
+                                .mb_1()
+                                .px_1()
+                                .rounded_sm()
+                                .bg(hsla(s.surface))
+                                .border_1()
+                                .border_color(hsla(s.border))
+                                .whitespace_nowrap()
+                                .test_support()
+                                .child(tip),
+                        )
+                    })
+                    .when(dragging, |el| {
+                        // While dragging, follow the pointer anywhere in the window.
+                        el.child(
+                            canvas(
+                                |_, _, _| (),
+                                move |_, _, window, _| {
+                                    let moves = watch.clone();
+                                    window.on_mouse_event(
+                                        move |e: &MouseMoveEvent, phase, _, cx| {
+                                            if phase == DispatchPhase::Bubble {
+                                                knob_move(&moves, e, cx);
+                                            }
+                                        },
+                                    );
+                                    let ups = watch.clone();
+                                    window.on_mouse_event(
+                                        move |e: &MouseUpEvent, phase, window, cx| {
+                                            if phase == DispatchPhase::Bubble
+                                                && e.button == MouseButton::Left
+                                            {
+                                                drag_release(&ups, handle, window, cx);
+                                            }
+                                        },
+                                    );
+                                },
+                            )
+                            .absolute()
+                            .size_full(),
+                        )
+                    }),
+            )
             .map(|el| match (compact, dragging) {
                 // Compact: the value floats above the dial while dragging, without layout.
                 (true, true) => el.relative().child(

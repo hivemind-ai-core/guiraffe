@@ -170,3 +170,96 @@ fn compact_knobs_and_number_field_sizes_light_and_dark() {
         assert_snapshot(name, &image, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
     }
 }
+
+type ModSpec = (
+    f32,
+    bool,
+    Vec<guiraffe_components::controls::ModArc>,
+    Option<f64>,
+    bool,
+);
+
+fn render_mod(scheme: Scheme) -> image::RgbaImage {
+    use guiraffe_components::controls::ModArc;
+    let mut snap = Snapshotter::new().unwrap().with_setup(move |cx| {
+        guiraffe_components::init(cx);
+        apply(
+            GuiraffeTheme {
+                scheme,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+    snap.render(size(px(360.), px(120.)), |window, cx| {
+        let theme = GuiraffeTheme::global(cx).clone();
+        let ink = |c| {
+            theme
+                .variant(Some(c), guiraffe_core::Variant::Filled)
+                .background
+                .to_hsla()
+        };
+        use guiraffe_core::ColorName::{Green, Orange, Teal, Violet};
+        let pct = || ValueMap::new(0.0, 1.0).unit(Unit::Percent);
+        let specs: Vec<ModSpec> = vec![
+            (
+                48.,
+                false,
+                vec![ModArc::new(0.3, 0.7, ink(Orange))],
+                Some(0.62),
+                false,
+            ),
+            (
+                48.,
+                false,
+                vec![
+                    ModArc::new(0.2, 0.5, ink(Orange)),
+                    ModArc::new(0.4, 0.9, ink(Teal)),
+                    ModArc::new(0.5, 0.5, ink(Violet)),
+                ],
+                Some(0.35),
+                true,
+            ),
+            (
+                28.,
+                true,
+                vec![
+                    ModArc::new(0.1, 0.6, ink(Teal)),
+                    ModArc::new(0.55, 0.75, ink(Orange)),
+                ],
+                None,
+                false,
+            ),
+        ];
+        let knobs: Vec<AnyView> = specs
+            .into_iter()
+            .map(|(d, compact, arcs, live, inked)| {
+                let knob = KnobControl::new()
+                    .mapping(pct())
+                    .value(0.5)
+                    .compact(compact)
+                    .diameter(d)
+                    .modulation_arcs(arcs)
+                    .value_ink(inked.then(|| ink(Green)))
+                    .build(window, cx);
+                knob.update(cx, |k, cx| k.set_live(live, cx));
+                knob.into()
+            })
+            .collect();
+        cx.new(|_| Panel(knobs, Vec::new()))
+    })
+    .unwrap()
+}
+
+#[test]
+fn modulation_arcs_light_and_dark() {
+    let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for (scheme, name) in [
+        (Scheme::Light, "knobs-mod-light"),
+        (Scheme::Dark, "knobs-mod-dark"),
+    ] {
+        let image = render_mod(scheme);
+        assert_snapshot(name, &image, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
+    }
+}

@@ -525,6 +525,8 @@ fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
                 strong: c % 4 == 0,
             })
         })),
+        // Mouse-first: a click edits without taking focus; Tab reaches the keyboard cursor.
+        focus: guiraffe_core::FocusPolicy::MOUSE_FIRST,
         ..StepGridOptions::default()
     };
     let grid = StepGrid::new(store, options, cx);
@@ -1053,7 +1055,7 @@ fn speed_dial(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 fn knobs_demo(window: &mut Window, cx: &mut App) -> AnyView {
-    use guiraffe_components::controls::{KnobControl, NumberFieldControl, ParamEvent};
+    use guiraffe_components::controls::{KnobControl, ModArc, NumberFieldControl, ParamEvent};
     use guiraffe_components::mapping::{Curve, Unit, ValueMap};
     playground_with_update(
         "Live Knob & NumberField",
@@ -1080,6 +1082,30 @@ fn knobs_demo(window: &mut Window, cx: &mut App) -> AnyView {
                 .label("Depth")
                 .diameter(48.)
                 .build(window, cx);
+            // Per-route arcs in each source's colour: Alt/Ctrl-drag an arc for its depth,
+            // right-click it for its menu; the dot is the live (modulated) value.
+            let theme = guiraffe_core::GuiraffeTheme::global(cx).clone();
+            let ink = |c| {
+                theme
+                    .variant(Some(c), guiraffe_core::Variant::Filled)
+                    .background
+                    .to_hsla()
+            };
+            let routed = KnobControl::new()
+                .mapping(ValueMap::new(0.0, 1.0).unit(Unit::Percent))
+                .value(0.45)
+                .label("Routed")
+                .diameter(48.)
+                .modulation_arcs(vec![
+                    ModArc::new(0.45, 0.8, ink(guiraffe_core::ColorName::Orange))
+                        .id("env-2")
+                        .tooltip("Envelope 2 → depth 0.35"),
+                    ModArc::new(0.2, 0.45, ink(guiraffe_core::ColorName::Teal))
+                        .id("lfo-1")
+                        .tooltip("LFO 1 → depth 0.25"),
+                ])
+                .build(window, cx);
+            routed.update(cx, |k, cx| k.set_live(Some(0.6), cx));
             let field = NumberFieldControl::new()
                 .mapping(hz)
                 .label("Cutoff")
@@ -1094,12 +1120,12 @@ fn knobs_demo(window: &mut Window, cx: &mut App) -> AnyView {
                 .label("Attack")
                 .build(window, cx);
             let log = EventLog::new(cx);
-            for knob in [&cutoff, &pan, &depth] {
+            for knob in [&cutoff, &pan, &depth, &routed] {
                 EventLog::watch::<ParamEvent, _>(&log, knob, cx);
             }
             EventLog::watch::<ParamEvent, _>(&log, &field, cx);
             EventLog::watch::<ParamEvent, _>(&log, &attack, cx);
-            ([cutoff, pan, depth], [field, attack], log)
+            ([cutoff, pan, depth, routed], [field, attack], log)
         },
         |(knobs, fields, _), v, cx| {
             let disabled = v.on(0);
@@ -1123,7 +1149,7 @@ fn knobs_demo(window: &mut Window, cx: &mut App) -> AnyView {
                     .children(fields.iter().map(|f| f.clone().into_any_element()))
                     .into_any_element(),
                 example(
-                    "Drag (Shift: fine), scroll, arrow keys; double-click a knob to reset; double-click a field to type 2.5k or 250 ms",
+                    "Drag (Shift: fine), scroll, arrow keys; double-click a knob to reset; Alt-drag or right-click a coloured arc; double-click a field to type 2.5k or 250 ms",
                     log.clone(),
                 ),
             ])
