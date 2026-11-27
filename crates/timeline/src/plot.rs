@@ -586,7 +586,24 @@ mod tests {
                         family,
                         guiraffe_core::ColorName::Dark | guiraffe_core::ColorName::Gray
                     ) {
-                        check(super::Ink::Color(family), super::INK_CONTRAST);
+                        let threshold = super::INK_CONTRAST + guiraffe_core::CONTRAST_MARGIN;
+                        let best = family
+                            .shades()
+                            .iter()
+                            .copied()
+                            .max_by(|a, b| a.contrast(bg).total_cmp(&b.contrast(bg)))
+                            .unwrap_or(bg);
+                        if best.contrast(bg) >= threshold {
+                            check(super::Ink::Color(family), super::INK_CONTRAST);
+                        } else {
+                            // No shade clears 3:1 (yellow on a light surface, KNOWN_ISSUES):
+                            // the ink is the family's most readable shade.
+                            assert_eq!(
+                                super::Ink::Color(family).resolve(&theme, bg),
+                                best,
+                                "{scheme:?} {kind:?} {family:?}"
+                            );
+                        }
                     }
                 }
             }

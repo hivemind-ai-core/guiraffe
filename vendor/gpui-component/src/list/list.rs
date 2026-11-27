@@ -91,6 +91,8 @@ pub struct ListState<D: ListDelegate> {
     mouse_right_clicked_index: Option<IndexPath>,
     reset_on_cancel: bool,
     searchable: bool,
+    /// The pointer moves the keyboard cursor (GUIraffe patch): pickers show one highlight.
+    hover_moves_cursor: bool,
     selectable: bool,
     _search_task: Task<()>,
     _load_more_task: Task<()>,
@@ -117,6 +119,7 @@ where
             last_query: None,
             selected_index: None,
             selectable: true,
+            hover_moves_cursor: false,
             searchable: false,
             item_to_measure_index: IndexPath::default(),
             deferred_scroll_to_index: None,
@@ -127,6 +130,13 @@ where
             _load_more_task: Task::ready(()),
             _query_input_subscription,
         }
+    }
+
+    /// Make the item under the pointer the highlighted (keyboard) item, so a picker shows
+    /// one highlight for pointer and keys. Default `false`.
+    pub fn hover_moves_cursor(mut self, on: bool) -> Self {
+        self.hover_moves_cursor = on;
+        self
     }
 
     /// Sets whether the list is searchable, default is `false`.
@@ -512,6 +522,15 @@ where
                 item.selected(selected)
                     .secondary_selected(mouse_right_clicked)
             }))
+            .when(selectable && self.hover_moves_cursor, |this| {
+                this.on_mouse_move(cx.listener(move |this, _: &gpui::MouseMoveEvent, window, cx| {
+                    if this.selected_index != Some(ix) {
+                        this.selected_index = Some(ix);
+                        this.delegate.set_selected_index(Some(ix), window, cx);
+                        cx.notify();
+                    }
+                }))
+            })
             .when(selectable, |this| {
                 this.on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                     this.set_right_clicked_index(None, window, cx);

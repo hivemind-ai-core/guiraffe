@@ -175,10 +175,19 @@ impl Surfaces {
     }
 }
 
+/// How far a chosen shade must clear a contrast minimum: above `f32` noise in
+/// [`Rgb::contrast`], far below anything visible.
+pub const CONTRAST_MARGIN: f32 = 0.01;
+
 /// The shade of `color` nearest to `preferred` that clears `min` contrast on `background`,
 /// searching away from the background's lightness first. Falls back to the family's
 /// highest-contrast shade when none clears `min`.
+///
+/// A shade must clear `min` by [`CONTRAST_MARGIN`], so a pair that sits on the threshold
+/// (yellow 9 on white is 3.0006:1 in `f32`) never passes or fails on float noise: the search
+/// moves to the next shade instead, or falls back when the family has none.
 pub fn readable_shade(color: ColorName, preferred: u8, background: Rgb, min: f32) -> Rgb {
+    let min = min + CONTRAST_MARGIN;
     let shades = color.shades();
     let preferred = usize::from(preferred.min(9));
     // On a light background darker (higher) shades gain contrast; on a dark one, lighter.
@@ -239,6 +248,36 @@ impl GuiraffeTheme {
             Scheme::Light => &self.surfaces_light,
             Scheme::Dark => &self.surfaces_dark,
         }
+    }
+
+    /// The highlight of the active item in a menu, dropdown or select list: the item under
+    /// the pointer and the item the arrow keys moved to are one highlight. Returns the fill and
+    /// the text on it. The fill is the primary colour at the shade nearest the theme's own
+    /// that clears 3:1 against the menu surface, so it reads as a highlight in both schemes.
+    pub fn menu_highlight(&self) -> (Rgb, Rgb) {
+        let menu = self.surfaces().raised;
+        let base = match self.scheme {
+            Scheme::Light => self.primary_shade_light,
+            Scheme::Dark => self.primary_shade_dark,
+        };
+        // Search away from the menu surface: darker on light, lighter on dark. A primary
+        // with no shade that clears it (yellow on white) falls back to gray.
+        let away = |color: ColorName| -> Vec<Rgb> {
+            match self.scheme {
+                Scheme::Light => (base..=9).map(|s| color.shade(s)).collect(),
+                Scheme::Dark => (0..=base.min(9)).rev().map(|s| color.shade(s)).collect(),
+            }
+        };
+        let (color, fill) = [self.primary, ColorName::Gray]
+            .into_iter()
+            .find_map(|color| {
+                away(color)
+                    .into_iter()
+                    .find(|fill| fill.contrast(menu) >= crate::state::NON_TEXT_MIN)
+                    .map(|fill| (color, fill))
+            })
+            .unwrap_or((self.primary, self.primary.shade(base)));
+        (fill, crate::variant::filled_foreground(color, fill))
     }
 
     pub fn surfaces(&self) -> Surfaces {
@@ -451,6 +490,12 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
             t.radius = px(k.radius);
         });
     }
+    // One highlight for the active item of every menu, dropdown and select list.
+    let (fill, text) = theme.menu_highlight();
+    cx.set_global(gpui_kit::component::menu::MenuHighlight {
+        background: fill.to_hsla(),
+        foreground: text.to_hsla(),
+    });
     cx.set_global(theme);
     cx.refresh_windows();
 }

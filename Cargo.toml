@@ -8,6 +8,10 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.97"
+description = "GUI toolkit built on GPUI Kit"
+homepage = "https://github.com/hivemind-ai-core/guiraffe"
+repository = "git@github.com:hivemind-ai-core/guiraffe.git"
+readme = "https://github.com/hivemind-ai-core/guiraffe/blob/main/README.md"
 
 [workspace.dependencies]
 smallvec = "1.16"

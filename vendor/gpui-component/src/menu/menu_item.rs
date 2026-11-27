@@ -127,16 +127,17 @@ impl RenderOnce for MenuItemElement {
                 this.on_hover(move |hovered, window, cx| (on_hover)(hovered, window, cx))
             })
             .when(!self.disabled, |this| {
-                // Not `group_hover` on the item's own group: GPUI styles an
-                // element before registering its group, and that fallback keeps
-                // the pointer's item lit after a key moves the highlight away.
-                this.hover(|this| {
-                    this.bg(cx.theme().tokens.accent)
-                        .text_color(cx.theme().accent_foreground)
-                })
-                .when(self.selected, |this| {
-                    this.bg(cx.theme().tokens.accent)
-                        .text_color(cx.theme().accent_foreground)
+                // One highlight for pointer and keyboard: the menu moves its
+                // selection to the item under the pointer (its hover listener),
+                // so no separate hover style can light a second item after a key
+                // moves the highlight away.
+                this.when(self.selected, |this| {
+                    match cx.try_global::<super::MenuHighlight>() {
+                        Some(h) => this.bg(h.background).text_color(h.foreground),
+                        None => this
+                            .bg(cx.theme().tokens.accent)
+                            .text_color(cx.theme().accent_foreground),
+                    }
                 })
                 .when_some(self.on_click, |this, on_click| {
                     this.on_mouse_down(MouseButton::Left, move |_, _, cx| {

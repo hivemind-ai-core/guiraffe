@@ -255,7 +255,10 @@ impl RenderOnce for ListItem {
             )
             .when_some(self.suffix, |this, suffix| this.child(suffix(window, cx)))
             .when(is_selectable && self.selected, |this| {
-                if cx.theme().list.active_highlight {
+                // GUIraffe patch: the embedder's menu highlight, shared with menus.
+                if let Some(h) = cx.try_global::<crate::menu::MenuHighlight>() {
+                    this.bg(h.background).text_color(h.foreground)
+                } else if cx.theme().list.active_highlight {
                     this.bg(cx.theme().list_active)
                 } else {
                     this.bg(cx.theme().accent)
