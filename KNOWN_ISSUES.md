@@ -122,6 +122,27 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 
 - `guiraffe-goldens` zooms images with GPUI's linear sampling, so magnified goldens blur; the pixel readout stays exact. GPUI's `img` has no nearest-neighbour option. Add one in our GPUI fork (0.4).
 
+### Theme and meters
+
+- No yellow shade clears 3:1 on a light surface (yellow 9 is 2.3:1 on the gray 3 well), so the
+  meter's default middle zone is orange. A yellow meter zone or plot ink in the light scheme
+  stays below 3:1; pick another family or an exact `Rgb`.
+
+### Tabs
+
+- Sizes cover the Xs/Sm/Md scale (Lg and Xl clamp to Md). Tabs has no built-in overflow
+  yet: it waits for the shared overflow row (#19), which will drive `set_hidden` and the
+  `trailing` slot. Until then hosts that overflow keep their own scroll container.
+
+### Flow
+
+- A ring port shows whether it is connected for a node's first 64 ports; later ports stay hollow
+  until hovered.
+- Edge, port and cable colours keep 3:1 against the canvas in both schemes, but there is no
+  separate high-contrast mode, and hues are told apart by colour alone (pair them with a stroke
+  pattern or a tooltip where that matters).
+- A node with `NodeFrame::None` shows no selection unless its renderer draws it.
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select
@@ -148,3 +169,12 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 - A tray double-click also delivers its first click as `Click`.
 - Minimize-to-tray closes and later reopens the window, because Wayland has no hidden state.
   Provide a Quit item.
+
+## StepGrid
+
+- Undo covers the rows only. Undoing `apply_ghosts` restores the cells but not the ghost
+  layer, and `SetColumns` and `SetGhosts` are host writes outside history.
+- The keyboard toggles and inspects. Emphasis, micro-timing and flams have no keys yet; use the
+  pointer gestures or the bus actions.
+- The press hook (`StepGridOptions::on_press`) sees left presses only, and only on a cell.
+  Shift-click and Ctrl-drag act on lit cells; on an off cell they toggle it like a plain click.

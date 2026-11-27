@@ -299,6 +299,8 @@ bitflags::bitflags! {
         const SCROLL_TO = 1 << 7;
         const INCREMENT = 1 << 8;
         const DECREMENT = 1 << 9;
+        const NEXT = 1 << 10;
+        const PREVIOUS = 1 << 11;
     }
 }
 
@@ -316,6 +318,8 @@ impl Capabilities {
             (Self::SCROLL_TO, names::SCROLL_TO),
             (Self::INCREMENT, names::INCREMENT),
             (Self::DECREMENT, names::DECREMENT),
+            (Self::NEXT, names::NEXT),
+            (Self::PREVIOUS, names::PREVIOUS),
         ]
         .into_iter()
         .filter_map(move |(flag, name)| self.contains(flag).then_some(name))
@@ -746,6 +750,8 @@ pub mod names {
     pub const SCROLL_TO: &str = "scroll_to";
     pub const INCREMENT: &str = "increment";
     pub const DECREMENT: &str = "decrement";
+    pub const NEXT: &str = "next";
+    pub const PREVIOUS: &str = "previous";
 }
 
 #[cfg(test)]
@@ -764,12 +770,15 @@ mod tests {
     }
     #[test]
     fn flags_enumerate_only_advertised_actions() {
-        let flags = Capabilities::TOGGLE | Capabilities::FOCUS;
+        let flags = Capabilities::TOGGLE
+            | Capabilities::FOCUS
+            | Capabilities::NEXT
+            | Capabilities::PREVIOUS;
         assert_eq!(
             flags.action_names().collect::<Vec<_>>(),
-            [names::TOGGLE, names::FOCUS]
+            [names::TOGGLE, names::FOCUS, names::NEXT, names::PREVIOUS]
         );
-        assert_eq!(Capabilities::all().action_names().count(), 10);
+        assert_eq!(Capabilities::all().action_names().count(), 12);
     }
 
     struct Toggle(bool);

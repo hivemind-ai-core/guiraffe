@@ -29,7 +29,59 @@ pub struct GuiraffeTheme {
     pub recipes: Recipes,
     /// Contrast setting (API conventions §12.1).
     pub contrast: crate::state::Contrast,
+    /// The neutral surface ladder of the light scheme.
+    pub surfaces_light: SurfaceShades,
+    /// The neutral surface ladder of the dark scheme.
+    pub surfaces_dark: SurfaceShades,
 }
+
+/// One scheme's neutral surface ladder. Adjacent levels (body and surface, surface and
+/// raised, surface and sunken, body and sunken) differ by at least 1.08:1, so panels, cards
+/// and wells separate without borders.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfaceShades {
+    /// The window behind everything.
+    pub body: Rgb,
+    /// Panels and cards on the body.
+    pub surface: Rgb,
+    /// Popovers and the active element on a track.
+    pub raised: Rgb,
+    /// Recessed areas: wells, recessed fields, meter tracks, plot backgrounds.
+    pub sunken: Rgb,
+    /// Dividers and outlines.
+    pub border: Rgb,
+}
+
+impl SurfaceShades {
+    /// Light default: white body, gray 1 panels, white raised, gray 3 wells.
+    pub const LIGHT: Self = Self {
+        body: Rgb::WHITE,
+        surface: Rgb::hex(0xf1f3f5),
+        raised: Rgb::WHITE,
+        sunken: Rgb::hex(0xdee2e6),
+        border: Rgb::hex(0xdee2e6),
+    };
+    /// Dark default: dark 7 body, dark 6 panels, dark 5 raised, dark 9 wells.
+    pub const DARK: Self = Self {
+        body: Rgb::hex(0x242424),
+        surface: Rgb::hex(0x2e2e2e),
+        raised: Rgb::hex(0x3b3b3b),
+        sunken: Rgb::hex(0x141414),
+        border: Rgb::hex(0x424242),
+    };
+    /// The adjacent pairs that must separate, with their names (for tests and audits).
+    pub fn adjacent(&self) -> [(&'static str, Rgb, Rgb); 4] {
+        [
+            ("body/surface", self.body, self.surface),
+            ("surface/raised", self.surface, self.raised),
+            ("surface/sunken", self.surface, self.sunken),
+            ("body/sunken", self.body, self.sunken),
+        ]
+    }
+}
+
+/// Minimum contrast between adjacent surface levels.
+pub const SURFACE_STEP: f32 = 1.08;
 
 /// Style recipes per layout kind. Containers apply these as [`crate::StylePatch`]es;
 /// restyle an app globally by editing recipes rather than call sites.
@@ -83,6 +135,8 @@ impl Default for GuiraffeTheme {
             scale: 1.0,
             recipes: Recipes::DEFAULT,
             contrast: crate::state::Contrast::Standard,
+            surfaces_light: SurfaceShades::LIGHT,
+            surfaces_dark: SurfaceShades::DARK,
         }
     }
 }
@@ -102,10 +156,56 @@ pub struct Surfaces {
     pub track: Rgb,
     /// Raised element on a track (active segment).
     pub raised: Rgb,
+    /// Recessed areas: wells, recessed fields, meter tracks, plot backgrounds.
+    pub sunken: Rgb,
     /// Background for highlighted/marked text.
     pub mark: Rgb,
     /// Multiplier for shadow opacity (dark surfaces need stronger shadows to read).
     pub shadow_strength: f32,
+}
+
+impl Surfaces {
+    /// The colour a region of `kind` paints.
+    pub fn of(&self, kind: crate::context::SurfaceKind) -> Rgb {
+        match kind {
+            crate::context::SurfaceKind::Body => self.body,
+            crate::context::SurfaceKind::Raised => self.raised,
+            crate::context::SurfaceKind::Sunken => self.sunken,
+        }
+    }
+}
+
+/// The shade of `color` nearest to `preferred` that clears `min` contrast on `background`,
+/// searching away from the background's lightness first. Falls back to the family's
+/// highest-contrast shade when none clears `min`.
+pub fn readable_shade(color: ColorName, preferred: u8, background: Rgb, min: f32) -> Rgb {
+    let shades = color.shades();
+    let preferred = usize::from(preferred.min(9));
+    // On a light background darker (higher) shades gain contrast; on a dark one, lighter.
+    let darker_first = background.luminance() > 0.18;
+    let mut best = shades[preferred];
+    for step in 0..10usize {
+        let ahead = if darker_first {
+            preferred.checked_add(step)
+        } else {
+            preferred.checked_sub(step)
+        };
+        let behind = if darker_first {
+            preferred.checked_sub(step)
+        } else {
+            preferred.checked_add(step)
+        };
+        for candidate in [ahead, behind].into_iter().flatten().filter(|i| *i < 10) {
+            let rgb = shades[candidate];
+            if rgb.contrast(background) >= min {
+                return rgb;
+            }
+            if rgb.contrast(background) > best.contrast(background) {
+                best = rgb;
+            }
+        }
+    }
+    best
 }
 
 impl GuiraffeTheme {
@@ -163,32 +263,43 @@ impl GuiraffeTheme {
         (fill, crate::variant::filled_foreground(color, fill))
     }
 
+    /// The scheme's surface ladder.
+    pub fn surface_shades(&self) -> &SurfaceShades {
+        match self.scheme {
+            Scheme::Light => &self.surfaces_light,
+            Scheme::Dark => &self.surfaces_dark,
+        }
+    }
+
     pub fn surfaces(&self) -> Surfaces {
         let (g, d) = (ColorName::Gray, ColorName::Dark);
+        let l = self.surface_shades();
         match self.scheme {
             Scheme::Light => Surfaces {
-                body: Rgb::WHITE,
-                surface: g.shade(0),
+                body: l.body,
+                surface: l.surface,
                 text: Rgb::BLACK,
                 // Gray 6 is only 3.3:1 on white; halfway to gray 7 clears 4.5:1.
                 dimmed: g.shade(7).alpha(0.5).over(g.shade(6)),
-                border: g.shade(3),
+                border: l.border,
                 hover: g.shade(1),
                 track: g.shade(1),
-                raised: Rgb::WHITE,
+                raised: l.raised,
+                sunken: l.sunken,
                 mark: ColorName::Yellow.shade(2),
                 shadow_strength: 1.0,
             },
             Scheme::Dark => Surfaces {
-                body: d.shade(7),
-                surface: d.shade(6),
+                body: l.body,
+                surface: l.surface,
                 text: d.shade(0),
                 // Dark 2 is 4.0:1 on the dark body; dark 1 clears 4.5:1.
                 dimmed: d.shade(1),
-                border: d.shade(4),
+                border: l.border,
                 hover: d.shade(5),
                 track: d.shade(6),
-                raised: d.shade(5),
+                raised: l.raised,
+                sunken: l.sunken,
                 mark: ColorName::Yellow.shade(8).alpha(0.35).over(d.shade(7)),
                 shadow_strength: 4.0,
             },
@@ -218,6 +329,8 @@ static DEFAULT: GuiraffeTheme = GuiraffeTheme {
     scale: 1.0,
     recipes: Recipes::DEFAULT,
     contrast: crate::state::Contrast::Standard,
+    surfaces_light: SurfaceShades::LIGHT,
+    surfaces_dark: SurfaceShades::DARK,
 };
 
 /// Install `theme` and push its primary color, radius and scheme into Controls' theme so
@@ -402,7 +515,39 @@ mod surface_tests {
             assert!(s.dimmed.contrast(s.body) >= 3.0, "{scheme:?} dimmed text");
             assert_ne!(s.track, s.body, "{scheme:?} track visible");
             assert_ne!(s.raised, s.track, "{scheme:?} raised visible on track");
+            for (pair, a, b) in t.surface_shades().adjacent() {
+                assert!(
+                    a.contrast(b) >= SURFACE_STEP,
+                    "{scheme:?} {pair}: {:.3}:1 < {SURFACE_STEP}:1",
+                    a.contrast(b)
+                );
+            }
+            assert_eq!(s.of(crate::context::SurfaceKind::Sunken), s.sunken);
+            assert!(
+                s.text.contrast(s.sunken) >= 4.5,
+                "{scheme:?} text on a well"
+            );
         }
+    }
+
+    #[test]
+    fn readable_shade_walks_to_the_nearest_passing_shade() {
+        let white = Rgb::WHITE;
+        // Orange 6 fails 3:1 on white; the nearest darker passing shade is chosen.
+        let pick = readable_shade(ColorName::Orange, 6, white, 3.0);
+        assert!(pick.contrast(white) >= 3.0);
+        assert_ne!(pick, ColorName::Orange.shade(6));
+        // A passing preferred shade is kept.
+        assert_eq!(
+            readable_shade(ColorName::Blue, 8, white, 3.0),
+            ColorName::Blue.shade(8)
+        );
+        // On a dark background it walks towards lighter shades.
+        let dark = ColorName::Dark.shade(8);
+        assert!(readable_shade(ColorName::Violet, 8, dark, 3.0).contrast(dark) >= 3.0);
+        // Impossible targets return the best available, never panic.
+        let best = readable_shade(ColorName::Gray, 0, white, 21.0);
+        assert!(best.contrast(white) > 5.0);
     }
 
     #[test]

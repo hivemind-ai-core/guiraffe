@@ -10,7 +10,7 @@ use gpui_kit::{Render, StyleRefinement};
 use guiraffe_components::{Text, controls::KnobControl};
 use guiraffe_core::ColorName;
 use guiraffe_flow::cables::{Cable, CableAnchorExt, CableEnd, CableLayer, Cables};
-use guiraffe_flow::core::{Side, StrokeStyle};
+use guiraffe_flow::core::{Handle, HandleKind, Hue, NodeFrame, PortRing, Side, StrokeStyle};
 use guiraffe_flow::{
     Background, FlowCanvas, FlowEvent, FlowOptions, FlowState,
     core::{
@@ -44,7 +44,7 @@ pub fn entries() -> Vec<Entry> {
         Entry {
             krate: "flow",
             name: "Cables",
-            summary: "Cables from any element to flow ports and other elements, drawn by a window-level CableLayer with the edge look: solid, dashed or dotted. Pan, zoom or move a node and they follow.",
+            summary: "Cables from any element to flow ports and other elements, drawn by a window-level CableLayer with the edge look: solid, dashed or dotted, in a theme colour. Typed ports are coloured rings that fill once connected; nodes can be pills or frameless. Pan, zoom or move a node and the cables follow.",
             covers: &["CableLayer"],
             demo: cables,
         },
@@ -103,36 +103,70 @@ impl Render for CablesDemo {
 }
 
 fn cables(window: &mut Window, cx: &mut App) -> AnyView {
-    let flow = Graph::from_parts(
-        [
-            Node::new(1, "Filter", Point::new(40., 50.)),
-            Node::new(2, "Output", Point::new(260., 150.)),
-        ],
-        [Edge::new(1, 1, 2)],
-    )
-    .ok()
-    .and_then(|graph| {
-        let editor = guiraffe_flow::core::Editor::new(graph).ok()?;
-        Some(cx.new(|cx| {
-            FlowState::from_editor(editor, cx).options(FlowOptions {
-                minimap: false,
-                toolbar: false,
-                fit_on_init: false,
-                ..FlowOptions::default()
+    // Typed ports: audio in teal, modulation in orange, as rings that fill once connected.
+    let typed = |node: Node, ports: &[(&str, HandleKind, Side, Hue)]| {
+        let mut node = node;
+        node.handles = ports
+            .iter()
+            .map(|(id, kind, side, color)| {
+                Handle::new(*id, *kind, *side)
+                    .with_color(*color)
+                    .with_ring(PortRing::Ring)
+                    .with_tooltip(if *color == Hue::Teal {
+                        "Audio"
+                    } else {
+                        "Modulation"
+                    })
             })
-        }))
-    });
+            .collect();
+        node
+    };
+    let filter = typed(
+        Node::new(1, "Filter", Point::new(40., 50.)),
+        &[
+            ("in", HandleKind::Target, Side::Left, Hue::Teal),
+            ("mod", HandleKind::Target, Side::Top, Hue::Orange),
+            ("out", HandleKind::Source, Side::Right, Hue::Teal),
+        ],
+    );
+    let mut output = typed(
+        Node::new(2, "Output", Point::new(260., 150.)),
+        &[("in", HandleKind::Target, Side::Left, Hue::Teal)],
+    );
+    output.frame = NodeFrame::Pill;
+    output.size = Point::new(120., 40.);
+    let mut audio = Edge::new(1, 1, 2);
+    audio.color = Some(Hue::Teal);
+    let flow = Graph::from_parts([filter, output], [audio])
+        .map(|mut graph| {
+            graph.hide_markers = true;
+            graph
+        })
+        .ok()
+        .and_then(|graph| {
+            let editor = guiraffe_flow::core::Editor::new(graph).ok()?;
+            Some(cx.new(|cx| {
+                FlowState::from_editor(editor, cx).options(FlowOptions {
+                    minimap: false,
+                    toolbar: false,
+                    fit_on_init: false,
+                    ..FlowOptions::default()
+                })
+            }))
+        });
     let mut seeded = Cables::new();
     let cables = [
         Cable::new(
             CableEnd::element("cables/cutoff"),
-            CableEnd::port("graph", 1, "in"),
-        ),
+            CableEnd::port("graph", 1, "mod"),
+        )
+        .color(ColorName::Orange),
         Cable::new(
             CableEnd::element("cables/resonance"),
-            CableEnd::port("graph", 2, "in"),
+            CableEnd::port("graph", 1, "mod"),
         )
-        .style(StrokeStyle::DASHED),
+        .style(StrokeStyle::DASHED)
+        .color(ColorName::Orange),
         Cable::new(
             CableEnd::element("cables/cutoff"),
             CableEnd::element("cables/resonance"),

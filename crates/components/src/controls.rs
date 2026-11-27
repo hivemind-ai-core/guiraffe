@@ -1374,6 +1374,9 @@ impl Render for SliderControl {
     }
 }
 
+mod cycle;
+pub use cycle::*;
+
 mod knob;
 pub use knob::*;
 
