@@ -153,6 +153,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
     (
+        "components::StepGrid::focus_policy",
+        "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
+    ),
+    (
         "components::StepGrid::new",
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
@@ -169,11 +173,23 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
     (
+        "components::StepGrid::resolved_focus",
+        "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
+    ),
+    (
+        "components::StepGrid::set_focus_policy",
+        "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
+    ),
+    (
         "components::StepGrid::store",
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
     (
         "components::StepGridOptions::field cell",
+        "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
+    ),
+    (
+        "components::StepGridOptions::field focus",
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
     (

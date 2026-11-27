@@ -152,3 +152,7 @@ splitter sizes, collapsed panels and recent spotlight items. Each widget opts in
 - One shared helper renders it (absolute-positioned, `inset: -offset`, `pointer-events: none`, theme `state(FocusRing)` color, width 2px, offset 2px, radius = control radius + offset), so every control looks and behaves the same.
 - State borders in general (hover/selected/error) must also not change size: border width is constant across states (color changes only); a state that needs a thicker line uses an overlay.
 - Test: a control's laid-out bounds and its siblings' bounds are identical focused vs. unfocused and across hover/selected states.
+
+### 12.3 Focus policy
+
+`guiraffe_core::FocusPolicy` sets three things independently: **pointer** (a press takes focus), **tab** (a Tab stop) and **indicator** (`Focused`, `Keyboard` = focus-visible, `Never`). Each resolves component override → app default (`set_app_focus_policy`, window-free) → the component's built-in behaviour; `FocusOpt::Inherit` everywhere is the library default, so nothing changes until a host sets a policy. Presets: `MOUSE_FIRST`, `POINTER_ONLY`, `KEYBOARD_FIRST`. Mouse-first components that adopt it take a `focus: FocusPolicy` option and a `set_focus_policy` host setter; with pointer focus off they `prevent_default` the press so focus stays where it was, and pointer edits and bus actions keep working. Keyboard-first components (text fields, the command ribbon, keyboard-navigable views) ignore the app pointer setting and always focus on press. Adopted by: `StepGrid`.

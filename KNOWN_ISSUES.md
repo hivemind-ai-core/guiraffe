@@ -122,6 +122,15 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 
 - `guiraffe-goldens` zooms images with GPUI's linear sampling, so magnified goldens blur; the pixel readout stays exact. GPUI's `img` has no nearest-neighbour option. Add one in our GPUI fork (0.4).
 
+### Knob and focus policy
+
+- Knob modulation rings past the first two (at the default 40 px) paint outside the knob's box
+  without reserving layout space; leave room around heavily modulated knobs. Arc hit-testing
+  uses the rings' own geometry, so an overlay drawn over a ring does not block arc presses.
+- Arc events name an arc by its index in `set_modulation_arcs`; look up `ModArc::id` for the route.
+- Only `StepGrid` adopts `FocusPolicy` so far; `KnobControl` and `NumberFieldControl` still take
+  focus on press.
+
 ### Chat
 
 - A drag selection clears when one end scrolls out of the rendered rows, so you can't select
