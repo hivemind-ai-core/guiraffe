@@ -352,7 +352,10 @@ impl TracksModel {
         }
         self.selection = selection;
         self.additional = Arc::new(additional);
-        Some(TracksChange::SelectionChanged { selection })
+        Some(TracksChange::SelectionChanged {
+            selection,
+            clips: self.selected_clips().collect(),
+        })
     }
     fn prune_selection(&mut self) {
         let remaining: Vec<_> = self.selected_clips().collect();
@@ -586,7 +589,7 @@ pub enum TracksAction {
 
 /// What a [`TracksAction`] changed: the outcome bus subscribers and `TracksEvent`
 /// listeners see.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TracksChange {
     TrackResized {
         track: TrackId,
@@ -599,6 +602,7 @@ pub enum TracksChange {
     },
     SelectionChanged {
         selection: Option<ClipRef>,
+        clips: Arc<[ClipRef]>,
     },
     Seek {
         time: f64,
@@ -776,8 +780,14 @@ impl From<TracksChange> for Value {
                     ("sourceOffset", Value::Num(span.source_offset)),
                 ])
             }
-            TracksChange::SelectionChanged { selection } => {
-                let mut fields = vec![("kind", Value::Str("selectionChanged".into()))];
+            TracksChange::SelectionChanged { selection, clips } => {
+                let mut fields = vec![
+                    ("kind", Value::Str("selectionChanged".into())),
+                    (
+                        "clips",
+                        Value::List(clips.iter().map(|at| record(&clip_fields(*at))).collect()),
+                    ),
+                ];
                 if let Some(at) = selection {
                     fields.extend(clip_fields(at));
                 }
@@ -1044,11 +1054,17 @@ mod tests {
         ));
         assert_eq!(
             m.apply(TracksAction::Select(Some(a))),
-            Some(TracksChange::SelectionChanged { selection: Some(a) })
+            Some(TracksChange::SelectionChanged {
+                selection: Some(a),
+                clips: [a].into()
+            })
         );
         assert_eq!(
             m.apply(TracksAction::Select(Some(ClipRef::new(10, 99)))),
-            Some(TracksChange::SelectionChanged { selection: None }),
+            Some(TracksChange::SelectionChanged {
+                selection: None,
+                clips: [].into()
+            }),
             "a missing clip clears"
         );
         assert_eq!(m.apply(TracksAction::Seek(-3.0)), None, "already at 0");

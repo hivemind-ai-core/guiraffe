@@ -21,7 +21,8 @@ The model is store state. `TracksModel` holds the track rows (name, clips, heigh
 - **User edits** are `TracksAction`s: `ResizeTrack`, `MoveClip`, `TrimClip` (the end may extend past the content; a clip's length is host data), `Select` and `Seek`. `TracksView::register(&view, path, window, cx)` puts the view on the action bus; pointer and keyboard input then dispatch the same erased action a bus client sends (`resize_track`, `move_clip`, `trim_clip`, `select`, `seek`), tagged with its `Source`. A drag previews locally and commits one action on release as a `dispatch_batch`, so it is one undo step. Each applied action emits `TracksEvent` (`ClipChanged { edit: Move | Trim(edge) }`, `TrackResized`, `SelectionChanged`, `Seek`) and returns its `TracksChange` as the bus outcome. `perform(action, cx)` applies one directly.
 - **Rows** have their own heights (`TrackRow::with_height`, clamped to 20..=800 px). Layout is a prefix sum (`RowLayout`), and hit testing a binary search over row tops. `set_resizable_tracks(true, cx)` lets the user drag a row's bottom edge. A vertical wheel scrolls the rows when they overflow (Shift pans time); `scroll_y`/`set_scroll_y` read and set it.
 - **Clip content:** `set_clip_painter(Some(Rc<dyn ClipPainter>), cx)`. `ClipPainter::paint(&ClipPaint, window, &App)` gets a snapshot of one visible clip (track, row, clip, on-screen bounds, the axis mapping time to x, selected) and only paints. It runs for visible clips of rows below overview density, after the clip background and before the selection.
-- **Selection** is an accent border with a light tint (`SelectionStyle::themed`); `set_selection_style(Some(style), cx)` overrides it.
+- **Selection.** Click a clip to select it alone. Shift-, Ctrl-, or Command-click toggles it. Drag empty space to select the intersecting clips across rows, holding a modifier to add them. A right-click on a selected clip keeps the set. Every selected clip receives the theme's selection border and tint, or the host's `set_selection_style` override.
+- Read stable keys with `selected_clips(cx)` and replace them silently with `select_many(keys, cx)` (store event `SetSelectionMany`). The first valid key is the primary clip used for keyboard edits. User changes emit `TracksEvent::SelectionChanged { selected, clips, source }`. The bus accepts a list of `{track, clip}` records on `select` alongside its single-clip and null forms.
 - **Header column:** `set_header(HeaderMode::Default | Hidden | Custom(width, renderer), cx)`. A custom renderer gets a `HeaderRow` (index, row, height, selected) per visible row and is sized and aligned to it.
 
 In a DataUi document, each track record may carry an `id` (its key; else its position) and a `height`, and the `header` prop is `default` or `hidden`.
@@ -63,7 +64,7 @@ view.update(cx, |view, cx| {
 See `examples/plot_layers.rs` and the five showcase timeline entries.
 
 In a Rust host, subscribe to `TracksEvent::ContextMenu { track, clip, position, source }` to open a
-host menu. A secondary click selects the clip first and supplies the pointer position
+host menu. A secondary click on an unselected clip selects it alone. Clicking a selected clip keeps the set. The menu event supplies the pointer position
 in window coordinates. Empty space leaves selection alone. In a focused TracksView,
 the Menu key and Shift+F10 use the selected clip's center, clamped to the visible
 tracks body when scrolled out of view. With no selection these keys do nothing.

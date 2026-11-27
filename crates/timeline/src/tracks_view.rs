@@ -90,9 +90,9 @@ impl From<TracksChange> for TracksEvent {
                 edit,
             },
             TracksChange::TrackResized { track, height } => Self::TrackResized { track, height },
-            TracksChange::SelectionChanged { selection } => Self::SelectionChanged {
+            TracksChange::SelectionChanged { selection, clips } => Self::SelectionChanged {
                 selected: selection,
-                clips: selection.into_iter().collect(),
+                clips,
                 source: Source::Host,
             },
             TracksChange::Seek { time } => Self::Seek(time),
@@ -491,14 +491,14 @@ impl TracksView {
             return Ok(None);
         };
         self.store.dispatch_now(ApplyAction(action), cx);
-        let event = match change {
-            TracksChange::SelectionChanged { selection } => TracksEvent::SelectionChanged {
-                selected: selection,
-                clips: next.selected_clips().collect(),
-                source,
-            },
-            other => other.into(),
-        };
+        let mut event = TracksEvent::from(change.clone());
+        if let TracksEvent::SelectionChanged {
+            source: event_source,
+            ..
+        } = &mut event
+        {
+            *event_source = source;
+        }
         cx.emit(event);
         cx.notify();
         Ok(Some(change))

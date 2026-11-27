@@ -558,11 +558,11 @@ fn tracks_selection_light_and_dark() {
     let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
         .update_from_env();
     for scheme in [Scheme::Light, Scheme::Dark] {
-        let mut s = Snapshotter::new()
-            .unwrap_or_else(|e| panic!("{e}"))
-            .with_setup(gpui_kit::component::init);
-        let img = s
-            .render(size(px(640.), px(240.)), move |_, cx| {
+        let render = |clips: Vec<ClipRef>| {
+            let mut s = Snapshotter::new()
+                .unwrap_or_else(|e| panic!("{e}"))
+                .with_setup(gpui_kit::component::init);
+            s.render(size(px(640.), px(240.)), move |_, cx| {
                 apply(
                     GuiraffeTheme {
                         scheme,
@@ -577,9 +577,7 @@ fn tracks_selection_light_and_dark() {
                 ]);
                 let store = tracks_store(model, 10, cx);
                 store.dispatch_now(
-                    guiraffe_timeline::tracks_model::SetSelectionMany(
-                        [ClipRef::new(2, 1), ClipRef::new(1, 2)].into(),
-                    ),
+                    guiraffe_timeline::tracks_model::SetSelectionMany(clips.into()),
                     cx,
                 );
                 store.dispatch_now(SetPlayhead(2.25), cx);
@@ -607,7 +605,25 @@ fn tracks_selection_light_and_dark() {
                 });
                 cx.new(|_| Root(view))
             })
-            .unwrap_or_else(|e| panic!("{e:#}"));
+            .unwrap_or_else(|e| panic!("{e:#}"))
+        };
+        let keys = ClipRef::new(2, 1);
+        let drums = ClipRef::new(1, 2);
+        let img = render(vec![keys]);
+        let both = render(vec![keys, drums]);
+        let other = render(vec![drums]);
+        let empty = render(vec![]);
+        // Selections occupy disjoint rows. Every changed pixel from either solo
+        // selection must appear in the combined render, including its row header.
+        assert!(img != empty && other != empty);
+        for (((base, first), second), combined) in empty
+            .pixels()
+            .zip(img.pixels())
+            .zip(other.pixels())
+            .zip(both.pixels())
+        {
+            assert_eq!(combined, if second != base { second } else { first });
+        }
         let name = if scheme == Scheme::Light {
             "tracks-selection/light"
         } else {
@@ -928,6 +944,31 @@ fn multi_selection_follows_pointer_marquee_host_and_context_menu(cx: &mut TestAp
         assert!(
             matches!(m.events.borrow().last(), Some(TracksEvent::SelectionChanged { clips,source:Source::Pointer,.. }) if clips.as_ref()==[a,b])
         );
+        let third = m.at(5.5, 15.);
+        m.vcx
+            .simulate_mouse_down(third, MouseButton::Right, Default::default());
+        m.vcx
+            .simulate_mouse_up(third, MouseButton::Right, Default::default());
+        assert_eq!(
+            m.model().selected_clips().collect::<Vec<_>>(),
+            [ClipRef::new(100, 2)]
+        );
+        if let Some(id) = m.id {
+            m.vcx
+                .update(|window, cx| {
+                    ActionBus::dispatch(
+                        id,
+                        &TracksAction::SelectMany([b, a].into()).to_action(),
+                        Source::Script,
+                        window,
+                        cx,
+                    )
+                })
+                .expect("bus selection");
+            assert!(
+                matches!(m.events.borrow().last(), Some(TracksEvent::SelectionChanged {source:Source::Script,clips,..}) if clips.as_ref()==[b,a])
+            );
+        }
         m.click(first);
         assert_eq!(m.model().selected_clips().collect::<Vec<_>>(), [a]);
     }
