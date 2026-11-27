@@ -41,6 +41,20 @@ pub struct StepCell {
     pub probability: f32,
     /// Repeats within the step (1 = none), drawn as stacked ticks.
     pub ratchet: u8,
+    /// A ghost note: a quiet hit, drawn as a smaller inset fill.
+    pub soft: bool,
+    /// Micro-timing in steps, -0.5..=0.5 (negative is early), drawn as a tick.
+    pub offset: f32,
+    /// A flam (a grace hit just before), drawn as a bar at the top.
+    pub flam: bool,
+}
+
+/// A cell's emphasis, as `cycle_flag` steps through it: normal, accent, ghost note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepFlag {
+    Normal,
+    Accent,
+    Ghost,
 }
 
 impl Default for StepCell {
@@ -51,6 +65,9 @@ impl Default for StepCell {
             flag: false,
             probability: 1.0,
             ratchet: 1,
+            soft: false,
+            offset: 0.0,
+            flam: false,
         }
     }
 }
@@ -81,6 +98,45 @@ impl StepCell {
     pub fn with_ratchet(mut self, n: u8) -> Self {
         self.ratchet = n.clamp(1, 8);
         self
+    }
+
+    /// A ghost note (see [`StepCell::soft`]).
+    pub fn ghost_note(mut self) -> Self {
+        self.soft = true;
+        self
+    }
+
+    /// Micro-timing in steps, clamped to -0.5..=0.5.
+    pub fn with_offset(mut self, offset: f32) -> Self {
+        self.offset = clamp_offset(offset);
+        self
+    }
+
+    pub fn with_flam(mut self) -> Self {
+        self.flam = true;
+        self
+    }
+
+    /// The cell's emphasis. An accent wins over a ghost note.
+    pub fn emphasis(&self) -> StepFlag {
+        match (self.flag, self.soft) {
+            (true, _) => StepFlag::Accent,
+            (false, true) => StepFlag::Ghost,
+            _ => StepFlag::Normal,
+        }
+    }
+
+    fn set_emphasis(&mut self, flag: StepFlag) {
+        self.flag = flag == StepFlag::Accent;
+        self.soft = flag == StepFlag::Ghost;
+    }
+}
+
+fn clamp_offset(offset: f32) -> f32 {
+    if offset.is_finite() {
+        offset.clamp(-0.5, 0.5)
+    } else {
+        0.0
     }
 }
 
@@ -150,6 +206,8 @@ impl StepRow {
 #[derive(Debug, Clone)]
 pub struct StepDoc {
     rows: Arc<Vec<Arc<StepRow>>>,
+    /// Draft cells per row (a proposed pattern), drawn as dashed outlines until applied.
+    ghosts: Arc<BTreeMap<RowId, Arc<[StepCell]>>>,
     pub columns: usize,
     /// Columns per group (shaded bands and bar lines); 0 for none.
     pub group: usize,
@@ -166,6 +224,7 @@ impl PartialEq for StepDoc {
                     .all(|(a, b)| Arc::ptr_eq(a, b) || a == b)))
             && self.columns == other.columns
             && self.group == other.group
+            && (Arc::ptr_eq(&self.ghosts, &other.ghosts) || self.ghosts == other.ghosts)
     }
 }
 
@@ -191,6 +250,25 @@ pub enum StepChange {
     RowLengthChanged {
         row: RowId,
         length: usize,
+    },
+    FlagCycled {
+        row: RowId,
+        column: usize,
+        flag: StepFlag,
+    },
+    OffsetChanged {
+        row: RowId,
+        column: usize,
+        offset: f32,
+    },
+    FlamChanged {
+        row: RowId,
+        column: usize,
+        flam: bool,
+    },
+    /// The row's ghost cells became its cells, and its ghosts were cleared.
+    GhostsApplied {
+        row: RowId,
     },
 }
 
@@ -218,12 +296,34 @@ pub enum StepAction {
         row: RowId,
         length: usize,
     },
+    /// Step a lit cell's emphasis: normal, accent, ghost note, normal.
+    CycleFlag {
+        row: RowId,
+        column: usize,
+    },
+    /// Set a lit cell's micro-timing in steps (clamped to -0.5..=0.5).
+    SetOffset {
+        row: RowId,
+        column: usize,
+        offset: f32,
+    },
+    /// Set or clear a lit cell's flam.
+    SetFlam {
+        row: RowId,
+        column: usize,
+        flam: bool,
+    },
+    /// Replace the row's cells with its ghost cells and clear them (an "Apply").
+    ApplyGhosts {
+        row: RowId,
+    },
 }
 
 impl StepDoc {
     pub fn new(columns: usize, group: usize, rows: Vec<StepRow>) -> Self {
         let mut doc = Self {
             rows: Arc::new(Vec::new()),
+            ghosts: Arc::default(),
             columns: columns.max(1),
             group,
         };
@@ -277,10 +377,114 @@ impl StepDoc {
         !same
     }
 
+    /// A row's ghost cells, if it has any.
+    pub fn ghosts(&self, row: RowId) -> Option<&[StepCell]> {
+        self.ghosts.get(&row).map(|g| &**g)
+    }
+
+    /// Set (or with `None` clear) a row's ghost cells. Returns whether anything changed.
+    pub fn set_ghosts(&mut self, row: RowId, cells: Option<Vec<StepCell>>) -> bool {
+        let next: Option<Arc<[StepCell]>> = cells.map(Into::into);
+        if self.ghosts.get(&row) == next.as_ref() {
+            return false;
+        }
+        let ghosts = Arc::make_mut(&mut self.ghosts);
+        match next {
+            Some(cells) => ghosts.insert(row, cells),
+            None => ghosts.remove(&row),
+        };
+        true
+    }
+
+    /// Change the column count and grouping (a pattern length change). Row lengths are
+    /// clamped to the new count; cells past it stay stored. Returns whether anything changed.
+    pub fn set_columns(&mut self, columns: usize, group: usize) -> bool {
+        let columns = columns.max(1);
+        if (self.columns, self.group) == (columns, group) {
+            return false;
+        }
+        self.columns = columns;
+        self.group = group;
+        if self.rows.iter().any(|r| r.length > columns) {
+            for row in Arc::make_mut(&mut self.rows).iter_mut() {
+                if row.length > columns {
+                    Arc::make_mut(row).length = columns;
+                }
+            }
+        }
+        true
+    }
+
+    /// Edit a lit, playing cell: `None` when off, a repeat, or unchanged.
+    fn edit_lit(
+        &mut self,
+        row: RowId,
+        column: usize,
+        edit: impl FnOnce(&mut StepCell),
+    ) -> Option<StepCell> {
+        let r = self.row(row)?;
+        if column >= r.length || !r.cell(column).on {
+            return None;
+        }
+        let before = r.cell(column);
+        let mut cell = before;
+        edit(&mut cell);
+        if cell == before {
+            return None;
+        }
+        self.row_mut(row)?.set(column, cell);
+        Some(cell)
+    }
+
     /// Apply a user action; `None` for a no-op.
     pub fn apply(&mut self, action: StepAction) -> Option<StepChange> {
         let columns = self.columns;
         match action {
+            StepAction::CycleFlag { row, column } => {
+                let cell = self.edit_lit(row, column, |cell| {
+                    let next = match cell.emphasis() {
+                        StepFlag::Normal => StepFlag::Accent,
+                        StepFlag::Accent => StepFlag::Ghost,
+                        StepFlag::Ghost => StepFlag::Normal,
+                    };
+                    cell.set_emphasis(next);
+                })?;
+                Some(StepChange::FlagCycled {
+                    row,
+                    column,
+                    flag: cell.emphasis(),
+                })
+            }
+            StepAction::SetOffset {
+                row,
+                column,
+                offset,
+            } => {
+                let offset = clamp_offset(offset);
+                self.edit_lit(row, column, |cell| cell.offset = offset)?;
+                Some(StepChange::OffsetChanged {
+                    row,
+                    column,
+                    offset,
+                })
+            }
+            StepAction::SetFlam { row, column, flam } => {
+                self.edit_lit(row, column, |cell| cell.flam = flam)?;
+                Some(StepChange::FlamChanged { row, column, flam })
+            }
+            StepAction::ApplyGhosts { row } => {
+                let cells = self.ghosts.get(&row)?.clone();
+                let target = self.row_mut(row)?;
+                for (c, cell) in cells.iter().enumerate() {
+                    target.set(c, *cell);
+                }
+                let length = target.length;
+                for c in cells.len()..length {
+                    target.set(c, StepCell::default());
+                }
+                Arc::make_mut(&mut self.ghosts).remove(&row);
+                Some(StepChange::GhostsApplied { row })
+            }
             StepAction::ToggleCell { row, column } => {
                 let r = self.row(row)?;
                 if column >= r.length {
@@ -354,6 +558,14 @@ pub mod action_names {
     pub const PAINT_CELLS: &str = "paint_cells";
     /// `{row, length}`
     pub const SET_ROW_LENGTH: &str = "set_row_length";
+    /// `{row, column}`
+    pub const CYCLE_FLAG: &str = "cycle_flag";
+    /// `{row, column, offset}`
+    pub const SET_OFFSET: &str = "set_offset";
+    /// `{row, column, flam}`
+    pub const SET_FLAM: &str = "set_flam";
+    /// `{row}`
+    pub const APPLY_GHOSTS: &str = "apply_ghosts";
 }
 
 fn record(fields: &[(&'static str, Value)]) -> Value {
@@ -410,6 +622,31 @@ impl StepAction {
                 SET_ROW_LENGTH,
                 record(&[("row", r(row)), ("length", n(length))]),
             ),
+            Self::CycleFlag { row, column } => (
+                CYCLE_FLAG,
+                record(&[("row", r(row)), ("column", n(column))]),
+            ),
+            Self::SetOffset {
+                row,
+                column,
+                offset,
+            } => (
+                SET_OFFSET,
+                record(&[
+                    ("row", r(row)),
+                    ("column", n(column)),
+                    ("offset", Value::Num(f64::from(offset))),
+                ]),
+            ),
+            Self::SetFlam { row, column, flam } => (
+                SET_FLAM,
+                record(&[
+                    ("row", r(row)),
+                    ("column", n(column)),
+                    ("flam", Value::Bool(flam)),
+                ]),
+            ),
+            Self::ApplyGhosts { row } => (APPLY_GHOSTS, record(&[("row", r(row))])),
         };
         Action {
             name: SharedString::new_static(name),
@@ -445,6 +682,24 @@ impl StepAction {
                 row: row()?,
                 length: at("length")?,
             },
+            CYCLE_FLAG => Self::CycleFlag {
+                row: row()?,
+                column: at("column")?,
+            },
+            SET_OFFSET => Self::SetOffset {
+                row: row()?,
+                column: at("column")?,
+                offset: num(p, "offset")? as f32,
+            },
+            SET_FLAM => Self::SetFlam {
+                row: row()?,
+                column: at("column")?,
+                flam: p
+                    .field(&[SharedString::new_static("flam")])
+                    .as_bool()
+                    .ok_or(ActionError::Invalid("flam"))?,
+            },
+            APPLY_GHOSTS => Self::ApplyGhosts { row: row()? },
             _ => return Err(ActionError::Unsupported),
         })
     }
@@ -480,6 +735,36 @@ impl From<StepChange> for Value {
                 ("row", r(row)),
                 ("length", n(length)),
             ]),
+            StepChange::FlagCycled { row, column, flag } => record(&[
+                kind("flagCycled"),
+                ("row", r(row)),
+                ("column", n(column)),
+                (
+                    "flag",
+                    Value::Str(SharedString::new_static(match flag {
+                        StepFlag::Normal => "normal",
+                        StepFlag::Accent => "accent",
+                        StepFlag::Ghost => "ghost",
+                    })),
+                ),
+            ]),
+            StepChange::OffsetChanged {
+                row,
+                column,
+                offset,
+            } => record(&[
+                kind("offsetChanged"),
+                ("row", r(row)),
+                ("column", n(column)),
+                ("offset", Value::Num(f64::from(offset))),
+            ]),
+            StepChange::FlamChanged { row, column, flam } => record(&[
+                kind("flamChanged"),
+                ("row", r(row)),
+                ("column", n(column)),
+                ("flam", Value::Bool(flam)),
+            ]),
+            StepChange::GhostsApplied { row } => record(&[kind("ghostsApplied"), ("row", r(row))]),
         }
     }
 }
@@ -517,6 +802,44 @@ impl Event<StepDoc> for SetRows {
     fn handle(self, fx: &mut Fx<'_, StepDoc>) {
         let mut next = fx.state().clone();
         if next.set_rows(self.0) {
+            fx.set(next);
+        }
+    }
+    fn undoable(&self) -> bool {
+        false
+    }
+}
+
+/// Host write: change the column count and grouping. Never echoes; not undoable.
+#[derive(Debug, Clone, Copy)]
+pub struct SetColumns {
+    pub columns: usize,
+    pub group: usize,
+}
+
+impl Event<StepDoc> for SetColumns {
+    fn handle(self, fx: &mut Fx<'_, StepDoc>) {
+        let mut next = fx.state().clone();
+        if next.set_columns(self.columns, self.group) {
+            fx.set(next);
+        }
+    }
+    fn undoable(&self) -> bool {
+        false
+    }
+}
+
+/// Host write: set (`Some`) or clear (`None`) a row's ghost cells. Never echoes.
+#[derive(Debug, Clone)]
+pub struct SetGhosts {
+    pub row: RowId,
+    pub cells: Option<Vec<StepCell>>,
+}
+
+impl Event<StepDoc> for SetGhosts {
+    fn handle(self, fx: &mut Fx<'_, StepDoc>) {
+        let mut next = fx.state().clone();
+        if next.set_ghosts(self.row, self.cells) {
             fx.set(next);
         }
     }
@@ -663,6 +986,121 @@ mod tests {
                 row: RowId(3),
                 length: 7,
             },
+        ] {
+            assert_eq!(StepAction::decode(&a.to_action()), Ok(a));
+        }
+    }
+
+    #[test]
+    fn flags_cycle_offsets_clamp_and_flams_toggle_on_lit_cells() {
+        let mut d = doc();
+        let kick = RowId(7);
+        let cycle = StepAction::CycleFlag {
+            row: kick,
+            column: 0,
+        };
+        let flags: Vec<_> = (0..3)
+            .filter_map(|_| match d.apply(cycle) {
+                Some(StepChange::FlagCycled { flag, .. }) => Some(flag),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, [StepFlag::Accent, StepFlag::Ghost, StepFlag::Normal]);
+        assert_eq!(
+            d.apply(StepAction::CycleFlag {
+                row: kick,
+                column: 1
+            }),
+            None,
+            "an off cell has no emphasis"
+        );
+        assert_eq!(
+            d.apply(StepAction::SetOffset {
+                row: kick,
+                column: 0,
+                offset: -2.0
+            }),
+            Some(StepChange::OffsetChanged {
+                row: kick,
+                column: 0,
+                offset: -0.5
+            })
+        );
+        assert_eq!(
+            d.apply(StepAction::SetFlam {
+                row: kick,
+                column: 0,
+                flam: true
+            }),
+            Some(StepChange::FlamChanged {
+                row: kick,
+                column: 0,
+                flam: true
+            })
+        );
+        let cell = d.row(kick).map(|r| r.cell(0)).unwrap_or_default();
+        assert!(cell.flam && cell.offset == -0.5 && cell.emphasis() == StepFlag::Normal);
+    }
+
+    #[test]
+    fn ghosts_and_columns_round_trip() {
+        let mut d = doc();
+        let hat = RowId(9);
+        let draft = vec![
+            StepCell::on(),
+            StepCell::default(),
+            StepCell::on().ghost_note(),
+        ];
+        assert!(d.set_ghosts(hat, Some(draft.clone())));
+        assert!(!d.set_ghosts(hat, Some(draft.clone())), "unchanged");
+        assert_eq!(d.ghosts(hat), Some(draft.as_slice()));
+        let before = d.clone();
+        assert!(d.set_ghosts(hat, None));
+        assert_eq!(d.ghosts(hat), None);
+        assert_ne!(d, before);
+        d.set_ghosts(hat, Some(draft.clone()));
+        assert_eq!(
+            d.apply(StepAction::ApplyGhosts { row: hat }),
+            Some(StepChange::GhostsApplied { row: hat })
+        );
+        let row = d
+            .row(hat)
+            .cloned()
+            .unwrap_or_else(|| StepRow::new(0, "", 1));
+        assert!(row.cell(0).on && !row.cell(1).on && row.cell(2).soft);
+        assert_eq!(d.ghosts(hat), None);
+        assert_eq!(d.apply(StepAction::ApplyGhosts { row: hat }), None);
+        // Columns: shrink clamps lengths, growing keeps them.
+        assert!(d.set_columns(8, 2));
+        assert_eq!((d.columns, d.group), (8, 2));
+        assert!(d.rows().iter().all(|r| r.length <= 8));
+        assert!(!d.set_columns(8, 2));
+        assert!(d.set_columns(32, 4));
+        assert_eq!(d.row(hat).map(|r| r.length), Some(8));
+        assert!(
+            d.row(RowId(7)).is_some_and(|r| r.cell(0).on),
+            "cells survive"
+        );
+    }
+
+    #[test]
+    fn new_actions_round_trip() {
+        for a in [
+            StepAction::CycleFlag {
+                row: RowId(3),
+                column: 5,
+            },
+            StepAction::SetOffset {
+                row: RowId(3),
+                column: 5,
+                offset: -0.25,
+            },
+            StepAction::SetFlam {
+                row: RowId(3),
+                column: 5,
+                flam: true,
+            },
+            StepAction::ApplyGhosts { row: RowId(3) },
         ] {
             assert_eq!(StepAction::decode(&a.to_action()), Ok(a));
         }

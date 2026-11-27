@@ -446,14 +446,18 @@ struct StepDemo(Entity<StepGrid>);
 impl gpui_kit::Render for StepDemo {
     fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
         column([example(
-            "Click toggles, drag paints, Alt-drag sets the level; Hat repeats every 6 steps",
+            "Click toggles, drag paints, Alt-drag sets the level, Shift-click cycles accent and ghost, Ctrl-drag nudges; Hat repeats every 6 steps, Clap is muted, the dashed Snare cells are a draft",
             self.0.clone(),
         )])
     }
 }
 
 fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
-    use guiraffe_components::step_grid::{StepDoc, step_store};
+    use guiraffe_components::step_grid::{RulerLabel, SetGhosts, StepDoc, step_store};
+    let mut clap = StepRow::new(4, "Clap (muted)", 16)
+        .with_color(ColorName::Grape)
+        .with_cell(14, StepCell::on().with_ratchet(4));
+    clap.muted = true;
     let rows = vec![
         StepRow::new(1, "Kick", 16)
             .with_color(ColorName::Red)
@@ -463,20 +467,50 @@ fn step_grid(_: &mut Window, cx: &mut App) -> AnyView {
             .with_cell(12, StepCell::on().with_ratchet(2)),
         StepRow::new(2, "Snare", 16)
             .with_color(ColorName::Blue)
-            .with_cell(4, StepCell::on())
-            .with_cell(12, StepCell::on())
+            .with_cell(4, StepCell::on().with_flam())
+            .with_cell(7, StepCell::on().ghost_note().with_level(0.6))
+            .with_cell(12, StepCell::on().with_offset(0.25))
             .with_cell(15, StepCell::on().with_probability(0.4)),
         StepRow::new(3, "Hat", 6)
             .with_color(ColorName::Yellow)
             .with_cell(0, StepCell::on().with_level(0.5))
             .with_cell(2, StepCell::on())
             .with_cell(4, StepCell::on().with_level(0.3)),
-        StepRow::new(4, "Clap", 16)
-            .with_color(ColorName::Grape)
-            .with_cell(14, StepCell::on().with_ratchet(4)),
+        clap,
     ];
     let store = step_store(StepDoc::new(16, 4, rows), 100, cx);
-    let grid = StepGrid::new(store, StepGridOptions::default(), cx);
+    // A proposed Snare pattern, drawn dashed until applied (`apply_ghosts` on the bus).
+    store.dispatch(
+        SetGhosts {
+            row: guiraffe_components::RowId(2),
+            cells: Some(
+                (0..16)
+                    .map(|c| {
+                        if c % 8 == 6 {
+                            StepCell::on()
+                        } else {
+                            StepCell::default()
+                        }
+                    })
+                    .collect(),
+            ),
+        },
+        cx,
+    );
+    let options = StepGridOptions {
+        group_gap: 6.,
+        // Bold bar numbers, step-in-bar numbers between.
+        ruler_label: Some(std::rc::Rc::new(|c| {
+            Some(RulerLabel {
+                text: if c % 4 == 0 { c / 4 + 1 } else { c % 4 + 1 }
+                    .to_string()
+                    .into(),
+                strong: c % 4 == 0,
+            })
+        })),
+        ..StepGridOptions::default()
+    };
+    let grid = StepGrid::new(store, options, cx);
     grid.read(cx).playhead().set(Some(6));
     cx.new(|_| StepDemo(grid)).into()
 }
