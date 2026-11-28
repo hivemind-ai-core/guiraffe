@@ -69,11 +69,11 @@ pub use segmented::{SegmentedControl, SegmentedEvent};
 pub use speed_dial::{DialAction, DialArc, DialLayout, SpeedDial, SpeedDialEvent};
 pub use spoiler::Spoiler;
 pub use step_grid::{
-    LevelStyle, RowId, StepCell, StepGrid, StepGridEvent, StepGridOptions, StepPlayheadFeed,
-    StepRow, StepRowHeader,
+    LevelStyle, RowId, StepCell, StepCellColors, StepGrid, StepGridEvent, StepGridOptions,
+    StepPlayheadFeed, StepRow, StepRowHeader,
 };
 pub use stepper::{Step, StepState, Stepper, connector_complete, step_state};
-pub use tabs::{TabId, TabItem, Tabs, TabsEvent, TabsOptions, TabsVariant};
+pub use tabs::{TabId, TabItem, Tabs, TabsEvent, TabsOptions, TabsOrientation, TabsVariant};
 pub use timeline::{ItemState, Timeline, TimelineItem};
 pub use typography::{Text, Title};
 

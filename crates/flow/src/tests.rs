@@ -1037,3 +1037,98 @@ fn anchors_moved_fires_on_pan_zoom_move_and_layout_only(cx: &mut TestAppContext)
     drag(&view, true, cx);
     expect(cx, "the same locked drag", 6);
 }
+
+#[gpui_kit::test]
+fn a_host_preview_shifts_hides_and_adds_without_history_or_cancelling_a_drag(
+    cx: &mut TestAppContext,
+) {
+    use crate::core::{Edge, GraphPatch};
+    let (w, view) = open(cx);
+    view.update(cx, |view, cx| {
+        view.edit(
+            |graph| {
+                graph.edges.insert(1, Edge::new(1, 1, 2));
+                Ok(())
+            },
+            cx,
+        )
+        .expect("edge");
+    });
+    let frame = |cx: &mut TestAppContext| {
+        w.update(cx, |_, window, cx| window.render_frame(cx))
+            .expect("frame");
+        cx.run_until_parked();
+    };
+    frame(cx);
+    let read = |cx: &mut TestAppContext| {
+        view.read_with(cx, |view, _| {
+            (
+                view.node_bounds(2).expect("bounds").origin,
+                view.visible_counts().1,
+                view.interaction.editor.undo_depth(),
+                view.graph().clone(),
+            )
+        })
+    };
+    let (origin, edges, depth, graph) = read(cx);
+    assert_eq!(edges, 1);
+
+    // A drag of node 1 is in progress.
+    view.update(cx, |view, _| {
+        view.interaction.gesture = Some(crate::Gesture::Move {
+            start: WorldPoint::new(90., 130.),
+            origins: std::sync::Arc::new([(1, WorldPoint::new(80., 120.))].into_iter().collect()),
+            roots: std::sync::Arc::new([(1, WorldPoint::new(80., 120.))].into_iter().collect()),
+            axes: Default::default(),
+            delta: WorldPoint::new(0., 40.),
+            dominant: false,
+        });
+    });
+    let patch = GraphPatch::default()
+        .offset(2, WorldPoint::new(0., 100.))
+        .hide_edge(1);
+    view.update(cx, |view, cx| view.set_preview(Some(patch.clone()), cx))
+        .expect("preview");
+    frame(cx);
+    let (shifted, hidden, after_depth, after_graph) = read(cx);
+    assert_eq!(
+        shifted.y - origin.y,
+        px(100.),
+        "node 2 drawn 100 lower at zoom 1"
+    );
+    assert_eq!(shifted.x, origin.x);
+    assert_eq!(hidden, 0, "the hidden edge is not drawn");
+    assert_eq!(after_depth, depth, "no history entry");
+    assert_eq!(after_graph, graph, "the document is untouched");
+    assert!(
+        view.read_with(cx, |view, _| view.interaction.gesture.is_some()),
+        "the drag carries on"
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.preview().cloned()),
+        Some(patch)
+    );
+
+    // An added edge is drawn; a bad patch is refused and leaves the preview.
+    let added = GraphPatch::default().add_edge(Edge::new(9, 2, 1));
+    view.update(cx, |view, cx| view.set_preview(Some(added.clone()), cx))
+        .expect("added");
+    frame(cx);
+    assert_eq!(read(cx).1, 2);
+    let bad = GraphPatch::default().add_edge(Edge::new(1, 1, 2));
+    assert!(
+        view.update(cx, |view, cx| view.set_preview(Some(bad), cx))
+            .is_err()
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.preview().cloned()),
+        Some(added)
+    );
+
+    // Cleared: the document again.
+    view.update(cx, |view, cx| view.set_preview(None, cx))
+        .expect("clear");
+    frame(cx);
+    let (back, edges, ..) = read(cx);
+    assert_eq!((back, edges), (origin, 1));
+}

@@ -157,6 +157,9 @@ pub struct FlowViewport {
     theme_cache: Option<Rc<GuiraffeTheme>>,
     ordered_ids: Vec<core::NodeId>,
     layout_preview: Option<std::sync::Arc<core::Scene>>,
+    /// A host preview (`set_preview`) and the scene it shows; rebuilt when the document
+    /// changes, and kept through gestures until the host clears it.
+    patch_preview: Option<(core::GraphPatch, std::sync::Arc<core::Scene>)>,
     order_scene: Option<std::sync::Arc<core::Scene>>,
     order_selection: Option<std::sync::Arc<std::collections::BTreeSet<core::NodeId>>>,
     last_query_ids: Vec<core::NodeId>,
@@ -267,6 +270,7 @@ impl FlowViewport {
             theme_cache: None,
             ordered_ids: Vec::new(),
             layout_preview: None,
+            patch_preview: None,
             order_scene: None,
             order_selection: None,
             last_query_ids: Vec::new(),
@@ -398,10 +402,62 @@ impl FlowViewport {
 
     /// The graph the canvas draws: a layout preview while one is shown.
     fn display_graph(&self) -> &Graph {
-        match &self.layout_preview {
-            Some(preview) => preview.graph(),
-            None => self.interaction.editor.graph(),
+        match (&self.layout_preview, &self.patch_preview) {
+            (Some(preview), _) | (None, Some((_, preview))) => preview.graph(),
+            (None, None) => self.interaction.editor.graph(),
         }
+    }
+
+    /// The scene the canvas draws: a layout preview while one is shown, else the host's
+    /// preview, else the document.
+    fn display_scene(&self) -> std::sync::Arc<core::Scene> {
+        self.layout_preview
+            .clone()
+            .or_else(|| self.patch_preview.as_ref().map(|(_, scene)| scene.clone()))
+            .unwrap_or_else(|| self.interaction.editor.scene_shared())
+    }
+
+    /// Shows the graph with `patch` applied, or the document again for `None`, without
+    /// editing it: no history entry, no event, and a gesture in progress carries on. The
+    /// preview follows later edits until it is cleared. Pointer hits still use the
+    /// document's positions. Fails, leaving the current preview, for a patch that does not
+    /// apply (see [`core::GraphPatch::apply`]).
+    pub fn set_preview(
+        &mut self,
+        patch: Option<core::GraphPatch>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), FlowError> {
+        let next = match patch {
+            Some(patch) if !patch.is_empty() => {
+                let graph = patch.apply(self.interaction.editor.graph())?;
+                let scene = std::sync::Arc::new(core::Scene::new(graph)?);
+                Some((patch, scene))
+            }
+            _ => None,
+        };
+        if next.is_none() && self.patch_preview.is_none() {
+            return Ok(());
+        }
+        self.patch_preview = next;
+        cx.notify();
+        Ok(())
+    }
+
+    /// The host preview shown, if any.
+    pub fn preview(&self) -> Option<&core::GraphPatch> {
+        self.patch_preview.as_ref().map(|(patch, _)| patch)
+    }
+
+    /// Re-applies the host preview to the current document; drops it if it no longer applies.
+    pub(crate) fn refresh_patch_preview(&mut self) {
+        let Some((patch, _)) = self.patch_preview.take() else {
+            return;
+        };
+        self.patch_preview = patch
+            .apply(self.interaction.editor.graph())
+            .and_then(core::Scene::new)
+            .ok()
+            .map(|scene| (patch, std::sync::Arc::new(scene)));
     }
 
     /// Node `id`'s world rectangle as drawn, at a dragged node's preview position.
@@ -462,6 +518,7 @@ impl FlowViewport {
         if document {
             self.cancel_stale_indexes();
             self.layout_preview = None;
+            self.refresh_patch_preview();
             self.meshes
                 .borrow_mut()
                 .sync(self.interaction.editor.scene());
@@ -750,10 +807,7 @@ impl Render for FlowViewport {
         if self.visible.edges.is_empty() {
             self.visible.edges = std::mem::take(&mut self.meshes.borrow_mut().edge_buffer);
         }
-        let display = self
-            .layout_preview
-            .clone()
-            .unwrap_or_else(|| self.interaction.editor.scene_shared());
+        let display = self.display_scene();
         if self.first_fit.get() && display.has_deferred_edges() && !window.is_a11y_active() {
             viewport = self.interaction.fitted_viewport(size);
         }
@@ -779,10 +833,8 @@ impl Render for FlowViewport {
         }
         if let Some(Gesture::Move { origins, .. }) = &self.interaction.gesture {
             self.visible.nodes.extend(origins.keys().copied());
-            self.interaction
-                .editor
-                .scene()
-                .append_incident_edges(origins.keys().copied(), &mut self.visible.edges);
+            // From the scene drawn, so a previewed graph's hidden edges stay hidden.
+            display.append_incident_edges(origins.keys().copied(), &mut self.visible.edges);
             self.visible.nodes.sort_unstable();
             self.visible.nodes.dedup();
             self.visible.edges.sort_unstable();

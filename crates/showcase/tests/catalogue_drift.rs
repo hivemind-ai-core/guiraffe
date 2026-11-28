@@ -145,6 +145,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
     (
+        "components::StepGridOptions::field cells",
+        "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
+    ),
+    (
         "components::StepGridOptions::field group_gap",
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
@@ -418,6 +422,22 @@ const IMPERATIVE: &[(&str, &str)] = &[
     ),
     (
         "components::Tabs::store",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::orientation",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::set_orientation",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::TabsOptions::field orientation",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::TabsOptions::field strip_width",
         "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
     ),
     (
@@ -1463,6 +1483,14 @@ const IMPERATIVE: &[(&str, &str)] = &[
     (
         "timeline::TracksView::set_scroll_y",
         "The rendered view scrolls its own rows.",
+    ),
+    (
+        "timeline::TracksView::select_many",
+        "Window-free host write of a selection of stable clip keys.",
+    ),
+    (
+        "timeline::TracksView::selected_clips",
+        "Read-only native iterator over selected stable clip keys.",
     ),
     (
         "timeline::TracksView::selection_style",

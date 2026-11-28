@@ -48,34 +48,61 @@ pub struct SurfaceShades {
     pub raised: Rgb,
     /// Recessed areas: wells, recessed fields, meter tracks, plot backgrounds.
     pub sunken: Rgb,
-    /// Dividers and outlines.
+    /// Header bars, toolbars, tab strips, table heads and title bars.
+    pub chrome: Rgb,
+    /// Dividers between regions.
     pub border: Rgb,
+    /// The outline of a default (neutral) control: buttons, inputs, selects.
+    pub outline: Rgb,
+    /// The hovered row or neutral control.
+    pub hover: Rgb,
+    /// Recessed track behind segmented controls, switches, progress rings and pills.
+    pub track: Rgb,
+    /// Body text.
+    pub text: Rgb,
+    /// Secondary text: at least 3:1 on the body.
+    pub dimmed: Rgb,
 }
 
 impl SurfaceShades {
-    /// Light default: white body, gray 1 panels, white raised, gray 3 wells.
+    /// Light default: white body, gray 1 panels, white raised, gray 3 wells, gray 2 chrome.
     pub const LIGHT: Self = Self {
         body: Rgb::WHITE,
         surface: Rgb::hex(0xf1f3f5),
         raised: Rgb::WHITE,
         sunken: Rgb::hex(0xdee2e6),
+        chrome: Rgb::hex(0xe9ecef),
         border: Rgb::hex(0xdee2e6),
+        outline: Rgb::hex(0xced4da),
+        hover: Rgb::hex(0xf1f3f5),
+        track: Rgb::hex(0xf1f3f5),
+        text: Rgb::BLACK,
+        // Gray 7 at 50% over gray 6: gray 6 alone is only 3.3:1 on white.
+        dimmed: Rgb::hex(0x676f76),
     };
-    /// Dark default: dark 7 body, dark 6 panels, dark 5 raised, dark 9 wells.
+    /// Dark default: dark 7 body, dark 6 panels and chrome, dark 5 raised, dark 9 wells.
     pub const DARK: Self = Self {
         body: Rgb::hex(0x242424),
         surface: Rgb::hex(0x2e2e2e),
         raised: Rgb::hex(0x3b3b3b),
         sunken: Rgb::hex(0x141414),
+        chrome: Rgb::hex(0x2e2e2e),
         border: Rgb::hex(0x424242),
+        outline: Rgb::hex(0x424242),
+        hover: Rgb::hex(0x3b3b3b),
+        track: Rgb::hex(0x2e2e2e),
+        text: Rgb::hex(0xc9c9c9),
+        // Dark 2 is 4.0:1 on the dark body; dark 1 clears 4.5:1.
+        dimmed: Rgb::hex(0xb8b8b8),
     };
     /// The adjacent pairs that must separate, with their names (for tests and audits).
-    pub fn adjacent(&self) -> [(&'static str, Rgb, Rgb); 4] {
+    pub fn adjacent(&self) -> [(&'static str, Rgb, Rgb); 5] {
         [
             ("body/surface", self.body, self.surface),
             ("surface/raised", self.surface, self.raised),
             ("surface/sunken", self.surface, self.sunken),
             ("body/sunken", self.body, self.sunken),
+            ("body/chrome", self.body, self.chrome),
         ]
     }
 }
@@ -158,6 +185,10 @@ pub struct Surfaces {
     pub raised: Rgb,
     /// Recessed areas: wells, recessed fields, meter tracks, plot backgrounds.
     pub sunken: Rgb,
+    /// Header bars, toolbars, tab strips, table heads and title bars.
+    pub chrome: Rgb,
+    /// The outline of a default (neutral) control.
+    pub outline: Rgb,
     /// Background for highlighted/marked text.
     pub mark: Rgb,
     /// Multiplier for shadow opacity (dark surfaces need stronger shadows to read).
@@ -223,9 +254,19 @@ impl GuiraffeTheme {
     }
 
     pub fn resolve_ctx(&self) -> ResolveCtx {
+        let l = self.surface_shades();
         ResolveCtx {
             primary_shade_light: self.primary_shade_light,
             primary_shade_dark: self.primary_shade_dark,
+            surface: l.body,
+            neutral: crate::variant::Neutral {
+                background: l.raised,
+                // A step toward the text, so hover reads on any ramp (raised and hover can
+                // be the same shade).
+                hover: l.raised.mix(l.text, 0.06),
+                border: l.outline,
+                foreground: l.text,
+            },
             ..ResolveCtx::new(self.scheme)
         }
     }
@@ -280,38 +321,29 @@ impl GuiraffeTheme {
         (fill, crate::variant::filled_foreground(color, fill))
     }
 
+    /// Every neutral colour comes from the scheme's [`SurfaceShades`], so an app that supplies
+    /// its own ramp (`surfaces_light`/`surfaces_dark`) repaints every GUIraffe component and,
+    /// through [`apply`], the Kit widgets.
     pub fn surfaces(&self) -> Surfaces {
-        let (g, d) = (ColorName::Gray, ColorName::Dark);
         let l = self.surface_shades();
-        match self.scheme {
-            Scheme::Light => Surfaces {
-                body: l.body,
-                surface: l.surface,
-                text: Rgb::BLACK,
-                // Gray 6 is only 3.3:1 on white; halfway to gray 7 clears 4.5:1.
-                dimmed: g.shade(7).alpha(0.5).over(g.shade(6)),
-                border: l.border,
-                hover: g.shade(1),
-                track: g.shade(1),
-                raised: l.raised,
-                sunken: l.sunken,
-                mark: ColorName::Yellow.shade(2),
-                shadow_strength: 1.0,
-            },
-            Scheme::Dark => Surfaces {
-                body: l.body,
-                surface: l.surface,
-                text: d.shade(0),
-                // Dark 2 is 4.0:1 on the dark body; dark 1 clears 4.5:1.
-                dimmed: d.shade(1),
-                border: l.border,
-                hover: d.shade(5),
-                track: d.shade(6),
-                raised: l.raised,
-                sunken: l.sunken,
-                mark: ColorName::Yellow.shade(8).alpha(0.35).over(d.shade(7)),
-                shadow_strength: 4.0,
-            },
+        let (mark, shadow_strength) = match self.scheme {
+            Scheme::Light => (ColorName::Yellow.shade(2), 1.0),
+            Scheme::Dark => (ColorName::Yellow.shade(8).alpha(0.35).over(l.body), 4.0),
+        };
+        Surfaces {
+            body: l.body,
+            surface: l.surface,
+            text: l.text,
+            dimmed: l.dimmed,
+            border: l.border,
+            outline: l.outline,
+            hover: l.hover,
+            track: l.track,
+            raised: l.raised,
+            sunken: l.sunken,
+            chrome: l.chrome,
+            mark,
+            shadow_strength,
         }
     }
 
@@ -393,6 +425,48 @@ pub fn apply(theme: GuiraffeTheme, cx: &mut App) {
             t.popover_foreground = k.foreground.to_hsla();
             t.accent = k.accent.to_hsla();
             t.accent_foreground = k.foreground.to_hsla();
+            // Every neutral Kit surface comes from the same ramp as GUIraffe's components,
+            // so an app's `surfaces_light`/`surfaces_dark` repaint inputs, lists, tables,
+            // tabs, popovers and scrollbars without patching Kit's theme.
+            let s = theme.surfaces();
+            let h = |c: Rgb| c.to_hsla();
+            t.input = h(s.outline);
+            t.colors.list = h(s.body);
+            t.list_even = h(s.surface);
+            t.list_head = h(s.chrome);
+            t.list_hover = h(s.hover);
+            t.table = h(s.body);
+            t.table_even = h(s.surface);
+            t.table_head = h(s.chrome);
+            t.table_head_foreground = h(s.dimmed);
+            t.table_foot = h(s.chrome);
+            t.table_foot_foreground = h(s.dimmed);
+            t.table_hover = h(s.hover);
+            t.table_row_border = h(s.border);
+            t.tab_bar = h(s.chrome);
+            t.tab_bar_segmented = h(s.track);
+            t.tab = h(s.chrome);
+            t.tab_active = h(s.body);
+            t.tab_foreground = h(s.dimmed);
+            t.tab_active_foreground = h(s.text);
+            t.title_bar = h(s.chrome);
+            t.title_bar_border = h(s.border);
+            t.secondary = h(s.surface);
+            t.secondary_hover = h(s.hover);
+            t.secondary_active = h(s.track);
+            t.secondary_foreground = h(s.text);
+            t.sidebar = h(s.surface);
+            t.sidebar_border = h(s.border);
+            t.sidebar_foreground = h(s.text);
+            t.sidebar_accent = h(s.hover);
+            t.sidebar_accent_foreground = h(s.text);
+            t.group_box = h(s.surface);
+            t.group_box_foreground = h(s.text);
+            t.description_list_label = h(s.surface);
+            t.description_list_label_foreground = h(s.dimmed);
+            t.scrollbar_thumb = h(s.outline);
+            t.scrollbar_thumb_hover = h(s.dimmed);
+            t.window_border = h(s.border);
             // The semantic families follow the same rules as the primary. One
             // family paints the text of an alert on its tint, the fill of a
             // tag, the text of an outlined tag, the fill of a button and the
@@ -536,6 +610,83 @@ mod surface_tests {
                 s.text.contrast(s.sunken) >= 4.5,
                 "{scheme:?} text on a well"
             );
+        }
+    }
+
+    #[test]
+    fn default_ramps_keep_the_previous_derived_colours() {
+        let (g, d) = (ColorName::Gray, ColorName::Dark);
+        let l = SurfaceShades::LIGHT;
+        assert_eq!(l.dimmed, g.shade(7).alpha(0.5).over(g.shade(6)));
+        assert_eq!(
+            (l.hover, l.track, l.outline),
+            (g.shade(1), g.shade(1), g.shade(4))
+        );
+        let k = SurfaceShades::DARK;
+        assert_eq!((k.text, k.dimmed), (d.shade(0), d.shade(1)));
+        assert_eq!(
+            (k.hover, k.track, k.outline),
+            (d.shade(5), d.shade(6), d.shade(4))
+        );
+    }
+
+    #[test]
+    fn an_app_ramp_repaints_every_neutral() {
+        let ramp = SurfaceShades {
+            body: Rgb::hex(0xe4e7ec),
+            surface: Rgb::hex(0xf4f6f9),
+            raised: Rgb::hex(0xffffff),
+            sunken: Rgb::hex(0xccd2da),
+            chrome: Rgb::hex(0xd8dde4),
+            border: Rgb::hex(0xc2c9d2),
+            outline: Rgb::hex(0xa9b2be),
+            hover: Rgb::hex(0xe9edf2),
+            track: Rgb::hex(0xdde2e8),
+            text: Rgb::hex(0x14181f),
+            dimmed: Rgb::hex(0x56606d),
+        };
+        let theme = GuiraffeTheme {
+            surfaces_light: ramp,
+            ..Default::default()
+        };
+        let s = theme.surfaces();
+        assert_eq!(
+            (s.body, s.surface, s.raised, s.sunken, s.chrome),
+            (
+                ramp.body,
+                ramp.surface,
+                ramp.raised,
+                ramp.sunken,
+                ramp.chrome
+            )
+        );
+        assert_eq!(
+            (s.border, s.outline, s.hover, s.track, s.text, s.dimmed),
+            (
+                ramp.border,
+                ramp.outline,
+                ramp.hover,
+                ramp.track,
+                ramp.text,
+                ramp.dimmed
+            )
+        );
+        // Default (neutral) controls and tinted variants follow the ramp too.
+        let button = theme.variant(None, Variant::Default);
+        assert_eq!(
+            (button.background, button.border, button.foreground),
+            (ramp.raised, ramp.outline, ramp.text)
+        );
+        assert_ne!(button.hover, button.background, "hover is visible");
+        assert_eq!(theme.resolve_ctx().surface, ramp.body);
+        // Kit's colours come from the same ramp.
+        let kit = crate::kit_bridge::KitColors::from_theme(&theme);
+        assert_eq!(
+            (kit.background, kit.border, kit.popover),
+            (ramp.body, ramp.border, ramp.raised)
+        );
+        for (pair, a, b) in ramp.adjacent() {
+            assert!(a.contrast(b) >= SURFACE_STEP, "{pair}");
         }
     }
 

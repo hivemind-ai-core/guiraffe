@@ -628,7 +628,13 @@ impl gpui_kit::Render for PanelDemo {
 
 /// An editor's tab row: click or arrows and Enter select; the x, Delete or Ctrl+W closes.
 /// Below it, a secondary Xs underline row and a compact Sm pill row (tool modes).
-struct TabsDemo(Entity<Tabs>, Entity<EventLog>, Entity<Tabs>, Entity<Tabs>);
+struct TabsDemo(
+    Entity<Tabs>,
+    Entity<EventLog>,
+    Entity<Tabs>,
+    Entity<Tabs>,
+    Entity<Tabs>,
+);
 
 impl gpui_kit::Render for TabsDemo {
     fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl IntoElement {
@@ -644,6 +650,10 @@ impl gpui_kit::Render for TabsDemo {
             example(
                 "Pill variant: a compact segmented row (pattern tools)",
                 div().flex().child(self.3.clone()),
+            ),
+            example(
+                "Vertical strip: 64 px, Up/Down, ellipsized labels with tooltips (panel switcher)",
+                div().flex().h(px(180.)).child(self.4.clone()),
             ),
             example("Events", self.1.clone()),
         ])
@@ -795,7 +805,19 @@ fn tabs_demo(_: &mut Window, cx: &mut App) -> AnyView {
     );
     EventLog::watch::<TabsEvent, _>(&log, &chain, cx);
     EventLog::watch::<TabsEvent, _>(&log, &tools, cx);
-    cx.new(|_| TabsDemo(tabs, log, chain, tools)).into()
+    let panels = TabsDoc::new(vec![
+        TabItem::new(1, "Instrument").icon(IconName::Settings),
+        TabItem::new(2, "Effects").icon(IconName::Folder),
+        TabItem::new(3, "Master"),
+        TabItem::new(4, "Mixer").tooltip("Mixer (M)"),
+    ]);
+    let panels = Tabs::new(
+        tabs_store(panels, cx),
+        TabsOptions::default().vertical(),
+        cx,
+    );
+    EventLog::watch::<TabsEvent, _>(&log, &panels, cx);
+    cx.new(|_| TabsDemo(tabs, log, chain, tools, panels)).into()
 }
 
 fn ring(window: &mut Window, cx: &mut App) -> AnyView {

@@ -136,6 +136,21 @@ impl FlowState {
     ) -> Option<crate::PortAnchor> {
         self.canvas.read(cx).port_anchor(node, port)
     }
+    /// Shows the graph with `patch` applied (nodes shifted, edges hidden or added), or the
+    /// document again for `None`, without editing it: no undo entry, no event, and a drag in
+    /// progress carries on. See [`FlowViewport::set_preview`].
+    pub fn set_preview(
+        &mut self,
+        patch: Option<core::GraphPatch>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), FlowError> {
+        self.canvas
+            .update(cx, |leaf, cx| leaf.set_preview(patch, cx))
+    }
+    /// The preview shown, if any.
+    pub fn preview<'a>(&self, cx: &'a App) -> Option<&'a core::GraphPatch> {
+        self.canvas.read(cx).preview()
+    }
     /// Whether there is an edit to undo. Selection is not an edit.
     pub fn can_undo(&self) -> bool {
         self.editor.can_undo()
@@ -167,6 +182,7 @@ impl FlowState {
             leaf.interaction.cancel();
             leaf.interaction.editor = editor;
             leaf.cancel_stale_indexes();
+            leaf.refresh_patch_preview();
             leaf.last_error = error;
             if leaf.gesture_view.read(cx).gesture.is_some() {
                 leaf.gesture_view.update(cx, |view, cx| {

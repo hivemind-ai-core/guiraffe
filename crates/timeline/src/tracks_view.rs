@@ -41,7 +41,7 @@ use crate::{
         EndEarlier, EndLater, MoveEarlier, MoveLater, Nudge, SelectNextItem, SelectPrevItem,
         StartEarlier, StartLater, key_step,
     },
-    tracks_model::{ApplyAction, SetSelection, SetViewport},
+    tracks_model::{ApplyAction, SetSelection, SetSelectionMany, SetViewport},
 };
 
 /// Default row height (rows may differ; see [`TrackRow::height`]).
@@ -68,6 +68,8 @@ pub enum TracksEvent {
     },
     SelectionChanged {
         selected: Option<ClipRef>,
+        clips: Arc<[ClipRef]>,
+        source: Source,
     },
     /// Open the host menu for this clip at a point in window coordinates.
     ContextMenu {
@@ -88,8 +90,10 @@ impl From<TracksChange> for TracksEvent {
                 edit,
             },
             TracksChange::TrackResized { track, height } => Self::TrackResized { track, height },
-            TracksChange::SelectionChanged { selection } => Self::SelectionChanged {
+            TracksChange::SelectionChanged { selection, clips } => Self::SelectionChanged {
                 selected: selection,
+                clips,
+                source: Source::Host,
             },
             TracksChange::Seek { time } => Self::Seek(time),
         }
@@ -183,6 +187,43 @@ enum Drag {
     },
 }
 
+#[derive(Clone, Copy)]
+struct Marquee {
+    start: (f64, f32),
+    end: (f64, f32),
+    additive: bool,
+}
+
+impl Marquee {
+    fn moved(self) -> bool {
+        (self.end.0 - self.start.0).abs() >= 2. || (self.end.1 - self.start.1).abs() >= 2.
+    }
+
+    fn hits(self, model: &TracksModel, axis: &Axis, layout: &RowLayout) -> Vec<ClipRef> {
+        let left = self.start.0.min(self.end.0);
+        let right = self.start.0.max(self.end.0);
+        let top = self.start.1.min(self.end.1);
+        let bottom = self.start.1.max(self.end.1);
+        let mut hits = Vec::new();
+        for i in layout.rows_in(top, bottom) {
+            let Some(row) = model.row(i) else { continue };
+            if layout.top(i) + CLIP_INSET > bottom || layout.top(i) + row.height - CLIP_INSET < top
+            {
+                continue;
+            }
+            let clips = row.track.clips();
+            let first = clips.partition_point(|c| axis.x(c.end()).max(axis.x(c.start) + 2.) < left);
+            hits.extend(
+                clips[first..]
+                    .iter()
+                    .take_while(|c| axis.x(c.start) <= right)
+                    .map(|c| ClipRef::new(row.id, c.id)),
+            );
+        }
+        hits
+    }
+}
+
 pub struct TracksView {
     store: Store<TracksModel>,
     model: Selected<TracksModel>,
@@ -194,6 +235,7 @@ pub struct TracksView {
     format: TimeFormat,
     snap: Option<f64>,
     drag: Option<Drag>,
+    marquee: Option<Marquee>,
     /// The action a drag will commit on release; painted as a preview meanwhile.
     preview: Option<TracksAction>,
     body: Rc<Cell<Bounds<Pixels>>>,
@@ -281,7 +323,7 @@ fn route(
             drop(outcome);
             Ok(None)
         }
-        None => entity.update(cx, |view, cx| view.perform(action, cx)),
+        None => entity.update(cx, |view, cx| view.perform_from(action, source, cx)),
     }
 }
 
@@ -324,6 +366,7 @@ impl TracksView {
                 format,
                 snap: None,
                 drag: None,
+                marquee: None,
                 preview: None,
                 body: Rc::default(),
                 resize: ResizeEdges::default(),
@@ -399,11 +442,39 @@ impl TracksView {
         );
     }
 
+    /// All selected stable clip keys, primary first.
+    pub fn selected_clips<'a>(&self, cx: &'a App) -> impl Iterator<Item = ClipRef> + 'a {
+        self.model(cx).selected_clips()
+    }
+
+    /// Window-free host write. Unknown keys are discarded; the first valid key is primary.
+    pub fn select_many(
+        &mut self,
+        clips: impl IntoIterator<Item = ClipRef>,
+        cx: &mut Context<Self>,
+    ) {
+        self.store
+            .dispatch_now(SetSelectionMany(clips.into_iter().collect()), cx);
+    }
+
     /// Apply a user action: what the bus, the pointer and the keyboard all run. Emits a
     /// [`TracksEvent`] and returns the change, or `None` for a no-op.
     pub fn perform(
         &mut self,
         action: TracksAction,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<TracksChange>, ActionError> {
+        self.perform_from(
+            action,
+            ActionBus::current_source(cx).unwrap_or(Source::Host),
+            cx,
+        )
+    }
+
+    fn perform_from(
+        &mut self,
+        action: TracksAction,
+        source: Source,
         cx: &mut Context<Self>,
     ) -> Result<Option<TracksChange>, ActionError> {
         if let TracksAction::MoveClip { clip, .. } | TracksAction::TrimClip { clip, .. } = action
@@ -416,11 +487,19 @@ impl TracksView {
             return Err(ActionError::Disabled);
         }
         let mut next = self.model(cx).clone();
-        let Some(change) = next.apply(action) else {
+        let Some(change) = next.apply(action.clone()) else {
             return Ok(None);
         };
         self.store.dispatch_now(ApplyAction(action), cx);
-        cx.emit(TracksEvent::from(change));
+        let mut event = TracksEvent::from(change.clone());
+        if let TracksEvent::SelectionChanged {
+            source: event_source,
+            ..
+        } = &mut event
+        {
+            *event_source = source;
+        }
+        cx.emit(event);
         cx.notify();
         Ok(Some(change))
     }
@@ -626,7 +705,7 @@ impl TracksView {
         });
         let selection = model.selection;
         hit.map(|clip| ClipRef::new(id, clip))
-            .filter(|at| selection != Some(*at))
+            .filter(|at| selection != Some(*at) || model.selected_clips().nth(1).is_some())
             .map(|at| TracksAction::Select(Some(at)))
     }
 
@@ -745,7 +824,7 @@ impl TracksView {
             },
         };
         let mut probe = self.model(cx).clone();
-        let next = probe.apply(action).map(|_| action);
+        let next = probe.apply(action.clone()).map(|_| action);
         if next != self.preview {
             self.preview = next;
             true
@@ -777,6 +856,7 @@ impl TracksView {
 
     /// Drop an active drag without committing it.
     pub fn cancel_drag(&mut self) {
+        self.marquee = None;
         self.drag = None;
         self.preview = None;
     }
@@ -863,9 +943,19 @@ impl Observe for TracksView {
         let model = self.model(cx);
         ControlSnapshot {
             value: Some(Value::Num(model.playhead)),
-            selected: model
-                .selected_index()
-                .map(|(row, clip)| Rc::from([row, clip as usize].as_slice())),
+            // The existing row/clip pair is repeated for every selected key.
+            selected: model.selection.map(|_| {
+                model
+                    .selected_clips()
+                    .flat_map(|at| {
+                        model
+                            .index_of(at.track)
+                            .map(|i| [i, at.clip as usize])
+                            .into_iter()
+                            .flatten()
+                    })
+                    .collect()
+            }),
             disabled: Some(!self.editable),
             ..Default::default()
         }
@@ -941,6 +1031,21 @@ fn overview(track: &Track, axis: &Axis) -> bool {
     crate::visible(track.clips(), axis, |c| c.start, |c| c.end()).len() > (axis.width / 4.) as usize
 }
 
+/// A single selected clip has a direct lookup; for multiple clips walk the visible span
+/// once rather than searching the entire row for every selected key.
+fn selection_candidates<'a>(model: &TracksModel, row: &'a TrackRow, axis: &Axis) -> &'a [Clip] {
+    let mut selected = model.selected_on(row.id);
+    match (selected.next(), selected.next()) {
+        (None, _) => &[],
+        (Some(at), None) => row
+            .track
+            .clip(at.clip)
+            .filter(|c| c.end() >= axis.start && c.start <= axis.t(axis.width))
+            .map_or(&[], std::slice::from_ref),
+        _ => crate::visible(row.track.clips(), axis, |c| c.start, |c| c.end()),
+    }
+}
+
 /// A clip's rectangle inside a row whose top is `top` (body-local) and height `height`.
 fn clip_rect(
     origin: gpui_kit::Point<Pixels>,
@@ -993,7 +1098,7 @@ impl TracksView {
         if this.focusable == Some(true) {
             this.focus.clone().focus(window, cx);
         }
-        if entity.read(cx).model(cx).selection != Some(at)
+        if !entity.read(cx).model(cx).is_selected(at)
             && route(
                 view,
                 TracksAction::Select(Some(at)),
@@ -1007,7 +1112,7 @@ impl TracksView {
             return;
         }
         entity.update(cx, |this, cx| {
-            if this.store.state(cx).selection == Some(at) {
+            if this.store.state(cx).is_selected(at) {
                 cx.emit(TracksEvent::ContextMenu {
                     track: at.track,
                     clip: at.clip,
@@ -1059,6 +1164,7 @@ impl TracksView {
                 return (None, false);
             }
             let content = y + this.scroll_y;
+            this.marquee = None;
             if this.resizable
                 && let Some(track) = this.layout.bottom_edge_at(content, RESIZE_GRAB)
                 && this.press_resize(track, content, cx)
@@ -1066,11 +1172,34 @@ impl TracksView {
                 cx.notify();
                 return (None, false);
             }
-            let Some(row) = this.layout.row_at(content) else {
-                return (None, false);
-            };
+            let additive = e.modifiers.shift || e.modifiers.control || e.modifiers.platform;
+            let row = this.layout.row_at(content);
+            let hit = row.and_then(|i| {
+                let r = this.model(cx).row(i)?;
+                menu_clip(r, &this.surface.axis, x, content - this.layout.top(i))
+            });
             let previous = this.drag;
-            let select = this.press_item(row, x, cx);
+            this.cancel_drag();
+            let select = match (row, hit) {
+                (Some(_), Some(at)) if additive => {
+                    let model = this.model(cx);
+                    let mut clips: Vec<_> =
+                        model.selected_clips().filter(|key| *key != at).collect();
+                    if !model.is_selected(at) {
+                        clips.insert(0, at);
+                    }
+                    Some(TracksAction::SelectMany(clips.into()))
+                }
+                (Some(row), Some(_)) => this.press_item(row, x, cx),
+                _ => {
+                    this.marquee = Some(Marquee {
+                        start: (x, content),
+                        end: (x, content),
+                        additive,
+                    });
+                    None
+                }
+            };
             if previous != this.drag {
                 cx.notify();
             }
@@ -1090,7 +1219,14 @@ impl TracksView {
         let Some(entity) = view.upgrade() else { return };
         entity.update(cx, |this, cx| {
             let (x, y) = this.local(e.position);
-            if e.pressed_button == Some(MouseButton::Left) && this.drag.is_some() {
+            if let Some(m) = &mut this.marquee {
+                if e.pressed_button == Some(MouseButton::Left) {
+                    m.end = (x, y + this.scroll_y);
+                } else {
+                    this.marquee = None;
+                }
+                cx.notify();
+            } else if e.pressed_button == Some(MouseButton::Left) && this.drag.is_some() {
                 if this.drag_preview(x, y + this.scroll_y, cx) {
                     cx.notify();
                 }
@@ -1100,9 +1236,25 @@ impl TracksView {
         });
     }
 
-    fn mouse_up(view: &WeakEntity<Self>, _: &MouseUpEvent, window: &mut Window, cx: &mut App) {
+    fn mouse_up(view: &WeakEntity<Self>, e: &MouseUpEvent, window: &mut Window, cx: &mut App) {
         let Some(entity) = view.upgrade() else { return };
         let commit = entity.update(cx, |this, cx| {
+            if let Some(mut m) = this.marquee.take() {
+                let (x, y) = this.local(e.position);
+                m.end = (x, y + this.scroll_y);
+                cx.notify();
+                if !m.moved() {
+                    return None;
+                }
+                let model = this.model(cx);
+                let mut clips = if m.additive {
+                    model.selected_clips().collect()
+                } else {
+                    Vec::new()
+                };
+                clips.extend(m.hits(model, &this.surface.axis, &this.layout));
+                return Some(TracksAction::SelectMany(clips.into()));
+            }
             let commit = this.take_commit();
             cx.notify();
             commit
@@ -1125,7 +1277,7 @@ impl TracksView {
             return None;
         }
         let scroll = self.scroll_y;
-        let selected_track = model.selected_index().map(|s| s.0);
+
         let column = div()
             .id("tracks-header")
             .relative()
@@ -1156,7 +1308,7 @@ impl TracksView {
                     let info = HeaderRow {
                         index: i,
                         height: self.layout.height(i),
-                        selected: selected_track == Some(i),
+                        selected: model.selected_on(row.id).next().is_some(),
                         row,
                     };
                     cells.push(cell(i).child(render(&info, window, cx)));
@@ -1217,7 +1369,7 @@ impl Render for TracksView {
             .selection_style
             .unwrap_or_else(|| SelectionStyle::themed(t));
         let model = self.model(cx).clone();
-        let selected = model.selected_index();
+
         let accessibility = window.is_a11y_active();
         let view = cx.weak_entity();
 
@@ -1397,6 +1549,14 @@ impl Render for TracksView {
                                     Self::mouse_up(&view, e, window, cx)
                                 }
                             })
+                            .on_mouse_up_out(MouseButton::Left, {
+                                let view = view.clone();
+                                move |e, window, cx| {
+                                    if view.upgrade().is_some_and(|v| v.read(cx).marquee.is_some()) {
+                                        Self::mouse_up(&view,e,window,cx);
+                                    }
+                                }
+                            })
                             .child(
                                 canvas(
                                     move |b, _, cx| crate::measure::record(&body, b, cx, owner),
@@ -1434,7 +1594,7 @@ impl Render for TracksView {
                                                 if !overview(track, &axis) {
                                                     if editable && canvas_clips(track, &axis) {
                                                         for clip in crate::visible(track.clips(), &axis, |c| c.start, |c| c.end()) {
-                                                            if selected == Some((row, clip.id)) || view.locked.contains(&ClipRef::new(r.id, clip.id)) {
+                                                            if model.is_selected(ClipRef::new(r.id, clip.id)) || view.locked.contains(&ClipRef::new(r.id, clip.id)) {
                                                                 continue;
                                                             }
                                                             let shown = view.shown(row, clip, model);
@@ -1492,13 +1652,7 @@ impl Render for TracksView {
                                 let top = layout.top(i) - scroll;
                                 let height = layout.height(i);
                                 let overview_row = !accessibility && overview(tr, &axis);
-                                let clips: &[Clip] = if overview_row {
-                                    selected
-                                        .filter(|(row, _)| *row == i)
-                                        .and_then(|(_, id)| tr.clip(id))
-                                        .filter(|clip| clip.end() >= axis.start && clip.start <= axis.t(axis.width))
-                                        .map_or(&[][..], std::slice::from_ref)
-                                } else {
+                                let clips = if overview_row { selection_candidates(&model, r, &axis) } else {
                                     crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
                                 };
                                 let detailed_canvas = !overview_row && !accessibility && editable && canvas_clips(tr, &axis);
@@ -1507,11 +1661,11 @@ impl Render for TracksView {
                                 let model = &model;
                                 clips
                                     .iter()
-                                    .filter(move |clip| !detailed_canvas || selected == Some((i, clip.id)) || locked.contains(&ClipRef::new(key, clip.id)))
+                                    .filter(move |clip| (!overview_row && !detailed_canvas) || model.is_selected(ClipRef::new(key,clip.id)) || (!overview_row && locked.contains(&ClipRef::new(key, clip.id))))
                                     .map(move |c| {
                                         let shown = this.shown(i, c, model);
                                         let (x0, x1) = (axis.x(shown.start) as f32, axis.x(shown.end()) as f32);
-                                        let on = selected == Some((i, c.id));
+                                        let on = model.is_selected(ClipRef::new(key,c.id));
                                         let is_locked = !editable || locked.contains(&ClipRef::new(key, c.id));
                                         div()
                                             .id(clip_element_id(i, c.id))
@@ -1568,15 +1722,14 @@ impl Render for TracksView {
                                                             clip: &shown,
                                                             bounds: clip_rect(b.origin, &axis, &shown, top, height),
                                                             axis: &axis,
-                                                            selected: selected == Some((row, clip.id)),
+                                                            selected: model.is_selected(ClipRef::new(r.id, clip.id)),
                                                         },
                                                         window,
                                                         cx,
                                                     );
                                                 }
                                             }
-                                            if let Some((_, id)) = selected.filter(|(t, _)| *t == row)
-                                                && let Some(clip) = r.track.clip(id)
+                                            for clip in selection_candidates(model, r, &axis).iter().filter(|c| model.is_selected(ClipRef::new(r.id,c.id)))
                                             {
                                                 let shown = view.shown(row, clip, model);
                                                 let rect = clip_rect(b.origin, &axis, &shown, top, height);
@@ -1589,6 +1742,13 @@ impl Render for TracksView {
                                                     gpui_kit::BorderStyle::Solid,
                                                 ));
                                             }
+                                        }
+                                        if let Some(m) = view.marquee.filter(|m| m.moved()) {
+                                            let (x,y) = m.start;
+                                            let (xx,yy) = m.end;
+                                            let rect = Bounds::new(b.origin + gpui_kit::point(px(x.min(xx) as f32),px(y.min(yy)-scroll)),
+                                                gpui_kit::size(px((x-xx).abs() as f32),px((y-yy).abs())));
+                                            window.paint_quad(gpui_kit::quad(rect,px(0.),selection_style.fill,px(1.),selection_style.border,gpui_kit::BorderStyle::Solid));
                                         }
                                     });
                                 }
@@ -1698,7 +1858,9 @@ mod tests {
             *events,
             [
                 TracksEvent::SelectionChanged {
-                    selected: Some(ClipRef::new(0, 1))
+                    selected: Some(ClipRef::new(0, 1)),
+                    clips: [ClipRef::new(0, 1)].into(),
+                    source: Source::Host,
                 },
                 TracksEvent::ClipChanged {
                     track: TrackId(0),

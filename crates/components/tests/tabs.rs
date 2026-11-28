@@ -9,7 +9,7 @@ use gpui_kit::{
 };
 use guiraffe_components::tabs::{
     SetSelected, SetTabs, TabId, TabItem, Tabs, TabsAction, TabsDoc, TabsEvent, TabsOptions,
-    TabsVariant, tab_close_id, tab_element_id, tabs_store,
+    TabsOrientation, TabsVariant, tab_close_id, tab_element_id, tabs_store,
 };
 use guiraffe_core::{
     GuiraffeTheme, Scheme, Size, apply,
@@ -318,6 +318,129 @@ fn tab_sizes_and_variants_light_and_dark() {
             "tabs-variants-light"
         } else {
             "tabs-variants-dark"
+        };
+        assert_snapshot(name, &img, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
+    }
+}
+
+#[gpui_kit::test]
+fn vertical_strip_stacks_tabs_and_moves_with_up_and_down(cx: &mut TestAppContext) {
+    let m = mount_with(cx, TabsOptions::default().vertical().strip_width(64.));
+    let bounds = |vcx: &mut VisualTestContext, id: u64| {
+        vcx.update(|w, cx| {
+            w.render_frame(cx);
+            w.find(tab_element_id(TabId(id))).bounds()
+        })
+    };
+    let (first, second) = (bounds(m.vcx, 1), bounds(m.vcx, 2));
+    assert!(second.origin.y > first.origin.y, "stacked top to bottom");
+    assert_eq!(second.origin.x, first.origin.x);
+    assert!(
+        f32::from(first.size.width) <= 64.,
+        "a long label ellipsizes inside the fixed strip"
+    );
+    m.vcx.update(|window, cx| {
+        let handle = gpui_kit::Focusable::focus_handle(m.tabs.read(cx), cx);
+        handle.focus(window, cx);
+    });
+    // Left/Right belong to the host in a strip; Down Down Enter selects the third tab.
+    m.vcx.simulate_keystrokes("right down down enter");
+    assert_eq!(*m.events.borrow(), [TabsEvent::Selected(TabId(3))]);
+    m.vcx.simulate_keystrokes("up enter");
+    assert_eq!(
+        m.events.borrow().last().copied(),
+        Some(TabsEvent::Selected(TabId(2)))
+    );
+    // The bus and the pointer select the same way.
+    m.vcx.update(|w, cx| w.click(tab_element_id(TabId(5)), cx));
+    m.vcx.run_until_parked();
+    assert_eq!(
+        m.events.borrow().last().copied(),
+        Some(TabsEvent::Selected(TabId(5)))
+    );
+    m.vcx.update(|window, cx| {
+        ActionBus::dispatch(
+            m.id,
+            &TabsAction::Select(TabId(1)).to_action(),
+            Source::Script,
+            window,
+            cx,
+        )
+        .ok();
+    });
+    assert_eq!(
+        m.events.borrow().last().copied(),
+        Some(TabsEvent::Selected(TabId(1)))
+    );
+    let tabs = m.tabs.clone();
+    m.vcx.update(|_, cx| {
+        tabs.update(cx, |t, cx| {
+            t.set_orientation(TabsOrientation::Horizontal, cx)
+        })
+    });
+    let (first, second) = (bounds(m.vcx, 1), bounds(m.vcx, 2));
+    assert_eq!(second.origin.y, first.origin.y, "back to a row");
+}
+
+/// A 64 px strip in both variants, in both themes.
+struct Strips(Vec<Entity<Tabs>>);
+impl Render for Strips {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = GuiraffeTheme::global(cx).surfaces();
+        div()
+            .size_full()
+            .bg(s.body.to_hsla())
+            .text_color(s.text.to_hsla())
+            .p(px(12.))
+            .flex()
+            .items_start()
+            .gap(px(24.))
+            .children(self.0.iter().cloned())
+    }
+}
+
+#[test]
+fn vertical_tabs_light_and_dark() {
+    let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
+        .update_from_env();
+    for scheme in [Scheme::Light, Scheme::Dark] {
+        let mut s = Snapshotter::new()
+            .unwrap_or_else(|e| panic!("{e}"))
+            .with_setup(guiraffe_components::init);
+        let img = s
+            .render(size(px(240.), px(220.)), move |_, cx| {
+                apply(
+                    GuiraffeTheme {
+                        scheme,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                let strip = |variant, cx: &mut gpui_kit::App| {
+                    let store = tabs_store(
+                        TabsDoc::new(vec![
+                            TabItem::new(1, "Instrument").icon(IconName::Settings),
+                            TabItem::new(2, "Effects").icon(IconName::Folder),
+                            TabItem::new(3, "Master"),
+                            TabItem::new(4, "Mixer").tooltip("Mixer (M)"),
+                        ]),
+                        cx,
+                    );
+                    store.dispatch_now(SetSelected(TabId(2)), cx);
+                    let options = TabsOptions::default().vertical().variant(variant);
+                    Tabs::new(store, options, cx)
+                };
+                let rows = vec![
+                    strip(TabsVariant::Underline, cx),
+                    strip(TabsVariant::Pill, cx),
+                ];
+                cx.new(|_| Strips(rows))
+            })
+            .unwrap_or_else(|e| panic!("{e:#}"));
+        let name = if scheme == Scheme::Light {
+            "tabs-vertical-light"
+        } else {
+            "tabs-vertical-dark"
         };
         assert_snapshot(name, &img, &cfg).unwrap_or_else(|e| panic!("{e:#}"));
     }
