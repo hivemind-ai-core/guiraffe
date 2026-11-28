@@ -19,7 +19,7 @@ use gpui_kit::{
     prelude::FluentBuilder, px, relative, size,
 };
 use guiraffe_core::{
-    ColorName, FocusIndicator, FocusPolicy, GuiraffeTheme, ResolvedFocus, Variant,
+    ColorName, FocusIndicator, FocusPolicy, GuiraffeTheme, ResolvedFocus, Rgb, Variant,
     protocol::{
         Action, ActionBus, ActionError, Capabilities, ControlId, ControlSnapshot, Drive, Observe,
         Outcome, Source,
@@ -221,6 +221,21 @@ pub struct StepGridOptions {
     pub ruler_label: Option<RulerLabeler>,
     /// Offered every left press first (see [`StepPress`]).
     pub on_press: Option<StepPressHook>,
+    /// Cell colours over the theme's (each `None` field keeps the theme's).
+    pub cells: StepCellColors,
+}
+
+/// App-chosen cell colours for a [`StepGrid`]. A `None` field uses the theme: empty cells
+/// and beat bands from the border, level bars from dimmed text, flags orange, the cursor the
+/// primary colour and marks the text colour.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StepCellColors {
+    pub empty: Option<Rgb>,
+    pub band: Option<Rgb>,
+    pub bar: Option<Rgb>,
+    pub flag: Option<Rgb>,
+    pub cursor: Option<Rgb>,
+    pub mark: Option<Rgb>,
 }
 
 impl Default for StepGridOptions {
@@ -236,6 +251,14 @@ impl Default for StepGridOptions {
             level_gesture: LevelGesture::Relative,
             ruler_label: None,
             on_press: None,
+            cells: StepCellColors {
+                empty: None,
+                band: None,
+                bar: None,
+                flag: None,
+                cursor: None,
+                mark: None,
+            },
         }
     }
 }
@@ -1310,6 +1333,18 @@ impl Render for StepGrid {
                 };
                 self.colors = Some((theme.clone(), c));
                 c
+            }
+        };
+        let colors = {
+            let o = &self.options.cells;
+            let pick = |own: Option<Rgb>, theme: Hsla| own.map_or(theme, Rgb::to_hsla);
+            CellColors {
+                empty: pick(o.empty, colors.empty),
+                band: pick(o.band, colors.band),
+                bar: pick(o.bar, colors.bar),
+                flag: pick(o.flag, colors.flag),
+                cursor: pick(o.cursor, colors.cursor),
+                mark: pick(o.mark, colors.mark),
             }
         };
         {

@@ -32,6 +32,17 @@ pub struct ResolveCtx {
     pub primary_shade_dark: u8,
     /// Background of the surface the control sits on (used for contrast checks).
     pub surface: Rgb,
+    /// The colours of [`Variant::Default`], from the theme's surface ramp.
+    pub neutral: Neutral,
+}
+
+/// A default (neutral) control: its fill, hovered fill, outline and text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Neutral {
+    pub background: Rgb,
+    pub hover: Rgb,
+    pub border: Rgb,
+    pub foreground: Rgb,
 }
 
 impl ResolveCtx {
@@ -43,6 +54,20 @@ impl ResolveCtx {
             surface: match scheme {
                 Scheme::Light => Rgb::WHITE,
                 Scheme::Dark => ColorName::Dark.shade(7),
+            },
+            neutral: match scheme {
+                Scheme::Light => Neutral {
+                    background: Rgb::WHITE,
+                    hover: ColorName::Gray.shade(0),
+                    border: ColorName::Gray.shade(4),
+                    foreground: Rgb::BLACK,
+                },
+                Scheme::Dark => Neutral {
+                    background: ColorName::Dark.shade(6),
+                    hover: ColorName::Dark.shade(5),
+                    border: ColorName::Dark.shade(4),
+                    foreground: Rgb::WHITE,
+                },
             },
         }
     }
@@ -154,7 +179,7 @@ pub fn resolve(ctx: &ResolveCtx, color: ColorName, variant: Variant) -> VariantC
     use std::cell::RefCell;
     // One table for the current theme context: apps run one context at a time, so this is a
     // direct index (no hashing). A different context swaps the table.
-    type Key = (Scheme, u8, u8, u32);
+    type Key = (Scheme, u8, u8, u32, [u32; 4]);
     struct Table {
         key: Key,
         cells: [[Option<VariantColors>; VARIANTS]; COLORS],
@@ -173,6 +198,12 @@ pub fn resolve(ctx: &ResolveCtx, color: ColorName, variant: Variant) -> VariantC
         ctx.primary_shade_light,
         ctx.primary_shade_dark,
         ctx.surface.to_u32(),
+        [
+            ctx.neutral.background.to_u32(),
+            ctx.neutral.hover.to_u32(),
+            ctx.neutral.border.to_u32(),
+            ctx.neutral.foreground.to_u32(),
+        ],
     );
     let (ci, vi) = (color as usize, variant as usize);
     CACHE.with(|c| {
@@ -283,25 +314,12 @@ pub fn resolve_uncached(ctx: &ResolveCtx, color: ColorName, variant: Variant) ->
             },
             border: t,
         },
-        Variant::Default => {
-            if dark {
-                let d = ColorName::Dark;
-                VariantColors {
-                    background: d.shade(6),
-                    hover: d.shade(5),
-                    foreground: Rgb::WHITE,
-                    border: d.shade(4),
-                }
-            } else {
-                let g = ColorName::Gray;
-                VariantColors {
-                    background: Rgb::WHITE,
-                    hover: g.shade(0),
-                    foreground: Rgb::BLACK,
-                    border: g.shade(4),
-                }
-            }
-        }
+        Variant::Default => VariantColors {
+            background: ctx.neutral.background,
+            hover: ctx.neutral.hover,
+            foreground: ctx.neutral.foreground,
+            border: ctx.neutral.border,
+        },
     }
 }
 
