@@ -421,6 +421,22 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
     ),
     (
+        "components::Tabs::orientation",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::Tabs::set_orientation",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::TabsOptions::field orientation",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
+        "components::TabsOptions::field strip_width",
+        "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
+    ),
+    (
         "components::Tabs::set_size",
         "Store-backed tab row for Rust hosts; documents cannot bind a TabsDoc store yet.",
     ),

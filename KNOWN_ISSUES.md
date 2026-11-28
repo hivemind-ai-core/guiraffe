@@ -141,6 +141,8 @@ The budgets and test conditions are in [performance](docs/performance.md). Open 
 - Sizes cover the Xs/Sm/Md scale (Lg and Xl clamp to Md). Tabs has no built-in overflow
   yet: it waits for the shared overflow row (#19), which will drive `set_hidden` and the
   `trailing` slot. Until then hosts that overflow keep their own scroll container.
+- A vertical strip has a fixed width and ellipsizes labels; it does not scroll, so a strip
+  taller than its panel clips its last tabs until #19 covers vertical rows too.
 
 ### Flow
 
