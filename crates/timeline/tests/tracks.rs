@@ -343,7 +343,13 @@ fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
     assert_eq!(bus.model().selection, after_pointer.selection);
     assert_eq!(bus.model().playhead, after_pointer.playhead);
     assert_eq!(*bus.log.outcomes.borrow(), pointer_outcomes);
-    assert_eq!(*bus.events.borrow(), pointer_events);
+    let mut expected = pointer_events;
+    let TracksEvent::SelectionChanged { source, .. } = &mut expected[0] else {
+        panic!("first click should select a clip");
+    };
+    assert_eq!(*source, Source::Pointer);
+    *source = Source::Script;
+    assert_eq!(*bus.events.borrow(), expected);
 }
 
 /// With a minimum time, a wheel pan past it reads the minimum straight away, before the
@@ -496,10 +502,12 @@ fn host_writes_never_echo_and_zoom_survives_track_updates(cx: &mut TestAppContex
 }
 
 /// Paints one bar per clip and counts calls.
-struct Bars(Rc<RefCell<Vec<(usize, u32)>>>);
+struct Bars(Rc<RefCell<Vec<(usize, u32, bool)>>>);
 impl ClipPainter for Bars {
     fn paint(&self, clip: &ClipPaint<'_>, window: &mut Window, _: &App) {
-        self.0.borrow_mut().push((clip.track, clip.clip.id));
+        self.0
+            .borrow_mut()
+            .push((clip.track, clip.clip.id, clip.selected));
         let b = clip.bounds;
         let dx = (clip.axis.x(clip.clip.start + 0.25) - clip.axis.x(clip.clip.start)) as f32;
         window.paint_quad(gpui_kit::fill(
@@ -522,6 +530,7 @@ fn the_painter_runs_for_visible_clips_only(cx: &mut TestAppContext) {
     let calls = Rc::new(RefCell::new(Vec::new()));
     m.vcx.update(|_, cx| {
         m.view.update(cx, |v, cx| {
+            v.select_many([ClipRef::new(100, 1), ClipRef::new(101, 2)], cx);
             v.set_clip_painter(Some(Rc::new(Bars(calls.clone()))), cx)
         })
     });
@@ -532,6 +541,13 @@ fn the_painter_runs_for_visible_clips_only(cx: &mut TestAppContext) {
         let h = 236.0;
         v.layout().rows_in(v.scroll_y(), v.scroll_y() + h)
     });
+    let marked: std::collections::BTreeSet<_> = calls
+        .borrow()
+        .iter()
+        .filter(|c| c.2)
+        .map(|c| (c.0, c.1))
+        .collect();
+    assert_eq!(marked, [(0, 1), (1, 2)].into());
     assert!(!painted.is_empty());
     assert!(
         painted.iter().all(|row| visible.contains(row)),
@@ -548,11 +564,11 @@ fn tracks_selection_light_and_dark() {
     let cfg = SnapshotConfig::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots"))
         .update_from_env();
     for scheme in [Scheme::Light, Scheme::Dark] {
-        let mut s = Snapshotter::new()
-            .unwrap_or_else(|e| panic!("{e}"))
-            .with_setup(gpui_kit::component::init);
-        let img = s
-            .render(size(px(640.), px(240.)), move |_, cx| {
+        let render = |clips: Vec<ClipRef>| {
+            let mut s = Snapshotter::new()
+                .unwrap_or_else(|e| panic!("{e}"))
+                .with_setup(gpui_kit::component::init);
+            s.render(size(px(640.), px(240.)), move |_, cx| {
                 apply(
                     GuiraffeTheme {
                         scheme,
@@ -566,7 +582,10 @@ fn tracks_selection_light_and_dark() {
                     TrackRow::new(3, "Bass", track(&[(0.0, 1.5), (2.0, 2.0)])).with_height(30.0),
                 ]);
                 let store = tracks_store(model, 10, cx);
-                store.dispatch_now(SetSelection(Some(ClipRef::new(2, 1))), cx);
+                store.dispatch_now(
+                    guiraffe_timeline::tracks_model::SetSelectionMany(clips.into()),
+                    cx,
+                );
                 store.dispatch_now(SetPlayhead(2.25), cx);
                 let view = TracksView::with_store(store, TimeFormat::Seconds, 6.0, cx);
                 view.update(cx, |v, cx| {
@@ -592,7 +611,25 @@ fn tracks_selection_light_and_dark() {
                 });
                 cx.new(|_| Root(view))
             })
-            .unwrap_or_else(|e| panic!("{e:#}"));
+            .unwrap_or_else(|e| panic!("{e:#}"))
+        };
+        let keys = ClipRef::new(2, 1);
+        let drums = ClipRef::new(1, 2);
+        let img = render(vec![keys]);
+        let both = render(vec![keys, drums]);
+        let other = render(vec![drums]);
+        let empty = render(vec![]);
+        // Selections occupy disjoint rows. Every changed pixel from either solo
+        // selection must appear in the combined render, including its row header.
+        assert!(img != empty && other != empty);
+        for (((base, first), second), combined) in empty
+            .pixels()
+            .zip(img.pixels())
+            .zip(other.pixels())
+            .zip(both.pixels())
+        {
+            assert_eq!(combined, if second != base { second } else { first });
+        }
         let name = if scheme == Scheme::Light {
             "tracks-selection/light"
         } else {
@@ -719,7 +756,9 @@ fn track_inserts_removes_and_moves_keep_state_with_the_key(cx: &mut TestAppConte
     assert_eq!(
         *m.events.borrow(),
         [TracksEvent::SelectionChanged {
-            selected: Some(ClipRef::new(100, 1))
+            selected: Some(ClipRef::new(100, 1)),
+            clips: [ClipRef::new(100, 1)].into(),
+            source: Source::Pointer,
         }],
         "only the user's click emitted; the three host writes did not"
     );
@@ -827,7 +866,11 @@ fn context_menu_selects_clip_and_reports_window_position(cx: &mut TestAppContext
     assert_eq!(
         *m.events.borrow(),
         [
-            TracksEvent::SelectionChanged { selected: Some(at) },
+            TracksEvent::SelectionChanged {
+                selected: Some(at),
+                clips: [at].into(),
+                source: Source::Pointer
+            },
             TracksEvent::ContextMenu {
                 track: at.track,
                 clip: at.clip,
@@ -860,4 +903,79 @@ fn context_menu_selects_clip_and_reports_window_position(cx: &mut TestAppContext
     m.vcx.run_until_parked();
     assert!(m.events.borrow().is_empty());
     assert_eq!(m.model().selection, Some(at));
+}
+
+#[gpui_kit::test]
+fn multi_selection_follows_pointer_marquee_host_and_context_menu(cx: &mut TestAppContext) {
+    for registered in [false, true] {
+        let mut m = mount(cx, 4, registered);
+        let a = ClipRef::new(100, 1);
+        let b = ClipRef::new(101, 1);
+        let first = m.at(2., 15.);
+        let second = m.at(2., 75.);
+        m.click(first);
+        let shift = gpui_kit::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        m.vcx.simulate_click(second, shift);
+        assert_eq!(m.model().selected_clips().collect::<Vec<_>>(), [b, a]);
+        m.vcx
+            .simulate_mouse_down(first, MouseButton::Right, Default::default());
+        m.vcx
+            .simulate_mouse_up(first, MouseButton::Right, Default::default());
+        assert_eq!(m.model().selected_clips().collect::<Vec<_>>(), [b, a]);
+        assert!(
+            matches!(m.events.borrow().last(), Some(TracksEvent::ContextMenu {track,clip:1,..}) if *track==a.track)
+        );
+        m.vcx.simulate_click(
+            first,
+            gpui_kit::Modifiers {
+                control: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(m.model().selected_clips().collect::<Vec<_>>(), [b]);
+        let before = m.events.borrow().len();
+        m.vcx.update(|_, cx| {
+            m.view
+                .update(cx, |v, cx| v.select_many([a, a, ClipRef::new(999, 1)], cx))
+        });
+        assert_eq!(m.model().selected_clips().collect::<Vec<_>>(), [a]);
+        assert_eq!(m.events.borrow().len(), before);
+        let start = m.at(4., 125.);
+        let end = m.at(1.5, 15.);
+        m.drag(start, end);
+        assert_eq!(m.model().selected_clips().collect::<Vec<_>>(), [a, b]);
+        assert!(
+            matches!(m.events.borrow().last(), Some(TracksEvent::SelectionChanged { clips,source:Source::Pointer,.. }) if clips.as_ref()==[a,b])
+        );
+        let third = m.at(5.5, 15.);
+        m.vcx
+            .simulate_mouse_down(third, MouseButton::Right, Default::default());
+        m.vcx
+            .simulate_mouse_up(third, MouseButton::Right, Default::default());
+        assert_eq!(
+            m.model().selected_clips().collect::<Vec<_>>(),
+            [ClipRef::new(100, 2)]
+        );
+        if let Some(id) = m.id {
+            m.vcx
+                .update(|window, cx| {
+                    ActionBus::dispatch(
+                        id,
+                        &TracksAction::SelectMany([b, a].into()).to_action(),
+                        Source::Script,
+                        window,
+                        cx,
+                    )
+                })
+                .expect("bus selection");
+            assert!(
+                matches!(m.events.borrow().last(), Some(TracksEvent::SelectionChanged {source:Source::Script,clips,..}) if clips.as_ref()==[b,a])
+            );
+        }
+        m.click(first);
+        assert_eq!(m.model().selected_clips().collect::<Vec<_>>(), [a]);
+    }
 }

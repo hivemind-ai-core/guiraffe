@@ -1485,6 +1485,14 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "The rendered view scrolls its own rows.",
     ),
     (
+        "timeline::TracksView::select_many",
+        "Window-free host write of a selection of stable clip keys.",
+    ),
+    (
+        "timeline::TracksView::selected_clips",
+        "Read-only native iterator over selected stable clip keys.",
+    ),
+    (
         "timeline::TracksView::selection_style",
         "Read-only effective style for Rust hosts.",
     ),
