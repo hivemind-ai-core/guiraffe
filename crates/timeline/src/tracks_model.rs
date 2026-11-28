@@ -745,6 +745,9 @@ impl TracksAction {
                 Value::List(items) => {
                     Self::SelectMany(items.iter().map(clip_ref).collect::<Result<_, _>>()?)
                 }
+                Value::Sequence(items) => {
+                    Self::SelectMany(items.iter().map(clip_ref).collect::<Result<_, _>>()?)
+                }
                 _ => Self::Select(Some(clip_ref(p)?)),
             },
             SEEK => Self::Seek(match p.as_f64() {

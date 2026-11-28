@@ -943,9 +943,19 @@ impl Observe for TracksView {
         let model = self.model(cx);
         ControlSnapshot {
             value: Some(Value::Num(model.playhead)),
-            selected: model
-                .selected_index()
-                .map(|(row, clip)| Rc::from([row, clip as usize].as_slice())),
+            // The existing row/clip pair is repeated for every selected key.
+            selected: model.selection.map(|_| {
+                model
+                    .selected_clips()
+                    .flat_map(|at| {
+                        model
+                            .index_of(at.track)
+                            .map(|i| [i, at.clip as usize])
+                            .into_iter()
+                            .flatten()
+                    })
+                    .collect()
+            }),
             disabled: Some(!self.editable),
             ..Default::default()
         }
