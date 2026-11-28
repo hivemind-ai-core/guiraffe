@@ -57,10 +57,14 @@ A Component never hides an `Entity` inside itself. When something needs state, i
 
 - No color or pixel constants in widget code. Everything comes from `GuiraffeTheme`: palettes,
   `Size` scales, the `Variant` resolver, `Surfaces`, shadow and motion tokens.
-- Surfaces form a per-scheme ladder (`GuiraffeTheme::surfaces_light` / `surfaces_dark`:
-  body, surface, raised, sunken, border). Adjacent levels differ by at least 1.08:1
-  (`SURFACE_STEP`). Paint a region's level with `Surfaces::of(SurfaceKind)`; wells, recessed
-  fields, meter tracks and plot backgrounds are `Sunken`.
+- Surfaces form a per-scheme ramp (`GuiraffeTheme::surfaces_light` / `surfaces_dark`, a
+  `SurfaceShades`: body, surface, raised, sunken, chrome, border, outline, hover, track, text,
+  dimmed). Adjacent levels differ by at least 1.08:1 (`SURFACE_STEP`). Every neutral colour
+  comes from it: `surfaces()`, default (neutral) controls, the tinted variants (they tint over
+  the ramp's body) and, through `apply`, Kit's inputs, lists, tables, tabs, popovers,
+  title bars and scrollbars. An app supplies its own ramp per scheme and patches nothing else.
+  Paint a region's level with `Surfaces::of(SurfaceKind)`; wells, recessed fields, meter
+  tracks and plot backgrounds are `Sunken`, header bars and table heads `chrome`.
 - Coloured ink on a surface (meter zones, plot lines) uses `readable_shade(color, preferred,
   background, 3.0)`: the nearest shade that clears 3:1 (WCAG 1.4.11), so a family never
   vanishes on a light or dark well. Exact per-scheme shades and `Rgb`s stay available.

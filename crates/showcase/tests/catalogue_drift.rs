@@ -145,6 +145,10 @@ const IMPERATIVE: &[(&str, &str)] = &[
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
     (
+        "components::StepGridOptions::field cells",
+        "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
+    ),
+    (
         "components::StepGridOptions::field group_gap",
         "Store-backed step sequencer for Rust hosts; documents cannot bind a StepDoc store yet.",
     ),
