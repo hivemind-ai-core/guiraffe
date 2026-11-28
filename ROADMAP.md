@@ -15,6 +15,7 @@ are the source of truth.
 | 0.3.3 | Freeze the `ui!` binding syntax |
 | 0.4 | Our own GPUI fork, tracking gpui-fast |
 | 0.4.1 | Umbrella crate and publishing on the fork |
+| 0.4.2 | Passage frame cost on the fork: plain-notify and multi-view patching, flow canvas windows, rounded clips, meter repaint, TracksView at scale |
 | 0.5 | Real-time rendering for Passage: paint-only sinks, boundaries, several changed views |
 | 0.5.1 | Performance budgets |
 | 0.6 | Allocation-free rendering |
@@ -26,6 +27,30 @@ are the source of truth.
 | 0.10 | Text |
 | 0.11 | Accessibility |
 | 0.12 | Platforms |
+
+## Passage performance stock take (2026-11-28)
+
+Where GUIraffe costs Passage frame time, re-renders and memory, ranked by benefit per effort.
+Passage records no GUI frame metrics yet, so the gains are estimates from the nightly runs.
+
+1. **Measure Passage's frames** (#5, 0.3.2) and add a Passage-shaped playback benchmark to the
+   nightly (#189, 0.3.2): fed meters, a moving playhead, a cable layer, rounded scopes.
+2. **Root re-render at 25 Hz.** Passage's 40 ms ticker notifies its root view every tick
+   (`passage-gui/src/main.rs:433-452`), although playhead and meters already update through
+   stores and feeds. Passage-side fix; GUIraffe adds a debug warning and a convention (#188, 0.3.2).
+3. **Several changed views per frame** (#1) and **plain `cx.notify` patching** (#155): Passage's
+   frames change many views at once and it has about 60 plain notify sites, so it rarely gets the
+   retained patch. 0.4.2, on the fork.
+4. **Meters:** 34 separate fed `Meter`s at 16 tracks cost about 2,000 allocations per tick.
+   `MeterBank` now (Passage side); paint-only repaint later (#3, #141). 0.4.2.
+5. **Flow canvas windows are never patched** and every cable redraws each frame while the chain is
+   open (#153, flow p50 2.6 ms in the soak). 0.4.2.
+6. **Rounded overflow clips** rebuild the scene (#43): Passage's scope and spectrum panels. 0.4.2.
+7. **ScopeLayer** fed from a shared buffer instead of a plot rebuilt per frame (#26, 0.3.2).
+8. Later: `uniform_list` row patching (#6), single build on fallback (#128), TracksView at
+   thousands of clips (#190, 0.4.2), coalesced store writes (#59), soak memory growth (#46, #138),
+   drag reflow timers replaced by #173.
+
 
 Older section numbers below (0.4 "Text, pixels and platforms", 0.5 "Compiled reactivity") predate
 this sequencing; their items now live in the milestones above.
