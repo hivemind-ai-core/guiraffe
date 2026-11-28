@@ -140,6 +140,18 @@ carries the `Source`: `Pointer` or `Keyboard` for canvas input, the caller's for
 `set_selection`, the dispatch's for the bus `select` action (`{nodes: [...], edges: [...]}`,
 `FlowAction::Select`).
 
+### Transient previews
+
+`FlowState::set_preview(Some(patch), cx)` draws the graph with a `core::GraphPatch` applied:
+nodes shifted by world offsets, edges hidden, and edges added (an added edge may reuse a hidden
+edge's id to replace it). It is for showing a reorder or a splice while a drag is in progress. It
+never edits the document: no undo entry, no `FlowEvent`, and a gesture in progress carries on.
+Edges, nodes, port anchors and `AnchorsMoved` follow the preview, and it is re-applied after
+later edits until the host clears it with `set_preview(None, cx)` (or drops it when it no longer
+applies). A patch that does not apply is refused and the current preview stays. Pointer hits
+(clicks, drags, connections) still use the document's positions, and a shifted node's children
+stay put unless they are listed too.
+
 ### Auto-layout
 
 Call `FlowState::arrange(engine, options, duration, cx)` to compute geometry on
