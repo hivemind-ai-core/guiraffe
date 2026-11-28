@@ -833,10 +833,8 @@ impl Render for FlowViewport {
         }
         if let Some(Gesture::Move { origins, .. }) = &self.interaction.gesture {
             self.visible.nodes.extend(origins.keys().copied());
-            self.interaction
-                .editor
-                .scene()
-                .append_incident_edges(origins.keys().copied(), &mut self.visible.edges);
+            // From the scene drawn, so a previewed graph's hidden edges stay hidden.
+            display.append_incident_edges(origins.keys().copied(), &mut self.visible.edges);
             self.visible.nodes.sort_unstable();
             self.visible.nodes.dedup();
             self.visible.edges.sort_unstable();
