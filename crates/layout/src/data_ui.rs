@@ -125,6 +125,13 @@ pub(crate) fn register(cx: &mut App) {
                     if let Some(key) = node.prop(5).as_str() {
                         splitter = splitter.persist_key(key.to_owned());
                     }
+                    if let Some(index) = node
+                        .prop(6)
+                        .as_f64()
+                        .filter(|n| n.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(n))
+                    {
+                        splitter = splitter.fixed_pane(index as usize);
+                    }
                     if let Some(handler) = node.handler(0) {
                         splitter = splitter.on_resize(move |sizes, window, cx| {
                             let values = sizes

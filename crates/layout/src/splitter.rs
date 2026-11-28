@@ -428,6 +428,7 @@ pub struct Splitter {
     state: Entity<SplitterState>,
     axis: SplitterAxis,
     panes: Vec<AnyElement>,
+    fixed_pane: Option<usize>,
     sizes: Vec<Option<Pixels>>,
     min_size: Pixels,
     max_size: Option<Pixels>,
@@ -447,6 +448,7 @@ impl Splitter {
             state: state.clone(),
             axis: SplitterAxis::Horizontal,
             panes: Vec::new(),
+            fixed_pane: None,
             sizes: Vec::new(),
             min_size: px(crate::theme::panel_min_size()),
             max_size: None,
@@ -501,6 +503,17 @@ impl Splitter {
     /// The size the first pane starts at.
     pub fn first_size(self, size: impl Into<Pixels>) -> Self {
         self.pane_size(0, size)
+    }
+
+    /// Keep the pane at this zero-based index at its current size when the
+    /// container grows or shrinks. Its divider remains draggable.
+    ///
+    /// Give the pane an initial size with [`Self::pane_size`] or a persisted
+    /// size, and leave another pane to absorb changes in the container size.
+    /// Calling this again selects a different fixed pane.
+    pub fn fixed_pane(mut self, index: usize) -> Self {
+        self.fixed_pane = Some(index);
+        self
     }
 
     /// The size a pane starts at.
@@ -623,6 +636,9 @@ impl RenderOnce for Splitter {
         let range = self.size_range();
         for (index, pane) in self.panes.into_iter().enumerate() {
             let mut panel = resizable_panel().size_range(range.clone());
+            if self.fixed_pane == Some(index) {
+                panel = panel.fixed();
+            }
             if let Some(size) = sizes.get(index).copied().flatten() {
                 panel = panel.size(size);
             }
