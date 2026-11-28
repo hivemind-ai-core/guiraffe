@@ -343,7 +343,13 @@ fn pointer_and_bus_paths_are_identical(cx: &mut TestAppContext) {
     assert_eq!(bus.model().selection, after_pointer.selection);
     assert_eq!(bus.model().playhead, after_pointer.playhead);
     assert_eq!(*bus.log.outcomes.borrow(), pointer_outcomes);
-    assert_eq!(*bus.events.borrow(), pointer_events);
+    let mut expected = pointer_events;
+    let TracksEvent::SelectionChanged { source, .. } = &mut expected[0] else {
+        panic!("first click should select a clip");
+    };
+    assert_eq!(*source, Source::Pointer);
+    *source = Source::Script;
+    assert_eq!(*bus.events.borrow(), expected);
 }
 
 /// With a minimum time, a wheel pan past it reads the minimum straight away, before the
