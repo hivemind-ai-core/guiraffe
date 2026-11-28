@@ -57,6 +57,9 @@ pub struct TabItem {
     pub badge: Option<SharedString>,
     pub closable: bool,
     pub disabled: bool,
+    /// Hover text. A vertical strip shows the label when this is unset, since its labels
+    /// can be ellipsized.
+    pub tooltip: Option<SharedString>,
 }
 
 impl TabItem {
@@ -68,7 +71,13 @@ impl TabItem {
             badge: None,
             closable: false,
             disabled: false,
+            tooltip: None,
         }
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
@@ -324,6 +333,42 @@ pub enum TabsVariant {
     Pill,
 }
 
+/// Which way the tabs run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TabsOrientation {
+    /// A row; Left/Right move between tabs.
+    #[default]
+    Horizontal,
+    /// A fixed-width strip with tabs stacked top to bottom; Up/Down move between tabs and
+    /// labels ellipsize.
+    Vertical,
+}
+
+/// One keyboard step through the visible, enabled tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabStep {
+    Previous,
+    Next,
+    First,
+    Last,
+}
+
+/// The navigation key for `orientation`: Left/Right for a row, Up/Down for a strip, and
+/// Home/End for both. Keys of the other axis do nothing, so they stay free for the host.
+pub fn tab_step(key: &str, orientation: TabsOrientation) -> Option<TabStep> {
+    match (key, orientation) {
+        ("left", TabsOrientation::Horizontal) | ("up", TabsOrientation::Vertical) => {
+            Some(TabStep::Previous)
+        }
+        ("right", TabsOrientation::Horizontal) | ("down", TabsOrientation::Vertical) => {
+            Some(TabStep::Next)
+        }
+        ("home", _) => Some(TabStep::First),
+        ("end", _) => Some(TabStep::Last),
+        _ => None,
+    }
+}
+
 /// Pixel metrics of one size, derived from the shared size tokens.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TabMetrics {
@@ -357,6 +402,10 @@ pub struct TabsOptions {
     /// Xs, Sm (default) or Md.
     pub size: Size,
     pub variant: TabsVariant,
+    pub orientation: TabsOrientation,
+    /// Width of a vertical strip; `None` is twice the tab height (64 px at Sm). Ignored
+    /// for a row.
+    pub strip_width: Option<f32>,
 }
 
 impl Default for TabsOptions {
@@ -365,6 +414,8 @@ impl Default for TabsOptions {
             trailing: None,
             size: Size::Sm,
             variant: TabsVariant::Underline,
+            orientation: TabsOrientation::Horizontal,
+            strip_width: None,
         }
     }
 }
@@ -378,6 +429,27 @@ impl TabsOptions {
         self.variant = variant;
         self
     }
+    pub fn orientation(mut self, orientation: TabsOrientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+    /// A vertical strip: tabs stacked top to bottom.
+    pub fn vertical(self) -> Self {
+        self.orientation(TabsOrientation::Vertical)
+    }
+    pub fn strip_width(mut self, width: f32) -> Self {
+        self.strip_width = Some(width);
+        self
+    }
+}
+
+/// The width of a vertical strip: the option when finite and positive, else twice the tab
+/// height of `size`.
+pub fn strip_width(options: &TabsOptions) -> f32 {
+    options
+        .strip_width
+        .filter(|w| w.is_finite() && *w > 0.)
+        .unwrap_or(tab_metrics(options.size).height * 2.)
 }
 
 /// The tab row.
@@ -490,6 +562,18 @@ impl Tabs {
         }
     }
 
+    /// Change the orientation (window-free host write); notifies only on a change.
+    pub fn set_orientation(&mut self, orientation: TabsOrientation, cx: &mut Context<Self>) {
+        if self.options.orientation != orientation {
+            self.options.orientation = orientation;
+            cx.notify();
+        }
+    }
+
+    pub fn orientation(&self) -> TabsOrientation {
+        self.options.orientation
+    }
+
     pub fn size(&self) -> Size {
         self.options.size
     }
@@ -549,11 +633,14 @@ impl Tabs {
             .unwrap_or(0);
         let m = &e.keystroke.modifiers;
         let move_to = |i: usize| visible[i].id;
+        let step = tab_step(e.keystroke.key.as_str(), self.options.orientation);
         let next = match e.keystroke.key.as_str() {
-            "left" => Some(move_to(at.saturating_sub(1))),
-            "right" => Some(move_to((at + 1).min(visible.len() - 1))),
-            "home" => Some(move_to(0)),
-            "end" => Some(move_to(visible.len() - 1)),
+            _ if step.is_some() => step.map(|step| match step {
+                TabStep::Previous => move_to(at.saturating_sub(1)),
+                TabStep::Next => move_to((at + 1).min(visible.len() - 1)),
+                TabStep::First => move_to(0),
+                TabStep::Last => move_to(visible.len() - 1),
+            }),
             "enter" | "space" => return Some(TabsAction::Select(visible[at].id)),
             "delete" => {
                 return visible[at]
@@ -655,6 +742,18 @@ impl Render for Tabs {
         // Pills sit inside the track's padding, so they are a little shorter than the row.
         let inset = if pill { (m.gap / 3.).max(2.) } else { 0. };
         let tab_height = m.height - 2. * inset;
+        let vertical = self.options.orientation == TabsOrientation::Vertical;
+        let strip = strip_width(&self.options);
+        // A tab's rounded corners face away from the baseline (or the strip's inner edge).
+        let round = move |d: gpui_kit::Div| {
+            if pill {
+                d.rounded(px(radius))
+            } else if vertical {
+                d.rounded_r(px(radius))
+            } else {
+                d.rounded_t(px(radius))
+            }
+        };
         let view = cx.weak_entity();
         let tabs = self.visible(&doc).map(|tab| {
             let selected = doc.selected == Some(tab.id);
@@ -677,14 +776,34 @@ impl Render for Tabs {
                 .items_center()
                 .gap(px(m.gap))
                 .h(px(tab_height))
-                .px(px(m.pad_x))
+                .map(|d| {
+                    if vertical {
+                        // Fixed strip: the tab fills it and its label ellipsizes.
+                        d.w_full().min_w_0().px(px(m.gap))
+                    } else {
+                        d.px(px(m.pad_x))
+                    }
+                })
                 .map(|d| {
                     if pill {
                         d.rounded(px(radius))
+                    } else if vertical {
+                        d.rounded_r(px(radius))
                     } else {
                         d.rounded_t(px(radius))
                     }
                 })
+                .when_some(
+                    tab.tooltip
+                        .clone()
+                        .or_else(|| vertical.then(|| tab.label.clone())),
+                    |d, tip| {
+                        d.tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(tip.clone())
+                                .build(window, cx)
+                        })
+                    },
+                )
                 .when(pill && selected, |d| d.bg(raised))
                 .text_color(if tab.disabled {
                     disabled
@@ -703,7 +822,13 @@ impl Render for Tabs {
                 .when_some(tab.icon, |d, icon| {
                     d.child(Icon::new(icon).size(px(m.icon)))
                 })
-                .child(tab.label.clone())
+                .map(|d| {
+                    if vertical {
+                        d.child(div().flex_1().min_w_0().truncate().child(tab.label.clone()))
+                    } else {
+                        d.child(tab.label.clone())
+                    }
+                })
                 .when_some(tab.badge.clone(), |d, badge| {
                     d.child(
                         div()
@@ -739,15 +864,14 @@ impl Render for Tabs {
                 // Underline selection: an accent underline (a shape cue, not colour alone);
                 // pill selection is the raised chip plus the semibold label.
                 .when(selected && !pill, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .bottom_0()
-                            .h(px(2.))
-                            .bg(accent),
-                    )
+                    d.child(div().absolute().bg(accent).map(|bar| {
+                        if vertical {
+                            // On the strip's inner (leading) edge.
+                            bar.left_0().top_0().bottom_0().w(px(2.))
+                        } else {
+                            bar.left_0().right_0().bottom_0().h(px(2.))
+                        }
+                    }))
                 })
                 // Focus ring as an overlay: focus never changes layout.
                 .when(focused, |d| {
@@ -755,13 +879,7 @@ impl Render for Tabs {
                         div()
                             .absolute()
                             .inset_0()
-                            .map(|r| {
-                                if pill {
-                                    r.rounded(px(radius))
-                                } else {
-                                    r.rounded_t(px(radius))
-                                }
-                            })
+                            .map(round)
                             .border_1()
                             .border_color(ring),
                     )
@@ -785,13 +903,18 @@ impl Render for Tabs {
                 }
             })
             .flex()
+            .when(vertical, |strip_el| {
+                strip_el.flex_col().w(px(strip)).flex_shrink_0()
+            })
             .map(|row| {
                 if pill {
-                    row.items_center()
+                    row.when(!vertical, |r| r.items_center())
                         .gap(px(inset))
                         .p(px(inset))
                         .rounded(px(radius + inset))
                         .bg(s.track.to_hsla())
+                } else if vertical {
+                    row.border_l_1().border_color(s.border.to_hsla())
                 } else {
                     row.items_end()
                         .border_b_1()
@@ -893,6 +1016,30 @@ mod tests {
         assert!(xs.font < sm.font && sm.font < md.font);
         assert_eq!(tab_metrics(Size::Xl), md, "clamped to the Xs/Sm/Md scale");
         assert_eq!(TabsOptions::default().size, Size::Sm);
+    }
+
+    #[test]
+    fn navigation_keys_follow_the_orientation() {
+        use TabsOrientation::{Horizontal, Vertical};
+        assert_eq!(tab_step("left", Horizontal), Some(TabStep::Previous));
+        assert_eq!(tab_step("right", Horizontal), Some(TabStep::Next));
+        assert_eq!(tab_step("up", Horizontal), None, "free for the host");
+        assert_eq!(tab_step("up", Vertical), Some(TabStep::Previous));
+        assert_eq!(tab_step("down", Vertical), Some(TabStep::Next));
+        assert_eq!(tab_step("left", Vertical), None);
+        for o in [Horizontal, Vertical] {
+            assert_eq!(tab_step("home", o), Some(TabStep::First));
+            assert_eq!(tab_step("end", o), Some(TabStep::Last));
+        }
+    }
+
+    #[test]
+    fn strip_width_defaults_to_twice_the_tab_height_and_rejects_bad_values() {
+        let options = TabsOptions::default().vertical();
+        assert_eq!(strip_width(&options), 64.);
+        assert_eq!(strip_width(&options.clone().strip_width(80.)), 80.);
+        assert_eq!(strip_width(&options.clone().strip_width(-1.)), 64.);
+        assert_eq!(strip_width(&options.strip_width(f32::NAN)), 64.);
     }
 
     #[test]
