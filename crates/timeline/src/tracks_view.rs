@@ -1652,7 +1652,7 @@ impl Render for TracksView {
                                 let top = layout.top(i) - scroll;
                                 let height = layout.height(i);
                                 let overview_row = !accessibility && overview(tr, &axis);
-                                let clips = if overview_row { selection_candidates(model, r, &axis) } else {
+                                let clips = if overview_row { selection_candidates(&model, r, &axis) } else {
                                     crate::visible(tr.clips(), &axis, |c| c.start, |c| c.end())
                                 };
                                 let detailed_canvas = !overview_row && !accessibility && editable && canvas_clips(tr, &axis);
